@@ -13,11 +13,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: pins
         run: . packaging/versions.env && echo "node=$NODE_VERSION" >> "$GITHUB_OUTPUT"
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.pins.outputs.node }}
           cache: pnpm
@@ -35,11 +35,11 @@ jobs:
   db-integration:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: pins
         run: . packaging/versions.env && echo "node=$NODE_VERSION" >> "$GITHUB_OUTPUT"
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.pins.outputs.node }}
           cache: pnpm
@@ -58,18 +58,18 @@ jobs:
   restore-drill:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: bash packaging/docker/test/restore-drill.sh
       - run: bash packaging/docker/test/backup-suite-in-image.sh ghcr.io/stuga-dev/stuga-node:0.0.0-drill
 
   macos:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: pins
         run: . packaging/versions.env && echo "node=$NODE_VERSION" >> "$GITHUB_OUTPUT"
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.pins.outputs.node }}
           cache: pnpm
@@ -77,7 +77,7 @@ jobs:
       # Again here, for the tests that need plutil.
       - run: node --test "packaging/**/*.test.mjs"
       # Downloads and the Postgres tree assembled from them; a changed pin or build script changes the key.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/stuga-macos-cache
           key: stuga-macos-${{ hashFiles('packaging/versions.env', 'packaging/macos/build/**') }}

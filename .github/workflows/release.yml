@@ -23,7 +23,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: The tag's entry is the newest in CHANGELOG.md
         run: node packaging/release/feed.mjs check "${GITHUB_REF_NAME#v}"
       - name: The release list and this release's notes
@@ -32,7 +32,7 @@ jobs:
           mkdir release-notes
           node packaging/release/feed.mjs feed > release-notes/releases.json
           node packaging/release/feed.mjs notes "${GITHUB_REF_NAME#v}" > release-notes/notes.md
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-notes
           path: release-notes
@@ -48,10 +48,10 @@ jobs:
           - image: stuga-postgres
             dockerfile: packaging/docker/postgres.Dockerfile
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -67,7 +67,7 @@ jobs:
           fi
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           # The exact version only: promote adds the floating tags after the gate, and `latest` is never published.
@@ -90,7 +90,7 @@ jobs:
             echo "ARGS"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -108,8 +108,8 @@ jobs:
     needs: docker-images
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -137,7 +137,7 @@ jobs:
             grep -qx linux/arm64 /tmp/platforms
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-assets
           path: |
@@ -155,12 +155,12 @@ jobs:
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-assets
           path: smoke
@@ -198,15 +198,15 @@ jobs:
     # Signing and notarization secrets live in this environment, which only v* tags may use.
     environment: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: pins
         run: . packaging/versions.env && echo "node=$NODE_VERSION" >> "$GITHUB_OUTPUT"
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.pins.outputs.node }}
           cache: pnpm
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/stuga-macos-cache
           key: stuga-macos-${{ hashFiles('packaging/versions.env', 'packaging/macos/build/**') }}
@@ -268,7 +268,7 @@ jobs:
           pkgutil --expand-full "$RUNNER_TEMP/pkg/Stuga-$V.pkg" "$RUNNER_TEMP/expanded"
           bash packaging/macos/test/smoke.sh "$RUNNER_TEMP/expanded/stuga-node.pkg/Payload/Library/Application Support/Stuga/runtime/$V"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos-pkg
           path: ${{ runner.temp }}/pkg/Stuga-*.pkg
@@ -278,7 +278,7 @@ jobs:
     needs: [docker-smoke, macos-pkg]
     runs-on: ubuntu-latest
     steps:
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -304,13 +304,13 @@ jobs:
     needs: [docker-smoke, macos-pkg, promote]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-assets
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: macos-pkg
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-notes
       # releases.json is what running nodes read at releases/latest/download/ to learn of this version.
