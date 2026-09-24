@@ -20,12 +20,14 @@ jobs:
   cla:
     runs-on: ubuntu-latest
     steps:
+      # A PR a bot opens is skipped: Dependabot's runs get a read-only token and could only fail here.
       - uses: contributor-assistant/github-action@v2.6.1
-        if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
+        if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || (github.event_name == 'pull_request_target' && github.event.pull_request.user.type != 'Bot')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path-to-signatures: "signatures/cla.json"
           path-to-document: "https://github.com/stuga-dev/stuga/blob/main/CLA.md"
           branch: "cla-signatures"
-          allowlist: bot*
+          # Exact logins: a pattern with * matches anywhere in a name, so bot* let "abbott" skip the CLA.
+          allowlist: dependabot[bot],github-actions[bot]
