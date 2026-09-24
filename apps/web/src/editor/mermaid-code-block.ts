@@ -44,11 +44,14 @@ function themeVariables(): Record<string, string | boolean> {
  * `suppressErrorRendering` must stay true: without it a syntax error renders
  * mermaid's own error graphic instead of throwing, and leaves a node in <body>.
  * `look: "classic"` keeps borders the themed flat colour rather than gradients.
+ * `layout: "dagre"` must stay: mermaid 12 defaults to ELK, which the build replaces with
+ * elk-unavailable.ts, so without it every flowchart, state, class and ER diagram fails.
  */
 const MERMAID_CONFIG = {
   startOnLoad: false,
   theme: "base",
   look: "classic",
+  layout: "dagre",
   suppressErrorRendering: true,
   securityLevel: "strict",
   flowchart: { htmlLabels: true, curve: "basis" },
