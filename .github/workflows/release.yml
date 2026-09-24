@@ -195,6 +195,8 @@ jobs:
   macos-pkg:
     needs: [verify, changelog]
     runs-on: macos-15
+    # Signing and notarization secrets live in this environment, which only v* tags may use.
+    environment: release
     steps:
       - uses: actions/checkout@v4
       - id: pins
