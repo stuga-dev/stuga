@@ -48,7 +48,8 @@
       "@tiptap/extension-table-cell": "3.31.3",
       "@tiptap/extension-table-header": "3.31.3",
       "@tiptap/extension-table-row": "3.31.3",
-      "@tiptap/y-tiptap": "3.0.9"
+      "@tiptap/y-tiptap": "3.0.9",
+      "lodash-es@<4.18.1": "^4.18.1"
     }
   }
 }
