@@ -166,26 +166,21 @@ on Linux and on macOS.
 
 ## Schema changes
 
-`packages/db/migrations/0001_initial.sql` is the whole schema, and **until the first release a schema
-change edits it in place**. Nothing is deployed, so there is no data to carry forward and no upgrade
-path to keep: a database made by an older build is thrown away and made again. Do not add `0002`, a
-backfill, or code that tolerates the old shape.
-
-Once Stuga ships this flips: a change becomes a new file, `0002_short_name.sql` and up, appended to
-`MIGRATIONS` in `packages/db/src/schema/migrate.ts`, with contiguous numbers as the schema version.
-The node applies pending migrations in one transaction when it boots, and refuses to start when an
-applied file has changed.
+A released migration is never edited: nodes have already applied it. A schema change is a new file,
+`0002_short_name.sql` and up, appended to `MIGRATIONS` in `packages/db/src/schema/migrate.ts`, with
+contiguous numbers as the schema version. The node applies pending migrations in one transaction
+when it boots, and refuses to start when an applied file has changed.
 
 The structured databases are not Postgres: each one is SQLite inside its actor, created by
-`ensureSchema` in `packages/database-actor/src/schema-ops.ts`, which has no migration mechanism at
-all. The same rule holds there, and for the same reason.
+`ensureSchema` in `packages/database-actor/src/schema-ops.ts`, which has no migration mechanism of
+its own.
 
-What an actor keeps does carry a version: `DOC_STORE_VERSION` and `DATABASE_STORE_VERSION`. The host
-stamps each actor's SQLite file with its namespace's version (`PRAGMA user_version`) and refuses a
-file stamped higher, so an older build never opens what a newer one wrote. Until the first release
-both stay at 1. After it, a change to what a store holds raises its version, together with the step
-in `claimStoreVersion` (`packages/runtime/src/actor-host.ts`) that brings an older store forward;
-the host refuses an older store rather than restamp it while no such step exists.
+What an actor keeps carries a version instead: `DOC_STORE_VERSION` and `DATABASE_STORE_VERSION`. The
+host stamps each actor's SQLite file with its namespace's version (`PRAGMA user_version`) and refuses
+a file stamped higher, so an older build never opens what a newer one wrote. A change to what a
+store holds raises its version, together with the step in `claimStoreVersion`
+(`packages/runtime/src/actor-host.ts`) that brings an older store forward; the host refuses an older
+store rather than restamp it while no such step exists.
 
 Then regenerate `packages/db/schema.snapshot.txt`, with `TEST_DATABASE_URL` pointing at a database
 you can lose, and check that its diff holds only the change you meant. The integration suites fail
