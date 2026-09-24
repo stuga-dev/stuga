@@ -23,7 +23,7 @@ export const TAB_LABEL: Record<ClientTab, string> = {
 export const TOKEN_PLACEHOLDER = "vk_your_key_here";
 
 /** The web UI's DeepSeek Harness profile is `web`. */
-export const DSH_INSTALL_COMMAND = "dsh plugin --profile web add @stuga/dsh-bundle";
+export const DSH_INSTALL_COMMAND = "dsh plugin --profile web add @stuga/dsh-plugin";
 
 /** The `x-stuga-client` label a hand-configured Claude Desktop sends, the same one its extension sends. */
 const DESKTOP_CLIENT = "claude-desktop";

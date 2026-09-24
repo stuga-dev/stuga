@@ -454,9 +454,9 @@ describe("ConnectAgent", () => {
 describe("ConnectAgent — DeepSeek Harness tab", () => {
   it("prints the install command and an environment block with a bearer slot", () => {
     clickTab("dsh");
-    expect(text()).toContain("dsh plugin --profile web add @stuga/dsh-bundle");
+    expect(text()).toContain("dsh plugin --profile web add @stuga/dsh-plugin");
     // The product's name in prose; `dsh` only where it is the command being run.
-    expect(text().replace("dsh plugin --profile web add @stuga/dsh-bundle", "")).not.toContain("dsh");
+    expect(text().replace("dsh plugin --profile web add @stuga/dsh-plugin", "")).not.toContain("dsh");
     expect(text()).toContain("STUGA_URL=");
     expect(text()).toContain("STUGA_API_KEY=vk_your_key_here");
   });

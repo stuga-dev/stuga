@@ -219,7 +219,7 @@ to the file.
 ## DeepSeek Harness
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) reaches the node over
-`/mcp` with a key. The `@stuga/dsh-bundle` plugin installs into a dsh profile and adds what a bare MCP
+`/mcp` with a key. The `@stuga/dsh-plugin` package installs into a dsh profile and adds what a bare MCP
 connection lacks: playbook skills for research, edits and databases, and a system-prompt section that
 carries the workspace's instructions for agents, explains that a `Proposed` result is success and
 must not be retried, and says to follow the instructions that come back with a document
@@ -228,7 +228,7 @@ must not be retried, and says to follow the instructions that come back with a d
 In **Your own AI**, open **DeepSeek Harness** and mint a key. Then, on the machine that runs dsh:
 
 ```sh
-dsh plugin --profile web add @stuga/dsh-bundle
+dsh plugin --profile web add @stuga/dsh-plugin
 ```
 
 Put `STUGA_URL` (the node's origin) and `STUGA_API_KEY` (the key) in `$DSH_HOME/.env` or in the
