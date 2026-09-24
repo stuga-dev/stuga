@@ -1,0 +1,11 @@
+# npm security fixes come from Dependabot security updates (a repository setting); npm version
+# bumps are done by hand, since they need the pins in packaging/check-pins.sh and codemods.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
