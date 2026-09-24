@@ -1,0 +1,28 @@
+/* The sign-in split card. The collapse keys off the card's width, not the window's,
+   so the columns and the padding change together. */
+.auth-page { min-height: 100vh; padding: 1.5rem;
+  background: radial-gradient(1200px 600px at 50% -10%, var(--color-accent-muted), transparent 70%); }
+.auth-card { width: 100%; max-width: 1000px; margin-inline: auto; }
+/* The grid carries the inset: the brand panel paints to the card's edge. */
+.auth-grid { container-type: inline-size; container-name: auth; padding: var(--spacing-8); }
+
+.auth-aside { border-radius: var(--radius-container);
+  background: linear-gradient(160deg, var(--color-accent-muted), var(--color-background-muted) 70%);
+  border: 1px solid var(--color-border); }
+.auth-aside__inner { padding: var(--spacing-6); justify-content: center; }
+.auth-feature__ico { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 1.75rem; height: 1.75rem; border-radius: var(--radius-element);
+  background: var(--color-background-surface); color: var(--color-accent); border: 1px solid var(--color-border); }
+
+/* The ring-to-tick swap is the checklist's only signal. */
+.auth-rules { padding: var(--spacing-1) 0; }
+.auth-rule__ico { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 1rem; height: 1rem; border-radius: 50%; color: var(--color-text-secondary); }
+.auth-rule__ico--ok { background: var(--color-success); color: var(--color-on-success); }
+.auth-rule__dot { width: 0.35rem; height: 0.35rem; border-radius: 50%; border: 1px solid currentColor; }
+
+/* The grid's columns collapse to one below 2 × 260px + the 32px gap. */
+@container auth (max-width: 551px) {
+  .auth-grid { padding: var(--spacing-5); }
+  .auth-aside { order: 1; }
+}

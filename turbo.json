@@ -1,0 +1,40 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "stream",
+  "tasks": {
+    "build": {
+      "dependsOn": [
+        "^build",
+        "^transit"
+      ],
+      "outputs": [
+        "dist/**"
+      ]
+    },
+    "transit": {
+      "dependsOn": [
+        "^transit"
+      ]
+    },
+    "typecheck": {
+      "dependsOn": [
+        "^transit"
+      ]
+    },
+    "test": {
+      "dependsOn": [
+        "^transit"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": [
+        "STUGA_NODE"
+      ]
+    },
+    "clean": {
+      "cache": false
+    }
+  }
+}

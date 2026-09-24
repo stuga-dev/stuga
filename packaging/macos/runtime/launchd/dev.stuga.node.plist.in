@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The Stuga node. Rendered by packaging/macos/build/render-launchd.sh; every @-delimited placeholder is
+  filled, and agent mode drops UserName, GroupName and the upgrade helper's two paths.
+
+  - node-wrapper.sh waits for Postgres, then execs the node, so launchd's SIGTERM starts its
+    graceful shutdown; ExitTimeOut is the backstop behind the node's own 25 s limit.
+  - The database is reached over the unix socket in DATABASE_URL's host=, with peer
+    authentication: there is no password.
+  - AbandonProcessGroup lets rotate-log.mjs copy the node's last lines after the node exits.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@LABEL@</string>
+
+  <!-- So System Settings lists the job under Stuga, with its icon, not as an unnamed bash. -->
+  <key>AssociatedBundleIdentifiers</key>
+  <string>@BUNDLE_ID@</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@ROOT@/current/bin/node-wrapper.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>STUGA_ROOT</key>
+    <string>@ROOT@</string>
+    <key>STUGA_LOG_DIR</key>
+    <string>@LOGS@</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>DATA_DIR</key>
+    <string>@ROOT@/data/node</string>
+    <key>DATABASE_URL</key>
+    <string>postgres:///stuga?host=@SOCKET_DIR_URI@&amp;user=stuga</string>
+    <key>PG_BIN</key>
+    <string>@ROOT@/current/postgres/bin</string>
+    <key>PUBLIC_ORIGIN</key>
+    <string>@PUBLIC_ORIGIN@</string>
+    <key>EXTRA_ORIGINS</key>
+    <string>@EXTRA_ORIGINS@</string>
+    <key>BIND</key>
+    <string>@BIND@</string>
+    <key>PORT</key>
+    <string>@PORT@</string>
+    <key>STUGA_RESTART_HINT</key>
+    <string>@RESTART_HINT@</string>
+    <key>STUGA_UPGRADE_HINT</key>
+    <string>@UPGRADE_HINT@</string>
+    <key>STUGA_UPGRADE_REQUESTS</key>
+    <string>@ROOT@/requests</string>
+    <key>STUGA_UPGRADE_STATUS</key>
+    <string>@ROOT@/status/upgrade.json</string>
+  </dict>
+
+  <key>UserName</key>
+  <string>_stuga</string>
+  <key>GroupName</key>
+  <string>_stuga</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>WorkingDirectory</key>
+  <string>@ROOT@/data</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ExitTimeOut</key>
+  <integer>60</integer>
+  <key>ProcessType</key>
+  <string>Standard</string>
+
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>65536</integer>
+  </dict>
+  <key>HardResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>65536</integer>
+  </dict>
+
+  <key>AbandonProcessGroup</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>@LOGS@/node-wrapper.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGS@/node-wrapper.log</string>
+</dict>
+</plist>

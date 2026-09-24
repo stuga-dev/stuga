@@ -1,0 +1,49 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: var(--font-family-body);
+  background: var(--color-background-body);
+  color: var(--color-text-primary);
+}
+/* For the few bare <button>s that carry their own styles. */
+button { font: inherit; }
+
+/* <Avatar>: size and background come inline. White initials, which PEER_PALETTE is chosen to contrast with. */
+.avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; box-sizing: border-box; border-radius: 50%;
+  color: var(--color-on-dark); font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em;
+  user-select: none;
+}
+
+/* The drag strip beside a side panel. Invisible at rest, since the panel draws its own border. */
+.resize-handle {
+  flex: 0 0 5px; align-self: stretch; cursor: col-resize;
+  background: transparent; transition: background 0.12s;
+  position: relative; z-index: 21; touch-action: none;
+}
+.resize-handle:hover,
+.resize-handle--dragging { background: var(--color-accent-muted); }
+.resize-handle::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
+  width: 2px; transform: translateX(-50%); background: transparent; transition: background 0.12s;
+}
+.resize-handle:hover::after,
+.resize-handle--dragging::after { background: var(--color-accent); }
+
+/* --- workspace settings: member list --- */
+.member-list { list-style: none; padding: 0; margin: 0; }
+.member-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--color-border); }
+.member-row:last-child { border-bottom: none; }
+
+/* --- side panel shell (the doc page's dock, the database page's panels) --- */
+.side-panel { width: 320px; flex-shrink: 0; border-left: 1px solid var(--color-border); display: flex; flex-direction: column; }
+/* Inside the dock the AI panel is content, not a sibling column. */
+.dock > :first-child { border-bottom: 1px solid var(--color-border); flex-shrink: 0; }
+.dock .ai-panel { width: auto; border-left: none; flex: 1; }
+/* A docked panel body (database AI / Activity): fill the dock below the strip. */
+.dock-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* Opaque, so sticky day headings in version history hide the rows scrolling under them. */
+.side-body { flex: 1; overflow: auto; padding: 0.8rem; display: flex; flex-direction: column; gap: 0.6rem; background: var(--color-background-body); }
+
+.empty { color: var(--color-text-secondary); }

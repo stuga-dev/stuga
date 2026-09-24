@@ -1,0 +1,30 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.*
+!.env.dev.example
+
+# node data and dev clusters
+data/
+
+# operator backups: secret material, never committed
+backups/
+
+# the Docker operator shell's image pin, kept after a failure whose message names it
+.stuga-pin.*
+
+# the app version packaging writes at the app root, and the day it was released
+/VERSION
+/RELEASED
+
+# misc
+.DS_Store
+*.log
+
+# Local agent and editor context, never published.
+.claude/
+CLAUDE.md

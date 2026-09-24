@@ -1,0 +1,26 @@
+# The development Postgres for `pnpm dev`, on 127.0.0.1:55433 (pnpm db:up, db:down, db:reset).
+# Its own project and volume, so a feature branch's schema never lands in an operator's database.
+name: stuga-dev
+
+services:
+  postgres:
+    build:
+      context: ../../..
+      dockerfile: packaging/docker/postgres.Dockerfile
+    environment:
+      POSTGRES_USER: stuga
+      POSTGRES_PASSWORD: stuga
+      POSTGRES_DB: stuga
+    volumes:
+      - devdata:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:55433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stuga -d stuga"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  devdata:
+    name: stuga_dev_pgdata

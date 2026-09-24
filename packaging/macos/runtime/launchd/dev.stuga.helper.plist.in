@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Stuga's upgrade helper, as root: launchd starts helper.sh whenever the node drops a request into
+  requests/, and never otherwise. Rendered by packaging/macos/build/render-launchd.sh in daemon mode
+  only. A package's scripts never reload this job, since it may be the one running the installer.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@LABEL@</string>
+
+  <key>AssociatedBundleIdentifiers</key>
+  <string>@BUNDLE_ID@</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@ROOT@/current/bin/helper.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>STUGA_ROOT</key>
+    <string>@ROOT@</string>
+  </dict>
+
+  <key>WatchPaths</key>
+  <array>
+    <string>@ROOT@/requests</string>
+  </array>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>StandardOutPath</key>
+  <string>@LOGS@/helper.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGS@/helper.log</string>
+</dict>
+</plist>

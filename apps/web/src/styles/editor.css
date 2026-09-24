@@ -1,0 +1,659 @@
+/* --- document page ------------------------------------------------------- */
+/* dvh where supported: a phone's browser toolbar would otherwise cover the page's foot. */
+.doc-page { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+/* The header of a document or database page. Its start content keeps its full
+   width by default and slides under the end buttons on a narrow screen; these
+   let the title give way and truncate instead. */
+.item-nav > :first-child > *,
+.item-nav > :first-child > * > * { min-width: 0; }
+.item-nav .doc-title-btn, .item-nav .doc-crumb { min-width: 0; overflow: hidden; }
+.doc-title-btn { background: transparent; border: none; cursor: pointer; padding: 0.15rem 0.3rem; border-radius: var(--radius-element); max-width: 34vw; text-align: left; color: inherit; }
+.doc-title-btn:hover:not(:disabled) { background: var(--color-accent-muted); }
+/* A title that cannot be renamed reads as plain text. */
+.doc-title-btn:disabled { cursor: default; opacity: 1; }
+/* A row page's crumb back to its database. */
+.doc-crumb {
+  display: inline-flex; align-items: center; gap: 0.15rem; max-width: 18vw;
+  background: transparent; border: none; cursor: pointer; color: var(--color-text-secondary);
+  padding: 0.15rem 0.3rem; border-radius: var(--radius-element);
+}
+.doc-crumb:hover { background: var(--color-accent-muted); color: var(--color-text-primary); }
+
+/* Presence badges: white initials on the peer's hue, overlapping, ringed in the surface colour. */
+.presence-stack { display: inline-flex; align-items: center; padding-left: 4px; }
+.presence-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 50%;
+  /* The stack's left padding absorbs the first badge's overlap. */
+  margin-left: -4px;
+  box-shadow: 0 0 0 2px var(--color-background-surface);
+  color: var(--color-on-dark); font-size: 10px; font-weight: 700; line-height: 1;
+  text-transform: uppercase; letter-spacing: 0.02em;
+  user-select: none; box-sizing: border-box;
+  border: none; padding: 0; font-family: inherit; cursor: pointer;
+  transition: transform 0.12s;
+}
+button.presence-badge:hover { transform: translateY(-1px); }
+/* Raised, so an overlapped badge's focus ring is not cut by its neighbour. */
+.presence-badge:focus-visible {
+  outline: 2px solid var(--color-accent); outline-offset: 2px;
+  position: relative; z-index: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .presence-badge { transition: none; }
+  button.presence-badge:hover { transform: none; }
+}
+span.presence-badge { cursor: default; }
+.presence-badge--overflow { background: var(--color-neutral); color: var(--color-text-primary); }
+/* An AI agent's badge is square. */
+.presence-badge--agent { border-radius: 6px; font-size: 12px; text-transform: none; }
+.presence-tip { display: flex; flex-direction: column; gap: 1px; text-align: left; }
+.presence-tip__sub { opacity: 0.8; font-size: 0.85em; }
+/* Visually hidden but still announced, unlike `display: none`. */
+.presence-live {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* The connection dot, growing into a labelled pill as delivery confidence drops. */
+.conn-status {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  border-radius: 999px; white-space: nowrap;
+  /* The dot stays still while the pill grows to its right. */
+  transition: padding 120ms ease, background-color 120ms ease;
+}
+.conn-status[data-expanded="true"] { padding: 0.15rem 0.55rem 0.15rem 0.5rem; }
+.conn-status__label { font-size: 0.78rem; font-weight: 500; line-height: 1.2; }
+.conn-status[data-tone="warning"][data-expanded="true"] {
+  background: var(--color-background-yellow); color: var(--color-text-yellow);
+}
+.conn-status[data-tone="error"][data-expanded="true"] {
+  background: var(--color-background-red); color: var(--color-text-red);
+}
+.conn-status[data-tone="success"][data-expanded="true"] {
+  background: var(--color-background-green); color: var(--color-text-green);
+}
+/* The persistent states also get a ring. */
+.conn-status[data-phase="at-risk"] { box-shadow: inset 0 0 0 1px var(--color-border-yellow); }
+.conn-status[data-phase="prolonged"] { box-shadow: inset 0 0 0 1px var(--color-border-red); }
+
+.doc-body { display: flex; flex: 1; overflow: hidden; }
+.doc-main { flex: 1; min-width: 0; overflow: auto; padding: 0 2rem 2rem; }
+/* Same breakpoint as COMPACT_QUERY in ui/narrow.ts, below which Dock drops its
+   width and resize handle. The dock then overlays the document or database grid
+   rather than narrowing it. */
+@media (max-width: 1099px) {
+  .doc-body { position: relative; }
+  .doc-body > .dock {
+    position: absolute; top: 0; right: 0; bottom: 0; z-index: 30;
+    width: min(26rem, 100%); background: var(--color-background-body);
+    box-shadow: var(--shadow-med);
+  }
+}
+/* Same breakpoint as NARROW_QUERY. A phone gets narrow page margins and a full-width dock. */
+@media (max-width: 640px) {
+  .doc-body > .dock { left: 0; width: auto; border-left: none; box-shadow: none; }
+  .doc-main { padding: 0 0.5rem 1rem; }
+}
+/* No transition or smooth scroll while a width or zoom change re-anchors the reading position. */
+.doc-main--reflowing,
+.doc-main--reflowing * {
+  scroll-behavior: auto !important;
+  transition: none !important;
+  animation: none !important;
+}
+
+.editor-shell { max-width: var(--doc-width, 740px); margin: 0 auto; }
+
+/* Sticky over the scrolling page, below the floating popovers (50+). */
+.editor-toolbar-bar {
+  position: sticky; top: 0; z-index: 20;
+  padding: 0.75rem 0 0.5rem;
+  background: var(--color-background-body);
+}
+
+/* The page: a lighter sheet on the canvas, in both themes. */
+.editor-page {
+  background: var(--color-background-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-container);
+  box-shadow: var(--shadow-low);
+  padding: 3.5rem 3.5rem 4rem;
+  margin-bottom: 2rem;
+  /* `zoom` scales text, images and layout together; the toolbar sits outside the sheet. */
+  zoom: var(--doc-zoom, 1);
+}
+/* Full width drops the sheet's border and shadow but keeps a side gap. */
+.doc-page[data-doc-width="full"] .editor-page {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding-left: 2rem;
+  padding-right: 2rem;
+}
+/* After the rules above, which it overrides on a phone. */
+@media (max-width: 640px) {
+  .editor-page { padding: 1.5rem 1.25rem 2.5rem; margin-bottom: 1rem; }
+  .doc-page[data-doc-width="full"] .editor-page { padding-left: 1.25rem; padding-right: 1.25rem; }
+}
+
+/* An empty document still shows a full sheet that takes a click anywhere. */
+.stuga-editor { outline: none; line-height: 1.6; min-height: calc(100vh - 18rem); }
+.stuga-editor:focus { outline: none; }
+/* The Placeholder extension marks an empty document. Only hint after the first
+   sync: an existing document briefly looks empty while it loads. Floated with no
+   height so the caret stays at the start of the line. */
+.editor-page[data-empty-hint="true"] .stuga-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--color-text-secondary);
+}
+
+/* --- document prose ------------------------------------------------------- */
+/* Document typography, restoring what Astryx's reset strips (block margins, list
+   markers, reading size). The reset is layered, so plain selectors win. */
+.stuga-editor p { font-size: 1rem; line-height: 1.7; margin: 0 0 0.85em; }
+.stuga-editor h1,
+.stuga-editor h2,
+.stuga-editor h3,
+.stuga-editor h4,
+.stuga-editor h5,
+.stuga-editor h6 { line-height: 1.3; margin: 1.6em 0 0.5em; font-weight: 600; }
+.stuga-editor h1 { font-size: 1.75rem; }
+.stuga-editor h2 { font-size: 1.4rem; }
+.stuga-editor h3 { font-size: 1.2rem; }
+.stuga-editor h4 { font-size: 1.05rem; }
+/* Markers sit outside the text column, so wrapped lines align with the text. */
+.stuga-editor ul,
+.stuga-editor ol { margin: 0 0 0.85em; padding-left: 1.6em; }
+.stuga-editor ul { list-style: disc outside; }
+.stuga-editor ol { list-style: decimal outside; }
+.stuga-editor ul ul { list-style: circle outside; }
+.stuga-editor ul ul ul { list-style: square outside; }
+.stuga-editor li { font-size: 1rem; line-height: 1.7; margin: 0.25em 0; }
+/* A list item's <p> adds no paragraph gap; a nested list still needs one. */
+.stuga-editor li > p { margin: 0; }
+.stuga-editor li > ul,
+.stuga-editor li > ol { margin: 0.25em 0 0; }
+.stuga-editor blockquote {
+  margin: 0 0 0.85em;
+  padding: 0.1em 0 0.1em 1em;
+  border-left: 3px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+.stuga-editor pre { font-size: 0.9rem; line-height: 1.55; margin: 0 0 0.85em; }
+.stuga-editor > :first-child { margin-top: 0; }
+.stuga-editor > :last-child { margin-bottom: 0; }
+.stuga-editor a { color: var(--color-accent); text-decoration: underline; cursor: pointer; }
+.stuga-editor hr { border: none; border-top: 1px solid var(--color-border); margin: 1.2rem 0; }
+.stuga-editor img { max-width: 100%; height: auto; border-radius: 6px; display: block; margin: 0.5rem 0; }
+
+/* --- resizable images ---------------------------------------------------------
+   The resize handles have no appearance of their own; they show as dots on hover or while dragging. */
+.stuga-editor [data-resize-container] { margin: 0.5rem 0; max-width: 100%; }
+.stuga-editor [data-resize-wrapper] { border-radius: 6px; outline: 1px solid transparent; transition: outline-color 0.12s; }
+.stuga-editor [data-resize-container]:hover [data-resize-wrapper],
+.stuga-editor [data-resize-container][data-resize-state="true"] [data-resize-wrapper] { outline-color: var(--color-accent); }
+.stuga-editor [data-resize-wrapper] img { margin: 0; max-width: 100%; }
+.stuga-editor [data-resize-handle] {
+  width: 11px; height: 11px; background: var(--color-accent); border: 2px solid var(--color-background-surface);
+  border-radius: 50%; box-sizing: border-box; opacity: 0; transition: opacity 0.12s; z-index: 2;
+}
+.stuga-editor [data-resize-container]:hover [data-resize-handle],
+.stuga-editor [data-resize-container][data-resize-state="true"] [data-resize-handle] { opacity: 1; }
+.stuga-editor [data-resize-handle="top-left"] { margin: -6px 0 0 -6px; cursor: nwse-resize; }
+.stuga-editor [data-resize-handle="top-right"] { margin: -6px -6px 0 0; cursor: nesw-resize; }
+.stuga-editor [data-resize-handle="bottom-left"] { margin: 0 0 -6px -6px; cursor: nesw-resize; }
+.stuga-editor [data-resize-handle="bottom-right"] { margin: 0 -6px -6px 0; cursor: nwse-resize; }
+
+/* --- tables --------------------------------------------------------------- */
+/* Columns size to their content unless every column has a width, which
+   prosemirror-tables marks with an inline `width` (not `min-width`) on the table. */
+.stuga-editor .tableWrapper { overflow-x: auto; margin: 0.8rem 0; }
+.stuga-editor table { border-collapse: collapse; margin: 0.8rem 0; table-layout: auto; width: 100%; }
+.stuga-editor table[style*="width"]:not([style*="min-width"]) { table-layout: fixed; }
+.stuga-editor .tableWrapper table { margin: 0; }
+.stuga-editor th, .stuga-editor td { border: 1px solid var(--color-border); padding: 0.4rem 0.6rem; vertical-align: top; position: relative; }
+/* Cell blocks get no outer margins, only gaps between siblings. Not :last-child:
+   the column resize handle is a widget inside the cell. The handle is absolute,
+   so it is left out of the gap rule. */
+.stuga-editor th > *, .stuga-editor td > * { margin-top: 0; margin-bottom: 0; }
+.stuga-editor th > * + :not(.column-resize-handle),
+.stuga-editor td > * + :not(.column-resize-handle) { margin-top: 0.85em; }
+.stuga-editor th { background: var(--color-accent-muted); font-weight: 600; text-align: left; }
+.stuga-editor .selectedCell { background: var(--color-accent-muted); }
+.stuga-editor .column-resize-handle {
+  position: absolute; right: -2px; top: 0; bottom: -1px; width: 4px;
+  background: var(--color-accent); opacity: 0; transition: opacity 0.12s; pointer-events: none; z-index: 3;
+}
+.stuga-editor table:hover .column-resize-handle { opacity: 0.6; }
+.stuga-editor.resize-cursor { cursor: col-resize; }
+
+/* --- mermaid diagrams ----------------------------------------------------- */
+/* The source shows above a live preview while the caret is inside the block. */
+.stuga-editor .mermaid-wrap { margin: 0.8rem 0; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+.stuga-editor .mermaid-preview { padding: 1rem; background: var(--color-accent-muted); text-align: center; cursor: pointer; }
+.stuga-editor .mermaid-preview svg { max-width: 100%; height: auto; }
+/* Mermaid measures labels outside the editor, so prose rules must not resize them here. */
+.stuga-editor .mermaid-preview svg :is(p, li, h1, h2, h3, h4, h5, h6, pre, blockquote) {
+  font-size: inherit;
+  line-height: inherit;
+  margin: 0;
+  padding: 0;
+}
+.stuga-editor .mermaid-source { margin: 0; padding: 0.75rem 1rem; background: var(--color-background-surface); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; white-space: pre-wrap; }
+.stuga-editor .mermaid-wrap--editing .mermaid-source { border-bottom: 1px solid var(--color-border); }
+.stuga-editor .mermaid-error { color: var(--color-text-red); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+.stuga-editor .mermaid-hint { color: var(--color-text-secondary); font-size: 0.85rem; font-style: italic; }
+
+/* --- outline --- */
+.outline-panel { flex: 0 0 240px; border-right: 1px solid var(--color-border); padding: 1rem 0.8rem; overflow: auto; scroll-behavior: smooth; }
+.outline-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+/* The section being read. Every row has a transparent left border so labels do not shift. */
+.outline-row { border-left: 3px solid transparent; }
+.outline-row--active {
+  border-left-color: var(--selection-mark);
+  background: var(--selection-bg);
+  color: var(--color-text-primary);
+  font-weight: 600;
+  border-radius: 0 var(--radius-element) var(--radius-element) 0;
+}
+/* The Item sets its own colour and weight. */
+.outline-row--active * { color: inherit; font-weight: inherit; }
+
+.tb-grid-pop { padding: 0.25rem; min-width: 0; }
+.tb-grid-label { text-align: center; font-size: 0.75rem; color: var(--color-text-secondary); margin-bottom: 0.4rem; min-height: 1rem; }
+.tb-grid { display: grid; grid-auto-rows: 16px; gap: 2px; }
+.tb-grid-cell { border: 1px solid var(--color-border); border-radius: 2px; background: transparent; cursor: pointer; }
+.tb-grid-cell.on { background: var(--color-accent); border-color: var(--color-accent); }
+
+/* --- selection bubble (floats above the selection; positioned from PM coords) --- */
+.selection-bubble {
+  position: fixed; z-index: 50; transform: translate(-50%, calc(-100% - 8px));
+  display: flex; align-items: center; gap: 0.15rem;
+  padding: 0.2rem; background: var(--color-background-popover);
+  border: 1px solid var(--color-border); border-radius: var(--radius-container);
+  box-shadow: var(--shadow-med);
+}
+
+/* --- inline link popover (view + edit) --- */
+.link-popover {
+  position: fixed; z-index: 55; transform: translate(-50%, 8px);
+  display: flex; align-items: center; gap: 0.3rem;
+  max-width: 360px; padding: 0.3rem 0.4rem; background: var(--color-background-surface);
+  border: 1px solid var(--color-border); border-radius: 8px;
+  box-shadow: var(--shadow-med); font-size: 0.85rem;
+}
+.link-popover__input {
+  min-width: 220px; flex: 1 1 auto; border: 1px solid var(--color-border); border-radius: 6px;
+  padding: 0.3rem 0.45rem; background: var(--color-background-surface); color: var(--color-text-primary); font-size: 0.85rem; outline: none;
+}
+.link-popover__input:focus { border-color: var(--color-accent); }
+
+/* --- image caption popover (shown while an image node is selected) --- */
+.image-caption-popover {
+  position: fixed; z-index: 55; transform: translate(-50%, 8px);
+  display: flex; align-items: center; gap: 0.4rem;
+  max-width: 420px; padding: 0.3rem 0.5rem; background: var(--color-background-popover);
+  border: 1px solid var(--color-border); border-radius: var(--radius-container);
+  box-shadow: var(--shadow-med); font-size: 0.85rem;
+}
+.image-caption-popover__label { color: var(--color-text-secondary); flex-shrink: 0; }
+.image-caption-popover__input {
+  min-width: 240px; flex: 1 1 auto; border: 1px solid var(--color-border); border-radius: 6px;
+  padding: 0.3rem 0.45rem; background: var(--color-background-surface); color: var(--color-text-primary); font-size: 0.85rem; outline: none;
+}
+.image-caption-popover__input:focus { border-color: var(--color-accent); }
+.link-popover__url {
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--color-accent); text-decoration: none; padding: 0 0.2rem;
+}
+.link-popover__url:hover { text-decoration: underline; }
+.link-popover__btn {
+  flex: 0 0 auto; background: transparent; border: 1px solid transparent; color: var(--color-text-primary);
+  border-radius: 6px; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.82rem;
+}
+.link-popover__btn:hover { background: var(--color-accent-muted); }
+.link-popover__btn--danger:hover { background: color-mix(in srgb, var(--color-background-red) 70%, transparent); color: var(--color-text-red); }
+
+/* --- slash command menu (type `/` at the start of a block) --- */
+.slash-menu {
+  position: fixed; z-index: 60; width: 232px; max-height: 312px; overflow-y: auto;
+  background: var(--color-background-surface); border: 1px solid var(--color-border); border-radius: 10px;
+  box-shadow: var(--shadow-high); padding: 0.3rem;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.slash-item {
+  display: flex; align-items: center; gap: 0.6rem; width: 100%; text-align: left;
+  background: transparent; border: none; color: var(--color-text-primary); cursor: pointer;
+  padding: 0.45rem 0.5rem; border-radius: 7px; font-size: 0.9rem;
+}
+.slash-item.active { background: var(--color-accent-muted); }
+/* A message, not an option. */
+.slash-item--empty { color: var(--color-text-secondary); cursor: default; }
+.slash-item__hint {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 1.7rem; height: 1.7rem; border: 1px solid var(--color-border); border-radius: 6px;
+  font-size: 0.78rem; color: var(--color-text-secondary);
+}
+.slash-item.active .slash-item__hint { color: var(--color-accent); border-color: var(--color-accent); }
+.slash-item__label { flex: 1 1 auto; }
+
+/* --- image upload tray (floating progress, bottom-right) --- */
+.upload-tray {
+  position: fixed; right: 1rem; bottom: 1rem; z-index: 70;
+  display: flex; flex-direction: column; gap: 0.4rem; width: 290px; max-width: calc(100vw - 2rem);
+}
+.upload-row {
+  display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 0.4rem 0.5rem;
+  background: var(--color-background-surface); border: 1px solid var(--color-border); border-radius: 9px;
+  box-shadow: var(--shadow-med); padding: 0.5rem 0.6rem; font-size: 0.82rem;
+}
+.upload-row.error { border-color: var(--color-border-red); }
+.upload-row__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-row__err { grid-column: 1 / 3; color: var(--color-text-red); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-bar { grid-column: 1 / 4; height: 4px; border-radius: 2px; background: var(--color-accent-muted); overflow: hidden; }
+
+/* --- comment composer (floats under the selection; controls are Astryx) --- */
+.comment-composer {
+  position: fixed; z-index: 55; width: 270px;
+  display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem;
+  background: var(--color-background-popover); border: 1px solid var(--color-border); border-radius: var(--radius-container);
+  box-shadow: var(--shadow-high);
+}
+.comment-composer__quote {
+  font-size: 0.78rem; color: var(--color-text-secondary); border-left: 2px solid var(--color-accent);
+  padding-left: 0.4rem; max-height: 2.6rem; overflow: hidden;
+}
+
+/* --- "Edit with AI" selection composer (controls are Astryx) --- */
+.ai-edit-composer {
+  position: fixed; z-index: 55; width: 300px;
+  display: flex; flex-direction: column; gap: 0.45rem; padding: 0.6rem;
+  background: var(--color-background-popover); border: 1px solid var(--color-border); border-radius: var(--radius-container);
+  box-shadow: var(--shadow-high);
+}
+.ai-edit-composer__quote {
+  font-size: 0.78rem; color: var(--color-text-secondary); border-left: 2px solid var(--color-accent);
+  padding-left: 0.4rem; max-height: 2.6rem; overflow: hidden;
+}
+.ai-edit-composer__actions { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+
+/* --- collaborator carets ---------------------------------------------------------
+   Everything derives from the widget's `--peer-color`. `--peer-ink` lightens it
+   for dark surfaces, where the palette's white-text hues are thin as a 2px line. */
+.stuga-editor .collaboration-carets__caret,
+.stuga-editor .collaboration-carets__selection {
+  --peer-ink: light-dark(var(--peer-color), color-mix(in srgb, var(--peer-color) 65%, var(--color-on-dark)));
+}
+
+/* Net zero width, so a peer arriving mid-sentence never reflows the line; clicks go to the text. */
+.stuga-editor .collaboration-carets__caret {
+  position: relative;
+  display: inline;
+  margin: 0 -1px;
+  border-left: 2px solid var(--peer-ink);
+  pointer-events: none;
+  user-select: none;
+  word-break: normal;
+}
+/* The flag is the only part that takes the pointer, for hover to see who. */
+.stuga-editor .collaboration-carets__caret::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  width: 7px;
+  height: 7px;
+  background: var(--peer-ink);
+  border-radius: 2px 2px 2px 0;
+  pointer-events: auto;
+}
+/* Every font property is set: the widget sits inside the following text's marks. */
+.stuga-editor .collaboration-carets__label {
+  position: absolute;
+  left: -2px;
+  bottom: 100%;
+  z-index: 1;
+  display: inline-block;
+  max-width: 10rem;
+  margin-bottom: 2px;
+  padding: 1px 5px;
+  border-radius: 3px 3px 3px 0;
+  background: var(--peer-ink);
+  color: light-dark(var(--color-on-dark), var(--color-on-light));
+  font: 600 12px/1.4 var(--font-family-body);
+  font-style: normal;
+  letter-spacing: normal;
+  text-transform: none;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+  pointer-events: none;
+  /* `display: none`: an invisible box near a line end would still widen the scroll area. */
+  display: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 150ms ease, transform 150ms ease, display 150ms allow-discrete;
+}
+/* Shown while the peer is active, or on hover of the flag. */
+.stuga-editor .collaboration-carets__caret[data-active] .collaboration-carets__label,
+.stuga-editor .collaboration-carets__caret:hover .collaboration-carets__label {
+  display: inline-block;
+  opacity: 1;
+  transform: none;
+}
+@starting-style {
+  .stuga-editor .collaboration-carets__caret[data-active] .collaboration-carets__label,
+  .stuga-editor .collaboration-carets__caret:hover .collaboration-carets__label {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+/* Hovering lifts a tag above a neighbour and lets the pointer rest on it (WCAG 1.4.13);
+   a tag shown for activity stays click-through. */
+.stuga-editor .collaboration-carets__caret:hover .collaboration-carets__label {
+  z-index: 2;
+  pointer-events: auto;
+}
+/* Escape hides a hovered tag, not one shown for activity. */
+.stuga-editor[data-peer-labels-muted] .collaboration-carets__caret:not([data-active]):hover .collaboration-carets__label {
+  display: none;
+}
+/* Near the right margin the tag grows leftward. */
+.stuga-editor .collaboration-carets__caret[data-flip] .collaboration-carets__label {
+  left: auto;
+  right: -2px;
+  border-radius: 3px 3px 0 3px;
+}
+/* .tableWrapper clips overflow, so a first-row tag goes below the caret. */
+.stuga-editor .tableWrapper .collaboration-carets__label {
+  top: 100%;
+  bottom: auto;
+  margin: 2px 0 0;
+  border-radius: 0 3px 3px 3px;
+}
+.stuga-editor .tableWrapper .collaboration-carets__caret[data-flip] .collaboration-carets__label {
+  border-radius: 3px 0 3px 3px;
+}
+/* The alpha is here so it can differ by theme. */
+.stuga-editor .collaboration-carets__selection {
+  background-color: light-dark(
+    color-mix(in srgb, var(--peer-color) 22%, transparent),
+    color-mix(in srgb, var(--peer-color) 42%, transparent)
+  );
+  border-radius: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stuga-editor .collaboration-carets__label { transition: none; }
+}
+
+/* --- in-editor comment highlight --- */
+.comment-highlight { background: color-mix(in srgb, var(--color-background-yellow) 60%, transparent); border-bottom: 2px solid var(--color-background-yellow); cursor: pointer; }
+.comment-highlight--active { background: var(--color-background-yellow); }
+/* A resolved thread's anchor flashes when clicked; the fade ends before the decoration is removed. */
+.comment-highlight--flash { background: var(--color-background-yellow); animation: comment-flash 2.4s ease-out forwards; }
+@keyframes comment-flash {
+  0%   { background: color-mix(in srgb, var(--color-border-yellow) 50%, var(--color-background-yellow)); }
+  55%  { background: var(--color-background-yellow); }
+  100% { background: transparent; border-bottom-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .comment-highlight--flash { animation: none; }
+}
+
+/* The passage a citation link landed on, in blue so it cannot read as a pending edit or a comment. */
+.citation-target--flash { animation: citation-target-flash 1.6s ease-out 1; border-radius: var(--radius-element); }
+@keyframes citation-target-flash {
+  0% { box-shadow: 0 0 0 4px var(--color-border-blue); }
+  100% { box-shadow: 0 0 0 4px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .citation-target--flash { animation: none; outline: 2px solid var(--color-border-blue); }
+}
+
+.toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); background: var(--color-error); color: var(--color-on-error); padding: 0.6rem 1rem; border-radius: var(--radius-element); z-index: 100; }
+
+/* --- no-access page (shown when a doc 403/404s for the caller) --- */
+.doc-noaccess { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 2rem; }
+.doc-noaccess__card { max-width: 420px; text-align: center; }
+.doc-noaccess__card h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
+.doc-noaccess__card p { color: var(--color-text-secondary); margin: 0 0 1.25rem; }
+
+/* Footnote definitions are hidden from the body and listed in Sources. */
+.stuga-editor .footnote-hidden { display: none; }
+/* Citation markers off: only the document's superscripts hide. */
+.doc-page[data-show-citations="false"] .stuga-editor .citation-ref { display: none; }
+.sources-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+.sources-item { font-size: 0.85rem; }
+.sources-row { display: flex; gap: 0.4rem; align-items: baseline; }
+.sources-num { background: transparent; border: none; color: var(--color-accent); font-weight: 600; cursor: pointer; padding: 0; flex: 0 0 auto; }
+.sources-num:hover { text-decoration: underline; }
+.sources-title { color: var(--color-text-primary); text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+a.sources-title:hover { color: var(--color-accent); text-decoration: underline; }
+.sources-excerpt { margin: 0.25rem 0 0 1.4rem; padding: 0 0 0 0.6rem; border-left: 3px solid var(--color-border); color: var(--color-text-secondary); font-style: italic; font-size: var(--text-body-size); }
+
+.comment-list, .version-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.comment-list li, .version-list li { border: 1px solid var(--color-border); border-radius: 8px; padding: 0.5rem 0.7rem; }
+.comment-list p { margin: 0.2rem 0 0; }
+
+/* --- version history --- */
+.version-history { display: flex; flex-direction: column; gap: 0.15rem; }
+/* Pinned flush with the scrollport, covering rows in the padding above it. */
+.version-day {
+  position: sticky; top: -0.8rem; z-index: 1;
+  margin: 0.7rem 0 0.15rem; padding: 0.95rem 0.15rem 0.25rem;
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--color-text-secondary); background: var(--color-background-body);
+}
+.version-history > .version-day:first-child { margin-top: -0.8rem; }
+.version-list { gap: 0.1rem; }
+.version-list li { border: none; border-radius: 6px; padding: 0; }
+.version-open {
+  width: 100%; display: flex; flex-direction: column; gap: 0.15rem;
+  padding: 0.4rem 0.5rem; background: none; border: none; border-left: 2px solid transparent;
+  border-radius: 6px; text-align: left; cursor: pointer; color: inherit; font: inherit;
+}
+.version-open:hover { background: var(--color-accent-muted); border-left-color: var(--color-accent); }
+.version-open__head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.version-open__sub { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; min-width: 0; }
+.vtime { font-weight: 600; font-variant-numeric: tabular-nums; }
+.vauthors { color: var(--color-text-secondary); font-size: var(--text-body-size); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vcurrent {
+  flex-shrink: 0; font-size: var(--text-supporting-size); font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
+  color: var(--color-accent); background: var(--color-accent-muted); border-radius: 999px; padding: 0.05rem 0.4rem;
+}
+.vchange { flex-shrink: 0; display: flex; gap: 0.35rem; font-size: var(--text-body-size); font-variant-numeric: tabular-nums; }
+.vchange--none { color: var(--color-text-secondary); font-style: italic; }
+.vchange__ins { color: var(--color-text-green); font-weight: 600; }
+.vchange__del { color: var(--color-text-red); font-weight: 600; }
+
+/* version compare/restore dialog */
+.vcompare { display: flex; flex-direction: column; gap: 0.6rem; }
+.vcompare-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; }
+.vcompare-meta { margin: 0; color: var(--color-text-secondary); font-size: 0.85rem; }
+.vcompare-baseline { display: flex; align-items: center; gap: 0.5rem; }
+.vcompare-baseline-label { color: var(--color-text-secondary); font-size: 0.85rem; }
+.vcompare-controls { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.vcompare-legend { margin: 0; font-size: 0.8rem; color: var(--color-text-secondary); display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
+.vcompare-legend-swatch { width: 0.85rem; height: 0.85rem; border-radius: 3px; flex-shrink: 0; }
+.vcompare-legend-swatch--del { background: color-mix(in srgb, var(--color-background-red) 90%, transparent); border: 1px solid var(--color-border-red); }
+.vcompare-legend-swatch--ins { background: color-mix(in srgb, var(--color-background-green) 90%, transparent); border: 1px solid var(--color-border-green); margin-left: 0.8rem; }
+.vcompare-legend-note { color: var(--color-text-secondary); opacity: 0.8; }
+.vcompare-diff { max-height: 55vh; overflow: auto; border: 1px solid var(--color-border); border-radius: 8px; padding: 0.3rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.vcompare-block { border-radius: 6px; padding: 0.25rem 0.6rem; border-left: 3px solid transparent; }
+.vcompare-block--eq { color: var(--color-text-secondary); }
+.vcompare-block--del { background: color-mix(in srgb, var(--color-background-red) 50%, transparent); border-left-color: var(--color-border-red); text-decoration: line-through; text-decoration-color: var(--color-text-red); }
+.vcompare-block--ins { background: color-mix(in srgb, var(--color-background-green) 65%, transparent); border-left-color: var(--color-border-green); }
+/* In the footer, so the diff stays visible while deciding. */
+.vcompare-confirm { color: var(--color-text-secondary); font-size: 0.82rem; }
+/* --- comments rail --- */
+.comment-toolbar { display: flex; align-items: center; padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--color-border); }
+/* Outlined so it reads as a control; the caret turns down while resolved threads show. */
+.resolved-toggle {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  padding: 0.15rem 0.55rem 0.15rem 0.35rem;
+  border: 1px solid var(--color-border); border-radius: 999px;
+  background: transparent; color: var(--color-text-secondary);
+  font: inherit; font-size: 0.78rem; line-height: 1.7; cursor: pointer;
+}
+.resolved-toggle:hover,
+.resolved-toggle.is-on { color: var(--color-accent); border-color: var(--color-accent); background: var(--color-accent-muted); }
+.resolved-toggle__caret { flex: 0 0 auto; transition: transform 120ms ease; }
+.resolved-toggle.is-on .resolved-toggle__caret { transform: rotate(90deg); }
+.comment-empty { margin: auto 0; }
+.comment-add {
+  display: flex; flex-direction: column; gap: 0.4rem;
+  padding: 0.6rem 0.8rem 0.8rem; border-top: 1px solid var(--color-border);
+  background: var(--color-background-body);
+}
+.comment-add > :last-child { align-self: flex-end; }
+.comment-item { display: flex; flex-direction: column; gap: 0.3rem; }
+.comment-item.active { border-color: var(--color-accent); box-shadow: 0 0 0 1px var(--color-accent); }
+.comment-item.resolved { opacity: 0.6; }
+.comment-quote {
+  align-self: flex-start; text-align: left; background: var(--color-accent-muted); color: var(--color-text-primary);
+  border: none; border-left: 2px solid var(--color-accent); border-radius: 4px;
+  padding: 0.2rem 0.4rem; font-size: 0.78rem; cursor: pointer;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.comment-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.comment-actions { display: flex; gap: 0.3rem; flex-shrink: 0; }
+
+/* --- comment thread replies --- */
+.comment-replies { list-style: none; margin: 0.4rem 0 0; padding: 0 0 0 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; border-left: 2px solid var(--color-border); }
+.comment-reply p { margin: 0.15rem 0 0; }
+.comment-reply-box { display: flex; gap: 0.35rem; margin-top: 0.4rem; align-items: end; }
+.comment-reply-box > :first-child { flex: 1; min-width: 0; }
+
+/* --- @mentions: the chip in documents and comments, and the people list --- */
+.mention {
+  color: var(--color-accent); background: var(--color-accent-muted);
+  border-radius: 4px; padding: 0 0.2em; white-space: nowrap; font-weight: 500;
+}
+.ProseMirror .mention { cursor: default; }
+.comment-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mention-list {
+  z-index: 60; width: 260px; max-height: 296px; overflow-y: auto;
+  background: var(--color-background-surface); border: 1px solid var(--color-border); border-radius: 10px;
+  box-shadow: var(--shadow-high); padding: 0.3rem;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.mention-list--floating { position: fixed; }
+.mention-textarea { position: relative; }
+.mention-list--attached { position: absolute; left: 0; max-width: 100%; }
+.mention-textarea--below .mention-list--attached { top: calc(100% + 4px); }
+.mention-textarea--above .mention-list--attached { bottom: calc(100% + 4px); }
+.mention-item {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%; text-align: left;
+  background: transparent; border: none; color: var(--color-text-primary); cursor: pointer;
+  padding: 0.4rem 0.5rem; border-radius: 7px; font-size: 0.88rem;
+}
+.mention-item.active { background: var(--color-accent-muted); }
+.mention-item--empty { color: var(--color-text-secondary); cursor: default; }
+.mention-item__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-item__handle { flex: 0 1 auto; color: var(--color-text-secondary); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

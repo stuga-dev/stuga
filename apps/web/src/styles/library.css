@@ -1,0 +1,216 @@
+/* --- folder picker ------------------------------------------------------- */
+.folder-level { list-style: none; margin: 0; padding: 0; }
+.folder-caret { display: inline-flex; background: transparent; border: none; color: var(--color-text-secondary); cursor: pointer; padding: 0; }
+.doc-list { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+/* --- library sidebar ----------------------------------------------------- */
+/* The current view's brand bar, drawn outside the pill so the pill's radius does not clip it. */
+.astryx-app-shell-sidenav [aria-current="page"] { position: relative; }
+.astryx-app-shell-sidenav [aria-current="page"]::before {
+  content: ""; position: absolute; left: calc(-1 * var(--spacing-2)); top: 22%; height: 56%; width: 3px;
+  border-radius: 2px; background: var(--brand); pointer-events: none;
+}
+/* SideNav's resize handle overhangs the scrollable panel by a fraction of a
+   pixel, which shows a horizontal scrollbar that scrolls nowhere. Unlayered, so
+   it beats the rule in @layer astryx-base. */
+.astryx-app-shell-sidenav { overflow-x: clip; }
+
+/* --- content view header ------------------------------------------------- */
+.view-head {
+  padding: var(--spacing-4) var(--spacing-5) var(--spacing-3);
+  border-bottom: 1px solid var(--color-border);
+  flex: 0 0 auto;
+}
+
+/* --- Collections page ---------------------------------------------------- */
+.collections-page { display: flex; flex: 1; min-height: 0; }
+/* A fixed New button over a scrolling list. */
+.collections-page__master { overflow: hidden; }
+.collections-page__master-inner { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.collections-page__new { padding: var(--spacing-1) var(--spacing-1) var(--spacing-2); flex: 0 0 auto; }
+.collections-page__list { flex: 1; min-height: 0; overflow-y: auto; }
+.collections-page__detail { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.collections-page__head {
+  padding: var(--spacing-4) var(--spacing-5) var(--spacing-3);
+  border-bottom: 1px solid var(--color-border);
+  flex: 0 0 auto;
+}
+.collections-page__body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.collections-page__center {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; min-height: 8rem; padding: var(--spacing-4);
+}
+
+/* --- library: breadcrumb, toolbar, table and detail rail ------------------ */
+.explorer-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.explorer { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.explorer-heading {
+  padding: var(--spacing-4) var(--spacing-4) var(--spacing-3);
+  flex: 0 0 auto;
+}
+.library-toolbar {
+  display: flex; align-items: center; gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-4);
+  border-bottom: 1px solid var(--color-border);
+  flex: 0 0 auto;
+}
+.library-toolbar__filter { width: 15rem; flex: 0 0 auto; }
+.library-toolbar__spacer { flex: 1; }
+/* Replaces the filter row in place, so it keeps the row's height. */
+.library-toolbar--selection { background: var(--selection-bg); }
+.explorer-body { flex: 1; min-height: 0; display: flex; align-items: stretch; }
+.explorer-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.explorer-center { display: flex; align-items: center; justify-content: center; height: 100%; min-height: 8rem; padding: 1rem; }
+.library-detail { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+/* Same breakpoint as COMPACT_QUERY in ui/narrow.ts. The details overlay the table rather than
+   squeezing it, so the table stays in place, keeps focus and still takes clicks where it shows. */
+@media (max-width: 1099px) {
+  .explorer-body { position: relative; }
+  .explorer-body > .library-detail {
+    /* Above the table's sticky header and column resize handles. */
+    position: absolute; top: 0; right: 0; bottom: 0; z-index: 4;
+    width: min(26rem, 100%); background: var(--color-background-body);
+    box-shadow: var(--shadow-med);
+    /* A row's first click opens the details over the row's right side; for a double-click's
+       length they let clicks through, so the second click still reaches the row and opens it. */
+    animation: library-detail-arriving 0.5s;
+  }
+}
+@keyframes library-detail-arriving {
+  from, to { pointer-events: none; }
+}
+@media (max-width: 640px) {
+  .library-toolbar { flex-wrap: wrap; }
+  .library-toolbar__filter { width: 100%; flex: 1 1 100%; }
+}
+.flat-table { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.skel-row { display: flex; align-items: center; gap: var(--spacing-3); padding: var(--spacing-3) var(--spacing-4); }
+.skel-row--head { border-bottom: 1px solid var(--color-border); }
+.skel-row__text { flex: 1; min-width: 0; }
+/* A ListItem that reveals its ⋯ menu on hover. */
+.list-row__end { display: inline-flex; align-items: center; gap: 0.15rem; }
+.list-row__more { opacity: 0; transition: opacity 0.12s; }
+.list-row:hover .list-row__more,
+.list-row:focus-within .list-row__more { opacity: 1; }
+
+/* --- the library table ---------------------------------------------------- */
+.doc-table { flex: 1; min-height: 0; overflow: auto; }
+/* A sticky header needs `border-collapse: separate`, or its borders scroll away. */
+.doc-table table { border-collapse: separate; border-spacing: 0; }
+.doc-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--color-background-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+.doc-table__glyph { display: inline-flex; flex: 0 0 auto; color: var(--color-text-secondary); }
+.doc-table__glyph[data-kind="folder"] { color: var(--color-accent); }
+.doc-table__page-mark { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; color: var(--color-text-secondary); font-size: 12px; min-width: 0; }
+.doc-table__page-mark-name { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-table__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-table__title .astryx-link:hover { text-decoration: underline; }
+.doc-table__muted {
+  color: var(--color-text-secondary);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.doc-table__chev { color: var(--color-text-secondary); flex: 0 0 auto; }
+/* Never truncated: the title is what ellipses. */
+.doc-state-marks { display: inline-flex; align-items: center; gap: 0.25rem; flex: 0 0 auto; }
+.doc-state-mark { display: inline-flex; color: var(--color-text-secondary); }
+.doc-row[data-selected="true"] .doc-state-mark { color: inherit; }
+/* The row is the click target, so Astryx's focus ring never fires; this one is inset so it does not overlap neighbours. */
+.doc-row:focus-visible {
+  outline: 2px solid var(--focus-outline-color);
+  outline-offset: -2px;
+}
+.doc-row[data-selected="true"] > td { background: var(--selection-bg); }
+.doc-row[data-selected="true"] > td:first-child { box-shadow: inset 3px 0 0 var(--selection-mark); }
+/* Clicking a row selects and clicking its name opens. Dragging is secondary, so no grab cursor. */
+.doc-row[draggable="true"] { cursor: default; }
+/* Shift-click would otherwise select text across rows. */
+.doc-table tbody { user-select: none; }
+.doc-row.is-dragging { opacity: 0.45; }
+.doc-row.is-drop-target > td {
+  background: var(--color-accent-muted);
+  box-shadow: inset 0 2px 0 var(--color-accent), inset 0 -2px 0 var(--color-accent);
+}
+.doc-table--drop { box-shadow: inset 0 0 0 2px var(--color-accent); border-radius: var(--radius-container); }
+.crumb-drop { border-radius: var(--radius-inner); box-shadow: inset 0 0 0 2px var(--color-accent); }
+/* Truncation would paint an ellipsis beside a control that is invisible until hover. */
+.doc-table td:has(.doc-table__star),
+.doc-table td:has(.doc-table__more) { text-overflow: clip; }
+/* Revealed on hover; a starred row keeps its star. */
+.doc-table__star, .doc-table__more { opacity: 0; transition: opacity 0.12s; }
+.doc-table__star--on,
+.doc-row:hover .doc-table__star, .doc-row:focus-within .doc-table__star,
+.doc-row:hover .doc-table__more, .doc-row:focus-within .doc-table__more { opacity: 1; }
+.doc-table__star {
+  display: inline-flex; background: transparent; border: none; color: var(--color-text-secondary);
+  cursor: pointer; padding: 0.2rem; border-radius: var(--radius-inner);
+}
+.doc-table__star:hover { color: var(--color-accent); background: var(--color-accent-muted); }
+.doc-table__star--on { color: var(--color-accent); }
+.doc-table__star:focus-visible { outline: 2px solid var(--focus-outline-color); outline-offset: 1px; opacity: 1; }
+
+/* --- detail rail ---------------------------------------------------------- */
+.doc-detail { padding: var(--spacing-4); }
+.doc-detail__close { margin-left: auto; }
+.doc-detail__type {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.5rem; height: 1.5rem; border-radius: var(--radius-inner);
+  background: var(--color-background-muted); color: var(--color-text-secondary);
+  flex: 0 0 auto;
+}
+.doc-detail__star--on { color: var(--color-text-yellow); }
+.db-detail-tables { list-style: none; margin: 0; padding: 0; }
+.db-detail-tables__row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem;
+  padding: 0.3rem 0; border-bottom: 1px solid var(--color-border);
+}
+.db-detail-tables__row:last-child { border-bottom: none; }
+.db-detail-tables__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- list page header and search results ---------------------------------- */
+.doc-list-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
+.doc-list-head__title { display: inline-flex; align-items: center; gap: 0.6rem; min-width: 0; }
+/* The echoed query is user text of any length, so it truncates rather than pushing the way back off the row. */
+.doc-list-head__query { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snippet { color: var(--color-text-secondary); font-size: 0.85rem; }
+.snippet mark { background: var(--color-background-yellow); color: inherit; }
+
+.folder-picker-tree { max-height: 320px; overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius-element); padding: 0.4rem; }
+
+/* --- share dialog ----------------------------------------------------------- */
+
+/* --- collection membership tree ---------------------------------------------- */
+.collection-tree { display: flex; flex-direction: column; min-height: 0; flex: 1; padding: 0 var(--spacing-5); }
+/* A dialog has no flex parent to grow into. */
+.collection-tree--dialog { height: 62vh; min-height: 380px; flex: none; }
+.collection-tree__search { padding: 0.75rem 0; }
+.collection-tree__tree { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--color-border); border-radius: var(--radius-element); padding: 0.3rem; }
+.collection-tree__center { display: flex; align-items: center; justify-content: center; height: 100%; min-height: 8rem; }
+.collection-tree__summary { padding: 0.6rem 0.1rem 0; }
+.collection-tree-row { display: flex; align-items: center; gap: 0.4rem; min-height: 2rem; padding: 0.1rem 0.4rem; border-radius: var(--radius-inner); }
+.collection-tree-row:hover { background: var(--color-accent-muted); }
+.collection-tree-row__caret { display: inline-flex; align-items: center; justify-content: center; width: 1rem; flex: 0 0 auto; }
+.collection-tree-row__caret--btn { background: transparent; border: none; color: var(--color-text-secondary); cursor: pointer; padding: 0; }
+.collection-tree-row__caret--btn:hover { color: var(--color-text-primary); }
+.collection-tree-row__ico { color: var(--color-icon-secondary); flex: 0 0 auto; }
+.collection-tree-row__ico--folder { color: var(--color-accent); }
+.collection-tree-row__label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collection-tree-row__tag { flex: 0 0 auto; font-size: 0.68rem; font-weight: 600; color: var(--color-accent); background: var(--color-accent-muted); border-radius: var(--radius-full); padding: 0.05rem 0.45rem; }
+.collection-tree-row__hint { flex: 0 0 auto; font-size: 0.7rem; font-style: italic; color: var(--color-text-secondary); }
+.collection-tree-row--locked { opacity: 0.55; }
+.collection-tree-row--locked:hover { background: transparent; }
+/* Inline on the Collections page, with its save bar pinned to the bottom. */
+.collection-tree-inline { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.collection-tree-inline__actions {
+  padding: var(--spacing-3) var(--spacing-5);
+  border-top: 1px solid var(--color-border);
+  flex: 0 0 auto;
+}
+
+/* Share dialog: a non-person row's icon sits in the avatar's round slot. */
+.share-row-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--color-background-muted); color: var(--color-text-secondary); flex-shrink: 0; }
+/* An inherited row's note fills the column the others' access menus use. */
+.share-row-note { width: 132px; text-align: end; padding-inline-end: var(--spacing-2); white-space: nowrap; }
+.share-row-note--revoked { color: var(--color-text-red); }

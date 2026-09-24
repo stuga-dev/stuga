@@ -1,0 +1,13 @@
+# Patterns here are root-relative, unlike .gitignore's: each one that must match at any depth says **/.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/.turbo
+.git
+.github
+# Operator state and secrets: signing keys, provider keys, backups.
+**/data
+**/backups
+**/.env
+**/.env.*
+**/.DS_Store

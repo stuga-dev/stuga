@@ -1,0 +1,13 @@
+Stuga
+Copyright (C) 2026 PillarXYZ, Inc. and contributors
+https://github.com/stuga-dev/stuga
+
+Stuga is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License, version 3 only, as published
+by the Free Software Foundation. The full text is in LICENSE. The files under
+integrations/ are under the MIT License instead; see integrations/LICENSE.
+
+"Stuga" and the Stuga logo are trademarks of PillarXYZ, Inc. The license grants
+no right to use them (AGPL-3.0 section 7(e)); TRADEMARKS.md says what you may do.
+
+Contributions are accepted under the Contributor License Agreement in CLA.md.

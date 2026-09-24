@@ -1,0 +1,43 @@
+.brand { display: inline-flex; align-items: center; gap: 0.5rem; }
+.brand__mark { display: inline-flex; align-items: center; justify-content: center;
+  width: 1.75rem; height: 1.75rem; border-radius: var(--radius-element);
+  background: var(--color-background-inverted); color: var(--color-background-surface);
+  font-weight: 800; font-size: 1rem; flex: 0 0 auto; }
+.brand__glyph { width: 64%; height: 64%; }
+.brand--link { background: transparent; border: none; padding: 0; cursor: pointer; display: inline-flex; }
+.brand--link:hover .brand__mark { opacity: 0.85; }
+
+.topnav__sep { width: 1px; height: 1.25rem; background: var(--color-border); flex: 0 0 auto; }
+/* A definite width: TopNav's `auto` centre track drops a percentage width during
+   intrinsic sizing. The calc() reserves 320px per side for the brand and the
+   workspace switcher. The `>` inside :has() matters: Button's content wrapper is
+   `display: contents` but is still the DOM parent. */
+.topnav__search { width: 480px; max-width: calc(100vw - 640px); margin: 0 auto; }
+.topnav__search .astryx-button { justify-content: flex-start; }
+.topnav__search .astryx-button span:has(> .astryx-kbd) { margin-inline-start: auto; }
+.notif-trigger { position: relative; display: inline-flex; }
+.notif-dot {
+  position: absolute; top: 5px; right: 5px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--color-text-red); pointer-events: none;
+  box-shadow: 0 0 0 2px var(--color-background-surface);
+}
+.notif-empty { padding: var(--spacing-4); text-align: center; list-style: none; }
+/* A bare button, so the Avatar is the hit target Popover wires. */
+.account-trigger {
+  background: none; border: 0; padding: 2px; cursor: pointer;
+  border-radius: var(--radius-full); display: inline-flex;
+}
+.account-trigger:focus-visible { outline: 2px solid var(--focus-outline-color); outline-offset: 2px; }
+
+.cmdk { display: flex; flex-direction: column; gap: 0.5rem; }
+.cmdk-list { display: flex; flex-direction: column; gap: 1px; max-height: 50vh; overflow: auto; }
+.cmdk-empty { padding: 0.8rem; color: var(--color-text-secondary); }
+
+/* Fixed, not AppShell's banner slot: shells fill 100dvh, and the editor page has
+   none. Above the editor's popovers (55), below Astryx's layers. */
+.node-health {
+  position: fixed; z-index: 60;
+  left: 50%; transform: translateX(-50%);
+  bottom: var(--spacing-4);
+  width: min(34rem, calc(100vw - var(--spacing-8)));
+}

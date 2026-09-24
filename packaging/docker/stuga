@@ -1,0 +1,686 @@
+#!/usr/bin/env bash
+# Stuga operator commands for Docker Compose. Keep this file beside compose.yml.
+#
+#   ./stuga status | backup | verify <backup> | list | restore [--yes] <backup> | upgrade
+#   ./stuga reset-password <username> | media-scan [--reclaim] [--empty-trash[=<days>]] [--grace-hours=<hours>]
+#
+# The work is the node's own `stuga-node`, run in a one-off container of the image that wrote
+# the data; this shell stops and starts the compose node around it. Exit codes are stuga-node's:
+# 0 done, 2 refused with nothing changed, 3 failed with nothing changed, 4 failed after a change.
+# Written for bash 3.2.
+set -euo pipefail
+
+# A relative backup path the operator types is relative to where they ran this from.
+CALLER_DIR="$(pwd)"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+SELF="$0"
+cd "$ROOT"
+
+say()  { printf '%s\n' "$*"; }
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+# fail <exit code> <message>
+fail() { local code="$1"; shift; printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit "$code"; }
+
+[ -f compose.yml ] || fail 2 "no compose.yml beside this script (looked in $ROOT)"
+
+# One value from .env, or empty. Read, never sourced: sourcing would run whatever the file holds.
+env_value() {
+  [ -f .env ] || return 0
+  sed -n "s/^[[:space:]]*$1=//p" .env | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+}
+
+# The compose files as docker compose itself picks them, so a pin file can be added to the same list.
+COMPOSE=(docker compose)
+compose_files="${COMPOSE_FILE:-$(env_value COMPOSE_FILE)}"
+old_ifs="$IFS"
+IFS="${COMPOSE_PATH_SEPARATOR:-:}"
+for f in ${compose_files:-compose.yml}; do COMPOSE+=(-f "$f"); done
+IFS="$old_ifs"
+SHOWN="docker compose"
+
+DATA_PARENT="$ROOT/data"
+DATA_NAME="node"
+BACKUP_DIR="${BACKUP_DIR:-$(env_value BACKUP_DIR)}"
+BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
+case "$BACKUP_DIR" in /*) ;; *) BACKUP_DIR="$ROOT/$BACKUP_DIR" ;; esac
+KEEP="${BACKUP_KEEP:-$(env_value BACKUP_KEEP)}"
+KEEP="${KEEP:-7}"
+
+# How long a starting node may show no progress, and how long it may take in all.
+READY_QUIET_SECONDS="${STUGA_READY_QUIET_SECONDS:-600}"
+READY_MAX_SECONDS="${STUGA_READY_MAX_SECONDS:-7200}"
+for setting in "STUGA_READY_QUIET_SECONDS=$READY_QUIET_SECONDS" "STUGA_READY_MAX_SECONDS=$READY_MAX_SECONDS"; do
+  case "${setting#*=}" in
+    '' | *[!0-9]*) fail 2 "${setting%%=*} must be a whole number of seconds (got \"${setting#*=}\")" ;;
+  esac
+done
+
+compose() { "${COMPOSE[@]}" "$@"; }
+compose_running() { compose ps --status running --services 2>/dev/null; }
+node_running() { compose_running | grep -qx node; }
+
+# True when the compose files build from source, as compose.build.yml does.
+buildable() { compose config 2>/dev/null | grep -qE '^[[:space:]]+build:'; }
+
+pinned_node_tag() { compose config --images 2>/dev/null | sed -n 's|.*/stuga-node:||p' | head -1 || true; }
+
+# True when every image the compose files name is already on this machine, as after a docker load.
+images_present() {
+  local image images
+  images="$(compose config --images 2>/dev/null)" || return 1
+  [ -n "$images" ] || return 1
+  for image in $images; do
+    docker image inspect "$image" >/dev/null 2>&1 || return 1
+  done
+}
+
+require_postgres() {
+  compose_running | grep -qx postgres || fail 2 "the postgres service is not running — start it with: $SHOWN up -d postgres"
+}
+
+require_node() {
+  node_running || fail 2 "the node is not running — start it first: $SHOWN up -d"
+}
+
+# The image the node's container was created from: the build that wrote the data, even after a
+# new compose.yml has been downloaded for an upgrade.
+created_node_image() {
+  local id
+  id="$(compose ps -a -q node 2>/dev/null | head -1)"
+  [ -n "$id" ] || return 0
+  docker inspect --format '{{.Config.Image}}' "$id" 2>/dev/null || true
+}
+
+# pin_image <image>: run the node service on <image>, whatever compose.yml names.
+PIN=""
+PIN_FILE=""
+pin_image() {
+  PIN="${1:-}"
+  if [ -n "$PIN_FILE" ]; then rm -f "$PIN_FILE"; fi
+  PIN_FILE=""
+  [ -n "$PIN" ] || return 0
+  # Beside compose.yml, not in a temp directory: an exit-4 message names it, possibly for after a reboot.
+  PIN_FILE="$(mktemp .stuga-pin.XXXXXX)"
+  printf 'services:\n  node:\n    image: "%s"\n' "$PIN" > "$PIN_FILE"
+}
+pinned() { if [ -n "$PIN_FILE" ]; then compose -f "$PIN_FILE" "$@"; else compose "$@"; fi; }
+pinned_shown() { if [ -n "$PIN_FILE" ]; then printf '%s -f %s' "$SHOWN" "$PIN_FILE"; else printf '%s' "$SHOWN"; fi; }
+
+# Set while this script has stopped a node nothing has changed under yet: any exit starts it again.
+NODE_STOPPED_BY_US=no
+RESTORE_RUNNING=no
+# Set when a message has told the operator to run a command naming PIN_FILE.
+KEEP_PIN=no
+
+on_exit() {
+  local code=$?
+  if [ "$NODE_STOPPED_BY_US" = yes ]; then
+    NODE_STOPPED_BY_US=no
+    warn "interrupted; starting the node again (its data was not changed)" >&2
+    compose start node >/dev/null 2>&1 || warn "it did not start: $SHOWN start node" >&2
+  fi
+  if [ "$RESTORE_RUNNING" = yes ]; then
+    printf '\033[31merror:\033[0m %s\n' "interrupted during the restore. The node was left stopped: run $SELF list to see what is in place before starting it." >&2
+    code=4
+  fi
+  if [ -n "$PIN_FILE" ] && [ "$KEEP_PIN" != yes ]; then rm -f "$PIN_FILE"; fi
+  exit "$code"
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+# node_cli <stuga-node arguments…>: the data directory's parent is mounted because a restore renames
+# the data directory, and a mount point cannot be renamed. Root in the container can read and
+# replace what the node wrote as root.
+node_cli() {
+  mkdir -p "$BACKUP_DIR" "$DATA_PARENT"
+  pinned run --rm -T --no-deps \
+    -v "$DATA_PARENT:/parent" -v "$BACKUP_DIR:/backups" \
+    -e DATA_DIR="/parent/$DATA_NAME" -e BACKUP_DIR=/backups -e BACKUP_KEEP="$KEEP" \
+    --entrypoint node node bin/stuga-node.js "$@"
+}
+
+# One string field out of stuga-node's one-line JSON result.
+json_field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" | head -1; }
+
+canonical() {
+  local dir
+  if dir="$(cd "$(dirname "$1")" 2>/dev/null && pwd -P)"; then printf '%s/%s' "$dir" "$(basename "$1")"; else printf '%s' "$1"; fi
+}
+
+# A backup as the one-off container sees it: a bare name is looked up in BACKUP_DIR, a path is taken
+# from where the command was run, and anything outside BACKUP_DIR is refused rather than mounted.
+container_path() {
+  local p="${1%/}" base
+  case "$(basename "$p")" in . | ..) fail 2 "$1 does not name a backup; nothing was changed" ;; esac
+  case "$p" in
+    */*) case "$p" in /*) ;; *) p="$CALLER_DIR/$p" ;; esac ;;
+    *) p="$BACKUP_DIR/$p" ;;
+  esac
+  p="$(canonical "$p")"
+  base="$(cd "$BACKUP_DIR" 2>/dev/null && pwd -P || printf '%s' "$BACKUP_DIR")"
+  case "$p" in
+    "$base"/*) printf '/backups/%s' "${p#"$base"/}" ;;
+    *) fail 2 "$1 is not under the backup directory ($BACKUP_DIR); nothing was changed" ;;
+  esac
+}
+host_path() { printf '%s/%s' "$BACKUP_DIR" "${1#/backups/}"; }
+
+# A single scalar, or empty when the query cannot be answered.
+psql_value() {
+  compose exec -T postgres psql -U stuga -d stuga -tAc "$1" 2>/dev/null | tr -d '\r' | head -1 || true
+}
+
+# The running node's VERSION, or empty for a source build.
+node_version_raw() {
+  node_running || return 0
+  compose exec -T node cat /app/VERSION 2>/dev/null | tr -d '\r' | head -1 || true
+}
+
+node_version() {
+  if ! node_running; then printf '(not running)'; return; fi
+  local v
+  v="$(node_version_raw)"
+  if [ -n "$v" ]; then printf '%s' "$v"; else printf '0.0.0-dev (built from source)'; fi
+}
+
+# The address people use, as the node is told it.
+public_origin() {
+  local origin
+  origin="$(env_value PUBLIC_ORIGIN)"
+  printf '%s' "${origin:-http://localhost:8787}"
+}
+
+# host:port/ready as compose publishes it (HOST_BIND, HOST_PORT); .env answers when the stack is down.
+ready_url() {
+  local hostport host port
+  hostport="$(compose port node 8787 2>/dev/null | tail -1 || true)"
+  if [ -n "$hostport" ]; then
+    host="${hostport%:*}"
+    port="${hostport##*:}"
+  else
+    host=""
+    port="$(env_value HOST_PORT)"
+    port="${port:-8787}"
+  fi
+  case "$host" in "" | 0.0.0.0 | :: | "[::]") host=127.0.0.1 ;; esac
+  printf '%s:%s/ready' "$host" "$port"
+}
+
+# Plain HTTP, then TLS (TLS_CERT_DIR); -k because this is a liveness probe, not a trust decision.
+ready_probe() {
+  local at
+  at="$(ready_url)"
+  curl -fsS --max-time 5 -o /dev/null "http://$at" 2>/dev/null && return 0
+  curl -fsS --max-time 5 -k -o /dev/null "https://$at" 2>/dev/null && return 0
+  return 1
+}
+
+# A first boot can migrate and build search indexes before it listens, so this waits while the
+# container stays up and shows progress (a new log line, or an unblocked statement in Postgres),
+# and gives up when it exits, restarts, goes quiet for READY_QUIET_SECONDS or passes READY_MAX_SECONDS.
+wait_node_ready() {
+  local id status restarts first elapsed=0 quiet=0 log="" last_log="" busy
+  id="$(compose ps -q node 2>/dev/null | head -1)"
+  [ -n "$id" ] || return 1
+  first="$(docker inspect -f '{{.RestartCount}}' "$id" 2>/dev/null || echo 0)"
+  while :; do
+    if ready_probe; then return 0; fi
+    status="$(docker inspect -f '{{.State.Status}}' "$id" 2>/dev/null || echo missing)"
+    restarts="$(docker inspect -f '{{.RestartCount}}' "$id" 2>/dev/null || echo 0)"
+    case "$status" in exited | dead | missing | restarting) return 1 ;; esac
+    [ "$restarts" -gt "$first" ] && return 1
+    sleep 2
+    elapsed=$((elapsed + 2))
+    log="$(docker logs -t --tail 1 "$id" 2>&1 | tail -1 || true)"
+    busy="$(psql_value "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND state = 'active' AND backend_type = 'client backend' AND wait_event_type IS DISTINCT FROM 'Lock' AND pid <> pg_backend_pid()")"
+    case "$busy" in '' | *[!0-9]*) busy=0 ;; esac
+    if [ "$log" != "$last_log" ] || [ "$busy" -gt 0 ]; then
+      last_log="$log"
+      quiet=0
+    else
+      quiet=$((quiet + 2))
+    fi
+    if [ "$quiet" -ge "$READY_QUIET_SECONDS" ]; then
+      say "  no sign of progress for ${quiet}s: nothing new in its log, nothing running in Postgres, and not serving"
+      return 1
+    fi
+    if [ "$elapsed" -ge "$READY_MAX_SECONDS" ]; then
+      say "  not serving after ${elapsed}s (STUGA_READY_MAX_SECONDS); it may still be starting — watch: $SHOWN logs -f node"
+      return 1
+    fi
+    if [ $((elapsed % 30)) -eq 0 ]; then
+      say "  still starting after ${elapsed}s (a first boot can migrate and build search indexes before it serves)"
+    fi
+  done
+}
+
+# stuga-node exits 0, 2, 3 or 4; anything else is docker's own code from before stuga-node ran.
+cli_failed() {
+  case "$1" in
+    2 | 3 | 4) return 0 ;;
+    *) say "stuga-node did not report how it ended (exit $1)." >&2; return 1 ;;
+  esac
+}
+
+# After a refusal or a failure that changed nothing, the node goes back to how it was.
+start_again() {
+  NODE_STOPPED_BY_US=no
+  if compose start node >/dev/null 2>&1 && wait_node_ready; then
+    ok "node is serving again"
+  else
+    warn "the node did not come back by itself: $SHOWN start node, then $SHOWN logs --tail 50 node"
+  fi
+}
+
+# ---------------------------------------------------------------- backup
+
+# cmd_backup [--leave-stopped]: the node is the only writer, so it is stopped for the two halves to
+# describe one instant. --leave-stopped keeps writes from landing between an upgrade's backup and
+# the new version. Sets LAST_BACKUP and BACKUP_WAS_RUNNING.
+LAST_BACKUP=""
+BACKUP_WAS_RUNNING=no
+
+cmd_backup() {
+  local leave_stopped=no out code name
+  if [ "${1:-}" = "--leave-stopped" ]; then leave_stopped=yes; fi
+  require_postgres
+  pin_image "$(created_node_image)"
+
+  BACKUP_WAS_RUNNING=no
+  if node_running; then
+    BACKUP_WAS_RUNNING=yes
+    NODE_STOPPED_BY_US=yes
+    compose stop node >/dev/null 2>&1 || fail 3 "could not stop the node; nothing was changed"
+    ok "node stopped"
+  else
+    warn "node was not running — backing up what is on disk"
+  fi
+
+  set +e
+  out="$(node_cli backup --json)"
+  code=$?
+  set -e
+  if [ "$code" -ne 0 ]; then
+    cli_failed "$code" || code=3
+    if [ "$BACKUP_WAS_RUNNING" = yes ]; then start_again; fi
+    exit "$code"
+  fi
+  name="$(printf '%s' "$out" | json_field path)"
+  LAST_BACKUP="$(host_path "$name")"
+
+  # For a person reading the backup later; a restore trusts the manifest, not this.
+  pinned run --rm -T --no-deps -v "$BACKUP_DIR:/backups" -v "$ROOT/compose.yml:/compose.yml:ro" \
+    --entrypoint cp node /compose.yml "$name/compose.yml" >/dev/null 2>&1 \
+    || warn "could not copy compose.yml into the backup (the backup itself is complete)"
+
+  if [ "$BACKUP_WAS_RUNNING" = yes ] && [ "$leave_stopped" = no ]; then
+    NODE_STOPPED_BY_US=no
+    compose start node >/dev/null 2>&1 || fail 3 "the backup is complete at $LAST_BACKUP, but the node did not start again: $SHOWN start node"
+    wait_node_ready || fail 3 "the backup is complete at $LAST_BACKUP, but the node did not become ready again. Its log: $SHOWN logs --tail 50 node"
+    ok "node is serving again"
+  fi
+
+  say ""
+  say "Backup complete: $LAST_BACKUP"
+  say "Restore it with: $SELF restore $LAST_BACKUP"
+}
+
+# ---------------------------------------------------------------- verify
+
+cmd_verify() {
+  local src="${1:-}" cpath code
+  [ -n "$src" ] || fail 2 "usage: $SELF verify <backup>"
+  cpath="$(container_path "$src")"
+  pin_image "$(created_node_image)"
+  set +e
+  node_cli verify "$cpath" --json >/dev/null
+  code=$?
+  set -e
+  if [ "$code" -ne 0 ]; then cli_failed "$code" || code=3; exit "$code"; fi
+  ok "$(host_path "$cpath") is whole, and restorable by this runtime"
+}
+
+# ---------------------------------------------------------------- restore
+
+cmd_restore() {
+  local assume_yes=no src="" arg
+  for arg in "$@"; do
+    case "$arg" in --yes) assume_yes=yes ;; *) src="$arg" ;; esac
+  done
+  [ -n "$src" ] || fail 2 "usage: $SELF restore [--yes] <backup>"
+  local cpath out code runtime created target was_running=no replaced_db replaced_dir answer start_it
+  cpath="$(container_path "$src")"
+  require_postgres
+
+  # Verified with the node still running: a damaged or incompatible backup stops nothing.
+  created="$(created_node_image)"
+  pin_image "$created"
+  set +e
+  out="$(node_cli verify "$cpath" --json)"
+  code=$?
+  set -e
+  if [ "$code" -ne 0 ]; then cli_failed "$code" || code=3; exit "$code"; fi
+
+  # The node comes back on the release that last served the data: the one that took a backup, or the
+  # one a newer release backed up before upgrading it. A source build has no tag to go back to.
+  runtime="$(printf '%s' "$out" | json_field stuga_version)"
+  [ -n "$runtime" ] || runtime="$(printf '%s' "$out" | json_field runtime_version)"
+  target="$created"
+  case "$runtime" in
+    "" | 0.0.0-*) ;;
+    *) case "$created" in *stuga-node:*) target="${created%:*}:$runtime" ;; esac ;;
+  esac
+
+  if [ "$assume_yes" = no ]; then
+    printf 'This REPLACES the current database and data directory. Type the backup name to confirm: '
+    read -r answer || true
+    [ "$answer" = "$(basename "${src%/}")" ] || fail 2 "not confirmed — nothing has been changed"
+  fi
+
+  # Pulled before the node stops, so a failed pull leaves it serving.
+  if [ "$target" != "$created" ] && ! docker image inspect "$target" >/dev/null 2>&1; then
+    docker pull "$target" >/dev/null 2>&1 || fail 3 "the backup was taken by $target, which could not be pulled; nothing was changed"
+  fi
+  pin_image "$target"
+  if node_running; then
+    was_running=yes
+    NODE_STOPPED_BY_US=yes
+    compose stop node >/dev/null 2>&1 || fail 3 "could not stop the node; nothing was changed"
+    ok "node stopped"
+  fi
+
+  NODE_STOPPED_BY_US=no
+  RESTORE_RUNNING=yes
+  set +e
+  out="$(node_cli restore "$cpath" --yes --json)"
+  code=$?
+  set -e
+  RESTORE_RUNNING=no
+  if [ "$code" -eq 2 ] || [ "$code" -eq 3 ]; then
+    if [ "$was_running" = yes ]; then start_again; fi
+    exit "$code"
+  fi
+  if [ "$code" -ne 0 ]; then
+    [ "$code" -eq 4 ] || say "stuga-node did not report how the restore ended (exit $code)." >&2
+    fail 4 "the restore did not finish, and the node was left stopped. Read the message above, and run $SELF list to see what is in place, before starting it."
+  fi
+
+  replaced_db="$(printf '%s' "$out" | json_field replacedDatabase)"
+  replaced_dir="$(printf '%s' "$out" | json_field replacedDataDir)"
+  replaced_dir="${replaced_dir#/parent/}"
+  ok "database and data directory restored"
+
+  # A plain `up -d` would start the image compose.yml names, which after a failed upgrade is the
+  # release that failed, and it would migrate the restored data forward.
+  KEEP_PIN=yes
+  start_it="Start it on the build that took the backup ($target) with: $(pinned_shown) up -d node"
+  pinned up -d node >/dev/null 2>&1 \
+    || fail 4 "restored, but the node did not start. $start_it
+       What the restore replaced is kept: database \"$replaced_db\", $DATA_PARENT/$replaced_dir"
+  if ! wait_node_ready; then
+    fail 4 "restored, but the node did not become ready. Its log: $SHOWN logs --tail 50 node
+       $start_it
+       What the restore replaced is kept: database \"$replaced_db\", $DATA_PARENT/$replaced_dir"
+  fi
+  KEEP_PIN=no
+  ok "node is ready"
+
+  say ""
+  say "Restored."
+  if [ -n "$replaced_db" ]; then say "The database it replaced is kept as \"$replaced_db\"."; fi
+  if [ -n "$replaced_dir" ]; then say "The data directory it replaced is kept at $DATA_PARENT/$replaced_dir."; fi
+  say "Delete them once you are satisfied."
+  if [ "$target" != "$created" ]; then
+    warn "the node now runs $target; compose.yml names another image, so download the compose.yml of that release before the next '$SHOWN up'"
+  fi
+}
+
+# ---------------------------------------------------------------- upgrade
+
+# The backup a new version took of $1's data before upgrading it: the newest backup whose data
+# $1 served last. Empty when there is none.
+upgrade_backup() {
+  local out
+  pin_image "$(created_node_image)"
+  out="$(node_cli list --json 2>/dev/null || true)"
+  printf '%s' "$out" | sed -n 's/.*"backups":\[{"name":"\([^"]*\)","path":"[^"]*","database":"[^"]*","created_at":"[^"]*","stuga_version":"\([^"]*\)".*/\1 \2/p' \
+    | while read -r name version; do
+      if [ "$version" = "$1" ]; then printf '%s/%s' "$BACKUP_DIR" "$name"; fi
+    done
+}
+
+RELEASES="https://github.com/stuga-dev/stuga/releases"
+
+# version_lt A B: true when release A comes before release B (both 1.2.3).
+version_lt() {
+  local a1 a2 a3 b1 b2 b3
+  IFS=. read -r a1 a2 a3 <<EOF_A
+$1
+EOF_A
+  IFS=. read -r b1 b2 b3 <<EOF_B
+$2
+EOF_B
+  [ "$a1" -lt "$b1" ] && return 0; [ "$a1" -gt "$b1" ] && return 1
+  [ "$a2" -lt "$b2" ] && return 0; [ "$a2" -gt "$b2" ] && return 1
+  [ "$a3" -lt "$b3" ]
+}
+is_release() { printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; }
+
+# fetch_release <version|latest> <running version>: put that release's three files here and run its
+# own stuga to carry on. The script moves in on a new inode: bash reads a running script as it goes.
+fetch_release() {
+  local base tmp f next
+  case "$1" in latest) base="$RELEASES/latest/download" ;; *) base="$RELEASES/download/v$1" ;; esac
+  tmp="$(mktemp -d "$ROOT/.upgrade.XXXXXX")"
+  for f in compose.yml env.example stuga; do
+    if ! curl -fsSL -o "$tmp/$f" "$base/$f"; then
+      rm -rf "$tmp"
+      fail 3 "could not download $f from $base. Nothing was changed.
+       Without a connection to GitHub, carry the release to this machine: see Upgrade in docs/install/docker.md."
+    fi
+  done
+  next="$(sed -n 's|^    image: .*/stuga-node:||p' "$tmp/compose.yml" | head -1)"
+  if [ "$next" = "$2" ]; then
+    rm -rf "$tmp"
+    say "stuga $2 is running, and it is the newest release. Nothing to do."
+    exit 0
+  fi
+  if is_release "$next" && is_release "$2" && version_lt "$next" "$2"; then
+    rm -rf "$tmp"
+    fail 2 "stuga $next is older than the running $2; nothing was changed. Going back is a restore: $SELF list"
+  fi
+  cp "$tmp/compose.yml" "$ROOT/compose.yml"
+  cp "$tmp/env.example" "$ROOT/env.example"
+  chmod +x "$tmp/stuga"
+  mv "$tmp/stuga" "$ROOT/stuga"
+  rm -rf "$tmp"
+  ok "downloaded stuga $next's files (your .env is untouched)"
+  exec "$ROOT/stuga" upgrade --fetched
+}
+
+# ./stuga upgrade [<version>]: to the newest release, or the one named. A compose.yml already
+# naming another version than the running one (put there by hand, as for an upgrade without a
+# connection) is used as it is. A release's node backs up the data another version served before
+# it changes anything, so this fetches the images and starts them. A build from source keeps its
+# version, so there this takes the backup itself, first.
+cmd_upgrade() {
+  require_postgres
+  local before after pin backup="" wanted="" fetched=no arg
+  for arg in "$@"; do
+    case "$arg" in
+      --fetched) fetched=yes ;;
+      *) is_release "$arg" || fail 2 "usage: $SELF upgrade [<version such as 1.2.3>]"; wanted="$arg" ;;
+    esac
+  done
+  before="$(node_version_raw)"
+  before="${before:-0.0.0-dev}"
+
+  pin="$(pinned_node_tag)"
+  if ! buildable && [ "$fetched" = no ] && { [ -n "$wanted" ] || [ "$pin" = "$before" ]; }; then
+    fetch_release "${wanted:-latest}" "$before"
+  fi
+  # An image-only compose.yml that still pins the running version would pull nothing and report success.
+  if [ -n "$pin" ] && [ "$pin" = "$before" ] && ! buildable; then
+    say "compose.yml pins stuga $pin, which is already running."
+    fail 2 "nothing to upgrade to; nothing was changed"
+  fi
+
+  say "Upgrading from stuga $before"
+  if buildable; then
+    # Left stopped: a write after this backup would not be in it.
+    cmd_backup --leave-stopped
+    backup="$LAST_BACKUP"
+  fi
+
+  say ""
+  say "Fetching the new images"
+  local fetched=yes
+  if buildable; then
+    compose build --pull || fetched=no
+  elif printf '%s' "$pin" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' && images_present; then
+    # A published version's images never change, so the ones here are the ones a pull would bring.
+    # This is how a node with no way to the registry upgrades: from images loaded by hand.
+    ok "already on this machine"
+  else
+    compose pull || fetched=no
+  fi
+  if [ "$fetched" = no ]; then
+    if [ "$BACKUP_WAS_RUNNING" = yes ]; then start_again; fi
+    fail 3 "could not fetch the new images. Nothing was changed."
+  fi
+  ok "images ready"
+
+  # From here the new version may migrate the database: never restart the old one behind it.
+  NODE_STOPPED_BY_US=no
+  say "Starting the new version; it backs up stuga $before's data before it changes anything"
+  if ! compose up -d; then
+    fail 4 "the new version did not start. Look at its log: $SHOWN logs --tail 50 node
+       Then $SELF list shows the backup it took before changing anything, if it got that far."
+  fi
+  if ! wait_node_ready; then
+    [ -n "$backup" ] || backup="$(upgrade_backup "$before")"
+    if [ -n "$backup" ]; then
+      fail 4 "the node did not become ready after the upgrade.
+       Look at the log first:   $SHOWN logs --tail 50 node
+       A verified backup of stuga $before's data, taken before the upgrade changed anything: $backup
+       To go back:              $SELF restore $backup"
+    fi
+    fail 4 "the node did not become ready after the upgrade, and it took no backup, so it changed nothing:
+       it backs up before it upgrades, and stops if it cannot. Look at the log: $SHOWN logs --tail 50 node
+       To go back, put the compose.yml of stuga $before back and run $SHOWN up -d."
+  fi
+
+  after="$(node_version_raw)"
+  after="${after:-0.0.0-dev}"
+  [ -n "$backup" ] || backup="$(upgrade_backup "$before")"
+  ok "node is ready"
+  say ""
+  if [ "$before" = "$after" ]; then
+    say "Done — rebuilt and restarted, still reporting stuga $after."
+  else
+    say "Done — stuga $before → $after."
+  fi
+  if [ -n "$backup" ]; then
+    say "If something is wrong: $SELF restore $backup"
+  else
+    warn "found no backup of stuga $before's data; $SELF list shows the backups there are"
+  fi
+}
+
+# ---------------------------------------------------------------- status
+
+cmd_status() {
+  local out last
+  say "stuga        $(node_version)"
+  if compose_running | grep -qx postgres; then
+    say "schema       $(psql_value 'SELECT max(id) FROM schema_migrations' || true)"
+    say "postgres     $(psql_value 'SHOW server_version' || true)"
+  else
+    say "schema       (postgres not running)"
+  fi
+  if ready_probe; then
+    say "ready        yes"
+  else
+    say "ready        NO — the node is not serving requests"
+  fi
+  local code
+  code="$(compose exec -T node cat /data/setup-code 2>/dev/null | tr -d '[:space:]' || true)"
+  if [ -n "$code" ]; then
+    say "set up       NOT YET — open $(public_origin)/login?setup=$code"
+  fi
+
+  pin_image "$(created_node_image)"
+  out="$(node_cli list --json 2>/dev/null || true)"
+  last="$(printf '%s' "$out" | sed -n 's/.*"backups":\[{"name":"\([^"]*\)".*/\1/p')"
+  if [ -n "$last" ]; then
+    say "last backup  $last"
+  else
+    say "last backup  NONE — run $SELF backup"
+  fi
+  if printf '%s' "$out" | grep -q '"partial":\["'; then warn "an unfinished backup is in $BACKUP_DIR (the next backup removes it)"; fi
+  if printf '%s' "$out" | grep -qE '"unfinishedRestore(Dirs|Databases)":\["'; then
+    warn "an interrupted restore left a copy of the data beside it (it holds the secrets too) — run: $SELF list; the next restore removes it"
+  fi
+  if printf '%s' "$out" | grep -qE '"replaced(DataDirs|Databases)":\["'; then
+    warn "a restore kept what it replaced — run: $SELF list"
+  fi
+
+  say ""
+  compose ps
+}
+
+cmd_list() {
+  pin_image "$(created_node_image)"
+  # Paths as this machine names them, not as the one-off container did.
+  node_cli list 2>&1 | sed -e "s#/parent/#$DATA_PARENT/#g" -e "s#/backups/#$BACKUP_DIR/#g"
+}
+
+# Needs shell access to this machine, which can already read the signing key, and adds no network route.
+cmd_reset_password() {
+  [ -n "${1:-}" ] || fail 2 "usage: $SELF reset-password <username>"
+  require_node
+  compose exec -T node node bin/stuga-node.js reset-password "$@"
+}
+
+cmd_media_scan() {
+  require_node
+  compose exec -T node node bin/stuga-node.js media-scan "$@"
+}
+
+case "${1:-}" in
+  backup)  shift; cmd_backup "$@" ;;
+  verify)  shift; cmd_verify "$@" ;;
+  list)    shift; cmd_list "$@" ;;
+  restore) shift; cmd_restore "$@" ;;
+  upgrade) shift; cmd_upgrade "$@" ;;
+  status)  shift; cmd_status "$@" ;;
+  media-scan) shift; cmd_media_scan "$@" ;;
+  reset-password) shift; cmd_reset_password "$@" ;;
+  *)
+    cat <<USAGE
+Stuga operator commands.
+
+  $SELF status               version, schema, readiness, last backup
+  $SELF backup               stop the node, take a verified backup, start it again
+  $SELF verify <backup>      check a backup is whole and restorable here
+  $SELF list                 backups, and what restores kept beside the data
+  $SELF upgrade [<version>]  to the newest release (or the one named): fetch its files, pull, restart
+                             (the node backs up first), wait for ready; prints how to undo
+  $SELF restore [--yes] <backup>
+                             put a backup back after checking it; what it replaces is kept
+  $SELF reset-password <username>
+                             mint a link that sets the account's password, without signing in
+  $SELF media-scan           report images no document points at any more
+  $SELF media-scan --reclaim
+                             move those to trash/ — reversible, frees nothing yet
+  $SELF media-scan --empty-trash=30 --reclaim
+                             destroy what has sat in trash/ 30+ days. NOT reversible
+
+Backups live in $BACKUP_DIR (BACKUP_DIR), keeping the last $KEEP (BACKUP_KEEP).
+USAGE
+    exit 2 ;;
+esac

@@ -1,0 +1,177 @@
+/* AI panel: user turns are right-aligned bubbles, assistant turns plain prose. */
+.ai-panel { width: 360px; flex-shrink: 0; border-left: 1px solid var(--color-border); display: flex; flex-direction: column; min-height: 0; }
+.ai-thread { flex: 1; overflow: auto; padding: 0.4rem 0.8rem 0.8rem; display: flex; flex-direction: column; gap: 1rem; }
+.ai-turn { border-radius: var(--radius-element); max-width: 100%; }
+.ai-turn-user { background: var(--color-accent-muted); align-self: flex-end; max-width: 85%; padding: 0.5rem 0.7rem; white-space: pre-wrap; }
+.ai-turn-assistant { align-self: stretch; }
+/* Shown while the agent works before any prose has streamed. */
+.ai-activity { display: flex; align-items: center; gap: 0.5rem; color: var(--color-text-secondary); font-size: 0.88rem; }
+.ai-activity__dot { flex: 0 0 auto; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--color-accent); animation: ai-pulse 1.2s ease-in-out infinite; }
+.ai-activity__label { min-width: 0; }
+@keyframes ai-pulse { 0%, 100% { opacity: 0.3; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
+/* The passage a user turn was scoped to, clamped to a few lines. */
+.ai-turn-quote {
+  font-size: var(--text-body-size); color: var(--color-text-secondary); border-left: 2px solid var(--color-accent);
+  padding: 0.1rem 0 0.1rem 0.5rem; margin-bottom: 0.35rem; white-space: pre-wrap;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
+
+/* The composer strip and the transcript share one thumbnail, before and after sending. */
+.ai-attachments, .ai-turn-images {
+  display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.35rem;
+}
+.ai-attachment { position: relative; line-height: 0; }
+.ai-attachment__thumb {
+  width: 44px; height: 44px; object-fit: cover; display: block;
+  border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-background-muted);
+}
+.ai-attachment--error .ai-attachment__thumb { border-color: var(--color-text-red); opacity: 0.55; }
+/* An overlay bar, so finishing causes no layout shift. */
+.ai-attachment__progress {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  border-radius: 0 0 6px 6px; background: var(--color-border); overflow: hidden;
+}
+.ai-attachment__progress::after {
+  content: ""; display: block; height: 100%; width: var(--p, 0%); background: var(--color-accent);
+  transition: width 0.15s linear;
+}
+.ai-attachment__remove {
+  position: absolute; top: -5px; right: -5px; width: 16px; height: 16px; padding: 0;
+  display: grid; place-items: center; cursor: pointer;
+  border: 1px solid var(--color-border); border-radius: 50%; background: var(--color-background-surface); color: var(--color-text-secondary);
+}
+.ai-attachment__remove:hover { color: var(--color-text-primary); }
+.ai-composer { display: flex; flex-direction: column; }
+
+.ai-md { line-height: 1.55; font-size: 0.9rem; overflow-wrap: anywhere; }
+.ai-md > :first-child { margin-top: 0; }
+.ai-md > :last-child { margin-bottom: 0; }
+.ai-md p { margin: 0.5rem 0; }
+.ai-md h1, .ai-md h2, .ai-md h3, .ai-md h4 { margin: 0.9rem 0 0.4rem; line-height: 1.3; }
+.ai-md h1 { font-size: 1.15rem; }
+.ai-md h2 { font-size: 1.05rem; }
+.ai-md h3 { font-size: 0.98rem; }
+.ai-md h4 { font-size: 0.92rem; }
+.ai-md ul, .ai-md ol { margin: 0.5rem 0; padding-left: 1.3rem; }
+.ai-md li { margin: 0.2rem 0; }
+.ai-md li > p { margin: 0.2rem 0; }
+.ai-md a { color: var(--color-accent); text-decoration: underline; }
+.ai-md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82em; background: var(--color-accent-muted); border-radius: 4px; padding: 0.05rem 0.3rem; }
+.ai-md pre { background: var(--color-accent-muted); border-radius: var(--radius-element); padding: 0.6rem 0.75rem; overflow-x: auto; margin: 0.6rem 0; }
+.ai-md pre code { background: none; padding: 0; font-size: 0.8rem; }
+.ai-md blockquote { margin: 0.6rem 0; padding-left: 0.7rem; border-left: 3px solid var(--color-border); color: var(--color-text-secondary); }
+.ai-md table { border-collapse: collapse; margin: 0.6rem 0; font-size: 0.82rem; display: block; overflow-x: auto; }
+.ai-md th, .ai-md td { border: 1px solid var(--color-border); padding: 0.25rem 0.5rem; text-align: left; vertical-align: top; }
+.ai-md th { background: var(--color-accent-muted); font-weight: 600; }
+.ai-md hr { border: none; border-top: 1px solid var(--color-border); margin: 0.8rem 0; }
+/* Image captions: a widget in the editor and a <figure> in rendered markdown, styled alike.
+   Here rather than in editor.css because the Ask page renders markdown without the editor. */
+.stuga-image-figure { margin: 0; }
+.stuga-image-caption {
+  margin: -0.25rem 0 0.7rem; color: var(--color-text-secondary); font-size: 0.82rem; line-height: 1.4;
+}
+.ai-md .stuga-image-caption { margin: 0.2rem 0 0.6rem; }
+/* In a reply the marker is a <button>: the base rule's `line-height: 0` would give it a zero-height hit target. */
+.ai-md .citation-ref { background: transparent; border: none; font-family: inherit; line-height: 1; }
+/* A marker whose source has not streamed in yet: nothing to open. */
+.ai-md .citation-ref--pending { color: var(--color-text-secondary); cursor: default; }
+.ai-md .citation-ref--pending:hover { text-decoration: none; }
+
+.ai-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; margin-top: 0.6rem; }
+.ai-sources-label { font-size: var(--text-body-size); color: var(--color-text-secondary); margin-right: 0.2rem; }
+/* The ellipsis sits on the inner title, or truncation would clip the icon. */
+.ai-source { display: inline-flex; align-items: center; gap: 0.25rem; font-size: var(--text-body-size); background: var(--color-accent-muted); color: var(--color-accent); border: none; border-radius: var(--radius-inner); padding: var(--spacing-1) var(--spacing-2); cursor: pointer; max-width: 100%; overflow: hidden; }
+.ai-source svg { flex: 0 0 auto; }
+.ai-source__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-source:hover { text-decoration: underline; }
+/* What a turn staged: a receipt, since review happens on the ghosts and the run bar. */
+.ai-staged {
+  display: flex; align-items: center; gap: 0.4rem; margin-top: 0.45rem;
+  padding-top: 0.4rem; border-top: 1px dashed var(--color-border); color: var(--color-text-green);
+}
+/* The cross-document row is a button to where that proposal is reviewed. */
+.ai-staged--crossdoc {
+  width: 100%; background: none; border: none; border-top: 1px dashed var(--color-border);
+  text-align: left; cursor: pointer; padding-left: 0; padding-right: 0;
+}
+.ai-staged--crossdoc:hover { text-decoration: underline; }
+.ai-staged--error { color: var(--color-text-red); }
+.ai-input { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.6rem; border-top: 1px solid var(--color-border); }
+/* The selection the next turn will be scoped to. */
+.ai-input-quote {
+  display: flex; align-items: baseline; gap: 0.4rem; min-width: 0;
+  border-left: 2px solid var(--color-accent); padding: 0.15rem 0 0.15rem 0.5rem;
+}
+.ai-input-quote__label { flex: 0 0 auto; font-size: 0.68rem; font-weight: 600; color: var(--color-accent); text-transform: uppercase; letter-spacing: 0.03em; }
+.ai-input-quote__text { flex: 1 1 auto; min-width: 0; font-size: 0.78rem; color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The /ask page: answers are read top to bottom, so they get a reading measure. */
+.ask-page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.ask-page__thread { flex: 1; overflow-y: auto; padding: 1.5rem 2rem; }
+.ask-page__thread > * { max-width: 760px; margin-left: auto; margin-right: auto; }
+.ask-turn { padding-bottom: 2rem; margin-bottom: 2rem; border-bottom: 1px solid var(--color-border); display: flex; flex-direction: column; gap: 0.7rem; }
+.ask-turn:last-of-type { border-bottom: none; }
+.ask-turn__question { font-size: 1.15rem; font-weight: 600; line-height: 1.35; margin: 0; }
+.ask-turn__answer { line-height: 1.6; }
+.ask-turn__error { font-size: 0.85rem; color: var(--color-text-red); }
+.ask-cursor { animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+/* An incomplete-but-useful answer's footnote (round cap, budget, degraded retrieval): not a failure. */
+.ask-notice { font-size: 0.8rem; color: var(--color-text-secondary); font-style: italic; }
+.ask-trace { font-size: var(--text-supporting-size); color: var(--color-text-secondary); }
+.ask-trace summary { font-size: var(--text-body-size); cursor: pointer; user-select: none; }
+.ask-trace summary:hover { color: var(--color-text-primary); }
+.ask-trace ul { list-style: none; padding: 0; margin: 0.4rem 0 0; display: flex; flex-direction: column; gap: 0.3rem; }
+/* The icon takes its own column, so a query's SQL lines up under its step text. */
+.ask-trace li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 0.4rem; row-gap: var(--spacing-1); }
+.ask-trace__sql { grid-column: 2; white-space: pre-wrap; }
+
+.ask-composer { flex: 0 0 auto; border-top: 1px solid var(--color-border); padding: 0.8rem 2rem 1rem; background: var(--color-background-surface); }
+
+/* The textarea's chrome moves to the wrapper, so the question and its controls
+   read as one field. The extra ancestor class outranks Astryx's StyleX rules. */
+/* Stands in for the box while the node's AI chat is off. */
+.ask-composer__notice { max-width: 760px; margin: 0 auto; }
+.ask-composer__box { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column;
+  border: 1px solid var(--color-border-emphasized); border-radius: var(--radius-container);
+  background: var(--color-background-surface);
+  transition: border-color 120ms ease, box-shadow 120ms ease; }
+.ask-composer__box:hover:not(:focus-within) { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-border-emphasized) 30%, transparent); }
+.ask-composer__box:focus-within { border-color: var(--color-accent); box-shadow: inset 0 0 0 2px var(--color-accent-muted); }
+.ask-composer .ask-composer__box .astryx-textarea { border-color: transparent; background: transparent; box-shadow: none; border-radius: var(--radius-container) var(--radius-container) 0 0; }
+.ask-composer__box .astryx-textarea textarea { padding: 0.6rem 0.75rem 0.3rem; resize: none; }
+
+.ask-composer__foot { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.25rem 0.4rem 0.4rem 0.5rem; }
+.ask-composer__hint { font-size: 0.75rem; white-space: nowrap; }
+
+@media (max-width: 760px) { .ask-composer__hint { display: none; } }
+
+.ask-empty { display: flex; flex-direction: column; align-items: center; gap: 0.6rem; text-align: center; padding: 4rem 1rem 2rem; color: var(--color-text-secondary); }
+.ask-empty p { max-width: 46ch; margin: 0; }
+
+.ask-rail__empty { padding: 0 0.4rem; }
+/* Opacity, not display:none, so keyboard users can still reach the row actions. */
+.ask-rail__actions { display: flex; gap: 0.1rem; opacity: 0; }
+.ask-rail__row:hover .ask-rail__actions,
+.ask-rail__actions:focus-within { opacity: 1; }
+
+.ask-sources-block { display: flex; flex-direction: column; gap: 0.4rem; }
+.ask-source-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; }
+.ask-source-card { display: flex; flex-direction: column; gap: 0.25rem; text-align: left; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-element); padding: 0.55rem 0.7rem; color: inherit; font: inherit; cursor: pointer; text-decoration: none; }
+.ask-source-card:hover { border-color: var(--color-accent); }
+.ask-source-card__head { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
+.ask-source-card__n { color: var(--color-accent); font-weight: 600; font-size: var(--text-body-size); flex: 0 0 auto; }
+.ask-source-card__title { font-size: var(--text-body-size); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ask-source-card__section { font-size: 0.75rem; color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ask-source-card__excerpt { font-size: var(--text-body-size); color: var(--color-text-secondary); font-style: italic; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.citation-ref { color: var(--color-accent); cursor: pointer; font-size: 0.7em; vertical-align: super; line-height: 0; padding: 0 0.05rem; user-select: none; }
+.citation-ref:hover { text-decoration: underline; }
+/* CitationPopover.tsx clamps the fixed card to the window with this width's half; change both together. */
+.citation-popover { position: fixed; transform: translateX(-50%); z-index: 200; width: 320px; max-width: 90vw; background: var(--color-background-surface); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: var(--shadow-med); padding: 0.7rem 0.8rem; font-size: 0.85rem; }
+.citation-popover__excerpt { margin: 0 0 0.5rem; padding: 0 0 0 0.6rem; border-left: 3px solid var(--color-accent); color: var(--color-text-primary); font-style: italic; max-height: 8rem; overflow-y: auto; }
+.citation-popover__empty { margin: 0 0 0.5rem; color: var(--color-text-secondary); }
+.citation-popover__source { display: flex; align-items: center; gap: 0.3rem; color: var(--color-text-secondary); font-size: 0.8rem; margin-bottom: 0.5rem; overflow: hidden; }
+.citation-popover__source svg { flex: 0 0 auto; }
+.citation-popover__source-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.citation-popover__open { display: inline-block; background: transparent; border: none; color: var(--color-accent); cursor: pointer; padding: 0; font: inherit; text-decoration: none; }
+.citation-popover__open:hover { text-decoration: underline; }

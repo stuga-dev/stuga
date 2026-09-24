@@ -1,0 +1,342 @@
+name: Release
+
+# A tag publishes a release; nothing else does. The GitHub release and the floating image tags
+# appear only once the Docker artifact and the Mac runtime have both booted.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  # CHANGELOG.md is what a release says about itself: its notes, its date, and whether it fixes a
+  # vulnerability. A tag whose entry was never written fails here, before anything is pushed.
+  changelog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag's entry is the newest in CHANGELOG.md
+        run: node packaging/release/feed.mjs check "${GITHUB_REF_NAME#v}"
+      - name: The release list and this release's notes
+        run: |
+          set -euo pipefail
+          mkdir release-notes
+          node packaging/release/feed.mjs feed > release-notes/releases.json
+          node packaging/release/feed.mjs notes "${GITHUB_REF_NAME#v}" > release-notes/notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes
+
+  docker-images:
+    needs: [verify, changelog]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: stuga-node
+            dockerfile: packaging/docker/node.Dockerfile
+          - image: stuga-postgres
+            dockerfile: packaging/docker/postgres.Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A tag is a promise about specific bytes; republishing one changes what an operator who pinned it gets.
+      - name: Refuse to republish an existing tag
+        run: |
+          ref="ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${GITHUB_REF_NAME#v}"
+          if docker manifest inspect "$ref" >/dev/null 2>&1; then
+            echo "::error::$ref already exists. Cut a new patch version instead."
+            exit 1
+          fi
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          # The exact version only: promote adds the floating tags after the gate, and `latest` is never published.
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+
+      - id: args
+        name: Build arguments from versions.env
+        run: |
+          set -a
+          . packaging/versions.env
+          set +a
+          {
+            echo "list<<ARGS"
+            while read -r key; do
+              printf '%s=%s\n' "$key" "${!key}"
+            done < <(sed -n 's/^\([A-Z0-9_]*\)=.*/\1/p' packaging/versions.env)
+            echo "STUGA_VERSION=${{ steps.meta.outputs.version }}"
+            echo "ARGS"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ steps.args.outputs.list }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  docker-package:
+    needs: docker-images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stamp the assets
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          bash packaging/docker/package.sh "$V" release-assets
+          owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          grep -qx "    image: ghcr.io/${owner}/stuga-node:${V}" release-assets/compose.yml
+          grep -qx "    image: ghcr.io/${owner}/stuga-postgres:${V}" release-assets/compose.yml
+
+      # The unknown/unknown entries are the provenance and SBOM attestations, not platforms.
+      - name: Check both architectures were published
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          for img in stuga-node stuga-postgres; do
+            docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/$img:$V" --raw \
+              | jq -r '.manifests[].platform | .os+"/"+.architecture' \
+              | grep -v '^unknown/unknown$' | sort -u > /tmp/platforms
+            grep -qx linux/amd64 /tmp/platforms
+            grep -qx linux/arm64 /tmp/platforms
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            release-assets/compose.yml
+            release-assets/env.example
+            release-assets/stuga
+            release-assets/install.sh
+
+  # The only test of what an operator downloads: the stamped compose.yml booting the published images.
+  docker-smoke:
+    needs: docker-package
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: smoke
+
+      - name: Boot the published artifact
+        working-directory: smoke
+        run: |
+          set -euo pipefail
+          cp env.example .env
+          printf 'HOST_PORT=8790\nSTUGA_VOLUME_NAME=stuga_smoke_pgdata\nPUBLIC_ORIGIN=http://127.0.0.1:8790\n' >> .env
+          docker compose -p stuga-smoke up -d --wait
+
+      - name: Assert what a broken release would get wrong
+        working-directory: smoke
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          # /ready follows the Postgres preflight, the migration and the boot repairs.
+          curl -fsS http://127.0.0.1:8790/ready
+          # A missing web build still answers /ready.
+          curl -fsS http://127.0.0.1:8790/ | grep -q 'id="root"'
+          test "$(docker run --rm --entrypoint cat "ghcr.io/${{ github.repository_owner }}/stuga-node:$V" /app/VERSION)" = "$V"
+          docker compose -p stuga-smoke logs node | grep -q "stuga $V,"
+
+      - name: Tear down
+        if: always()
+        working-directory: smoke
+        run: docker compose -p stuga-smoke down -v || true
+
+  # The Mac package: the runtime, Stuga.app and the scripts that install them, every binary signed with
+  # Stuga's Developer ID, the package notarized and stapled, and the runtime it carries booted.
+  macos-pkg:
+    needs: [verify, changelog]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - id: pins
+        run: . packaging/versions.env && echo "node=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+          cache: pnpm
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/stuga-macos-cache
+          key: stuga-macos-${{ hashFiles('packaging/versions.env', 'packaging/macos/build/**') }}
+
+      # One p12 holding both Developer ID identities, in a keychain that lives as long as the job. Their
+      # names come from the p12, and their team must be the one the upgrade helper trusts.
+      - name: Import the signing identities
+        env:
+          CERTS: ${{ secrets.MACOS_CERTS_P12 }}
+          CERTS_PASSWORD: ${{ secrets.MACOS_CERTS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          kpass="$(openssl rand -hex 16)"
+          security create-keychain -p "$kpass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$kpass" "$keychain"
+          printf '%s' "$CERTS" | base64 --decode > "$RUNNER_TEMP/certs.p12"
+          security import "$RUNNER_TEMP/certs.p12" -k "$keychain" -P "$CERTS_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/productbuild -T /usr/bin/pkgbuild
+          rm -f "$RUNNER_TEMP/certs.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kpass" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          app="$(security find-identity -v "$keychain" | sed -n 's/.*"\(Developer ID Application: .*\)"$/\1/p' | head -1)"
+          installer="$(security find-identity -v "$keychain" | sed -n 's/.*"\(Developer ID Installer: .*\)"$/\1/p' | head -1)"
+          team="$(sed -n 's/.*STUGA_TEAM_ID:-\([A-Z0-9]*\)}.*/\1/p' packaging/macos/runtime/bin/helper.sh)"
+          for id in "$app" "$installer"; do
+            case "$id" in
+              *" ($team)") ;;
+              *) echo "::error::the p12 needs a Developer ID Application and a Developer ID Installer identity of team $team" >&2; exit 1 ;;
+            esac
+          done
+          { echo "APP_IDENTITY=$app"; echo "INSTALLER_IDENTITY=$installer"; } >> "$GITHUB_ENV"
+
+      - name: Store the notary credential
+        env:
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool store-credentials stuga-notary --key "$RUNNER_TEMP/notary.p8" \
+            --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER"
+          rm -f "$RUNNER_TEMP/notary.p8"
+
+      - name: Build, sign and notarize the package
+        env:
+          STUGA_MACOS_CACHE: ${{ runner.temp }}/stuga-macos-cache
+        run: |
+          bash packaging/macos/pkg/build-pkg.sh --version "${GITHUB_REF_NAME#v}" --out "$RUNNER_TEMP/pkg" \
+            --app-identity "$APP_IDENTITY" --installer-identity "$INSTALLER_IDENTITY" --notary-profile stuga-notary
+
+      # The runtime as the package carries it, signed: library validation on, Node with only allow-jit.
+      - name: Boot the runtime the package carries
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          pkgutil --expand-full "$RUNNER_TEMP/pkg/Stuga-$V.pkg" "$RUNNER_TEMP/expanded"
+          bash packaging/macos/test/smoke.sh "$RUNNER_TEMP/expanded/stuga-node.pkg/Payload/Library/Application Support/Stuga/runtime/$V"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-pkg
+          path: ${{ runner.temp }}/pkg/Stuga-*.pkg
+
+  # The floating tags point at the digest smoke booted; imagetools re-tags, it never rebuilds.
+  promote:
+    needs: [docker-smoke, macos-pkg]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Point the floating tags at the tested digest
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          MINOR="${V%.*}"
+          MAJOR="${V%%.*}"
+          for img in stuga-node stuga-postgres; do
+            SRC="ghcr.io/${{ github.repository_owner }}/$img:$V"
+            docker buildx imagetools create --tag "ghcr.io/${{ github.repository_owner }}/$img:$MINOR" "$SRC"
+            docker buildx imagetools create --tag "ghcr.io/${{ github.repository_owner }}/$img:$MAJOR" "$SRC"
+            want="$(docker buildx imagetools inspect "$SRC" --format '{{.Manifest.Digest}}')"
+            for t in "$MINOR" "$MAJOR"; do
+              got="$(docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/$img:$t" --format '{{.Manifest.Digest}}')"
+              [ "$got" = "$want" ] || { echo "::error::$img:$t is $got, not the tested $want"; exit 1; }
+            done
+          done
+
+  release:
+    needs: [docker-smoke, macos-pkg, promote]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-pkg
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+      # releases.json is what running nodes read at releases/latest/download/ to learn of this version.
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cat >> notes.md <<'ASSETS'
+
+          ## Assets
+
+          Mac: `Stuga.pkg`, notarized; the same package as `Stuga-<version>.pkg`, which a node's Update now installs.
+          Docker, in one step: `curl -fsSL https://github.com/stuga-dev/stuga/releases/latest/download/install.sh | bash`.
+          By hand, these three in one directory:
+          - `compose.yml` — pinned to this release's images
+          - `env.example` — copy to `.env`
+          - `stuga` — `chmod +x` it
+
+          `releases.json` is the list of releases a running node reads to learn of a newer version.
+
+          Install: docs/install/docker.md
+          ASSETS
+          V="${GITHUB_REF_NAME#v}"
+          # A name without the version, so releases/latest/download/Stuga.pkg is always the newest.
+          cp "Stuga-$V.pkg" Stuga.pkg
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md \
+            compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg" Stuga.pkg \
+          || gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg" Stuga.pkg --clobber

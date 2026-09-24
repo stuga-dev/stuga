@@ -1,0 +1,13 @@
+/* Stuga's own tokens on top of the Astryx theme. */
+:root {
+  /* The node's brand colour, used only as the selection marker. applyBranding() overrides it on html:root. */
+  --brand: var(--color-accent);
+  /* Every selected surface: a translucent neutral fill plus a 3px bar in the brand colour. */
+  --selection-bg: var(--color-neutral);
+  --selection-mark: var(--brand);
+}
+
+/* Unlayered, so they outrank theme-neutral's layered `color-scheme: light dark`
+   and light-dark() follows the chosen theme rather than the OS. */
+html[data-theme="dark"] { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }

@@ -1,0 +1,10 @@
+export type { AiConfig, AiModelChoice, AiProvider, ChatEndpoint } from "./config.js";
+export { resolveModel } from "./models.js";
+export { AiError } from "./providers/transport.js";
+export { listModels, streamTurn } from "./providers/dispatch.js";
+export { embed, type EmbedResult } from "./retrieval/embed.js";
+export { chunkEmbedInput, headingAwareChunk } from "./retrieval/chunk.js";
+export { rerankChunks, type RerankCandidate } from "./retrieval/rerank.js";
+export { runAgentTurn, type AgentActivity, type AgentInput, type ToolRunner } from "./agents/coauthor.js";
+export { LIST_LIMIT, runAskAgentTurn, type AskAgentActivity, type AskToolRunner } from "./agents/ask.js";
+export { runTableAgentTurn, type TableToolRunner } from "./agents/table.js";

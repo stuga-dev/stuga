@@ -1,0 +1,26 @@
+{
+  "name": "@stuga/auth",
+  "version": "0.0.1",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/oidc/testing/mock-provider.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stuga/protocol": "workspace:*",
+    "jose": "^6.2.12"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

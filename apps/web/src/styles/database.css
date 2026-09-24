@@ -1,0 +1,277 @@
+/* --- structured databases ------------------------------------------------- */
+.db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* Two bars, one per level. Tables are underlined tabs on the top bar; the
+   chosen table's views are pills on the bar below, with the controls that shape
+   the view at its far end. A tab is a button beside a ⋯ menu, which a TabList
+   tab cannot hold. Both strips scroll sideways rather than wrap. */
+.db-tabs {
+  display: flex; align-items: center; gap: 0.25rem; flex-wrap: nowrap;
+  min-width: 0; overflow-x: auto; scrollbar-width: none; flex: 0 1 auto;
+}
+.db-tabs::-webkit-scrollbar { display: none; }
+.db-tab { display: inline-flex; align-items: center; flex: 0 0 auto; }
+.db-tab__btn {
+  display: inline-flex; align-items: center; gap: 0.4rem; max-width: 14rem;
+  background: transparent; border: none; cursor: pointer; color: var(--color-text-secondary);
+  font: inherit; font-weight: 500; white-space: nowrap;
+}
+.db-tab__btn svg { flex: 0 0 auto; }
+.db-tab__label { overflow: hidden; text-overflow: ellipsis; }
+.db-tab:hover .db-tab__btn,
+.db-tab--active .db-tab__btn { color: var(--color-text-primary); }
+.db-tab--active .db-tab__btn { font-weight: 600; }
+/* Only the chosen tab carries its ⋯; a hidden one on every other tab left a gap after each. */
+.db-tab__menu { display: none; }
+.db-tab--active .db-tab__menu { display: inline-flex; }
+
+/* No bottom padding: a table tab's underline sits on the bar's bottom rule. */
+.db-tablebar { display: flex; padding: 0.25rem 1rem 0; border-bottom: 1px solid var(--color-border); flex: 0 0 auto; }
+.db-tables .db-tab { border-bottom: 2px solid transparent; }
+.db-tables .db-tab--active { border-bottom-color: var(--color-accent); }
+.db-tables .db-tab__btn { font-size: 0.88rem; padding: 0.5rem 0.4rem 0.45rem 0.5rem; }
+
+.db-viewbar {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.3rem 1rem; border-bottom: 1px solid var(--color-border); flex: 0 0 auto;
+}
+/* Only the view pills give way when the bar is short of room. */
+.db-viewbar > * { flex-shrink: 0; }
+.db-viewbar > .db-views { flex-shrink: 1; }
+.db-viewbar__spacer { flex: 1 1 0; }
+.db-views { gap: 0.15rem; }
+.db-views .db-tab { border-radius: var(--radius-element); }
+.db-views .db-tab:hover { background: var(--color-accent-muted); }
+.db-views .db-tab--active { background: var(--selection-bg); }
+.db-views .db-tab__btn { font-size: 0.82rem; padding: 0.3rem 0.6rem; }
+.db-views .db-tab__menu { margin-left: -0.35rem; }
+.db-toolbar__ctl { display: inline-flex; }
+
+/* One filter condition: column, operator, value, remove. */
+.db-filter__cond { display: grid; grid-template-columns: 1.2fr 1.3fr 1fr auto; gap: 0.3rem; align-items: center; }
+/* A popover that a phone screen squeezes: column and operator share a line and
+   the value takes the next, beside the remove button. */
+@container db-filter (max-width: 340px) {
+  .db-filter__cond { grid-template-columns: 1fr 1fr auto; }
+  .db-filter__cond > :nth-child(3):not(:last-child) { grid-column: 1 / 3; }
+}
+.db-filter__row--inline { flex-direction: row; align-items: center; gap: 0.5rem; }
+.db-filter__row--inline .db-select { width: auto; flex: 1; }
+.db-group-row td { background: var(--color-background-surface); padding: 0; }
+.db-group-row__btn {
+  display: flex; align-items: center; gap: 0.4rem; width: 100%;
+  background: transparent; border: none; cursor: pointer; color: var(--color-text-primary);
+  font: inherit; font-size: 0.82rem; font-weight: 600; padding: 0.35rem 0.6rem; text-align: left;
+}
+.db-group-row__btn:hover { background: var(--color-accent-muted); }
+.db-group-row__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-group-row__count { color: var(--color-text-secondary); font-weight: 500; margin-left: 0.25rem; }
+/* A chip reopens its editor; its × clears without opening. */
+.db-chip {
+  display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer;
+  font-size: 0.8rem; color: var(--color-accent); background: var(--color-accent-muted);
+  border-radius: var(--radius-full); padding: 0.2rem 0.3rem 0.2rem 0.6rem;
+}
+.db-chip__label { max-width: 20rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-chip__x {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: inherit; cursor: pointer;
+  padding: 0.1rem; border-radius: var(--radius-full);
+}
+.db-chip__x:hover { background: var(--color-background-surface); }
+
+.db-filter { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.25rem; container: db-filter / inline-size; }
+.db-filter__row { display: flex; flex-direction: column; gap: 0.2rem; }
+.db-filter__label { font-size: 0.75rem; font-weight: 600; color: var(--color-text-secondary); }
+.db-select {
+  font: inherit; font-size: 0.85rem; color: var(--color-text-primary); background: var(--color-background-surface);
+  border: 1px solid var(--color-border); border-radius: var(--radius-element);
+  padding: 0.3rem 0.45rem; width: 100%;
+}
+.db-select:focus { outline: none; border-color: var(--color-accent); }
+
+/* `separate`, or the sticky header's borders scroll away with the body. */
+.db-grid-shell { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.db-grid-wrap { flex: 1; min-height: 0; overflow: auto; }
+.db-grid { border-collapse: separate; border-spacing: 0; font-size: 0.88rem; }
+.db-grid th, .db-grid td {
+  border-bottom: 1px solid var(--color-border); border-right: 1px solid var(--color-border);
+  padding: 0; min-width: 9rem; max-width: 22rem; vertical-align: middle;
+}
+.db-grid th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--color-background-body); text-align: left; font-weight: 600;
+}
+/* The row-start cell holds the checkbox and the open button. */
+.db-grid th.db-grid__check, .db-grid td.db-grid__check {
+  min-width: 0; width: 3.6rem; padding: 0 0.4rem; text-align: center;
+}
+.db-row__start { display: inline-flex; align-items: center; gap: 0.1rem; }
+/* Shown on hover, and always on a row with a page or open in the dock. */
+.db-row__open {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.5rem; height: 1.5rem; border-radius: var(--radius-element);
+  background: transparent; border: none; cursor: pointer; color: var(--color-text-secondary);
+  opacity: 0; transition: opacity 0.12s;
+}
+.db-row__open:hover { background: var(--color-accent-muted); color: var(--color-text-primary); }
+.db-row__open:focus-visible,
+.db-row__open--page,
+.db-grid tr:hover .db-row__open,
+.db-row--open .db-row__open { opacity: 1; }
+/* One bar at the row's start, as on a selected library row; on every cell it drew a bar per column. */
+.db-row--open > td { background: var(--selection-bg); }
+.db-row--open > td:first-child { box-shadow: inset 3px 0 0 var(--selection-mark); }
+.db-grid th.db-grid__addcol, .db-grid td.db-grid__addcol {
+  min-width: 0; width: 2.25rem; padding: 0 0.15rem; border-right: none;
+}
+.db-row--selected td { background: var(--color-accent-muted); }
+
+.db-col-head { display: flex; align-items: center; gap: 0.1rem; padding: 0 0.2rem 0 0; }
+.db-col-head__sort {
+  flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 0.3rem;
+  background: transparent; border: none; cursor: pointer; color: inherit;
+  font: inherit; font-weight: 600; text-align: left; padding: 0.4rem 0.5rem;
+}
+.db-col-head__sort:hover { color: var(--color-accent); }
+.db-col-head__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-col-head__menu { opacity: 0; transition: opacity 0.12s; flex: 0 0 auto; }
+.db-col-head:hover .db-col-head__menu,
+.db-col-head:focus-within .db-col-head__menu { opacity: 1; }
+/* A touch screen has no hover to reveal these. */
+@media (hover: none) {
+  .db-row__open, .db-col-head__menu { opacity: 1; }
+}
+
+/* A cell and its editor fill the same box, so editing does not reflow the row. */
+.db-td { position: relative; }
+.db-td--checkbox { padding: 0.15rem 0.5rem; }
+.db-cell {
+  display: block; width: 100%; min-height: 2.1rem; text-align: left;
+  background: transparent; border: none; cursor: pointer; color: var(--color-text-primary);
+  font: inherit; padding: 0.4rem 0.5rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.db-cell:hover:not(:disabled) { background: var(--color-accent-muted); }
+.db-cell:disabled { cursor: default; }
+.db-td--editing { box-shadow: inset 0 0 0 2px var(--color-accent); }
+.db-cell-input, .db-cell-select {
+  display: block; width: 100%; min-height: 2.1rem; box-sizing: border-box;
+  background: var(--color-background-surface); color: var(--color-text-primary); border: none; outline: none;
+  font: inherit; font-size: 0.88rem; padding: 0.4rem 0.5rem;
+}
+
+/* New row, and the row count at the far end. */
+.db-foot { display: flex; align-items: center; border-bottom: 1px solid var(--color-border); }
+.db-newrow {
+  display: flex; align-items: center; gap: 0.4rem; flex: 1 1 auto;
+  background: transparent; border: none;
+  color: var(--color-text-secondary); font: inherit; font-size: 0.85rem; cursor: pointer;
+  padding: 0.5rem 0.75rem; text-align: left;
+}
+.db-foot__count {
+  margin-left: auto; padding: 0.5rem 0.75rem; white-space: nowrap;
+  color: var(--color-text-secondary); font-size: 0.8rem; font-variant-numeric: tabular-nums;
+}
+.db-newrow:hover { background: var(--color-accent-muted); color: var(--color-text-primary); }
+.db-loadmore { display: flex; justify-content: center; padding: 0.75rem; }
+.db-grid-center {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.6rem; padding: 2rem 1rem; min-height: 8rem;
+}
+
+/* Agent proposals over the grid, in the editor's .ai-preview-* palette: green
+   is added, struck red is removed, a tint is a changed value. */
+.db-row--ghost td { background: color-mix(in srgb, var(--color-background-green) 50%, transparent); }
+.db-row--ghost .db-cell--ghost { color: var(--color-text-primary); }
+.db-row--ghost-busy td { opacity: 0.55; }
+.db-cell--ghost, .db-cell--proposed {
+  display: block; min-height: 2.1rem; padding: 0.4rem 0.5rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.db-ghost-actions td {
+  background: color-mix(in srgb, var(--color-background-green) 50%, transparent); border-top: none;
+  padding: 0.25rem 0.75rem 0.45rem;
+}
+.db-ghost-actions__label { color: var(--color-text-secondary); font-size: 0.8rem; margin-right: 0.75rem; }
+
+/* --- row panel --- */
+.row-panel { min-height: 0; }
+.row-panel__head { padding: 0.6rem 0.9rem 0.4rem; border-bottom: 1px solid var(--color-border); display: flex; flex-direction: column; gap: 0.15rem; }
+.row-panel__body { flex: 1; min-height: 0; overflow: auto; padding: 0.4rem 0.9rem 0.6rem; }
+.row-panel__fields { margin: 0; display: flex; flex-direction: column; gap: 0.55rem; }
+.row-panel__field { display: flex; flex-direction: column; gap: 0.2rem; }
+.row-panel__label { font-size: 0.75rem; font-weight: 600; color: var(--color-text-secondary); }
+.row-panel__value { margin: 0; min-width: 0; }
+.row-panel__input, .row-panel__textarea, .row-panel__select {
+  display: block; width: 100%; box-sizing: border-box;
+  background: var(--color-background-surface); color: var(--color-text-primary); border: 1px solid var(--color-border);
+  border-radius: var(--radius-element); font: inherit; font-size: 0.88rem; padding: 0.35rem 0.5rem;
+}
+.row-panel__textarea { resize: vertical; line-height: 1.4; }
+.row-panel__input:focus, .row-panel__textarea:focus, .row-panel__select:focus { outline: none; border-color: var(--color-accent); }
+.row-panel__input:disabled, .row-panel__textarea:disabled, .row-panel__select:disabled { opacity: 0.7; cursor: default; }
+.row-panel__foot {
+  padding: 0.6rem 0.9rem; border-top: 1px solid var(--color-border);
+  display: flex; flex-direction: column; gap: 0.35rem; align-items: flex-start; flex: 0 0 auto;
+}
+
+/* --- import dialog --- */
+.db-import__file {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.5rem 0.4rem 0.5rem 0.75rem; border: 1px solid var(--color-border); border-radius: var(--radius-container);
+}
+.db-import__file-icon { color: var(--color-text-secondary); flex: 0 0 auto; }
+.db-import__file-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
+.db-import__file-size { color: var(--color-text-secondary); font-size: 0.8rem; flex: 0 0 auto; }
+.db-import__card { border: 1px solid var(--color-border); border-radius: var(--radius-container); overflow: hidden; }
+.db-import__card--good { border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-border)); }
+.db-import__card--bad { border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-border)); }
+.db-import__card-head { padding: 0.8rem 0.9rem; }
+.db-import__card-icon { display: inline-flex; margin-top: 0.1rem; color: var(--color-text-secondary); flex: 0 0 auto; }
+.db-import__card--good .db-import__card-icon { color: var(--color-success); }
+.db-import__card--bad .db-import__card-icon { color: var(--color-error); }
+.db-import__card-section { border-top: 1px solid var(--color-border); padding: 0.7rem 0.9rem; }
+.db-import__card-section--flush { padding: 0; }
+.db-import__errors { max-height: 32vh; overflow: auto; }
+.db-import__table { width: 100%; border-collapse: collapse; font-size: 0.8rem; line-height: 1.35; }
+.db-import__table th,
+.db-import__table td { text-align: left; padding: 0.45rem 0.9rem; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+.db-import__table th + th,
+.db-import__table td + td { padding-left: 0.5rem; }
+.db-import__table tbody tr:last-child td { border-bottom: 0; }
+.db-import__table th { position: sticky; top: 0; background: var(--color-background-surface); color: var(--color-text-secondary); font-weight: 500; font-size: 0.75rem; }
+.db-import__num { width: 3rem; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+.db-import__value { font-family: var(--font-family-code); max-width: 11rem; overflow-wrap: anywhere; }
+.db-import__hint { color: var(--color-text-secondary); margin-top: 0.1rem; }
+.db-import__more { padding: 0.4rem 0.6rem; border-top: 1px solid var(--color-border); }
+.db-ghost-actions__buttons { display: inline-flex; gap: 0.4rem; vertical-align: middle; }
+.db-row--proposed-delete td { background: color-mix(in srgb, var(--color-background-red) 50%, transparent); }
+.db-row--proposed-delete .db-cell { text-decoration: line-through; text-decoration-color: var(--color-text-red); color: var(--color-text-secondary); }
+.db-td--proposed { background: color-mix(in srgb, var(--color-background-green) 70%, transparent); }
+.db-cell--proposed { font-style: normal; }
+.db-th--ghost {
+  background: color-mix(in srgb, var(--color-background-green) 50%, transparent) !important; font-weight: 600;
+  padding: 0.4rem 0.5rem; white-space: nowrap;
+}
+.db-ghost-tag {
+  margin-left: 0.4rem; font-size: 0.68rem; font-weight: 500; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--color-text-green);
+}
+.db-td--ghostcol { background: color-mix(in srgb, var(--color-background-green) 30%, transparent); }
+
+/* --- Activity panel --- */
+.db-ops-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--color-border); flex: 0 0 auto;
+}
+.db-ops { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.db-op { border: 1px solid var(--color-border); border-radius: 8px; padding: 0.5rem 0.7rem; }
+.db-op__head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.db-op__actor { display: inline-flex; align-items: center; gap: 0.35rem; min-width: 0; }
+.db-op__time { color: var(--color-text-secondary); font-size: 0.78rem; flex: 0 0 auto; }
+.db-op__summary { margin: 0.25rem 0 0; font-size: 0.85rem; }
+.db-op__foot { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-top: 0.25rem; min-height: 1rem; }
+.db-ops-more { display: flex; justify-content: center; padding-block: 0.5rem 0.25rem; }
+
+.db-op__for { color: var(--color-text-secondary); font-size: 0.75rem; font-style: italic; }

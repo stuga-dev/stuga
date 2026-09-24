@@ -1,0 +1,39 @@
+{
+  "name": "@stuga/node",
+  "version": "0.0.1",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "stuga-node": "./bin/stuga-node.js"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run",
+    "dev": "tsx watch --env-file-if-exists=.env.dev src/main.ts",
+    "start": "node bin/stuga-node.js serve"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "@stuga/agent-surface": "workspace:*",
+    "@stuga/ai": "workspace:*",
+    "@stuga/auth": "workspace:*",
+    "@stuga/crdt-ops": "workspace:*",
+    "@stuga/database-actor": "workspace:*",
+    "@stuga/db": "workspace:*",
+    "@stuga/doc-actor": "workspace:*",
+    "@stuga/mcp": "workspace:*",
+    "@stuga/protocol": "workspace:*",
+    "@stuga/runtime": "workspace:*",
+    "postgres": "^3.4.9",
+    "tsx": "^4.23.15",
+    "ws": "^8.21.3",
+    "yjs": "^13.6.33"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "jose": "^6.2.12",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

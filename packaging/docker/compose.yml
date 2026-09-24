@@ -1,0 +1,63 @@
+# Stuga on Docker Compose. Keep this file, .env (from env.example) and ./stuga in one directory:
+#
+#   docker compose up -d
+#   open http://localhost:8787
+#
+# Postgres keeps its cluster in the pgdata volume; the node keeps blobs, actor stores and keys in ./data/node,
+# and writes the backups it takes itself (daily, and before an upgrade) to ./backups, as ./stuga does.
+# Both image tags are one version: a checkout's source build, which a release replaces with its own.
+
+# Pinned so the volume and containers do not follow the directory's name; COMPOSE_PROJECT_NAME overrides it.
+name: stuga
+
+services:
+  postgres:
+    image: ghcr.io/stuga-dev/stuga-postgres:0.0.0-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: stuga
+      POSTGRES_PASSWORD: stuga
+      POSTGRES_DB: stuga
+    volumes:
+      # The parent of the cluster directory: the image keeps the cluster under 18/docker.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stuga -d stuga"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  node:
+    image: ghcr.io/stuga-dev/stuga-node:0.0.0-dev
+    restart: unless-stopped
+    # The node needs up to 25 s after SIGTERM to close its actors cleanly.
+    stop_grace_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    # Here rather than only in the image, because these outrank .env: the volume below, the
+    # published port and ./stuga assume these values.
+    environment:
+      DATABASE_URL: postgres://stuga:stuga@postgres:5432/stuga
+      DATA_DIR: /data
+      # .env's BACKUP_DIR is the host directory, mounted here.
+      BACKUP_DIR: /backups
+      BIND: 0.0.0.0
+      PORT: "8787"
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8787}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data/node:/data
+      - ${BACKUP_DIR:-./backups}:/backups
+    # Every address of this machine: only whoever has the setup code the node logs can claim it.
+    # PUBLIC_ORIGIN is the address invite links carry.
+    ports:
+      - "${HOST_BIND:-0.0.0.0}:${HOST_PORT:-8787}:8787"
+
+volumes:
+  pgdata:
+    name: ${STUGA_VOLUME_NAME:-stuga_pgdata}

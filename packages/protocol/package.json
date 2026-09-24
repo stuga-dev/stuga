@@ -1,0 +1,23 @@
+{
+  "name": "@stuga/protocol",
+  "version": "0.0.1",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./wire/*": "./src/wire/*.ts",
+    "./api/*": "./src/api/*.ts",
+    "./domain/*": "./src/domain/*.ts",
+    "./databases/*": "./src/databases/*.ts",
+    "./text/*": "./src/text/*.ts",
+    "./internal/*": "./src/internal/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

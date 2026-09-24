@@ -1,0 +1,12 @@
+# Builds both images from this checkout, tagged as compose.yml names them:
+#
+#   docker compose -f compose.yml -f compose.build.yml up -d --build
+services:
+  postgres:
+    build:
+      context: ../..
+      dockerfile: packaging/docker/postgres.Dockerfile
+  node:
+    build:
+      context: ../..
+      dockerfile: packaging/docker/node.Dockerfile

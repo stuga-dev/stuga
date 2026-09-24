@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Stuga's Postgres. Rendered by packaging/macos/build/render-launchd.sh; every @-delimited placeholder is
+  filled, and agent mode drops UserName and GroupName.
+
+  - It runs through `current`, so an update or rollback is a symlink change and a restart.
+  - ExitTimeOut gives the fast shutdown and its checkpoint minutes instead of launchd's 20 s.
+  - KeepAlive restarts a crash, not a stop.
+  - The file limit is raised for pg_search, whose index segments are many small files.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@LABEL@</string>
+
+  <!-- So System Settings lists the job under Stuga, with its icon, not as an unnamed bash. -->
+  <key>AssociatedBundleIdentifiers</key>
+  <string>@BUNDLE_ID@</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@ROOT@/current/bin/postgres-wrapper.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>STUGA_ROOT</key>
+    <string>@ROOT@</string>
+  </dict>
+
+  <key>UserName</key>
+  <string>_stuga</string>
+  <key>GroupName</key>
+  <string>_stuga</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>WorkingDirectory</key>
+  <string>@ROOT@/data</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ExitTimeOut</key>
+  <integer>300</integer>
+  <key>ProcessType</key>
+  <string>Standard</string>
+
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>65536</integer>
+  </dict>
+  <key>HardResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>65536</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>@LOGS@/postgres.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGS@/postgres.log</string>
+</dict>
+</plist>

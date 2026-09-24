@@ -1,0 +1,27 @@
+{
+  "name": "@stuga/doc-actor",
+  "version": "0.0.1",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stuga/ai": "workspace:*",
+    "@stuga/crdt-ops": "workspace:*",
+    "@stuga/protocol": "workspace:*",
+    "@stuga/runtime": "workspace:*",
+    "yjs": "^13.6.33"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

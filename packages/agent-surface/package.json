@@ -1,0 +1,23 @@
+{
+  "name": "@stuga/agent-surface",
+  "version": "0.0.1",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stuga/protocol": "workspace:*",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

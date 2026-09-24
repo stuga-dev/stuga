@@ -1,0 +1,28 @@
+/* Branding preview cards, each inside its own Astryx <Theme mode>. */
+.brand-preview {
+  flex: 1 1 15rem; min-width: 0;
+  background: var(--color-background-body);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border); border-radius: var(--radius-container);
+  /* A var() resolves where it is declared, so the :root tokens are re-declared to follow the card's mode. */
+  --brand: var(--color-accent);
+  --selection-bg: var(--color-neutral);
+  --selection-mark: var(--brand);
+}
+/* The nested <Theme> does not re-declare --color-background-inverted, so the
+   inversion is rebuilt from tokens it does re-declare. */
+.brand-preview .brand__mark { background: var(--color-text-primary); color: var(--color-background-body); }
+
+.brand-preview__rows { background: var(--color-background-surface); border-radius: var(--radius-element); overflow: hidden; }
+.brand-preview__row { min-width: 0; }
+/* Never the first or last row: the rounded, clipped block would shave the bar to a point. */
+.brand-preview__row--selected { background: var(--selection-bg); box-shadow: inset 3px 0 0 var(--selection-mark); }
+.brand-preview__nav { padding-left: 0.6rem; }
+.brand-preview__nav-item { position: relative; border-radius: var(--radius-element); }
+.brand-preview__nav-item--current { background: var(--selection-bg); font-weight: 600; }
+/* The Astryx <Text> inside sets its own weight. */
+.brand-preview__nav-item--current * { font-weight: inherit; }
+.brand-preview__nav-item--current::before {
+  content: ""; position: absolute; left: -0.6rem; top: 20%; height: 60%; width: 3px;
+  border-radius: 2px; background: var(--brand);
+}

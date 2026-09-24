@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: pins
+        run: . packaging/versions.env && echo "node=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: node --test "packaging/**/*.test.mjs"
+      - run: bash packaging/check-pins.sh
+      - name: shellcheck
+        run: |
+          find packaging scripts -type f -name '*.sh' -print0 | sort -z \
+            | xargs -0 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 -x -P SCRIPTDIR packaging/docker/stuga
+
+  db-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: pins
+        run: . packaging/versions.env && echo "node=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The backup suite's pg_dump refuses a server newer than itself, and the runner's client is older.
+      - name: Postgres client
+        run: |
+          . packaging/versions.env
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y "postgresql-client-$PG_MAJOR"
+          echo "PG_BIN=/usr/lib/postgresql/$PG_MAJOR/bin" >> "$GITHUB_ENV"
+      - run: bash scripts/test-integration.sh
+
+  restore-drill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash packaging/docker/test/restore-drill.sh
+      - run: bash packaging/docker/test/backup-suite-in-image.sh ghcr.io/stuga-dev/stuga-node:0.0.0-drill
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - id: pins
+        run: . packaging/versions.env && echo "node=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Again here, for the tests that need plutil.
+      - run: node --test "packaging/**/*.test.mjs"
+      # Downloads and the Postgres tree assembled from them; a changed pin or build script changes the key.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/stuga-macos-cache
+          key: stuga-macos-${{ hashFiles('packaging/versions.env', 'packaging/macos/build/**') }}
+      - run: bash packaging/macos/test/ci.sh
+        env:
+          STUGA_MACOS_CACHE: ${{ runner.temp }}/stuga-macos-cache
+      - name: Build a runtime
+        env:
+          STUGA_MACOS_CACHE: ${{ runner.temp }}/stuga-macos-cache
+        run: bash packaging/macos/build/build-runtime.sh --out "$RUNNER_TEMP/stuga-macos" --version 0.0.0-ci
+      - run: bash packaging/macos/test/smoke.sh "$RUNNER_TEMP/stuga-macos/runtime/0.0.0-ci"
+      - run: bash packaging/macos/test/restore-drill.sh "$RUNNER_TEMP/stuga-macos/runtime/0.0.0-ci"

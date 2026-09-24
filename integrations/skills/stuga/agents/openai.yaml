@@ -1,0 +1,5 @@
+interface:
+  display_name: "Stuga"
+  short_description: "Find and edit documents in Stuga workspaces"
+policy:
+  allow_implicit_invocation: true

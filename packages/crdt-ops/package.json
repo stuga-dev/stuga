@@ -1,0 +1,38 @@
+{
+  "name": "@stuga/crdt-ops",
+  "version": "0.0.1",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stuga/protocol": "workspace:*",
+    "@tiptap/core": "3.31.3",
+    "@tiptap/extension-code": "3.31.3",
+    "@tiptap/extension-image": "3.31.3",
+    "@tiptap/extension-table": "3.31.3",
+    "@tiptap/extension-table-cell": "3.31.3",
+    "@tiptap/extension-table-header": "3.31.3",
+    "@tiptap/extension-table-row": "3.31.3",
+    "@tiptap/starter-kit": "3.31.3",
+    "@tiptap/y-tiptap": "3.0.9",
+    "markdown-it": "^15.0.2",
+    "markdown-it-footnote": "^4.0.0",
+    "prosemirror-markdown": "^1.13.8",
+    "prosemirror-model": "^1.25.12",
+    "yjs": "^13.6.33"
+  },
+  "devDependencies": {
+    "@tiptap/extension-code-block": "3.31.3",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

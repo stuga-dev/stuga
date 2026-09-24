@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+  <title>Stuga</title>
+  <welcome file="welcome.html" mime-type="text/html"/>
+  <license file="LICENSE.txt"/>
+  <conclusion file="conclusion.html" mime-type="text/html"/>
+  <options customize="never" require-scripts="true" rootVolumeOnly="true" hostArchitectures="arm64"/>
+  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+  <volume-check>
+    <allowed-os-versions>
+      <os-version min="13.0"/>
+    </allowed-os-versions>
+  </volume-check>
+  <choices-outline>
+    <line choice="dev.stuga.node"/>
+  </choices-outline>
+  <choice id="dev.stuga.node" title="Stuga" visible="false">
+    <pkg-ref id="dev.stuga.node"/>
+  </choice>
+  <pkg-ref id="dev.stuga.node" version="@VERSION@" onConclusion="none">stuga-node.pkg</pkg-ref>
+  <product id="dev.stuga" version="@VERSION@"/>
+</installer-gui-script>

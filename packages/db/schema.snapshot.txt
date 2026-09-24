@@ -1,0 +1,646 @@
+# Stuga schema snapshot — GENERATED, do not edit by hand.
+#
+# Regenerate with:  pnpm --filter @stuga/db schema:snapshot
+# A diff here is the visible half of a migration. If one appears that no
+# migration in this change explains, something is wrong.
+
+TABLE agent_runs
+  accepted integer NOT NULL DEFAULT 0
+  acknowledged boolean NOT NULL DEFAULT false
+  agent text NOT NULL
+  agent_alias text NOT NULL
+  applied integer NOT NULL DEFAULT 0
+  auto_applied boolean NOT NULL DEFAULT false
+  client text
+  conflicts integer NOT NULL DEFAULT 0
+  created_at timestamp with time zone NOT NULL
+  doc_id text NOT NULL
+  doc_kind text NOT NULL
+  doc_title text NOT NULL DEFAULT ''::text
+  model text
+  pending integer NOT NULL DEFAULT 0
+  rejected integer NOT NULL DEFAULT 0
+  reverted boolean NOT NULL DEFAULT false
+  review_mode text NOT NULL DEFAULT 'review'::text
+  reviewer text NOT NULL
+  run_id text NOT NULL
+  source text NOT NULL
+  status text NOT NULL
+  updated_at timestamp with time zone NOT NULL
+  workspace_id text NOT NULL
+  CONSTRAINT agent_runs_doc_kind_check CHECK ((doc_kind = ANY (ARRAY['prose'::text, 'database'::text])))
+  CONSTRAINT agent_runs_pkey PRIMARY KEY (run_id)
+  CONSTRAINT agent_runs_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX agent_runs_doc_idx CREATE INDEX agent_runs_doc_idx ON public.agent_runs USING btree (doc_id)
+  INDEX agent_runs_pkey CREATE UNIQUE INDEX agent_runs_pkey ON public.agent_runs USING btree (run_id)
+  INDEX agent_runs_ws_agent_idx CREATE INDEX agent_runs_ws_agent_idx ON public.agent_runs USING btree (workspace_id, agent_alias, updated_at DESC)
+  INDEX agent_runs_ws_updated_idx CREATE INDEX agent_runs_ws_updated_idx ON public.agent_runs USING btree (workspace_id, updated_at DESC)
+
+TABLE ai_usage
+  alias text NOT NULL
+  cache_read_tokens integer NOT NULL DEFAULT 0
+  cache_write_tokens integer NOT NULL DEFAULT 0
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  doc_id text
+  id bigint NOT NULL DEFAULT nextval('ai_usage_id_seq'::regclass)
+  input_tokens integer NOT NULL DEFAULT 0
+  kind text NOT NULL
+  model text NOT NULL
+  output_tokens integer NOT NULL DEFAULT 0
+  status text NOT NULL DEFAULT 'ok'::text
+  workspace_id text
+  CONSTRAINT ai_usage_pkey PRIMARY KEY (id)
+  INDEX ai_usage_alias_idx CREATE INDEX ai_usage_alias_idx ON public.ai_usage USING btree (alias, created_at DESC)
+  INDEX ai_usage_pkey CREATE UNIQUE INDEX ai_usage_pkey ON public.ai_usage USING btree (id)
+  INDEX ai_usage_ws_month_idx CREATE INDEX ai_usage_ws_month_idx ON public.ai_usage USING btree (workspace_id, created_at)
+
+TABLE api_keys
+  access text NOT NULL DEFAULT 'propose'::text
+  agent_id text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  expires_at timestamp with time zone
+  key_id text NOT NULL
+  last_used_at timestamp with time zone
+  name text NOT NULL DEFAULT ''::text
+  owner text NOT NULL
+  revoked_at timestamp with time zone
+  revoked_by text
+  rotated_at timestamp with time zone
+  scope_folders ARRAY
+  secret_hash text NOT NULL
+  workspace_id text NOT NULL
+  CONSTRAINT api_keys_access_check CHECK ((access = ANY (ARRAY['read'::text, 'propose'::text])))
+  CONSTRAINT api_keys_pkey PRIMARY KEY (key_id)
+  CONSTRAINT api_keys_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX api_keys_agent_uniq CREATE UNIQUE INDEX api_keys_agent_uniq ON public.api_keys USING btree (agent_id)
+  INDEX api_keys_owner_idx CREATE INDEX api_keys_owner_idx ON public.api_keys USING btree (owner)
+  INDEX api_keys_pkey CREATE UNIQUE INDEX api_keys_pkey ON public.api_keys USING btree (key_id)
+  INDEX api_keys_ws_idx CREATE INDEX api_keys_ws_idx ON public.api_keys USING btree (workspace_id)
+
+TABLE ask_threads
+  collection_id text
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  owner text NOT NULL
+  thread_id text NOT NULL
+  title text NOT NULL DEFAULT ''::text
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+  workspace_id text NOT NULL
+  CONSTRAINT ask_threads_collection_id_fkey FOREIGN KEY (collection_id) REFERENCES collections(collection_id) ON DELETE SET NULL
+  CONSTRAINT ask_threads_pkey PRIMARY KEY (thread_id)
+  CONSTRAINT ask_threads_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX ask_threads_pkey CREATE UNIQUE INDEX ask_threads_pkey ON public.ask_threads USING btree (thread_id)
+  INDEX ask_threads_ws_owner_idx CREATE INDEX ask_threads_ws_owner_idx ON public.ask_threads USING btree (workspace_id, owner, updated_at DESC)
+
+TABLE ask_turns
+  answer text NOT NULL DEFAULT ''::text
+  citations jsonb NOT NULL DEFAULT '[]'::jsonb
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  input_tokens integer NOT NULL DEFAULT 0
+  model text NOT NULL DEFAULT ''::text
+  output_tokens integer NOT NULL DEFAULT 0
+  question text NOT NULL
+  rounds integer NOT NULL DEFAULT 0
+  seq integer NOT NULL
+  steps jsonb NOT NULL DEFAULT '[]'::jsonb
+  stop_reason text NOT NULL DEFAULT 'complete'::text
+  thread_id text NOT NULL
+  CONSTRAINT ask_turns_pkey PRIMARY KEY (thread_id, seq)
+  CONSTRAINT ask_turns_thread_id_fkey FOREIGN KEY (thread_id) REFERENCES ask_threads(thread_id) ON DELETE CASCADE
+  INDEX ask_turns_pkey CREATE UNIQUE INDEX ask_turns_pkey ON public.ask_turns USING btree (thread_id, seq)
+
+TABLE audit_events
+  action text NOT NULL
+  actor text NOT NULL
+  actor_kind text NOT NULL
+  at timestamp with time zone NOT NULL DEFAULT date_trunc('milliseconds'::text, now())
+  detail jsonb NOT NULL DEFAULT '{}'::jsonb
+  id bigint NOT NULL DEFAULT nextval('audit_events_id_seq'::regclass)
+  on_behalf_of text
+  request_id text
+  source text NOT NULL
+  status text NOT NULL DEFAULT 'ok'::text
+  target_id text
+  target_kind text
+  target_label text
+  workspace_id text
+  CONSTRAINT audit_events_at_ms_check CHECK ((at = date_trunc('milliseconds'::text, at)))
+  CONSTRAINT audit_events_pkey PRIMARY KEY (id)
+  INDEX audit_events_actor_at_idx CREATE INDEX audit_events_actor_at_idx ON public.audit_events USING btree (actor, at DESC)
+  INDEX audit_events_at_idx CREATE INDEX audit_events_at_idx ON public.audit_events USING btree (at)
+  INDEX audit_events_pkey CREATE UNIQUE INDEX audit_events_pkey ON public.audit_events USING btree (id)
+  INDEX audit_events_target_at_idx CREATE INDEX audit_events_target_at_idx ON public.audit_events USING btree (target_kind, target_id, at DESC)
+  INDEX audit_events_ws_at_idx CREATE INDEX audit_events_ws_at_idx ON public.audit_events USING btree (workspace_id, at DESC)
+  INDEX audit_events_ws_behalf_at_idx CREATE INDEX audit_events_ws_behalf_at_idx ON public.audit_events USING btree (workspace_id, on_behalf_of, at DESC) WHERE (on_behalf_of IS NOT NULL)
+  INDEX audit_events_ws_status_at_idx CREATE INDEX audit_events_ws_status_at_idx ON public.audit_events USING btree (workspace_id, status, at DESC)
+
+TABLE collection_items
+  added_at timestamp with time zone NOT NULL DEFAULT now()
+  collection_id text NOT NULL
+  doc_id text
+  folder_id text
+  CONSTRAINT collection_items_check CHECK (((doc_id IS NOT NULL) <> (folder_id IS NOT NULL)))
+  CONSTRAINT collection_items_collection_id_fkey FOREIGN KEY (collection_id) REFERENCES collections(collection_id) ON DELETE CASCADE
+  CONSTRAINT collection_items_doc_id_fkey FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
+  CONSTRAINT collection_items_folder_id_fkey FOREIGN KEY (folder_id) REFERENCES folders(folder_id) ON DELETE CASCADE
+  INDEX collection_items_collection_idx CREATE INDEX collection_items_collection_idx ON public.collection_items USING btree (collection_id)
+  INDEX collection_items_doc_uniq CREATE UNIQUE INDEX collection_items_doc_uniq ON public.collection_items USING btree (collection_id, doc_id) WHERE (doc_id IS NOT NULL)
+  INDEX collection_items_folder_uniq CREATE UNIQUE INDEX collection_items_folder_uniq ON public.collection_items USING btree (collection_id, folder_id) WHERE (folder_id IS NOT NULL)
+
+TABLE collections
+  collection_id text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  name text NOT NULL
+  owner text NOT NULL
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+  workspace_id text NOT NULL
+  CONSTRAINT collections_pkey PRIMARY KEY (collection_id)
+  CONSTRAINT collections_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX collections_owner_idx CREATE INDEX collections_owner_idx ON public.collections USING btree (owner)
+  INDEX collections_pkey CREATE UNIQUE INDEX collections_pkey ON public.collections USING btree (collection_id)
+  INDEX collections_ws_owner_idx CREATE INDEX collections_ws_owner_idx ON public.collections USING btree (workspace_id, owner)
+
+TABLE comments
+  anchor_end text
+  anchor_quote text
+  anchor_start text
+  author text NOT NULL
+  body text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  doc_id text NOT NULL
+  mentions jsonb NOT NULL DEFAULT '[]'::jsonb
+  num bigint NOT NULL
+  parent_num bigint
+  reactions jsonb NOT NULL DEFAULT '{}'::jsonb
+  resolved boolean NOT NULL DEFAULT false
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+  CONSTRAINT comments_doc_id_fkey FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
+  CONSTRAINT comments_doc_id_parent_num_fkey FOREIGN KEY (doc_id, parent_num) REFERENCES comments(doc_id, num) ON DELETE CASCADE
+  CONSTRAINT comments_pkey PRIMARY KEY (doc_id, num)
+  INDEX comments_parent_idx CREATE INDEX comments_parent_idx ON public.comments USING btree (doc_id, parent_num)
+  INDEX comments_pkey CREATE UNIQUE INDEX comments_pkey ON public.comments USING btree (doc_id, num)
+
+TABLE doc_chunks
+  chunk_index integer NOT NULL
+  content text NOT NULL
+  doc_id text NOT NULL
+  doc_title text
+  embed_attempts integer NOT NULL DEFAULT 0
+  embed_hash text
+  embedding USER-DEFINED
+  heading_path text
+  workspace_id text NOT NULL
+  CONSTRAINT doc_chunks_doc_id_fkey FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
+  CONSTRAINT doc_chunks_pkey PRIMARY KEY (doc_id, chunk_index)
+  INDEX doc_chunks_bm25_v1 CREATE INDEX doc_chunks_bm25_v1 ON public.doc_chunks USING bm25 (doc_id, ((((((COALESCE(doc_title, ''::text) || ' '::text) || COALESCE(heading_path, ''::text)) || ' '::text) || content))::pdb.icu('stemmer=english', 'stopwords_language=english', 'alias=chunk_text'))) WITH (key_field=doc_id)
+  INDEX doc_chunks_doc_idx CREATE INDEX doc_chunks_doc_idx ON public.doc_chunks USING btree (doc_id)
+  INDEX doc_chunks_pkey CREATE UNIQUE INDEX doc_chunks_pkey ON public.doc_chunks USING btree (doc_id, chunk_index)
+  INDEX doc_chunks_vec_hnsw CREATE INDEX doc_chunks_vec_hnsw ON public.doc_chunks USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='200')
+  INDEX doc_chunks_ws_idx CREATE INDEX doc_chunks_ws_idx ON public.doc_chunks USING btree (workspace_id)
+
+TABLE doc_mentions
+  alias text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  doc_id text NOT NULL
+  CONSTRAINT doc_mentions_doc_id_fkey FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
+  CONSTRAINT doc_mentions_pkey PRIMARY KEY (doc_id, alias)
+  INDEX doc_mentions_pkey CREATE UNIQUE INDEX doc_mentions_pkey ON public.doc_mentions USING btree (doc_id, alias)
+
+TABLE docs
+  acl_commenters ARRAY NOT NULL DEFAULT '{}'::text[]
+  acl_principals ARRAY NOT NULL DEFAULT '{}'::text[]
+  acl_writers ARRAY NOT NULL DEFAULT '{}'::text[]
+  agent_instructions text NOT NULL DEFAULT ''::text
+  agent_mode text NOT NULL DEFAULT 'review'::text
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  created_by text
+  doc_id text NOT NULL
+  doc_type text NOT NULL DEFAULT 'prose'::text
+  embedding_hash text
+  inherits_perms boolean NOT NULL DEFAULT true
+  locked boolean NOT NULL DEFAULT false
+  locked_at timestamp with time zone
+  locked_by text
+  own_grants jsonb NOT NULL DEFAULT '{"c": [], "p": [], "w": []}'::jsonb
+  owner text NOT NULL
+  page_of text
+  page_row text
+  parent_id text
+  search_hidden boolean NOT NULL DEFAULT false
+  search_text text NOT NULL DEFAULT ''::text
+  snapshot_seq bigint NOT NULL DEFAULT 0
+  title text NOT NULL DEFAULT ''::text
+  title_source text NOT NULL DEFAULT 'heading'::text
+  trashed boolean NOT NULL DEFAULT false
+  trashed_at timestamp with time zone
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+  version_floor bigint
+  workspace_id text NOT NULL
+  CONSTRAINT docs_agent_mode_check CHECK ((agent_mode = ANY (ARRAY['review'::text, 'auto'::text])))
+  CONSTRAINT docs_owner_check CHECK ((owner ~ '^(user|agent):.'::text))
+  CONSTRAINT docs_page_of_fkey FOREIGN KEY (page_of) REFERENCES docs(doc_id) ON DELETE SET NULL
+  CONSTRAINT docs_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES folders(folder_id) ON DELETE SET NULL
+  CONSTRAINT docs_pkey PRIMARY KEY (doc_id)
+  CONSTRAINT docs_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX docs_acl_gin CREATE INDEX docs_acl_gin ON public.docs USING gin (acl_principals)
+  INDEX docs_bm25_v1 CREATE INDEX docs_bm25_v1 ON public.docs USING bm25 (doc_id, ((title)::pdb.icu), ((search_text)::pdb.icu('stemmer=english', 'stopwords_language=english')), ((((title || ' '::text) || search_text))::pdb.icu('alias=all_text')), ((((title || ' '::text) || search_text))::pdb.icu('stemmer=english', 'stopwords_language=english', 'alias=all_text_en'))) WITH (key_field=doc_id)
+  INDEX docs_commenters_gin CREATE INDEX docs_commenters_gin ON public.docs USING gin (acl_commenters)
+  INDEX docs_owner_idx CREATE INDEX docs_owner_idx ON public.docs USING btree (owner)
+  INDEX docs_page_of_idx CREATE INDEX docs_page_of_idx ON public.docs USING btree (workspace_id, page_of) WHERE (page_of IS NOT NULL)
+  INDEX docs_parent_idx CREATE INDEX docs_parent_idx ON public.docs USING btree (parent_id)
+  INDEX docs_pkey CREATE UNIQUE INDEX docs_pkey ON public.docs USING btree (doc_id)
+  INDEX docs_title_trgm CREATE INDEX docs_title_trgm ON public.docs USING gin (title gin_trgm_ops)
+  INDEX docs_trashed_idx CREATE INDEX docs_trashed_idx ON public.docs USING btree (trashed_at) WHERE (trashed = true)
+  INDEX docs_writers_gin CREATE INDEX docs_writers_gin ON public.docs USING gin (acl_writers)
+  INDEX docs_ws_acl_gin CREATE INDEX docs_ws_acl_gin ON public.docs USING gin (workspace_id, acl_principals)
+  INDEX docs_ws_writers_gin CREATE INDEX docs_ws_writers_gin ON public.docs USING gin (workspace_id, acl_writers)
+
+TABLE favorites
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  doc_id text NOT NULL
+  user_alias text NOT NULL
+  CONSTRAINT favorites_doc_id_fkey FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
+  CONSTRAINT favorites_pkey PRIMARY KEY (user_alias, doc_id)
+  INDEX favorites_pkey CREATE UNIQUE INDEX favorites_pkey ON public.favorites USING btree (user_alias, doc_id)
+
+TABLE folders
+  acl_principals ARRAY NOT NULL DEFAULT '{}'::text[]
+  acl_writers ARRAY NOT NULL DEFAULT '{}'::text[]
+  agent_instructions text NOT NULL DEFAULT ''::text
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  folder_id text NOT NULL
+  inherits_perms boolean NOT NULL DEFAULT true
+  own_grants jsonb NOT NULL DEFAULT '{"c": [], "p": [], "w": []}'::jsonb
+  owner text NOT NULL
+  parent_id text
+  title text NOT NULL
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+  workspace_id text NOT NULL
+  CONSTRAINT folders_owner_check CHECK ((owner ~ '^(user|agent):.'::text))
+  CONSTRAINT folders_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES folders(folder_id) ON DELETE SET NULL
+  CONSTRAINT folders_pkey PRIMARY KEY (folder_id)
+  CONSTRAINT folders_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX folders_acl_gin CREATE INDEX folders_acl_gin ON public.folders USING gin (acl_principals)
+  INDEX folders_parent_idx CREATE INDEX folders_parent_idx ON public.folders USING btree (parent_id)
+  INDEX folders_pkey CREATE UNIQUE INDEX folders_pkey ON public.folders USING btree (folder_id)
+  INDEX folders_writers_gin CREATE INDEX folders_writers_gin ON public.folders USING gin (acl_writers)
+  INDEX folders_ws_acl_gin CREATE INDEX folders_ws_acl_gin ON public.folders USING gin (workspace_id, acl_principals)
+
+TABLE groups
+  group_id text NOT NULL
+  members ARRAY NOT NULL DEFAULT '{}'::text[]
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+  workspace_id text NOT NULL
+  CONSTRAINT groups_pkey PRIMARY KEY (workspace_id, group_id)
+  CONSTRAINT groups_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX groups_members_gin CREATE INDEX groups_members_gin ON public.groups USING gin (members)
+  INDEX groups_pkey CREATE UNIQUE INDEX groups_pkey ON public.groups USING btree (workspace_id, group_id)
+
+TABLE jobs
+  attempts integer NOT NULL DEFAULT 0
+  available_at timestamp with time zone NOT NULL DEFAULT now()
+  body jsonb NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  dead_at timestamp with time zone
+  id bigint NOT NULL DEFAULT nextval('jobs_id_seq'::regclass)
+  last_error text
+  locked_at timestamp with time zone
+  CONSTRAINT jobs_pkey PRIMARY KEY (id)
+  INDEX jobs_pkey CREATE UNIQUE INDEX jobs_pkey ON public.jobs USING btree (id)
+  INDEX jobs_ready_idx CREATE INDEX jobs_ready_idx ON public.jobs USING btree (available_at, id) WHERE (dead_at IS NULL)
+
+TABLE local_accounts
+  alias text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  password_hash text NOT NULL
+  CONSTRAINT local_accounts_alias_fkey FOREIGN KEY (alias) REFERENCES users(alias) ON DELETE CASCADE
+  CONSTRAINT local_accounts_pkey PRIMARY KEY (alias)
+  INDEX local_accounts_pkey CREATE UNIQUE INDEX local_accounts_pkey ON public.local_accounts USING btree (alias)
+
+TABLE node_admins
+  alias text NOT NULL
+  granted_at timestamp with time zone NOT NULL DEFAULT now()
+  granted_by text
+  CONSTRAINT node_admins_alias_fkey FOREIGN KEY (alias) REFERENCES users(alias) ON DELETE CASCADE
+  CONSTRAINT node_admins_pkey PRIMARY KEY (alias)
+  INDEX node_admins_pkey CREATE UNIQUE INDEX node_admins_pkey ON public.node_admins USING btree (alias)
+
+TABLE node_ai_settings
+  chat_default_model text
+  chat_enabled boolean
+  chat_endpoints jsonb NOT NULL DEFAULT '[]'::jsonb
+  embed_api_key_fp text
+  embed_base_url text
+  embed_enabled boolean
+  embed_model text
+  embed_provider text
+  id boolean NOT NULL DEFAULT true
+  retrieval_max_distance double precision
+  search_max_distance double precision
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+  updated_by text
+  CONSTRAINT node_ai_settings_embed_provider_check CHECK ((embed_provider = ANY (ARRAY['anthropic'::text, 'openai'::text, 'ollama'::text])))
+  CONSTRAINT node_ai_settings_id_check CHECK (id)
+  CONSTRAINT node_ai_settings_pkey PRIMARY KEY (id)
+  CONSTRAINT node_ai_settings_retrieval_max_distance_check CHECK (((retrieval_max_distance > (0)::double precision) AND (retrieval_max_distance <= (2)::double precision)))
+  CONSTRAINT node_ai_settings_search_max_distance_check CHECK (((search_max_distance > (0)::double precision) AND (search_max_distance <= (2)::double precision)))
+  INDEX node_ai_settings_pkey CREATE UNIQUE INDEX node_ai_settings_pkey ON public.node_ai_settings USING btree (id)
+
+TABLE node_settings
+  ai_usage_retention_days integer
+  ask_thread_retention_days integer
+  audit_retention_days integer
+  backup_auto boolean
+  backup_hour smallint
+  brand_accent_color text
+  database_ops_keep integer
+  email_from text
+  id boolean NOT NULL DEFAULT true
+  idp_client_id text
+  idp_client_secret_label text
+  idp_issuer text
+  idp_label text
+  idp_scopes text
+  max_upload_bytes bigint
+  node_name text
+  notify_sink text
+  notify_webhook_label text
+  smtp_label text
+  time_zone text
+  update_check boolean
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+  updated_by text
+  CONSTRAINT node_settings_backup_hour_check CHECK (((backup_hour IS NULL) OR ((backup_hour >= 0) AND (backup_hour <= 23))))
+  CONSTRAINT node_settings_brand_accent_color_check CHECK (((brand_accent_color IS NULL) OR (brand_accent_color ~ '^#[0-9a-fA-F]{6}$'::text)))
+  CONSTRAINT node_settings_check CHECK (((idp_issuer IS NULL) = (idp_client_id IS NULL)))
+  CONSTRAINT node_settings_id_check CHECK (id)
+  CONSTRAINT node_settings_node_name_check CHECK (((node_name IS NULL) OR ((btrim(node_name) <> ''::text) AND (length(node_name) <= 80))))
+  CONSTRAINT node_settings_notify_sink_check CHECK ((notify_sink = ANY (ARRAY['slack'::text, 'teams'::text, 'discord'::text, 'email'::text, 'webhook'::text, 'none'::text])))
+  CONSTRAINT node_settings_pkey PRIMARY KEY (id)
+  CONSTRAINT node_settings_time_zone_check CHECK (((time_zone IS NULL) OR ((length(time_zone) >= 1) AND (length(time_zone) <= 64))))
+  INDEX node_settings_pkey CREATE UNIQUE INDEX node_settings_pkey ON public.node_settings USING btree (id)
+
+TABLE node_state
+  app_version text NOT NULL
+  backup_attempted_at timestamp with time zone
+  backup_error text
+  first_boot_at timestamp with time zone NOT NULL DEFAULT now()
+  id boolean NOT NULL DEFAULT true
+  last_boot_at timestamp with time zone NOT NULL DEFAULT now()
+  node_id text NOT NULL
+  update_check_error text
+  update_checked_at timestamp with time zone
+  update_feed jsonb
+  CONSTRAINT node_state_id_check CHECK (id)
+  CONSTRAINT node_state_node_id_check CHECK ((node_id ~ '^[a-z2-7]{16}$'::text))
+  CONSTRAINT node_state_pkey PRIMARY KEY (id)
+  INDEX node_state_pkey CREATE UNIQUE INDEX node_state_pkey ON public.node_state USING btree (id)
+
+TABLE notifications
+  actor_alias text
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  event_type text NOT NULL
+  id text NOT NULL
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb
+  read boolean NOT NULL DEFAULT false
+  recipient_alias text NOT NULL
+  resource_id text
+  resource_title text
+  resource_url text
+  workspace_id text
+  CONSTRAINT notifications_pkey PRIMARY KEY (id)
+  CONSTRAINT notifications_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX notifications_pkey CREATE UNIQUE INDEX notifications_pkey ON public.notifications USING btree (id)
+  INDEX notifications_recipient_idx CREATE INDEX notifications_recipient_idx ON public.notifications USING btree (recipient_alias, created_at DESC)
+  INDEX notifications_recipient_unread_idx CREATE INDEX notifications_recipient_unread_idx ON public.notifications USING btree (recipient_alias) WHERE (read = false)
+  INDEX notifications_workspace_idx CREATE INDEX notifications_workspace_idx ON public.notifications USING btree (workspace_id)
+
+TABLE oauth_clients
+  client_id text NOT NULL
+  client_name text NOT NULL DEFAULT ''::text
+  client_secret_hash text
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  last_used_at timestamp with time zone
+  redirect_uris ARRAY NOT NULL DEFAULT '{}'::text[]
+  CONSTRAINT oauth_clients_pkey PRIMARY KEY (client_id)
+  INDEX oauth_clients_last_used_idx CREATE INDEX oauth_clients_last_used_idx ON public.oauth_clients USING btree (last_used_at)
+  INDEX oauth_clients_pkey CREATE UNIQUE INDEX oauth_clients_pkey ON public.oauth_clients USING btree (client_id)
+
+TABLE oauth_codes
+  client_id text NOT NULL
+  code_challenge text NOT NULL
+  code_hash text NOT NULL
+  expires_at timestamp with time zone NOT NULL
+  redirect_uri text NOT NULL
+  user_alias text NOT NULL
+  workspace_id text NOT NULL
+  CONSTRAINT oauth_codes_pkey PRIMARY KEY (code_hash)
+  CONSTRAINT oauth_codes_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX oauth_codes_expiry_idx CREATE INDEX oauth_codes_expiry_idx ON public.oauth_codes USING btree (expires_at)
+  INDEX oauth_codes_pkey CREATE UNIQUE INDEX oauth_codes_pkey ON public.oauth_codes USING btree (code_hash)
+
+TABLE oidc_flows
+  binding_hash text NOT NULL
+  code_verifier text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  expires_at timestamp with time zone NOT NULL
+  link_alias text
+  nonce text NOT NULL
+  prompt text
+  redirect_uri text NOT NULL
+  return_to text NOT NULL
+  state text NOT NULL
+  CONSTRAINT oidc_flows_link_alias_fkey FOREIGN KEY (link_alias) REFERENCES users(alias) ON DELETE CASCADE
+  CONSTRAINT oidc_flows_pkey PRIMARY KEY (state)
+  CONSTRAINT oidc_flows_prompt_check CHECK ((prompt = ANY (ARRAY['none'::text, 'select_account'::text])))
+  INDEX oidc_flows_expiry_idx CREATE INDEX oidc_flows_expiry_idx ON public.oidc_flows USING btree (expires_at)
+  INDEX oidc_flows_pkey CREATE UNIQUE INDEX oidc_flows_pkey ON public.oidc_flows USING btree (state)
+
+TABLE oidc_tickets
+  alias text
+  binding_hash text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  email text
+  expires_at timestamp with time zone NOT NULL
+  issuer text
+  kind text NOT NULL
+  name text
+  preferred_username text
+  return_to text NOT NULL
+  sub text
+  ticket_hash text NOT NULL
+  CONSTRAINT oidc_tickets_alias_fkey FOREIGN KEY (alias) REFERENCES users(alias) ON DELETE CASCADE
+  CONSTRAINT oidc_tickets_check CHECK ((((kind = 'session'::text) AND (alias IS NOT NULL) AND (sub IS NULL) AND (issuer IS NULL)) OR ((kind = 'first_visit'::text) AND (alias IS NULL) AND (sub IS NOT NULL) AND (issuer IS NOT NULL))))
+  CONSTRAINT oidc_tickets_kind_check CHECK ((kind = ANY (ARRAY['session'::text, 'first_visit'::text])))
+  CONSTRAINT oidc_tickets_pkey PRIMARY KEY (ticket_hash)
+  INDEX oidc_tickets_expiry_idx CREATE INDEX oidc_tickets_expiry_idx ON public.oidc_tickets USING btree (expires_at)
+  INDEX oidc_tickets_pkey CREATE UNIQUE INDEX oidc_tickets_pkey ON public.oidc_tickets USING btree (ticket_hash)
+
+TABLE password_resets
+  alias text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  created_by text NOT NULL
+  expires_at timestamp with time zone NOT NULL
+  token_hash text NOT NULL
+  used_at timestamp with time zone
+  CONSTRAINT password_resets_alias_fkey FOREIGN KEY (alias) REFERENCES users(alias) ON DELETE CASCADE
+  CONSTRAINT password_resets_pkey PRIMARY KEY (token_hash)
+  INDEX password_resets_alias_idx CREATE INDEX password_resets_alias_idx ON public.password_resets USING btree (alias)
+  INDEX password_resets_expiry_idx CREATE INDEX password_resets_expiry_idx ON public.password_resets USING btree (expires_at)
+  INDEX password_resets_pkey CREATE UNIQUE INDEX password_resets_pkey ON public.password_resets USING btree (token_hash)
+
+TABLE refresh_sessions
+  alias text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  expires_at timestamp with time zone NOT NULL
+  id text NOT NULL
+  replaced_by text
+  revoked_at timestamp with time zone
+  token_hash text NOT NULL
+  CONSTRAINT refresh_sessions_pkey PRIMARY KEY (id)
+  CONSTRAINT refresh_sessions_token_hash_key UNIQUE (token_hash)
+  INDEX refresh_sessions_alias_idx CREATE INDEX refresh_sessions_alias_idx ON public.refresh_sessions USING btree (alias)
+  INDEX refresh_sessions_expiry_idx CREATE INDEX refresh_sessions_expiry_idx ON public.refresh_sessions USING btree (expires_at)
+  INDEX refresh_sessions_pkey CREATE UNIQUE INDEX refresh_sessions_pkey ON public.refresh_sessions USING btree (id)
+  INDEX refresh_sessions_token_hash_key CREATE UNIQUE INDEX refresh_sessions_token_hash_key ON public.refresh_sessions USING btree (token_hash)
+
+TABLE schema_migrations
+  applied_at timestamp with time zone NOT NULL DEFAULT now()
+  checksum text NOT NULL
+  filename text NOT NULL
+  id integer NOT NULL
+  CONSTRAINT schema_migrations_pkey PRIMARY KEY (id)
+  INDEX schema_migrations_pkey CREATE UNIQUE INDEX schema_migrations_pkey ON public.schema_migrations USING btree (id)
+
+TABLE share_links
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  created_by text NOT NULL
+  doc_id text NOT NULL
+  expires_at timestamp with time zone
+  revoked_at timestamp with time zone
+  role text NOT NULL DEFAULT 'viewer'::text
+  token_hash text NOT NULL
+  workspace_id text NOT NULL
+  CONSTRAINT share_links_doc_id_fkey FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
+  CONSTRAINT share_links_pkey PRIMARY KEY (token_hash)
+  CONSTRAINT share_links_role_check CHECK ((role = ANY (ARRAY['viewer'::text, 'commenter'::text, 'editor'::text])))
+  INDEX share_links_doc_idx CREATE INDEX share_links_doc_idx ON public.share_links USING btree (doc_id)
+  INDEX share_links_pkey CREATE UNIQUE INDEX share_links_pkey ON public.share_links USING btree (token_hash)
+
+TABLE user_nodes
+  alias text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  id text NOT NULL
+  label text NOT NULL
+  origin text NOT NULL
+  position integer NOT NULL
+  CONSTRAINT user_nodes_alias_fkey FOREIGN KEY (alias) REFERENCES users(alias) ON DELETE CASCADE
+  CONSTRAINT user_nodes_alias_origin_key UNIQUE (alias, origin)
+  CONSTRAINT user_nodes_label_check CHECK (((length(label) >= 1) AND (length(label) <= 80)))
+  CONSTRAINT user_nodes_origin_check CHECK ((origin ~ '^https?://[^/\s]+$'::text))
+  CONSTRAINT user_nodes_pkey PRIMARY KEY (id)
+  INDEX user_nodes_alias_idx CREATE INDEX user_nodes_alias_idx ON public.user_nodes USING btree (alias, "position")
+  INDEX user_nodes_alias_origin_key CREATE UNIQUE INDEX user_nodes_alias_origin_key ON public.user_nodes USING btree (alias, origin)
+  INDEX user_nodes_pkey CREATE UNIQUE INDEX user_nodes_pkey ON public.user_nodes USING btree (id)
+
+TABLE users
+  alias text NOT NULL
+  display_name text NOT NULL DEFAULT ''::text
+  email text
+  oidc_sub text
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+  username text NOT NULL
+  CONSTRAINT users_oidc_sub_key UNIQUE (oidc_sub)
+  CONSTRAINT users_pkey PRIMARY KEY (alias)
+  CONSTRAINT users_username_check CHECK ((username ~ '^[a-z0-9][a-z0-9._-]{1,31}$'::text))
+  CONSTRAINT users_username_key UNIQUE (username)
+  INDEX users_oidc_sub_key CREATE UNIQUE INDEX users_oidc_sub_key ON public.users USING btree (oidc_sub)
+  INDEX users_pkey CREATE UNIQUE INDEX users_pkey ON public.users USING btree (alias)
+  INDEX users_username_key CREATE UNIQUE INDEX users_username_key ON public.users USING btree (username)
+
+TABLE versions
+  authors ARRAY NOT NULL DEFAULT '{}'::text[]
+  blob_key text NOT NULL
+  chars integer
+  chars_added integer
+  chars_removed integer
+  doc_id text NOT NULL
+  seq bigint NOT NULL
+  ts timestamp with time zone NOT NULL DEFAULT now()
+  CONSTRAINT versions_doc_id_fkey FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
+  CONSTRAINT versions_pkey PRIMARY KEY (doc_id, seq)
+  INDEX versions_pkey CREATE UNIQUE INDEX versions_pkey ON public.versions USING btree (doc_id, seq)
+
+TABLE webhooks
+  active boolean NOT NULL DEFAULT true
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  created_by text NOT NULL
+  events ARRAY NOT NULL DEFAULT '{}'::text[]
+  failures integer NOT NULL DEFAULT 0
+  folder_id text
+  last_delivery_at timestamp with time zone
+  last_status integer
+  secret text NOT NULL
+  url text NOT NULL
+  webhook_id text NOT NULL
+  workspace_id text NOT NULL
+  CONSTRAINT webhooks_folder_id_fkey FOREIGN KEY (folder_id) REFERENCES folders(folder_id) ON DELETE CASCADE
+  CONSTRAINT webhooks_pkey PRIMARY KEY (webhook_id)
+  CONSTRAINT webhooks_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX webhooks_pkey CREATE UNIQUE INDEX webhooks_pkey ON public.webhooks USING btree (webhook_id)
+  INDEX webhooks_ws_idx CREATE INDEX webhooks_ws_idx ON public.webhooks USING btree (workspace_id)
+
+TABLE workspace_events
+  actor text NOT NULL
+  actor_kind text NOT NULL
+  at timestamp with time zone NOT NULL DEFAULT now()
+  doc_id text
+  id bigint NOT NULL DEFAULT nextval('workspace_events_id_seq'::regclass)
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb
+  type text NOT NULL
+  workspace_id text NOT NULL
+  CONSTRAINT workspace_events_pkey PRIMARY KEY (id)
+  CONSTRAINT workspace_events_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX workspace_events_at_idx CREATE INDEX workspace_events_at_idx ON public.workspace_events USING btree (at)
+  INDEX workspace_events_pkey CREATE UNIQUE INDEX workspace_events_pkey ON public.workspace_events USING btree (id)
+  INDEX workspace_events_ws_id_idx CREATE INDEX workspace_events_ws_id_idx ON public.workspace_events USING btree (workspace_id, id)
+
+TABLE workspace_invites
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  created_by text NOT NULL
+  expires_at timestamp with time zone
+  max_uses integer
+  revoked_at timestamp with time zone
+  role text NOT NULL DEFAULT 'member'::text
+  token_hash text NOT NULL
+  token_hint text
+  use_count integer NOT NULL DEFAULT 0
+  workspace_id text NOT NULL
+  CONSTRAINT workspace_invites_pkey PRIMARY KEY (token_hash)
+  CONSTRAINT workspace_invites_role_check CHECK ((role = ANY (ARRAY['admin'::text, 'member'::text, 'guest'::text])))
+  CONSTRAINT workspace_invites_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX workspace_invites_pkey CREATE UNIQUE INDEX workspace_invites_pkey ON public.workspace_invites USING btree (token_hash)
+  INDEX workspace_invites_ws_idx CREATE INDEX workspace_invites_ws_idx ON public.workspace_invites USING btree (workspace_id)
+
+TABLE workspace_members
+  alias text NOT NULL
+  joined_at timestamp with time zone NOT NULL DEFAULT now()
+  role text NOT NULL DEFAULT 'member'::text
+  workspace_id text NOT NULL
+  CONSTRAINT workspace_members_pkey PRIMARY KEY (workspace_id, alias)
+  CONSTRAINT workspace_members_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text, 'guest'::text])))
+  CONSTRAINT workspace_members_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX workspace_members_alias_idx CREATE INDEX workspace_members_alias_idx ON public.workspace_members USING btree (alias, joined_at)
+  INDEX workspace_members_pkey CREATE UNIQUE INDEX workspace_members_pkey ON public.workspace_members USING btree (workspace_id, alias)
+  INDEX workspace_members_ws_role_idx CREATE INDEX workspace_members_ws_role_idx ON public.workspace_members USING btree (workspace_id, role)
+
+TABLE workspaces
+  agent_instructions text NOT NULL DEFAULT ''::text
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  default_doc_access text NOT NULL DEFAULT 'workspace_edit'::text
+  embedding_backfill_at timestamp with time zone
+  embedding_backfill_cursor text
+  name text NOT NULL
+  workspace_id text NOT NULL
+  CONSTRAINT workspaces_pkey PRIMARY KEY (workspace_id)
+  INDEX workspaces_embedding_backfill_idx CREATE INDEX workspaces_embedding_backfill_idx ON public.workspaces USING btree (embedding_backfill_at) WHERE (embedding_backfill_at IS NOT NULL)
+  INDEX workspaces_pkey CREATE UNIQUE INDEX workspaces_pkey ON public.workspaces USING btree (workspace_id)

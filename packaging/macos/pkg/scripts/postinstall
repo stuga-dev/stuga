@@ -1,0 +1,116 @@
+#!/bin/bash
+# After a Stuga package installs its runtime: the _stuga account, the directories, `current`, the
+# three jobs, the database cluster once, and a start. A first install then opens the menu-bar app
+# and the setup page for whoever is at the Mac; an upgrade starts the new version, which backs up
+# the data before it changes anything. build-pkg.sh fills in the version.
+set -euo pipefail
+
+main() {
+  local version="@VERSION@" port=8787
+  local root="/Library/Application Support/Stuga" logs="/Library/Logs/Stuga"
+  local runtime="$root/runtime/$version"
+  [ -x "$runtime/node/bin/node" ] || { echo "error: the package left no runtime at $runtime" >&2; exit 1; }
+
+  ensure_account
+
+  install -d -o root -g wheel -m 0755 "$root" "$root/runtime" "$root/status"
+  install -d -o _stuga -g _stuga -m 0750 "$root/data"
+  install -d -o _stuga -g _stuga -m 0700 "$root/data/node"
+  # The node drops upgrade requests here; only root, which runs the helper, reads them.
+  install -d -o root -g _stuga -m 0770 "$root/requests"
+  install -d -o _stuga -g admin -m 0750 "$logs"
+  local previous
+  previous="$(basename "$(readlink "$root/current" 2> /dev/null || true)")"
+  ln -sfn "runtime/$version" "$root/current"
+
+  # The address: kept from an earlier install, else this Mac's local name.
+  local origin
+  origin="$(plutil -extract EnvironmentVariables.PUBLIC_ORIGIN raw /Library/LaunchDaemons/dev.stuga.node.plist 2> /dev/null || true)"
+  [ -n "$origin" ] || origin="http://$(scutil --get LocalHostName | tr '[:upper:]' '[:lower:]').local:$port"
+  STUGA_LAUNCHD_TEMPLATES="$runtime/share/launchd/templates" bash "$runtime/share/launchd/render-launchd.sh" \
+    --mode daemon --out /Library/LaunchDaemons --public-origin "$origin" --bind 0.0.0.0 --port "$port" \
+    --extra-origins "http://127.0.0.1:$port" --keep-env > /dev/null
+  chown root:wheel /Library/LaunchDaemons/dev.stuga.*.plist
+  chmod 0644 /Library/LaunchDaemons/dev.stuga.*.plist
+
+  if [ ! -f "$root/data/pgdata/PG_VERSION" ]; then
+    bash "$runtime/bin/init-cluster.sh" --pgbin "$runtime/postgres/bin" --data "$root/data/pgdata" \
+      --socket "$root/data/run" --os-user _stuga
+  fi
+  # The live halves are copied mid-write; Time Machine keeps backups/, which the node fills daily.
+  tmutil addexclusion "$root/data/pgdata" "$root/data/node" > /dev/null 2>&1 || true
+
+  local label
+  for label in dev.stuga.postgres dev.stuga.node; do
+    launchctl bootout "system/$label" > /dev/null 2>&1 || true
+    launchctl bootstrap system "/Library/LaunchDaemons/$label.plist"
+  done
+  # Never reloaded here: an upgrade the helper started is running inside it.
+  launchctl print system/dev.stuga.helper > /dev/null 2>&1 ||
+    launchctl bootstrap system /Library/LaunchDaemons/dev.stuga.helper.plist
+
+  prune_runtimes "$root" "$version" "$previous"
+  greet "$root" "$origin" "$port"
+}
+
+# The _stuga user and group, hidden, with no shell and no home, at an unused id.
+ensure_account() {
+  local id
+  if dscl . -read /Groups/_stuga > /dev/null 2>&1 && dscl . -read /Users/_stuga > /dev/null 2>&1; then return; fi
+  id="$(free_id)"
+  if ! dscl . -read /Groups/_stuga > /dev/null 2>&1; then
+    dscl . -create /Groups/_stuga
+    dscl . -create /Groups/_stuga PrimaryGroupID "$id"
+    dscl . -create /Groups/_stuga RealName "Stuga"
+    dscl . -create /Groups/_stuga Password '*'
+  fi
+  if ! dscl . -read /Users/_stuga > /dev/null 2>&1; then
+    dscl . -create /Users/_stuga
+    dscl . -create /Users/_stuga UniqueID "$id"
+    dscl . -create /Users/_stuga PrimaryGroupID "$(dscl . -read /Groups/_stuga PrimaryGroupID | awk '{print $2}')"
+    dscl . -create /Users/_stuga UserShell /usr/bin/false
+    dscl . -create /Users/_stuga NFSHomeDirectory /var/empty
+    dscl . -create /Users/_stuga RealName "Stuga"
+    dscl . -create /Users/_stuga Password '*'
+    dscl . -create /Users/_stuga IsHidden 1
+  fi
+}
+
+# An id from 250 to 400 that no user and no group has.
+free_id() {
+  local used id
+  used="$( (dscl . -list /Users UniqueID; dscl . -list /Groups PrimaryGroupID) | awk '{print $2}')"
+  for id in $(seq 250 400); do
+    printf '%s\n' "$used" | grep -qx "$id" || { printf '%s' "$id"; return; }
+  done
+  echo "error: no free id from 250 to 400 for _stuga" >&2
+  exit 1
+}
+
+# Keep this runtime and the one it replaced, for a roll back; older ones go.
+prune_runtimes() {
+  local dir name
+  for dir in "$1"/runtime/*; do
+    name="$(basename "$dir")"
+    [ "$name" = "$2" ] || [ "$name" = "$3" ] || rm -rf "$dir"
+  done
+}
+
+# For whoever is at the Mac: the menu-bar app, and the setup page while nobody has claimed the node.
+greet() {
+  local root="$1" origin="$2" port="$3" user uid code i
+  user="$(stat -f %Su /dev/console 2> /dev/null || true)"
+  uid="$(stat -f %u /dev/console 2> /dev/null || true)"
+  [ -n "$uid" ] && [ "$user" != root ] || return 0
+  launchctl asuser "$uid" sudo -u "$user" open -a /Applications/Stuga.app > /dev/null 2>&1 || true
+  # A first start creates the database and its search indexes before it serves.
+  for i in $(seq 1 120); do
+    curl -fsS --max-time 2 -o /dev/null "http://127.0.0.1:$port/ready" 2> /dev/null && break
+    sleep 1
+  done
+  code="$(tr -d '[:space:]' < "$root/data/node/setup-code" 2> /dev/null || true)"
+  [ -n "$code" ] || return 0
+  launchctl asuser "$uid" sudo -u "$user" open "$origin/login?setup=$code" > /dev/null 2>&1 || true
+}
+
+main "$@"

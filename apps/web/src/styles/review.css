@@ -1,0 +1,152 @@
+/* --- agent run preview in the editor ------------------------------------- */
+/* Red and green, never amber, so a proposal cannot read as a comment highlight. */
+.ai-preview-delete { background: color-mix(in srgb, var(--color-background-red) 60%, transparent); text-decoration: line-through; text-decoration-color: var(--color-text-red); }
+.ai-preview-insert { background: color-mix(in srgb, var(--color-background-green) 90%, transparent); color: var(--color-text-primary); border-radius: 3px; text-decoration: none; }
+.ai-preview-insert--block { display: block; border-left: 2px solid var(--color-border-green); padding: 0.1rem 0.4rem; margin: 0.15rem 0; opacity: 0.95; }
+.ai-preview-insert--block > :first-child { margin-top: 0; }
+.ai-preview-insert--block > :last-child { margin-bottom: 0; }
+ins.ai-preview-insert { padding: 0 0.1rem; }
+
+/* A ghost's Accept is filled and Reject is an outline that turns red on hover. */
+.ai-preview-hunk-actions { display: flex; gap: 0.4rem; margin-top: 0.45rem; align-items: center; }
+.ai-preview-hunk-btn {
+  font: inherit; font-size: var(--text-body-size); line-height: var(--text-body-leading); font-weight: 600; cursor: pointer;
+  padding: 0.2rem 0.75rem; border-radius: var(--radius-element);
+  border: 1px solid var(--color-border); background: var(--color-background-surface); color: var(--color-text-primary);
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.ai-preview-hunk-btn--accept {
+  background: var(--color-success);
+  border-color: var(--color-success);
+  color: var(--color-on-success);
+}
+/* Toward the text colour: darker in the light theme, lighter in the dark. */
+.ai-preview-hunk-btn--accept:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-success) 80%, var(--color-text-primary));
+  border-color: color-mix(in srgb, var(--color-success) 80%, var(--color-text-primary));
+}
+.ai-preview-hunk-btn--reject { color: var(--color-text-secondary); }
+.ai-preview-hunk-btn--reject:hover:not(:disabled) {
+  color: var(--color-text-red);
+  border-color: var(--color-text-red);
+  background: color-mix(in srgb, var(--color-background-red) 40%, transparent);
+}
+.ai-preview-hunk-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.ai-preview-hunk-btn:disabled { opacity: 0.5; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .ai-preview-hunk-btn { transition: none; }
+}
+
+/* A merged ghost separates its hunks, so each Accept visibly belongs to one. */
+.ai-preview-hunk { display: block; }
+.ai-preview-ghost--merged .ai-preview-hunk + .ai-preview-hunk {
+  margin-top: 0.3rem; padding-top: 0.3rem; border-top: 1px dashed var(--color-border-green);
+}
+/* A decision is in flight. */
+.ai-preview-hunk--pending { opacity: 0.5; }
+/* The word form's <ins>/<del> spans carry the colour instead of a block fill. */
+.ai-preview-ghost--words { display: block; }
+/* A removal inserts nothing, so its ghost has no green fill. */
+.ai-preview-ghost--removal {
+  display: block; margin: 0.15rem 0; padding: 0.1rem 0.4rem;
+  border-left: 2px solid var(--color-border-red);
+}
+
+/* A ghost painted inside a list would otherwise grow a bullet. Among table rows
+   the ghost is a real <tr> instead, since CSS cannot stop a <div> there getting
+   an anonymous first-column cell. */
+ul > .ai-preview-ghost,
+ol > .ai-preview-ghost { list-style: none; margin-left: 0; }
+/* The shell row's one spanning cell reads as overlay, not as data. */
+.stuga-editor td.ai-preview-ghost-cell {
+  border: none; padding: 0.15rem 0; background: transparent;
+}
+.ai-preview-hunk-agent,
+.ai-preview-hunk-label { display: block; font-size: var(--text-body-size); color: var(--color-text-secondary); line-height: var(--text-body-leading); }
+.ai-preview-hunk-label { font-style: italic; }
+/* Marks the ghost the navigator just scrolled to. */
+.ai-preview-hunk--flash { animation: ai-preview-flash 1.2s ease-out 1; }
+@keyframes ai-preview-flash {
+  0% { box-shadow: 0 0 0 3px var(--color-border-green); }
+  100% { box-shadow: 0 0 0 3px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-preview-hunk--flash { animation: none; outline: 2px solid var(--color-border-green); }
+}
+
+/* --- run banners -------------------------------------------------------- */
+/* A run that just changed pulses, so a streaming agent reads as live. */
+.agent-run-bar--live { animation: agent-run-pulse 1.2s ease-in-out 2; }
+@keyframes agent-run-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.72; } }
+
+/* One line: the count stays whole and the hint ellipses, then disappears on a narrow row. */
+.agent-run-title { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
+.agent-run-title__main { flex: 0 0 auto; white-space: nowrap; }
+.agent-run-title__hint {
+  min-width: 0; flex: 0 1 auto; font-size: var(--text-body-size); font-weight: 400; color: var(--color-text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Drawn in CSS, so it stays out of the accessible name. */
+.agent-run-title__hint::before { content: "· "; }
+@media (max-width: 900px) { .agent-run-title__hint { display: none; } }
+
+.agent-run-nav { display: inline-flex; align-items: center; gap: 0.15rem; }
+.agent-run-nav__count {
+  font-size: var(--text-body-size); color: var(--color-text-secondary); font-variant-numeric: tabular-nums;
+  min-width: 4.2rem; text-align: center; white-space: nowrap;
+}
+
+/* The "Review each" drawer under its banner. */
+.agent-run-changes {
+  list-style: none; margin: 0; padding: 0.25rem 0;
+  background: var(--color-background-surface); border-bottom: 1px solid var(--color-border);
+}
+.agent-run-changes__empty {
+  margin: 0; padding: 0.5rem 1rem; font-size: 0.8rem; color: var(--color-text-secondary);
+  background: var(--color-background-surface); border-bottom: 1px solid var(--color-border);
+}
+.agent-run-change { display: flex; align-items: center; gap: 0.5rem; padding: 0.1rem 1rem; }
+.agent-run-change:hover { background: var(--color-overlay-hover); }
+.agent-run-change--busy { opacity: 0.5; }
+/* A button that jumps to the change, styled as a line of text. */
+.agent-run-change__body {
+  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 0.45rem;
+  background: none; border: none; padding: 0.3rem 0; text-align: left; cursor: pointer;
+  color: var(--color-text-primary); font-size: var(--text-body-size); line-height: var(--text-body-leading);
+}
+.agent-run-change__body:disabled { cursor: default; }
+.agent-run-change__body:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-element); }
+.agent-run-change__marker { flex: 0 0 auto; width: 0.75rem; font-weight: 700; }
+.agent-run-change__marker--add { color: var(--color-text-green); }
+.agent-run-change__marker--remove { color: var(--color-text-red); }
+.agent-run-change__marker--change { color: var(--color-text-secondary); }
+.agent-run-change__text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-run-change__note { flex: 0 0 auto; font-size: var(--text-body-size); color: var(--color-text-secondary); font-style: italic; }
+.agent-run-change__actions { flex: 0 0 auto; display: inline-flex; gap: 0.3rem; }
+
+/* Ghosted table rows use the live table's column grid and borders. */
+.ai-preview-ghost-table {
+  border-collapse: collapse;
+  max-width: 100%;
+}
+.ai-preview-ghost-table td,
+.ai-preview-ghost-table th {
+  border: 1px solid var(--color-border);
+  padding: 0.375rem 0.5rem;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+/* The database run banner's per-op list. */
+.db-run-list {
+  list-style: none; margin: 0; padding: 0.25rem 0.75rem 0.5rem;
+  border: 1px solid var(--color-border); border-top: none; border-radius: 0 0 8px 8px;
+  display: flex; flex-direction: column;
+}
+.db-run-list__row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  padding: 0.35rem 0; border-bottom: 1px solid var(--color-border);
+}
+.db-run-list__row:last-child { border-bottom: none; }
+.db-run-list__row--busy { opacity: 0.55; pointer-events: none; }
+.db-run-list__summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
