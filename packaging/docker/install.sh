@@ -111,7 +111,8 @@ until curl -fsS --max-time 5 -o /dev/null "http://127.0.0.1:$port/ready" 2>/dev/
 done
 ok "Stuga is running"
 
-code="$(docker compose exec -T node cat /data/setup-code 2>/dev/null | tr -d '[:space:]' || true)"
+# </dev/null: piped from curl, this script is bash's stdin, and exec would swallow the rest of it.
+code="$(docker compose exec -T node cat /data/setup-code </dev/null 2>/dev/null | tr -d '[:space:]' || true)"
 say ""
 if [ -n "$code" ]; then
   say "Open this link to create the administrator account:"

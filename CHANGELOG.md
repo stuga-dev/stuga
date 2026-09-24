@@ -10,6 +10,14 @@ one, the release notes say there is nothing to do.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-24
+
+### Fixed
+
+- The one-step Docker install (`curl … | bash`) stopped after "Stuga is running" without printing
+  the link that creates the administrator account. On a node installed with 0.1.0, `./stuga status`
+  prints that link.
+
 ## [0.1.0] - 2026-09-24
 
 The first release.
