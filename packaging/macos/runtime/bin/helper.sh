@@ -42,7 +42,7 @@ main() {
     local tmp
     tmp="$(mktemp "$status_dir/.upgrade.XXXXXX")"
     printf '{"version":"%s","state":"%s","message":"%s","at":"%s"}\n' \
-      "$wanted" "$1" "$(printf '%s' "$2" | tr -d '"\\' | tr '\n' ' ')" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+      "$wanted" "$1" "$(printf '%s' "$2" | tr -d '\\"' | tr '\n' ' ')" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
     chmod 0644 "$tmp"
     mv -f "$tmp" "$status_dir/upgrade.json"
   }
@@ -90,7 +90,7 @@ main() {
 
   status installing "installing Stuga $wanted"
   if installer -pkg "$pkg" -target / > "$work/installer.log" 2>&1; then
-    status done "installed Stuga $wanted"
+    status 'done' "installed Stuga $wanted"
   else
     status failed "the installer stopped: $(tail -1 "$work/installer.log")"
   fi
