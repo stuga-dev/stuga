@@ -10,4 +10,6 @@ one, the release notes say there is nothing to do.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-24
+
 The first release.
