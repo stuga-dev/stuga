@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@stuga/db", () => ({ getFolder: vi.fn(), insertApiKey: vi.fn(async () => {}) }));
 
 const { getFolder, insertApiKey } = await import("@stuga/db");
-const { agentKeyKind, createAgentKey, createConnectorKey, newAgentId } = await import("./keys.js");
+const { agentKeyKind, createAgentKey, newAgentId } = await import("./keys.js");
 import type { Ctx } from "../auth/context.js";
 
 const ctx = { sql: {}, alias: "human-1", workspaceId: "ws1", principals: ["user:human-1", "org:ws1"] } as unknown as Ctx;
@@ -21,16 +21,15 @@ describe("agent key kinds", () => {
     }
   });
 
-  it("mints a person's key with a key id and a connector's with a connector id", async () => {
+  // A connector's agent id is minted with its OAuth grant (mcp/oauth.ts), never as an api key.
+  it("mints a person's key with a key id, owned by them in their workspace", async () => {
     const key = await createAgentKey(ctx, "CI");
-    const connector = await createConnectorKey(ctx.sql, { owner: "human-1", workspaceId: "ws1", name: "Claude" });
     expect(agentKeyKind(key.agentId)).toBe("key");
-    expect(agentKeyKind(connector.agentId)).toBe("connector");
-    expect(vi.mocked(insertApiKey).mock.calls[1]![1]).toMatchObject({
-      agentId: connector.agentId,
+    expect(vi.mocked(insertApiKey).mock.calls[0]![1]).toMatchObject({
+      agentId: key.agentId,
       owner: "human-1",
       workspaceId: "ws1",
-      name: "Claude",
+      name: "CI",
     });
   });
 });

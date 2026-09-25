@@ -33,7 +33,7 @@ describe("renderRead", () => {
 
   it("says the text includes the agent's own unreviewed edits", () => {
     expect(renderRead({ markdown: "body", run_id: "run_abc", pending: 2 })).toBe(
-      'body\n\n[note] Includes your 2 pending edit(s) awaiting user review (run run_abc). Use action:"status" to check decisions.',
+      'body\n\n[note] Includes your 2 pending edit(s) awaiting user review (run run_abc). Use `markdown` action:status to check decisions.',
     );
   });
 
@@ -111,7 +111,7 @@ describe("renderRead", () => {
   it("keeps the pending-edits note last, after the markdown", () => {
     const out = renderRead({ markdown: "body", instructions: LEVELS.slice(0, 1), run_id: "run_abc", pending: 1 });
     expect(out.indexOf("=== END OF INSTRUCTIONS")).toBeLessThan(out.indexOf("body"));
-    expect(out.endsWith('body\n\n[note] Includes your 1 pending edit(s) awaiting user review (run run_abc). Use action:"status" to check decisions.')).toBe(true);
+    expect(out.endsWith('body\n\n[note] Includes your 1 pending edit(s) awaiting user review (run run_abc). Use `markdown` action:status to check decisions.')).toBe(true);
   });
 });
 
@@ -144,7 +144,7 @@ describe("renderPropose", () => {
     expect(out).toMatch(/^Proposed — your edit is waiting for the user to accept it \(this document waits for review\)\. /);
     expect(out).toContain("Run run_0123456789ab, 3 pending");
     expect(out).toContain("do NOT retry");
-    expect(out).toContain('action:"status"');
+    expect(out).toContain("`markdown` action:status");
   });
 
   it("reports an auto-applied edit with its seq and review link", () => {

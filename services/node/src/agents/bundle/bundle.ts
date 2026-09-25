@@ -1,8 +1,8 @@
 /**
- * The one file a user installs: manifest, icon, server, its licenses and the
- * key it authenticates with. The archive is not signed; the installer rejects
- * archives from the signing tool in circulation, and the download comes from
- * the node the user is signed in to.
+ * The one file a user installs: manifest, icon, server and its licenses. It
+ * holds no credential, so it can be passed around; the server signs in, or uses
+ * a key the person typed into the extension's settings. The archive is not
+ * signed; the installer rejects archives from the signing tool in circulation.
  */
 import { readFileSync } from "node:fs";
 import {
@@ -36,14 +36,13 @@ export interface McpbInput {
   license: Uint8Array;
   thirdPartyLicenses: Uint8Array;
   cfg: BundleConfig;
-  now: Date;
 }
 
 const utf8 = (text: string) => new TextEncoder().encode(text);
 
-export function buildMcpb({ serverJs, license, thirdPartyLicenses, cfg, now }: McpbInput): Uint8Array<ArrayBuffer> {
+export function buildMcpb({ serverJs, license, thirdPartyLicenses, cfg }: McpbInput): Uint8Array<ArrayBuffer> {
   return zipStored([
-    { name: MANIFEST_PATH, data: utf8(`${JSON.stringify(bundleManifest(cfg, now), null, 2)}\n`) },
+    { name: MANIFEST_PATH, data: utf8(`${JSON.stringify(bundleManifest(cfg), null, 2)}\n`) },
     { name: ICON_PATH, data: ICON_PNG },
     { name: SERVER_PACKAGE_PATH, data: utf8(SERVER_PACKAGE_JSON) },
     { name: SERVER_ENTRY_PATH, data: serverJs },
@@ -54,14 +53,7 @@ export function buildMcpb({ serverJs, license, thirdPartyLicenses, cfg, now }: M
   ]);
 }
 
-/** Everything the manifest puts in the launch environment. */
+/** What the server falls back to when the host passes it no environment: the node it came from, and no key. */
 function sidecarConfig(cfg: BundleConfig): Record<string, string> {
-  return {
-    url: cfg.url,
-    token: cfg.token,
-    client: BUNDLE_CLIENT,
-    version: cfg.stugaVersion,
-    node_name: cfg.nodeName,
-    ...(cfg.workspace ? { workspace: cfg.workspace } : {}),
-  };
+  return { url: cfg.url, client: BUNDLE_CLIENT, version: cfg.stugaVersion };
 }

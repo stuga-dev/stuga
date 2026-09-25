@@ -1,5 +1,5 @@
 /** The route table shape every surface uses, and the one matcher that reads it. */
-import type { AccountCtx, Ctx } from "../auth/context.js";
+import type { AccountCtx, Ctx, McpCaller } from "../auth/context.js";
 import type { NodeEnv } from "../env.js";
 
 export type Method = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
@@ -44,6 +44,14 @@ export interface PublicCall {
 /** What a handler behind an identity without a workspace receives. */
 export interface AccountCall {
   ctx: AccountCtx;
+  req: Request;
+  url: URL;
+  match: PathMatch;
+}
+
+/** What the /mcp handler receives: the caller, whose workspace each tool call names. */
+export interface McpCall {
+  caller: McpCaller;
   req: Request;
   url: URL;
   match: PathMatch;

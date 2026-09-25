@@ -39,9 +39,9 @@ export interface InstallerCommands {
   uninstall: string;
 }
 
-/** A hosted connector dials from its own cloud, so it is offered only when the internet can reach the node. */
+/** A hosted connector dials from its own cloud over HTTPS, so it is offered only when the internet can reach the node that way. */
 export function clientTabs(setup: AgentSetup): [ClientTab, ...ClientTab[]] {
-  return setup.reachable
+  return setup.reachable && setup.secure
     ? ["claude", "claude-desktop", "claude-code", "codex", "antigravity", "dsh", "other"]
     : ["claude-desktop", "claude-code", "codex", "antigravity", "dsh", "other"];
 }

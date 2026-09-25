@@ -9,6 +9,7 @@ import {
   listWorkspaceMembers,
   removeWorkspaceMember,
   revokeWorkspaceApiKeysForOwner,
+  dropWorkspaceFromOwnerGrants,
   searchAccounts,
   updateMemberRole,
   userExists,
@@ -94,8 +95,9 @@ export async function changeMemberRole({ ctx, req, match }: WorkspaceCall): Prom
 }
 
 // Remove a member, or leave. Direct grants on documents survive (they are inert
-// without membership), but the person's agent keys in this workspace are revoked:
-// a key in a client's config would otherwise resume working on re-invitation.
+// without membership), but the person's agent keys in this workspace are revoked,
+// and their apps' sign-ins stop naming it: either would otherwise resume working
+// on re-invitation.
 export async function removeMember({ ctx, match }: WorkspaceCall): Promise<Response> {
   const wsId = match[1]!;
   const target = match[2]!;
@@ -115,5 +117,6 @@ export async function removeMember({ ctx, match }: WorkspaceCall): Promise<Respo
   await removeWorkspaceMember(ctx.sql, wsId, target);
   // After the removal, so a failed removal never cuts off a member's agents.
   const orphaned = await revokeWorkspaceApiKeysForOwner(ctx.sql, wsId, target, ctx.alias);
-  return json({ removed: target, keys_revoked: orphaned.length });
+  const connections = await dropWorkspaceFromOwnerGrants(ctx.sql, wsId, target, ctx.alias);
+  return json({ removed: target, keys_revoked: orphaned.length, connections_revoked: connections });
 }

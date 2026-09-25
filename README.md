@@ -31,17 +31,21 @@ process and Postgres, with no cloud in between. Everyone else uses it in a brows
   databases, with each agent's record of accepted and rejected changes beside it.
 - **Who wrote this?** An agent can ask a document who wrote which passage and whether a person has
   reviewed it, so one agent does not take another's unreviewed text as settled.
-- **Narrow keys, full audit.** A key can be confined to folders, limited to reading, or given an
-  expiry. Every call an agent makes over MCP, reads included, is in the audit log. An event feed and
-  signed webhooks tell agents and other systems what changed.
+- **Narrow access, full audit.** An app that signs in reaches only the workspaces you tick, and can
+  be limited to reading. A key can also be confined to folders or given an expiry. Every call an
+  agent makes over MCP, reads included, is in the audit log. An event feed and signed webhooks tell
+  agents and other systems what changed.
 
 ## Your data stays on your machine
 
 Stuga sends no telemetry, and nothing reaches us. The node makes outbound requests only for features
 in use on it: the AI providers a node admin configures, the notification sink and webhooks admins
-set up, the identity provider when an admin adds one, and images an agent adds by URL, which the
-node downloads and serves itself. AI is off until an admin turns it on, and the model can run on the
-same machine.
+set up, the identity provider when an admin adds one, images an agent adds by URL, which the node
+downloads and serves itself, and the metadata document of an app that signs in with one. AI is off
+until an admin turns it on, and the model can run on the same machine.
+
+An AI app you connect sees what its model reads and writes. A hosted one, such as Claude on the web,
+handles it on its vendor's servers.
 
 One request is the node's own: once a day it asks GitHub for the list of Stuga releases, to tell its
 admins when a newer one is out. The request says nothing about the node, not even its version, and
@@ -99,12 +103,14 @@ Then [docs/getting-started.md](docs/getting-started.md) walks through the first 
 
 ## Connect your agents
 
-Agents reach Stuga over MCP: the node serves `/mcp`, and `stuga-mcp` is a local stdio server for
-desktop clients. **Settings → Your own AI** in the app gives the setup for Claude Code, Claude Desktop,
-Codex, Antigravity and DeepSeek Harness, the Claude app's connector on a node with a public HTTPS
-address, and the URL and key any other MCP client needs. A client holds one connection, called
-**Stuga**; which workspace a call acts in comes from the connection's own `workspaces` listing. API keys, the tools and how
-agent work appears in the run ledger are covered in [docs/agents.md](docs/agents.md).
+Agents reach Stuga over MCP: the node serves `/mcp`, and `stuga-mcp` is a local stdio server that
+forwards to it for desktop clients. **Settings → Your own AI** in the app gives the setup for Claude
+Code, Claude Desktop, Codex, Antigravity and DeepSeek Harness, the Claude app's connector on a node
+with a public HTTPS address, and the URL and key any other MCP client needs. Most clients sign in
+through the browser, where you choose the workspaces the app may use and whether it may only read.
+A client holds one connection, called **Stuga**, that reaches every workspace you allowed, and each
+call names the one it acts in. API keys, the tools and how agent work appears in the run ledger are
+covered in [docs/agents.md](docs/agents.md).
 
 ## Status
 

@@ -98,7 +98,6 @@ export function WorkspaceOnboarding() {
             <AiChoices
               settings={ai}
               onSaved={setAi}
-              workspaceName={name.trim()}
               onStart={() => nav(takeWorkspaceReturn(), { replace: true })}
             />
           ) : (
@@ -151,12 +150,10 @@ type Way = "agent" | "chat" | "search";
 function AiChoices({
   settings,
   onSaved,
-  workspaceName,
   onStart,
 }: {
   settings: NodeAiSettings;
   onSaved: (settings: NodeAiSettings) => void;
-  workspaceName: string;
   onStart: () => void;
 }) {
   const [open, setOpen] = useState<Record<Way, boolean>>({ agent: false, chat: false, search: false });
@@ -194,7 +191,7 @@ function AiChoices({
             onOpen={() => show("agent", true)}
           >
             {/* Nothing on this page lists keys, so a new one has nothing to reload. */}
-            <AgentClients workspaceName={workspaceName} onKeyCreated={() => {}} />
+            <AgentClients onKeyCreated={() => {}} />
             <HStack>
               <Button label="Done" variant="secondary" size="sm" onClick={() => show("agent", false)} />
             </HStack>

@@ -14,7 +14,10 @@ describe("isAppPath", () => {
     ["GET", "/oauth/authorize"],
     ["POST", "/oauth/token"],
     ["POST", "/oauth/register"],
+    ["POST", "/oauth/revoke"],
+    ["GET", "/oauth/client"],
     ["GET", "/.well-known/oauth-protected-resource"],
+    ["GET", "/.well-known/oauth-protected-resource/mcp"],
   ])("routes %s %s to the API", (method, path) => {
     expect(isAppPath(method, path)).toBe(true);
   });
@@ -76,7 +79,7 @@ describe("the route table's gates", () => {
   const request = (method: string, path: string) => new Request(`https://node.example.test${path}`, { method });
 
   it("refuses a read-only key on any write, including a path no route names", async () => {
-    const readOnly = agent({ scope: { folders: null, readOnly: true, keyId: "k1" } });
+    const readOnly = agent({ scope: { folders: null, readOnly: true, credentialId: "k1" } });
     const res = await routeWorkspaceRequest(readOnly, request("POST", "/api/no-such-thing"));
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: READ_ONLY_MESSAGE });

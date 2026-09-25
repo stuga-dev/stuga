@@ -10,7 +10,6 @@ describe("parseConfig", () => {
     const all = {
       url: "http://node",
       token: "vk_a_b",
-      workspace: "ws-1",
       model: "m-1",
       client: "claude-desktop",
       version: "0.3.0",
@@ -50,13 +49,12 @@ describe("readConfigFile", () => {
 });
 
 describe("resolveConfig", () => {
-  const side = { url: "http://side", token: "vk_side_1", workspace: "ws-side", model: "side", client: "side-client", version: "0.2.0" };
+  const side = { url: "http://side", token: "vk_side_1", model: "side", client: "side-client", version: "0.2.0" };
 
   it("prefers the environment over both files, key by key", () => {
     const env = {
       STUGA_URL: "http://env",
       STUGA_TOKEN: "vk_env_1",
-      STUGA_WORKSPACE: "ws-env",
       STUGA_MODEL: "env-model",
       STUGA_CLIENT: "env-client",
       STUGA_VERSION: "0.4.0",
@@ -64,7 +62,6 @@ describe("resolveConfig", () => {
     expect(resolve(env, side, side)).toEqual({
       url: "http://env",
       token: "vk_env_1",
-      workspace: "ws-env",
       model: "env-model",
       client: "env-client",
       version: "0.4.0",
@@ -95,7 +92,6 @@ describe("resolveConfig", () => {
     expect(resolveConfig({ STUGA_URL: "http://env", STUGA_TOKEN: "vk_env_1", STUGA_NODE_NAME: "Studio" }, boom, boom)).toEqual({
       url: "http://env",
       token: "vk_env_1",
-      workspace: undefined,
       model: undefined,
       client: DEFAULT_CLIENT,
       version: DEV_VERSION,
@@ -109,11 +105,10 @@ describe("resolveConfig", () => {
       throw new Error("the home file was read");
     };
     const env = { STUGA_URL: "http://env", STUGA_TOKEN: "vk_env_1" };
-    const sidecar = { url: "http://env", token: "vk_side_1", workspace: "ws-side", client: "side-client", node_name: "Cash $ Office" };
+    const sidecar = { url: "http://env", token: "vk_side_1", client: "side-client", node_name: "Cash $ Office" };
     expect(resolveConfig(env, () => sidecar, boom)).toEqual({
       url: "http://env",
       token: "vk_env_1",
-      workspace: undefined,
       model: undefined,
       client: DEFAULT_CLIENT,
       version: DEV_VERSION,
@@ -133,7 +128,24 @@ describe("resolveConfig", () => {
   });
 
   it("falls back to the defaults with nothing configured", () => {
-    expect(resolve({})).toEqual({ url: DEFAULT_URL, token: "", workspace: undefined, model: undefined, client: DEFAULT_CLIENT, version: DEV_VERSION });
+    expect(resolve({})).toEqual({ url: DEFAULT_URL, token: "", model: undefined, client: DEFAULT_CLIENT, version: DEV_VERSION });
+  });
+
+  it("reduces the address a person typed to its origin, so every URL built from it is right", () => {
+    expect(resolve({ STUGA_URL: " https://stuga.example/ " }).url).toBe("https://stuga.example");
+    expect(resolve({ STUGA_URL: "http://livs-air.local:8787/settings/agents" }).url).toBe("http://livs-air.local:8787");
+    expect(resolve({ STUGA_URL: "https://stuga.example/" }, {}, { url: "https://stuga.example", token: "vk_home_1" }).token).toBe("vk_home_1");
+  });
+
+  it("never hands a key a file holds for another node to the node the environment names", () => {
+    expect(resolve({ STUGA_URL: "http://work" }, {}, { url: "http://home", token: "vk_home_1" }).token).toBe("");
+    expect(resolve({ STUGA_URL: "http://home" }, {}, { url: "http://home", token: "vk_home_1" }).token).toBe("vk_home_1");
+  });
+
+  it("treats a blank key, or a placeholder the host left unfilled, as none, so the extension signs in instead", () => {
+    expect(resolve({ STUGA_URL: "http://env", STUGA_TOKEN: "  " })).toMatchObject({ url: "http://env", token: "" });
+    expect(resolve({ STUGA_URL: "http://env", STUGA_TOKEN: "${user_config.access_key}" })).toMatchObject({ url: "http://env", token: "" });
+    expect(resolve({ STUGA_URL: "${user_config.node_url}" }, { url: "http://side" }).url).toBe("http://side");
   });
 
   it("treats a blank version as unset", () => {

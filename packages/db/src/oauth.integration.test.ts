@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createClient, closeClients } from "./client.js";
-import { seedWorkspaces } from "./testing/fixtures.js";
 import { initSchema } from "./schema/migrate.js";
 import { consumeOauthCode, insertOauthClient, insertOauthCode } from "./agents.js";
 import type { Sql } from "./client.js";
@@ -21,7 +20,6 @@ describe.skipIf(!URL)("OAuth authorization codes", () => {
 
   beforeEach(async () => {
     await sql`TRUNCATE oauth_codes, oauth_clients CASCADE`;
-    await seedWorkspaces(sql, "ws-1");
     await insertOauthClient(sql, {
       clientId: "client-1",
       clientSecretHash: null,
@@ -32,7 +30,8 @@ describe.skipIf(!URL)("OAuth authorization codes", () => {
       codeHash: "code-hash",
       clientId: "client-1",
       userAlias: "alice",
-      workspaceId: "ws-1",
+      workspaceScope: ["ws-1"],
+      access: "read",
       redirectUri: "https://client.example.test/callback",
       codeChallenge: "challenge",
       expiresAt: new Date(Date.now() + 60_000),
@@ -48,7 +47,7 @@ describe.skipIf(!URL)("OAuth authorization codes", () => {
     expect(await consumeOauthCode(sql, { ...base, codeChallenge: "wrong" })).toBeNull();
 
     const consumed = await consumeOauthCode(sql, { ...base, codeChallenge: "challenge" });
-    expect(consumed).toMatchObject({ client_id: "client-1", user_alias: "alice", workspace_id: "ws-1" });
+    expect(consumed).toMatchObject({ client_id: "client-1", user_alias: "alice", workspace_scope: ["ws-1"], access: "read" });
     expect(await consumeOauthCode(sql, { ...base, codeChallenge: "challenge" })).toBeNull();
   });
 

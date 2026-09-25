@@ -1,9 +1,8 @@
 # The REST API
 
 Everything an agent can do over MCP is also a REST route, open to any client with a credential: a
-script, an agent framework that does not speak MCP, a scheduled job. The stdio server `stuga-mcp`
-calls these routes, and the node's `/mcp` endpoint runs the same code in-process, so a check that
-applies to one applies to the other.
+script, an agent framework that does not speak MCP, a scheduled job. The node's `/mcp` endpoint runs
+the same code in-process, so a check that applies to one applies to the other.
 
 Routes live under the node's `PUBLIC_ORIGIN`, take and return JSON unless noted, and are registered
 in `services/node/src/http/routes.ts`. This page details the routes agents and integrations use.
@@ -29,6 +28,9 @@ next request. A session token acts in the workspace named by the `x-stuga-worksp
 person belongs to it. A person with no workspace yet gets `409` with the header
 `x-stuga-workspace-required`.
 
+The tokens an app gets by signing in through OAuth (`sto_…`) work only on `/mcp`, and every route
+here answers them `401` ([Agents over OAuth](#agents-over-oauth)).
+
 Each credential has a budget of 600 requests a minute per workspace. Past it the node answers `429`
 with `retry-after`.
 
@@ -51,13 +53,13 @@ curl -X POST "$STUGA/api/keys" -H "Authorization: Bearer $SESSION" \
 
 | Route | |
 |---|---|
-| `GET /api/keys` | The caller's keys in every workspace, each with `kind` (`key`, or `connector` for one minted through OAuth), scope, last use and revocation. |
+| `GET /api/keys` | The caller's keys in every workspace, each with its scope, last use and revocation. Apps that signed in are under [`/api/me/connections`](#connections). |
 | `POST /api/keys` | `{ name, scope_folders?, access?, expires_in_days? }` → `201` with `token`, shown once. |
 | `PATCH /api/keys/:id` | `{ name?, scope_folders?, access?, expires_in_days?, clear_expiry? }`. |
 | `POST /api/keys/:id/rotate` | A new secret for the same key. The key id and agent principal stay, so runs and audit rows still name the same agent. |
 | `DELETE /api/keys/:id` | Revoke. |
-| `POST /api/agent-bundle` | `{ name? }` → a `stuga.mcpb` extension carrying the stdio server and a newly minted key. It installs under the node's id, so a second node's extension sits beside it ([agents.md](agents.md#one-connection-and-which-node-a-call-lands-on)). `503` when the node has no built server. |
-| `GET /api/agent-setup` | What a client needs to connect: `url`, `mcp_url`, the `node` (`id` and `name`), whether the origin is `reachable` from the internet or `loopback`, whether the extension is available, and the `stdio` command and server path (`entry` is null when the node offers none). An API key gets the same answer. |
+| `GET /api/agent-bundle` | The Claude Desktop extension, `stuga.mcpb`: the stdio server and a manifest named `stuga`, the same for every node, carrying no key. It asks for `node_url`, filled in with `PUBLIC_ORIGIN`, and an optional `access_key` ([agents.md](agents.md#claude-desktop)). People only. `503` when the node has no built server. |
+| `GET /api/agent-setup` | What a client needs to connect: `url`, `mcp_url`, the `node` (`id` and `name`), whether the origin is `reachable` from the internet, `loopback` or `secure` (https, or http to loopback), whether the extension is available, and the `stdio` command and server path (`entry` is null when the node offers none). An API key gets the same answer. |
 
 Key routes refuse agents and guests, and a key can be changed only by the person who minted it.
 
@@ -79,8 +81,8 @@ workspace:
   marking notifications read, and opening a row page that would have to be created or restored.
 
 Routes that refuse every agent key, such as key, webhook and workspace management, refuse a
-read-only key too. Over MCP a read-only key calls the same reads; a change comes back as a tool
-error with the same sentence ([agents.md](agents.md#read-only-keys)).
+read-only key too. Over MCP a read-only key is offered only the reading tools
+([agents.md](agents.md#read-only-credentials)).
 
 `GET /api/whoami` reports the credential's `alias`, `display_name`, `username`, `email` (optional),
 `principals`, `workspace_id`, `node_admin`, for a person `has_password` and `provider_linked`
@@ -418,6 +420,59 @@ what they may do.
 | `GET /api/models` | The chat models people may pick; none while AI chat is off. No credential. |
 | `/api/node/…` | Node administration: admins, password resets, settings including the node's name and the [identity provider](#through-the-identity-provider), AI settings, the node's audit rows, version. Node administrators. `PUT /api/node/settings` takes `node_name`, at most 80 characters with at least one visible character and no control characters, line breaks or invisible direction marks, where `""` or `null` removes it; `GET` answers `node_name`, null while the node is unnamed, `node_label`, which is the name or else the host of `PUBLIC_ORIGIN` without its port or a trailing `.local`, and the node's `node_id` among its read-only facts. `updates: { check }` on the same `PUT`, a boolean, turns the daily look for a newer version off or on, and `GET` answers it. `backups: { auto, hour }` turns the daily backup off or on and sets its hour (0–23), and `time_zone`, an IANA name or null for UTC, is the zone that hour is in; `GET` answers both. `DELETE /api/node/settings` returns the name, **Storage**, **Notifications**, **Branding**, the look for a newer version (on), the daily backup (on, at 3 in UTC) and the identity provider to their defaults. `GET /api/node/backups` answers the schedule (`auto`, `hour`, `time_zone`, `next_at`), whether a backup is `running`, the last try (`attempted_at`, `error`), the backup directory (`dir`) and `keep`, and `backups`, newest first, each `{ name, created_at, bytes, stuga_version, before_upgrade }`. `POST /api/node/backups` starts one now and answers `202`; the node pauses for it, answering `503` meanwhile, and `409` when one is already under way. `GET /api/node/version` answers `version`, `build` (`release` or `source`), `released_at` (`YYYY-MM-DD` or null), `source_url` (the code the build was made from: a release's tag, or the repository for a build from source), `schema_version`, `previous_version`, the boot times, and `update`: `comparable` (false for a build that is not a plain `1.2.3`, which never looks), `checked_at`, `error` (why the last look failed, or null), `available` (`{ version, released_at, security, notes_url }` or null, where `security` says a release after the running one fixes a vulnerability), `releases_url`, `upgrade_hint`, and `install`: `available` (true where the packaging installs a release from here, the Mac package) and `status` (the helper's last `{ version, state, message, at }`, or null). `POST /api/node/version/check` looks now and answers the same; it does not look again within a minute, with the look turned off, or from a build that is not comparable. `POST /api/node/version/install` `{ version }` asks the packaging to install the newest version the node knows of, which `version` must name, and answers the same with `202`; `409` where the packaging installs nothing from here, when the node knows of no newer version, or for any other version. |
 | `GET /ready` | `{ ok: true }` while the node serves and the database answers, else `503`, with a `status` (`starting`, `backing_up`, `upgrading`, `maintenance`) while the node is not serving. No credential. |
+
+## Agents over OAuth
+
+`/mcp` is the MCP endpoint ([agents.md](agents.md)), a stateless Streamable HTTP server: `POST` and
+`DELETE`, and `405` for `GET`. It takes an OAuth access token, an API key or a person's session
+token, with a budget of 600 requests a minute per credential. Without a valid one it answers `401`
+with where to start:
+
+```
+WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource/mcp"
+```
+
+The node is the authorization server. `<origin>` is the one the client called when it is
+`PUBLIC_ORIGIN` or in `EXTRA_ORIGINS`, and `PUBLIC_ORIGIN` otherwise; the metadata, the endpoints it
+names and the consent page all use that origin ([network-access.md](network-access.md#agents-signing-in)).
+
+| Route | |
+|---|---|
+| `GET /.well-known/oauth-protected-resource/mcp` | RFC 9728: `resource` (`<origin>/mcp`) and `authorization_servers`. Also answered without the `/mcp` suffix. |
+| `GET /.well-known/oauth-authorization-server` | RFC 8414: the endpoints below, the grant types `authorization_code` and `refresh_token`, PKCE `S256`, public clients only (`none`), the scope `mcp`, and `client_id_metadata_document_supported`, true only on an https origin that is not a loopback, private or local-network address. |
+| `POST /oauth/register` | RFC 7591: `{ redirect_uris, client_name? }` → `201` with a `client_id`. At most 20 redirect URIs, each https or http to a loopback address. Limited per client address (`429` with `retry-after`). A registration unused for 90 days is removed. |
+| `GET /oauth/authorize` | `client_id`, `redirect_uri`, `state`, `code_challenge` (`S256`) and an optional `resource` → `302` to the consent page. |
+| `GET /oauth/client?client_id=` | `{ client_id, client_name, verified_host }`: what the consent page shows of a client, from the node's own records. `verified_host` is null for a client that registered itself. |
+| `POST /oauth/consent` | The consent page's answer, with the person's session token; an agent's credential is refused. `{ decision: "allow" \| "deny", client_id, redirect_uri, state, code_challenge, workspaces, access }` → `{ redirect }`, back to the client with a code or `error=access_denied`. `workspaces` is a list of workspace ids the person belongs to other than as a guest, or `"all"` for every workspace they belong to, now and later. `access` is `read` or `propose`. `409` when the person has no workspace to connect, `403` when one named is not theirs to connect. A code lasts five minutes and is used once. |
+| `POST /oauth/token` | Form-encoded or JSON. `grant_type=authorization_code` with `code`, `code_verifier`, `redirect_uri` and `client_id`, or `grant_type=refresh_token` with `refresh_token` and `client_id`; either may add `resource`. → `{ access_token, token_type: "Bearer", expires_in: 3600, refresh_token, scope: "mcp" }`. Errors are `{ error }` with `400`: `invalid_request`, `invalid_grant`, `invalid_target`, `unsupported_grant_type`. |
+| `POST /oauth/revoke` | RFC 7009: `token`, of either kind → `200`, even for a token the node does not know. Ends every token of the sign-in it belongs to. The connection stays until it is revoked. |
+
+- **Clients.** A client registers itself, or uses as its `client_id` the https URL of its client
+  metadata document. The node fetches that document through its outbound URL checks (never a
+  private address, no redirects, five seconds, 64 KB), requires its `client_id` to repeat the URL,
+  fetches it again after a day, and limits the fetches per client address. A registered redirect
+  URI on a loopback address matches on any port (RFC 8252).
+- **Resource.** A `resource` (RFC 8707) must be the node's `/mcp` on `PUBLIC_ORIGIN` or an
+  `EXTRA_ORIGINS` origin; any other is refused. A token is the node's, and works at each of them.
+- **Tokens.** The access token (`sto_…`) lasts an hour. The refresh token (`str_…`) is replaced at
+  every use and lapses after 90 days unused. A spent refresh token presented again ends every token of
+  its sign-in. Only hashes are stored. A refresh token sent as a bearer is refused.
+- **Grants.** A consent creates the person's connection to that client, or renews it with the new
+  workspaces and access, keeping its id, name and agent. The connection acts as its own agent for
+  the person, like a key, in the workspaces it names where the person is a member at the time of the
+  call. When a person leaves a workspace or is removed from it, their connections that named it stop
+  naming it, and one left naming none is revoked.
+
+### Connections
+
+The apps a person signed in, for that person only: these routes refuse agents, and work before the
+person has a workspace.
+
+| Route | |
+|---|---|
+| `GET /api/me/connections` | `{ connections: [{ grant_id, agent_id, name, client_id, verified_host, workspaces, access, created_at, last_used_at, revoked_at }] }`, newest first, revoked ones included. `workspaces` is null for every workspace, now and later. |
+| `PATCH /api/me/connections/:id` | `{ name?, access? }`: rename, or narrow to `access: "read"`. Widening is a new sign-in. |
+| `DELETE /api/me/connections/:id` | Revoke: every token of the connection stops at once. `404` for one that is not the caller's or already revoked. |
 
 ## Sign-in
 

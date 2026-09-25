@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildInstructions } from "@stuga/agent-surface/instructions";
 import type { ResolvedConfig } from "./config.js";
 import { configuredNode, identifyNode } from "./node.js";
+import { waitingInstructions } from "./proxy.js";
 
 const CONFIG: ResolvedConfig = { url: "http://livs-air.local:8787", token: "vk_a_b", client: "claude-desktop", version: "0.3.0" };
 
@@ -78,12 +78,10 @@ describe("identifyNode", () => {
     }
   });
 
-  it("opens with the same first line as /mcp, for the same node, when reached at another of its addresses", async () => {
-    // /mcp introduces the node by its settings name and PUBLIC_ORIGIN; /auth/config answers exactly those.
-    const node = { name: "Liv’s Mac mini", origin: "https://mini.example" };
-    const http = buildInstructions({ variant: "http", node }).split("\n")[0];
+  it("names the node by its own answer while the connection waits, when reached at another of its addresses", async () => {
+    // Once connected the node's own instructions take over; until then the model still learns which node this is.
     const reached = { ...CONFIG, url: "http://127.0.0.1:8787", nodeName: "Stale name" };
-    const stdio = buildInstructions({ variant: "stdio", node: await identifyNode(reached, answering(config(node.name, node.origin)).fetchImpl) });
-    expect(stdio.split("\n")[0]).toBe(http);
+    const node = await identifyNode(reached, answering(config("Liv’s Mac mini", "https://mini.example")).fetchImpl);
+    expect(waitingInstructions(node)).toContain('This connection is to the Stuga node "Liv’s Mac mini" at https://mini.example.');
   });
 });

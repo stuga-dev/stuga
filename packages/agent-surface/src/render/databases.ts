@@ -24,7 +24,7 @@ export function bulkSteer(rowCount: number): string {
   if (rowCount < BULK_STEER_ROWS) return "";
   return (
     ` NOTE — that was ${rowCount} rows as one change. If more rows are coming, do NOT send another insert_rows batch: ` +
-    `action:import takes a whole CSV/JSONL file at once (up to ${DATABASE_MAX_ROWS} rows) and lands it as ONE change the user reviews once.`
+    `\`databases_add\` action:import takes a whole CSV/JSONL file at once (up to ${DATABASE_MAX_ROWS} rows) and lands it as ONE change the user reviews once.`
   );
 }
 
@@ -41,7 +41,7 @@ export function renderDatabasePropose(res: DatabaseProposeBody, applied: string,
       result:
         `Proposed — your change is waiting for the user to accept it (run ${run?.id}, ${pending} pending).${why} ` +
         `This is SUCCESS. Do NOT retry; continue your work. Your schema reads already include this pending change ` +
-        `(query results note what is pending); check action:"status" for decisions.${note}${instructions}`,
+        `(query results note what is pending); check \`databases\` action:status for decisions.${note}${instructions}`,
       ...minted,
     });
   }
@@ -76,7 +76,7 @@ export function renderOpenPage(page: RowPage): string {
   return JSON.stringify({
     result:
       `The row's page is document ${page.doc_id} — it ${how}. It is a prose document: read it with \`markdown\` ` +
-      `action:read and change it with \`markdown\` action:write / str_replace / append (proposed for review like any ` +
+      `action:read and change it with \`markdown_edit\` or \`markdown_append\` (proposed for review like any ` +
       `document edit). The row's cells stay in the table; the page is the row's body.`,
     doc_id: page.doc_id,
     created: page.created,
@@ -171,7 +171,7 @@ export function renderImportCommit(status: number, body: Record<string, unknown>
     body.mode === "proposed"
       ? `Proposed — the import of ${n} row${n === 1 ? "" : "s"} is ONE change waiting for the user to accept it` +
         `${run ? ` (run ${run.id})` : ""}. This is SUCCESS: do NOT retry or re-upload. Your schema reads and ` +
-        `query results already reflect the pending rows; check action:"status" for the decision.${skippedNote}${replay}${guessed}`
+        `query results already reflect the pending rows; check \`databases\` action:status for the decision.${skippedNote}${replay}${guessed}`
       : `Applied — imported ${n} row${n === 1 ? "" : "s"}. The user was notified and can revert the whole import from the ` +
         `table's Activity panel.${skippedNote}${replay}${guessed}`;
   const { run: _run, ...rest } = body;

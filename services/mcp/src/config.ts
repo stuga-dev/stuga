@@ -1,9 +1,10 @@
 /**
- * Which node this server talks to, and as whom: the environment, then the
- * config file beside this server (an installed extension's own credential),
- * then ~/.config/stuga/credentials.json, then defaults. Reading is injected.
- * A credential the environment holds whole is never mixed with a file's, but
- * the file beside the server may still name the node it came from.
+ * Which node this server talks to, and as whom: the environment (an installed
+ * extension's settings), then the config file beside this server, then
+ * ~/.config/stuga/credentials.json, then defaults. Reading is injected. A
+ * credential the environment holds whole is never mixed with a file's, but the
+ * file beside the server may still name the node it came from. No key at all
+ * means this server signs in through the browser.
  */
 import { readFileSync } from "node:fs";
 
@@ -15,7 +16,6 @@ export const DEV_VERSION = "0.0.0-dev";
 export interface StoredConfig {
   url?: string;
   token?: string;
-  workspace?: string;
   model?: string;
   client?: string;
   version?: string;
@@ -24,8 +24,8 @@ export interface StoredConfig {
 
 export interface ResolvedConfig {
   url: string;
+  /** A key minted on the node; empty means this server signs in through the browser instead. */
   token: string;
-  workspace?: string;
   model?: string;
   client: string;
   /** The version of the node that installed this server. */
@@ -34,7 +34,7 @@ export interface ResolvedConfig {
   nodeName?: string;
 }
 
-const FIELDS = ["url", "token", "workspace", "model", "client", "version", "node_name"] as const;
+const FIELDS = ["url", "token", "model", "client", "version", "node_name"] as const;
 
 /** A field of the wrong type counts as absent, so a half-written file costs one setting, not the server. */
 export function parseConfig(raw: unknown): StoredConfig {
@@ -65,7 +65,23 @@ export function readConfigFile(
  * only the file beside the server is opened, only for the node's name, only
  * when the environment has none, and only if that file names the same node.
  */
-export function resolveConfig(env: NodeJS.ProcessEnv, sidecar: () => StoredConfig, home: () => StoredConfig): ResolvedConfig {
+/** The node's address as a person may type it (a trailing slash, a path) reduced to its origin. */
+function originOf(raw: string): string {
+  const trimmed = raw.trim();
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return trimmed.replace(/\/+$/, "");
+  }
+}
+
+/** A value the environment did not really set: blank, or a host's `${user_config.…}` placeholder left unfilled. */
+function unset(value: string | undefined): boolean {
+  return value === undefined || value.trim() === "" || /^\$\{[^}]*\}$/.test(value.trim());
+}
+
+export function resolveConfig(rawEnv: NodeJS.ProcessEnv, sidecar: () => StoredConfig, home: () => StoredConfig): ResolvedConfig {
+  const env = Object.fromEntries(Object.entries(rawEnv).filter(([, v]) => !unset(v))) as NodeJS.ProcessEnv;
   const credentialInEnv = env.STUGA_URL != null && env.STUGA_TOKEN != null;
   const files = credentialInEnv ? [] : [sidecar(), home()];
   const fromFiles = (field: keyof StoredConfig): string | undefined => {
@@ -74,11 +90,12 @@ export function resolveConfig(env: NodeJS.ProcessEnv, sidecar: () => StoredConfi
     }
     return undefined;
   };
+  const url = originOf(env.STUGA_URL ?? fromFiles("url") ?? DEFAULT_URL);
+  // A key belongs to one node: a file's key is taken only for the node that file names, or one that names none.
+  const fileToken = files.find((file) => file.token != null && (file.url == null || originOf(file.url) === url))?.token;
   return {
-    url: env.STUGA_URL ?? fromFiles("url") ?? DEFAULT_URL,
-    // An unauthenticated request gets the node's 401, which says more than a crash at startup.
-    token: env.STUGA_TOKEN ?? fromFiles("token") ?? "",
-    workspace: env.STUGA_WORKSPACE ?? fromFiles("workspace"),
+    url,
+    token: env.STUGA_TOKEN?.trim() ?? fileToken?.trim() ?? "",
     model: env.STUGA_MODEL ?? fromFiles("model"),
     client: env.STUGA_CLIENT ?? fromFiles("client") ?? DEFAULT_CLIENT,
     version: env.STUGA_VERSION?.trim() || fromFiles("version")?.trim() || DEV_VERSION,
@@ -94,5 +111,5 @@ export function resolveConfig(env: NodeJS.ProcessEnv, sidecar: () => StoredConfi
  */
 function sidecarName(url: string, sidecar: () => StoredConfig): string | undefined {
   const file = sidecar();
-  return file.url === url ? file.node_name : undefined;
+  return file.url != null && originOf(file.url) === originOf(url) ? file.node_name : undefined;
 }

@@ -18,8 +18,8 @@ What helps, roughly in this order:
   **Settings → This node → About** and the node's log shows in its boot line,
   `stuga <version>, schema <n>`
 - whether the node is reachable from beyond its own machine
-- what an attacker needs to start with: nothing, an account, an agent key, or membership of a
-  workspace
+- what an attacker needs to start with: nothing, an account, an agent key, an app's sign-in, or
+  membership of a workspace
 - the smallest thing that demonstrates it
 
 You will get a first response within a week. If a fix is warranted, it ships in the next patch
@@ -29,8 +29,12 @@ you would rather not be.
 ## What is in scope
 
 - **The node and everything it serves:** authentication and sessions, the permission model, the
-  agent SQL surface, `/mcp` and its OAuth flow, the `stuga-mcp` server, media handling, webhooks
-  and other outbound requests, the audit log, and the `stuga-node` backup and restore commands.
+  agent SQL surface, `/mcp` and which workspaces a call may act in, the OAuth authorization server
+  (client registration, consent, grants, token refresh and revocation), media handling, webhooks and
+  other outbound requests, including the fetch of an app's client metadata document, the audit log,
+  and the `stuga-node` backup and restore commands.
+- **The agent pieces that run on your machine:** the `stuga-mcp` server, its browser sign-in and the
+  tokens it keeps, the Claude Desktop extension, and the installer scripts the node serves.
 - **The packaging:** the `stuga-node` and `stuga-postgres` container images and the Docker release
   assets (`compose.yml`, `env.example`, the `stuga` script and `install.sh`) that a release
   publishes, and the Mac package, `Stuga.pkg`, and the Stuga.app that `packaging/macos` builds, with
@@ -53,6 +57,9 @@ Out of scope, because Stuga does not claim to protect against them:
   not an escalation.
 - **Whoever controls the identity provider an administrator adds can sign in to any account linked
   to it.**
+- **An app a person connects sees what its model reads and writes,** and a hosted one handles it on
+  its vendor's servers. The consent page names the app and what it may reach; what the app does with
+  that is between the person and its vendor.
 
 ## Which versions get fixes
 

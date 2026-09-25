@@ -1,19 +1,22 @@
 /**
- * The consent screen /oauth/authorize hands a person to. Anyone can link
- * straight to this page with any query string, so it never navigates to the
- * redirect it was given: both answers go to POST /oauth/consent, which checks
- * the address against the client's registered ones and returns where to go.
+ * The consent screen /oauth/authorize hands a person to: which workspaces the
+ * app may use, and whether it may only read. Anyone can link straight to this
+ * page with any query string, so it never navigates to the redirect it was
+ * given, and what it says about the app comes from the node, not the link:
+ * both answers go to POST /oauth/consent, which checks the address against the
+ * client's registered ones and returns where to go.
  */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@astryxdesign/core/Button";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { CheckboxList, CheckboxListItem } from "@astryxdesign/core/CheckboxList";
+import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
 import { Text, Heading } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 import { HStack } from "@astryxdesign/core/HStack";
-import { List, ListItem } from "@astryxdesign/core/List";
 import { Link } from "@astryxdesign/core/Link";
-import { getActiveWorkspace } from "../lib/session/workspace-pointer";
-import { Workspaces } from "../api";
+import { Workspaces, type WorkspaceInfo } from "../api";
 import { Brand, nodeName } from "../shell/Brand";
 import { authHeaders } from "../lib/http/client";
 
@@ -24,8 +27,14 @@ export interface ConsentRequest {
   state: string;
 }
 
+/** What the person grants: the workspaces ("all" includes ones joined later) and the access. */
+export interface ConsentChoice {
+  workspaces: "all" | string[];
+  access: "read" | "propose";
+}
+
 /** Where the server sends the browser after this answer, or null when it refused the request. */
-export async function answerConsent(decision: "allow" | "deny", request: ConsentRequest): Promise<string | null> {
+export async function answerConsent(decision: "allow" | "deny", request: ConsentRequest, choice?: ConsentChoice): Promise<string | null> {
   try {
     const res = await fetch("/oauth/consent", {
       method: "POST",
@@ -36,11 +45,28 @@ export async function answerConsent(decision: "allow" | "deny", request: Consent
         redirect_uri: request.redirectUri,
         code_challenge: request.codeChallenge,
         state: request.state,
+        ...(decision === "allow" && choice ? { workspaces: choice.workspaces, access: choice.access } : {}),
       }),
     });
     if (!res.ok) return null;
     const body = (await res.json()) as { redirect?: unknown };
     return typeof body.redirect === "string" ? body.redirect : null;
+  } catch {
+    return null;
+  }
+}
+
+interface ClientInfo {
+  client_name: string;
+  /** The host that vouches for the app; null for one that registered itself. */
+  verified_host: string | null;
+}
+
+/** The node's own record of the app, or null when it has none. */
+export async function clientInfo(clientId: string): Promise<ClientInfo | null> {
+  try {
+    const res = await fetch(`/oauth/client?client_id=${encodeURIComponent(clientId)}`);
+    return res.ok ? ((await res.json()) as ClientInfo) : null;
   } catch {
     return null;
   }
@@ -64,36 +90,42 @@ export function OAuthAuthorize() {
     codeChallenge: params.get("code_challenge") ?? "",
     state: params.get("state") ?? "",
   };
-  // Registration is open, so this name identifies nothing by itself; the redirect host is shown beside it.
-  const clientName = params.get("client_name") || "an application";
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // A failure costs the workspace's name, not the screen.
-  const [workspaceName, setWorkspaceName] = useState<string | null>(null);
+  const [client, setClient] = useState<ClientInfo | null>(null);
+  // A guest connects no agent, so their guest workspaces are not offered.
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[] | null>(null);
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [later, setLater] = useState(false);
+  const [access, setAccess] = useState<"read" | "propose">("propose");
 
   useEffect(() => {
     let alive = true;
+    void clientInfo(request.clientId).then((info) => alive && setClient(info));
     Workspaces.list()
-      .then(({ workspaces, active }) => {
+      .then(({ workspaces: all }) => {
         if (!alive) return;
-        const id = getActiveWorkspace() ?? active;
-        setWorkspaceName(workspaces.find((w) => w.workspace_id === id)?.name ?? null);
+        const own = all.filter((w) => w.role !== "guest");
+        setWorkspaces(own);
+        setChosen(own.map((w) => w.workspace_id));
       })
-      .catch(() => {});
+      .catch(() => alive && setWorkspaces([]));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [request.clientId]);
 
   const redirectHost = hostOf(request.redirectUri);
   const valid = Boolean(request.clientId && redirectHost && request.codeChallenge);
-  const scopeName = workspaceName ?? "this workspace";
+  // The app's own name is self-asserted unless the node fetched it from a host that vouches for it.
+  const appName = client?.client_name || "An app";
+  const canAllow = later || chosen.length > 0;
 
   async function allow() {
     setBusy(true);
     setErr(null);
-    const redirect = await answerConsent("allow", request);
+    const redirect = await answerConsent("allow", request, { workspaces: later ? "all" : chosen, access });
     if (redirect) {
       window.location.assign(redirect);
       return;
@@ -117,48 +149,53 @@ export function OAuthAuthorize() {
         {!valid ? (
           <>
             <Heading level={2}>Incomplete request</Heading>
-            <Text color="secondary">
-              This link is missing app details. Restart the connection from the app.
-            </Text>
+            <Text color="secondary">This link is missing app details. Restart the connection from the app.</Text>
             <HStack gap={2}>
               <Button label="All documents" variant="primary" onClick={() => nav("/")} />
             </HStack>
           </>
+        ) : workspaces !== null && workspaces.length === 0 ? (
+          <>
+            <Heading level={2}>No workspace to connect</Heading>
+            <Text color="secondary">Create or join a workspace first, then connect the app again.</Text>
+            <HStack gap={2}>
+              <Button label="Deny" variant="ghost" isDisabled={busy} onClick={deny} />
+            </HStack>
+          </>
         ) : (
           <>
-            <Heading level={2}>
-              Connect {clientName} to {scopeName}
-            </Heading>
+            <Heading level={2}>Connect {appName}</Heading>
             <Text type="supporting" color="secondary">
-              You’ll return to <strong>{redirectHost}</strong>. Deny if you don’t recognize it.
+              {client?.verified_host ? (
+                <>
+                  Verified by <strong>{client.verified_host}</strong>. You’ll return to {redirectHost}.
+                </>
+              ) : (
+                <>
+                  Unverified app. You’ll return to <strong>{redirectHost}</strong> — deny if you don’t recognize it.
+                </>
+              )}
             </Text>
-            <Text>
-              <strong>{clientName}</strong> can act as you to:
-            </Text>
-            <List listStyle="disc" density="compact">
-              <ListItem
-                label={<Text type="supporting">Read your documents, databases and comments</Text>}
-              />
-              <ListItem label={<Text type="supporting">Create and edit documents</Text>} />
-              <ListItem
-                label={
-                  <Text type="supporting">
-                    Create tables and edit database rows
-                  </Text>
-                }
-              />
-              <ListItem label={<Text type="supporting">Comment and upload images</Text>} />
-            </List>
-            <Text type="supporting" color="secondary">
-              Starts in {scopeName}, but can use any workspace you belong to with your current role. It can’t manage
-              access. Changes are attributed and require review unless auto-apply is enabled.
-            </Text>
+            {workspaces && (
+              <VStack gap={2}>
+                <CheckboxList label="Workspaces" value={chosen} onChange={setChosen} density="compact" isDisabled={later}>
+                  {workspaces.map((w) => (
+                    <CheckboxListItem key={w.workspace_id} value={w.workspace_id} label={w.name} />
+                  ))}
+                </CheckboxList>
+                <CheckboxInput label="Also workspaces I join later" value={later} onChange={setLater} />
+              </VStack>
+            )}
+            <RadioList label="Access" value={access} onChange={(v) => setAccess(v === "read" ? "read" : "propose")}>
+              <RadioListItem value="propose" label="Read and suggest changes" description="Changes wait for review unless a document applies them at once." />
+              <RadioListItem value="read" label="Read only" />
+            </RadioList>
             <Text type="supporting" color="secondary">
               Revoke anytime in{" "}
               <Link href="/settings/agents" target="_blank" rel="noopener noreferrer" type="supporting">
                 Settings → Your own AI
-              </Link>{" "}
-              (opens in a new tab).
+              </Link>
+              .
             </Text>
             {err && (
               <Text type="supporting" color="secondary">
@@ -166,7 +203,7 @@ export function OAuthAuthorize() {
               </Text>
             )}
             <HStack gap={2}>
-              <Button label={busy ? "Connecting…" : "Allow"} variant="primary" isDisabled={busy} onClick={allow} />
+              <Button label={busy ? "Connecting…" : "Allow"} variant="primary" isDisabled={busy || !canAllow} onClick={allow} />
               <Button label="Deny" variant="ghost" isDisabled={busy} onClick={deny} />
             </HStack>
           </>

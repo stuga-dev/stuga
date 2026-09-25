@@ -1,7 +1,7 @@
 /**
- * What a server must provide for the tools to run. Bodies are the shapes the
- * node's REST routes answer with, so the stdio server passes them through and
- * the node's /mcp maps its in-process outcomes onto them.
+ * What one workspace must provide for the tools to run in it. Bodies are the
+ * shapes the node's REST routes answer with, so an in-process backend and one
+ * that forwards to another node answer alike.
  */
 import type {
   DatabaseColumnType,
@@ -71,9 +71,18 @@ export interface SearchQuery {
   limit?: number;
 }
 
+/** A search hit; the node's scores ride along until a merge drops them. */
+export interface SearchHitBody {
+  doc_id: string;
+  title: string;
+  score?: number;
+  sem_score?: number;
+  [key: string]: unknown;
+}
+
 export interface SearchBody {
   query: string;
-  results: unknown[];
+  results: SearchHitBody[];
   degraded: boolean;
   semantic: boolean;
   /** The collection scope resolved to nothing this credential can read. */
@@ -234,9 +243,22 @@ export interface RowPage {
   restored: boolean;
 }
 
+/** A staged import a caller uploads the file to itself, then commits by `import_id`. */
+export interface ImportUpload {
+  import_id: string;
+  /** PUT the whole file here; the signed URL is the credential and works once. */
+  upload_url: string;
+  /** The same target as a path, for a client that reaches the node at another origin. */
+  upload_path: string;
+  max_bytes: number;
+  /** ISO timestamp after which the upload and the commit are refused. */
+  expires_at: string;
+  /** Where the person can drop the file instead. */
+  import_page_url: string;
+}
+
 export type ImportSource =
   | { kind: "content"; content: string; format?: DatabaseImportFormat }
-  | { kind: "file"; path: string; format?: DatabaseImportFormat }
   | { kind: "import_id"; import_id: string };
 
 export interface ImportOptions {
@@ -253,7 +275,6 @@ export type ImportOutcome = { status: number; body: Record<string, unknown> } | 
 export interface AgentBackend {
   /** Base URL for document links in results; "" when there is none to give. */
   origin: string;
-  listWorkspaces(): Answer<Record<string, unknown>>;
   workspaceInstructions(): Answer<WorkspaceInstructions>;
   listDocs(parentId: string | null | undefined): Answer<DocListing[]>;
   searchDocs(query: SearchQuery): Answer<SearchBody>;
@@ -285,6 +306,9 @@ export interface AgentBackend {
   databaseRuns(databaseId: string): Answer<DatabaseRunSummary[]>;
   mutateDatabase(databaseId: string, mutation: DatabaseMutation): Answer<DatabaseProposeBody>;
   openRowPage(databaseId: string, tableId: string, rowId: string): Answer<RowPage>;
+  /** The live page a row already has, or null: a read, which never restores or creates one. */
+  findRowPage(databaseId: string, tableId: string, rowId: string): Answer<{ doc_id: string | null }>;
+  startImport(databaseId: string, tableId: string, format: DatabaseImportFormat): Answer<ImportUpload>;
   /** `tableId` is null only for an `import_id` retry, whose staging names its own table. */
   importRows(databaseId: string, tableId: string | null, source: ImportSource, options: ImportOptions): Answer<ImportOutcome>;
   query(databaseId: string, sql: string, params: Array<string | number | null>): Answer<Record<string, unknown>>;

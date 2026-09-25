@@ -72,11 +72,13 @@ export async function updateApiKey(
   return rows[0] ?? null;
 }
 
-/** Display names for agent ids, revoked keys included: their runs still need a name. */
+/** Display names for agent ids, keys and OAuth grants alike, revoked ones included: their runs still need a name. */
 export async function agentNames(sql: Sql, agentIds: string[]): Promise<Map<string, string>> {
   if (agentIds.length === 0) return new Map();
   const rows = await sql<{ agent_id: string; name: string }[]>`
-    SELECT agent_id, name FROM api_keys WHERE agent_id = ANY(${agentIds})`;
+    SELECT agent_id, name FROM api_keys WHERE agent_id = ANY(${agentIds})
+    UNION ALL
+    SELECT agent_id, name FROM oauth_grants WHERE agent_id = ANY(${agentIds})`;
   return new Map(rows.map((r) => [r.agent_id, r.name]));
 }
 
@@ -137,7 +139,18 @@ export async function touchApiKey(sql: Sql, keyId: string): Promise<void> {
 }
 
 // ---- OAuth (remote MCP connectors) --------------------------------------------------
-// Dynamic client registration and single-use PKCE codes; the token exchange mints an API key.
+// Clients (registered dynamically, or known by their metadata document) and single-use PKCE codes;
+// the token exchange creates or renews a grant (grants.ts).
+
+export interface OauthClientRow {
+  client_id: string;
+  client_secret_hash: string | null;
+  redirect_uris: string[];
+  client_name: string;
+  /** `cimd`: the client id is the URL of its metadata document, fetched and checked by the node. */
+  kind: "dcr" | "cimd";
+  metadata_fetched_at: string | null;
+}
 
 export async function insertOauthClient(
   sql: Sql,
@@ -151,27 +164,48 @@ export async function insertOauthClient(
   })}`;
 }
 
-/** Every lookup stamps last_used_at, which is what the unused-client purge reads. */
-export async function getOauthClient(
+/** Record what a client's metadata document said, fetched just now. */
+export async function upsertMetadataClient(
   sql: Sql,
-  clientId: string,
-): Promise<{ client_id: string; client_secret_hash: string | null; redirect_uris: string[]; client_name: string } | null> {
-  const rows = await sql<
-    { client_id: string; client_secret_hash: string | null; redirect_uris: string[]; client_name: string }[]
-  >`UPDATE oauth_clients SET last_used_at = now() WHERE client_id = ${clientId}
-     RETURNING client_id, client_secret_hash, redirect_uris, client_name`;
+  input: { clientId: string; redirectUris: string[]; clientName: string },
+): Promise<OauthClientRow> {
+  const rows = await sql<OauthClientRow[]>`
+    INSERT INTO oauth_clients ${sql({
+      client_id: input.clientId,
+      client_secret_hash: null,
+      redirect_uris: input.redirectUris,
+      client_name: input.clientName,
+      kind: "cimd",
+      metadata_fetched_at: new Date(),
+    })}
+    ON CONFLICT (client_id) DO UPDATE SET
+      redirect_uris = EXCLUDED.redirect_uris,
+      client_name = EXCLUDED.client_name,
+      metadata_fetched_at = EXCLUDED.metadata_fetched_at,
+      last_used_at = now()
+    RETURNING client_id, client_secret_hash, redirect_uris, client_name, kind, metadata_fetched_at`;
+  return rows[0]!;
+}
+
+/** Every lookup stamps last_used_at, which is what the unused-client purge reads. */
+export async function getOauthClient(sql: Sql, clientId: string): Promise<OauthClientRow | null> {
+  const rows = await sql<OauthClientRow[]>`
+    UPDATE oauth_clients SET last_used_at = now() WHERE client_id = ${clientId}
+    RETURNING client_id, client_secret_hash, redirect_uris, client_name, kind, metadata_fetched_at`;
   return rows[0] ?? null;
 }
 
 /**
  * Drop clients unused for `days`. Registration is open, so without this
- * anyone who reaches the node could grow the table forever. API keys issued
- * through a client are independent and stay.
+ * anyone who reaches the node could grow the table forever. A client someone
+ * still has a live grant for stays, so it can sign them in again once its
+ * refresh token lapses.
  */
 export async function purgeUnusedOauthClients(sql: Sql, days: number): Promise<number> {
   const rows = await sql<{ client_id: string }[]>`
-    DELETE FROM oauth_clients
-    WHERE coalesce(last_used_at, created_at) < ${daysAgo(sql, days)}
+    DELETE FROM oauth_clients c
+    WHERE coalesce(c.last_used_at, c.created_at) < ${daysAgo(sql, days)}
+      AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.client_id AND g.revoked_at IS NULL)
     RETURNING client_id`;
   return rows.length;
 }
@@ -182,7 +216,9 @@ export async function insertOauthCode(
     codeHash: string;
     clientId: string;
     userAlias: string;
-    workspaceId: string;
+    /** The workspaces consented to; null = every one, now and later. */
+    workspaceScope: string[] | null;
+    access: ApiKeyAccess;
     redirectUri: string;
     codeChallenge: string;
     expiresAt: Date;
@@ -192,11 +228,20 @@ export async function insertOauthCode(
     code_hash: input.codeHash,
     client_id: input.clientId,
     user_alias: input.userAlias,
-    workspace_id: input.workspaceId,
+    workspace_scope: input.workspaceScope,
+    access: input.access,
     redirect_uri: input.redirectUri,
     code_challenge: input.codeChallenge,
     expires_at: input.expiresAt,
   })}`;
+}
+
+export interface ConsumedOauthCode {
+  client_id: string;
+  user_alias: string;
+  workspace_scope: string[] | null;
+  access: ApiKeyAccess;
+  redirect_uri: string;
 }
 
 /**
@@ -207,8 +252,8 @@ export async function insertOauthCode(
 export async function consumeOauthCode(
   sql: Sql,
   input: { codeHash: string; clientId: string; redirectUri: string; codeChallenge: string },
-): Promise<{ client_id: string; user_alias: string; workspace_id: string; redirect_uri: string } | null> {
-  const rows = await sql<{ client_id: string; user_alias: string; workspace_id: string; redirect_uri: string }[]>`
+): Promise<ConsumedOauthCode | null> {
+  const rows = await sql<ConsumedOauthCode[]>`
     WITH consumed AS (
       DELETE FROM oauth_codes
       WHERE code_hash = ${input.codeHash}
@@ -220,9 +265,9 @@ export async function consumeOauthCode(
             AND code_challenge = ${input.codeChallenge}
           )
         )
-      RETURNING client_id, user_alias, workspace_id, redirect_uri, expires_at
+      RETURNING client_id, user_alias, workspace_scope, access, redirect_uri, expires_at
     )
-    SELECT client_id, user_alias, workspace_id, redirect_uri
+    SELECT client_id, user_alias, workspace_scope, access, redirect_uri
     FROM consumed
     WHERE expires_at > now()`;
   return rows[0] ?? null;

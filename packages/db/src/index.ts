@@ -17,6 +17,7 @@ export * from "./user-nodes.js";
 export * from "./sharing.js";
 export * from "./notifications.js";
 export * from "./agents.js";
+export * from "./grants.js";
 export * from "./governance.js";
 export * from "./audit.js";
 export * from "./node.js";

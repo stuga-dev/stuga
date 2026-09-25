@@ -4,8 +4,8 @@
  * The script carries no credential and this route mints none: it installs the
  * discovery skill, points the host at `/mcp`, and the host's own browser
  * sign-in does the granting. Both hosts register themselves through dynamic
- * client registration, which is what `/oauth/register` serves, so the key that
- * comes out is an ordinary connector key revocable under Connected agents.
+ * client registration, which is what `/oauth/register` serves, so what comes
+ * out is an ordinary connection, revocable under Connected agents.
  */
 import { MCP_SERVER_KEY } from "@stuga/protocol/domain/node-name";
 import { error } from "../http/respond.js";
@@ -21,14 +21,42 @@ description: Use whenever the user mentions Stuga or a Stuga workspace, asks whe
 
 Treat a Stuga workspace as an external collaborative knowledge service, not as a directory on disk. Never read "Stuga workspace" as a local folder path or look for it on the filesystem.
 
-Before saying that Stuga is unavailable or asking for a local path:
+## Connections
 
-1. Discover the configured MCP server named \`stuga\`. Do not use differently named MCP servers.
-2. Call its \`workspaces\` tool with \`action: list\`. For an access question, report the returned node and workspaces.
+A Stuga connection is an MCP server, usually named \`stuga\`. A person with more than one node may have added another under a different name, such as \`stuga-work\`: any server offering Stuga's tools (\`workspaces\`, \`search\`, \`retrieve\`, \`markdown\`) is one. Use every Stuga connection you have, and pass each \`workspace_id\` to the connection that listed it.
 
-For document discovery, use \`docs\` with \`action: list\` or \`action: search\`. Use \`retrieve\` when answering a question from content across documents, and \`markdown\` with \`action: read\` when the exact document is known. Follow the server and item instructions returned by Stuga.
+Only report that Stuga is unavailable after searching the available MCP tools and finding no Stuga connection. When one is configured but failing, say that instead. Never ask for a local path.
 
-If several Stuga servers or workspaces match and the request does not identify one, ask which one to use. Only report that no Stuga connection is available after searching the available MCP tools and finding no configured Stuga server.
+## Routing
+
+1. Know the workspaces first. The connection's instructions carry a table of the workspaces it reaches; call \`workspaces\` with \`action: list\` when you do not see it, when it is cut short, or to refresh it. Each workspace comes with its \`workspace_id\`, name, your role, your \`access\` (\`read\` or \`propose\`) and the node it is on.
+2. Pass a \`workspace_id\` on every call except \`workspaces\` action:list, \`search\` and \`retrieve\`. The id already says which node; no tool takes a node.
+3. \`search\` and \`retrieve\` take \`workspace_ids\`. When the request does not say which workspace, pass \`["*"]\` to cover every workspace the connection reaches. Each result names its \`workspace_id\`: act on it there.
+4. \`workspaces\` action:list, \`search\` and \`retrieve\` name under \`unavailable\` any workspace they could not cover just now. Tell the user which, and never present the rest as complete.
+5. For an access question, report the node and each workspace the list returns, with your access there.
+6. A change goes to the workspace of the item it changes. To create something new when the connection reaches several workspaces and the request names none, ask which one.
+
+## Tools
+
+Reading:
+
+- \`search\` finds documents. \`docs\` action:list lists a workspace or one folder (\`parent_id\`), action:metadata inspects one document. \`folders\` lists folders.
+- \`retrieve\` returns cited passages to answer a question from. Prefer it to reading whole documents.
+- \`markdown\` action:read reads a known document; action:status reports what became of your edits.
+- \`databases\` action:list and action:schema, then \`query\` for read-only SQL. \`databases\` action:page finds a row's page.
+- \`comments\`, \`collections\` (action:list, action:open) and \`events\`.
+
+Writing, where your access is \`propose\`:
+
+- \`docs_create\` makes a document. \`markdown_append\` adds text; \`markdown_edit\` changes it (prefer a small \`str_replace\` to a whole \`write\`).
+- \`databases_add\` adds databases, tables, columns, rows, views and row pages; load data with its action:import, never row by row. \`databases_change\` updates or deletes rows and changes views.
+- \`comments_add\`, \`media_upload\` and \`collections_edit\`.
+
+Before writing in a workspace, follow its conventions: the connection's instructions carry them when it reaches one workspace; otherwise read them with \`workspaces\` action:instructions. Follow the item instructions that reads and writes return as well.
+
+A \`Proposed\` result is success: the change waits for a person to accept it. Never retry it.
+
+Where your access is \`read\`, only reading tools are offered: tell the user what you would change.
 `;
 
 /** Codex's skill UI metadata, kept identical to `integrations/skills/stuga/agents/openai.yaml`. */
@@ -122,7 +150,7 @@ const HOSTS: Record<string, Host> = {
     openaiMetadata: true,
     tool: { command: "codex", missing: "Codex CLI is required. Install it, then run this command again." },
     // Current Codex releases complete OAuth during `mcp add --url`. Following it with
-    // `mcp login` opens a second grant and leaves the first connector key orphaned.
+    // `mcp login` makes the person sign in a second time.
     connect: `if STUGA_EXISTING="$(codex mcp get "\${STUGA_SERVER}" --json 2>/dev/null)"; then
   case "\${STUGA_EXISTING}" in
     *"\${STUGA_MCP_URL}"*) echo "Codex already has \${STUGA_SERVER}. To sign in again: codex mcp login \${STUGA_SERVER}" ;;

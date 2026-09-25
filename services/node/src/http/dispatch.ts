@@ -7,6 +7,7 @@
 import {
   buildAccountContext,
   buildContext,
+  buildMcpCaller,
   buildSocketContext,
   Unauthorized,
   WorkspaceRequired,
@@ -26,7 +27,7 @@ import type { RequestHandler } from "../platform/http-server.js";
 import { allowedCorsOrigin, reportRefusedOrigin, withCors } from "./cors.js";
 import { rateLimitRefusal } from "./rate-limit.js";
 import { error } from "./respond.js";
-import { matchRoute, type AccountCall, type PublicCall, type Route, type WorkspaceCall } from "./router.js";
+import { matchRoute, type AccountCall, type McpCall, type PublicCall, type Route, type WorkspaceCall } from "./router.js";
 import { APP_ROUTES } from "./routes.js";
 import { withSecurityHeaders } from "./security-headers.js";
 
@@ -50,11 +51,11 @@ export type AppRoute = Route &
   (
     | { auth: "none"; handler: Handler<PublicCall> }
     | { auth: "account"; handler: Handler<AccountCall> }
+    /** The /mcp endpoint: every call names its workspace, its 401 starts OAuth discovery, and it carries no identity headers. */
+    | { auth: "mcp"; handler: Handler<McpCall> }
     | {
         auth: "workspace";
         handler: Handler<WorkspaceCall>;
-        /** The /mcp endpoint: its 401 starts OAuth discovery, and its responses carry no identity headers. */
-        transport?: "mcp";
         /** No per-principal budget, no identity headers, no denial ledger (the media ticket the SPA mints at boot). */
         unmetered?: boolean;
       }
@@ -133,6 +134,8 @@ async function answer(req: Request, env: NodeEnv): Promise<Response> {
       }
     case "account":
       return accountRequest(route, { req, url, match }, env);
+    case "mcp":
+      return mcpRequest(route, { req, url, match }, env);
     case "workspace":
       return workspaceRequest(route, { req, url, match }, env);
   }
@@ -166,9 +169,27 @@ async function accountRequest(route: Extract<AppRoute, { auth: "account" }>, cal
   }
 }
 
+async function mcpRequest(route: Extract<AppRoute, { auth: "mcp" }>, call: Unauthed, env: NodeEnv): Promise<Response> {
+  const { req } = call;
+  let caller;
+  try {
+    caller = await buildMcpCaller(req, env);
+  } catch (e) {
+    return contextFailure(e, "mcp", env, req);
+  }
+  // One budget per credential, whichever workspaces its calls name.
+  const limited = await rateLimitRefusal(env, caller.account.alias, "mcp");
+  if (limited) return limited;
+  try {
+    return await route.handler({ ...call, caller });
+  } catch (e) {
+    return unexpectedError(e, { req });
+  }
+}
+
 async function workspaceRequest(route: Extract<AppRoute, { auth: "workspace" }>, call: Unauthed, env: NodeEnv): Promise<Response> {
   const { req, url } = call;
-  const transport: Transport = route.transport ?? "http";
+  const transport: Transport = "http";
   let ctx: Ctx;
   try {
     ctx = await buildContext(req, env, transport);
@@ -186,13 +207,6 @@ async function workspaceRequest(route: Extract<AppRoute, { auth: "workspace" }>,
   if (limited) {
     noteDenial(ctx, limited, { method: req.method, path: url.pathname });
     return limited;
-  }
-  if (transport === "mcp") {
-    try {
-      return await route.handler({ ...call, ctx });
-    } catch (e) {
-      return unexpectedError(e, { req });
-    }
   }
   const reqId = requestId();
   // On the context, so a ledger row the route writes names the request the response names.
@@ -234,7 +248,7 @@ export async function routeWorkspaceRequest(ctx: Ctx, req: Request): Promise<Res
   const url = new URL(req.url);
   const found = matchRoute(APP_ROUTES, req.method, url.pathname);
   const route = found?.route;
-  if (!found || route?.auth !== "workspace" || route.transport || route.unmetered) {
+  if (!found || route?.auth !== "workspace" || route.unmetered) {
     return runWorkspaceRoute({ handler: async () => error(404, "no such route") }, { ctx, req, url, match: [url.pathname] });
   }
   return runWorkspaceRoute(route, { ctx, req, url, match: found.match });
@@ -254,7 +268,7 @@ function contextFailure(e: unknown, transport: Transport, env: NodeEnv, req: Req
     if (e instanceof WorkspaceRequired) return new Response(e.message, { status: 409 });
     return new Response("error", { status: 500 });
   }
-  if (e instanceof Unauthorized) return transport === "mcp" ? unauthorizedChallenge(env) : error(401, e.message);
+  if (e instanceof Unauthorized) return transport === "mcp" ? unauthorizedChallenge(env, req) : error(401, e.message);
   if (e instanceof WorkspaceRequired) return workspaceRequiredResponse(error(409, e.message));
   return unexpectedError(e, { req });
 }

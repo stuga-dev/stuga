@@ -19,7 +19,6 @@ import {
   listDocs,
   listFolders,
   listWorkspaceEvents,
-  listWorkspacesForUser,
 } from "@stuga/db";
 import { DATABASE_IMPORT_INLINE_MAX_CHARS } from "@stuga/protocol/databases/limits";
 import type { DatabaseRunSummary, DatabaseSchema } from "@stuga/protocol/databases/types";
@@ -62,7 +61,7 @@ import {
   proposeTableWithColumns,
   type DatabaseProposeOutcome,
 } from "../databases/propose.js";
-import { openRowPage } from "../databases/row-pages.js";
+import { findRowPage, openRowPage } from "../databases/row-pages.js";
 import { createDocument } from "../documents/create.js";
 import { docAgentInstructions, docAgentInstructionsOrNone, docInstructionLabelsOrNone } from "../documents/instructions.js";
 import {
@@ -79,8 +78,8 @@ const RUNS_PAGE = 50;
 
 const NOT_FOUND = { error: "not found or no access" };
 
-/** `homeWorkspaceId` is the workspace the credential was issued in, which `ctx` may have left for another. */
-export function nodeBackend(ctx: Ctx, homeWorkspaceId: string): AgentBackend {
+/** The tools' data access in the one workspace `ctx` resolved to. */
+export function nodeBackend(ctx: Ctx): AgentBackend {
   /** A database the caller may change, or the refusal. */
   const writableDatabase = async (databaseId: string): Promise<DocRow | { error: string }> => {
     const doc = await authorizedDatabase(ctx, databaseId);
@@ -98,21 +97,6 @@ export function nodeBackend(ctx: Ctx, homeWorkspaceId: string): AgentBackend {
 
   return {
     origin: ctx.env.publicOrigin,
-
-    async listWorkspaces() {
-      // A connector follows the person who authorized it, the same rule the per-call workspace gate applies.
-      const rows = await listWorkspacesForUser(ctx.sql, ctx.isAgent ? ctx.onBehalfOf : ctx.alias);
-      // The routing table: a workspace id is unique everywhere, so naming the node on each row is
-      // all a caller needs to say which node it means — there is no node argument anywhere else.
-      // Every row is on this node today; a row on another one would differ only in `node`.
-      const node = { id: ctx.env.nodeId, name: ctx.env.settings.current().nodeLabel, origin: ctx.env.publicOrigin };
-      return {
-        workspaces: rows.map((w) => ({ workspace_id: w.workspace_id, name: w.name, role: w.role, node })),
-        home_workspace_id: homeWorkspaceId,
-        /** The node this connection is to, which is where an omitted `workspace_id` acts. */
-        node,
-      };
-    },
 
     async workspaceInstructions() {
       const ws = await getWorkspace(ctx.sql, ctx.workspaceId);
@@ -314,13 +298,28 @@ export function nodeBackend(ctx: Ctx, homeWorkspaceId: string): AgentBackend {
       return { doc_id: out.doc_id, created: out.created, restored: out.restored };
     },
 
+    async findRowPage(databaseId, tableId, rowId) {
+      const doc = await authorizedDatabase(ctx, databaseId);
+      if (!doc) return NOT_FOUND;
+      const out = await findRowPage(ctx, doc, tableId, rowId);
+      return out.kind === "error" ? { error: out.message } : { doc_id: out.doc_id };
+    },
+
+    async startImport(databaseId, tableId, format) {
+      const doc = await writableDatabase(databaseId);
+      if ("error" in doc) return doc;
+      const staged = await createDatabaseImport(ctx, doc, tableId, format);
+      if ("error" in staged) return { error: staged.error };
+      const { import_id, upload_url, upload_path, max_bytes, expires_at, import_page_url } = staged.ticket;
+      return { import_id, upload_url, upload_path, max_bytes, expires_at, import_page_url };
+    },
+
     async importRows(databaseId, tableId, source, options): Answer<ImportOutcome> {
       const doc = await writableDatabase(databaseId);
       if ("error" in doc) return doc;
       const opts = parseCommitOptions({ ...options });
       if ("error" in opts) return opts;
       if (source.kind === "import_id") return commitDatabaseImport(ctx, doc, source.import_id, opts, "connector");
-      if (source.kind === "file") return { error: "this connector cannot read files — pass the file's text in `content`" };
       const handOff = (why: string): ImportOutcome => ({ hand_off: { page_url: importPageUrl(ctx.env.publicOrigin, databaseId, tableId!), why } });
       if (source.content.length > DATABASE_IMPORT_INLINE_MAX_CHARS) {
         return handOff(`That is ${source.content.length} characters, past the ${DATABASE_IMPORT_INLINE_MAX_CHARS} a tool call may carry.`);

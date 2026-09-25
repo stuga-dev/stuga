@@ -132,6 +132,8 @@ async function purgeRetention(env: JobsEnv, d: JobDeps): Promise<void> {
   if (signIns > 0) d.log.info("purged expired identity-provider sign-ins", { purged: signIns });
   const clients = await d.db.purgeUnusedOauthClients(OAUTH_CLIENT_RETENTION_DAYS);
   if (clients > 0) d.log.info("purged unused oauth client registrations", { purged: clients });
+  const tokens = await d.db.purgeExpiredOauthTokens();
+  if (tokens > 0) d.log.info("purged expired oauth tokens", { purged: tokens });
   // A retention of 0 keeps that ledger whole.
   const { auditRetentionDays, aiUsageRetentionDays, askThreadRetentionDays } = env.settings.current();
   if (auditRetentionDays > 0) {

@@ -130,7 +130,7 @@ const agent = (over: Partial<Ctx> = {}) =>
     principals: ["agent:agent-1", "user:alice", "org:ws1"],
     ...over,
   } as Partial<Ctx>);
-const readOnlyKey = () => agent({ scope: { folders: null, readOnly: true, keyId: "k1" } } as Partial<Ctx>);
+const readOnlyKey = () => agent({ scope: { folders: null, readOnly: true, credentialId: "k1" } } as Partial<Ctx>);
 
 async function call(ctx: Ctx, method: string, path: string, body?: unknown): Promise<Response> {
   const req = new Request(`https://node.test${path}`, {

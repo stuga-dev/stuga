@@ -1,11 +1,11 @@
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
 import { api, apiFailure, authedFetch } from "../lib/http/client";
 
-/** A `vk_` key a machine client acts with, for the person who minted it. OAuth connectors are keys too. */
+/** A `vk_` key a machine client acts with, for the person who minted it. Apps that sign in are connections instead. */
 export interface AgentKeyInfo {
   key_id: string;
   agent_id: string;
-  /** `connector`: minted by an OAuth token exchange rather than by hand. */
+  /** `connector`: a retired key an OAuth sign-in once minted; sign-ins are connections now. */
   kind: "key" | "connector";
   name: string;
   /** The one tenant the key can act in. */
@@ -56,6 +56,29 @@ export const AgentKeys = {
   rename: (keyId: string, name: string) => api<AgentKeyInfo>(`/api/keys/${keyId}`, { method: "PATCH", body: JSON.stringify({ name }) }),
 };
 
+/** An app that signed in through OAuth: the person's grant of the workspaces they chose. */
+export interface ConnectionInfo {
+  grant_id: string;
+  agent_id: string;
+  name: string;
+  client_id: string;
+  /** The host that vouches for the app; null for one that registered itself. */
+  verified_host: string | null;
+  /** null: every workspace its person belongs to, now and later. */
+  workspaces: string[] | null;
+  access: "read" | "propose";
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export const Connections = {
+  mine: () => api<{ connections: ConnectionInfo[] }>("/api/me/connections"),
+  rename: (grantId: string, name: string) =>
+    api<ConnectionInfo>(`/api/me/connections/${grantId}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  revoke: (grantId: string) => api<{ revoked: boolean }>(`/api/me/connections/${grantId}`, { method: "DELETE" }),
+};
+
 export interface WebhookInfo {
   webhook_id: string;
   url: string;
@@ -84,10 +107,10 @@ export const Webhooks = {
 export const Agents = {
   setup: () => api<AgentSetup>("/api/agent-setup"),
 
-  /** The installable extension. A POST because it mints a key sealed inside the archive. */
+  /** The installable extension. It carries no credential: it signs in through the browser once installed. */
   bundle: async (): Promise<Blob> => {
-    const res = await authedFetch("/api/agent-bundle", { method: "POST" });
-    if (!res.ok) throw await apiFailure("/api/agent-bundle", "POST", res);
+    const res = await authedFetch("/api/agent-bundle");
+    if (!res.ok) throw await apiFailure("/api/agent-bundle", "GET", res);
     return res.blob();
   },
 };

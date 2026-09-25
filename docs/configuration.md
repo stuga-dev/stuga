@@ -37,7 +37,7 @@ How these fit together, and what each way of reaching a node protects, is in
 | `BIND` | `127.0.0.1` | The address the node listens on. |
 | `PORT` | `8787` | The port the node listens on. |
 | `PUBLIC_ORIGIN` | `http://localhost:8787` | The address people and agents reach the node at. Every link the node creates, the token issuer and the origins browsers may call from all derive from it. |
-| `EXTRA_ORIGINS` | none | Further exact origins browsers may call from, comma-separated. Wildcards are refused. The node's own IP addresses and local names, at `PUBLIC_ORIGIN`'s http or https, need no entry ([Network access](network-access.md#public_origin-and-extra_origins)). |
+| `EXTRA_ORIGINS` | none | Further exact origins browsers may call from, comma-separated. Wildcards are refused. The node's own IP addresses and local names, at `PUBLIC_ORIGIN`'s http or https, need no entry ([Network access](network-access.md#public_origin-and-extra_origins)). An agent that calls the node at one of these signs in there ([Agents signing in](network-access.md#agents-signing-in)). |
 | `TRUST_PROXY_HEADERS` | `false` | Take the client address from `X-Forwarded-For` or `X-Real-IP`. Turn it on only behind a reverse proxy that sets them. |
 | `TLS_CERT_DIR` | none | A directory holding `<hostname>/fullchain.pem` and `<hostname>/privkey.pem`. When set, the node serves https only. |
 
@@ -57,7 +57,7 @@ letter or a digit. These are reserved: `admin`, `administrator`, `root`, `stuga`
 | Variable | Default | |
 |---|---|---|
 | `NODE_SIGNING_KEY` | `<DATA_DIR>/identity/signing.jwk` | The key that signs session tokens, created on first start. Outside `DATA_DIR` it is not in backups, and losing it signs everyone out. |
-| `ACCESS_TOKEN_TTL_SECONDS` | `3600` | How long an access token lasts. At least 60. |
+| `ACCESS_TOKEN_TTL_SECONDS` | `3600` | How long a session's access token lasts. At least 60. The tokens apps get through OAuth last an hour whatever this says. |
 | `REFRESH_TOKEN_TTL_SECONDS` | `2592000` (30 days) | How long a session lasts without being renewed. At least 60. |
 | `REFRESH_ROTATION_GRACE_SECONDS` | `60` | How long a just-used refresh token is still accepted. A refresh token is used once, and a second use normally ends every session of the account. The grace window covers two tabs renewing at the same moment. `0` turns it off. |
 
@@ -90,7 +90,7 @@ and node administrators also see **This node**.
 
 | Where | What |
 |---|---|
-| Preferences → **Your own AI** | Connecting your own agent, such as Claude Desktop, Claude Code or Codex, and the agents you have connected, with their keys ([agents.md](agents.md)). Each person connects their own. |
+| Preferences → **Your own AI** | Connecting your own agent, such as Claude Desktop, Claude Code or Codex, and the agents you have connected: apps that signed in, and keys ([agents.md](agents.md)). Each person connects their own. |
 | This node → **AI providers** | **Built-in AI** (chat), with its model providers and **Default model**, and **Search by meaning** (semantic search), with its service, model and [match cutoffs](#match-cutoffs). Each is set up on its own and runs without the other. Setting a half up turns it on, its switch turns it off and keeps it, and **Remove** forgets it. **Test** in an **Edit** checks that service. |
 | This node → **Notifications** | Where notifications go: Slack, Microsoft Teams, Discord, a plain webhook or email, with **Send a test**. |
 | This node → **Access** | The node's address and accepted origins (read-only), the [identity provider](#identity-provider), administrators, the node's audit log, and account recovery links. |
@@ -113,7 +113,7 @@ stricter. There are two, under **Match cutoffs** in the **Edit** of **Search by 
 
 | Setting | Default | Applies to |
 |---|---|---|
-| **Search cutoff** | `0.6` | The search box, `POST /api/search`, and agents' `docs` action `search`. |
+| **Search cutoff** | `0.6` | The search box, `POST /api/search`, and agents' `search`. |
 | **Retrieval cutoff** | `0.9` | Ask, `POST /api/retrieve`, agents' `retrieve`, and the co-author's and table assistant's document search. |
 
 Retrieval's default is looser because a short question sits far from even its best passage, and
@@ -136,10 +136,9 @@ without its port or a trailing `.local`, such as `livs-air` for `http://livs-air
 that label changes with the node's address. **Settings → This node → About** shows it.
 
 The node ID is 16 lowercase letters and digits, chosen when the node first starts. A rename does not
-change it, and it is kept in the database, so a restored node keeps it. The Claude Desktop extension
-installs under it, so two nodes' extensions sit side by side, and `workspaces` action `list` names it
-as the node each workspace is on. Neither the name nor the ID appears in what a client stores: that is
-always `stuga` ([Agents](agents.md#one-connection-and-which-node-a-call-lands-on)).
+change it, and it is kept in the database, so a restored node keeps it. `workspaces` action `list`
+names it as the node each workspace is on. Neither the name nor the ID appears in what a client
+stores: that is always `stuga` ([Agents](agents.md#one-connection-and-which-node-a-call-lands-on)).
 
 ### Identity provider
 
@@ -172,8 +171,9 @@ down, and the sign-in works over plain http too.
 
 The node renews its sessions without asking the provider, so disabling someone there stops their next
 sign-in through it but not the session they have. Removing them from a workspace's **Members** ends
-their access to that workspace and revokes the keys they minted there, but not their session, and a
-node administrator stays one until removed under **Access**. Redeeming a reset link for their account
+their access to that workspace, revokes the keys they minted there and takes the workspace out of
+the apps they connected, but not their session, and a node administrator stays one until removed
+under **Access**. Redeeming a reset link for their account
 ends every session they have ([Troubleshooting](troubleshooting.md#accounts-and-sign-in) has the
 steps).
 

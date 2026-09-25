@@ -15,6 +15,12 @@ export {
 } from "./acl.js";
 export { looksLikeApiKey, mintApiKey, mintRotatedApiKeySecret, parseApiKey } from "./credentials/apikey.js";
 export { canonicalizeAlias, newAlias } from "./credentials/alias.js";
+export {
+  connectorTokenKind,
+  hashConnectorToken,
+  mintConnectorToken,
+  type ConnectorTokenKind,
+} from "./credentials/connector-token.js";
 export { hashPassword, verifyPassword } from "./credentials/password.js";
 export { hashRefreshToken, mintRefreshToken } from "./credentials/refresh.js";
 export { constantTimeEqual, randomBase64url, randomHex, sha256Hex } from "./crypto.js";

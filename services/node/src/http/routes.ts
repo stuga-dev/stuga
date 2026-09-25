@@ -46,6 +46,7 @@ import {
 import { syncGroup } from "../api/groups.js";
 import { createInvite, listInvites, redeemInvite, revokeInvite } from "../api/invites.js";
 import { listKeys, mintKey, revokeKey, rotateKey, updateKey } from "../api/keys.js";
+import { listConnections, revokeConnection, updateConnection } from "../api/connections.js";
 import { clearMediaTicket, mintMediaTicketRoute, readMedia, uploadImage } from "../api/media.js";
 import { changeMemberRole, inviteMember, listMemberCandidates, listMembers, removeMember } from "../api/members.js";
 import { listModels } from "../api/models.js";
@@ -87,7 +88,7 @@ import {
 } from "../api/versions.js";
 import { createWorkspace, deleteWorkspace, listWorkspaces, updateWorkspace } from "../api/workspaces.js";
 import { mintSocketTicket } from "../api/ws.js";
-import { createAgentBundle } from "../agents/bundle/route.js";
+import { getAgentBundle } from "../agents/bundle/route.js";
 import { getAgentInstaller } from "../agents/install.js";
 import { getAgentSetup } from "../agents/setup.js";
 import { exportAudit, listAudit, listAuditFacets, listNodeAudit } from "../audit/routes.js";
@@ -133,8 +134,10 @@ import {
 import { handleMcpRequest } from "../mcp/handler.js";
 import {
   handleAuthorize,
+  handleClientInfo,
   handleConsent,
   handleRegister,
+  handleRevoke,
   handleToken,
   wellKnownAuthorizationServer,
   wellKnownProtectedResource,
@@ -165,6 +168,7 @@ const OWN_ASK_THREADS = { readOnlyKeys: true } as const;
 const ACCOUNT = { auth: "account", humanOnly: "agents cannot manage workspaces" } as const;
 /** A person's bookmarks to other nodes: an agent has no switcher to fill. */
 const OTHER_NODES = { auth: "account", humanOnly: "agents cannot read or change a person's other nodes" } as const;
+const CONNECTIONS = { auth: "account", humanOnly: "agents cannot manage connections" } as const;
 
 const DOC = "/api/docs/([^/]+)";
 const DATABASE = "/api/databases/([^/]+)";
@@ -194,19 +198,21 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: "GET", path: MEDIA_GET_PATH, auth: "none", handler: readMedia },
 
   // OAuth for agent connectors: consent verifies the human's token itself, token verifies the PKCE code.
-  { method: "*", path: "/.well-known/oauth-authorization-server", auth: "none", handler: async ({ env }) => wellKnownAuthorizationServer(env) },
-  { method: "*", path: "/.well-known/oauth-protected-resource", auth: "none", handler: async ({ env }) => wellKnownProtectedResource(env) },
-  { method: "POST", path: "/oauth/register", auth: "none", handler: ({ env, req }) => handleRegister(env, req) },
-  { method: "GET", path: "/oauth/authorize", auth: "none", handler: ({ env, req }) => handleAuthorize(env, req) },
-  { method: "POST", path: "/oauth/consent", auth: "none", handler: ({ env, req }) => handleConsent(env, req) },
-  { method: "POST", path: "/oauth/token", auth: "none", handler: ({ env, req }) => handleToken(env, req) },
+  { method: "*", path: "/.well-known/oauth-authorization-server", auth: "none", handler: async ({ env, req }) => wellKnownAuthorizationServer(env, req) },
+  // RFC 9728 puts the resource's path after the well-known name; the bare name is kept for clients that ask for it.
   {
     method: "*",
-    path: "/mcp",
-    auth: "workspace",
-    transport: "mcp",
-    handler: ({ ctx, req }) => handleMcpRequest(ctx, req),
+    path: /^\/\.well-known\/oauth-protected-resource(?:\/mcp)?$/,
+    auth: "none",
+    handler: async ({ env, req }) => wellKnownProtectedResource(env, req),
   },
+  { method: "POST", path: "/oauth/register", auth: "none", handler: ({ env, req }) => handleRegister(env, req) },
+  { method: "GET", path: "/oauth/authorize", auth: "none", handler: ({ env, req }) => handleAuthorize(env, req) },
+  { method: "GET", path: "/oauth/client", auth: "none", handler: ({ env, req }) => handleClientInfo(env, req) },
+  { method: "POST", path: "/oauth/consent", auth: "none", handler: ({ env, req }) => handleConsent(env, req) },
+  { method: "POST", path: "/oauth/token", auth: "none", handler: ({ env, req }) => handleToken(env, req) },
+  { method: "POST", path: "/oauth/revoke", auth: "none", handler: ({ env, req }) => handleRevoke(env, req) },
+  { method: "*", path: "/mcp", auth: "mcp", handler: ({ caller, req }) => handleMcpRequest(caller, req) },
   // Upgrades are answered by the upgrade handler; this is a client that forgot the header.
   { method: "*", path: /^\/ws\/([^/]+)$/, auth: "none", handler: async () => error(426, "expected websocket") },
   // The signed, single-use URL a staged import hands out is the whole credential.
@@ -223,6 +229,9 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: "POST", path: "/api/invites/redeem", ...ACCOUNT, handler: redeemInvite },
   { method: "POST", path: "/api/share-links/redeem", ...ACCOUNT, handler: redeemShareLink },
   // The switcher's Other nodes, which a person without a workspace has too.
+  { method: "GET", path: "/api/me/connections", ...CONNECTIONS, handler: listConnections },
+  { method: "PATCH", path: /^\/api\/me\/connections\/([^/]+)$/, ...CONNECTIONS, handler: updateConnection },
+  { method: "DELETE", path: /^\/api\/me\/connections\/([^/]+)$/, ...CONNECTIONS, handler: revokeConnection },
   { method: "GET", path: "/api/me/nodes", ...OTHER_NODES, handler: listOtherNodes },
   { method: "POST", path: "/api/me/nodes", ...OTHER_NODES, handler: addOtherNode },
   { method: "DELETE", path: /^\/api\/me\/nodes\/([^/]+)$/, ...OTHER_NODES, handler: removeOtherNode },
@@ -232,7 +241,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("PATCH", "/api/whoami", updateWhoami, { humanOnly: "agents cannot change the profile of the human who minted them" }),
   api("GET", "/api/ws/ticket", mintSocketTicket),
   api("GET", "/api/agent-setup", getAgentSetup),
-  api("POST", "/api/agent-bundle", createAgentBundle),
+  api("GET", "/api/agent-bundle", getAgentBundle, { humanOnly: "agents cannot download the extension" }),
 
   // Agent governance.
   api("GET", "/api/runs", listRunInbox, { humanOnly: "agents cannot read the review inbox" }),

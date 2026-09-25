@@ -33,14 +33,14 @@ package may depend on:
 |---|---|---|
 | `@stuga/protocol` | nothing | Wire formats, API and domain types, limits. Imported by subpath (`wire/`, `api/`, `domain/`, `databases/`, `text/`, `internal/`). |
 | `@stuga/runtime` | nothing | The actor contract, the in-process actor host, sockets, SQLite storage and the filesystem blob store. `@stuga/runtime/testing` is an in-memory host. |
-| `@stuga/auth` | protocol | Token signing and verification, API keys, password hashing, ACL checks, and the client side of sign-in through an identity provider. No database access. |
+| `@stuga/auth` | protocol | Token signing and verification, API keys, the tokens OAuth hands agents, password hashing, ACL checks, and the client side of sign-in through an identity provider. No database access. |
 | `@stuga/db` | protocol | The Postgres client, the migration runner and boot repairs, queries per domain, search, the job queue. |
 | `@stuga/ai` | protocol | Provider clients, chunking, embeddings, reranking, and the agent loops of the co-author, the table assistant and Ask. |
 | `@stuga/crdt-ops` | protocol | Markdown to and from Yjs, block-level edits, footnotes. Shared by the browser, the node and the document actor. |
 | `@stuga/doc-actor` | runtime, crdt-ops, ai, protocol | The document actor. |
 | `@stuga/database-actor` | runtime, protocol | The database actor. |
-| `@stuga/agent-surface` | protocol | The agent tools: names, descriptions, input schemas, server instructions and result wording, and `registerAgentTools`, which registers every tool against a backend. |
-| `@stuga/mcp` | agent-surface, protocol | The stdio MCP server and its REST backend, built to one file. |
+| `@stuga/agent-surface` | protocol | The agent tools: names, annotations, descriptions, input schemas, server instructions and result wording; `registerAgentTools`, which registers every tool against a surface that finds the backend for the workspace each call names; and the rank merge of results from several workspaces. |
+| `@stuga/mcp` | agent-surface, protocol | The stdio MCP server, a proxy to a node's `/mcp` that signs in through the browser, built to one file. |
 | `@stuga/node` | all of the above | The node. |
 | `@stuga/web` | protocol, crdt-ops | The web app. |
 
@@ -66,11 +66,11 @@ built.
 | `api/` | REST handlers, one file per resource. |
 | `documents/` | Document creation and the access checks routes share. |
 | `databases/` | Database routes, agent proposals, staged imports, row pages. |
-| `agents/` | Agent keys, the document propose path, agent setup, the `.mcpb` extension. |
+| `agents/` | Agent keys, the document propose path, agent setup, the installers, the `.mcpb` extension. |
 | `governance/` | The event feed, the review inbox, webhooks. |
 | `retrieval/` | Collection scope, the retrieval pipeline, the Ask tool runner. |
 | `media/`, `audit/` | Media storage and serving; writing and reading the audit ledger. |
-| `mcp/` | `/mcp` and the OAuth authorization server beside it. |
+| `mcp/` | `/mcp`, and the OAuth authorization server whose grants and tokens it accepts. |
 | `internal/` | The routes actors call back into. |
 | `jobs/` | Job handlers and the maintenance tick. |
 | `ops/` | Backup, verify, restore and list, and the backups a running node takes of itself. |
@@ -107,7 +107,12 @@ needs:
 - `none`: readiness, OAuth, the model list, media reads (authorized by a signed ticket cookie), and
   the signed upload URL of a staged import.
 - `account`: an authenticated identity with no workspace yet, for listing and creating workspaces,
-  redeeming invites and share links, and a person's bookmarks to other nodes.
+  redeeming invites and share links, a person's bookmarks to other nodes, and the apps they
+  connected through OAuth.
+- `mcp`: `/mcp` alone. An OAuth access token, an API key or a session token, with the workspace
+  resolved on each tool call rather than for the request, and one budget per credential (600
+  requests a minute) whatever workspaces its calls name. OAuth access tokens are accepted nowhere
+  else.
 - `workspace`: everything else.
 
 A workspace route builds its context from the credential: a session token resolves the person and
@@ -125,8 +130,10 @@ written to the audit ledger.
 Invariants the request layer holds:
 
 - The listener rebuilds every request URL on `PUBLIC_ORIGIN`, never on the `Host` header. Minted
-  links, the origin allow-set (with `EXTRA_ORIGINS`), the media cookie's `Secure` flag and the OAuth
-  issuer all derive from it.
+  links, the origin allow-set (with `EXTRA_ORIGINS`) and the media cookie's `Secure` flag all derive
+  from it. OAuth discovery is the one answer that follows `Host`, and only among `PUBLIC_ORIGIN` and
+  `EXTRA_ORIGINS`: an agent that called the node at one of them is answered with that origin, and
+  any other `Host` gets `PUBLIC_ORIGIN`'s.
 - The web app is served by the node, same-origin with the API, and derives its API and socket
   addresses from `location`. One build works at any address.
 - The listener caps request bodies at a size derived from the **Maximum upload size** setting and
@@ -197,7 +204,7 @@ key for socket tickets, media tickets and import upload signatures.
 
 ## Postgres
 
-**Schema.** `packages/db/migrations/0001_initial.sql` is the whole schema. The runner
+**Schema.** The numbered files in `packages/db/migrations/` are the whole schema. The runner
 (`packages/db/src/schema/migrate.ts`) applies the migrations a database has not seen, in order, in
 one transaction under an advisory lock, and records each with a checksum in `schema_migrations`. An
 applied migration is frozen, so a schema change is a new numbered file. The node refuses a database
@@ -270,8 +277,8 @@ is at least once, so every handler tolerates a repeat. The message kinds
 The maintenance tick embeds chunks left without a vector, re-embeds every workspace after the
 embedding model changes, takes the daily backup when it is due, purges expired trash, import
 stagings and unfinished sign-ins through the identity provider, and applies retention to revoked
-keys, notifications, sessions, OAuth clients, closed inbox runs, the event feed, and the ledgers
-whose retention the Settings page controls (audit, AI usage, Ask threads).
+keys, notifications, sessions, OAuth clients, expired OAuth tokens, closed inbox runs, the event
+feed, and the ledgers whose retention the Settings page controls (audit, AI usage, Ask threads).
 
 ## Identity
 
@@ -302,17 +309,19 @@ nodes happens in the client:
   a label and an origin, never shared and never checked to be a Stuga node. A `CHECK` keeps the origin
   a bare http or https one, and the switcher opens nothing else. Opening one navigates the whole page,
   because a session belongs to one node's origin and no page a node serves may be framed.
-- **Agents** connect to each node as a separate MCP server. The client fans out: a search covers one
-  workspace on one node, and the model combines the answers.
+- **Agents** connect to each node as a separate MCP server. One search covers any of the workspaces
+  a connection reaches on its node; across nodes, the client fans out and the model combines the
+  answers.
 
 ## Audit
 
 The audit ledger is append-only. Rows are queued as `audit` jobs from the places that change things:
-document and folder writes, sharing, keys, proposals and decisions, database mutations, settings,
-and every `/mcp` tool call, reads included. Refused requests are recorded too. Each row records the
-actor, its kind (`human`, `agent` or `internal`), the human an agent acted for, the source (`web`,
-`mcp`, `api-key`, `ws`, `internal` or `cron`), the action, the target and its name at the time, and
-the status. The maintenance tick purges rows past the audit retention set on the Settings page.
+document and folder writes, sharing, keys, connections, proposals and decisions, database mutations,
+settings, and every `/mcp` tool call in a workspace, reads included. Refused requests are recorded
+too. Each row records the actor, its kind (`human`, `agent` or `internal`), the human an agent acted
+for, the source (`web`, `mcp`, `api-key`, `ws`, `internal` or `cron`), the action, the target and
+its name at the time, and the status. The maintenance tick purges rows past the audit retention set
+on the Settings page.
 
 ## The run ledger
 
@@ -336,26 +345,40 @@ meet it is in [agents.md](agents.md#what-the-run-ledger-shows).
 
 ## MCP
 
-One tool surface, `@stuga/agent-surface`, is served two ways:
+The tools live in one place, `@stuga/agent-surface`, and one endpoint serves them:
 
 - **`/mcp`** is a stateless Streamable HTTP endpoint. Each request builds a server around the
-  caller's context, and each tool runs in-process over the same node code as the REST routes. An
-  OAuth 2.1 authorization server sits beside it (discovery, open client registration, authorization
-  code with PKCE). Its issuer is `PUBLIC_ORIGIN`, and the token it issues is an ordinary `vk_` API key,
-  so the `/mcp` request path never sees OAuth.
-- **`stuga-mcp`** (`services/mcp`) is a stdio process a desktop client launches. Its backend makes
-  REST calls against the node with an API key.
+  caller: who it acts for, the workspaces its credential may name, and whether it may only read, in
+  which case only the reading tools are registered. A tool call acts in the workspace it names, and
+  only if the credential reaches it and its person is a member there now; nothing falls back to
+  another workspace. The tool then runs in-process over the same node code as the REST routes, and
+  writes an audit row in that workspace. `search` and `retrieve` run once per workspace named and
+  merge the answers by rank.
+- **`stuga-mcp`** (`services/mcp`) is a stdio process a desktop client launches. It forwards to a
+  node's `/mcp`, so its tools, wording and checks are that node's, and adds only the upload of a
+  local file for an import. It sends a key when it has one, and otherwise signs in through the
+  browser like any other app.
 
-Both register the same tools with the same checks and wording, and both pass through the same
-permission checks and run ledger. An MCP agent holds no socket and is not in the presence bar. Its
-work shows up in the run ledger, and presence never affects whether an edit waits for review. Setup
-and the tools: [agents.md](agents.md).
+An MCP agent holds no socket and is not in the presence bar. Its work shows up in the run ledger,
+and presence never affects whether an edit waits for review. Setup and the tools:
+[agents.md](agents.md).
 
-Both introduce themselves as `name: stuga`, `title: Stuga`, with nothing of the node in either: a
-client holds one Stuga connection. Which node a call lands on is routing detail, and lives where the
-model can act on it — the instructions open with the node's current name and `PUBLIC_ORIGIN`, and
-`workspaces` action `list` names the node of every workspace the connection reaches, so a
+**OAuth.** The node is the authorization server for its own `/mcp`: discovery (RFC 8414, RFC 9728),
+clients that register themselves (RFC 7591) or are known by a client metadata document the node
+fetches through its outbound URL checks, authorization code with PKCE, rotating refresh tokens, and
+revocation (RFC 7009). A consent creates or renews a grant in `oauth_grants`: one person's
+authorization of one client over the workspaces they chose, with read or propose access. Its agent
+keeps one identity for life, so a grant is revoked and never deleted, and runs and audit rows name
+the same agent for as long as they are kept. Tokens in `oauth_tokens` are stored as hashes, belong to
+one sign-in's chain, and are accepted only by `/mcp`. A token belongs to the node, not to one of its
+addresses. The OAuth routes: [api.md](api.md#agents-over-oauth).
+
+Both servers introduce themselves as `name: stuga`, `title: Stuga`, with nothing of the node in
+either: a client holds one Stuga connection. Which node a call lands on is routing detail, and lives
+where the model can act on it — the instructions name the node's current name and `PUBLIC_ORIGIN`,
+and `workspaces` action `list` names the node of every workspace the connection reaches, so a
 `workspace_id` says which node too and no tool takes a node. `/mcp` reads the node name on every
-request. `stuga-mcp` takes `node_label` and `origin` from the node's public `/auth/config` when it
-starts, so its line matches `/mcp`'s. It waits at most two seconds, and otherwise uses
-`STUGA_NODE_NAME`, then the host of `STUGA_URL`, and the origin of `STUGA_URL`.
+request. `stuga-mcp` passes on the node's instructions. Until it reaches the node, its own
+instructions name the node by `node_label` and `origin` from the node's public `/auth/config`, asked
+for at most two seconds at startup, and otherwise by `STUGA_NODE_NAME`, then the host of
+`STUGA_URL`, and the origin of `STUGA_URL`.

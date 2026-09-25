@@ -43,15 +43,16 @@ once the node is claimed.
 
 `PUBLIC_ORIGIN` is the address people type, such as `http://192.168.1.50:8787` or
 `https://stuga.example.com`. The node builds every request URL on it, never on the `Host` header.
-Invite links, share links, the agent setup in **Settings → Your own AI**, OAuth for agents and the issuer of every
+Invite links, share links, the agent setup in **Settings → Your own AI** and the issuer of every
 session token all use it. It is also the origin browsers may call the node from, and its host is what
 agents call the node until an administrator [names the node](configuration.md#the-nodes-name-and-id).
 
 `EXTRA_ORIGINS` lists further exact origins that browsers may call from, such as
-`http://localhost:8787` on the node's own machine. Links still use `PUBLIC_ORIGIN`. Sign-in through
-an identity provider is the exception: the provider sends the browser back to the origin the
-sign-in started from, `PUBLIC_ORIGIN` or one of these, so it needs a callback for each
-([Identity provider](configuration.md#identity-provider)).
+`http://localhost:8787` on the node's own machine. Links still use `PUBLIC_ORIGIN`. Two things
+follow the origin in use instead: sign-in through an identity provider, which sends the browser back
+to the origin the sign-in started from, `PUBLIC_ORIGIN` or one of these, so it needs a callback for
+each ([Identity provider](configuration.md#identity-provider)); and an agent's sign-in
+([below](#agents-signing-in)).
 
 A browser that opens the node at one of its own local addresses works too, without that address in
 `EXTRA_ORIGINS`, as long as it uses the same http or https as `PUBLIC_ORIGIN`: an IP address,
@@ -67,11 +68,11 @@ Changing `PUBLIC_ORIGIN` has consequences:
 
 - Everyone signs in again, because sessions belong to the old address.
 - Links created before the change carry the old address. Create invite links after it.
-- Agents set up with the old address need the new one. Download the Claude Desktop extension again
-  from **Your own AI**, which replaces the installed one, and add Claude Code's server again in place
-  of the old one. API keys keep working.
-- Agents and the workspace switcher call a node nobody has named by the new host, and the server
-  name in agent setups changes with it ([The node's name](configuration.md#the-nodes-name-and-id)).
+- Agents set up with the old address need the new one. Change **Stuga address** in the Claude
+  Desktop extension's settings, and add Claude Code's server again in place of the old one. API keys
+  keep working; an app that signed in may ask to sign in again.
+- Agents and the workspace switcher call a node nobody has named by the new host
+  ([The node's name](configuration.md#the-nodes-name-and-id)).
 - An identity provider needs the new callback URL registered, as listed in
   **Settings → This node → Access**.
 - Shortcuts to the node that people keep under **Other nodes** on other nodes still carry the old
@@ -79,11 +80,29 @@ Changing `PUBLIC_ORIGIN` has consequences:
 
 Keep the address stable. A network address from DHCP can change, so reserve it on your router.
 
+## Agents signing in
+
+An agent that signs in through OAuth finds the node from the `401` that `/mcp` answers
+([Agents](agents.md#apps-that-sign-in)).
+
+- **Discovery follows the address called.** The OAuth metadata, the consent page and every endpoint
+  they name are on whichever of `PUBLIC_ORIGIN` and `EXTRA_ORIGINS` the agent called, so an agent that
+  reaches the node by a name in `EXTRA_ORIGINS` signs in on that name. Any other address, such as an
+  IP address not listed, is answered with `PUBLIC_ORIGIN`'s.
+- **Tokens belong to the node.** A token works at every one of those addresses, and the resource a
+  client names must be the node's `/mcp` on one of them.
+- **Client metadata documents need a public https origin.** An app can identify itself by an https
+  URL whose document the node fetches, and is then shown as verified by that host. The node's
+  metadata advertises this only when the origin called is https and not a loopback, private or
+  local-network address. Elsewhere apps register themselves, and the consent page shows them as
+  unverified.
+
 ## HTTPS
 
-A node on a private network works over plain http. Give it TLS to reach it from the internet, and to
-get Claude Code's browser sign-in, which refuses to send a credential to a token endpoint that is
-neither https nor loopback ([Claude Code](agents.md#claude-code)).
+A node on a private network works over plain http. Give it TLS to reach it from the internet, to add
+it to Claude on the web, which needs a public https address ([Agents](agents.md#claude-on-the-web)),
+and to get Claude Code's browser sign-in, which refuses to send a credential to a token endpoint that
+is neither https nor loopback ([Claude Code](agents.md#claude-code)).
 
 ### A reverse proxy
 
@@ -151,8 +170,8 @@ where it was added, for that person alone: nothing checks that the address is a 
 other node learns nothing. Opening one loads that address in the same tab, and that node asks you to
 sign in unless you already have. API keys cannot read or change shortcuts.
 
-An agent that works with several nodes connects to each as its own MCP server
-([Agents](agents.md#one-connection-and-which-node-a-call-lands-on)).
+An agent that works with several nodes connects to each as its own MCP server, and signs in to each
+on its own ([Agents](agents.md#one-connection-and-which-node-a-call-lands-on)).
 
 ## Headers
 

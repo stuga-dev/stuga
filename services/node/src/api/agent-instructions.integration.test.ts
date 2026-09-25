@@ -44,7 +44,7 @@ const bobsKey = () =>
     isAgent: true,
     onBehalfOf: "bob",
     principals: ["agent:agent-1", "user:bob", ORG],
-    scope: { folders: ["f_deals"], readOnly: true, keyId: "k1" },
+    scope: { folders: ["f_deals"], readOnly: true, credentialId: "k1" },
   });
 
 async function call(ctx: Ctx, method: string, path: string, body?: unknown): Promise<Response> {

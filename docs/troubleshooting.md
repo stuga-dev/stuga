@@ -132,7 +132,7 @@ give the node an https address as [Network access](network-access.md#https) desc
 | The identity provider refuses the redirect URI | Register the callback URL that **Settings → This node → Access** lists for the address in the browser: [Identity provider](configuration.md#identity-provider). |
 | Saving the identity provider refuses the issuer | On save the node reads `<issuer>/.well-known/openid-configuration`, and the message says what failed: the node cannot reach it, its `issuer` differs from the one typed, or the provider offers no authorization code flow with S256 PKCE. The issuer must be https unless its host is loopback. On Docker the node's container has to reach it, and `localhost` there is the container itself. |
 | **Continue with** signs straight back in as the same person | The provider still has them signed in. After signing out here, the next **Continue with** has the provider ask which account to use, and the first-visit page offers **Use a different account**. |
-| Someone disabled at the identity provider can still use the node | Expected. The provider is asked only at sign-in, and the node renews its own sessions, which removing them from a workspace does not end. First take away node administration in **Settings → This node → Access** if they have it. Then mint a reset link for them under **Account recovery**, redeem it yourself in a private window and sign out there: that ends every session of theirs, though an access token already issued works for up to `ACCESS_TOKEN_TTL_SECONDS`. Last, remove them from each workspace's **Members**, which revokes the keys they minted there. |
+| Someone disabled at the identity provider can still use the node | Expected. The provider is asked only at sign-in, and the node renews its own sessions, which removing them from a workspace does not end. First take away node administration in **Settings → This node → Access** if they have it. Then mint a reset link for them under **Account recovery**, redeem it yourself in a private window and sign out there: that ends every session of theirs, though an access token already issued works for up to `ACCESS_TOKEN_TTL_SECONDS`. Last, remove them from each workspace's **Members**, which revokes the keys they minted there and takes the workspace out of the apps they connected. |
 | Someone who signed in only through the identity provider cannot sign in after it was removed or its issuer changed | The change signed nobody out. While they are still signed in, they set a password in **Settings → Profile**. Otherwise send them a reset link from **Account recovery** in **Settings → This node → Access**. It sets their first password. |
 | **Unlink** is unavailable: `Set a password first.` | An account keeps a way to sign in. Set a password in **Settings → Profile** first. |
 | Everyone has to sign in again after the address changed | Expected. Sessions belong to the old address. |
@@ -146,7 +146,20 @@ give the node an https address as [Network access](network-access.md#https) desc
 | A shortcut under **Other nodes** opens a sign-in page | Expected. Each node has its own sign-in, and being signed in here signs you in nowhere else: [Several nodes](network-access.md#several-nodes). |
 | A shortcut opens the wrong page, or nothing | A shortcut keeps the address it was added with, and nothing checks it. Remove it and add the node's current address. |
 | Adding a second node to one client fails, or the installer says the name is taken | A client cannot hold two entries called `stuga`. Add the second under another name: write `stuga-work` in the Claude Code command, change the key in a pasted config, or run an installer as `curl -fsSL '…' \| STUGA_SERVER=stuga-work sh`. |
-| An agent finds nothing that lives on another node | Each node is its own MCP server, and a search covers only the node it is sent to. Set the agent up on each node: [Agents](agents.md#one-connection-and-which-node-a-call-lands-on). |
+| An agent finds nothing that lives on another node | Each node is its own MCP server, and a search covers only workspaces on the node it is sent to. Set the agent up on each node: [Agents](agents.md#one-connection-and-which-node-a-call-lands-on). |
+| Claude Desktop reaches the wrong node after you installed a second node's extension | The extension is one for every node, so the second replaced the first. Its **Stuga address** setting says which node it reaches. |
+
+## Agents
+
+| What you see | What it is |
+|---|---|
+| An agent does not see a workspace | The app signed in with other workspaces ticked. Sign in from the app again and tick it. A key confined to folders reaches only the workspace it was minted in. |
+| An agent's call says `workspace is not available to this connector` | The `workspace_id` is not one this connection reaches, or you are no longer a member there. `workspaces` action `list` names the ones it can use. |
+| An agent was working, then asks to sign in again | Its connection was revoked under **Connected agents**, its refresh token went unused for 90 days, or you left every workspace it named. Sign in again. |
+| An agent can read but offers no way to change anything | The connection or key is read-only, so only the reading tools are offered. Sign in again with **Read and suggest changes**, or mint a key that can propose. |
+| Claude Desktop lists no Stuga tools | The sign-in page may be waiting in your browser: approve it. Otherwise quit Claude fully, reopen it, and read the extension's log ([Agents](agents.md#claude-desktop)). |
+| The consent page says **Unverified app** | The app registered itself with the node, so its name is its own claim. Allow it only if you started the connection and recognize the host it returns to. |
+| **Your own AI** has no **Claude** tab | Claude on the web needs the node at a public https address: [HTTPS](network-access.md#https). |
 
 ## AI
 
@@ -155,7 +168,7 @@ give the node an https address as [Network access](network-access.md#https) desc
 | The log says `ai off`, or a request answers `AI chat is disabled on this node` | Chat is not set up, or its switch is off. Connect a provider under **Built-in AI** in **Settings → This node → AI providers**, or switch **Built-in AI** on there. |
 | **Connect** says the service didn't accept the key | The key is wrong, revoked or for another service. Paste it again. For a service that is not listed, choose **Something else…** and check its **Base URL**. |
 | The log says `a chat provider is saved but offers no model` | Chat stays off until the provider offers a model. Open its **Edit** and choose **Models offered**. |
-| An agent's `retrieve` answers `AI chat is disabled on this node for retrieval (embeddings are off)` | **Search by meaning** is not set up, or its switch is off. Keyword search with `docs` action `search` still works. |
+| An agent's `retrieve` answers `AI chat is disabled on this node for retrieval (embeddings are off)` | **Search by meaning** is not set up, or its switch is off. Keyword search with `search` still works. |
 | **Connect** or **Test** cannot reach Ollama on Docker Desktop | Use **Ollama (local)**, which fills in `http://host.docker.internal:11434`, and check that Ollama is running on the host. |
 | **Connect** or **Test** cannot reach Ollama on Docker on Linux | Ollama listens on `127.0.0.1` by default, which the container cannot reach. Make it listen on an address the container can reach, such as `OLLAMA_HOST=0.0.0.0:11434`, and keep that port closed to the network in the host's firewall. |
 | Anthropic is not listed under **Search by meaning** | Anthropic serves no embeddings. Use another service there, or leave search matching words. |

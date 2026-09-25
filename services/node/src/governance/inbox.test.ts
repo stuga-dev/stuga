@@ -101,7 +101,7 @@ beforeEach(() => {
 });
 
 describe("a read-only key", () => {
-  const ro = agentCtx({ scope: { folders: null, readOnly: true, keyId: "k1" } });
+  const ro = agentCtx({ scope: { folders: null, readOnly: true, credentialId: "k1" } });
   it("is refused any write before the route runs", async () => {
     for (const [m, p] of [
       ["POST", "/api/docs"],
@@ -133,7 +133,7 @@ describe("a read-only key", () => {
 });
 
 describe("a folder-scoped key", () => {
-  const scoped = agentCtx({ scope: { folders: ["f1", "f1a"], readOnly: false, keyId: "k2" } });
+  const scoped = agentCtx({ scope: { folders: ["f1", "f1a"], readOnly: false, credentialId: "k2" } });
   it("lists documents and folders inside its folders only", async () => {
     await call(scoped, "GET", "/api/docs");
     expect(mockListDocs).toHaveBeenCalledWith(expect.anything(), scoped.principals, "ws1", expect.objectContaining({ scopeFolderIds: ["f1", "f1a"] }));

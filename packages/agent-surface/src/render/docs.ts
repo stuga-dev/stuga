@@ -62,7 +62,7 @@ export function renderRead(res: MarkdownBody): string {
   if (pending <= 0 || !res.run_id) return text;
   return (
     `${text}\n\n[note] Includes your ${pending} pending edit(s) awaiting user review ` +
-    `(run ${res.run_id}). Use action:"status" to check decisions.`
+    `(run ${res.run_id}). Use \`markdown\` action:status to check decisions.`
   );
 }
 
@@ -74,7 +74,7 @@ export function renderPropose(res: ProposeBody): string {
         `Proposed — your edit is waiting for the user to accept it (${res.reason}). ` +
         `Run ${res.run.id}, ${res.pending} pending. This is SUCCESS: do NOT retry, and do not ` +
         `rewrite the document because the change looks missing. The user has been notified. ` +
-        `Later reads include your pending edits; check action:"status" for their decision.${mediaNote(res.media_note)}` +
+        `Later reads include your pending edits; check \`markdown\` action:status for their decision.${mediaNote(res.media_note)}` +
         instructionsPointer(res.instructions_labels, "`docs` action:metadata")
       );
     case "auto_applied":

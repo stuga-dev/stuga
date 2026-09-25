@@ -60,7 +60,7 @@ describe("renderDatabasePropose", () => {
       result:
         "Proposed — your change is waiting for the user to accept it (run run_0123456789ab, 2 pending). This is SUCCESS. " +
         "Do NOT retry; continue your work. Your schema reads already include this pending change (query results note " +
-        'what is pending); check action:"status" for decisions.',
+        'what is pending); check `databases` action:status for decisions.',
       row_ids: ["r1", "r2"],
     });
   });

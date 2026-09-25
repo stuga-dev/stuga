@@ -23,29 +23,27 @@ import { DshTab } from "./tabs/DshTab";
 import { OtherClientsTab } from "./tabs/OtherClientsTab";
 
 interface AgentClientsProps {
-  /** The workspace a new key is pinned to; null while the page's workspace list is unknown. */
-  workspaceName: string | null;
   /** A key was minted, so a list of keys can reload. */
   onKeyCreated: () => void;
 }
 
-export function ConnectAgent({ workspaceName, onKeyCreated }: AgentClientsProps) {
+export function ConnectAgent({ onKeyCreated }: AgentClientsProps) {
   return (
     <Card>
       <VStack gap={3} style={{ padding: 20 }}>
         <Heading level={2}>Connect an agent</Heading>
         <Text color="secondary">
-          Agents act with your access, and their changes appear in version history. They start in{" "}
-          {workspaceName ? <strong>{workspaceName}</strong> : "this workspace"} but can use your other workspaces.
+          Agents act with your access, and their changes appear in version history. An app that signs in reaches the
+          workspaces you choose.
         </Text>
-        <AgentClients workspaceName={workspaceName} onKeyCreated={onKeyCreated} />
+        <AgentClients onKeyCreated={onKeyCreated} />
       </VStack>
     </Card>
   );
 }
 
 /** A tab per client with its setup for this node, also offered at first run. */
-export function AgentClients({ workspaceName, onKeyCreated }: AgentClientsProps) {
+export function AgentClients({ onKeyCreated }: AgentClientsProps) {
   const [setup, setSetup] = useState<AgentSetup | null>(null);
   const [failed, setFailed] = useState(false);
   // The tab the user picked; until then the node's answer decides the first tab.
@@ -68,23 +66,19 @@ export function AgentClients({ workspaceName, onKeyCreated }: AgentClientsProps)
       </VStack>
     );
   }
-  return <ClientTabs setup={setup} tab={tab} onTab={setTab} workspaceName={workspaceName} mint={mint} onKeyCreated={onKeyCreated} />;
+  return <ClientTabs setup={setup} tab={tab} onTab={setTab} mint={mint} />;
 }
 
 function ClientTabs({
   setup,
   tab,
   onTab,
-  workspaceName,
   mint,
-  onKeyCreated,
 }: {
   setup: AgentSetup;
   tab: ClientTab | null;
   onTab: (tab: ClientTab) => void;
-  workspaceName: string | null;
   mint: ReturnType<typeof useMintKey>;
-  onKeyCreated: () => void;
 }) {
   const tabs = clientTabs(setup);
   const active = tab !== null && tabs.includes(tab) ? tab : tabs[0];
@@ -104,7 +98,6 @@ function ClientTabs({
           serverKey={configs.serverKey}
           desktopJson={configs.desktopJson}
           mint={mint}
-          onKeyCreated={onKeyCreated}
         />
       )}
       {active === "claude-code" && (
@@ -119,7 +112,7 @@ function ClientTabs({
         />
       )}
       {active === "dsh" && <DshTab dshEnv={configs.dshEnv} mint={mint} />}
-      {active === "other" && <OtherClientsTab httpJson={configs.httpJson} workspaceName={workspaceName} mint={mint} />}
+      {active === "other" && <OtherClientsTab httpJson={configs.httpJson} mint={mint} />}
     </>
   );
 }

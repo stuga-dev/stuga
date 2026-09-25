@@ -13,10 +13,11 @@ apps/
 services/
   node/              the node: HTTP and WebSocket layer, actor hosting, jobs, identity,
                      /mcp and OAuth, and the stuga-node command line
-  mcp/               stuga-mcp, the stdio MCP server; every tool is a REST call to a node
+  mcp/               stuga-mcp, the stdio MCP server: a proxy to a node's /mcp that adds
+                     imports from a local file
 packages/
   agent-surface/     the MCP tool catalog, argument schemas, instructions and renderers
-                     that both MCP servers register
+                     that the node's /mcp registers
   protocol/          shared contracts by subpath: wire/, api/, domain/, databases/, text/, internal/
   runtime/           the actor contract, the in-process actor host, SQLite and blob storage,
                      and an in-memory host for tests (@stuga/runtime/testing)

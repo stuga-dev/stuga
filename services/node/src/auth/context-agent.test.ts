@@ -35,6 +35,8 @@ vi.mock("@stuga/auth", () => ({
   sha256Hex: (s: string) => `hash:${s}`,
   constantTimeEqual: (a: string, b: string) => a === b,
   agentPrincipal: (id: string) => `agent:${id}`,
+  connectorTokenKind: (t: string) => (t.startsWith("sto_") ? "access" : t.startsWith("str_") ? "refresh" : null),
+  hashConnectorToken: (t: string) => `hash:${t}`,
 }));
 
 vi.mock("./principals.js", () => ({
@@ -44,7 +46,7 @@ vi.mock("./principals.js", () => ({
   },
 }));
 
-const { buildContext, Unauthorized, agentLabel } = await import("./context.js");
+const { buildContext, buildMcpCaller, Unauthorized, agentLabel } = await import("./context.js");
 
 const env = { sql: {} } as never;
 const request = () =>
@@ -78,7 +80,7 @@ describe("buildContext — delegated agent authority", () => {
 
   it("records the transport the key arrived on as its surface", async () => {
     expect((await buildContext(request(), env)).surface).toBe("api-key");
-    expect((await buildContext(request(), env, "mcp")).surface).toBe("mcp");
+    expect((await buildMcpCaller(request(), env)).account.surface).toBe("mcp");
     expect((await buildContext(request(), env, "ws")).surface).toBe("ws");
   });
 

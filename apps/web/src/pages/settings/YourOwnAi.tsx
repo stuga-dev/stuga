@@ -25,13 +25,11 @@ export function YourOwnAi() {
 
   // The settings rail's switcher picks the workspace a new key is pinned to.
   const activeWorkspaceId = getActiveWorkspace();
-  const activeWorkspaceName =
-    workspaces.find((w) => w.workspace_id === activeWorkspaceId)?.name ?? null;
 
   return (
     <PageColumn>
       <VStack gap={5}>
-        <ConnectAgent workspaceName={activeWorkspaceName} onKeyCreated={() => setKeysChanged((n) => n + 1)} />
+        <ConnectAgent onKeyCreated={() => setKeysChanged((n) => n + 1)} />
         <ConnectedAgents activeWorkspaceId={activeWorkspaceId} workspaces={workspaces} reloadSignal={keysChanged} />
       </VStack>
     </PageColumn>

@@ -115,7 +115,7 @@ describe("a read-only key", () => {
     isAgent: true,
     onBehalfOf: "ada",
     principals: ["agent:agent-1", "user:ada"],
-    scope: { folders: null, readOnly: true, keyId: "k1" },
+    scope: { folders: null, readOnly: true, credentialId: "k1" },
   } as unknown as Ctx;
   const THREAD = { thread_id: "ask_1", workspace_id: "ws1", owner: "agent-1", title: "", collection_id: null, created_at: "", updated_at: "" };
 

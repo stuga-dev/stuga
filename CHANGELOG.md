@@ -10,11 +10,70 @@ one, the release notes say there is nothing to do.
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- Apps that signed in to the node through OAuth, such as Claude Code, Codex, Antigravity and Claude
+  on the web, have to sign in again: the keys those sign-ins created are revoked. Each person then
+  chooses the app's workspaces and access.
+- Replace the Claude Desktop extension: remove the old **Stuga** extension in Claude Desktop, add
+  the new one from **Settings → Your own AI**, and revoke the old extension's key under
+  **Connected agents**.
+- Skills, prompts and scripts that call the MCP tools by name need the new names, and a
+  `workspace_id` on every call. Running the Codex or Antigravity installer again replaces the Stuga
+  Skill it installed.
+
+### Added
+
+- One agent connection reaches several workspaces. `search` and `retrieve` take `workspace_ids`,
+  one or more workspaces or `["*"]` for every one the connection reaches, merge the results by rank,
+  name each result's workspace, and list under `unavailable` any workspace they could not cover.
+- Signing in an app asks which workspaces it may use, optionally including ones you join later, and
+  whether it may suggest changes or only read. The consent page shows an app as verified by the host
+  of its client metadata document, or as unverified.
+- **Connected agents** lists each app that signed in as a connection, with Rename and Revoke, and
+  `GET`, `PATCH` and `DELETE /api/me/connections` do the same. Leaving a workspace takes it out of
+  your connections.
+- OAuth access tokens last an hour and renew with refresh tokens that are replaced at every use; a
+  sign-in ends after 90 days unused, or a year after it happened. A spent refresh token presented
+  again after `REFRESH_ROTATION_GRACE_SECONDS` ends its sign-in.
+  `POST /oauth/revoke` ends a sign-in. Clients may identify themselves by a client metadata
+  document, advertised on a public https origin. OAuth discovery answers on each of
+  `PUBLIC_ORIGIN` and `EXTRA_ORIGINS`, and a loopback redirect URI matches on any port.
+- MCP tool annotations, so a client can tell reads from writes and ask before a destructive call.
+- `databases_add` action `start_import` returns an upload URL for a caller that can send a file
+  itself.
+- The Claude Desktop extension and `stuga-mcp` sign in through the browser when they have no key.
+
 ### Changed
 
+- **The MCP tools are split into reads and writes**, nineteen in all. `docs` action `search` is now
+  `search`; `docs` action `create` is `docs_create`; the `markdown` writes are `markdown_append` and
+  `markdown_edit`; `media` is `media_upload`; `comments` action `add` is `comments_add`; the
+  `collections` changes are `collections_edit`; and the `databases` writes are `databases_add` and
+  `databases_change`. `databases` action `page` only finds a row's page, and `databases_add` action
+  `open_page` opens or creates it. The old names are gone.
+- **Every MCP tool but `workspaces` action `list`, `search` and `retrieve` requires
+  `workspace_id`.** A connection has no home workspace, and no call falls back to one.
+  `workspaces` action `list` answers `{ contract: 2, workspaces, unavailable }`, each workspace with
+  its role, the connection's access and its node, and no `home_workspace_id`.
+- MCP search results carry no scores.
+- A read-only key or connection is offered only the reading tools.
+- An agent no longer acts in a workspace where its person is only a guest, on `/mcp`.
+- **OAuth creates a grant, not an API key.** Its tokens work only on `/mcp`, and `GET /api/keys`
+  lists keys only.
+- **`stuga-mcp` forwards to the node's `/mcp`**, so its tools, instructions and checks are the
+  node's. It no longer calls the REST API.
+- **The Claude Desktop extension is one extension, `stuga`, for every node, and carries no key.** It
+  asks for the node's address and an optional key. `GET /api/agent-bundle` serves it.
+- **Your own AI** offers the **Claude** tab only when the node's public address is https as well.
 - The setup link, invite links and share links stay in the address bar, so they can be copied from
   there. Opened signed out, an invite or share link shows sign-in at its own address instead of
   moving to `/login`.
+
+### Removed
+
+- `POST /api/agent-bundle`, and the key it minted into each download.
+- `STUGA_WORKSPACE`, and the `workspace` field of the stdio server's config files.
 
 ### Fixed
 

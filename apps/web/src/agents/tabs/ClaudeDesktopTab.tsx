@@ -20,7 +20,6 @@ export function ClaudeDesktopTab({
   serverKey,
   desktopJson,
   mint,
-  onKeyCreated,
 }: {
   canBundle: boolean;
   /** `stuga.mcpb`, the same for every node: the extension installs under the node's id, which is not shown. */
@@ -30,7 +29,6 @@ export function ClaudeDesktopTab({
   /** Null when no client on this machine can open the node's server file. */
   desktopJson: string | null;
   mint: MintKeyState;
-  onKeyCreated: () => void;
 }) {
   const toast = useToast();
   const [downloading, setDownloading] = useState(false);
@@ -38,14 +36,13 @@ export function ClaudeDesktopTab({
   // Open from the start when there is no one-click path to prefer.
   const [showManual, setShowManual] = useState(!canBundle);
 
-  /** The node mints a key sealed inside the file; this page never sees its token. */
+  /** The file carries no key: once installed, it signs in through the browser. */
   async function downloadBundle() {
     setDownloading(true);
     try {
       saveBlob(await Agents.bundle(), bundleFilename);
       setDownloaded(true);
       toast({ body: `${bundleFilename} saved. Double-click it to install.`, type: "info" });
-      onKeyCreated();
     } catch (e) {
       toast({ body: errorMessage(e, "Couldn’t build the extension."), type: "error" });
     } finally {
@@ -69,12 +66,11 @@ export function ClaudeDesktopTab({
           <Text size="sm" color="secondary">
             Open <code>{bundleFilename}</code>, click <strong>Install</strong>, then fully restart Claude.
           </Text>
-          {/* The key is only a risk once the file exists, so this waits for the download. */}
           {downloaded && (
             <Banner
               status="success"
               title={`${bundleFilename} saved — install it, then restart Claude`}
-              description="The file carries a working key: delete it once installed. If installation fails, revoke its key below and download a new file."
+              description="The first time Claude uses it, approve Stuga in your browser."
             />
           )}
         </>

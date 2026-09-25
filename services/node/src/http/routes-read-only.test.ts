@@ -21,17 +21,18 @@ const readOnlyKey = {
   principals: ["agent:agent-1", "user:ada", "org:ws1"],
   workspaceId: "ws1",
   role: "admin",
-  scope: { folders: null, readOnly: true, keyId: "k1" },
+  scope: { folders: null, readOnly: true, credentialId: "k1" },
   env: {},
 } as unknown as Ctx;
 
-/** A regex path as a person would write it: `:id` for a segment, `:n` for a number, `**` for the rest. */
+/** A regex path as a person would write it: `:id` for a segment, `:n` for a number, `**` for the rest, `[x]` for an optional part. */
 function pathLabel(path: string | RegExp): string {
   if (typeof path === "string") return path;
-  const source = path.source.replaceAll("\\/", "/");
+  const source = path.source.replaceAll("\\/", "/").replaceAll("\\.", ".");
   const label = source
     .replace(/^\^/, "")
     .replace(/\$$/, "")
+    .replace(/\(\?:([^)]*)\)\?/g, "[$1]")
     .replaceAll("([^/]+)", ":id")
     .replaceAll("[^/]+", ":id")
     .replaceAll("(\\d+)", ":n")
@@ -52,8 +53,9 @@ async function verdict(route: AppRoute, method: Method): Promise<string> {
       return "no credential";
     case "account":
       return route.humanOnly ? "agents refused" : "allowed";
+    case "mcp":
+      return "each tool decides";
     case "workspace": {
-      if (route.transport === "mcp") return "each tool decides";
       // An unmetered route runs no gates at all.
       if (route.unmetered) return method === "GET" ? "allowed" : "UNGATED";
       const refusal = await gateRefusal(route, readOnlyKey, method);
@@ -86,11 +88,13 @@ const PINNED = [
   "* /api/media/ticket: no credential",
   "GET /api/docs/:id/media/:hash: no credential",
   "* /.well-known/oauth-authorization-server: no credential",
-  "* /.well-known/oauth-protected-resource: no credential",
+  "* /.well-known/oauth-protected-resource[/mcp]: no credential",
   "POST /oauth/register: no credential",
   "GET /oauth/authorize: no credential",
+  "GET /oauth/client: no credential",
   "POST /oauth/consent: no credential",
   "POST /oauth/token: no credential",
+  "POST /oauth/revoke: no credential",
   "* /mcp: each tool decides",
   "* /ws/:id: no credential",
   "PUT /api/databases/:id/imports/:id/upload: no credential",
@@ -98,6 +102,9 @@ const PINNED = [
   "POST /api/workspaces: agents refused",
   "POST /api/invites/redeem: agents refused",
   "POST /api/share-links/redeem: agents refused",
+  "GET /api/me/connections: agents refused",
+  "PATCH /api/me/connections/:id: agents refused",
+  "DELETE /api/me/connections/:id: agents refused",
   "GET /api/me/nodes: agents refused",
   "POST /api/me/nodes: agents refused",
   "DELETE /api/me/nodes/:id: agents refused",
@@ -106,7 +113,7 @@ const PINNED = [
   "PATCH /api/whoami: refused",
   "GET /api/ws/ticket: allowed",
   "GET /api/agent-setup: allowed",
-  "POST /api/agent-bundle: refused",
+  "GET /api/agent-bundle: agents refused",
   "GET /api/runs: agents refused",
   "GET /api/agents/stats: agents refused",
   "GET /api/webhooks: agents refused",

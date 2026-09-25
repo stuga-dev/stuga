@@ -95,6 +95,10 @@ the first workspace. It has a tab for each kind of client, with the setup for th
 and lists the agents you have connected so far. Each member connects their own. [Agents](agents.md) covers each client, and how
 one agent works with several nodes.
 
+Most clients sign in through your browser. The node then asks which of your workspaces the app may
+use, and whether it may suggest changes or only read ([Apps that sign in](agents.md#apps-that-sign-in)).
+One connection reaches every workspace you tick.
+
 What the client stores is simply **Stuga**, whatever the node is called. Name the node under
 **Settings → This node → Branding** anyway: that name is how agents are told which node a call lands
 on, and how each workspace is labelled when you have more than one node

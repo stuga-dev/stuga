@@ -13,7 +13,7 @@ import {
 import { createDoc } from "./docs.js";
 import { createFolder } from "./folders.js";
 import { insertShareLink } from "./sharing.js";
-import { insertOauthCode, insertApiKey } from "./agents.js";
+import { insertApiKey } from "./agents.js";
 import { createCollection } from "./collections.js";
 import { insertNotification } from "./notifications.js";
 import { insertWorkspaceEvent, upsertAgentRun } from "./governance.js";
@@ -59,15 +59,6 @@ describe.skipIf(!URL)("deleteWorkspaceCascade", () => {
       createdBy: owner,
       expiresAt: null,
     });
-    await insertOauthCode(sql, {
-      codeHash: `code-${suffix}`,
-      clientId: "client-x",
-      userAlias: owner,
-      workspaceId: ws,
-      redirectUri: "https://example.test/cb",
-      codeChallenge: "challenge",
-      expiresAt: new Date(Date.now() + 600_000),
-    });
     await upsertGroup(sql, `group:${suffix}`, [`user:${owner}`], ws);
     await createCollection(sql, { collectionId: `c-${suffix}`, workspaceId: ws, owner, name: "Collection" });
     await insertApiKey(sql, { keyId: `k-${suffix}`, secretHash: "h", agentId: `agent-${suffix}`, owner, workspaceId: ws, name: "Key" });
@@ -104,7 +95,6 @@ describe.skipIf(!URL)("deleteWorkspaceCascade", () => {
     "workspace_members",
     "workspace_invites",
     "share_links",
-    "oauth_codes",
     "groups",
     "collections",
     "api_keys",

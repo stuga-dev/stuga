@@ -1,30 +1,34 @@
 /**
  * Per-call workspace scoping and the audit row every /mcp tool call writes. A
- * `workspace_id` the caller cannot reach is refused with one wording and never
- * falls back to home, where a write would land in the wrong tenant.
+ * call names its workspace; one the credential cannot reach, or whose person is
+ * not a member there now, is refused with one wording and never runs anywhere else.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@stuga/db", async (orig) => ({
   ...(await orig<typeof import("@stuga/db")>()),
   getDoc: vi.fn(),
+  getWorkspace: vi.fn(async () => null),
   listDocs: vi.fn(async () => []),
   getMemberRole: vi.fn(),
   getGroupsForMember: vi.fn(async () => []),
   listWorkspacesForUser: vi.fn(async () => []),
+  getFolderSubtreeIds: vi.fn(async (_sql: unknown, root: string) => [root, `${root}-child`]),
 }));
 
-const { listDocs, getMemberRole, listWorkspacesForUser } = await import("@stuga/db");
-const { handleMcpRequest, WORKSPACE_UNAVAILABLE_MESSAGE } = await import("./handler.js");
-import type { Ctx } from "../auth/context.js";
+const { getWorkspace, listDocs, getMemberRole, listWorkspacesForUser } = await import("@stuga/db");
+const { WORKSPACE_UNAVAILABLE_MESSAGE } = await import("./handler.js");
+const { callToolAs, mcpRequest } = await import("./testing/call.js");
+import type { AccountCtx, McpCaller } from "../auth/context.js";
 
-const mockListDocs = listDocs as unknown as ReturnType<typeof vi.fn>;
-const mockGetMemberRole = getMemberRole as unknown as ReturnType<typeof vi.fn>;
-const mockListWorkspaces = listWorkspacesForUser as unknown as ReturnType<typeof vi.fn>;
+const mockListDocs = vi.mocked(listDocs);
+const mockGetMemberRole = vi.mocked(getMemberRole);
+const mockListWorkspaces = vi.mocked(listWorkspacesForUser);
 
-const jobsSend = vi.fn(async () => {});
+const jobsSend = vi.fn(async (_message: unknown) => {});
+const NODE = { id: "ktbbpahhzxoldakw", name: "Studio", origin: "https://stuga.test" };
 
-function connectorCtx(overrides: Partial<Ctx> = {}): Ctx {
+function account(over: Partial<AccountCtx> = {}): AccountCtx {
   return {
     sql: {},
     alias: "agent-conn-abc",
@@ -32,90 +36,83 @@ function connectorCtx(overrides: Partial<Ctx> = {}): Ctx {
     surface: "mcp",
     isAgent: true,
     onBehalfOf: "human-1",
-    principals: ["agent:agent-conn-abc", "user:human-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "member",
+    scope: { folders: null, readOnly: false, credentialId: "grt_1" },
     env: {
       databases: { get: () => ({ fetch: vi.fn() }) },
       docs: { get: () => ({ fetch: vi.fn() }) },
       jobs: { send: jobsSend },
       aiSettings: { current: () => ({ enabled: false }) },
       publicOrigin: "https://stuga.test",
-      nodeId: "ktbbpahhzxoldakw",
-      settings: { current: () => ({ nodeLabel: "Studio" }) },
+      nodeId: NODE.id,
+      settings: { current: () => ({ nodeLabel: "Studio", maxBodyBytes: 1_000_000 }) },
     },
-    ...overrides,
-  } as unknown as Ctx;
+    ...over,
+  } as unknown as AccountCtx;
 }
 
-async function callTool(ctx: Ctx, name: string, args: Record<string, unknown> = {}) {
-  const req = new Request("https://api.test/mcp", {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-  });
-  const res = await handleMcpRequest(ctx, req);
-  const text = await res.text();
-  const payload = text.startsWith("event:") || text.startsWith("data:")
-    ? JSON.parse(/data: (.*)/.exec(text)![1]!)
-    : JSON.parse(text);
-  const result = payload.result ?? {};
-  return { isError: result.isError === true, text: String(result.content?.[0]?.text ?? "") };
-}
+/** A grant over every workspace its person belongs to. */
+const grant = (over: Partial<McpCaller> = {}): McpCaller => ({ account: account(), workspaces: null, readOnly: false, ...over });
+const human = (): McpCaller => ({
+  account: account({ alias: "human-1", isAgent: false, onBehalfOf: undefined, scope: undefined } as Partial<AccountCtx>),
+  workspaces: null,
+  readOnly: false,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockListDocs.mockResolvedValue([]);
+  mockGetMemberRole.mockResolvedValue("member");
 });
 
 describe("workspace_id resolution", () => {
-  it("runs in the home workspace, with its principals, when workspace_id is omitted", async () => {
-    const r = await callTool(connectorCtx(), "docs", { action: "list" });
-    expect(r.isError).toBe(false);
-    expect(mockGetMemberRole).not.toHaveBeenCalled();
-    expect(mockListDocs).toHaveBeenCalledWith(
-      expect.anything(),
-      ["agent:agent-conn-abc", "user:human-1", "org:ws1"],
-      "ws1",
-      expect.anything(),
-    );
-  });
-
-  it("treats an empty workspace_id as omitted", async () => {
-    const r = await callTool(connectorCtx(), "docs", { action: "list", workspace_id: "" });
-    expect(r.isError).toBe(false);
-    expect(mockListDocs).toHaveBeenCalledWith(expect.anything(), expect.anything(), "ws1", expect.anything());
-  });
-
-  it("runs in a workspace the authorizing human belongs to, with principals derived there", async () => {
-    mockGetMemberRole.mockResolvedValue("member");
-    const r = await callTool(connectorCtx(), "docs", { action: "list", workspace_id: "ws2" });
+  it("runs a call in the workspace it names, with principals derived there", async () => {
+    const r = await callToolAs(grant(), "docs", { action: "list", workspace_id: "ws2" });
     expect(r.isError).toBe(false);
     expect(mockGetMemberRole).toHaveBeenCalledWith(expect.anything(), "ws2", "human-1");
     const [, principals, workspaceId] = mockListDocs.mock.calls[0]!;
     expect(workspaceId).toBe("ws2");
     expect(principals).toContain("agent:agent-conn-abc");
     expect(principals).toContain("org:ws2");
-    expect(principals).not.toContain("org:ws1");
   });
 
-  it("refuses an unreachable workspace with the fixed wording and never runs at home", async () => {
+  it("refuses a call that names no workspace before anything runs", async () => {
+    const r = await callToolAs(grant(), "docs", { action: "list" });
+    expect(r.isError).toBe(true);
+    expect(mockListDocs).not.toHaveBeenCalled();
+    expect(mockGetMemberRole).not.toHaveBeenCalled();
+  });
+
+  it("refuses a workspace its person is not a member of, with the fixed wording", async () => {
     mockGetMemberRole.mockResolvedValue(null);
-    const r = await callTool(connectorCtx(), "docs", { action: "list", workspace_id: "ws-nope" });
+    const r = await callToolAs(grant(), "docs", { action: "list", workspace_id: "ws-nope" });
     expect(r.isError).toBe(true);
     expect(r.text).toContain(WORKSPACE_UNAVAILABLE_MESSAGE);
     expect(mockListDocs).not.toHaveBeenCalled();
   });
 
-  it("resolves a human bearer against their own memberships", async () => {
-    mockGetMemberRole.mockResolvedValue("admin");
-    const human = connectorCtx({
-      alias: "human-1",
-      isAgent: false,
-      onBehalfOf: undefined,
-      principals: ["user:human-1", "org:ws1"],
+  it("refuses a workspace outside the grant with the same wording, without asking about membership", async () => {
+    const r = await callToolAs(grant({ workspaces: ["ws1"] }), "docs", { action: "list", workspace_id: "ws2" });
+    expect(r.text).toContain(WORKSPACE_UNAVAILABLE_MESSAGE);
+    expect(mockGetMemberRole).not.toHaveBeenCalled();
+    expect((await callToolAs(grant({ workspaces: ["ws1"] }), "docs", { action: "list", workspace_id: "ws1" })).isError).toBe(false);
+  });
+
+  it("keeps a minted key's folders in its own workspace, and gives it only its access elsewhere", async () => {
+    const key = grant({
+      workspaces: null,
+      key: { workspaceId: "ws1", scope: { folders: null, readOnly: false, credentialId: "k1" } },
     });
-    const r = await callTool(human, "docs", { action: "list", workspace_id: "ws2" });
+    await callToolAs(key, "docs", { action: "list", workspace_id: "ws2" });
+    expect(mockListDocs.mock.calls[0]![3]).toMatchObject({ scopeFolderIds: null });
+
+    const confined = grant({ workspaces: ["ws1"], key: { workspaceId: "ws1", scope: { folders: ["f1"], readOnly: false, credentialId: "k2" } } });
+    await callToolAs(confined, "docs", { action: "list", workspace_id: "ws1" });
+    expect(mockListDocs.mock.calls[1]![3]).toMatchObject({ scopeFolderIds: ["f1", "f1-child"] });
+  });
+
+  it("resolves a person's own session against their own memberships", async () => {
+    mockGetMemberRole.mockResolvedValue("admin");
+    const r = await callToolAs(human(), "docs", { action: "list", workspace_id: "ws2" });
     expect(r.isError).toBe(false);
     expect(mockGetMemberRole).toHaveBeenCalledWith(expect.anything(), "ws2", "human-1");
     const [, principals] = mockListDocs.mock.calls[0]!;
@@ -125,38 +122,65 @@ describe("workspace_id resolution", () => {
 });
 
 describe("workspaces tool", () => {
-  it("lists the authorizing human's workspaces with ids, names and roles", async () => {
+  it("lists the person's workspaces the grant reaches, each naming its node, with the contract version", async () => {
     mockListWorkspaces.mockResolvedValue([
       { workspace_id: "ws1", name: "Home", role: "member" },
       { workspace_id: "ws2", name: "Shared", role: "guest" },
-    ]);
-    const r = await callTool(connectorCtx(), "workspaces", { action: "list" });
+      { workspace_id: "ws3", name: "Elsewhere", role: "member" },
+    ] as never);
+    const r = await callToolAs(grant({ workspaces: ["ws1", "ws2"], readOnly: true }), "workspaces", { action: "list" });
     expect(r.isError).toBe(false);
     expect(mockListWorkspaces).toHaveBeenCalledWith(expect.anything(), "human-1");
-    const body = JSON.parse(r.text) as { workspaces: unknown[]; home_workspace_id: string };
-    const node = { id: "ktbbpahhzxoldakw", name: "Studio", origin: "https://stuga.test" };
-    expect(body.workspaces).toEqual([
-      { workspace_id: "ws1", name: "Home", role: "member", node },
-      { workspace_id: "ws2", name: "Shared", role: "guest", node },
-    ]);
-    expect(body.home_workspace_id).toBe("ws1");
+    // ws2 is out: its person is only a guest there, and a guest brings no agent in.
+    expect(JSON.parse(r.text)).toEqual({
+      contract: 2,
+      workspaces: [{ workspace_id: "ws1", name: "Home", role: "member", access: "read", node: NODE }],
+      unavailable: [],
+    });
+    // A person's own session lists every membership.
+    const own = JSON.parse((await callToolAs(human(), "workspaces", { action: "list" })).text);
+    expect(own.workspaces.map((w: { workspace_id: string }) => w.workspace_id)).toEqual(["ws1", "ws2", "ws3"]);
   });
 
-  it("names the node on the connection and on every workspace, so a workspace_id says which node too", async () => {
-    mockListWorkspaces.mockResolvedValue([{ workspace_id: "ws1", name: "Home", role: "member" }]);
-    const body = JSON.parse((await callTool(connectorCtx(), "workspaces", { action: "list" })).text) as {
-      node: unknown;
-      workspaces: Array<{ node: unknown }>;
-    };
-    const node = { id: "ktbbpahhzxoldakw", name: "Studio", origin: "https://stuga.test" };
-    expect(body.node).toEqual(node);
-    expect(body.workspaces[0]!.node).toEqual(node);
+  it("refuses an agent in a workspace where its person is only a guest, even under a grant for every workspace", async () => {
+    mockGetMemberRole.mockResolvedValue("guest");
+    const r = await callToolAs(grant(), "docs", { action: "list", workspace_id: "ws2" });
+    expect(r.text).toContain(WORKSPACE_UNAVAILABLE_MESSAGE);
+    expect(mockListDocs).not.toHaveBeenCalled();
+    expect((await callToolAs(human(), "docs", { action: "list", workspace_id: "ws2" })).isError).toBe(false);
+  });
+
+  it("serves one workspace's conventions to the workspace named", async () => {
+    vi.mocked(getWorkspace).mockResolvedValue({ workspace_id: "ws2", name: "Shared", agent_instructions: "Notes go in Log/." } as never);
+    const r = await callToolAs(grant(), "workspaces", { action: "instructions", workspace_id: "ws2" });
+    expect(JSON.parse(r.text)).toEqual({ workspace_id: "ws2", name: "Shared", instructions: "Notes go in Log/." });
+  });
+});
+
+describe("initialize", () => {
+  it("names the node and the workspaces in the instructions, and inlines the only workspace's conventions", async () => {
+    mockListWorkspaces.mockResolvedValue([{ workspace_id: "ws1", name: "Home", role: "member" }] as never);
+    vi.mocked(getWorkspace).mockResolvedValue({ workspace_id: "ws1", name: "Home", agent_instructions: "Write in British English." } as never);
+    const init = await mcpRequest(grant(), "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
+    const { instructions, serverInfo } = init.result as { instructions: string; serverInfo: { name: string; title: string } };
+    expect(serverInfo).toMatchObject({ name: "stuga", title: "Stuga" });
+    expect(instructions).toContain('node "Studio" at https://stuga.test and reaches 1 workspace');
+    expect(instructions).toContain('- "Home": workspace_id ws1, node "Studio", member');
+    expect(instructions).toContain("WORKSPACE CONVENTIONS (written by this workspace's people; follow them):\nWrite in British English.");
+  });
+
+  it("offers a read-only grant the reading tools only", async () => {
+    const all = (await mcpRequest(grant(), "tools/list")).result as { tools: Array<{ name: string }> };
+    const reads = (await mcpRequest(grant({ readOnly: true }), "tools/list")).result as { tools: Array<{ name: string }> };
+    expect(all.tools.map((t) => t.name)).toContain("markdown_edit");
+    expect(reads.tools.map((t) => t.name)).not.toContain("markdown_edit");
+    expect(reads.tools.map((t) => t.name)).toContain("markdown");
   });
 });
 
 describe("audit trail", () => {
-  it("records one attributed audit row for a read", async () => {
-    await callTool(connectorCtx(), "docs", { action: "list" });
+  it("records one attributed audit row for a read, in the workspace it ran in", async () => {
+    await callToolAs(grant(), "docs", { action: "list", workspace_id: "ws1" });
     expect(jobsSend).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "audit",
@@ -166,67 +190,37 @@ describe("audit trail", () => {
         actorKind: "agent",
         onBehalfOf: "human-1",
         workspaceId: "ws1",
+        status: "ok",
       }),
     );
   });
 
   it("names the target when the input carries one", async () => {
-    await callTool(connectorCtx(), "markdown", { doc_id: "d1", action: "read" });
-    expect(jobsSend).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "mcp.markdown.read", targetKind: "doc", targetId: "d1" }),
-    );
+    await callToolAs(grant(), "markdown", { doc_id: "d1", action: "read", workspace_id: "ws1" });
+    expect(jobsSend).toHaveBeenCalledWith(expect.objectContaining({ action: "mcp.markdown.read", targetKind: "doc", targetId: "d1" }));
   });
 
-  it("records the resolved workspace, and null when resolution refused", async () => {
-    mockGetMemberRole.mockResolvedValue("member");
-    await callTool(connectorCtx(), "docs", { action: "list", workspace_id: "ws2" });
-    expect(jobsSend).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "ws2" }));
-
-    jobsSend.mockClear();
+  it("marks a call refused at workspace resolution as denied, with no workspace", async () => {
     mockGetMemberRole.mockResolvedValue(null);
-    await callTool(connectorCtx(), "docs", { action: "list", workspace_id: "ws-nope" });
-    expect(jobsSend).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: null }));
+    await callToolAs(grant(), "docs", { action: "list", workspace_id: "ws-nope" });
+    expect(jobsSend).toHaveBeenCalledWith(expect.objectContaining({ action: "mcp.docs.list", workspaceId: null, status: "denied" }));
   });
 
-  it("marks a call refused at workspace resolution as denied", async () => {
-    mockGetMemberRole.mockResolvedValue(null);
-    const r = await callTool(connectorCtx(), "docs", { action: "list", workspace_id: "ws-nope" });
-    expect(r.isError).toBe(true);
-    expect(r.text).toContain(WORKSPACE_UNAVAILABLE_MESSAGE);
-    expect(jobsSend).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "mcp.docs.list", workspaceId: null, status: "denied" }),
-    );
+  it("records one row per workspace a search covered", async () => {
+    await callToolAs(grant(), "search", { workspace_ids: ["ws1", "ws2"], q: "x" });
+    const searched = jobsSend.mock.calls.map((c) => c[0] as unknown as { action: string; workspaceId: string }).filter((m) => m.action === "mcp.search.search");
+    expect(searched.map((m) => m.workspaceId).sort()).toEqual(["ws1", "ws2"]);
   });
 
-  it("marks a read-only key's write as denied, on the action it attempted", async () => {
-    const r = await callTool(connectorCtx({ scope: { readOnly: true } } as Partial<Ctx>), "docs", { action: "create", title: "x" });
-    expect(r.isError).toBe(true);
-    expect(jobsSend).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "mcp.docs.create", workspaceId: "ws1", status: "denied" }),
-    );
-  });
-
-  it("records a human bearer's call as a human's, with no delegate", async () => {
-    const human = connectorCtx({
-      alias: "human-1",
-      isAgent: false,
-      onBehalfOf: undefined,
-      principals: ["user:human-1", "org:ws1"],
-    });
-    await callTool(human, "docs", { action: "list" });
+  it("records a person's own call as a human's, with no delegate", async () => {
+    await callToolAs(human(), "docs", { action: "list", workspace_id: "ws1" });
     expect(jobsSend).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "audit", action: "mcp.docs.list", actor: "human-1", actorKind: "human", onBehalfOf: null, source: "mcp" }),
     );
   });
 
-  it("marks an allowed call ok", async () => {
-    await callTool(connectorCtx(), "docs", { action: "list" });
-    expect(jobsSend).toHaveBeenCalledWith(expect.objectContaining({ status: "ok" }));
-  });
-
   it("answers the call even when the audit queue fails", async () => {
     jobsSend.mockRejectedValueOnce(new Error("queue offline"));
-    const r = await callTool(connectorCtx(), "docs", { action: "list" });
-    expect(r.isError).toBe(false);
+    expect((await callToolAs(grant(), "docs", { action: "list", workspace_id: "ws1" })).isError).toBe(false);
   });
 });

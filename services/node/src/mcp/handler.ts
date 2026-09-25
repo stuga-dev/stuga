@@ -1,57 +1,36 @@
 /**
  * The node's /mcp endpoint: a stateless Streamable-HTTP MCP server built per
- * request around the caller's authenticated Ctx. Every tool call resolves its
- * workspace, is refused if a read-only key tries to write, and writes one audit
- * row, reads and refusals included: at once for a call refused here, and once
- * the tool answers for a call that runs, denied if the backend refused it as read-only.
+ * request around the caller. Every tool call names its workspace and is run in
+ * it only if the credential reaches it and its person is a member there now. A
+ * read-only credential is offered only the reading tools, so a write it names
+ * anyway is an unknown tool; the read-only gate below still stands behind that.
+ * Every call in a workspace writes one audit row there, reads and refusals
+ * included: at once for a call refused here, and once the tool answers for a
+ * call that runs. The routing table reads only the caller's own memberships.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isMutating, type ToolName } from "@stuga/agent-surface/catalog";
 import { buildInstructions } from "@stuga/agent-surface/instructions";
-import { registerAgentTools, type ToolCall } from "@stuga/agent-surface/register";
-import { agentPrincipal } from "@stuga/auth";
+import { registerAgentTools, type AgentSurface, type Reach, type ToolCall } from "@stuga/agent-surface/register";
 import type { AuditStatus } from "@stuga/protocol/domain/audit";
 import { MCP_SERVER_TITLE } from "@stuga/protocol/domain/node-name";
-import { getMemberRole, getWorkspace } from "@stuga/db";
+import { getWorkspace, listWorkspacesForUser } from "@stuga/db";
 import { recordAudit } from "../audit/record.js";
-import type { Ctx } from "../auth/context.js";
-import { resolvePrincipals } from "../auth/principals.js";
+import { mcpPerson, workspaceContextFor, type McpCaller } from "../auth/context.js";
 import { READ_ONLY_MESSAGE } from "../authz/authz.js";
 import { VERSION } from "../version.js";
 import { nodeBackend } from "./backend.js";
 
-/** Identical for unknown, revoked and not-a-member, so a credential cannot probe which ids exist. */
+/** Identical for unknown, revoked, out-of-scope and not-a-member, so a credential cannot probe which ids exist. */
 export const WORKSPACE_UNAVAILABLE_MESSAGE = "workspace is not available to this connector";
-
-/**
- * The Ctx one call runs under: home when `workspace_id` is absent, that
- * workspace when the caller (for an agent, its human) is a member there now,
- * else null. Never a fallback to home, which would land a write in the wrong tenant.
- */
-async function workspaceCtx(base: Ctx, requested: string | undefined): Promise<Ctx | null> {
-  const wsId = requested?.trim();
-  if (!wsId || wsId === base.workspaceId) return base;
-  if (base.isAgent) {
-    // A folder-scoped key's folders are in its home workspace; it has nothing anywhere else.
-    if (base.scope?.folders) return null;
-    const role = await getMemberRole(base.sql, wsId, base.onBehalfOf);
-    if (!role) return null;
-    const inherited = await resolvePrincipals(base.sql, base.onBehalfOf, wsId, role);
-    // The agent keeps its own principal: documents it created are granted to agent:<id>.
-    return { ...base, workspaceId: wsId, role, principals: [...new Set([agentPrincipal(base.alias), ...inherited])] };
-  }
-  const role = await getMemberRole(base.sql, wsId, base.alias);
-  if (!role) return null;
-  return { ...base, workspaceId: wsId, role, principals: await resolvePrincipals(base.sql, base.alias, wsId, role) };
-}
 
 /** Audit verbs for tools that take no `action`. */
 const DEFAULT_ACTION: Record<ToolName, string> = {
   workspaces: "list",
   docs: "list",
+  search: "search",
   markdown: "read",
-  media: "upload",
   comments: "list",
   folders: "list",
   events: "poll",
@@ -59,6 +38,14 @@ const DEFAULT_ACTION: Record<ToolName, string> = {
   retrieve: "retrieve",
   databases: "list",
   query: "select",
+  docs_create: "create",
+  markdown_append: "append",
+  markdown_edit: "write",
+  comments_add: "add",
+  media_upload: "upload",
+  collections_edit: "change",
+  databases_add: "add",
+  databases_change: "change",
 };
 
 function auditTarget(args: Record<string, unknown>): { targetKind: string; targetId: string } | null {
@@ -68,32 +55,63 @@ function auditTarget(args: Record<string, unknown>): { targetKind: string; targe
   return null;
 }
 
-function buildMcpServer(base: Ctx, conventions: string): McpServer {
-  // One name for the product. Which node this is, and which workspaces it reaches, are in the
-  // instructions and in `workspaces` action:list, where the model can act on them.
-  const node = { name: base.env.settings.current().nodeLabel, origin: base.env.publicOrigin };
-  const instructions = buildInstructions({ variant: "http", node, conventions, readOnly: Boolean(base.scope?.readOnly) });
-  const server = new McpServer({ name: "stuga", title: MCP_SERVER_TITLE, version: VERSION }, { instructions, capabilities: { tools: {} } });
-  registerAgentTools(
-    server,
-    async ({ tool, action, args }: ToolCall) => {
-      const ctx = await workspaceCtx(base, typeof args.workspace_id === "string" ? args.workspace_id : undefined);
+/**
+ * Every workspace the credential reaches on this node: its person's memberships, narrowed to the ones it was
+ * given, and for an agent never one where its person is only a guest (workspaceContextFor refuses those).
+ */
+async function reachOf(caller: McpCaller): Promise<Reach> {
+  const { env } = caller.account;
+  const node = { id: env.nodeId, name: env.settings.current().nodeLabel, origin: env.publicOrigin };
+  const rows = await listWorkspacesForUser(caller.account.sql, mcpPerson(caller));
+  const allowed = caller.workspaces ? new Set(caller.workspaces) : null;
+  return {
+    workspaces: rows
+      .filter((w) => !allowed || allowed.has(w.workspace_id))
+      .filter((w) => !caller.account.isAgent || w.role !== "guest")
+      .map((w) => ({ workspace_id: w.workspace_id, name: w.name, role: w.role, access: caller.readOnly ? "read" : "propose", node })),
+    unavailable: [],
+  };
+}
+
+/** The tools' view of this node for one request: its routing table, and a backend per workspace a call names. */
+export function nodeSurface(caller: McpCaller): AgentSurface {
+  let reach: Promise<Reach> | null = null;
+  return {
+    reach: () => (reach ??= reachOf(caller)),
+    async backendFor({ tool, action, workspaceId, args }: ToolCall) {
+      const ctx = await workspaceContextFor(caller, workspaceId);
       // A refused call is the action it attempted, marked denied, so a filter on the tool finds refusals too.
       const audit = (status: AuditStatus) =>
-        recordAudit({ ...base, workspaceId: ctx?.workspaceId }, { action: `mcp.${tool}.${action ?? DEFAULT_ACTION[tool]}`, ...auditTarget(args), status });
+        recordAudit({ ...caller.account, workspaceId: ctx?.workspaceId }, { action: `mcp.${tool}.${action ?? DEFAULT_ACTION[tool]}`, ...auditTarget(args), status });
       if (!ctx) {
         audit("denied");
         return { error: WORKSPACE_UNAVAILABLE_MESSAGE };
       }
-      if (ctx.scope?.readOnly && isMutating(tool, action)) {
+      if (ctx.scope?.readOnly && isMutating(tool)) {
         audit("denied");
         return { error: READ_ONLY_MESSAGE };
       }
-      // A read can still end in the read-only refusal: open_page on a row whose page would have to be made.
-      return { backend: nodeBackend(ctx, base.workspaceId), settled: (refusal) => audit(refusal === READ_ONLY_MESSAGE ? "denied" : "ok") };
+      // A backend that answers with the read-only refusal was a denied write, recorded as one.
+      return { backend: nodeBackend(ctx), settled: (refusal: string | null) => audit(refusal === READ_ONLY_MESSAGE ? "denied" : "ok") };
     },
-    "http",
-  );
+  };
+}
+
+async function buildMcpServer(caller: McpCaller, surface: AgentSurface): Promise<McpServer> {
+  const { env, sql } = caller.account;
+  const { workspaces } = await surface.reach();
+  // One workspace's conventions travel with the connection; with several, each is read before writing there.
+  const only = workspaces.length === 1 ? await getWorkspace(sql, workspaces[0]!.workspace_id).catch(() => null) : null;
+  const instructions = buildInstructions({
+    node: { name: env.settings.current().nodeLabel, origin: env.publicOrigin },
+    workspaces,
+    conventions: only?.agent_instructions ?? "",
+    readOnly: caller.readOnly,
+  });
+  // One name for the product. Which node this is, and which workspaces it reaches, are in the instructions and in
+  // `workspaces` action:list, where the model can act on them.
+  const server = new McpServer({ name: "stuga", title: MCP_SERVER_TITLE, version: VERSION }, { instructions, capabilities: { tools: {} } });
+  registerAgentTools(server, surface, { readOnly: caller.readOnly });
   return server;
 }
 
@@ -109,17 +127,16 @@ function buildMcpServer(base: Ctx, conventions: string): McpServer {
 const MCP_METHODS = new Set(["POST", "DELETE"]);
 
 /** One stateless MCP request: a fresh server and transport, the response fully buffered before cleanup. */
-export async function handleMcpRequest(ctx: Ctx, req: Request): Promise<Response> {
+export async function handleMcpRequest(caller: McpCaller, req: Request): Promise<Response> {
   if (!MCP_METHODS.has(req.method)) {
     return new Response(null, { status: 405, headers: { allow: [...MCP_METHODS].join(", ") } });
   }
-  const home = await getWorkspace(ctx.sql, ctx.workspaceId).catch(() => null);
-  const server = buildMcpServer(ctx, home?.agent_instructions ?? "");
+  const server = await buildMcpServer(caller, nodeSurface(caller));
   // The listener already held the body to the node's ceiling. The SDK's own 4 MiB default sits
-  // under an inline image at the `media` cap, and would refuse it before the tool could name its limit.
+  // under an inline image at the `media_upload` cap, and would refuse it before the tool could name its limit.
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
-    maxRequestBodySize: ctx.env.settings.current().maxBodyBytes,
+    maxRequestBodySize: caller.account.env.settings.current().maxBodyBytes,
   });
   try {
     await server.connect(transport);

@@ -1,11 +1,10 @@
 /**
- * Minting agent credentials. A person mints keys (/api/keys and the extension
- * download); the OAuth flow mints connector keys. Both resolve to an
- * independent `agent:<id>` principal bound to one workspace, and the agent id
- * records which kind a key is.
+ * Minting agent credentials. A person mints keys (/api/keys); an OAuth consent
+ * creates a grant (mcp/oauth.ts). Both resolve to an independent `agent:<id>`
+ * principal, and the agent id records which kind it is.
  */
 import { mintApiKey } from "@stuga/auth";
-import { type ApiKeyAccess, type Sql, getFolder, insertApiKey } from "@stuga/db";
+import { type ApiKeyAccess, getFolder, insertApiKey } from "@stuga/db";
 import type { Ctx } from "../auth/context.js";
 
 export type AgentKeyKind = "key" | "connector";
@@ -107,22 +106,4 @@ export async function createAgentKey(ctx: Ctx, name: string, narrowing: KeyNarro
     expiresAt,
   });
   return { token: minted.token, keyId: minted.keyId, agentId, name, scopeFolders, access, expiresAt };
-}
-
-/** Mint the connector key an OAuth token exchange hands out: unnarrowed, never expiring, revocable like any key. */
-export async function createConnectorKey(
-  sql: Sql,
-  input: { owner: string; workspaceId: string; name: string },
-): Promise<Pick<AgentKey, "token" | "keyId" | "agentId">> {
-  const minted = mintApiKey();
-  const agentId = newAgentId("connector");
-  await insertApiKey(sql, {
-    keyId: minted.keyId,
-    secretHash: minted.secretHash,
-    agentId,
-    owner: input.owner,
-    workspaceId: input.workspaceId,
-    name: input.name,
-  });
-  return { token: minted.token, keyId: minted.keyId, agentId };
 }

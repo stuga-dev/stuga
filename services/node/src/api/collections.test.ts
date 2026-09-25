@@ -70,7 +70,7 @@ function agent(over: Partial<Ctx> = {}): Ctx {
 }
 
 const scoped = (folders: string[] | null, readOnly = false): Partial<Ctx> =>
-  ({ scope: { folders, readOnly, keyId: "a1" } }) as unknown as Partial<Ctx>;
+  ({ scope: { folders, readOnly, credentialId: "a1" } }) as unknown as Partial<Ctx>;
 
 const send = (ctx: Ctx, method: string, path: string, body?: unknown): Promise<Response> => {
   const url = new URL(`https://node.test${path}`);

@@ -419,24 +419,67 @@ TABLE oauth_clients
   client_name text NOT NULL DEFAULT ''::text
   client_secret_hash text
   created_at timestamp with time zone NOT NULL DEFAULT now()
+  kind text NOT NULL DEFAULT 'dcr'::text
   last_used_at timestamp with time zone
+  metadata_fetched_at timestamp with time zone
   redirect_uris ARRAY NOT NULL DEFAULT '{}'::text[]
+  CONSTRAINT oauth_clients_kind_check CHECK ((kind = ANY (ARRAY['dcr'::text, 'cimd'::text])))
   CONSTRAINT oauth_clients_pkey PRIMARY KEY (client_id)
   INDEX oauth_clients_last_used_idx CREATE INDEX oauth_clients_last_used_idx ON public.oauth_clients USING btree (last_used_at)
   INDEX oauth_clients_pkey CREATE UNIQUE INDEX oauth_clients_pkey ON public.oauth_clients USING btree (client_id)
 
 TABLE oauth_codes
+  access text NOT NULL
   client_id text NOT NULL
   code_challenge text NOT NULL
   code_hash text NOT NULL
   expires_at timestamp with time zone NOT NULL
   redirect_uri text NOT NULL
   user_alias text NOT NULL
-  workspace_id text NOT NULL
+  workspace_scope ARRAY
+  CONSTRAINT oauth_codes_access_check CHECK ((access = ANY (ARRAY['read'::text, 'propose'::text])))
   CONSTRAINT oauth_codes_pkey PRIMARY KEY (code_hash)
-  CONSTRAINT oauth_codes_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
   INDEX oauth_codes_expiry_idx CREATE INDEX oauth_codes_expiry_idx ON public.oauth_codes USING btree (expires_at)
   INDEX oauth_codes_pkey CREATE UNIQUE INDEX oauth_codes_pkey ON public.oauth_codes USING btree (code_hash)
+
+TABLE oauth_grants
+  access text NOT NULL DEFAULT 'propose'::text
+  agent_id text NOT NULL
+  client_host text
+  client_id text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  grant_id text NOT NULL
+  last_used_at timestamp with time zone
+  name text NOT NULL DEFAULT ''::text
+  owner text NOT NULL
+  revoked_at timestamp with time zone
+  revoked_by text
+  workspace_scope ARRAY
+  CONSTRAINT oauth_grants_access_check CHECK ((access = ANY (ARRAY['read'::text, 'propose'::text])))
+  CONSTRAINT oauth_grants_agent_id_key UNIQUE (agent_id)
+  CONSTRAINT oauth_grants_owner_fkey FOREIGN KEY (owner) REFERENCES users(alias) ON DELETE CASCADE
+  CONSTRAINT oauth_grants_pkey PRIMARY KEY (grant_id)
+  INDEX oauth_grants_agent_id_key CREATE UNIQUE INDEX oauth_grants_agent_id_key ON public.oauth_grants USING btree (agent_id)
+  INDEX oauth_grants_live_uniq CREATE UNIQUE INDEX oauth_grants_live_uniq ON public.oauth_grants USING btree (owner, client_id) WHERE (revoked_at IS NULL)
+  INDEX oauth_grants_owner_idx CREATE INDEX oauth_grants_owner_idx ON public.oauth_grants USING btree (owner, created_at DESC)
+  INDEX oauth_grants_pkey CREATE UNIQUE INDEX oauth_grants_pkey ON public.oauth_grants USING btree (grant_id)
+
+TABLE oauth_tokens
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  expires_at timestamp with time zone NOT NULL
+  family_id text NOT NULL
+  family_started_at timestamp with time zone NOT NULL
+  grant_id text NOT NULL
+  kind text NOT NULL
+  token_hash text NOT NULL
+  used_at timestamp with time zone
+  CONSTRAINT oauth_tokens_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES oauth_grants(grant_id) ON DELETE CASCADE
+  CONSTRAINT oauth_tokens_kind_check CHECK ((kind = ANY (ARRAY['access'::text, 'refresh'::text])))
+  CONSTRAINT oauth_tokens_pkey PRIMARY KEY (token_hash)
+  INDEX oauth_tokens_expiry_idx CREATE INDEX oauth_tokens_expiry_idx ON public.oauth_tokens USING btree (expires_at)
+  INDEX oauth_tokens_family_idx CREATE INDEX oauth_tokens_family_idx ON public.oauth_tokens USING btree (family_id)
+  INDEX oauth_tokens_grant_idx CREATE INDEX oauth_tokens_grant_idx ON public.oauth_tokens USING btree (grant_id)
+  INDEX oauth_tokens_pkey CREATE UNIQUE INDEX oauth_tokens_pkey ON public.oauth_tokens USING btree (token_hash)
 
 TABLE oidc_flows
   binding_hash text NOT NULL

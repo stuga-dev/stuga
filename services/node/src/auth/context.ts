@@ -9,6 +9,7 @@ import {
   touchApiKey,
   getMemberRole,
   getFolderSubtreeIds,
+  grantForAccessToken,
   type DirectoryRow,
   type Sql,
 } from "@stuga/db";
@@ -22,6 +23,8 @@ import {
   sha256Hex,
   constantTimeEqual,
   agentPrincipal,
+  connectorTokenKind,
+  hashConnectorToken,
 } from "@stuga/auth";
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
 import { AGENT_CLIENT_HEADER, AGENT_LABEL_MAX, AGENT_MODEL_HEADER } from "@stuga/protocol/api/headers";
@@ -73,17 +76,17 @@ interface AgentAccountCtx extends AccountBase {
 export type AccountCtx = HumanAccountCtx | AgentAccountCtx;
 
 /**
- * The narrowing an API key carries. It only ever subtracts from the owner's
- * live reach: it is intersected with the ACL gate, never consulted instead of it.
+ * The narrowing an agent credential carries. It only ever subtracts from the
+ * owner's live reach: it is intersected with the ACL gate, never consulted instead of it.
  */
 interface AgentScope {
   /** Every folder the key may act in, subtrees expanded, or null for the owner's
    *  whole reach. A document is in scope when its own parent folder is in this set. */
   folders: string[] | null;
-  /** True for an `access = 'read'` key: every write surface refuses it. */
+  /** True for read access: every write surface refuses it. */
   readOnly: boolean;
-  /** The key row this request authenticated with. */
-  keyId: string;
+  /** The API key or OAuth grant this request authenticated with. */
+  credentialId: string;
 }
 
 interface WorkspaceScope {
@@ -125,7 +128,7 @@ export function workspaceRequiredResponse(res: Response): Response {
 interface StoredScope {
   folders: string[] | null;
   readOnly: boolean;
-  keyId: string;
+  credentialId: string;
 }
 
 type AuthenticatedRequest =
@@ -142,12 +145,12 @@ async function expandScope(
   workspaceId: string,
   raw: StoredScope,
 ): Promise<AgentScope> {
-  if (!raw.folders) return { folders: null, readOnly: raw.readOnly, keyId: raw.keyId };
+  if (!raw.folders) return { folders: null, readOnly: raw.readOnly, credentialId: raw.credentialId };
   const all = new Set<string>();
   for (const root of raw.folders) {
     for (const id of await getFolderSubtreeIds(sql, root, workspaceId)) all.add(id);
   }
-  return { folders: [...all], readOnly: raw.readOnly, keyId: raw.keyId };
+  return { folders: [...all], readOnly: raw.readOnly, credentialId: raw.credentialId };
 }
 
 function surfaceOf(transport: Transport, isAgent: boolean): Surface {
@@ -160,6 +163,8 @@ async function authenticateRequest(req: Request, env: NodeEnv, transport: Transp
   const token = extractToken(req);
   if (!token) throw new Unauthorized("missing token");
   const sql = env.sql;
+  // An OAuth token's audience is /mcp, and only buildMcpCaller reads one.
+  if (connectorTokenKind(token)) throw new Unauthorized("this token is for the /mcp endpoint only");
 
   // An API key resolves the key's own principal here; buildContext adds its owner's delegated set.
   if (looksLikeApiKey(token)) {
@@ -185,7 +190,7 @@ async function authenticateRequest(req: Request, env: NodeEnv, transport: Transp
       },
       key: {
         workspaceId: row.workspace_id,
-        scope: { folders: row.scope_folders, readOnly: row.access === "read", keyId: row.key_id },
+        scope: { folders: row.scope_folders, readOnly: row.access === "read", credentialId: row.key_id },
       },
     };
   }
@@ -306,6 +311,95 @@ export async function buildSocketContext(env: NodeEnv, ticket: WsTicket): Promis
     env,
     principals: principalsFrom(ticket.alias, ticket.workspaceId, role, auth.groupIds),
     workspaceId: ticket.workspaceId,
+    role,
+  };
+}
+
+/**
+ * Who is calling /mcp, and where they may act. Each tool call names its
+ * workspace, so the workspace is resolved per call (`workspaceContextFor`),
+ * never pinned to the credential.
+ */
+export interface McpCaller {
+  account: AccountCtx;
+  /** The workspaces the credential may act in; null = every workspace its person belongs to, now and later. */
+  workspaces: readonly string[] | null;
+  readOnly: boolean;
+  /** A key minted by hand: its workspace and folder narrowing, which apply in that workspace. */
+  key?: { workspaceId: string; scope: StoredScope };
+}
+
+/** The person an /mcp caller acts for. */
+export function mcpPerson(caller: McpCaller): string {
+  return caller.account.isAgent ? caller.account.onBehalfOf : caller.account.alias;
+}
+
+/**
+ * Authenticate an /mcp request: an OAuth access token (a grant over the
+ * workspaces its person chose), a key minted by hand (a folder-confined one
+ * stays in its workspace), or a person's own session.
+ */
+export async function buildMcpCaller(req: Request, env: NodeEnv): Promise<McpCaller> {
+  const token = extractToken(req);
+  if (!token) throw new Unauthorized("missing token");
+  const kind = connectorTokenKind(token);
+  if (kind === "refresh") throw new Unauthorized("a refresh token is exchanged at /oauth/token, never sent as a bearer");
+  if (kind === "access") {
+    const grant = await grantForAccessToken(env.sql, hashConnectorToken(token));
+    if (!grant) throw new Unauthorized("invalid or expired token");
+    return {
+      account: {
+        sql: env.sql,
+        surface: "mcp",
+        alias: grant.agent_id,
+        displayName: grant.name || grant.agent_id,
+        isAgent: true,
+        onBehalfOf: grant.owner,
+        scope: { folders: null, readOnly: grant.access === "read", credentialId: grant.grant_id },
+        client: agentLabel(req.headers.get(AGENT_CLIENT_HEADER)),
+        model: agentLabel(req.headers.get(AGENT_MODEL_HEADER)),
+        env,
+      },
+      workspaces: grant.workspace_scope,
+      readOnly: grant.access === "read",
+    };
+  }
+  const authenticated = await authenticateRequest(req, env, "mcp");
+  if ("key" in authenticated) {
+    const { account, key } = authenticated;
+    return { account, workspaces: key.scope.folders ? [key.workspaceId] : null, readOnly: key.scope.readOnly, key };
+  }
+  const displayName = directoryName(await getDirectoryRow(env.sql, authenticated.account.alias));
+  return { account: { ...authenticated.account, displayName }, workspaces: null, readOnly: false };
+}
+
+/**
+ * The context one /mcp call runs under in the workspace it names, or null when
+ * the credential may not act there or its person is not a member now. Never a
+ * fallback to another workspace, which would land a write in the wrong tenant.
+ */
+export async function workspaceContextFor(caller: McpCaller, workspaceId: string): Promise<Ctx | null> {
+  if (caller.workspaces && !caller.workspaces.includes(workspaceId)) return null;
+  const { account } = caller;
+  const role = await getMemberRole(account.sql, workspaceId, mcpPerson(caller));
+  if (!role) return null;
+  // A guest brings no agent into someone else's workspace, the rule consent and key minting follow.
+  if (account.isAgent && role === "guest") return null;
+  if (!account.isAgent) {
+    return { ...account, workspaceId, role, principals: await resolvePrincipals(account.sql, account.alias, workspaceId, role) };
+  }
+  const inherited = await resolvePrincipals(account.sql, account.onBehalfOf, workspaceId, role);
+  // A minted key's folders narrow it in its own workspace; anywhere else it has only its access level.
+  const scope =
+    caller.key && caller.key.workspaceId === workspaceId
+      ? await expandScope(account.sql, workspaceId, caller.key.scope)
+      : { folders: null, readOnly: caller.readOnly, credentialId: caller.key?.scope.credentialId ?? account.scope?.credentialId ?? "" };
+  return {
+    ...account,
+    scope,
+    // Its own principal stays: documents it created are granted to agent:<id>.
+    principals: [...new Set([agentPrincipal(account.alias), ...inherited])],
+    workspaceId,
     role,
   };
 }

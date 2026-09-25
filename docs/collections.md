@@ -50,7 +50,7 @@ outside answers a tool error rather than widening the scope.
 
 | Surface | Inside the collection | Outside it |
 |---|---|---|
-| **Search** (`POST /api/search`, MCP `docs` action `search`) | Results come only from the collection. | Not returned. |
+| **Search** (`POST /api/search`, MCP `search`) | Results come only from the collection. | Not returned. |
 | **Retrieve** (`POST /api/retrieve`, MCP `retrieve`) | Passages come only from the collection. | Not returned. |
 | **Ask** (`POST /api/ask`, `/ask`) | `search_documents` searches the collection. `list_documents` lists its documents, and only the folders that lead to them. `list_databases` lists its databases. | `read_document` answers "that document is not in the selected collection", and `query_database` "that database is not in the selected collection". |
 | **Co-author** (a collection picked in the panel's **Search scope**) | `search_collection` searches the collection. `list_documents` lists its documents the person can edit. | Opening another document, and so editing it, answers "that document is not in the selected collection". A proposal into such a document is refused with the same sentence. |
@@ -73,7 +73,7 @@ collection is not available".
 | **Ask** (`/ask`, `POST /api/ask`) | The **Search scope** selector, sent as `collection_id`. A saved thread keeps its collection, so follow-up questions stay in scope unless a request names another. |
 | **Search** (`POST /api/search`) | Optional `collection_id`. |
 | **Retrieve** (`POST /api/retrieve`) | Optional `collection_id`. |
-| **MCP** | The `collections` tool lists, opens, creates, renames and deletes the person's collections and adds and removes their members. `retrieve` and `docs` action `search` take `collection_id` ([agents.md](agents.md#the-tools)). |
+| **MCP** | The `collections` tool lists and opens the person's collections; `collections_edit` creates, renames and deletes them and adds and removes their members. `search` and `retrieve` take `collection_id` when they cover one workspace ([agents.md](agents.md#the-tools)). |
 | **Co-author and table assistant** | The panel's **Search scope**: **This document only** (or **This database only**), **All documents in this workspace**, or a collection. |
 
 ## Routes

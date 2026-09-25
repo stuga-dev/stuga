@@ -152,7 +152,7 @@ on the **Storage** settings page are deleted.
 | Ask page | `/ask`, `/ask/:threadId` | Streams the answer. The steps behind it (searches, documents read, database queries) sit collapsed under **How this answer was found**, and each database step shows the SQL it ran. The source list is the citations the answer kept. |
 | REST | `POST /api/ask` | `{ question, collection_id?, thread_id?, model?, history? }`, answered as a stream of server-sent events. |
 | REST | `POST /api/retrieve` | `{ q, collection_id?, limit? }` → passages with sources ([api.md](api.md#documents)). |
-| MCP | `retrieve` | The same, for external agents. |
+| MCP | `retrieve` | The same, for external agents, over one or more workspaces (`workspace_ids`) with each passage naming its `workspace_id` ([agents.md](agents.md#searching-several-workspaces)). |
 | Co-author, table assistant | `search_collection` | The panel's search, scoped to all documents or a collection. With a collection, the co-author's `list_documents`, opening another document and its proposals into other documents stay inside the collection too, and anything outside answers "that document is not in the selected collection". With **This document only**, there is no search and the co-author reaches no other document. |
 | Co-author | `cited_edits` | Edits whose `[^n]` markers become footnotes to retrieved passages when the change lands. |
 

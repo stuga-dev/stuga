@@ -14,7 +14,7 @@ export function imageMarkdown(path: string, alt: string | undefined, caption: st
 export function renderUpload(stored: StoredImage, alt: string | undefined, caption: string | undefined): string {
   return (
     JSON.stringify({ url: stored.url, hash: stored.hash, size: stored.size, mime: stored.mime, markdown: imageMarkdown(stored.url, alt, caption) }) +
-    "\n[note] Stored. Insert the `markdown` field above into the document with the `markdown` " +
-    "tool — uploading does not place the image by itself."
+    "\n[note] Stored. Insert the `markdown` field above into the document with `markdown_edit` or " +
+    "`markdown_append` — uploading does not place the image by itself."
   );
 }

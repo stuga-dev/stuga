@@ -319,6 +319,26 @@ export interface ApiKeyRow {
   rotated_at: string | null;
 }
 
+/** One person's authorization of one OAuth client; revoked, never deleted. */
+export interface OauthGrantRow {
+  grant_id: string;
+  client_id: string;
+  /** What its runs are attributed to. */
+  name: string;
+  /** The host that served the client's metadata document; null = registered dynamically, unverified. */
+  client_host: string | null;
+  owner: string;
+  /** The agent acts as `agent:<agent_id>`. */
+  agent_id: string;
+  /** The workspaces it may act in; null = every workspace its owner belongs to, now and later. */
+  workspace_scope: string[] | null;
+  access: ApiKeyAccess;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  revoked_by: string | null;
+}
+
 export interface ShareLinkRow {
   token_hash: string;
   doc_id: string;

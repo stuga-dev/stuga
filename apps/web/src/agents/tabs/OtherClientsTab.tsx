@@ -5,19 +5,17 @@ import { MintKey, type MintKeyState } from "../MintKey";
 
 export function OtherClientsTab({
   httpJson,
-  workspaceName,
   mint,
 }: {
   httpJson: string;
-  workspaceName: string | null;
   mint: MintKeyState;
 }) {
   const { minted } = mint;
   return (
     <VStack gap={2}>
       <Text size="sm" color="secondary">
-        For MCP clients using streamable HTTP. Name a key to fill the config. It starts in{" "}
-        {workspaceName ? <strong>{workspaceName}</strong> : "this workspace"} and uses your access elsewhere.
+        For MCP clients using streamable HTTP. Name a key to fill the config; it acts with your access in every workspace
+        you belong to.
       </Text>
       <MintKey mint={mint} />
       <CodeBlock

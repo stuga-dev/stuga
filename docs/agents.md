@@ -15,14 +15,17 @@ filled in. Use it when it disagrees with an example here.
   can reach, including one on `localhost` or your local network. Claude Code dials the node's `/mcp`
   endpoint. Its browser sign-in needs the node on https or on loopback, so on a plain-http network
   address **Your own AI** gives it a command carrying a key instead. Claude Desktop runs Stuga's
-  stdio server from an extension, and the server calls the node.
+  stdio server from an extension, and the server forwards to the node's `/mcp`.
 - **Codex and Google Antigravity** dial the node's `/mcp` endpoint and work with any node the machine
   can reach. **Your own AI** gives one command per host that installs the Stuga Skill and adds the
   node; both hosts sign in through the browser, so no key is pasted.
 - **Claude on the web and on mobile** add custom connectors that Anthropic's cloud dials. Those need
   the node at a public HTTPS origin, set as `PUBLIC_ORIGIN`. **Your own AI** offers the **Claude** tab
-  only when `PUBLIC_ORIGIN` is not a loopback, private or local-network address. Ways to give a node a
-  public HTTPS origin are in [network-access.md](network-access.md#https).
+  only when `PUBLIC_ORIGIN` is https and not a loopback, private or local-network address. Ways to
+  give a node a public HTTPS origin are in [network-access.md](network-access.md#https).
+
+An app you connect sees what its model reads and writes. A hosted one, such as Claude on the web,
+handles it on its vendor's servers.
 
 ## One connection, and which node a call lands on
 
@@ -31,25 +34,94 @@ A client holds **one** Stuga connection. Every config names it `stuga`, every cl
 them: a node is renamed, moved to another address, or reached at a second address, and the client's
 entry never changes.
 
-Which node and which workspace a call acts in is the answer to `workspaces` action `list`, not the
-connection's name. That listing is the routing table:
+A connection reaches the workspaces its credential allows: the ones you chose when the app signed in
+([Apps that sign in](#apps-that-sign-in)), or a key's ([API keys](#api-keys)). `workspaces` action
+`list` is the routing table:
 
-- Each workspace carries the node it is on: `node: { id, name, origin }`.
-- A `workspace_id` is unique everywhere, so passing one already says which node is meant. **No tool
-  takes a node.** Omitting `workspace_id` acts in the home workspace the connector was authorized in.
-- The instructions open with the node a call lands on by default, and point at that listing.
+```json
+{
+  "contract": 2,
+  "workspaces": [
+    {
+      "workspace_id": "…",
+      "name": "Research",
+      "role": "member",
+      "access": "propose",
+      "node": { "id": "…", "name": "livs-air", "origin": "http://livs-air.local:8787" }
+    }
+  ],
+  "unavailable": []
+}
+```
 
-Today every workspace in the listing is on the node the connection is to. Nodes never talk to each
-other, so an agent that works with two nodes is set up on each: the second connection is added by hand
-under another name, because a client cannot hold two entries called `stuga`. In the Claude Code command
-write `stuga-work` in place of `stuga`; in a pasted JSON config, change the key; for the Codex and
-Antigravity installers, run the command as `curl -fsSL '…' | STUGA_SERVER=stuga-work sh`. The
-installers refuse to touch an entry whose name is already taken by another server, rather than replace
-it. The Claude Desktop extension needs nothing: it installs under the node's ID, so a second node's
-extension sits beside the first.
+- **Every call names its workspace.** Every tool requires `workspace_id` except `workspaces` action
+  `list`, and `search` and `retrieve`, which take `workspace_ids` instead
+  ([Searching several workspaces](#searching-several-workspaces)). There is no default workspace.
+- **No tool takes a node.** A `workspace_id` is unique everywhere, so it already says which node.
+- **An id the connection cannot use is refused with one sentence**, `workspace is not available to
+  this connector`, whether it does not exist, is outside the credential's workspaces, or its person
+  is no longer a member there, so a credential cannot probe which ids exist.
+- **`access`** is what the connection may do there: `read`, or `propose` changes. `role` is the
+  person's role in the workspace.
+- **`contract`** is the version of the tools. It goes up when a change would break an agent, a skill
+  or a router written against the previous one.
+
+The server instructions open with a routing rule, then name the node and how many workspaces the
+connection reaches, and carry a table of up to 20 of them. When the connection reaches exactly one
+workspace, that workspace's [instructions for agents](#instructions-for-agents) follow; otherwise
+they point at `workspaces` action `instructions`.
+
+Nodes never talk to each other, so every workspace in the listing is on the node the connection is
+to, and its `unavailable` is empty. An agent that works with two nodes is set up on each: the second
+connection is added by hand under another name, because a client cannot hold two entries called
+`stuga`. In the Claude Code command write `stuga-work` in place of `stuga`; in a pasted JSON config,
+change the key; for the Codex and Antigravity installers, run the command as
+`curl -fsSL '…' | STUGA_SERVER=stuga-work sh`. The installers refuse to touch an entry whose name is
+already taken by another server, rather than replace it. The Claude Desktop extension is one
+extension, `stuga`, whichever node it came from: installing another node's replaces it, and its
+**Stuga address** setting says which node it reaches.
 
 The shortcuts to other nodes in a person's workspace switcher are theirs alone: `/api/me/nodes`
 refuses API keys, so an agent reaches another node only by being connected to it.
+
+## Apps that sign in
+
+A client that supports OAuth signs in through the browser: Claude Code, Codex, Antigravity, Claude
+on the web, and the Claude Desktop extension or `stuga-mcp` without a key. You sign in to the node
+with your password or through its identity provider, and the consent page asks two things:
+
+- **Workspaces.** Every workspace you belong to other than as a guest is ticked. **Also workspaces I
+  join later** covers every workspace you belong to, now and later. An agent never acts in a
+  workspace where you are only a guest, whatever you ticked.
+- **Access.** **Read and suggest changes**, or **Read only**.
+
+The page names the app. An app that identifies itself by a metadata document the node fetched is
+shown as **Verified by** that document's host; any other is an **Unverified app**, with the host it
+returns to.
+
+Each consent creates a connection: one per person per app. Signing in again as the same client (the
+same `client_id`) renews it with your new answers and keeps its name and its agent, so its runs stay
+under one agent. It acts as its own agent for you, and the rules for agents under
+[API keys](#api-keys) apply to it.
+
+**Connected agents**, under **Settings → Your own AI**, lists each connection as *signed in*, with
+`verified by <host>` for a verified app, and a badge when it reaches fewer workspaces than you
+belong to or only reads.
+
+- **Rename** changes how its runs are attributed.
+- **Revoke** ends every token it holds at once. Its next call is refused, and the app asks you to
+  sign in again. A revoked connection stays in the list.
+- **Leaving a workspace** takes it out of every connection that named it, and a connection left
+  naming none is revoked. One made for workspaces you join later keeps following you.
+
+An app holds an access token (`sto_…`) that lasts an hour, and renews it with a refresh token
+(`str_…`) that is replaced every time it is used. A refresh token unused for 90 days lapses, and a
+sign-in ends a year after it happened however often it refreshed; either way the app asks you to
+sign in again. A refresh token presented again within
+`REFRESH_ROTATION_GRACE_SECONDS` (60 by default) of its use is one app refreshing twice at once, and
+gets a pair of its own; presented later, it ends the tokens of that sign-in, because someone else
+holds a copy. The node stores only their hashes. These tokens work only
+on `/mcp`; the REST API refuses them. The OAuth routes are in [api.md](api.md#agents-over-oauth).
 
 ## Claude Code
 
@@ -59,9 +131,8 @@ claude mcp add -s user --transport http stuga http://localhost:8787/mcp
 
 Use your node's origin in place of `http://localhost:8787`; **Your own AI** fills it in. `-s user`
 adds the connection once for every project. Then run `/mcp` in Claude Code, pick **stuga**, and choose
-Authenticate. You sign in to your node in the browser, with your password or through the node's
-identity provider, and no key is pasted: the node runs the OAuth flow itself and mints a key for the
-connection, which appears in **Your own AI** as *signed in* and can be revoked there.
+Authenticate. You sign in to your node in the browser and choose its workspaces and access, and no
+key is pasted ([Apps that sign in](#apps-that-sign-in)).
 
 That sign-in only works when `PUBLIC_ORIGIN` is https or a loopback address. Claude Code refuses to
 send a credential to a token endpoint that is neither, so on a node at a plain-http network address,
@@ -79,9 +150,9 @@ sign-in back.
 
 ## Claude on the web
 
-In Claude, open Settings → Connectors → **Add custom connector** and paste the MCP endpoint the
-**Your own AI** shows (`<PUBLIC_ORIGIN>/mcp`). Claude asks you to sign in to Stuga, and the connection's
-key appears in **Your own AI** as *signed in*.
+In Claude, open Settings → Connectors → **Add custom connector** and paste the MCP endpoint
+**Your own AI** shows (`<PUBLIC_ORIGIN>/mcp`). Claude asks you to sign in to Stuga, and the
+connection appears under **Connected agents**.
 
 ## Codex and Google Antigravity
 
@@ -97,13 +168,12 @@ this node’s `/mcp`. **The script carries no key and the endpoint serving it mi
 unauthenticated because a script that grants nothing needs no credential to fetch. Read it in a
 browser at the URL in the command before running it.
 
-Both hosts register themselves through [dynamic client registration](#other-mcp-clients), so the key
-that comes out is an ordinary connector key, listed in **Your own AI** as *signed in* and revoked
-there like any other. They differ in where the sign-in starts. Codex performs OAuth while the
-installer runs `codex mcp add --url`; use `codex mcp login` only to sign in again later. Antigravity
-has no such command — its OAuth runs inside the IDE and ends by pasting a code back from a hosted
-callback — so it shows **Authenticate** beside the server until you click it once, and reports
-`Unauthorized` until then.
+Both hosts register themselves with the node and sign in like any app
+([Apps that sign in](#apps-that-sign-in)). They differ in where the sign-in starts. Codex performs
+OAuth while the installer runs `codex mcp add --url`; use `codex mcp login` only to sign in again
+later. Antigravity has no such command — its OAuth runs inside the IDE and ends by pasting a code
+back from a hosted callback — so it shows **Authenticate** beside the server until you click it once,
+and reports `Unauthorized` until then.
 
 Restart the host when the command finishes, so the Skill is discovered. An ordinary question such as
 “can you access my Stuga workspace?” then routes to the connection without naming it.
@@ -132,22 +202,24 @@ curl -fsSL 'http://localhost:8787/api/agent-install/codex?action=disconnect' | s
 curl -fsSL 'http://localhost:8787/api/agent-install/codex?action=uninstall' | sh
 ```
 
-Neither revokes anything: the connector the host signed in with lives on the node. Revoke it under
-**Connected agents**, then restart the host.
+Neither revokes anything: the connection lives on the node. Revoke it under **Connected agents**,
+then restart the host.
 
 ## Claude Desktop
 
 In **Your own AI**, open **Claude Desktop** and click **Add to Claude Desktop**. Double-click the
-downloaded `stuga.mcpb`, click **Install**, then quit Claude completely and open it again.
-Closing the window leaves it running. The file carries the server and a key minted for it, so
-nothing is typed.
+downloaded `stuga.mcpb` and click **Install**. The extension asks for:
 
-The downloaded file is a working credential. Delete it once the extension is installed. If it goes
-anywhere it should not, revoke its key in **Your own AI**, and the installed extension stops working
-on its next call.
+- **Stuga address**, filled in with the node the file came from.
+- **Access key**, optional. Leave it empty to sign in through the browser.
 
-Each node's extension installs beside the others'. One downloaded from a second workspace on the
-same node replaces the first, so a desktop install reaches one workspace per node.
+Then quit Claude completely and open it again. Closing the window leaves it running. When Claude
+first starts the extension without a key, the node's consent page opens in your browser; approve it
+and the tools appear.
+
+The file carries no key, so it is safe to pass around. It is one extension for every node:
+installing another node's replaces it, and changing **Stuga address** in Claude's extension settings
+points it at another node.
 
 If the tools do not appear, quit Claude fully and reopen it, then read the extension's
 `mcp-server-*.log` in `~/Library/Logs/Claude/` (on Windows, `%APPDATA%\Claude\logs\`).
@@ -159,7 +231,7 @@ When the node's `PUBLIC_ORIGIN` is a loopback address, so the browser and the no
 a key you mint there, the absolute path of the Node interpreter running the node, and the absolute
 path of the node's stdio server. Paste it in Claude Desktop under Settings → Developer →
 **Edit Config**. Paths are absolute because desktop clients start servers without your shell's
-`PATH`.
+`PATH`. Without `STUGA_TOKEN`, the server signs in through the browser instead.
 
 Which server file the node offers is a packaging setting, `STUGA_STDIO_ENTRY`
 ([packaging/contract.md](../packaging/contract.md#packaging-hints)). When a node's files are not on
@@ -194,27 +266,45 @@ Any client that speaks Streamable HTTP can use `<PUBLIC_ORIGIN>/mcp`. A client t
 signs in like Claude Code. Any other client sends a key as `Authorization: Bearer vk_...`, and the
 **Other clients** tab in **Your own AI** builds that config.
 
-## The stdio server's settings
+## The stdio server
 
-`stuga-mcp.js` reads these settings:
+`stuga-mcp.js`, which the Claude Desktop extension runs, forwards to the node's `/mcp`: the tools,
+their wording, the instructions and every check are the node's own, whatever its version. It adds
+one thing only a process on your machine can do: `databases_add` action `import` also takes `file`,
+a CSV or JSONL path on that machine. The server stages the import with `start_import`, uploads the
+file and commits it, and hands the agent the table's Import dialog link when the file is larger than
+the node accepts.
+
+With `STUGA_TOKEN` set, it sends that key. Without one, it signs in through the browser: it registers
+itself with the node, opens the consent page (and writes its address to stderr), and takes the answer
+on a one-off loopback address. The tokens are kept per node address in `~/.config/stuga/oauth.json`,
+readable only by you. When the node stops accepting them, the server opens a new sign-in.
+
+At startup it waits up to three seconds for the node, so the instructions a client keeps are the
+node's. When the node has not answered by then, the server starts with instructions that say it is
+still connecting, and announces the tools once the node answers. A tool call waits up to 50 seconds
+for the node or the sign-in, then says what it is waiting for.
+
+It reads these settings:
 
 | Variable | File field | Default | |
 |---|---|---|---|
 | `STUGA_URL` | `url` | `http://127.0.0.1:8787` | The node's origin. |
-| `STUGA_TOKEN` | `token` | none | An API key. |
-| `STUGA_WORKSPACE` | `workspace` | none | A workspace to act in, honoured only for a person's access token that belongs to it. An API key always acts in the workspace it was minted in. |
+| `STUGA_TOKEN` | `token` | none | An API key. Without one, the server signs in through the browser. |
 | `STUGA_MODEL` | `model` | none | A model label, sent as `x-stuga-model` and shown beside the agent's runs. |
-| `STUGA_CLIENT` | `client` | `stuga-mcp` | A client label, sent as `x-stuga-client`. The extension sets `claude-desktop`. |
-| `STUGA_NODE_NAME` | `node_name` | the host of `STUGA_URL` | The node's name, for when the node cannot be asked. At startup the server asks the node's public `/auth/config` for its current name and its `PUBLIC_ORIGIN`, which win. The extension sets it. |
+| `STUGA_CLIENT` | `client` | `stuga-mcp` | A client label, sent as `x-stuga-client`. It also names the connection a sign-in creates: **Claude Desktop** for `claude-desktop`, which the extension sets, and **Stuga local connector** for the default. |
+| `STUGA_NODE_NAME` | `node_name` | the host of `STUGA_URL` | The node's name, for when the node cannot be asked. At startup the server asks the node's public `/auth/config` for its current name and its `PUBLIC_ORIGIN`, which win. |
+| `STUGA_VERSION` | `version` | `0.0.0-dev` | The version the server reports. The extension sets the node's. |
 
-Each setting comes from the environment first. When the environment sets both `STUGA_URL` and
-`STUGA_TOKEN`, only the node's name can still come from a file: `node_name` in `config.json` beside
-the server file, when the environment has no `STUGA_NODE_NAME` and the file's `url` is `STUGA_URL`.
-Otherwise each missing setting is taken from `config.json`, then from
-`~/.config/stuga/credentials.json`. Both files are JSON objects with the field names above. The
-extension writes its settings to `config.json` as well as to its launch environment, because a
-client does not always pass that environment to the process it starts, and a name with `$` goes only
-to the file.
+Each setting comes from the environment first. A value left as an unfilled `${user_config.…}`
+placeholder counts as unset. When the environment sets both `STUGA_URL` and `STUGA_TOKEN`, only the
+node's name can still come from a file: `node_name` in `config.json` beside the server file, when
+the environment has no `STUGA_NODE_NAME` and the file's `url` is `STUGA_URL`. Otherwise each missing
+setting is taken from `config.json`, then from `~/.config/stuga/credentials.json`, and a file's
+`token` only for the node that file names, or when it names none. Both files are JSON objects with
+the field names above. The extension writes its address, client label and version to `config.json`
+as well as to its launch environment, because a client does not always pass that environment to the
+process it starts.
 
 ## DeepSeek Harness
 
@@ -242,54 +332,52 @@ harness proposes. Mint one key per person rather than sharing one.
 ## API keys
 
 Mint a key in **Your own AI**, or with `POST /api/keys` ([api.md](api.md#authentication)). A key
-looks like `vk_<id>_<secret>`. The secret is shown once, and the node stores only its hash.
+looks like `vk_<id>_<secret>`. The secret is shown once, and the node stores only its hash. An app
+that signs in gets no key: its sign-in is a connection ([above](#apps-that-sign-in)).
 
 - **A key acts for the person who minted it.** Its reach is its owner's live reach: the owner's
   principals and role are read again on every request, so a guest's key is a guest's, and a key
   whose owner has left the workspace fails on its next request. Removing a member also revokes the
   keys they minted in that workspace.
-- **A key belongs to one workspace.** It acts in the workspace it was minted in. On `/mcp`, a key
-  that is not confined to folders may pass `workspace_id` to act in another workspace its owner
-  belongs to, at the owner's role there.
+- **Where a key acts.** Over REST, in the workspace it was minted in. On `/mcp`, a key that is not
+  confined to folders reaches every workspace its owner belongs to other than as a guest, at the
+  owner's role in each, and `workspaces` action `list` names them. A key confined to folders reaches
+  only its own workspace.
 - **An agent has its own principal**, `agent:<id>`. A document an agent creates is owned by its human,
   shared with the agent as a writer, and gets the workspace's default access like one the human
   creates. What the agent writes in it waits for review, as on any new document.
 - **Content only.** Agents change documents and databases through the run ledger. Renaming, moving,
   trashing and deleting items, sharing, locks, the agent-changes setting, and workspace and key
   management all refuse agents, because none of them leaves a run to revert.
-- **Collections are the exception.** A collection only scopes search and AI, so an agent key with
-  write access creates, renames and deletes its person's collections and adds and removes their
-  members, and a read-only key lists and opens them. The person sees every change, and the audit
-  ledger names the agent and the person it acted for ([collections.md](collections.md)).
+- **Collections are the exception.** A collection only scopes search and AI, so an agent with write
+  access creates, renames and deletes its person's collections and adds and removes their members,
+  and a read-only one lists and opens them. The person sees every change, and the audit ledger names
+  the agent and the person it acted for ([collections.md](collections.md)).
 - **A key can be narrowed below its owner's reach**: confined to folders (each with its subtree),
   made read-only, or given an expiry. **Your own AI** sets these when a key is minted, and
   `PATCH /api/keys/:id` changes them later. A narrowing only removes reach. A folder-scoped key's
   listings, search, retrieval and events are filtered to its folders, and a document elsewhere reads
   as not found. A read-only key reads and searches everything its owner can reach and changes
-  nothing ([below](#read-only-keys)).
+  nothing ([below](#read-only-credentials)).
 - **Rotate** gives a key a new secret and keeps its identity, so its runs and audit rows still name
   the same agent. **Revoke** stops it on its next request. **Rename** changes how it is attributed:
   a key is minted under the name of the client it is for, so rename one when the same client is
   connected twice.
-- A key minted through OAuth is not narrowed and never expires, and is revocable like any other.
-  Connected agents says *signed in* on its row instead of *key created*, and offers no Rotate: its
-  token came from the OAuth exchange, so a new one would have nowhere to go. The token response still states a one-year `expires_in`, because a client that reads none
-  may store a zero expiry, take the token for expired and stop sending it. It understates the key's
-  real life, so at worst the client asks to sign in again.
-- `STUGA_TOKEN` and the REST API also accept a person's access token, which acts as that person.
-  It expires within an hour by default and is attributed to the person rather than an agent, so use
-  it only to experiment.
+- `STUGA_TOKEN`, `/mcp` and the REST API also accept a person's access token, which acts as that
+  person. It expires within an hour by default and is attributed to the person rather than an agent,
+  so use it only to experiment.
 
-Every `/mcp` tool call, reads included, is written to the audit ledger with the credential, the tool
-and action, and the target. Over REST, writes and refusals are recorded.
+Every `/mcp` tool call in a workspace, reads included, is written to that workspace's audit ledger as
+`mcp.<tool>.<action>`, with the credential and the target. A search or retrieval writes one row per
+workspace it covered. Over REST, writes and refusals are recorded.
 
 ## What the run ledger shows
 
 A **run** is one agent's editing session on one document or database. For each run you see:
 
-- **Who and what**: the agent and its key's name, the client and model labels it sent (the
-  `x-stuga-client` and `x-stuga-model` headers, which the extension, the stdio server and the dsh
-  bundle set), and the person it acted for.
+- **Who and what**: the agent and the name of its key or connection, the client and model labels it
+  sent (the `x-stuga-client` and `x-stuga-model` headers, which the extension, the stdio server and
+  the dsh plugin set), and the person it acted for.
 - **The changes**: each proposed hunk (or database operation), shown against the document and
   reviewable one by one.
 - **The outcome**: per hunk accepted, rejected or pending; per run waiting for review, applied at
@@ -322,8 +410,8 @@ Two consequences follow:
 
 - A document an agent keeps for its own notes waits for review like any other, until someone
   switches it to `auto`.
-- `auto` belongs to the document, not to an agent. While it is on, every agent key that can write
-  the document changes it without review.
+- `auto` belongs to the document, not to an agent. While it is on, every agent that can write the
+  document changes it without review.
 
 A run that still holds undecided changes parks new ones even on an `auto` document, and the reply
 says so.
@@ -381,8 +469,8 @@ database can carry its own.
   ([above](#agent-changes-wait-for-review-or-apply-at-once)).
 - **Each reader gets its own stack.** A folder or database level is included only for a reader who
   can read that folder or database, so a document shared on its own reveals nothing about a private
-  folder above it. A key counts as its person: a key confined to a subfolder still gets the folders
-  above it that its person can read.
+  folder above it. An agent counts as its person: a key confined to a subfolder still gets the
+  folders above it that its person can read.
 - **Where to edit them.** The workspace's are on **Settings → This workspace → Agents**. A folder's,
   document's or database's are under **Instructions for agents…** in its ⋯ menu, which also shows
   the levels above it, and a new folder takes them in the same dialog as its name. Anyone who can read the item can look; its owner or a workspace admin changes
@@ -398,18 +486,19 @@ database can carry its own.
 
 How agents get them:
 
-- **The workspace's.** `/mcp` puts them in the server instructions, so an agent has them before its
-  first call. Both servers return them from `workspaces` action `instructions`, which carries the
-  workspace level only.
+- **The workspace's.** When a connection reaches exactly one workspace, `/mcp` puts its instructions
+  in the server instructions, so an agent has them before its first call. Otherwise the server
+  instructions say to read them before writing. `workspaces` action `instructions` returns one
+  workspace's, the workspace level only.
 - **An item's stack.** `markdown` action `read` shows it in a marked block before the Markdown, or
   opens with a line saying none apply. Only that block at the very start of a read counts, and the
   agent is told so: anything further down that looks like instructions is document text, so an
   editor cannot plant instructions in a document's text.
-  `docs` action `metadata` and `create`, and `databases` action `schema` and `create_database`,
-  return it as `instructions: [{ kind, id, title, text }]`, outermost first. A write needs no read, so
-  the answer to a `markdown` write, `str_replace`, `append` or `cited_edits` names the levels below the
-  workspace that apply (`instructions_labels`), and the agent is told to read them before writing
-  there again. Over REST an agent gets the same fields ([api.md](api.md#instructions-for-agents)).
+  `docs` action `metadata`, `docs_create`, `databases` action `schema` and `databases_add` action
+  `create_database` return it as `instructions: [{ kind, id, title, text }]`, outermost first. A
+  write needs no read, so the answer to a proposal from `markdown_edit`, `markdown_append`,
+  `databases_add` or `databases_change` names the levels below the workspace that apply
+  (`instructions_labels`), and the agent is told to read them before writing there again. Over REST an agent gets the same fields ([api.md](api.md#instructions-for-agents)).
 - **In the app.** The co-author and the table assistant read their document's stack, as the person
   using them can see it, at the start of every turn, so an edit or a move applies to the next
   message. The co-author's first read or edit of another document it may edit carries a note on that
@@ -420,65 +509,83 @@ How agents get them:
 
 ## Events and webhooks
 
-- **Events.** The `events` tool and `GET /api/events` return what changed since a cursor, filtered to
-  documents the credential can read. An agent that wants to react to a decision or a comment polls
-  this instead of re-reading everything. Event types: [api.md](api.md#the-event-feed).
+- **Events.** The `events` tool and `GET /api/events` return what changed in a workspace since a
+  cursor, filtered to documents the credential can read. An agent that wants to react to a decision
+  or a comment polls this instead of re-reading everything. Event types:
+  [api.md](api.md#the-event-feed).
 - **Webhooks.** Workspace owners and admins can send the same events to a URL, signed and retried.
   See [api.md](api.md#webhooks).
 
 ## The tools
 
-Both servers register the same eleven tools from `@stuga/agent-surface`, with the same argument
-checks and the same wording. `/mcp` runs them in-process over the node's own code, and `stuga-mcp`
-runs them as REST calls, so both pass the same permission checks and the same run ledger.
+`/mcp` registers nineteen tools from `@stuga/agent-surface`, and runs them in-process over the
+node's own code, through the same permission checks and run ledger as the REST routes. The stdio
+server lists the node's tools as they are. Reads and writes are separate tools, and each carries MCP
+annotations: `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint`. A client shows
+them or acts on them, such as asking before a destructive call. They grant nothing: permissions and
+the item's `agent_mode` decide what a call does.
+
+**Reads.** Every one is read-only and idempotent.
 
 | Tool | Actions and use |
 |---|---|
-| `workspaces` | `list` · `instructions`. The workspaces available to this connection and the node they are on, and a workspace's own instructions for agents. |
-| `docs` | `list` · `search` · `metadata` · `create`. `list` takes an optional folder; `search` is hybrid keyword and semantic search that returns documents, optionally within a collection; `metadata` includes this agent's `review` answer for the document; `create` takes a title and an optional folder. `metadata` and `create` return the document's `instructions`. |
-| `markdown` | `read` · `write` · `str_replace` · `append` · `cited_edits` · `status` · `provenance`. `read` shows the document's instructions in a marked block, then the text with the agent's own pending edits. `write` replaces the whole document, `str_replace` swaps `find` for `replace` (one occurrence, or all with `replace_all`), `append` adds text at the end of the document or of the section under `heading`, and `cited_edits` makes several exact edits at once with citations that become footnotes. All four are proposals. A mention of a person reads and writes as `[@username](mention:<alias>)`; keep it as written, and once an edit lands, a newly mentioned person who can read the document is notified. |
-| `media` | `upload` · `upload_from_url`. Stores an image and returns its path for Markdown. Writing `![alt](https://…)` through `markdown` also downloads and stores the image. |
-| `comments` | `list` · `add`. |
-| `folders` | The folders the credential can read. |
-| `events` | What changed since `after`, optionally narrowed by `types`. Without `after` it starts from the newest event. |
-| `collections` | `list` · `open` · `create` · `rename` · `delete` · `add_items` · `remove_items`. The saved document sets of the credential's person, which `retrieve` and `docs` `search` can be scoped to. `open` lists the members the credential can read, and `add_items` skips ids it cannot read and says how many. Scoped, `retrieve` and `search` return nothing from outside the collection ([collections.md](collections.md)). |
-| `retrieve` | The passages most relevant to a question across reachable documents, with their sources, optionally within a collection ([rag-cross-doc-qa.md](rag-cross-doc-qa.md)). |
-| `databases` | `list` · `schema` · `status` · `create_database` · `create_table` · `add_column` · `insert_rows` · `update_rows` · `delete_rows` · `import` · `create_view` · `update_view` · `open_page`. Writes are proposals. `schema` and `create_database` return the database's `instructions`, and `schema` carries each column's `description`: what the column holds, written by the people here. `add_column` may set one. Every write's answer names the instructions that apply beyond the workspace's. `import` loads a whole CSV or JSONL file as one reviewable change, so bulk data never passes through `insert_rows`. `open_page` returns a row's page, a document read and edited with `markdown`, and creates it the first time. |
+| `workspaces` | `list` · `instructions`. The workspaces this connection reaches and the node each is on ([above](#one-connection-and-which-node-a-call-lands-on)), and one workspace's instructions for agents. |
+| `docs` | `list` · `metadata`. `list` takes an optional folder (`parent_id`, null for the root). `metadata` includes this agent's `review` answer for the document and its `instructions`. |
+| `search` | Hybrid keyword and semantic search that returns documents, across `workspace_ids`, optionally within a collection. |
+| `markdown` | `read` · `status` · `provenance`. `read` shows the document's instructions in a marked block, then the text with the agent's own pending edits. `status` reports what became of its edits. |
+| `comments` | A document's comments. |
+| `folders` | The folders the credential can read in the workspace. |
+| `events` | What changed in the workspace since `after`, optionally narrowed by `types`. Without `after` it starts from the newest event. |
+| `collections` | `list` · `open`. The saved document sets of the credential's person, which `search` and `retrieve` can be scoped to. `open` lists the members the credential can read ([collections.md](collections.md)). |
+| `retrieve` | The passages most relevant to a question across `workspace_ids`, with their sources, optionally within a collection ([rag-cross-doc-qa.md](rag-cross-doc-qa.md)). |
+| `databases` | `list` · `schema` · `status` · `page`. `schema` returns tables, columns with their physical SQL names and `description` (what the column holds, written by the people here), saved views and the database's `instructions`. `page` returns the `doc_id` of a row's page, or null when it has none. |
 | `query` | One read-only `SELECT` (SQLite dialect) against one database, with `?` parameters. At most 8 KB of SQL, 1,000 rows, 1 MB per value and five seconds of work. `WITH RECURSIVE` is refused, because a recursive query that never ends cannot be stopped. |
 
-Where the two servers differ:
+**Writes.** None is idempotent. *Destructive* ones may replace or remove what exists; *open-world*
+ones may make the node download an image from the web.
 
-- **`workspace_id`** is accepted only by `/mcp`, on every tool. The stdio server acts in the one
-  workspace its credential resolves to, and its `workspaces` action `list` reports which.
-- **`upload_from_url`** is `/mcp` only. Downloading a model-supplied URL stays on the node, behind its
-  outbound address checks, rather than on your machine, where it would reach your local network.
-- **`import`** on the stdio server also takes `file`, a path on the machine where the server runs.
-  Both servers take the file's text in `content`, and both hand the agent a link to the table's
-  Import dialog when a file is too large to carry.
+| Tool | Actions and use | Destructive | Open-world |
+|---|---|---|---|
+| `docs_create` | A document with a title, optionally in a folder. Returns its `instructions`. | no | no |
+| `markdown_append` | Adds text at the end of a document, or of the section under `heading`, and touches nothing else. | no | yes |
+| `markdown_edit` | `write` · `str_replace` · `cited_edits`. `write` replaces the whole document, `str_replace` swaps `find` for `replace` (one occurrence, or all with `replace_all`), and `cited_edits` makes several exact edits at once with citations that become footnotes. | yes | yes |
+| `comments_add` | A comment on a document. Its people are notified. | no | no |
+| `media_upload` | `upload` · `upload_from_url`. Stores an image, from base64 of up to 3 MB or from a public URL the node downloads, and returns its path for Markdown. | no | yes |
+| `collections_edit` | `create` · `rename` · `delete` · `add_items` · `remove_items`. `add_items` skips ids the credential cannot read and says how many. | yes | no |
+| `databases_add` | `create_database` · `create_table` · `add_column` · `insert_rows` · `import` · `start_import` · `create_view` · `open_page`. `add_column` may set a column's `description`. `import` loads a whole CSV or JSONL file as one reviewable change, from its text in `content` or from an upload by `import_id`, so bulk data never passes through `insert_rows`. `start_import` returns an `upload_url` for a caller that can send the file itself, and the `import_id` to commit. `open_page` returns a row's page, a document read and edited like any other, and creates it the first time. | no | no |
+| `databases_change` | `update_rows` · `delete_rows` · `update_view`. | yes | no |
 
-### Read-only keys
+Edits to a document's text and to a database are proposals. Writing `![alt](https://…)` or a `data:`
+URI through `markdown_edit` or `markdown_append` downloads and stores the image, behind the node's
+outbound address checks. A mention of a person reads and writes as `[@username](mention:<alias>)`;
+keep it as written, and once an edit lands, a newly mentioned person who can read the document is
+notified. The answer to a proposal names the instructions that apply beyond the workspace's.
 
-A read-only key, over either server, may call every read:
+When a file is too large to carry, `import` hands the agent a link to the table's Import dialog to
+give the person. The stdio server also takes a local `file` ([above](#the-stdio-server)).
 
-| Tool | Actions a read-only key may call |
-|---|---|
-| `workspaces` | `list` · `instructions` |
-| `docs` | `list` · `search` · `metadata` |
-| `markdown` | `read` · `status` · `provenance` |
-| `comments` | `list` |
-| `folders`, `events`, `retrieve`, `query` | All of it. |
-| `collections` | `list` · `open` |
-| `databases` | `list` · `schema` · `status` · `open_page` for a row that already has a page |
+### Searching several workspaces
 
-Everything else, and `media` entirely, answers a normal tool error,
-`error: this key is read-only: it can read and search, but not change anything`, and changes
-nothing. The refusal is written to the audit ledger. Ask over REST is a read too, and a read-only
-key keeps its own Ask threads ([api.md](api.md#read-only-keys)).
+`search` and `retrieve` take `workspace_ids`: from 1 to 50 ids from `workspaces` action `list`, or
+`["*"]` for every workspace the connection reaches.
 
-`/mcp` knows the key's access, so for a read-only key the server instructions carry the list above
-and tell the agent to describe a change instead of attempting it. The stdio server cannot see
-the key's access, so its instructions say what the refusal means and to stop attempting changes after
-it.
+- Each workspace is searched on its own, under its own permissions. Scores from different workspaces
+  do not compare, so the answers are merged by rank: each workspace's first result, then each one's
+  second, and so on. Scores are left out.
+- Each result names its `workspace_id` and carries a `url` that opens the document.
+- `collection_id` narrows a search of exactly one workspace.
+- `unavailable: [{ workspace_id, reason }]` lists each workspace the call could not cover: one the
+  connection cannot use, or, for `retrieve`, one where search by meaning is off. The agent is told
+  to say so and never to present the rest as complete. When the only workspace named fails, its
+  reason is the tool's error.
+
+### Read-only credentials
+
+A read-only key, or a connection given **Read only**, is offered the eleven reading tools and
+nothing else. The server instructions say that it may change nothing, and to tell the user what it
+would change instead. `workspaces` action `list` reports `access: "read"`. A write tool it names
+anyway is unknown to it, and the node's own read-only check stands behind that. Ask over REST is a
+read too, and a read-only key keeps its own Ask threads ([api.md](api.md#read-only-keys)).
 
 Two rules hold whatever a client does:
 

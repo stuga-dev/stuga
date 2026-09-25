@@ -69,8 +69,8 @@ function folder(overrides: Partial<FolderRow> = {}): FolderRow {
   };
 }
 
-const scoped = ctx({ scope: { folders: ["f-in", "f-sub"], readOnly: false, keyId: "k1" } });
-const readOnly = ctx({ scope: { folders: null, readOnly: true, keyId: "k2" } });
+const scoped = ctx({ scope: { folders: ["f-in", "f-sub"], readOnly: false, credentialId: "k1" } });
+const readOnly = ctx({ scope: { folders: null, readOnly: true, credentialId: "k2" } });
 
 describe("inScope", () => {
   it("is always true without a scope", () => {

@@ -1,10 +1,11 @@
 /**
- * The manifest at the root of the .mcpb extension. It declares no `user_config`:
- * everything the server needs travels inside the archive, so installing asks
- * the user nothing.
+ * The manifest at the root of the .mcpb extension: one extension, `stuga`, for
+ * every node. It carries no credential. `user_config` asks for the node's
+ * address, filled in with the node it was downloaded from, and an optional key;
+ * without one the server signs in through the person's browser.
  */
 import { TOOL_NAMES, TOOL_SUMMARIES } from "@stuga/agent-surface/catalog";
-import { MCP_SERVER_TITLE } from "@stuga/protocol/domain/node-name";
+import { MCP_SERVER_KEY, MCP_SERVER_TITLE } from "@stuga/protocol/domain/node-name";
 
 /** The installer finds the manifest by name at the archive root; the entry point must match the server path. */
 export const MANIFEST_PATH = "manifest.json";
@@ -24,16 +25,8 @@ export const BUNDLE_CLIENT = "claude-desktop";
 export class UnsafeBundleValue extends Error {}
 
 export interface BundleConfig {
-  /** This node's public origin. */
+  /** The node the extension was downloaded from: the address it offers until the person changes it. */
   url: string;
-  /** The node's id, which never changes: the extension's name, so a second node's extension installs beside it. */
-  nodeId: string;
-  /** What people call the node, handed to the server for its routing instructions, not used as its display title. */
-  nodeName: string;
-  /** A freshly minted API key. */
-  token: string;
-  /** The workspace the key was minted in, named so two extensions from one node can be told apart. */
-  workspace?: string;
   /** This node's version, which the extension's server has no other way to learn. */
   stugaVersion: string;
 }
@@ -43,14 +36,21 @@ export interface BundleConfig {
  * spawned process, and a `$` comes back mangled, so refuse one.
  */
 export function assertBundleEnvValue(key: string, value: string): void {
-  if (!envSafe(value)) throw new UnsafeBundleValue(`${key} cannot contain "$"`);
+  if (value.includes("$")) throw new UnsafeBundleValue(`${key} cannot contain "$"`);
 }
-
-const envSafe = (value: string) => !value.includes("$");
 
 function envValue(key: string, value: string): string {
   assertBundleEnvValue(key, value);
   return value;
+}
+
+interface UserConfigField {
+  type: "string";
+  title: string;
+  description: string;
+  required: boolean;
+  sensitive?: boolean;
+  default?: string;
 }
 
 export interface BundleManifest {
@@ -72,6 +72,7 @@ export interface BundleManifest {
       env: Record<string, string>;
     };
   };
+  user_config: Record<"node_url" | "access_key", UserConfigField>;
   tools: { name: string; description: string }[];
   compatibility: {
     platforms: string[];
@@ -79,17 +80,14 @@ export interface BundleManifest {
   };
 }
 
-export function bundleManifest(cfg: BundleConfig, now: Date): BundleManifest {
-  const where = cfg.workspace ? `${cfg.url} (workspace ${cfg.workspace})` : cfg.url;
+export function bundleManifest(cfg: BundleConfig): BundleManifest {
   return {
     manifest_version: "0.3",
-    // The installer keys an extension by name: one per node, and a re-download from the same node replaces it.
-    name: `stuga-${cfg.nodeId}`,
+    // One name for every node: the installer keys an extension by it, so a newer download replaces the old one.
+    name: MCP_SERVER_KEY,
     display_name: MCP_SERVER_TITLE,
-    // An installer sequence, not a Stuga version: a re-download (say, after
-    // revoking a key) must be newer than the installed copy or it is skipped.
-    version: `0.1.${Math.floor(now.getTime() / 1000)}`,
-    description: `Read and edit live documents in Stuga. Connected to ${where}.`,
+    version: cfg.stugaVersion,
+    description: "Read and edit live documents in Stuga.",
     author: { name: "Stuga" },
     icon: ICON_PATH,
     license: "AGPL-3.0-only",
@@ -102,14 +100,27 @@ export function bundleManifest(cfg: BundleConfig, now: Date): BundleManifest {
         command: "node",
         args: [`\${__dirname}/${SERVER_ENTRY_PATH}`],
         env: {
-          STUGA_URL: envValue("STUGA_URL", cfg.url),
-          STUGA_TOKEN: envValue("STUGA_TOKEN", cfg.token),
+          STUGA_URL: "${user_config.node_url}",
+          STUGA_TOKEN: "${user_config.access_key}",
           STUGA_CLIENT: envValue("STUGA_CLIENT", BUNDLE_CLIENT),
           STUGA_VERSION: envValue("STUGA_VERSION", cfg.stugaVersion),
-          // Free text an administrator chose: one with a `$` stays out rather than failing the download. config.json
-          // still carries it beside the same URL, which is what lets the server read the name from there alone.
-          ...(envSafe(cfg.nodeName) ? { STUGA_NODE_NAME: cfg.nodeName } : {}),
         },
+      },
+    },
+    user_config: {
+      node_url: {
+        type: "string",
+        title: "Stuga address",
+        description: "The address you open Stuga at.",
+        required: true,
+        default: envValue("the node's address", cfg.url),
+      },
+      access_key: {
+        type: "string",
+        title: "Access key",
+        description: "Leave empty to sign in through your browser.",
+        required: false,
+        sensitive: true,
       },
     },
     tools: TOOL_NAMES.map((name) => ({ name, description: TOOL_SUMMARIES[name] })),

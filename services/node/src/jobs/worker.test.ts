@@ -41,6 +41,7 @@ function fakeDb(overrides: Partial<JobsDb> = {}): JobsDb {
     deleteDoc: vi.fn(async () => {}),
     purgeRevokedApiKeys: vi.fn(async () => 0),
     purgeUnusedOauthClients: vi.fn(async () => 0),
+    purgeExpiredOauthTokens: vi.fn(async () => 0),
     purgeOldNotifications: vi.fn(async () => 0),
     purgeAuditEvents: vi.fn(async () => 0),
     purgeAiUsage: vi.fn(async () => 0),
@@ -373,6 +374,15 @@ describe("runMaintenanceTick", () => {
     });
     await runMaintenanceTick(fakeEnv({ settings: nodeSettings({ auditRetentionDays: 30 }) }), { db, log: silentLog });
     expect(db.purgeAuditEvents).toHaveBeenCalledWith(30);
+  });
+
+  it("purges expired OAuth tokens on every pass, whatever the ledger retentions", async () => {
+    const db = fakeDb({ purgeExpiredOauthTokens: vi.fn(async () => 4) });
+    await runMaintenanceTick(
+      fakeEnv({ settings: nodeSettings({ auditRetentionDays: 0, aiUsageRetentionDays: 0, askThreadRetentionDays: 0 }) }),
+      { db, log: silentLog },
+    );
+    expect(db.purgeExpiredOauthTokens).toHaveBeenCalledTimes(1);
   });
 
   it("sweeps expired import stagings from the snapshot store", async () => {

@@ -105,7 +105,7 @@ function ctxOf(overrides: Partial<Ctx> = {}): Ctx {
 const viewer = () => ctxOf({ alias: "viv", principals: ["user:viv"] });
 const agent = () =>
   ctxOf({ alias: "agent-1", displayName: "Codey", isAgent: true, onBehalfOf: "owner-1", principals: ["agent:agent-1"] });
-const readOnlyKey = () => ctxOf({ ...agent(), scope: { folders: null, readOnly: true, keyId: "k1" } } as Partial<Ctx>);
+const readOnlyKey = () => ctxOf({ ...agent(), scope: { folders: null, readOnly: true, credentialId: "k1" } } as Partial<Ctx>);
 
 async function call(ctx: Ctx, method: string, path: string, body?: unknown): Promise<Response> {
   const req = new Request(`https://node.test${path}`, {

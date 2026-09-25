@@ -115,7 +115,7 @@ async function mount(setup: AgentSetup | null, props: Partial<Parameters<typeof 
   act(() => {
     root = createRoot(container);
   });
-  await act(async () => root.render(<ConnectAgent workspaceName={null} onKeyCreated={() => {}} {...props} />));
+  await act(async () => root.render(<ConnectAgent onKeyCreated={() => {}} {...props} />));
 }
 
 beforeEach(async () => {
@@ -368,15 +368,13 @@ describe("ConnectAgent", () => {
     expect(text()).not.toContain("vk_your_key_here");
   });
 
-  it("offers the extension first, and warns about the key only once the file exists", async () => {
+  it("offers the extension first", async () => {
     await mount(LOCAL);
     expect(button(/Add to Claude Desktop/)).toBeTruthy();
     expect(text()).toContain("Open stuga.mcpb");
-    // Nothing to be careful with until something was downloaded.
-    expect(text()).not.toContain("carries a working key");
   });
 
-  it("saves the file, admits it saved it, and tells the page a key appeared", async () => {
+  it("saves the file and admits it saved it, with no key to create or warn about", async () => {
     const file = new Blob(["PK"], { type: "application/octet-stream" });
     agents.bundle.mockResolvedValue(file);
     const onKeyCreated = vi.fn();
@@ -391,10 +389,9 @@ describe("ConnectAgent", () => {
     expect(text()).toContain("install it, then restart Claude");
     expect(toasts.shown).toContain("stuga.mcpb saved. Double-click it to install.");
     expect(text()).toContain("stuga.mcpb saved — install it, then restart Claude");
-    expect(text()).toContain("carries a working key: delete it once installed");
-    expect(onKeyCreated).toHaveBeenCalledTimes(1);
-    // The token stays inside the file.
-    expect(text()).toContain("vk_your_key_here");
+    expect(text()).toContain("approve Stuga in your browser");
+    expect(text()).not.toContain("carries a working key");
+    expect(onKeyCreated).not.toHaveBeenCalled();
   });
 
   it("keeps the failed download's message and offers the button again", async () => {

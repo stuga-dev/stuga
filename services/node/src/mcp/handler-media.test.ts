@@ -1,16 +1,23 @@
 /**
- * The /mcp `media` tool: an upload is a document write with the same gates, the
- * type comes from the bytes, and inline base64 has its own smaller cap.
+ * The /mcp `media_upload` tool: an upload is a document write with the same gates,
+ * the type comes from the bytes, and inline base64 has its own smaller cap.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@stuga/db", async (orig) => ({
   ...(await orig<typeof import("@stuga/db")>()),
   getDoc: vi.fn(),
+  listWorkspacesForUser: vi.fn(async () => []),
+}));
+
+vi.mock("../auth/context.js", async (orig) => ({
+  ...(await orig<typeof import("../auth/context.js")>()),
+  workspaceContextFor: vi.fn(),
 }));
 
 const { getDoc } = await import("@stuga/db");
-const { handleMcpRequest } = await import("./handler.js");
+const { workspaceContextFor } = await import("../auth/context.js");
+const { callerFor, resolvingTo, inWorkspace, callToolAs } = await import("./testing/call.js");
 import { MAX_INLINE_IMAGE_BYTES } from "@stuga/agent-surface/catalog";
 import type { Ctx } from "../auth/context.js";
 import { DEFAULT_MAX_BODY_BYTES } from "../media/media.js";
@@ -77,19 +84,10 @@ function doc(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function callTool(ctx: Ctx, name: string, args: Record<string, unknown>) {
-  const req = new Request("https://api.test/mcp", {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-  });
-  const res = await handleMcpRequest(ctx, req);
-  const text = await res.text();
-  const payload = text.startsWith("event:") || text.startsWith("data:")
-    ? JSON.parse(/data: (.*)/.exec(text)![1]!)
-    : JSON.parse(text);
-  const result = payload.result ?? {};
-  return { isError: result.isError === true, text: String(result.content?.[0]?.text ?? "") };
+/** One call run in `ctx`'s workspace, which is the only one the gate resolves. */
+async function callTool(ctx: Ctx, name: string, args: Record<string, unknown> = {}) {
+  vi.mocked(workspaceContextFor).mockImplementation(resolvingTo(ctx));
+  return callToolAs(callerFor(ctx), name, inWorkspace(ctx.workspaceId, name, args));
 }
 
 beforeEach(() => {
@@ -101,7 +99,7 @@ beforeEach(() => {
 
 describe("media upload", () => {
   it("stores base64 bytes and hands back a path plus ready-to-paste markdown", async () => {
-    const r = await callTool(connectorCtx(), "media", { doc_id: "d1", action: "upload", data: PNG_B64, alt: "A chart" });
+    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data: PNG_B64, alt: "A chart" });
     expect(r.isError).toBe(false);
     const json = JSON.parse(r.text.split("\n[note]")[0]!);
     expect(json.url).toMatch(/^\/api\/docs\/d1\/media\/[0-9a-f]{64}$/);
@@ -112,7 +110,7 @@ describe("media upload", () => {
   });
 
   it("puts a caption in the markdown title slot, escaped the way the serializer does", async () => {
-    const r = await callTool(connectorCtx(), "media", {
+    const r = await callTool(connectorCtx(), "media_upload", {
       doc_id: "d1",
       action: "upload",
       data: PNG_B64,
@@ -124,7 +122,7 @@ describe("media upload", () => {
   });
 
   it("omits the title slot entirely when there is no caption", async () => {
-    const r = await callTool(connectorCtx(), "media", {
+    const r = await callTool(connectorCtx(), "media_upload", {
       doc_id: "d1",
       action: "upload",
       data: PNG_B64,
@@ -136,7 +134,7 @@ describe("media upload", () => {
   });
 
   it("accepts a whole data: URI where raw base64 was asked for", async () => {
-    const r = await callTool(connectorCtx(), "media", {
+    const r = await callTool(connectorCtx(), "media_upload", {
       doc_id: "d1",
       action: "upload",
       data: `data:image/png;base64,${PNG_B64}`,
@@ -146,7 +144,7 @@ describe("media upload", () => {
   });
 
   it("refuses an SVG however it is labelled", async () => {
-    const r = await callTool(connectorCtx(), "media", { doc_id: "d1", action: "upload", data: btoa("<svg/>") });
+    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data: btoa("<svg/>") });
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/SVG is not accepted/);
     expect(puts).toEqual([]);
@@ -155,14 +153,14 @@ describe("media upload", () => {
   it("stores an inline payload at the base64 budget, a request body past the MCP SDK's own default", async () => {
     const data = pngBase64(MAX_INLINE_IMAGE_BYTES);
     expect(data.length).toBeGreaterThanOrEqual(4 * 1024 * 1024);
-    const r = await callTool(connectorCtx(), "media", { doc_id: "d1", action: "upload", data });
+    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data });
     expect(r.isError).toBe(false);
     expect(puts).toHaveLength(1);
   });
 
   it("refuses an inline payload past the smaller base64 budget", async () => {
     const data = pngBase64(MAX_INLINE_IMAGE_BYTES + 16);
-    const r = await callTool(connectorCtx(), "media", { doc_id: "d1", action: "upload", data });
+    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data });
     expect(r.isError).toBe(true);
     expect(puts).toEqual([]);
   });
@@ -171,7 +169,7 @@ describe("media upload", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(
       async () => new Response(PNG, { status: 200, headers: { "content-type": "application/octet-stream" } }),
     );
-    const r = await callTool(connectorCtx(), "media", {
+    const r = await callTool(connectorCtx(), "media_upload", {
       doc_id: "d1",
       action: "upload_from_url",
       url: "https://cdn.example.com/c.png",
@@ -182,7 +180,7 @@ describe("media upload", () => {
 
   it("refuses a URL pointed at the instance-metadata address", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const r = await callTool(connectorCtx(), "media", {
+    const r = await callTool(connectorCtx(), "media_upload", {
       doc_id: "d1",
       action: "upload_from_url",
       url: "http://169.254.169.254/latest/meta-data/",
@@ -192,15 +190,15 @@ describe("media upload", () => {
   });
 
   it("names the missing argument for each action", async () => {
-    expect((await callTool(connectorCtx(), "media", { doc_id: "d1", action: "upload" })).text).toMatch(/`data`/);
-    expect((await callTool(connectorCtx(), "media", { doc_id: "d1", action: "upload_from_url" })).text).toMatch(/`url`/);
+    expect((await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload" })).text).toMatch(/`data`/);
+    expect((await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload_from_url" })).text).toMatch(/`url`/);
   });
 });
 
 describe("an upload is a document write", () => {
   it("refuses view-only access", async () => {
     mockGetDoc.mockResolvedValue(doc({ acl_writers: ["user:someone-else"] }));
-    const r = await callTool(connectorCtx(), "media", { doc_id: "d1", action: "upload", data: PNG_B64 });
+    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data: PNG_B64 });
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/no write access/);
     expect(puts).toEqual([]);
@@ -208,7 +206,7 @@ describe("an upload is a document write", () => {
 
   it("refuses a locked document", async () => {
     mockGetDoc.mockResolvedValue(doc({ locked: true }));
-    const r = await callTool(connectorCtx(), "media", { doc_id: "d1", action: "upload", data: PNG_B64 });
+    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data: PNG_B64 });
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/locked/);
     expect(puts).toEqual([]);
@@ -216,14 +214,14 @@ describe("an upload is a document write", () => {
 
   it("refuses a document in another workspace as not found", async () => {
     mockGetDoc.mockResolvedValue(doc({ workspace_id: "ws2" }));
-    const r = await callTool(connectorCtx(), "media", { doc_id: "d1", action: "upload", data: PNG_B64 });
+    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data: PNG_B64 });
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/not found/);
   });
 
   it("redirects a database doc to the databases tools", async () => {
     mockGetDoc.mockResolvedValue(doc({ doc_type: "database" }));
-    const r = await callTool(connectorCtx(), "media", { doc_id: "d1", action: "upload", data: PNG_B64 });
+    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data: PNG_B64 });
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/structured database/);
   });

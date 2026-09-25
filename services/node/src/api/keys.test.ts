@@ -9,6 +9,7 @@ vi.mock("@stuga/db", async (importOriginal) => ({
   listApiKeys: vi.fn(),
   revokeApiKey: vi.fn(),
   revokeWorkspaceApiKeysForOwner: vi.fn(),
+  dropWorkspaceFromOwnerGrants: vi.fn(async () => 0),
   getMemberRole: vi.fn(),
   countWorkspaceOwners: vi.fn(),
   removeWorkspaceMember: vi.fn(),
@@ -18,6 +19,7 @@ const {
   listApiKeys,
   revokeApiKey,
   revokeWorkspaceApiKeysForOwner,
+  dropWorkspaceFromOwnerGrants,
   getMemberRole,
   countWorkspaceOwners,
   removeWorkspaceMember,
@@ -139,8 +141,10 @@ describe("DELETE /api/workspaces/:id/members/:alias", () => {
     mockRevokeForOwner.mockResolvedValue([keyRow({ owner: "human-2" })]);
     const res = await route(humanCtx({ role: "owner" }), "DELETE", "/api/workspaces/ws1/members/human-2");
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ removed: "human-2", keys_revoked: 1 });
+    expect(await res.json()).toMatchObject({ removed: "human-2", keys_revoked: 1, connections_revoked: 0 });
     expect(mockRevokeForOwner).toHaveBeenCalledWith({}, "ws1", "human-2", "human-1");
+    // Their apps' sign-ins stop naming the workspace too, so a re-invite hands it back to none of them.
+    expect(dropWorkspaceFromOwnerGrants).toHaveBeenCalledWith({}, "ws1", "human-2", "human-1");
   });
 
   it("revokes your own keys when you leave voluntarily", async () => {

@@ -63,6 +63,38 @@ function pageWriteRefusal(ctx: Ctx, db: DocRow): OpenRowPageOutcome | null {
   return null;
 }
 
+type PageRefusal = Extract<OpenRowPageOutcome, { kind: "error" }>;
+
+/** The live row, never an agent's projection: a proposed row has no page. */
+async function liveRow(ctx: Ctx, doc: DocRow, tableId: string, rowId: string): Promise<{ row: Record<string, unknown> } | { refused: PageRefusal }> {
+  const listed = await callDatabaseActor(ctx, doc.doc_id, "rows/list", {
+    table_id: tableId,
+    filter: { column_id: "_id", op: "eq", value: rowId },
+    limit: 1,
+  });
+  if (!listed.ok) {
+    return { refused: pageRefusal(listed, (await listed.json().catch(() => null)) as { message?: string } | null, "could not read the row") as PageRefusal };
+  }
+  const page = (await listed.json().catch(() => null)) as { rows?: Array<Record<string, unknown>> } | null;
+  const row = page?.rows?.[0];
+  return row ? { row } : { refused: { kind: "error", status: 404, message: "no such row (a row still awaiting review has no page yet)" } };
+}
+
+/** The live page a row has, or null: a read, so a page in the trash or gone counts as none and nothing is made. */
+export async function findRowPage(
+  ctx: Ctx,
+  doc: DocRow,
+  tableId: string,
+  rowId: string,
+): Promise<{ kind: "ok"; doc_id: string | null } | PageRefusal> {
+  const found = await liveRow(ctx, doc, tableId, rowId);
+  if ("refused" in found) return found.refused;
+  const linked = typeof found.row._doc_id === "string" && found.row._doc_id !== "" ? found.row._doc_id : null;
+  if (!linked) return { kind: "ok", doc_id: null };
+  const pageDoc = await getDoc(ctx.sql, linked);
+  return { kind: "ok", doc_id: pageDoc && !pageDoc.trashed && pageDoc.workspace_id === ctx.workspaceId ? linked : null };
+}
+
 /**
  * Open a row's page: the one it has, restored from the trash if need be, or a
  * new document filed beside the database with its sharing and linked to the
@@ -77,16 +109,9 @@ export async function openRowPage(
   rowId: string,
   opts: { replaceTrashed?: boolean } = {},
 ): Promise<OpenRowPageOutcome> {
-  // The live row, never an agent's projection: a proposed row has no page.
-  const listed = await callDatabaseActor(ctx, doc.doc_id, "rows/list", {
-    table_id: tableId,
-    filter: { column_id: "_id", op: "eq", value: rowId },
-    limit: 1,
-  });
-  if (!listed.ok) return pageRefusal(listed, (await listed.json().catch(() => null)) as { message?: string } | null, "could not read the row");
-  const page = (await listed.json().catch(() => null)) as { rows?: Array<Record<string, unknown>> } | null;
-  const row = page?.rows?.[0];
-  if (!row) return { kind: "error", status: 404, message: "no such row (a row still awaiting review has no page yet)" };
+  const found = await liveRow(ctx, doc, tableId, rowId);
+  if ("refused" in found) return found.refused;
+  const { row } = found;
 
   const existing = typeof row._doc_id === "string" && row._doc_id !== "" ? row._doc_id : null;
   if (existing) {
