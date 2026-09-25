@@ -33,6 +33,9 @@ const paletteFor = (clientId: number) => PEER_PALETTE[clientId % PEER_PALETTE.le
 /** What y-tiptap substitutes for a peer with no colour. */
 const Y_TIPTAP_ORANGE = "#ffa500";
 
+/** The name a caret's tag shows, which the stylesheet renders from `data-name`. */
+const nameOn = (caret: Element) => caret.querySelector(".collaboration-carets__label")!.getAttribute("data-name");
+
 describe("renderPeerCaret", () => {
   it("builds an inline span caret carrying the peer's hue as a custom property", () => {
     const caret = renderPeerCaret({ name: "Liv", color: "#2563eb" }, 42);
@@ -50,7 +53,7 @@ describe("renderPeerCaret", () => {
 
     expect(label).not.toBeNull();
     expect(label!.tagName).toBe("SPAN");
-    expect(label!.textContent).toBe("Liv");
+    expect(nameOn(caret)).toBe("Liv");
     expect(caret.querySelector("div")).toBeNull();
   });
 
@@ -64,19 +67,34 @@ describe("renderPeerCaret", () => {
     expect(label.getAttribute("style")).toBeNull();
   });
 
-  it("writes a peer-supplied name as text, so markup in it cannot become markup", () => {
+  it("holds a word joiner as its only text, in a span of its own, and the name as an attribute", () => {
+    // With no text node in the caret, Chromium's ArrowUp skips a line where it starts a soft-wrapped one.
+    const caret = renderPeerCaret({ name: "Ada Lovelace", color: "#2563eb" }, 42);
+    const label = caret.querySelector(".collaboration-carets__label");
+    const joiner = caret.querySelector(".collaboration-carets__joiner");
+
+    expect(caret.textContent).toBe("\u2060");
+    expect(joiner!.tagName).toBe("SPAN");
+    expect([...joiner!.childNodes].map((node) => node.nodeType)).toEqual([Node.TEXT_NODE]);
+    expect([...caret.childNodes]).toEqual([label, joiner]);
+    expect(nameOn(caret)).toBe("Ada Lovelace");
+    // Selectability and layout are the stylesheet's.
+    expect(caret.getAttribute("style")).toBe("--peer-color: #2563eb");
+  });
+
+  it("keeps a peer-supplied name an attribute value, so markup in it cannot become markup", () => {
     const hostile = '<img src=x onerror="alert(1)">';
     const caret = renderPeerCaret({ name: hostile, color: "#2563eb" }, 9);
 
     expect(caret.querySelector("img")).toBeNull();
-    expect(caret.children).toHaveLength(1);
-    expect(caret.querySelector(".collaboration-carets__label")!.textContent).toBe(hostile);
-    expect(caret.innerHTML).toContain("&lt;img");
+    expect(caret.children).toHaveLength(2);
+    expect(nameOn(caret)).toBe(hostile);
+    expect(caret.querySelector(".collaboration-carets__label")!.childNodes).toHaveLength(0);
   });
 
   it("names a peer that published no usable name after their client id", () => {
-    expect(renderPeerCaret({ color: "#2563eb" }, 42).textContent).toContain("User 42");
-    expect(renderPeerCaret({ name: "", color: "#2563eb" }, 7).textContent).toContain("User 7");
+    expect(nameOn(renderPeerCaret({ color: "#2563eb" }, 42))).toBe("User 42");
+    expect(nameOn(renderPeerCaret({ name: "", color: "#2563eb" }, 7))).toBe("User 7");
   });
 
   it("falls back to a legible hue for a colour y-tiptap would reject", () => {
@@ -187,6 +205,9 @@ describe("a collaborator's caret in a live editor", () => {
   });
 
   afterEach(() => {
+    // y-tiptap batches every editor's redraws behind one module-level timeout; one left pending,
+    // as a focus that publishes our own cursor leaves it, would stall the next test's carets.
+    vi.advanceTimersByTime(0);
     editor.destroy();
     awareness.destroy();
     element.remove();
@@ -251,7 +272,7 @@ describe("a collaborator's caret in a live editor", () => {
 
       const label = caret!.querySelector(".collaboration-carets__label");
       expect(label!.tagName).toBe("SPAN");
-      expect(label!.textContent).toBe("Liv");
+      expect(nameOn(caret!)).toBe("Liv");
       expect(editor.view.dom.querySelector("div.collaboration-carets__label")).toBeNull();
     });
 
@@ -316,7 +337,7 @@ describe("a collaborator's caret in a live editor", () => {
 
       expect(caretFor(peer.clientID), "same node — render did not re-run").toBe(node);
       expect(node!.style.getPropertyValue("--peer-color")).toBe("#15803d");
-      expect(node!.querySelector(".collaboration-carets__label")!.textContent).toBe("Livia");
+      expect(nameOn(node!)).toBe("Livia");
     });
 
     it("still paints a caret for a peer whose colour it cannot use", () => {
@@ -515,6 +536,237 @@ describe("a collaborator's caret in a live editor", () => {
     });
   });
 
+  describe("a click on a peer's flag or name tag", () => {
+    /** A left-button mousedown dispatched as the browser does, through ProseMirror's own listener. */
+    const pressOn = (target: Element, init: MouseEventInit = {}) => {
+      const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, detail: 1, ...init });
+      target.dispatchEvent(event);
+      return event;
+    };
+    /** The plugins' answer alone, where ProseMirror's own handler needs a layout jsdom lacks. */
+    const takenOver = (target: Element, init: MouseEventInit = {}) => {
+      const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, detail: 1, ...init });
+      Object.defineProperty(event, "target", { value: target });
+      return editor.view.someProp("handleDOMEvents", (handlers) => handlers.mousedown?.(editor.view, event)) ?? false;
+    };
+    const selected = () => editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
+
+    it("puts your cursor at their caret, not at the document's start", () => {
+      // The flag is the caret's ::before, so the caret is the target; Chromium's own click goes to position 1.
+      const peer = connectPeer();
+      peer.moveTo(posOf("quick") + 2);
+      editor.commands.setTextSelection(posOf("lazy"));
+
+      const event = pressOn(caretFor(peer.clientID)!);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(editor.state.selection.empty).toBe(true);
+      expect(editor.state.selection.from).toBe(posOf("quick") + 2);
+    });
+
+    it("does the same from a hovered name tag", () => {
+      const peer = connectPeer();
+      peer.moveTo(posOf("brown"));
+
+      const event = pressOn(caretFor(peer.clientID)!.querySelector(".collaboration-carets__label")!);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(editor.state.selection.from).toBe(posOf("brown"));
+    });
+
+    it("acts as clicks on the text there would: Shift extends, a double-click takes the word, a triple-click the block", () => {
+      const peer = connectPeer();
+      peer.moveTo(posOf("quick") + 2);
+      const caret = caretFor(peer.clientID)!;
+
+      editor.commands.setTextSelection(posOf("lazy"));
+      pressOn(caret, { shiftKey: true });
+      expect([editor.state.selection.anchor, editor.state.selection.head]).toEqual([posOf("lazy"), posOf("quick") + 2]);
+
+      pressOn(caret, { detail: 2 });
+      expect(selected()).toBe("quick");
+
+      pressOn(caret, { detail: 3 });
+      expect(selected()).toBe("The quick brown fox jumps.");
+    });
+
+    it("leaves every other mousedown to ProseMirror", () => {
+      const peer = connectPeer();
+      peer.moveTo(posOf("quick") + 2);
+
+      expect(takenOver(editor.view.dom.querySelector("p")!)).toBe(false);
+      expect(takenOver(caretFor(peer.clientID)!, { button: 2 })).toBe(false);
+    });
+  });
+
+  describe("double-click on a peer's caret", () => {
+    /** What ProseMirror asks its plugins on a double-click at `pos`: true means one took it over. */
+    const doubleClick = (pos: number, init: MouseEventInit = {}) =>
+      editor.view.someProp("handleDoubleClick", (handle) => handle(editor.view, pos, new MouseEvent("mousedown", { detail: 2, ...init }))) ??
+      false;
+    const selected = () => editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, "\n");
+    /** A pointerdown at fractional coordinates, which the mousedown after it rounds down. */
+    const pointerDown = (x: number, y: number) => {
+      const event = new MouseEvent("pointerdown", { bubbles: true });
+      Object.defineProperties(event, { clientX: { value: x }, clientY: { value: y } });
+      editor.view.dom.dispatchEvent(event);
+    };
+
+    it("selects the whole word when it lands on a caret mid-word", () => {
+      // The browser's own word ends at the widget when the click resolves to the position before it.
+      connectPeer().moveTo(posOf("quick") + 2);
+
+      expect(doubleClick(posOf("quick") + 2)).toBe(true);
+      expect(selected()).toBe("quick");
+    });
+
+    it("selects what continues from a caret at a word's edge, as with no caret", () => {
+      // There the browser's own selection is empty.
+      const peer = connectPeer();
+      peer.moveTo(posOf("quick"));
+      expect(doubleClick(posOf("quick"))).toBe(true);
+      expect(selected()).toBe("quick");
+
+      peer.moveTo(posOf(" brown"));
+      expect(doubleClick(posOf(" brown"))).toBe(true);
+      expect(selected()).toBe(" ");
+    });
+
+    it("leaves every other double-click to the browser", () => {
+      const peer = connectPeer();
+      peer.moveTo(posOf("quick") + 2);
+      expect(doubleClick(posOf("quick")), "elsewhere in the same word").toBe(false);
+      expect(doubleClick(posOf("quick") + 4), "elsewhere in the same word").toBe(false);
+      expect(doubleClick(posOf("brown") + 2), "another word").toBe(false);
+
+      peer.moveTo(posOf("jumps.") + "jumps.".length);
+      expect(doubleClick(posOf("jumps.") + "jumps.".length), "a caret at the paragraph's end").toBe(false);
+    });
+
+    it("resolves the click where the pointer went down, a character past ProseMirror's whole-pixel pos", () => {
+      // Chromium hits 190.6, past the middle of the "u" before the caret; the mousedown says 190, before it.
+      const caret = posOf("quick") + 2;
+      connectPeer().moveTo(caret);
+      vi.spyOn(editor.view, "posAtCoords").mockImplementation(({ left }) => ({ pos: left > 190.4 ? caret : caret - 1, inside: -1 }));
+
+      pointerDown(190.6, 20);
+      expect(doubleClick(caret - 1, { clientX: 190, clientY: 20 })).toBe(true);
+      expect(selected()).toBe("quick");
+    });
+
+    it("and leaves a click that lands a character past the caret to the browser", () => {
+      // ProseMirror's 217 says the caret; Chromium's 217.8 is past the middle of the space after it.
+      const caret = posOf(" brown");
+      connectPeer().moveTo(caret);
+      vi.spyOn(editor.view, "posAtCoords").mockImplementation(({ left }) => ({ pos: left > 217.5 ? caret + 1 : caret, inside: -1 }));
+
+      pointerDown(217.8, 20);
+      expect(doubleClick(caret, { clientX: 217, clientY: 20 })).toBe(false);
+    });
+
+    it("leaves a word next to a mention to the browser, whose word takes in the mention's text", () => {
+      editor.commands.setContent({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "Ask " },
+              { type: "mention", attrs: { alias: "amy", label: "amy" } },
+              { type: "text", text: "'s notes" },
+            ],
+          },
+        ],
+      });
+      const peer = connectPeer();
+      peer.moveTo(posOf("'s notes"));
+
+      expect(doubleClick(posOf("'s notes"))).toBe(false);
+    });
+
+    it("counts a hard break as the end of a line, not a leaf the browser's word takes in", () => {
+      editor.commands.setContent({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "line one" }, { type: "hardBreak" }, { type: "text", text: "Wordy here" }],
+          },
+        ],
+      });
+      connectPeer().moveTo(posOf("Wordy") + 2);
+
+      expect(doubleClick(posOf("Wordy") + 2)).toBe(true);
+      expect(selected()).toBe("Wordy");
+    });
+  });
+
+  describe("dragging after a double-click on a peer's caret", () => {
+    const doubleClick = (pos: number) =>
+      editor.view.someProp("handleDoubleClick", (handle) => handle(editor.view, pos, new MouseEvent("mousedown", { detail: 2 }))) ??
+      false;
+    const selected = () => editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, "|");
+    /** The drag listens on the document; clientX is the position the pointer is over, clientY picks the line. */
+    const dragTo = (pos: number, init: MouseEventInit = {}) =>
+      document.dispatchEvent(new MouseEvent("mousemove", { buttons: 1, clientX: pos, clientY: 50, ...init }));
+
+    beforeEach(() => {
+      // jsdom has no layout: the editor spans the page, and every position is on one line.
+      vi.spyOn(editor.view.dom, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 10_000, 10_000));
+      vi.spyOn(editor.view, "posAtCoords").mockImplementation(({ left }) => ({ pos: left, inside: -1 }));
+      vi.spyOn(editor.view, "coordsAtPos").mockReturnValue({ left: 0, right: 0, top: 0, bottom: 100 });
+      connectPeer().moveTo(posOf("quick") + 2);
+      expect(doubleClick(posOf("quick") + 2)).toBe(true);
+    });
+
+    it("extends by words either way from the word, as the browser's own drag does", () => {
+      dragTo(posOf("brown") + 3);
+      expect(selected()).toBe("quick brown");
+
+      dragTo(posOf("The quick") + 1);
+      expect(selected()).toBe("The quick");
+      expect(editor.state.selection.anchor, "anchored at the word's far edge").toBe(posOf("quick") + 5);
+
+      dragTo(posOf("quick") + 4);
+      expect(selected()).toBe("quick");
+    });
+
+    it("takes in the break to the next block past a block's last word", () => {
+      dragTo(posOf("jumps.") + "jumps.".length);
+
+      expect(editor.state.selection.head).toBe(posOf("The lazy"));
+    });
+
+    it("stops at a soft-wrapped line's end, short of the next line's first word", () => {
+      // The pointer is above the line "brown" starts.
+      vi.mocked(editor.view.coordsAtPos).mockReturnValue({ left: 0, right: 0, top: 100, bottom: 120 });
+
+      dragTo(posOf("brown"));
+
+      expect(selected()).toBe("quick ");
+    });
+
+    it("keeps the word through an edit made during the drag", () => {
+      editor.commands.insertContentAt(posOf("The quick"), "Oh, ");
+
+      dragTo(posOf("brown") + 3);
+
+      expect(selected()).toBe("quick brown");
+    });
+
+    it("ends when the button comes up", () => {
+      document.dispatchEvent(new MouseEvent("mouseup"));
+      dragTo(posOf("brown") + 3);
+      expect(selected()).toBe("quick");
+    });
+
+    it("ends on a move with the button already up, as when it came up outside the window", () => {
+      dragTo(posOf("brown") + 3, { buttons: 0 });
+      dragTo(posOf("fox") + 1);
+      expect(selected()).toBe("quick");
+    });
+  });
+
   describe("the stylesheet the markup is a contract with", () => {
     /** Tiptap ships no CSS for these classes and jsdom applies none, so the declarations are read from disk. */
     // vitest stubs CSS imports, and cwd is the package root.
@@ -527,6 +779,49 @@ describe("a collaborator's caret in a live editor", () => {
 
     it("draws the caret line, which no inline style provides", () => {
       expect(block).toMatch(/\.collaboration-carets__caret\s*\{[^}]*border-left:\s*2px solid/);
+    });
+
+    it("keeps the caret inline, since an inline-block would add a line break opportunity mid-word", () => {
+      expect(block).toMatch(/\.collaboration-carets__caret\s*\{[^}]*display:\s*inline;/);
+    });
+
+    /** Rules on the caret element itself, not on its tag or a pseudo-element. */
+    const caretRules = (css: string) =>
+      // Innermost rules, comments dropped; `block` starts inside the section's heading comment.
+      [...css.replace(/(?:\/\*|^)[\s\S]*?\*\//g, "").matchAll(/([^{}]*)\{([^{}]*)\}/g)].filter(([, selectors]) =>
+        // A comma inside :not(…) or :is(…) does not end a selector.
+        selectors!
+          .split(/,(?![^(]*\))/)
+          .some((s) => /\.collaboration-carets__caret(\[[^\]]*\]|:[a-z-]+(\([^)]*\))?)*$/.test(s.trim())),
+      );
+
+    it("leaves the caret itself selectable", () => {
+      // With `user-select: none` on it, Chromium puts a click past the end of its line at the line's start.
+      const onCaret = caretRules(block);
+
+      expect(onCaret.length).toBeGreaterThan(0);
+      for (const [, selectors, body] of onCaret) expect(body, selectors!.trim()).not.toMatch(/user-select:\s*none/);
+    });
+
+    it("counts a rule behind a functional pseudo-class as a rule on the caret", () => {
+      expect(caretRules(".e .collaboration-carets__caret:not([data-active]) { user-select: none; }")).toHaveLength(1);
+      expect(caretRules(".e .collaboration-carets__caret:is([data-a], [data-b]) { user-select: none; }")).toHaveLength(1);
+      expect(caretRules(".e .collaboration-carets__caret::after, .e .collaboration-carets__label { content: none; }")).toEqual([]);
+    });
+
+    it("keeps the caret's word joiner real text, and out of every selection", () => {
+      expect(block).toMatch(/\.collaboration-carets__joiner\s*\{[^}]*user-select:\s*none/);
+      // As generated content it would leave the caret with no text node.
+      expect(block).not.toMatch(/\.collaboration-carets__caret::after\s*\{[^}]*content:/);
+    });
+
+    it("shows the name the markup carries in data-name", () => {
+      expect(block).toMatch(/\.collaboration-carets__label::after\s*\{[^}]*content:\s*attr\(data-name\)/);
+    });
+
+    it("keeps the name tag out of a selection's highlight", () => {
+      const label = block.slice(block.indexOf(".collaboration-carets__label {"));
+      expect(label.slice(0, label.indexOf("}"))).toMatch(/user-select:\s*none/);
     });
 
     it("keeps the name tag out of the prose, and out of the scroll width when idle", () => {

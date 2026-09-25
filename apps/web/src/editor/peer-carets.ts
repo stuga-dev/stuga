@@ -9,8 +9,9 @@
  * matches; for the same reason the name and colour are re-read on every change.
  */
 import CollaborationCaret, { type CollaborationCaretOptions } from "@tiptap/extension-collaboration-caret";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
-import type { DecorationAttrs } from "@tiptap/pm/view";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { type EditorState, Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
+import type { DecorationAttrs, DecorationSet, EditorView } from "@tiptap/pm/view";
 import { yCursorPlugin, yCursorPluginKey } from "@tiptap/y-tiptap";
 import type { Awareness } from "y-protocols/awareness";
 import { PEER_PALETTE } from "../state/identity";
@@ -68,11 +69,17 @@ export function renderPeerCaret(user: PeerUser, clientId: number): HTMLElement {
 
   const label = document.createElement("span");
   label.classList.add("collaboration-carets__label");
-  // `name` is peer-supplied.
-  label.textContent = peerName(user, clientId);
+  // `name` is peer-supplied. The stylesheet shows it as generated content, which selections,
+  // copies and double-click word boundaries skip.
+  label.setAttribute("data-name", peerName(user, clientId));
 
-  // Word joiners give the zero-width caret an inline box without adding a line break opportunity.
-  caret.append("\u2060", label, "\u2060");
+  // A word joiner gives the zero-width caret an inline box without a line break opportunity. It is
+  // the widget's only text, and must be real text: see styles/editor.css.
+  const joiner = document.createElement("span");
+  joiner.classList.add("collaboration-carets__joiner");
+  joiner.textContent = "\u2060";
+
+  caret.append(label, joiner);
   return caret;
 }
 
@@ -135,7 +142,7 @@ function peerLabelActivityPlugin(awareness: Awareness, lingerMs: number = PEER_L
         caret.style.setProperty("--peer-color", peerColor(user, id));
         const label = caret.querySelector<HTMLElement>(".collaboration-carets__label");
         const name = peerName(user, id);
-        if (label && label.textContent !== name) label.textContent = name;
+        if (label && label.getAttribute("data-name") !== name) label.setAttribute("data-name", name);
       };
 
       const onChange = ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
@@ -203,6 +210,165 @@ function peerLabelActivityPlugin(awareness: Awareness, lingerMs: number = PEER_L
   });
 }
 
+/** Word boundaries for a double-click on a peer's caret. Missing in Firefox before 125. */
+const WORDS = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "word" }) : null;
+
+/** What a leaf counts as in a block's text, unless it is a line break. */
+const LEAF = "\ufffc";
+
+interface Segment {
+  from: number;
+  to: number;
+  /** A leaf other than a line break is in or next to it: the browser's word takes in what it renders. */
+  leaf: boolean;
+}
+
+/** The word, or the space, that `pos` starts or falls inside, as the browser picks one with no caret there. */
+function segmentAt(doc: ProseMirrorNode, pos: number): Segment | null {
+  if (!WORDS) return null;
+  const $pos = doc.resolve(pos);
+  const block = $pos.parent;
+  if (!block.inlineContent) return null;
+  // One character per position, so segment offsets are position offsets.
+  const text = block.textBetween(0, block.content.size, undefined, (leaf) =>
+    leaf.type.spec.linebreakReplacement ? "\n" : LEAF,
+  );
+  if (text.length !== block.content.size) return null;
+  const segment = WORDS.segment(text).containing(pos - $pos.start());
+  if (!segment) return null;
+  const end = segment.index + segment.segment.length;
+  return {
+    from: $pos.start() + segment.index,
+    to: $pos.start() + end,
+    leaf: segment.segment.includes(LEAF) || text[segment.index - 1] === LEAF || text[end] === LEAF,
+  };
+}
+
+/** Whether a peer's caret sits at `pos`. Carets carry a key; a peer's selection tint does not. */
+function caretAt(state: EditorState, pos: number): boolean {
+  const decorations: DecorationSet | undefined = yCursorPluginKey.getState(state);
+  return !!decorations?.find(pos, pos, (spec: { key?: unknown }) => typeof spec.key === "string").length;
+}
+
+/** Where a drag forward by words ends for a pointer at `pos`, `top` px down, as the browser's does. */
+function dragEnd(view: EditorView, pos: number, top: number): number {
+  const { doc } = view.state;
+  const segment = segmentAt(doc, pos);
+  // Past a soft-wrapped line's end it stops there, short of the next line's first word.
+  if (segment) return segment.from === pos && top < view.coordsAtPos(pos, 1).top ? pos : segment.to;
+  // Past a block's last word it takes in the break to the next line of text.
+  const $pos = doc.resolve(pos);
+  if (!$pos.parent.inlineContent || pos !== $pos.end()) return pos;
+  return Selection.findFrom(doc.resolve($pos.after()), 1, true)?.from ?? pos;
+}
+
+/** The word a double-click at a peer's caret selected, mapped through edits while the drag after it lasts. */
+const caretWordKey = new PluginKey<Segment | null>("peerCaretWord");
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+/**
+ * ProseMirror makes every widget `contenteditable="false"`, and Chromium mishandles a caret's island:
+ * a click on its flag or tag goes to the document's start, and a double-click that resolves just before
+ * it ends the word there. Both are taken over, the double-click with its word-by-word drag. The position
+ * is re-read from the pointerdown, whose coordinates are fractional like Chromium's hit test.
+ */
+function peerCaretPointerPlugin(): Plugin<Segment | null> {
+  /** The last pointerdown's coordinates. */
+  let pointer: { x: number; y: number } | null = null;
+  let endDrag: ((clear: boolean) => void) | null = null;
+
+  const startDrag = (view: EditorView) => {
+    endDrag?.(false);
+    const move = (event: MouseEvent) => {
+      const word = caretWordKey.getState(view.state);
+      if (!(event.buttons & 1) || !word) return endDrag?.(true);
+      // Past the text column, or above or below the editor, the drag holds at the edge.
+      const box = view.dom.getBoundingClientRect();
+      const top = clamp(event.clientY, box.top + 1, box.bottom - 1);
+      const hit = view.posAtCoords({ left: clamp(event.clientX, box.left + 1, box.right - 1), top });
+      if (!hit) return;
+      const { doc } = view.state;
+      let [anchor, head] = [word.from, word.to];
+      if (hit.pos < word.from) [anchor, head] = [word.to, segmentAt(doc, hit.pos)?.from ?? hit.pos];
+      else if (hit.pos > word.to) head = dragEnd(view, hit.pos, top);
+      const selection = TextSelection.between(doc.resolve(anchor), doc.resolve(head));
+      if (!selection.eq(view.state.selection)) view.dispatch(view.state.tr.setSelection(selection).setMeta("pointer", true));
+    };
+    const up = () => endDrag?.(true);
+    const root = view.root as Document;
+    root.addEventListener("mousemove", move);
+    root.addEventListener("mouseup", up);
+    endDrag = (clear) => {
+      root.removeEventListener("mousemove", move);
+      root.removeEventListener("mouseup", up);
+      endDrag = null;
+      if (clear && caretWordKey.getState(view.state)) view.dispatch(view.state.tr.setMeta(caretWordKey, null));
+    };
+  };
+
+  /** Selects the word at a caret at `pos`; false where the browser's own word is right. */
+  const selectWord = (view: EditorView, pos: number): boolean => {
+    const word = segmentAt(view.state.doc, pos);
+    if (!word || word.leaf) return false;
+    const selection = TextSelection.create(view.state.doc, word.from, word.to);
+    view.dispatch(view.state.tr.setSelection(selection).setMeta("pointer", true).setMeta(caretWordKey, word));
+    startDrag(view);
+    return true;
+  };
+
+  return new Plugin<Segment | null>({
+    key: caretWordKey,
+    state: {
+      init: () => null,
+      apply(tr, word) {
+        const set: Segment | null | undefined = tr.getMeta(caretWordKey);
+        if (set !== undefined) return set;
+        if (!word || !tr.docChanged) return word;
+        const from = tr.mapping.map(word.from, 1);
+        return { ...word, from, to: Math.max(from, tr.mapping.map(word.to, -1)) };
+      },
+    },
+    view: () => ({ destroy: () => endDrag?.(false) }),
+    props: {
+      handleDOMEvents: {
+        pointerdown(_view, event) {
+          pointer = { x: event.clientX, y: event.clientY };
+          return false;
+        },
+        // The flag and a hovered tag are the only parts that take the pointer.
+        mousedown(view, event) {
+          const target = event.button === 0 ? (event.target as Partial<Element> | null) : null;
+          const caret = target?.closest?.(".collaboration-carets__caret");
+          if (!caret) return false;
+          event.preventDefault();
+          view.focus();
+          const pos = view.posAtDOM(caret, 0);
+          // Clicks there act as they would on the text at the caret.
+          if (event.detail === 2 && selectWord(view, pos)) return true;
+          const { doc, selection } = view.state;
+          const $pos = doc.resolve(pos);
+          const next =
+            event.detail > 2
+              ? TextSelection.create(doc, $pos.start(), $pos.end())
+              : event.shiftKey
+                ? TextSelection.between(selection.$anchor, $pos)
+                : TextSelection.create(doc, pos);
+          view.dispatch(view.state.tr.setSelection(next).setMeta("pointer", true));
+          return true;
+        },
+      },
+      handleDoubleClick(view, pos, event) {
+        const at =
+          pointer && Math.abs(pointer.x - event.clientX) < 1 && Math.abs(pointer.y - event.clientY) < 1
+            ? (view.posAtCoords({ left: pointer.x, top: pointer.y })?.pos ?? pos)
+            : pos;
+        return caretAt(view.state, at) && selectWord(view, at);
+      },
+    },
+  });
+}
+
 /** Same options as CollaborationCaret, but with the `clientId` y-tiptap actually passes as a second argument. */
 interface PeerCaretsOptions extends Omit<CollaborationCaretOptions, "render" | "selectionRender"> {
   render(user: PeerUser, clientId: number): HTMLElement;
@@ -228,6 +394,7 @@ export const PeerCarets = CollaborationCaret.extend<PeerCaretsOptions>({
           : plugin,
       ),
       peerLabelActivityPlugin(awareness),
+      peerCaretPointerPlugin(),
     ];
   },
 });

@@ -389,15 +389,22 @@ span.presence-badge { cursor: default; }
   --peer-ink: light-dark(var(--peer-color), color-mix(in srgb, var(--peer-color) 65%, var(--color-on-dark)));
 }
 
-/* Net zero width, so a peer arriving mid-sentence never reflows the line; clicks go to the text. */
+/* Net zero width, so a peer arriving mid-sentence never reflows the line; clicks go to the text.
+   Selectable, unlike its tag: with `user-select: none` here, Chromium puts a click past the end
+   of a line that ends in a caret at the line's start. */
 .stuga-editor .collaboration-carets__caret {
   position: relative;
   display: inline;
   margin: 0 -1px;
   border-left: 2px solid var(--peer-ink);
   pointer-events: none;
-  user-select: none;
   word-break: normal;
+}
+/* Real text, unlike the name: in a caret with no text node, Chromium reads the position before it
+   at a soft-wrapped line's start as the end of the line above, and ArrowUp skips a line.
+   Unselectable, so a selection never lands inside the widget. */
+.stuga-editor .collaboration-carets__joiner {
+  user-select: none;
 }
 /* The flag is the only part that takes the pointer, for hover to see who. */
 .stuga-editor .collaboration-carets__caret::before {
@@ -439,6 +446,10 @@ span.presence-badge { cursor: default; }
   opacity: 0;
   transform: translateY(2px);
   transition: opacity 150ms ease, transform 150ms ease, display 150ms allow-discrete;
+}
+/* Generated, so selections, copies and double-click word boundaries skip the name. */
+.stuga-editor .collaboration-carets__label::after {
+  content: attr(data-name);
 }
 /* Shown while the peer is active, or on hover of the flag. */
 .stuga-editor .collaboration-carets__caret[data-active] .collaboration-carets__label,
