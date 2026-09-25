@@ -1,8 +1,11 @@
 /**
  * Character change counts for version history: a contiguous edit reports the
- * characters it touched, a same-length rewrite is not "nothing changed", moved
- * blocks are not churn, and the counts stay non-negative, bounded by each side
- * and consistent with the length delta.
+ * characters it touched, untouched lines and words are free, a formatting
+ * change counts its marks, a same-length rewrite is not "nothing changed",
+ * moved blocks are not churn, and the counts stay
+ * non-negative, bounded by each side, consistent with the length delta, never
+ * below the real difference nor above the plain trim, and the same either way
+ * round.
  */
 import { describe, expect, it } from "vitest";
 import { charChangeCounts } from "./diff/char-counts.js";
@@ -57,6 +60,166 @@ describe("charChangeCounts", () => {
     expect(charChangeCounts(base, next)).toEqual({ added: 6, removed: 0 });
   });
 
+  it("does not charge an untouched line the trim cut into", () => {
+    // The trim ends inside "Hello…" ("." is shared with "New."): that line must
+    // still match its twin whole. "A" → "B" plus "\n\nNew." is all that changed.
+    const base = "# A\n\nHello world, this line is untouched.";
+    const next = "# B\n\nHello world, this line is untouched.\n\nNew.";
+    expect(charChangeCounts(base, next)).toEqual({ added: 7, removed: 1 });
+  });
+
+  it("charges only the edited heading and the new paragraphs, not the paragraph between", () => {
+    const base = "# Team plan\n\nFirst paragraph written by Liv at creation.";
+    const next =
+      "\n# Liv edit two.Team plan\n\nFirst paragraph written by Liv at creation.\n\nAda edit one.\n\nBob edit three.";
+    // The heading's two insertions share one run, whose words keep "# " too.
+    // The first paragraph is free.
+    expect(charChangeCounts(base, next)).toEqual({
+      added: "\n".length + "Liv edit two.".length + "\n\nAda edit one.\n\nBob edit three.".length,
+      removed: 0,
+    });
+  });
+
+  it("charges an edited paragraph only its edit when a new one follows it", () => {
+    // Only the blank lines match whole: the one that keeps the edited paragraph
+    // next to its twin must win the tie, whichever text comes first.
+    expect(charChangeCounts("Title\n\nBody text.", "Title v2\n\nBody text, more.\n\nNew.")).toEqual({
+      added: 15,
+      removed: 0,
+    });
+    const base = "# Team plan\n\nFirst paragraph written by Liv at creation.";
+    const next = "# Team plan v2\n\nFirst paragraph written by Liv at creation, edited.\n\nAda edit one.";
+    expect(charChangeCounts(base, next)).toEqual({ added: 26, removed: 0 });
+    expect(charChangeCounts(next, base)).toEqual({ added: 0, removed: 26 });
+  });
+
+  it("does not charge a line that a join leaves whole", () => {
+    // "Alpha beta\n" and the "\n" after "Keep me." go; "Keep me." stays.
+    const split = "Intro. Alpha beta\nKeep me.\n Outro.";
+    const joined = "Intro. Keep me. Outro.";
+    expect(charChangeCounts(split, joined)).toEqual({ added: 0, removed: 12 });
+    expect(charChangeCounts(joined, split)).toEqual({ added: 12, removed: 0 });
+  });
+
+  it("counts a formatting change by its marks, not the words inside", () => {
+    expect(charChangeCounts("alpha beta", "**alpha** beta")).toEqual({ added: 4, removed: 0 });
+    expect(charChangeCounts("**alpha** beta", "alpha beta")).toEqual({ added: 0, removed: 4 });
+    expect(charChangeCounts("**alpha** beta", "_alpha_ beta")).toEqual({ added: 2, removed: 4 });
+    const para = "The quarterly plan covers hiring, the new office, and a budget review before the end of year.";
+    expect(charChangeCounts(`# Plan\n\n${para}\n\nNext.`, `# Plan\n\n**${para}**\n\nNext.`)).toEqual({
+      added: 4,
+      removed: 0,
+    });
+    expect(charChangeCounts("我们的会议计划", "我们的**会议**计划")).toEqual({ added: 4, removed: 0 });
+  });
+
+  it("counts two edits in one line as the two edits, not the stretch between", () => {
+    // "quick" → "slow" is a whole word; "today" → "tonight" keeps "to".
+    const base = "# T\n\nThe quick brown fox jumps over the lazy dog near the old river bank today.\n";
+    const next = "# T\n\nThe slow brown fox jumps over the lazy dog near the old river bank tonight.\n";
+    expect(charChangeCounts(base, next)).toEqual({ added: 4 + 5, removed: 5 + 3 });
+    expect(charChangeCounts(next, base)).toEqual({ added: 5 + 3, removed: 4 + 5 });
+  });
+
+  it("counts bold across a whole long document by its marks", () => {
+    const paras = Array.from({ length: 300 }, (_, i) => `Paragraph ${i} of the plan, with some words to diff.`.repeat(8));
+    const base = paras.join("\n\n");
+    const next = paras.map((p) => `**${p}**`).join("\n\n");
+    expect(charChangeCounts(base, next)).toEqual({ added: 300 * 4, removed: 0 });
+  });
+
+  it("treats a \\r as text, so CRLF lines still match their twins", () => {
+    // "A" → "B" plus "\r\n\r\nNew." after the last line.
+    const base = "# A\r\n\r\nHello world.";
+    expect(charChangeCounts(base, "# B\r\n\r\nHello world.\r\n\r\nNew.")).toEqual({ added: 9, removed: 1 });
+  });
+
+  it("counts an edit inside the only line", () => {
+    expect(charChangeCounts("Hello world", "Hello there")).toEqual({ added: 5, removed: 5 });
+    expect(charChangeCounts("The plan is final.", "The plan is draft.")).toEqual({ added: 5, removed: 5 });
+  });
+
+  it("counts an edit in the first or last line that shares its punctuation with the next", () => {
+    const base = "Alpha one.\nBeta two.\nGamma three.";
+    expect(charChangeCounts(base, "Alpha ONE.\nBeta two.\nGamma three.")).toEqual({ added: 3, removed: 3 });
+    expect(charChangeCounts(base, "Alpha one.\nBeta two.\nGamma THREE.")).toEqual({ added: 5, removed: 5 });
+    // "." → "!" in the first line, "\nThree." after the last.
+    expect(charChangeCounts("One.\nTwo.", "One!\nTwo.\nThree.")).toEqual({ added: 8, removed: 1 });
+  });
+
+  it("matches empty lines without charging the lines around them", () => {
+    expect(charChangeCounts("Title\n\n\n\nBody", "Title!\n\n\n\nBody.")).toEqual({ added: 2, removed: 0 });
+  });
+
+  it("reports nothing for identical multi-line text", () => {
+    for (const text of ["\n", "\n\n", "a\n\nb\n", "# T\n\n- one\n- two\n"]) {
+      expect(charChangeCounts(text, text)).toEqual({ added: 0, removed: 0 });
+    }
+  });
+
+  it("counts a pure insert at the start or the end", () => {
+    const base = "Body.\n\nMore.";
+    expect(charChangeCounts(base, `# Title\n\n${base}`)).toEqual({ added: 9, removed: 0 });
+    expect(charChangeCounts(base, `${base}\n\nEnd.`)).toEqual({ added: 6, removed: 0 });
+    expect(charChangeCounts(`${base}\n\nEnd.`, base)).toEqual({ added: 0, removed: 6 });
+  });
+
+  it("counts a line split in two, and joined back, as the break alone", () => {
+    const whole = "Intro.\n\nFirst half second half\n\nOutro.";
+    const split = "Intro.\n\nFirst half\n\nsecond half\n\nOutro.";
+    expect(charChangeCounts(whole, split)).toEqual({ added: 2, removed: 1 });
+    expect(charChangeCounts(split, whole)).toEqual({ added: 1, removed: 2 });
+    expect(charChangeCounts("Hello world", "Hello\nworld")).toEqual({ added: 1, removed: 1 });
+  });
+
+  it("does not report a moved newline as no change", () => {
+    expect(charChangeCounts("xyz12345\n", "\nxyz12345")).toEqual({ added: 1, removed: 1 });
+  });
+
+  it("stays between the real difference and the plain trim, either way round", () => {
+    // Against the exact character LCS: the counts are an upper bound on the
+    // smallest edit, never below it.
+    const lcs = (x: string, y: string): number => {
+      let prev: number[] = Array.from({ length: y.length + 1 }, () => 0);
+      for (let i = 1; i <= x.length; i++) {
+        const cur = [0];
+        for (let j = 1; j <= y.length; j++) {
+          cur[j] = x[i - 1] === y[j - 1] ? prev[j - 1]! + 1 : Math.max(prev[j]!, cur[j - 1]!);
+        }
+        prev = cur;
+      }
+      return prev[y.length]!;
+    };
+    const plainRemoved = (x: string, y: string): number => {
+      const max = Math.min(x.length, y.length);
+      let pre = 0;
+      while (pre < max && x[pre] === y[pre]) pre++;
+      let suf = 0;
+      while (suf < max - pre && x[x.length - 1 - suf] === y[y.length - 1 - suf]) suf++;
+      return x.length - pre - suf;
+    };
+    let seed = 1;
+    const rand = (k: number): number => {
+      seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+      return Math.floor((seed / 2 ** 32) * k);
+    };
+    const text = (len: number): string => Array.from({ length: len }, () => "ab\nc *"[rand(6)]).join("");
+    for (let t = 0; t < 2000; t++) {
+      const base = text(rand(14));
+      const next =
+        rand(2) === 0
+          ? text(rand(14))
+          : base.slice(0, rand(base.length + 1)) + text(rand(4)) + base.slice(rand(base.length + 1));
+      const { added, removed } = charChangeCounts(base, next);
+      const common = lcs(base, next);
+      const pair = JSON.stringify([base, next]);
+      expect(removed, pair).toBeGreaterThanOrEqual(base.length - common);
+      expect(removed, pair).toBeLessThanOrEqual(plainRemoved(base, next));
+      expect(added - removed, pair).toBe(next.length - base.length);
+      expect(charChangeCounts(next, base), pair).toEqual({ added: removed, removed: added });
+    }
+  });
+
   it("charges a reordered pair once, not the whole document", () => {
     const base = "intro\n\naaa\n\nbbb\n\noutro";
     const next = "intro\n\nbbb\n\naaa\n\noutro";
@@ -79,6 +242,8 @@ describe("charChangeCounts", () => {
     expect(added).toBeLessThanOrEqual(next.length);
     expect(removed).toBeLessThanOrEqual(base.length);
     expect(added - removed).toBe(next.length - base.length);
+    // The plain trim: everything but the shared " 4999".
+    expect({ added, removed }).toEqual({ added: next.length - 5, removed: base.length - 5 });
   });
 
   it("still measures a LOPSIDED document accurately, and quickly", () => {
