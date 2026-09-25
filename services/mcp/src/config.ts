@@ -12,6 +12,9 @@ export const DEFAULT_URL = "http://127.0.0.1:8787";
 /** Sent as `x-stuga-client` when nothing names the client that spawned this server. */
 export const DEFAULT_CLIENT = "stuga-mcp";
 export const DEV_VERSION = "0.0.0-dev";
+declare const __STUGA_MCP_VERSION__: string | undefined;
+/** The version this file was built as: a release stamps it; a source build is the dev version. */
+export const BUILD_VERSION = typeof __STUGA_MCP_VERSION__ === "string" ? __STUGA_MCP_VERSION__ : DEV_VERSION;
 
 export interface StoredConfig {
   url?: string;
@@ -98,7 +101,7 @@ export function resolveConfig(rawEnv: NodeJS.ProcessEnv, sidecar: () => StoredCo
     token: env.STUGA_TOKEN?.trim() ?? fileToken?.trim() ?? "",
     model: env.STUGA_MODEL ?? fromFiles("model"),
     client: env.STUGA_CLIENT ?? fromFiles("client") ?? DEFAULT_CLIENT,
-    version: env.STUGA_VERSION?.trim() || fromFiles("version")?.trim() || DEV_VERSION,
+    version: env.STUGA_VERSION?.trim() || fromFiles("version")?.trim() || BUILD_VERSION,
     nodeName:
       env.STUGA_NODE_NAME?.trim() || (credentialInEnv ? sidecarName(env.STUGA_URL!, sidecar) : fromFiles("node_name"))?.trim() || undefined,
   };

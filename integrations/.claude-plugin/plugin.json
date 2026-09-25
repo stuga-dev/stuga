@@ -1,0 +1,27 @@
+{
+  "name": "stuga",
+  "displayName": "Stuga",
+  "description": "Search, read and edit the documents and databases in your own Stuga workspaces. Claude's edits arrive in Stuga as suggestions you accept or reject.",
+  "author": {
+    "name": "Stuga",
+    "url": "https://stuga.dev"
+  },
+  "homepage": "https://stuga.dev",
+  "repository": "https://github.com/stuga-dev/stuga",
+  "license": "MIT",
+  "keywords": [
+    "stuga",
+    "documents",
+    "knowledge base",
+    "databases",
+    "self-hosted"
+  ],
+  "userConfig": {
+    "node_url": {
+      "type": "string",
+      "title": "Stuga address",
+      "description": "The address you open Stuga at, such as http://192.168.1.50:8787. Keep the default when Stuga runs on this computer.",
+      "default": "http://127.0.0.1:8787"
+    }
+  }
+}

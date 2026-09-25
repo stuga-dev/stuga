@@ -15,7 +15,9 @@ filled in. Use it when it disagrees with an example here.
   can reach, including one on `localhost` or your local network. Claude Code dials the node's `/mcp`
   endpoint. Its browser sign-in needs the node on https or on loopback, so on a plain-http network
   address **Your own AI** gives it a command carrying a key instead. Claude Desktop runs Stuga's
-  stdio server from an extension, and the server forwards to the node's `/mcp`.
+  stdio server from an extension, and the server forwards to the node's `/mcp`. The
+  [Stuga plugin](#the-stuga-plugin) runs the same server in Claude Code and in Cowork, and signs in
+  through the browser at any address.
 - **Codex and Google Antigravity** dial the node's `/mcp` endpoint and work with any node the machine
   can reach. **Your own AI** gives one command per host that installs the Stuga Skill and adds the
   node; both hosts sign in through the browser, so no key is pasted.
@@ -148,6 +150,27 @@ is stored in Claude Code's own configuration file in plain text, and is revoked 
 like any other. Giving the node [an https address](network-access.md#https) brings the browser
 sign-in back.
 
+### The Stuga plugin
+
+The plugin carries the Stuga Skill and runs the [stdio server](#the-stdio-server) with `npx`, so it
+needs Node.js 18 or newer. Each release publishes it from [integrations/](../integrations/) to
+[stuga-dev/stuga-plugin](https://github.com/stuga-dev/stuga-plugin), pinned to that release's
+`@stuga/mcp`:
+
+```
+/plugin marketplace add stuga-dev/stuga-plugin
+/plugin install stuga@stuga
+```
+
+Claude Code asks for **Stuga address**; keep `http://127.0.0.1:8787` when the node runs on the same
+computer. From a shell, `claude plugin install stuga@stuga --config node_url=http://nas.local:8787`
+sets it instead. The first time Claude uses a tool, the node's consent page opens in your browser,
+whatever the node's address, and the connection is listed as **Claude**. Its tools are named
+`mcp__plugin_stuga_stuga__<tool>`.
+
+In Cowork on your computer the plugin runs the same server against `http://127.0.0.1:8787`, since
+Cowork does not ask for plugin settings. Claude on the web loads only its skill.
+
 ## Claude on the web
 
 In Claude, open Settings → Connectors → **Add custom connector** and paste the MCP endpoint
@@ -268,12 +291,15 @@ signs in like Claude Code. Any other client sends a key as `Authorization: Beare
 
 ## The stdio server
 
-`stuga-mcp.js`, which the Claude Desktop extension runs, forwards to the node's `/mcp`: the tools,
-their wording, the instructions and every check are the node's own, whatever its version. It adds
-one thing only a process on your machine can do: `databases_add` action `import` also takes `file`,
-a CSV or JSONL path on that machine. The server stages the import with `start_import`, uploads the
-file and commits it, and hands the agent the table's Import dialog link when the file is larger than
-the node accepts.
+`stuga-mcp.js`, which the Claude Desktop extension and the Stuga plugin run, forwards to the node's
+`/mcp`: the tools, their wording, the instructions and every check are the node's own, whatever its
+version. It adds one thing only a process on your machine can do: `databases_add` action `import`
+also takes `file`, a CSV or JSONL path on that machine. The server stages the import with
+`start_import`, uploads the file and commits it, and hands the agent the table's Import dialog link
+when the file is larger than the node accepts.
+
+Each release publishes it to npm as `@stuga/mcp`, so any client that starts local servers runs it
+with `npx -y @stuga/mcp` and `STUGA_URL` set to the node's address.
 
 With `STUGA_TOKEN` set, it sends that key. Without one, it signs in through the browser: it registers
 itself with the node, opens the consent page (and writes its address to stderr), and takes the answer
@@ -292,9 +318,9 @@ It reads these settings:
 | `STUGA_URL` | `url` | `http://127.0.0.1:8787` | The node's origin. |
 | `STUGA_TOKEN` | `token` | none | An API key. Without one, the server signs in through the browser. |
 | `STUGA_MODEL` | `model` | none | A model label, sent as `x-stuga-model` and shown beside the agent's runs. |
-| `STUGA_CLIENT` | `client` | `stuga-mcp` | A client label, sent as `x-stuga-client`. It also names the connection a sign-in creates: **Claude Desktop** for `claude-desktop`, which the extension sets, and **Stuga local connector** for the default. |
+| `STUGA_CLIENT` | `client` | `stuga-mcp` | A client label, sent as `x-stuga-client`. It also names the connection a sign-in creates: **Claude Desktop** for `claude-desktop`, which the extension sets, **Claude** for `claude`, which the plugin sets, and **Stuga local connector** for the default. |
 | `STUGA_NODE_NAME` | `node_name` | the host of `STUGA_URL` | The node's name, for when the node cannot be asked. At startup the server asks the node's public `/auth/config` for its current name and its `PUBLIC_ORIGIN`, which win. |
-| `STUGA_VERSION` | `version` | `0.0.0-dev` | The version the server reports. The extension sets the node's. |
+| `STUGA_VERSION` | `version` | the version it was built as | The version the server reports. The extension sets the node's. |
 
 Each setting comes from the environment first. A value left as an unfilled `${user_config.…}`
 placeholder counts as unset. When the environment sets both `STUGA_URL` and `STUGA_TOKEN`, only the

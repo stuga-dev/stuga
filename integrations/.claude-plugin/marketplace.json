@@ -1,0 +1,15 @@
+{
+  "name": "stuga",
+  "owner": {
+    "name": "Stuga",
+    "url": "https://stuga.dev"
+  },
+  "description": "Stuga's plugin for Claude: the Stuga skill and a connector to your own Stuga node.",
+  "plugins": [
+    {
+      "name": "stuga",
+      "source": "./",
+      "description": "Search, read and edit the documents and databases in your own Stuga workspaces."
+    }
+  ]
+}

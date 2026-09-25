@@ -342,3 +342,116 @@ jobs:
             compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg" Stuga.pkg \
           || gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg" Stuga.pkg --clobber
+
+  # The stdio server as the npm package @stuga/mcp, which the Claude plugin in integrations/ runs with
+  # npx. Published by npm trusted publishing, so the package's provenance points back at this run.
+  npm:
+    needs: [release]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      # Not the pinned Node: trusted publishing needs npm 11.5 or later, which Node 22 does not ship.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile --filter @stuga/mcp...
+      - run: STUGA_VERSION="${GITHUB_REF_NAME#v}" pnpm --filter @stuga/mcp build
+      # A re-run finds the version published already: the first release publishes it by hand.
+      - name: Publish, unless npm has this version
+        working-directory: services/mcp/dist
+        run: |
+          if npm view "@stuga/mcp@${GITHUB_REF_NAME#v}" version > /dev/null 2>&1; then
+            echo "::notice::@stuga/mcp@${GITHUB_REF_NAME#v} is on npm already"
+          else
+            npm publish
+          fi
+
+  # The plugin with this version stamped in, as one commit and one tag on stuga-dev/stuga-plugin, which
+  # the Claude plugin directory and every marketplace read. Only the newest release moves it, once npm
+  # serves the @stuga/mcp it pins. It pushes as the Stuga Release app, installed on that repository alone.
+  plugin:
+    needs: [npm]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: newest
+        name: Only the newest release moves the plugin
+        run: |
+          newest="$(git tag -l 'v*.*.*' | sort -V | tail -1)"
+          if [ "$newest" = "$GITHUB_REF_NAME" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$newest is newer than $GITHUB_REF_NAME, so the plugin stays at $newest"
+          fi
+      - id: pins
+        if: steps.newest.outputs.go == 'true'
+        run: . packaging/versions.env && echo "node=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        if: steps.newest.outputs.go == 'true'
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+      - name: Wait until npm serves @stuga/mcp at this version
+        if: steps.newest.outputs.go == 'true'
+        run: |
+          for _ in $(seq 60); do
+            npm view "@stuga/mcp@${GITHUB_REF_NAME#v}" version > /dev/null 2>&1 && exit 0
+            sleep 10
+          done
+          echo "::error::npm does not serve @stuga/mcp@${GITHUB_REF_NAME#v}"
+          exit 1
+      - name: Stamp the plugin
+        if: steps.newest.outputs.go == 'true'
+        run: node packaging/release/plugin.mjs stamp "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/plugin"
+      - uses: actions/create-github-app-token@v3
+        if: steps.newest.outputs.go == 'true'
+        id: app
+        with:
+          client-id: ${{ vars.STUGA_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.STUGA_RELEASE_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: stuga-plugin
+          permission-contents: write
+      - name: Publish to stuga-dev/stuga-plugin
+        if: steps.newest.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          git init -q -b main "$RUNNER_TEMP/published"
+          cd "$RUNNER_TEMP/published"
+          gh auth setup-git
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY_OWNER}/stuga-plugin.git"
+          if [ -n "$(git ls-remote --tags origin "refs/tags/$GITHUB_REF_NAME")" ]; then
+            echo "::notice::stuga-plugin has $GITHUB_REF_NAME already"
+            exit 0
+          fi
+          # The first release finds the repository empty. Every file is replaced, so one removed from
+          # integrations/ is removed here too.
+          if git ls-remote --exit-code --heads origin main > /dev/null; then
+            git fetch -q --depth 1 origin main
+            git checkout -q -B main FETCH_HEAD
+            git rm -rq .
+          fi
+          cp -R "$RUNNER_TEMP/plugin/." .
+          git add -A
+          git config user.name "$SLUG[bot]"
+          git config user.email "$(gh api "/users/$SLUG%5Bbot%5D" --jq .id)+$SLUG[bot]@users.noreply.github.com"
+          git commit -q -m "Release $GITHUB_REF_NAME from $GITHUB_REPOSITORY@${GITHUB_SHA::7}"
+          git tag -a "$GITHUB_REF_NAME" -m "$GITHUB_REF_NAME"
+          git push --atomic origin main "refs/tags/$GITHUB_REF_NAME"

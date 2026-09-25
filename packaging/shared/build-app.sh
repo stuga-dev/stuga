@@ -85,6 +85,10 @@ find "$node_dir/node_modules" -type d -name .bin -prune -exec rm -rf {} +
 cp tsconfig.base.json "$out/tsconfig.base.json"
 # Stuga's own license, copyright notice and the trademark terms NOTICE points to travel with every copy of the tree.
 cp LICENSE NOTICE TRADEMARKS.md "$out/"
+# The Stuga skill the agent installers hand out, from its one copy; integrations/ is MIT, so its license goes with it.
+mkdir -p "$out/integrations"
+cp -R integrations/skills integrations/LICENSE "$out/integrations/"
+[ -f "$out/integrations/skills/stuga/SKILL.md" ] || { echo "error: the tree has no integrations/skills/stuga/SKILL.md" >&2; exit 1; }
 mkdir -p "$out/apps/web"
 cp -R apps/web/dist "$out/apps/web/dist"
 if [ -n "$version" ]; then

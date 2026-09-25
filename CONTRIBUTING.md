@@ -37,7 +37,9 @@ packaging/
                      helper, Stuga.app, dev Postgres, tests
   release/           feed.mjs: release notes and releases.json, from CHANGELOG.md
   test/              the restore drill both platforms run
-integrations/        the Stuga Skill that the Codex and Antigravity installers put in place
+integrations/        the Stuga Skill, which the Codex and Antigravity installers put in place, and the
+                     Claude plugin that carries it with the stdio server, which each release
+                     publishes to stuga-dev/stuga-plugin
 scripts/             test-integration.sh
 ```
 

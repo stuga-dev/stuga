@@ -23,7 +23,12 @@ const config = resolveConfig(
 );
 
 /** What the node lists this connection as until the person renames it. */
-const clientName = config.client === "claude-desktop" ? "Claude Desktop" : config.client === DEFAULT_CLIENT ? "Stuga local connector" : config.client;
+const CLIENT_NAMES = new Map([
+  ["claude-desktop", "Claude Desktop"],
+  ["claude", "Claude"],
+  [DEFAULT_CLIENT, "Stuga local connector"],
+]);
+const clientName = CLIENT_NAMES.get(config.client) ?? config.client;
 
 async function main(): Promise<void> {
   const signIn = config.token
@@ -37,7 +42,10 @@ async function main(): Promise<void> {
     if (announce) void server?.sendToolListChanged().catch(() => undefined);
   });
   const node = await identifyNode(config);
+  // Until stdio is connected nothing else holds the process open: the sign-in listener and every timer are unref'd.
+  const hold = setTimeout(() => undefined, STARTUP_WAIT_MS);
   const early = await within(upstream.ready(), STARTUP_WAIT_MS).catch(() => null);
+  clearTimeout(hold);
   // From here on every (re)connection may change the tools, and the client re-lists on the notice.
   announce = true;
   server = buildProxy({ config, node, upstream, instructions: early?.getInstructions() });

@@ -25,6 +25,7 @@ major the node accepts differs.
 <out>/TRADEMARKS.md               the terms for the name and logo, which NOTICE points to
 <out>/tsconfig.base.json
 <out>/apps/web/dist/              the built web app, with third-party-licenses.txt for the npm packages it bundles
+<out>/integrations/skills/, LICENSE  the Stuga skill the agent installers hand out, and its MIT license
 <out>/services/node/bin/stuga-node.js
 <out>/services/node/src/          the node's TypeScript, run through tsx
 <out>/services/node/tsconfig.json the compiler options bin/stuga-node.js hands to tsx
@@ -33,9 +34,9 @@ major the node accepts differs.
 ```
 
 The tree holds no tests, dev dependencies or local `.env` files. tsx ships a native esbuild binary,
-so build the tree on the OS and architecture it will run on. The node finds `apps/web/dist` and
-`VERSION` three directories above `services/node/src`. It reads the migration SQL from the tree at
-runtime.
+so build the tree on the OS and architecture it will run on. The node finds `apps/web/dist`,
+`integrations/skills` and `VERSION` three directories above `services/node/src`, and does not start
+without the skill. It reads the migration SQL from the tree at runtime.
 
 Run the tree with the pinned Node:
 

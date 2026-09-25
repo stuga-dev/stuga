@@ -75,6 +75,8 @@ runtime have both been built at the tag's version and booted.
 | `macos-pkg` | `verify`, `changelog` | On macOS, builds `Stuga-<version>.pkg` with `packaging/macos/pkg/build-pkg.sh`: the runtime at the version, Stuga.app and the install scripts, every binary signed with the Developer ID Application identity (Node with only `allow-jit`), the package signed with the Developer ID Installer identity, notarized and stapled. Then boots the runtime the package carries with `packaging/macos/test/smoke.sh`, which checks `/ready`, the web app, the boot line, a clean stop, `backup` and `verify`, and a clean Postgres shutdown. Needs the secrets `MACOS_CERTS_P12` (one p12 with both identities, base64, of the team the upgrade helper trusts: `STUGA_TEAM_ID` in `packaging/macos/runtime/bin/helper.sh`), `MACOS_CERTS_PASSWORD`, and an App Store Connect API key for notarytool: `NOTARY_KEY` (the .p8, base64), `NOTARY_KEY_ID`, `NOTARY_ISSUER`. |
 | `promote` | `docker-smoke`, `macos-pkg` | Points the `:1.2` and `:1` image tags at the digests the smoke test booted, and reads them back to confirm. `latest` is never published. |
 | `release` | `docker-smoke`, `macos-pkg`, `promote` | Creates the GitHub Release, with the notes from the changelog and `compose.yml`, `env.example`, `stuga`, `install.sh`, `releases.json`, `Stuga-<version>.pkg` and the same package as `Stuga.pkg`, which `releases/latest/download/` always names. A Mac node's **Update now** downloads the versioned name. |
+| `npm` | `release` | Builds `services/mcp` stamped with the version and publishes `services/mcp/dist` as `@stuga/mcp` through npm trusted publishing, from the `release` environment, unless npm has the version already. The package's provenance names this run. |
+| `plugin` | `npm` | For the newest version only, and once npm serves `@stuga/mcp` at it: stamps `integrations/` with the version and the `@stuga/mcp@<version>` pin (`packaging/release/plugin.mjs`), and pushes it to [stuga-dev/stuga-plugin](https://github.com/stuga-dev/stuga-plugin) as one commit and the tag `v<version>`, as the Stuga Release app. Anthropic's plugin directory and every marketplace read that repository. Needs `STUGA_RELEASE_APP_CLIENT_ID` (a variable) and `STUGA_RELEASE_APP_KEY` (a secret) in the `release` environment, of an app installed on stuga-plugin alone. |
 
 A pushed tag is never deleted or reused. You can re-run a job that failed for a transient reason.
 A failure that needs a code change is fixed in the next patch version. Once `docker-images` has
@@ -86,6 +88,16 @@ pushed, that version's images exist with no Release or floating tag pointing at 
 In an empty directory, follow [docs/install/docker.md](docs/install/docker.md) exactly as written and
 reach `/ready`. On a Mac, check out the tag, follow [docs/install/macos.md](docs/install/macos.md),
 and reach `/ready`. The workflow does not test the instructions themselves.
+
+npm accepts trusted publishing only for a package that already exists, so the first release's `npm`
+job fails. Publish that version by hand from the tag (`STUGA_VERSION=<version> pnpm --filter
+@stuga/mcp build`, then `npm publish` in `services/mcp/dist`), set the package's trusted publisher
+on npmjs.com to this repository, `release.yml`, environment `release`, and re-run the failed jobs:
+`npm` finds the version published and `plugin` runs.
+
+stuga-plugin's rulesets let only the Stuga Release app create or update `main` and create `v*` tags,
+and nobody move or delete them. A bad plugin version is superseded by the next patch release, like
+any other.
 
 ## Yanking
 

@@ -40,7 +40,7 @@ package may depend on:
 | `@stuga/doc-actor` | runtime, crdt-ops, ai, protocol | The document actor. |
 | `@stuga/database-actor` | runtime, protocol | The database actor. |
 | `@stuga/agent-surface` | protocol | The agent tools: names, annotations, descriptions, input schemas, server instructions and result wording; `registerAgentTools`, which registers every tool against a surface that finds the backend for the workspace each call names; and the rank merge of results from several workspaces. |
-| `@stuga/mcp` | agent-surface, protocol | The stdio MCP server, a proxy to a node's `/mcp` that signs in through the browser, built to one file. |
+| `@stuga/mcp` | agent-surface, protocol | The stdio MCP server, a proxy to a node's `/mcp` that signs in through the browser, built to one file and published to npm under the same name. |
 | `@stuga/node` | all of the above | The node. |
 | `@stuga/web` | protocol, crdt-ops | The web app. |
 

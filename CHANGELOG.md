@@ -43,6 +43,10 @@ one, the release notes say there is nothing to do.
 - `databases_add` action `start_import` returns an upload URL for a caller that can send a file
   itself.
 - The Claude Desktop extension and `stuga-mcp` sign in through the browser when they have no key.
+- A plugin for Claude: the Stuga Skill and the stdio server, installed in Claude Code with
+  `/plugin marketplace add stuga-dev/stuga-plugin` and `/plugin install stuga@stuga`. Each release
+  publishes it from `integrations/` to stuga-dev/stuga-plugin, and the server to npm as
+  `@stuga/mcp`, so any client that starts local servers can run `npx -y @stuga/mcp`.
 
 ### Changed
 

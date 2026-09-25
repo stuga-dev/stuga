@@ -5,9 +5,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./bundle": "./dist/stuga-mcp.js",
-    "./node": "./src/node.ts",
-    "./server": "./src/server.ts"
+    "./bundle": "./dist/stuga-mcp.js"
   },
   "scripts": {
     "build": "node build.mjs",

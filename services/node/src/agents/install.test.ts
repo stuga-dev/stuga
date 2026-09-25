@@ -102,10 +102,14 @@ describe("agent installer", () => {
     else expect(script).toContain("Local removal does not revoke access");
   });
 
-  it("keeps the served skill identical to the checked-in integration", async () => {
+  it("writes the skill's one copy, from integrations/", async () => {
     const dir = new URL("../../../../integrations/skills/stuga/", import.meta.url);
-    expect(STUGA_SKILL).toBe(await readFile(new URL("SKILL.md", dir), "utf8"));
-    expect(STUGA_SKILL_OPENAI).toBe(await readFile(new URL("agents/openai.yaml", dir), "utf8"));
+    const skill = await readFile(new URL("SKILL.md", dir), "utf8");
+    const metadata = await readFile(new URL("agents/openai.yaml", dir), "utf8");
+    expect([STUGA_SKILL, STUGA_SKILL_OPENAI]).toEqual([skill, metadata]);
+    const script = installScript("codex", "install", ORIGIN)!;
+    expect(script).toContain(`<<'STUGA_SKILL_EOF'\n${skill}STUGA_SKILL_EOF\n`);
+    expect(script).toContain(`<<'STUGA_OPENAI_EOF'\n${metadata}STUGA_OPENAI_EOF\n`);
   });
 });
 

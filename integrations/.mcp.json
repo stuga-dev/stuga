@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "stuga": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@stuga/mcp"
+      ],
+      "env": {
+        "STUGA_URL": "${user_config.node_url}",
+        "STUGA_CLIENT": "claude"
+      }
+    }
+  }
+}
