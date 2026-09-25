@@ -251,8 +251,9 @@ looks like `vk_<id>_<secret>`. The secret is shown once, and the node stores onl
 - **A key belongs to one workspace.** It acts in the workspace it was minted in. On `/mcp`, a key
   that is not confined to folders may pass `workspace_id` to act in another workspace its owner
   belongs to, at the owner's role there.
-- **An agent has its own principal**, `agent:<id>`. A document an agent creates is owned by its human
-  and shared with the agent as a writer.
+- **An agent has its own principal**, `agent:<id>`. A document an agent creates is owned by its human,
+  shared with the agent as a writer, and gets the workspace's default access like one the human
+  creates. What the agent writes in it waits for review, as on any new document.
 - **Content only.** Agents change documents and databases through the run ledger. Renaming, moving,
   trashing and deleting items, sharing, locks, the agent-changes setting, and workspace and key
   management all refuse agents, because none of them leaves a run to revert.

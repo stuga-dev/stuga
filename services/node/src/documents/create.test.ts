@@ -4,6 +4,7 @@ vi.mock("@stuga/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@stuga/db")>()),
   createDoc: vi.fn(),
   deleteDoc: vi.fn(async () => {}),
+  getDoc: vi.fn(async () => null),
   getFolder: vi.fn(async () => null),
   getWorkspace: vi.fn(async () => ({ default_doc_access: "workspace_edit" })),
   getMemberRole: vi.fn(async () => "member"),
@@ -14,13 +15,14 @@ vi.mock("../jobs/snapshot-sweep.js", async (importOriginal) => ({
   queueSnapshotSweep: vi.fn(async () => {}),
 }));
 
-const { createDoc, deleteDoc, getFolder, getWorkspace } = await import("@stuga/db");
+const { createDoc, deleteDoc, getDoc, getFolder, getWorkspace } = await import("@stuga/db");
 const { queueSnapshotSweep } = await import("../jobs/snapshot-sweep.js");
 const { createDocument } = await import("./create.js");
 import type { Ctx } from "../auth/context.js";
 
 const mockCreateDoc = vi.mocked(createDoc);
 const mockDeleteDoc = vi.mocked(deleteDoc);
+const mockGetDoc = vi.mocked(getDoc);
 const mockGetFolder = vi.mocked(getFolder);
 const mockGetWorkspace = vi.mocked(getWorkspace);
 const mockQueueSweep = vi.mocked(queueSnapshotSweep);
@@ -78,6 +80,7 @@ beforeEach(() => {
     parent_id: input.parentId ?? null,
     owner: input.owner,
   }) as never);
+  mockGetDoc.mockResolvedValue(null);
   mockGetFolder.mockResolvedValue(null);
   mockGetWorkspace.mockResolvedValue({ default_doc_access: "workspace_edit" } as never);
 });
@@ -92,14 +95,53 @@ describe("createDocument", () => {
     expect(row.owner).toBe("user:bob");
     expect(row.aclPrincipals).toEqual(expect.arrayContaining(["user:bob", "agent:agent-1", "group:ws1:design", "user:carol"]));
     expect(row.aclWriters).toEqual(expect.arrayContaining(["user:bob", "agent:agent-1"]));
-    // The agent is recorded as a direct grant; the workspace floor is a person's, not an agent's.
-    expect(row.ownGrants).toEqual({ p: ["agent:agent-1"], w: ["agent:agent-1"], c: [] });
+    // The agent is recorded as a direct grant, beside the workspace floor.
+    expect(row.ownGrants).toEqual({ p: ["agent:agent-1", "org:ws1"], w: ["agent:agent-1", "org:ws1"], c: [] });
   });
 
   it("gives a person's document the workspace's default visibility", async () => {
     mockGetWorkspace.mockResolvedValue({ default_doc_access: "workspace_view" } as never);
     await createDocument(ctxOf(), { title: "Plan" });
     expect(inserted().ownGrants).toEqual({ p: ["org:ws1"], w: [], c: [] });
+  });
+
+  it("gives an agent's document the default its person's would get", async () => {
+    await createDocument(agent(), { title: "Plan" });
+    expect(inserted().owner).toBe("user:bob");
+    expect(inserted().aclPrincipals).toEqual(expect.arrayContaining(["user:bob", "agent:agent-1", "org:ws1"]));
+    expect(inserted().aclWriters).toEqual(expect.arrayContaining(["user:bob", "agent:agent-1", "org:ws1"]));
+
+    vi.clearAllMocks();
+    mockGetWorkspace.mockResolvedValue({ default_doc_access: "private" } as never);
+    await createDocument(agent(), { title: "Plan" });
+    expect(inserted().aclPrincipals).not.toContain("org:ws1");
+  });
+
+  it("proposes an agent's imported body for review, and deletes the row when the proposal fails", async () => {
+    mockGetDoc.mockImplementation(async (_sql, docId) => ({
+      doc_id: docId,
+      workspace_id: "ws1",
+      doc_type: "prose",
+      title: "Minutes",
+      parent_id: null,
+      trashed: false,
+      locked: false,
+      agent_mode: "review",
+      acl_principals: inserted().aclPrincipals,
+      acl_writers: inserted().aclWriters,
+      acl_commenters: [],
+    }) as never);
+    actorAnswer = { status: 200, body: { mode: "proposed", run: { id: "run-1" }, pending: 1 } };
+    expect(await createDocument(agent(), { markdown: "# Minutes\n\nbody" })).toMatchObject({ ok: true });
+    expect(actorCalls.map((c) => c.url)).toEqual([expect.stringContaining("/runs/propose")]);
+    expect(actorCalls[0]!.body).toMatchObject({ action: "write", review: "review", reviewer: "bob" });
+
+    vi.clearAllMocks();
+    actorCalls.length = 0;
+    actorAnswer = { status: 503, body: {} };
+    expect(await createDocument(agent(), { markdown: "# Minutes" })).toMatchObject({ ok: false, status: 502 });
+    expect(actorCalls.some((c) => c.url.includes("/apply-edits"))).toBe(false);
+    expect(mockDeleteDoc).toHaveBeenCalledTimes(1);
   });
 
   it("refuses a guest, a parent the caller cannot write, and a scoped key at the root before inserting", async () => {

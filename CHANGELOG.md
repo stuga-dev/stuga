@@ -10,6 +10,14 @@ one, the release notes say there is nothing to do.
 
 ## [Unreleased]
 
+### Fixed
+
+- A document or folder an agent created stayed private to the person it acted for, whatever the
+  workspace's default access, so other members could not see it until that person shared it. It now
+  gets the default, like one the person creates. Items made before this release keep their sharing.
+- A Markdown body an agent sent with `POST /api/docs` landed at once. It is now proposed and waits
+  for review, like the agent's other writes.
+
 ## [0.1.1] - 2026-09-24
 
 ### Fixed

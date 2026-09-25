@@ -12,6 +12,7 @@ import {
   markdownByteLength,
   normalizeImportedMarkdown,
 } from "@stuga/protocol/text/markdown-import";
+import { proposeDocEdit } from "../agents/edits.js";
 import { recordAudit, recordEvent } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
 import { canWriteFolder } from "../authz/authz.js";
@@ -147,12 +148,12 @@ const TITLE_MAX = 200;
 const refuse = (status: number, message: string): CreateDocumentOutcome => ({ ok: false, status, message });
 
 /**
- * The workspace default-visibility floor for a new document or folder; an
- * agent's stay private to its human and itself. A folder takes it too, or a
- * member could open a document without seeing the folder that holds it.
+ * The workspace default-visibility floor for a new document or folder, an
+ * agent's included: it creates for its human, and what it writes there still
+ * waits for review. A folder takes it too, or a member could open a document
+ * without seeing the folder that holds it.
  */
 export async function visibilityFloor(ctx: Ctx): Promise<OwnGrants> {
-  if (ctx.isAgent) return { p: [], w: [], c: [] };
   const mode = (await getWorkspace(ctx.sql, ctx.workspaceId))?.default_doc_access;
   const access = mode === "workspace_view" || mode === "private" ? mode : "workspace_edit";
   const org = orgPrincipal(ctx.workspaceId);
@@ -244,9 +245,15 @@ export async function createDocument(ctx: Ctx, input: CreateDocumentInput): Prom
 /**
  * Write an imported body through the actor's apply-edits path, so the import is
  * journaled, flushed and indexed like typed content. An empty old_string on an
- * empty document is an append.
+ * empty document is an append. An agent's is proposed like its other writes,
+ * so it waits for review.
  */
 async function seedBody(ctx: Ctx, docId: string, markdown: string): Promise<boolean> {
+  if (ctx.isAgent) {
+    const source = ctx.surface === "mcp" ? "connector" : "stdio";
+    const proposed = await proposeDocEdit(ctx, { docId, action: "write", text: markdown, source }).catch(() => null);
+    return proposed?.kind === "proposed" || proposed?.kind === "auto_applied";
+  }
   const seeded = await ctx.env.docs
     .get(docId)
     .fetch(`http://actor/apply-edits?docId=${encodeURIComponent(docId)}`, {

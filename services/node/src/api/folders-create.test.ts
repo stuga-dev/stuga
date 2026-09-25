@@ -43,6 +43,7 @@ const inserted = () => mockCreateFolder.mock.calls[0]![1];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockGetWorkspace.mockResolvedValue({ default_doc_access: "workspace_edit" } as never);
   mockCreateFolder.mockImplementation(async (_sql, input) => ({
     folder_id: input.folderId,
     workspace_id: input.workspaceId,
@@ -76,9 +77,9 @@ describe("POST /api/folders", () => {
     expect(inserted().aclPrincipals).not.toContain("org:ws1");
   });
 
-  it("keeps an agent's folder to its human and itself", async () => {
-    await create(ctxOf({ alias: "agent-1", isAgent: true, onBehalfOf: "bob", principals: ["agent:agent-1", "user:bob"] }));
+  it("gives an agent's folder to its human, with the default the human's would get", async () => {
+    await create(ctxOf({ alias: "agent-1", isAgent: true, onBehalfOf: "bob", principals: ["agent:agent-1", "user:bob", "org:ws1"] }));
     expect(inserted().owner).toBe("user:bob");
-    expect(inserted().ownGrants).toEqual({ p: ["agent:agent-1"], w: ["agent:agent-1"], c: [] });
+    expect(inserted().ownGrants).toEqual({ p: ["agent:agent-1", "org:ws1"], w: ["agent:agent-1", "org:ws1"], c: [] });
   });
 });
