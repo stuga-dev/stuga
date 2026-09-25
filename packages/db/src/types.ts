@@ -33,7 +33,7 @@ export interface DocRow {
   title_source: "heading" | "user";
   doc_type: "prose" | "database";
   parent_id: string | null;
-  /** Seq of the latest indexed snapshot; 0 before the first flush. */
+  /** Seq of the latest processed snapshot, or of a version with its text; 0 before the first flush. */
   snapshot_seq: number;
   /** Oldest snapshot seq still in the version ring; null when the document publishes no ring. */
   version_floor: number | null;

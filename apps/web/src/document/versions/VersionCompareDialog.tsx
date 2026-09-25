@@ -1,7 +1,7 @@
 /**
  * One version diffed against the current document or another version, with
- * Restore and Delete. Delete lives here, not in the list, so a version is only
- * thrown away after it has been seen.
+ * Restore and Delete for those who manage the document. Delete lives here, not
+ * in the list, so a version is only thrown away after it has been seen.
  */
 import { useEffect, useState } from "react";
 import { Docs, type Version } from "../../api";
@@ -25,6 +25,7 @@ export function VersionCompareDialog({
   currentText,
   busy,
   isHead,
+  canManage,
   onClose,
   onRestore,
   onDelete,
@@ -36,14 +37,16 @@ export function VersionCompareDialog({
   /** Markdown of the live document, the default baseline. */
   currentText: string;
   busy: boolean;
-  /** The newest version cannot be deleted: the document loads from it. */
+  /** Not deletable: the Current version, or one at or past the processed head, which the server refuses. */
   isHead: boolean;
+  /** Restore and Delete are shown only to the owner or a workspace admin, on an unlocked document. */
+  canManage: boolean;
   onClose: () => void;
   onRestore: (seq: number) => void;
   onDelete: (seq: number) => void;
 }) {
   // "current" or another version's seq.
-  const [baseline, setBaseline] = useState<string>("current");
+  const [chosen, setBaseline] = useState<string>("current");
   const [targetText, setTargetText] = useState<string | null>(null);
   const [baseText, setBaseText] = useState<string>(currentText);
   const [loading, setLoading] = useState(true);
@@ -52,8 +55,10 @@ export function VersionCompareDialog({
 
   const viewed = versions.find((v) => v.seq === seq);
   const viewedLabel = viewed ? versionLabel(viewed.ts) : "this version";
-  const baselineTs = baseline === "current" ? null : versions.find((v) => v.seq === Number(baseline))?.ts;
-  const baselineLabel = baseline === "current" ? "the current document" : baselineTs ? versionLabel(baselineTs) : "the other version";
+  // A baseline a refresh dropped from the listing falls back to the current document.
+  const baseVersion = versions.find((v) => String(v.seq) === chosen);
+  const baseline = baseVersion ? chosen : "current";
+  const baselineLabel = baseVersion ? versionLabel(baseVersion.ts) : "the current document";
 
   useEffect(() => {
     let live = true;
@@ -132,8 +137,8 @@ export function VersionCompareDialog({
         }
         footer={
           <LayoutFooter>
-            <HStack gap={2} justify="between" vAlign="center">
-              {confirmDelete ? (
+            <HStack gap={2} justify={canManage ? "between" : "end"} vAlign="center">
+              {!canManage ? null : confirmDelete ? (
                 <HStack gap={2} vAlign="center">
                   <span className="vcompare-confirm">
                     Delete this version ({viewedLabel}) permanently? The document itself is unchanged.
@@ -156,22 +161,22 @@ export function VersionCompareDialog({
                   isDisabled={busy || isHead}
                   onClick={() => setConfirmDelete(true)}
                   tooltip={
-                    isHead
-                      ? "The newest version can't be deleted — it's what the document loads from"
-                      : "Remove this version from the history"
+                    isHead ? "The current version can't be deleted" : "Remove this version from the history"
                   }
                 />
               )}
               <HStack gap={2}>
                 <Button label="Close" variant="ghost" onClick={onClose} />
-                <Button
-                  label="Restore this version"
-                  variant="primary"
-                  isDisabled={busy || loading}
-                  isLoading={busy}
-                  onClick={() => onRestore(seq)}
-                  tooltip="Roll the document back to this version"
-                />
+                {canManage && (
+                  <Button
+                    label="Restore this version"
+                    variant="primary"
+                    isDisabled={busy || loading}
+                    isLoading={busy}
+                    onClick={() => onRestore(seq)}
+                    tooltip="Roll the document back to this version"
+                  />
+                )}
               </HStack>
             </HStack>
           </LayoutFooter>

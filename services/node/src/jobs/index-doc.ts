@@ -72,14 +72,14 @@ async function notifyNewMentions(
   env: JobsEnv,
   deps: JobDeps,
   doc: NonNullable<Awaited<ReturnType<JobDeps["db"]["getDoc"]>>>,
-  msg: IndexDocMessage,
+  editors: string[],
   markdown: string,
   title: string,
 ): Promise<void> {
   const added = await deps.db.syncDocMentions(doc.doc_id, markdownMentionAliases(markdown));
   if (added.length === 0 || doc.trashed) return;
-  // The first person who edited since the last flush; an agent's edit names no one.
-  const human = (msg.authors ?? []).map((a) => (a.startsWith("user:") ? a.slice("user:".length) : a)).find((a) => !a.includes(":"));
+  // The first person among the editors; an agent's edit names no one.
+  const human = editors.map((a) => (a.startsWith("user:") ? a.slice("user:".length) : a)).find((a) => !a.includes(":"));
   const actorName = human ? ((await deps.db.displayNameOf(human)) ?? human) : null;
   const recipients = await deps.db.mentionReaders(doc, added.slice(0, MAX_MENTIONS), human ?? null);
   for (const recipient of recipients) {
@@ -101,7 +101,7 @@ export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocM
   const doc = await db.getDoc(msg.docId);
   if (!doc) return;
 
-  // A forced reindex with no seq of its own reads the indexed snapshot; before the first flush there is none.
+  // A forced reindex with no seq of its own reads the row's snapshot; before the first flush there is none.
   const snapshotSeq = msg.snapshotSeq ?? doc.snapshot_seq;
   const snapshotMarkdown = snapshotSeq > 0 ? await markdownFromSnapshot(env, snapshotKey(msg.docId, snapshotSeq)) : null;
   const searchText = snapshotMarkdown ?? "";
@@ -117,7 +117,8 @@ export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocM
     const version: Parameters<JobsDb["recordVersion"]>[0] = {
       docId: msg.docId,
       seq: msg.snapshotSeq,
-      authors: msg.authors ?? [],
+      // Everyone since the previous version; `authors` covers only the last flush.
+      authors: msg.versionAuthors ?? msg.authors ?? [],
       blobKey: snapshotKey(msg.docId, msg.snapshotSeq),
       versionFloor: msg.versionFloor,
     };
@@ -129,22 +130,43 @@ export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocM
     await db.recordVersion(version);
   }
 
+  // A seq already indexed (a head the actor promoted to a version, a redelivery, a late job) was
+  // notified and embedded then: running again would re-count the embedding or roll mentions back.
+  // A forced job (the backfill) reruns its own seq, never one the row has moved past.
+  if (msg.snapshotSeq !== undefined && (doc.snapshot_seq > msg.snapshotSeq || (doc.snapshot_seq === msg.snapshotSeq && !msg.force))) return;
+
+  // Who the mentions name as their writer and who the embedding is charged to. A promote job
+  // carries no `authors` (its flush took them): when it overtakes that flush's job, the version's stand in.
+  const editors = msg.authors?.length ? msg.authors : ((msg.recordVersion && msg.versionAuthors) || []);
+
   // Before the search-hidden and unchanged-text exits: neither says anything about who is mentioned.
   if (snapshotMarkdown !== null) {
-    await notifyNewMentions(env, deps, doc, msg, snapshotMarkdown, title).catch((err: unknown) =>
+    await notifyNewMentions(env, deps, doc, editors, snapshotMarkdown, title).catch((err: unknown) =>
       log.warn("mention notifications failed", { docId: msg.docId, err: String(err) }),
     );
   }
 
+  // Both exits below skip indexDoc, yet the row's seq must keep up with the actor's head (the
+  // version listing's head_seq, the delete guard, the retention window). Last, like indexDoc: a
+  // retry must not find it indexed.
   if (doc.search_hidden) {
     await db.clearDocChunks(msg.docId);
+    if (msg.snapshotSeq !== undefined) await db.advanceSnapshotSeq(msg.docId, msg.snapshotSeq);
     return;
   }
 
   // Byte-identical text skips the embed; `force` (the backfill) bypasses it.
   const embedSource = `${title}\n\n${searchText}`;
   const hash = sha256Hex(embedSource);
-  if (!msg.force && hash === (await db.getEmbeddingHash(msg.docId))) return;
+  if (!msg.force && hash === (await db.getEmbeddingHash(msg.docId))) {
+    if (msg.snapshotSeq !== undefined) {
+      // Every seq since the row's holds this text. A version among them becomes the row's seq, so the
+      // listing still calls it current and a forced reindex reads a snapshot the ring keeps.
+      const version = await db.previousVersionSeq(msg.docId, msg.snapshotSeq + 1);
+      await db.advanceSnapshotSeq(msg.docId, version !== null && version >= doc.snapshot_seq ? version : msg.snapshotSeq);
+    }
+    return;
+  }
 
   const chunks: ChunkInput[] = [];
   if (searchText.length > 0) {
@@ -213,9 +235,9 @@ export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocM
         embeddedTokens: totalTokens,
       });
 
-      // Attributed once for the document: its first author, else its owner.
+      // Attributed once for the document: its first editor, else its owner.
       if (totalTokens > 0) {
-        const alias = msg.authors?.[0] ?? principalId(doc.owner);
+        const alias = editors[0] ?? principalId(doc.owner);
         await db
           .insertAiUsage({
             alias,

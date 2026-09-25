@@ -42,9 +42,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function render(versions: Version[]) {
+/** `currentSeq` defaults to the newest version's seq. */
+function render(versions: Version[], currentSeq: number | null = versions[0]?.seq ?? null) {
   act(() => {
-    root.render(<VersionHistory versions={versions} onOpen={(seq) => opened.push(seq)} />);
+    root.render(<VersionHistory versions={versions} currentSeq={currentSeq} onOpen={(seq) => opened.push(seq)} />);
   });
   return container;
 }
@@ -80,11 +81,17 @@ describe("VersionHistory", () => {
     expect(rows()).toHaveLength(3);
   });
 
-  it("marks the newest version as the current one, and only that one", () => {
-    render([version({ seq: 7, ts: ago(HOUR) }), version({ seq: 6, ts: ago(2 * HOUR) })]);
+  it("marks the current version, and only that one", () => {
+    render([version({ seq: 7, ts: ago(HOUR) }), version({ seq: 6, ts: ago(2 * HOUR) })], 7);
     const current = [...container.querySelectorAll(".vcurrent")];
     expect(current).toHaveLength(1);
     expect(rows()[0]!.contains(current[0]!)).toBe(true);
+  });
+
+  it("marks none current when the document has moved on past every version", () => {
+    render([version({ seq: 7, ts: ago(HOUR) }), version({ seq: 6, ts: ago(2 * HOUR) })], null);
+    expect(container.querySelector(".vcurrent")).toBeNull();
+    expect(text()).not.toContain("Current");
   });
 
   it("prints how much text each version added and removed", () => {

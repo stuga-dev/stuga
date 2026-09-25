@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { createClient, closeClients } from "./client.js";
 import { initSearchSchema } from "./testing/search-schema.js";
-import { createDoc, updateDoc, getDoc } from "./docs.js";
-import { indexDoc, searchDocs } from "./search.js";
+import { createDoc, updateDoc, getDoc, getDocSearchText } from "./docs.js";
+import { advanceSnapshotSeq, indexDoc, searchDocs } from "./search.js";
 import { provisionWorkspace } from "./workspaces.js";
 import type { Sql } from "./client.js";
 import { EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
@@ -76,6 +76,25 @@ describe.skipIf(!URL)("title provenance across index runs", () => {
     const doc = (await getDoc(sql, "d4"))!;
     expect(doc.title).toBe("Fifth");
     expect(doc.snapshot_seq).toBe(5);
+  });
+
+  it("advancing the seq with nothing to index only moves it forward and writes nothing else", async () => {
+    await createDoc(sql, { workspaceId: WS, docId: "d5", owner: "user:alice", title: "T" });
+    await flush("d5", 3, "Third", "body three");
+
+    await advanceSnapshotSeq(sql, "d5", 4);
+    const doc = (await getDoc(sql, "d5"))!;
+    expect(doc.snapshot_seq).toBe(4);
+    expect(doc.title).toBe("Third");
+    expect(await getDocSearchText(sql, "d5")).toBe("body three");
+
+    // A late job's older seq leaves it.
+    await advanceSnapshotSeq(sql, "d5", 2);
+    expect((await getDoc(sql, "d5"))!.snapshot_seq).toBe(4);
+
+    // Nor does a flush below it roll the row back.
+    await flush("d5", 3, "Stale", "stale body");
+    expect((await getDoc(sql, "d5"))!.title).toBe("Third");
   });
 
   it("a rename keeps its title through a reindex, and title_source is on the row", async () => {

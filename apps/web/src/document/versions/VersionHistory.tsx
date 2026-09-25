@@ -31,7 +31,7 @@ function byDay(versions: Version[]): Array<{ day: string; items: Version[] }> {
   return groups;
 }
 
-/** `+312 −45`; a formatting-only version says "No text change" rather than leaving a gap. */
+/** `+312 −45`; "No text change" when the Markdown is identical, as after restoring an identical version. */
 function ChangeCounts({ v }: { v: Version }) {
   const added = v.chars_added;
   const removed = v.chars_removed;
@@ -54,14 +54,16 @@ function ChangeCounts({ v }: { v: Version }) {
 
 export function VersionHistory({
   versions,
+  currentSeq,
   onOpen,
 }: {
   /** Newest first. */
   versions: Version[];
+  /** The version the document matches, labelled Current; null once edits moved past every one. */
+  currentSeq: number | null;
   onOpen: (seq: number) => void;
 }) {
   if (versions.length === 0) return <p className="empty">No versions yet.</p>;
-  const headSeq = versions[0]?.seq;
 
   return (
     <div className="version-history">
@@ -81,7 +83,7 @@ export function VersionHistory({
                   </span>
                   <span className="version-open__sub">
                     <span className="vauthors">{authorsOf(v, versions)}</span>
-                    {v.seq === headSeq && <span className="vcurrent">Current</span>}
+                    {v.seq === currentSeq && <span className="vcurrent">Current</span>}
                   </span>
                 </button>
               </li>

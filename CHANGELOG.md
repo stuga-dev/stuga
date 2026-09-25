@@ -25,6 +25,17 @@ one, the release notes say there is nothing to do.
   for review, like the agent's other writes.
 - Signing in with a password went to the library instead of the page that sent you to sign in, such
   as an invite link or a document.
+- An edit made within five minutes of the last version, with no edit after it, never became a
+  version. It now becomes one once the five minutes pass, or when someone leaves the document.
+- An edit that only changed formatting, such as making text bold, never became a version.
+- A version named only the people who edited in its last half minute. It now names everyone who
+  edited since the version before it.
+- Restoring a version lost the edits made since the last version, including ones not yet saved. The
+  document as it was before the restore is now kept as a version, so a restore can be undone.
+- The Versions panel called the newest version **Current** even when the document had changed since,
+  and did not show new versions until it was reopened.
+- A version's added and removed character counts included lines that had not changed.
+- Restore and Delete showed for people who cannot use them, and the error named only the owner.
 
 ## [0.1.1] - 2026-09-24
 

@@ -1,6 +1,6 @@
 /**
- * Plain text from the Y.Doc, for the derived title, the version text hash and
- * search. Not a faithful serializer; the Markdown projection is crdt-ops'.
+ * Plain text from the Y.Doc, for the derived title and search. Not a faithful
+ * serializer: versions hash the Markdown projection, which is crdt-ops'.
  */
 import * as Y from "yjs";
 import { getStugaSchema } from "@stuga/crdt-ops";

@@ -7,9 +7,16 @@ import { authorizedDoc, lockedError, proseOnly } from "../documents/access.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
 
+// `head_seq` is the newest processed snapshot and delete's floor; edits that recorded no
+// version leave it ahead of every listed one. `can_manage` is restore's and delete's gate.
 export async function listDocVersions({ ctx, match }: WorkspaceCall): Promise<Response> {
-  if (!(await authorizedDoc(ctx, match[1]!))) return error(404, "not found");
-  return json({ versions: await listVersions(ctx.sql, match[1]!) });
+  const doc = await authorizedDoc(ctx, match[1]!);
+  if (!doc) return error(404, "not found");
+  return json({
+    versions: await listVersions(ctx.sql, match[1]!),
+    head_seq: doc.snapshot_seq,
+    can_manage: proseOnly(doc) !== null && manages(ctx, doc) && !doc.locked,
+  });
 }
 
 export async function getVersionContent({ ctx, match }: WorkspaceCall): Promise<Response> {

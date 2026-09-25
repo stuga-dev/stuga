@@ -395,7 +395,7 @@ what they may do.
 |---|---|
 | `PATCH` / `DELETE /api/docs/:id` | Rename, move, trash or restore; delete for good. People only. Deleting takes the owner or a workspace admin. |
 | `GET` / `PUT /api/docs/:id/acl`, `/api/folders/:id/acl` | Sharing. `GET` answers the effective `acl_*` arrays, the direct `own_grants`, `inherits`, the `owner`, and `parent` (`{ folder_id, title }`, the title null when the caller cannot read that folder; null at the top level). Changing it takes the owner or a workspace admin. |
-| `/api/docs/:id/versions`, `/versions/:seq`, `/restore`, `/recover` | Version history. Restoring, deleting a version and recovering take the owner or a workspace admin. |
+| `/api/docs/:id/versions`, `/versions/:seq`, `/restore`, `/recover` | Version history. Restoring, deleting a version and recovering take the owner or a workspace admin. A restore first keeps the document it replaces as a version, so it can be undone. The listing answers `versions`, `head_seq` (the document's newest processed snapshot, ahead of every version when the latest edits recorded none; no version at or past it can be deleted) and `can_manage` (whether the caller may restore and delete; false while the document is locked). |
 | `/api/docs/:id/share-links`, `POST /api/share-links/redeem` | Share links. |
 | `PATCH` / `DELETE /api/docs/:id/comments/:n` | Resolve or delete a comment. |
 | `POST /api/docs/:id/request-access` | Ask a document's owner for access. |

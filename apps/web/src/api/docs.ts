@@ -73,6 +73,15 @@ export interface Version {
   chars_removed: number | null;
 }
 
+export interface VersionListing {
+  /** Newest first. */
+  versions: Version[];
+  /** The newest processed snapshot; ahead of every version when the latest edits recorded none. No version at or past it can be deleted. */
+  head_seq: number;
+  /** Whether the caller may restore and delete versions: they manage the doc and it is not locked. */
+  can_manage: boolean;
+}
+
 /** Listing orders the server accepts; anything else falls back to its default. */
 export type DocSort = "updated_at" | "created_at" | "title";
 export type SortOrder = "asc" | "desc";
@@ -173,7 +182,7 @@ export const Docs = {
       method: "POST",
       body: JSON.stringify({ q }),
     }),
-  versions: (id: string) => api<{ versions: Version[] }>(`/api/docs/${id}/versions`),
+  versions: (id: string) => api<VersionListing>(`/api/docs/${id}/versions`),
   comments: (id: string) => api<{ comments: Comment[] }>(`/api/docs/${id}/comments`),
   addComment: (id: string, body: string, anchor?: CommentAnchor | null) =>
     api<Comment>(`/api/docs/${id}/comments`, {
@@ -201,13 +210,13 @@ export const Docs = {
   /** Plain text of a historical version. */
   versionContent: (id: string, seq: number) =>
     api<{ seq: number; text: string }>(`/api/docs/${id}/versions/${seq}`),
-  /** Owner only. */
+  /** Owner or workspace admin. */
   restoreVersion: (id: string, seq: number) =>
     api<{ restored: number; seq: number }>(`/api/docs/${id}/restore`, {
       method: "POST",
       body: JSON.stringify({ seq }),
     }),
-  /** Owner only; the current version is refused. */
+  /** Owner or workspace admin; the current version is refused. */
   deleteVersion: (id: string, seq: number) =>
     api<{ deleted: number }>(`/api/docs/${id}/versions/${seq}`, { method: "DELETE" }),
   getAcl: (id: string) => api<AclModel>(`/api/docs/${id}/acl`),

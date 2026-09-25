@@ -1,6 +1,7 @@
 /**
  * DELETE /api/docs/:id/versions/:seq: who may call it, never the head (the actor would hydrate an
  * empty document), and the blob before the row so a crash leaves a row that reads as pruned.
+ * GET /api/docs/:id/versions: the head seq and whether the caller may restore and delete.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -151,9 +152,38 @@ describe("DELETE /api/docs/:id/versions/:seq", () => {
 });
 
 describe("GET /api/docs/:id/versions", () => {
+  type Listing = { versions: unknown[]; head_seq: number; can_manage: boolean };
+  const list = async (ctx: Ctx) => (await (await call(ctx, "GET", "/api/docs/d1/versions")).json()) as Listing;
+
   it("is readable by any principal on the ACL, not just a manager", async () => {
     const res = await call(member(), "GET", "/api/docs/d1/versions");
     expect(res.status).toBe(200);
     expect(mockListVersions).toHaveBeenCalledWith({}, "d1");
+  });
+
+  it("reports the head seq, which may be ahead of every recorded version", async () => {
+    mockListVersions.mockResolvedValueOnce([{ doc_id: "d1", seq: 40 }]);
+    expect(await list(member())).toMatchObject({ versions: [{ seq: 40 }], head_seq: 42 });
+  });
+
+  it("offers restore and delete to the owner and a workspace admin only", async () => {
+    // viv may edit the doc but does not manage it.
+    mockGetDoc.mockResolvedValue({ ...DOC, acl_writers: [...DOC.acl_writers, "user:viv"] });
+    expect((await list(owner())).can_manage).toBe(true);
+    expect((await list(admin())).can_manage).toBe(true);
+    expect((await list(member())).can_manage).toBe(false);
+    expect((await list(agent())).can_manage).toBe(false);
+  });
+
+  it("offers them to nobody while the doc is locked", async () => {
+    mockGetDoc.mockResolvedValue({ ...DOC, locked: true });
+    expect((await list(owner())).can_manage).toBe(false);
+    expect((await list(admin())).can_manage).toBe(false);
+  });
+
+  it("offers them to nobody on a database doc, which restore and delete hide", async () => {
+    mockGetDoc.mockResolvedValue({ ...DOC, doc_type: "database" });
+    expect((await list(owner())).can_manage).toBe(false);
+    expect((await list(admin())).can_manage).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ interface IndexDocFields {
   docId: string;
   snapshotSeq?: number;
   title?: string;
+  /** Who edited since the last flush. */
   authors?: string[];
   /** Bypass the content-hash dedup (the reconcile sweep re-embedding missing vectors). */
   force?: boolean;
@@ -22,6 +23,8 @@ export type IndexMessage =
       recordVersion: true;
       /** Oldest seq in the version ring after this version entered it; stored as `docs.version_floor`. */
       versionFloor: number;
+      /** Who edited since the previous version, for the version row; absent, `authors` stands in. */
+      versionAuthors?: string[];
     })
   | { kind: "gc_check"; docId: string }
   | NotifyMessage

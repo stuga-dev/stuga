@@ -80,6 +80,27 @@ describe("the actor's durability report", () => {
     expect(reports(ws)).toEqual([true, false]);
   });
 
+  it("withdraws the report when a restore saves what the flushes could not", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    const ws = await connect(dobj, h, CONNECT);
+    await edit(dobj, ws, "hello");
+    await dobj.alarm(); // seq 1
+    await edit(dobj, ws, "again");
+    const put = h.snapshots.put.bind(h.snapshots);
+    breakStorage(h);
+    await dobj.alarm();
+    h.snapshots.put = put;
+
+    const res = await dobj.fetch(new Request(`http://actor/restore?docId=${DOC}&seq=1`));
+
+    expect(res.status).toBe(200);
+    expect(reports(ws)).toEqual([true, false]);
+    const late = await connect(dobj, h, { ...CONNECT, alias: "bob" });
+    await handshake(dobj, late);
+    expect(reports(late)).toEqual([]);
+  });
+
   it("does not repeat itself while the outage continues", async () => {
     // The backstop retries every 30s. A report per retry would carry no new
     // information and would let the client restart its escalation clock forever.

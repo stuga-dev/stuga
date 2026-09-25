@@ -8,13 +8,36 @@
  * always has its bytes.
  */
 import { createHash } from "node:crypto";
+import type * as Y from "yjs";
 import { SNAPSHOT_KEEP, SNAPSHOT_MILESTONE, VERSION_KEEP, snapshotKey } from "@stuga/protocol/domain/limits";
+import { yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import type { BlobStore } from "@stuga/runtime";
 
 /** Versions run on wall-clock time, so VERSION_KEEP of them cover hours of work, not a burst of flushes. */
 export const VERSION_INTERVAL_MS = 5 * 60_000;
 
-/** sha-256 of a document's readable text: text that returned to where it was records no version. */
+/** Marks a Markdown hash; the plain-text hash a v0.1.x store holds has no prefix. */
+const MARKDOWN_HASH = "md:";
+/** Marks the plain-text hash of a document the Markdown serializer cannot read. */
+const TEXT_HASH = "txt:";
+
+/**
+ * A version's content hash: sha-256 of its Markdown, what the compare dialog shows,
+ * so formatting counts and a document that returned to where it was records no version.
+ * `plain` is the document's text. Never throws: a document the serializer cannot read
+ * hashes its text instead, so it still saves and records versions.
+ */
+export function versionHash(docId: string, doc: Y.Doc, plain: string): string {
+  try {
+    const markdown = yXmlFragmentToMarkdown(doc.getXmlFragment("default"));
+    return MARKDOWN_HASH + createHash("sha256").update(markdown).digest("hex");
+  } catch (err) {
+    console.warn("version hash: the document has no Markdown; hashing its text", { docId, err: String(err) });
+    return TEXT_HASH + hashText(plain);
+  }
+}
+
+/** sha-256 of a document's plain text: the version hash v0.1.x stored, and the fallback for a document with no Markdown. */
 export function hashText(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
@@ -24,7 +47,7 @@ export interface RingState {
   seqs: number[];
   /** Epoch ms of the last recorded version; 0 when none. */
   lastAt: number;
-  /** Text hash of the last recorded version; "" when none. */
+  /** `versionHash` of the last recorded version, or `hashText` in a store v0.1.x wrote; "" when none. */
   lastHash: string;
 }
 
@@ -40,13 +63,44 @@ export class VersionRing {
     return this.state.seqs[0]!;
   }
 
-  /** Whether a flush of `nextSeq` is due for a version: the first snapshot, the last writer leaving, or the interval. */
-  due(nextSeq: number, reason: string, now: number): boolean {
-    return nextSeq === 1 || reason === "eviction" || now - this.state.lastAt >= VERSION_INTERVAL_MS;
+  /** The newest member; 0 when none. */
+  get newest(): number {
+    return this.state.seqs.at(-1) ?? 0;
   }
 
-  changedSince(hash: string): boolean {
+  /** When the interval next allows a version. */
+  get nextAt(): number {
+    return this.state.lastAt + VERSION_INTERVAL_MS;
+  }
+
+  /** The last recorded version's hash. */
+  get lastHash(): string {
+    return this.state.lastHash;
+  }
+
+  /** Whether the last version's hash is the plain-text one v0.1.x stored. */
+  get legacyHash(): boolean {
+    const last = this.state.lastHash;
+    return last !== "" && !last.startsWith(MARKDOWN_HASH) && !last.startsWith(TEXT_HASH);
+  }
+
+  /** Whether a snapshot at `seq` is due for a version: the first snapshot, someone leaving, or the interval. */
+  due(seq: number, reason: string, now: number): boolean {
+    return seq === 1 || reason === "eviction" || now >= this.nextAt;
+  }
+
+  /**
+   * Whether a document whose `versionHash` is `hash` differs from the last version.
+   * Against a v0.1.x hash its plain `text` is compared, so an upgrade records no duplicate.
+   */
+  changedSince(hash: string, text: string): boolean {
+    if (this.legacyHash) return hashText(text) !== this.state.lastHash;
     return hash !== this.state.lastHash;
+  }
+
+  /** Replace a v0.1.x hash with the `versionHash` of the version it describes. */
+  rehash(hash: string): void {
+    this.state = { ...this.state, lastHash: hash };
   }
 
   /** Replaced whole on every change, so a held snapshot is a real copy for rollback. */

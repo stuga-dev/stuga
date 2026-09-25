@@ -216,7 +216,7 @@ export class DocActor implements Actor<SessionMeta> {
     // it. A raw send, so a failure fails the upgrade instead of a silently stuck tab.
     pair.server.send(encodeBinary(Opcode.DOCUMENT_EPOCH, encodeEpoch(this.store.epoch)));
     pair.server.send(encodeBinary(Opcode.SYNC_STEP_1, Y.encodeStateVector(this.store.doc)));
-    // Arms only if hydration replayed an unflushed log.
+    // Arms only if hydration replayed an unflushed log, or the head is owed a version.
     await this.store.armAlarms();
     return upgradeResponse(pair.client);
   }
@@ -245,7 +245,10 @@ export class DocActor implements Actor<SessionMeta> {
     try {
       this.peers.logConnectionCounts(this.store.docId, "disconnect", ws);
       // A revoked socket's departure is not a reason to persist anything on its behalf.
-      if (code !== CloseCode.ACCESS_REVOKED && this.store.isDirty) await this.store.flush("eviction");
+      if (code === CloseCode.ACCESS_REVOKED) return;
+      // Someone leaving records a version: of the unsaved edits, or else of a head a flush saved without one.
+      if (this.store.isDirty) await this.store.flush("eviction");
+      else await this.store.promote("eviction");
     } catch (err) {
       this.handlerThrew("webSocketClose", err);
     }
@@ -261,13 +264,14 @@ export class DocActor implements Actor<SessionMeta> {
   }
 
   /**
-   * The flush backstop, never a keepalive. It routinely fires on a fresh instance
-   * after a headless write, so it must not gate on in-memory `dirty`: flush
-   * rehydrates first and decides.
+   * The flush backstop and the timer for a version the head is owed, never a
+   * keepalive. It routinely fires on a fresh instance after a headless write, so
+   * it must not gate on in-memory `dirty`: flush and promote rehydrate first and decide.
    */
   async alarm(): Promise<void> {
     if (this.destroyed) return;
     await this.store.flush("timer");
+    await this.store.promote("timer");
     await this.store.armAlarms();
   }
 

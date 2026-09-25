@@ -140,6 +140,25 @@ describe("DocActor journals dependency-pending updates", () => {
     expect(h.state.storage.alarm, "parked bytes must arm the flush backstop").not.toBeNull();
   });
 
+  it("owes no version while everything held is parked, so its flush arms nothing", async () => {
+    // A version of a document that decodes empty would blank its history; an alarm
+    // re-armed for one that can never be taken would wake the actor forever.
+    const h = harness();
+    const dobj = makeActor(h);
+    const ws = await connect(dobj, h, CONNECT);
+    const [, gapped] = producer(["A", "B"]);
+    await send(dobj, ws, gapped!);
+
+    await dobj.alarm();
+    expect((await h.state.storage.get<{ seq: number }>("meta"))!.seq).toBe(1);
+    expect(h.state.storage.alarm).toBeNull();
+    await dobj.webSocketClose(ws, 1000, "", true);
+    await dobj.alarm();
+
+    expect(h.queued.filter((m) => m.kind === "index_doc")).toEqual([]);
+    expect(h.state.storage.alarm).toBeNull();
+  });
+
   it("survives eviction once flushed: a fresh instance resolves the gap from the snapshot", async () => {
     const h = harness();
     const first = makeActor(h);

@@ -4,7 +4,7 @@ import { DOC_FLUSH_INTERVAL_MS } from "@stuga/protocol/domain/limits";
 import { Docs, type DocSummary } from "../api";
 
 /** Time the index job gets, after the actor's snapshot, to write the document's row, embedding included. */
-const INDEX_ALLOWANCE_MS = 10_000;
+export const INDEX_ALLOWANCE_MS = 10_000;
 
 /**
  * Re-read the document once its content has been still long enough to be

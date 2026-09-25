@@ -4,6 +4,7 @@ import {
   type Sql,
   type WorkspaceEventInsert,
   advanceEmbeddingBackfill,
+  advanceSnapshotSeq,
   bumpChunkEmbedAttempt,
   clearDocChunks,
   countAccounts,
@@ -65,6 +66,7 @@ export function jobsDb(sql: Sql) {
     getReusableChunkEmbeddings: (docId: string, dims: number) => getReusableChunkEmbeddings(sql, docId, dims),
     insertAiUsage: (u: Parameters<typeof insertAiUsage>[1]) => insertAiUsage(sql, u),
     indexDoc: (input: Parameters<typeof indexDoc>[1]) => indexDoc(sql, input),
+    advanceSnapshotSeq: (docId: string, snapshotSeq: number) => advanceSnapshotSeq(sql, docId, snapshotSeq),
     /**
      * Store a notification and, when the row is new, queue its sink delivery in the same
      * transaction: a retried job then never finds its own row and skips a delivery that never ran.

@@ -8,10 +8,11 @@ import { applyMarkdownToYXmlFragment } from "@stuga/crdt-ops";
 import type { Peers } from "../session.js";
 import { deriveTitle, extractText } from "../text-extract.js";
 import type { DocStore, StoreEnv } from "./doc-store.js";
-import { hashText, pruneUnretained } from "./retention.js";
+import { pruneUnretained, versionHash } from "./retention.js";
 
 /**
- * Make `next` the head: a fresh seq (monotonic, so the index row is accepted), a
+ * Make `next` the head: with `checkpoint`, the live document first recorded as a
+ * version of its own; then a fresh seq (monotonic, so the index row is accepted), a
  * new rollback generation committed with it before any socket is reset (the
  * durable epoch fences the tab that was away), the superseded pending log
  * dropped, a version recorded, then every live client sent back for a clean sync.
@@ -26,8 +27,10 @@ async function installHead(
   authors: string[],
   reason: string,
   detail: Record<string, unknown>,
+  checkpoint: boolean,
 ): Promise<number> {
   return store.exclusive(async () => {
+    if (checkpoint) await store.checkpoint();
     const newSeq = store.seq + 1;
     await env.snapshots.put(snapshotKey(store.docId, newSeq), Y.encodeStateAsUpdate(next));
     store.seq = newSeq;
@@ -35,9 +38,11 @@ async function installHead(
     // The head this instance could not read is no longer the head.
     store.hydrationIncomplete = false;
     const plain = extractText(next);
-    const evictedVersion = store.ring.note(newSeq, Date.now(), hashText(plain));
+    const evictedVersion = store.ring.note(newSeq, Date.now(), versionHash(store.docId, next, plain));
     console.info("document head installed", { docId: store.docId, seq: newSeq, reason, epoch: store.epoch, ...detail });
     await store.commitHead();
+    // The pending log is gone with the head it edited, so nothing is left unsaved.
+    store.setPersistDegraded(false);
 
     try {
       await env.jobs.send({
@@ -62,19 +67,23 @@ async function installHead(
     for (const ws of peers.all()) peers.resetSocket(ws, `head replaced (${reason})`);
     // After the fan-out, which must not wait on a blob delete.
     await pruneUnretained(env.snapshots, store.docId, store.seq, store.ring, evictedVersion);
+    // Also forgets who wrote the replaced document, so no later version names them.
     store.unload();
     return newSeq;
   });
 }
 
-/** Roll back to a historical snapshot. Returns the new head seq, or null when the target is gone. */
+/**
+ * Roll back to a historical snapshot, after recording what it replaces, so the
+ * restore can be undone. Returns the new head seq, or null when the target is gone.
+ */
 export async function restoreToVersion(store: DocStore, env: StoreEnv, peers: Peers, targetSeq: number): Promise<number | null> {
   await store.ensureLoaded();
   const obj = await env.snapshots.get(snapshotKey(store.docId, targetSeq));
   if (!obj) return null;
   const restored = new Y.Doc();
   Y.applyUpdate(restored, new Uint8Array(await obj.arrayBuffer()), "restore");
-  return installHead(store, env, peers, restored, [`restore:v${targetSeq}`], "restore", { fromSeq: targetSeq });
+  return installHead(store, env, peers, restored, [`restore:v${targetSeq}`], "restore", { fromSeq: targetSeq }, true);
 }
 
 /**
@@ -137,7 +146,8 @@ export async function recoverHead(store: DocStore, env: StoreEnv, peers: Peers, 
     await env.snapshots.put(stranded, Y.encodeStateAsUpdate(store.doc));
   }
 
-  const seq = await installHead(store, env, peers, next, ["system:recovered"], "recover", { missingSeq, from: from.kind });
+  // No checkpoint: the live document is not the real one.
+  const seq = await installHead(store, env, peers, next, ["system:recovered"], "recover", { missingSeq, from: from.kind }, false);
   console.warn("recover: head rebuilt", { docId: store.docId, missingSeq, seq, from, stranded });
   return { status: 200, seq, epoch: store.epoch, from, stranded };
 }

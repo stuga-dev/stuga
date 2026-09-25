@@ -236,6 +236,17 @@ export async function indexDoc(sql: Sql, input: IndexDocInput): Promise<void> {
   });
 }
 
+/**
+ * Move `snapshot_seq` to a flush that had nothing to index (a search-hidden
+ * document, unchanged text), so it keeps up with the actor's head. Forward
+ * only, like indexDoc's guard.
+ */
+export async function advanceSnapshotSeq(sql: Sql, docId: string, snapshotSeq: number): Promise<void> {
+  await sql`
+    UPDATE docs SET snapshot_seq = ${snapshotSeq}
+    WHERE doc_id = ${docId} AND snapshot_seq < ${snapshotSeq}`;
+}
+
 export interface SearchInput {
   /** The searcher's flattened principal set. */
   principals: string[];
