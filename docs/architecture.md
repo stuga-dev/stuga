@@ -160,7 +160,8 @@ in `packages/runtime/src/interfaces.ts`, and the host guarantees:
 - **Sockets with typed session state.** An actor accepts the server half of a socket with
   `acceptWebSocket(ws, meta)`. `meta` is typed per actor and lives as long as the socket, which is
   enough because the host evicts only actors with no open sockets (after ten idle minutes) and a
-  restart closes every socket with 1012. Clients reconnect and re-sync.
+  restart or a backup's pause closes every socket with 1012. Clients reconnect and re-sync; one that
+  leaves while the actor waits to close has its last frames and its close handled first.
 - **Heartbeat in the host.** The client sends the text frame `ping` on a timer, and the host answers
   `pong` without entering the actor, so a keepalive never waits behind the actor's lock.
 

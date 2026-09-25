@@ -63,9 +63,9 @@ class TestActor implements Actor {
         return new Response("stored");
       }
       case "/get": {
-        const v = await storage.get<{ bytes: Uint8Array; nested: unknown } | number>(url.searchParams.get("key")!);
+        const v = await storage.get<{ bytes: Uint8Array; nested: unknown } | number | string>(url.searchParams.get("key")!);
         if (v === undefined) return new Response("missing", { status: 404 });
-        if (typeof v === "number") return new Response(String(v));
+        if (typeof v === "number" || typeof v === "string") return new Response(String(v));
         return Response.json({ isBytes: v.bytes instanceof Uint8Array, bytes: [...v.bytes], nested: v.nested });
       }
       case "/sql": {
@@ -116,9 +116,24 @@ class TestActor implements Actor {
       this.env.log.push("message:slow:end");
       return;
     }
+    if (message === "alarm-now") {
+      // Like the doc actor past its flush threshold: the work is left to an alarm due now.
+      this.env.log.push("message:alarm-now:start");
+      await this.state.storage.setAlarm(Date.now());
+      await sleep(30);
+      this.env.log.push("message:alarm-now:end");
+      return;
+    }
+    if (message === "due") {
+      // The same without holding the lock, so a stream of these sets the alarm for now over and over.
+      await this.state.storage.setAlarm(Date.now());
+      return;
+    }
     if (typeof message === "string") {
       this.env.log.push(`message:${message}`);
       ws.send(`echo:${message}`);
+      // Writes, like the doc actor's journal, so a frame run over a closed store fails loudly.
+      await this.state.storage.put("lastMessage", message);
     } else {
       ws.send(new Uint8Array(message).reverse());
     }
@@ -130,9 +145,21 @@ class TestActor implements Actor {
     return true;
   }
 
-  async webSocketClose(_ws: unknown, code: number): Promise<void> {
+  // Both write, like the doc actor's flush, so a call over a closed store fails loudly.
+  async webSocketClose(_ws: unknown, code: number, reason: string): Promise<void> {
     this.closes += 1;
     this.env.log.push(`close:${code}`);
+    if (reason === "slow") {
+      // Holds the lock for a while, like the doc actor's flush when someone leaves.
+      await sleep(30);
+      this.env.log.push("close:slow:end");
+    }
+    await this.state.storage.put("lastClose", code);
+  }
+
+  async webSocketError(): Promise<void> {
+    this.env.log.push("error");
+    await this.state.storage.put("lastError", true);
   }
 
   async alarm(): Promise<void> {
@@ -168,6 +195,22 @@ function host(dir: string, env: Env, idleMs = Infinity, more: Partial<ActorHostO
   return ns;
 }
 
+/** A `ws` stand-in that records what the host sends and the codes it closes with; the test fires its listeners. */
+function fakeWs() {
+  const listeners = new Map<string, (...args: unknown[]) => void>();
+  const sent: unknown[] = [];
+  const closes: number[] = [];
+  const ws = {
+    OPEN: 1,
+    readyState: 1,
+    send: (data: unknown) => sent.push(data),
+    close: (code: number) => closes.push(code),
+    terminate: () => {},
+    on: (event: string, fn: (...args: unknown[]) => void) => listeners.set(event, fn),
+  };
+  return { ws, listeners, sent, closes };
+}
+
 /** The stamp in an actor's file, read behind the host's back. */
 function stampOf(dir: string, actor: string): number {
   const db = new DatabaseSync(join(dir, `${encodeActorName(actor)}.sqlite`));
@@ -176,6 +219,21 @@ function stampOf(dir: string, actor: string): number {
   } finally {
     db.close();
   }
+}
+
+/**
+ * Actor `d1` evicted but still closing: it closed its only socket, and the peer's close arrives as
+ * the host evicts it, so close() runs that slow departure before the store closes.
+ */
+async function evicting() {
+  const env: Env = { log: [] };
+  const ns = host(tempDir(), env);
+  const server = serverSocketOf(await ns.get("d1").fetch("http://actor/connect", { headers: { upgrade: "websocket" } }));
+  server.close(4000, "slow");
+  const evicted = ns.evictIdle(0);
+  const departed = server.owner!.deliverClose(server, 4000, "slow", true);
+  expect(ns.resident()).toEqual([]);
+  return { env, ns, done: Promise.all([evicted, departed]) };
 }
 
 afterEach(async () => {
@@ -294,6 +352,35 @@ describe("alarms", () => {
     await until(() => env.log.length >= 2);
     expect(env.log).toEqual(["alarm:start", "alarm:end"]);
   });
+
+  it("fires one a handler sets for now after that handler, under the lock", async () => {
+    const env: Env = { log: [] };
+    const ns = host(tempDir(), env);
+    const server = serverSocketOf(await ns.get("d1").fetch("http://actor/connect", { headers: { upgrade: "websocket" } }));
+    await server.owner!.deliverMessage(server, "alarm-now");
+    await until(() => env.log.includes("alarm:end"));
+    expect(env.log).toEqual(["message:alarm-now:start", "message:alarm-now:end", "alarm:start", "alarm:end"]);
+  });
+
+  it("fires one that is due while a stream of frames keeps setting it for now", async () => {
+    const env: Env = { log: [] };
+    const ns = host(tempDir(), env);
+    const server = serverSocketOf(await ns.get("d1").fetch("http://actor/connect", { headers: { upgrade: "websocket" } }));
+    // One frame per timer tick, the next tick scheduled before the frame's handler sets the alarm: a
+    // timer made anew on every set would always sit behind the next frame, and never fire.
+    let frames = 0;
+    await new Promise<void>((resolve) => {
+      const tick = () => {
+        if (env.log.includes("alarm:start") || frames === 50) return resolve();
+        setTimeout(tick, 0);
+        frames += 1;
+        void server.owner!.deliverMessage(server, "due");
+      };
+      tick();
+    });
+    expect(env.log).toContain("alarm:start");
+    expect(frames).toBeLessThan(5);
+  });
 });
 
 describe("pause and resume", () => {
@@ -345,6 +432,137 @@ describe("pause and resume", () => {
     expect(env.log.filter((l) => l === "alarm:end")).toHaveLength(2);
     expect([...ns.resident()].sort()).toEqual(["cold", "resident"]);
   });
+
+  it.each([
+    ["set while close() waits", false],
+    ["already queued when close() starts", true],
+  ])("keeps an alarm a handler sets for now, %s, and fires it on resume", async (_when, queuedFirst) => {
+    const env: Env = { log: [] };
+    const ns = host(tempDir(), env);
+    const server = serverSocketOf(await ns.get("d1").fetch("http://actor/connect", { headers: { upgrade: "websocket" } }));
+    const handled = server.owner!.deliverMessage(server, "alarm-now");
+    // The alarm's zero-delay timer fires within the first poll, so it waits on the lock before close() does.
+    if (queuedFirst) await until(() => env.log.includes("message:alarm-now:start"));
+
+    await ns.pause();
+    await handled;
+    await sleep(50);
+    expect(env.log).toEqual(["message:alarm-now:start", "message:alarm-now:end"]);
+
+    ns.resume();
+    await until(() => env.log.includes("alarm:end"));
+    expect(env.log).toEqual(["message:alarm-now:start", "message:alarm-now:end", "alarm:start", "alarm:end"]);
+    expect(await (await ns.get("d1").fetch("http://actor/get?key=alarmFired")).text()).toBe("1");
+  });
+});
+
+describe("socket events after close", () => {
+  /** A namespace that collects actor failures, and one socket on actor `d1`. */
+  async function connected() {
+    const env: Env = { log: [] };
+    const failures: string[] = [];
+    const ns = host(tempDir(), env, Infinity, { onError: (error, ctx) => failures.push(`${ctx.entry}: ${String(error)}`) });
+    const res = await ns.get("d1").fetch("http://actor/connect?alias=a", { headers: { upgrade: "websocket" } });
+    const server = serverSocketOf(res);
+    return { env, failures, ns, server, owner: server.owner! };
+  }
+
+  it("reach no actor callback once the actor is closed, and leave its store alone", async () => {
+    const { env, failures, ns, server, owner } = await connected();
+    await ns.pause();
+    expect(server.closed?.code).toBe(1012);
+
+    await owner.deliverMessage(server, "hello");
+    await owner.deliverMessage(server, "cancel");
+    await owner.deliverError(server, new Error("reset"));
+    await owner.deliverClose(server, 1012, "service restart", true);
+    expect(env.log).toEqual([]);
+    expect(failures).toEqual([]);
+
+    ns.resume();
+    expect((await ns.get("d1").fetch("http://actor/get?key=lastClose")).status).toBe(404);
+    expect((await ns.get("d1").fetch("http://actor/get?key=lastError")).status).toBe(404);
+  });
+
+  it("run the frames and then the close of a peer that leaves while close() waits, since it never reconnects", async () => {
+    const { env, failures, ns, server } = await connected();
+    const { ws, listeners, sent, closes } = fakeWs();
+    attachSocket(server, ws as never);
+    const stays = serverSocketOf(await ns.get("d1").fetch("http://actor/connect?alias=b", { headers: { upgrade: "websocket" } }));
+    const slow = ns.get("d1").fetch("http://actor/slow");
+    await until(() => env.log.includes("fetch:start"));
+
+    const pausing = ns.pause();
+    listeners.get("message")!(Buffer.from("hello"), false);
+    await stays.owner!.deliverMessage(stays, "resent");
+    listeners.get("message")!(Buffer.from("world"), false);
+    listeners.get("close")!(1001, Buffer.from("going away"));
+    await pausing;
+    // The leaver's frames and close ran in order before the store closed, and pause waited for them.
+    // The frame of the peer that stays is dropped: it resends what the store lacks when it reconnects.
+    expect(env.log).toEqual(["fetch:start", "fetch:end", "message:hello", "message:world", "close:1001"]);
+    expect(failures).toEqual([]);
+    expect(await (await slow).text()).toBe("ok");
+    expect(sent).toEqual(["welcome", "echo:hello", "echo:world"]);
+    expect(server.closed).toEqual({ code: 1001, reason: "going away" });
+    expect(closes).toEqual([]);
+    expect(stays.closed).toEqual({ code: 1012, reason: "service restart" });
+
+    ns.resume();
+    expect(await (await ns.get("d1").fetch("http://actor/get?key=lastMessage")).text()).toBe("world");
+    expect(await (await ns.get("d1").fetch("http://actor/get?key=lastClose")).text()).toBe("1001");
+  });
+
+  it("still let a cancel through while close() waits, but queue nothing behind it", async () => {
+    const { env, failures, ns, server, owner } = await connected();
+    const slow = ns.get("d1").fetch("http://actor/slow");
+    await until(() => env.log.includes("fetch:start"));
+
+    const pausing = ns.pause();
+    await owner.deliverMessage(server, "cancel");
+    await owner.deliverMessage(server, "hello");
+    await pausing;
+    await slow;
+    await sleep(10);
+    expect(env.log).toEqual(["fetch:start", "intercept:cancel", "fetch:end"]);
+    expect(failures).toEqual([]);
+    ns.resume();
+  });
+
+  it("run one queued before close() against the open store", async () => {
+    const { env, failures, ns, server, owner } = await connected();
+    const slow = ns.get("d1").fetch("http://actor/slow");
+    await until(() => env.log.includes("fetch:start"));
+
+    const queued = owner.deliverClose(server, 1000, "", true);
+    await ns.pause();
+    await Promise.all([queued, slow]);
+    expect(env.log).toEqual(["fetch:start", "fetch:end", "close:1000"]);
+    expect(failures).toEqual([]);
+
+    ns.resume();
+    expect(await (await ns.get("d1").fetch("http://actor/get?key=lastClose")).text()).toBe("1000");
+  });
+
+  it("reach the new instance after pause and resume, and never the old one", async () => {
+    const { env, failures, ns, server: old, owner: oldOwner } = await connected();
+    await ns.pause();
+    ns.resume();
+
+    const res = await ns.get("d1").fetch("http://actor/connect?alias=b", { headers: { upgrade: "websocket" } });
+    const server = serverSocketOf(res);
+    const owner = server.owner!;
+    expect(owner).not.toBe(oldOwner);
+
+    await owner.deliverMessage(server, "hello");
+    expect(server.sentStrings).toEqual(["welcome", "echo:hello"]);
+    await owner.deliverError(server, new Error("reset"));
+    await oldOwner.deliverClose(old, 1012, "service restart", true);
+    await owner.deliverClose(server, 1000, "", true);
+    expect(env.log).toEqual(["message:hello", "error", "close:1000"]);
+    expect(failures).toEqual([]);
+    expect(await (await ns.get("d1").fetch("http://actor/get?key=lastClose")).text()).toBe("1000");
+  });
 });
 
 describe("eviction", () => {
@@ -368,6 +586,37 @@ describe("eviction", () => {
     serverSocketOf(res).close();
     await ns.evictIdle();
     expect(ns.resident()).toEqual([]);
+  });
+
+  it("opens an actor again only once its eviction has closed the store", async () => {
+    const { env, ns, done } = await evicting();
+    const reopened = ns.get("d1").fetch("http://actor/slow");
+    await Promise.all([done, reopened]);
+    expect(env.log).toEqual(["close:4000", "close:slow:end", "fetch:start", "fetch:end"]);
+    expect(ns.resident()).toEqual(["d1"]);
+    expect(await (await ns.get("d1").fetch("http://actor/get?key=lastClose")).text()).toBe("4000");
+  });
+
+  it("pauses only once an eviction under way has closed the store", async () => {
+    const { env, ns, done } = await evicting();
+    await ns.pause();
+    expect(env.log).toEqual(["close:4000", "close:slow:end"]);
+    await done;
+    ns.resume();
+  });
+});
+
+describe("close", () => {
+  it("waits for an eviction under way, then opens no actor, not even one that waited on it", async () => {
+    const { env, ns, done } = await evicting();
+    const waited = expect(ns.get("d1").fetch("http://actor/count")).rejects.toThrow(/\[actor test\] closed/);
+
+    await ns.close();
+    expect(env.log).toEqual(["close:4000", "close:slow:end"]);
+    await waited;
+    await expect(ns.get("d2").fetch("http://actor/count")).rejects.toThrow(/\[actor test\] closed/);
+    expect(ns.resident()).toEqual([]);
+    await done;
   });
 });
 
@@ -422,17 +671,8 @@ describe("sockets", () => {
     const ns = host(tempDir(), env);
     const res = await ns.get("hb").fetch("http://actor/connect", { headers: { upgrade: "websocket" } });
     const server = serverSocketOf(res);
-    const listeners = new Map<string, (...args: unknown[]) => void>();
-    const sent: unknown[] = [];
-    const fakeWs = {
-      OPEN: 1,
-      readyState: 1,
-      send: (d: unknown) => sent.push(d),
-      close: () => {},
-      terminate: () => {},
-      on: (event: string, fn: (...args: unknown[]) => void) => listeners.set(event, fn),
-    };
-    attachSocket(server, fakeWs as never);
+    const { ws, listeners, sent } = fakeWs();
+    attachSocket(server, ws as never);
     expect(sent).toEqual(["welcome"]);
 
     listeners.get("message")!(Buffer.from("ping"), false);

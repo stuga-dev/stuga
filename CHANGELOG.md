@@ -39,6 +39,8 @@ one, the release notes say there is nothing to do.
 - Clicking at the end of a line where a collaborator's cursor sat put your cursor at the start of the
   line, so what you typed landed before their text. Double-clicking a word their cursor sat in could
   select only part of it, and clicking their cursor's flag did nothing; it now puts your cursor there.
+- A backup that paused a document while someone had unsaved edits logged errors, could list a version
+  the document did not keep, and lost the last edits of someone who closed the document meanwhile.
 
 ## [0.1.1] - 2026-09-24
 

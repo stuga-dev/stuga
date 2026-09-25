@@ -60,7 +60,7 @@ export interface ActorStorage {
  * A server-side WebSocket owned by an actor. `meta` is the session state the
  * actor handed to `acceptWebSocket`; it lives exactly as long as the socket,
  * which is enough because the host only evicts actors with no open sockets and
- * a restart closes every socket.
+ * a restart or a pause closes every socket.
  */
 export interface ActorSocket<Meta = unknown> {
   send(data: string | Uint8Array | ArrayBuffer): void;
@@ -76,7 +76,8 @@ export interface ClientSocket {
 export interface ActorState<Meta = unknown> {
   readonly storage: ActorStorage;
   /** Hand a server socket to the host with its session state; from now on the
-   *  actor's socket callbacks fire for it and it appears in `getWebSockets()`. */
+   *  actor's socket callbacks fire for it, until the host closes (see `Actor`),
+   *  and it appears in `getWebSockets()`. */
   acceptWebSocket(ws: ActorSocket<Meta>, meta: Meta): void;
   /** Open sockets (closed ones are not returned). */
   getWebSockets(): ActorSocket<Meta>[];
@@ -85,6 +86,14 @@ export interface ActorState<Meta = unknown> {
 /**
  * What an actor class implements. Every method runs under the actor's lock —
  * except `interceptWebSocketMessage`.
+ *
+ * Once the host starts closing the actor (a restart, a pause, an eviction), work
+ * already queued still runs and a due alarm waits for the next open. A new frame
+ * reaches `interceptWebSocketMessage` and is otherwise held; an error reaches
+ * nothing. A peer that leaves before the store closes never reconnects, so its
+ * held frames and then its close still run first. The sockets left are dropped
+ * with 1012 and their held frames with them: those clients resend what the
+ * store lacks when they reconnect. No callback fires for them.
  */
 export interface Actor<Meta = unknown> {
   fetch(request: Request): Promise<Response>;

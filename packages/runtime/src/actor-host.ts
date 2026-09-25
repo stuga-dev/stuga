@@ -234,8 +234,17 @@ class HostedActor implements SocketOwner {
   #instance: Actor | null = null;
   #sockets = new Set<ServerSocket>();
   #timer: NodeJS.Timeout | null = null;
+  /** The alarm `#timer` fires for; null while it only wakes up to look again. */
+  #timerAt: number | null = null;
   #alarmRetries = 0;
+  /** Set when close() starts: work queued from then on would run after the store closes. */
   #closed = false;
+  /** Set once close() holds the lock: the instance is never entered again. */
+  #done = false;
+  /** Closes from peers that left while close() waited: they never reconnect, so close() runs these first. */
+  #departures: Array<() => Promise<void>> = [];
+  /** Frames that arrived while close() waited, by socket: its departure runs them, else they are dropped. */
+  #held = new Map<ServerSocket, Array<string | ArrayBuffer>>();
 
   constructor(
     readonly actorName: string,
@@ -259,6 +268,8 @@ class HostedActor implements SocketOwner {
   }
 
   private instance(): Actor {
+    // Never built or entered over a closed store; the namespace opens a new HostedActor instead.
+    if (this.#done) throw new Error(`[actor ${this.opts.name}/${this.actorName}] entered after its store closed`);
     this.#instance ??= this.factory(this.state);
     return this.#instance;
   }
@@ -284,27 +295,39 @@ class HostedActor implements SocketOwner {
   }
 
   deliverMessage(ws: ServerSocket, message: string | ArrayBuffer): Promise<void> {
+    if (this.#done) return Promise.resolve();
     this.touch();
     try {
+      // Still offered while close() waits: a cancel ends the work it waits for.
       if (this.instance().interceptWebSocketMessage?.(ws, message)) return Promise.resolve();
     } catch (e) {
       this.report(e, "interceptWebSocketMessage");
       return Promise.resolve();
     }
+    // Queued behind close() it would meet the closed store: held for the peer's close instead.
+    if (this.#closed) {
+      const held = this.#held.get(ws);
+      if (held) held.push(message);
+      else this.#held.set(ws, [message]);
+      return Promise.resolve();
+    }
     return this.mutex.run(async () => {
       this.touch();
-      try {
-        await this.instance().webSocketMessage?.(ws, message);
-      } catch (e) {
-        this.report(e, "webSocketMessage");
-      }
+      await this.message(ws, message);
     });
   }
 
+  private async message(ws: ServerSocket, message: string | ArrayBuffer): Promise<void> {
+    try {
+      await this.instance().webSocketMessage?.(ws, message);
+    } catch (e) {
+      this.report(e, "webSocketMessage");
+    }
+  }
+
   deliverClose(ws: ServerSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
-    this.touch();
-    return this.mutex.run(async () => {
-      this.touch();
+    if (this.#done) return Promise.resolve();
+    const deliver = async (): Promise<void> => {
       try {
         await this.instance().webSocketClose?.(ws, code, reason, wasClean);
       } catch (e) {
@@ -312,10 +335,29 @@ class HostedActor implements SocketOwner {
       } finally {
         this.#sockets.delete(ws);
       }
+    };
+    if (this.#closed) {
+      // The frames it sent while close() waited go first: the store must hold them before it closes.
+      const held = this.#held.get(ws) ?? [];
+      this.#held.delete(ws);
+      return new Promise((resolve) =>
+        this.#departures.push(async () => {
+          for (const message of held) await this.message(ws, message);
+          await deliver();
+          resolve();
+        }),
+      );
+    }
+    this.touch();
+    return this.mutex.run(async () => {
+      this.touch();
+      await deliver();
     });
   }
 
   deliverError(ws: ServerSocket, error: unknown): Promise<void> {
+    // A close follows every error, and runs before the store closes.
+    if (this.#closed) return Promise.resolve();
     this.touch();
     return this.mutex.run(async () => {
       this.touch();
@@ -358,12 +400,13 @@ class HostedActor implements SocketOwner {
 
   /** (Re)schedule the timer from the alarm row. Cheap; called on every change. */
   armAlarm(): void {
-    if (this.#timer) {
-      clearTimeout(this.#timer);
-      this.#timer = null;
-    }
-    if (this.#closed) return;
-    const at = this.storage.readAlarm();
+    const at = this.#closed ? null : this.storage.readAlarm();
+    // A timer due no later than the row stays, and fireAlarm re-reads the row. Made anew on every
+    // change, it would never fire while a stream of frames keeps setting the alarm for now.
+    if (at !== null && this.#timer && this.#timerAt !== null && this.#timerAt <= at) return;
+    if (this.#timer) clearTimeout(this.#timer);
+    this.#timer = null;
+    this.#timerAt = null;
     if (at === null) return;
     const delay = Math.max(0, at - Date.now());
     if (delay > MAX_TIMER_MS) {
@@ -372,10 +415,12 @@ class HostedActor implements SocketOwner {
       return;
     }
     this.#timer = setTimeout(() => void this.fireAlarm(), delay);
+    this.#timerAt = at;
   }
 
   private async fireAlarm(): Promise<void> {
     this.#timer = null;
+    this.#timerAt = null;
     this.touch();
     await this.mutex.run(async () => {
       if (this.#closed) return;
@@ -405,15 +450,19 @@ class HostedActor implements SocketOwner {
   }
 
   /**
-   * Stop timers, drop every socket with 1012 (service restart — clients
-   * reconnect) and close the database once whatever is running has finished.
-   * Returns the alarm that was pending, so the namespace can keep a cold timer.
+   * Stop timers, drop every socket with 1012 (service restart — clients reconnect and resend what
+   * the store lacks) and close the database once whatever is running has finished and the peers
+   * that left meanwhile are handled. Returns the pending alarm, for the namespace's cold timer.
    */
   async close(): Promise<number | null> {
     this.#closed = true;
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
-    return this.mutex.run(() => {
+    return this.mutex.run(async () => {
+      for (let next = this.#departures.shift(); next; next = this.#departures.shift()) await next();
+      this.#done = true;
+      // Frames held for the peers that stay: they resend what the store lacks when they reconnect.
+      this.#held.clear();
       for (const ws of this.#sockets) ws.close(1012, "service restart");
       this.#sockets.clear();
       const alarm = this.storage.readAlarm();
@@ -431,7 +480,7 @@ export interface HostedNamespace extends ActorNamespace {
   /** Close every actor that has been idle for at least `idleMs` (default: the
    *  namespace's own setting). Runs on a timer. */
   evictIdle(idleMs?: number): Promise<void>;
-  /** Cancel every timer and close every actor's database. */
+  /** Cancel every timer and close every actor's database, evictions under way included; no actor opens afterwards. */
   close(): Promise<void>;
   /**
    * Close every actor and keep them closed: each finishes what it is doing, its sockets drop with
@@ -459,10 +508,13 @@ export function createActorNamespace<Env, Meta>(
   const coldAlarms = new Map<string, { timer: NodeJS.Timeout; at: number }>();
   /** While paused: the alarms to arm on resume. */
   const heldAlarms = new Map<string, number>();
+  /** Actors out of `actors` whose close() is still running: none reopens before its store is closed. */
+  const closing = new Map<string, Promise<unknown>>();
   let closed = false;
   let paused = false;
 
   const open = (actorName: string): HostedActor => {
+    if (closed) throw new Error(`[actor ${opts.name}] closed; the node is shutting down`);
     if (paused) throw new Error(`[actor ${opts.name}] paused while the node backs up; try again shortly`);
     const cold = coldAlarms.get(actorName);
     if (cold) {
@@ -509,9 +561,20 @@ export function createActorNamespace<Env, Meta>(
     coldAlarms.set(actorName, { timer, at });
   };
 
+  /** Close an actor already taken out of `actors`, listed in `closing` until its store is closed. */
+  const closeActor = (actorName: string, hosted: HostedActor): Promise<number | null> => {
+    const done = hosted.close();
+    const settled = done.catch(() => null);
+    closing.set(actorName, settled);
+    void settled.then(() => {
+      if (closing.get(actorName) === settled) closing.delete(actorName);
+    });
+    return done;
+  };
+
   const evict = async (actorName: string, hosted: HostedActor): Promise<void> => {
     actors.delete(actorName);
-    const alarm = await hosted.close();
+    const alarm = await closeActor(actorName, hosted);
     if (alarm !== null && !actors.has(actorName)) armCold(actorName, alarm);
   };
 
@@ -546,6 +609,10 @@ export function createActorNamespace<Env, Meta>(
         // async, so a store that cannot be opened rejects like any other failure and reaches a caller's .catch().
         async fetch(input, init) {
           const request = input instanceof Request && init === undefined ? input : new Request(input, init);
+          // An eviction still closing this actor finishes first, so one file never has two hosts. Paused
+          // or closed, open refuses at once, so a caller holding another actor's lock never waits on a
+          // close that waits on it.
+          while (!paused && !closed && closing.has(name)) await closing.get(name);
           return open(name).fetch(request);
         },
       };
@@ -560,7 +627,7 @@ export function createActorNamespace<Env, Meta>(
       heldAlarms.clear();
       const resident = [...actors.values()];
       actors.clear();
-      await Promise.all(resident.map((a) => a.close()));
+      await Promise.all([...resident.map((a) => a.close()), ...closing.values()]);
     },
     async pause() {
       paused = true;
@@ -571,12 +638,12 @@ export function createActorNamespace<Env, Meta>(
       coldAlarms.clear();
       const resident = [...actors];
       actors.clear();
-      await Promise.all(
-        resident.map(async ([actorName, hosted]) => {
-          const alarm = await hosted.close();
-          if (alarm !== null) heldAlarms.set(actorName, alarm);
-        }),
-      );
+      const held = resident.map(async ([actorName, hosted]) => {
+        const alarm = await closeActor(actorName, hosted);
+        if (alarm !== null) heldAlarms.set(actorName, alarm);
+      });
+      // Evictions under way too: a backup must not read a store that is still open.
+      await Promise.all([...held, ...closing.values()]);
     },
     resume() {
       if (!paused) return;

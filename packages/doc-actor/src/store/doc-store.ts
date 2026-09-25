@@ -43,9 +43,9 @@ const FLUSH_THRESHOLD = 100; // updates
 const PERSIST_THRESHOLD = 10; // updates
 
 /**
- * A pending log above this snapshots straight to the blob store instead of being
- * journaled as one storage value; it is what lets a whole large document arrive
- * in one headless write.
+ * A pending log above this is snapshotted without waiting for the flush interval:
+ * by a headless write before it answers, otherwise by an alarm due now. It is what
+ * lets a whole large document arrive in one headless write.
  */
 export const PENDING_SNAPSHOT_BYTES = 1024 * 1024;
 
@@ -219,7 +219,9 @@ export class DocStore {
     if (this.updatesSinceFlush >= FLUSH_THRESHOLD || big) {
       // A large paste can trip this before the debounced persist would; persist it first.
       if (big) void this.forcePersistPending().catch(() => {});
-      void this.flush("threshold").catch(() => {});
+      // Flushed by an alarm due now rather than here: the alarm runs under the actor's lock, so a
+      // host that is closing waits for it or holds it until it resumes.
+      void this.storage.setAlarm(Date.now()).catch(() => {});
     }
   }
 
