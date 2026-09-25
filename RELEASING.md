@@ -89,15 +89,25 @@ In an empty directory, follow [docs/install/docker.md](docs/install/docker.md) e
 reach `/ready`. On a Mac, check out the tag, follow [docs/install/macos.md](docs/install/macos.md),
 and reach `/ready`. The workflow does not test the instructions themselves.
 
+Each commit the `plugin` job pushes is a new version of the listing in Anthropic's plugin
+directory, which follows stuga-plugin's `main`. The directory scans it and, because it runs a pinned
+npx package, holds it for review: open the plugin at
+[claude.ai/directory/manage](https://claude.ai/directory/manage) and select **Publish** on the new
+version, and an Anthropic reviewer publishes it. Until then the listing serves the previous version.
+
 npm accepts trusted publishing only for a package that already exists, so the first release's `npm`
 job fails. Publish that version by hand from the tag (`STUGA_VERSION=<version> pnpm --filter
 @stuga/mcp build`, then `npm publish` in `services/mcp/dist`), set the package's trusted publisher
-on npmjs.com to this repository, `release.yml`, environment `release`, and re-run the failed jobs:
+on npmjs.com to this repository, `release.yml`, environment `release`, require two-factor
+authentication to publish it (`npm access set mfa=publish @stuga/mcp`), and re-run the failed jobs:
 `npm` finds the version published and `plugin` runs.
 
 stuga-plugin's rulesets let only the Stuga Release app create or update `main` and create `v*` tags,
 and nobody move or delete them. A bad plugin version is superseded by the next patch release, like
-any other.
+any other. The app ([github.com/apps/stuga-release](https://github.com/apps/stuga-release), owned by
+the stuga-dev organization) has only contents: write and is installed on stuga-plugin alone. To
+rotate its key, generate a new private key on the app's settings page, replace
+`STUGA_RELEASE_APP_KEY` in the `release` environment, and delete the old key there.
 
 ## Yanking
 
