@@ -115,6 +115,8 @@ export function Login() {
   /** Asked for unless the link brought it, and again when the node refused the one it brought. */
   const [askSetupCode, setAskSetupCode] = useState(() => !new URLSearchParams(location.search).get("setup"));
   const [busy, setBusy] = useState(false);
+  /** A sign-in here has sent the visitor on: the live-token redirect below must not send them again. */
+  const [entered, setEntered] = useState(false);
   const [error, setError] = useState<string | null>(() =>
     failedReturn && !silentReturn ? `Couldn’t sign in with ${label ?? "the identity provider"}.` : null,
   );
@@ -132,8 +134,8 @@ export function Login() {
     // Signed in already (a stale callback, another tab): the redirect below goes on, and a replace here would undo it.
     if (getToken()) return;
     if (failedReturn || silentReturn) clearSsoHint();
-    // Out of the address bar, so a reload is a plain visit to the login page; a setup code is kept in state.
-    if (failedReturn || !askSetupCode) nav({ pathname: "/login" }, { replace: true, state: location.state });
+    // Out of the address bar, so a reload is a plain visit to the login page. A ?setup= link stays, to be copied.
+    if (failedReturn) nav({ pathname: "/login" }, { replace: true, state: location.state });
     // Once per mount: location changes with the replace above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [failedReturn, silentReturn, nav]);
@@ -157,7 +159,7 @@ export function Login() {
   );
 
   // Any visit with a live token goes where the user was headed.
-  if (getToken()) return <Navigate to={failedLink ? withFailedOutcome(failedLink) : takeLoginReturn()} replace />;
+  if (getToken() && !entered) return <Navigate to={failedLink ? withFailedOutcome(failedLink) : takeLoginReturn()} replace />;
 
   if (silent) {
     return (
@@ -203,9 +205,13 @@ export function Login() {
     void run(() => startProviderSignIn({ returnTo: peekLoginReturn(), ...prompt })).catch(() => {});
   }
 
-  /** The return stash is spent even when `to` overrides it, or a later sign-in would revisit a redeemed invite. */
+  /**
+   * The return stash is spent even when `to` overrides it, or a later sign-in would revisit a redeemed invite.
+   * The router navigates in a transition, so this page renders once more first, with the stash already spent.
+   */
   function enter(session: Session, to?: string) {
     setSession(session);
+    setEntered(true);
     const stashed = takeLoginReturn();
     nav(to ?? stashed, { replace: true });
   }

@@ -57,6 +57,23 @@ async function open(path = "/login") {
 }
 
 const button = (label: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === label);
+const input = (label: string) =>
+  [...host.querySelectorAll("input")].find((i) => host.querySelector(`label[for="${i.id}"]`)?.textContent?.startsWith(label));
+
+async function type(label: string, value: string) {
+  const el = input(label)!;
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => {
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+async function click(label: string) {
+  await act(async () => button(label)!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await settle();
+}
+
 const startBodies = () =>
   fetchMock.mock.calls.filter(([url]) => String(url) === "/auth/oidc/start").map(([, init]) => JSON.parse(String(init!.body)) as unknown);
 
@@ -105,24 +122,19 @@ describe("Login", () => {
   });
 });
 
+describe("Login · where a sign-in goes", () => {
+  it("goes where the visitor was headed, not to the start page", async () => {
+    rememberLoginReturn("/doc/d1");
+    fetchMock.mockImplementation(async () => reply(200, { access_token: "at-1", refresh_token: "rt-1", expires_in: 900 }));
+    await open();
+    await type("Username", "ada");
+    await type("Password", "battery staple 9");
+    await click("Sign in");
+    expect(host.querySelector("#where")?.textContent).toBe("/doc/d1");
+  });
+});
+
 describe("Login · a username the node refuses", () => {
-  const input = (label: string) =>
-    [...host.querySelectorAll("input")].find((i) => host.querySelector(`label[for="${i.id}"]`)?.textContent?.startsWith(label));
-
-  async function type(label: string, value: string) {
-    const el = input(label)!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => {
-      setter.call(el, value);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  }
-
-  async function click(label: string) {
-    await act(async () => button(label)!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await settle();
-  }
-
   const registered = () =>
     fetchMock.mock.calls.filter(([url]) => String(url) === "/auth/register").map(([, init]) => JSON.parse(String(init!.body)) as Record<string, unknown>);
 
@@ -180,12 +192,12 @@ describe("Login · a username the node refuses", () => {
     expect(registered().at(-1)).toMatchObject({ update_check: false });
   });
 
-  it("takes the setup code from the link the node printed, asks nothing, and clears it from the address bar", async () => {
+  it("takes the setup code from the link the node printed, asks nothing, and leaves the link in the address bar", async () => {
     setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME });
     fetchMock.mockImplementation(async () => reply(201, { access_token: "at-1", refresh_token: "rt-1", expires_in: 900 }));
     await open("/login?setup=ABCDE-12345");
     expect(input("Setup code")).toBeUndefined();
-    expect(host.querySelector("#where")?.textContent).toBe("/login");
+    expect(host.querySelector("#where")?.textContent).toBe("/login?setup=ABCDE-12345");
 
     await type("Username", "ada");
     await type("Password", "battery staple 9");

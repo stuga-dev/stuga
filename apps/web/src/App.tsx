@@ -33,11 +33,11 @@ import { WorkspaceOnboarding } from "./pages/WorkspaceOnboarding";
 import { CommandPalette } from "./shell/command-palette/CommandPalette";
 import { CommandPaletteProvider } from "./shell/command-palette/context";
 import { NodeHealthBanner } from "./shell/NodeHealthBanner";
+import { AuthLayout } from "./shell/AuthLayout";
 import { Workspaces } from "./api";
 import { getActiveWorkspace, setActiveWorkspace } from "./lib/session/workspace-pointer";
-import { getToken } from "./lib/session/tokens";
-import { rememberLoginReturn, rememberWorkspaceReturn } from "./lib/session/return-path";
-import { ensureMediaTicket, startMediaSession } from "./lib/session/tickets";
+import { rememberWorkspaceReturn } from "./lib/session/return-path";
+import { ensureMediaTicket } from "./lib/session/tickets";
 import { useThemeMode } from "./state/theme";
 import { useBrandingVersion } from "./state/branding";
 import "./styles/shell.css";
@@ -45,19 +45,6 @@ import "./styles/shell.css";
 // Lazy so the editor, the grid and markdown-it stay out of the login and library bundles.
 const ItemPage = lazy(() => import("./pages/ItemPage").then(({ ItemPage }) => ({ default: ItemPage })));
 const AskPage = lazy(() => import("./pages/AskPage"));
-
-function AuthLayout() {
-  const { pathname, search } = useLocation();
-  const signedIn = getToken() !== null;
-  useEffect(() => {
-    if (signedIn) startMediaSession();
-  }, [signedIn]);
-  if (!signedIn) {
-    rememberLoginReturn(pathname + search);
-    return <Navigate to="/login" replace />;
-  }
-  return <Outlet />;
-}
 
 /** Holds the whole shell until the caller's workspaces are known. */
 function WorkspaceLayout() {
