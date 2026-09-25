@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Docs, type Comment } from "../api";
 import { useComments } from "../comments/comments-context";
-import { authorLabel, useUserNames } from "../state/identity";
+import { authorLabel, nameLoading, useUserNames } from "../state/identity";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Button } from "@astryxdesign/core/Button";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
@@ -154,6 +154,11 @@ function deleteCopy(target: { isRoot: boolean; replies: number } | null): { titl
   return { title: "Delete this comment?", description: "The comment is removed for everyone. This can’t be undone." };
 }
 
+/** A blank while the name loads, rather than the raw alias, so the heading keeps its height. */
+function authorText(author: string): string {
+  return nameLoading(`user:${author}`) ? "\u00a0" : authorLabel(author);
+}
+
 /** A root comment, its replies, and a reply box. */
 function CommentThread({
   ref,
@@ -194,7 +199,7 @@ function CommentThread({
         </button>
       )}
       <div className="comment-head">
-        <strong title={root.author}>{authorLabel(root.author)}</strong>
+        <strong title={root.author}>{authorText(root.author)}</strong>
         <span className="comment-actions">
           <Button label={root.resolved ? "Reopen" : "Resolve"} variant="ghost" size="sm" onClick={onResolve} />
           <Button label="Delete" variant="ghost" size="sm" onClick={() => onDelete(root.num)} tooltip="Delete comment" />
@@ -207,7 +212,7 @@ function CommentThread({
           {replies.map((r) => (
             <li key={r.num} className="comment-reply">
               <div className="comment-head">
-                <strong title={r.author}>{authorLabel(r.author)}</strong>
+                <strong title={r.author}>{authorText(r.author)}</strong>
                 <span className="comment-actions">
                   <Button label="Delete" variant="ghost" size="sm" onClick={() => onDelete(r.num)} tooltip="Delete reply" />
                 </span>

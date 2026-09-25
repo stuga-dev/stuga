@@ -1,13 +1,12 @@
 /** The dock's Versions panel: history over REST, with compare, restore and delete in VersionCompareDialog. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type * as Y from "yjs";
-import { yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import { DOC_FLUSH_INTERVAL_MS } from "@stuga/protocol/domain/limits";
 import { Docs, type VersionListing } from "../../api";
 import { useUserNames } from "../../state/identity";
 import { versionLabel } from "../../lib/format";
 import { INDEX_ALLOWANCE_MS } from "../use-refresh-after-indexing";
-import { VersionCompareDialog } from "./VersionCompareDialog";
+import { VersionCompareDialog, currentMarkdown } from "./VersionCompareDialog";
 import { VersionHistory } from "./VersionHistory";
 import { useToast } from "@astryxdesign/core/Toast";
 
@@ -86,19 +85,13 @@ export function VersionsPanel({ docId, ydoc }: { docId: string; ydoc: Y.Doc | nu
 
   useUserNames(versions.flatMap((v) => v.authors.filter((a) => !a.startsWith("restore:")).map((a) => `user:${a}`)));
 
-  // The server serializes versions with the same crdt-ops function, so unchanged content diffs as equal.
-  function currentDocText(): string {
-    if (!ydoc) return "";
-    return yXmlFragmentToMarkdown(ydoc.getXmlFragment("default"));
-  }
-
   // At or past the head (a version is recorded before its snapshot is processed), the newest
   // version is current. Past it, the head may still hold the same text: an edit undone, or one
   // Markdown does not carry (underline, image or column widths). No version is owed then.
   const newest = versions[0];
   const ahead = newest !== undefined && headSeq > newest.seq;
   const newestText = useVersionText(docId, ahead ? newest.seq : null);
-  const newestIsCurrent = !ahead || (newestText !== null && ydoc !== null && newestText === currentDocText());
+  const newestIsCurrent = !ahead || (newestText !== null && ydoc !== null && newestText === currentMarkdown(ydoc));
   const currentSeq = newest !== undefined && newestIsCurrent ? newest.seq : null;
 
   // A refresh can drop the version being viewed: retention pruned it, or someone deleted it.
@@ -171,7 +164,7 @@ export function VersionsPanel({ docId, ydoc }: { docId: string; ydoc: Y.Doc | nu
           docId={docId}
           versions={versions}
           seq={compareSeq}
-          currentText={currentDocText()}
+          ydoc={ydoc}
           busy={busy}
           // The server refuses any seq at or past the processed head. Current stays too: the
           // actor owes no version for text that has one, so deleting it would leave none.

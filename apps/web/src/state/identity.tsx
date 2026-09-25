@@ -24,6 +24,10 @@ let queue: Promise<void> = Promise.resolve();
 let batch = new Set<string>();
 /** Queued or in flight, so a second caller does not ask again. */
 const pending = new Set<string>();
+/** Aliases whose lookup failed; they are shown as the alias until one succeeds. */
+const failed = new Set<string>();
+/** Aliases the directory has no row for, such as a former member or an agent's name: not asked about again. */
+const unknown = new Set<string>();
 
 /** The person a principal or ledger alias names; null for agents, groups and the workspace. */
 function personAlias(principal: string): string | null {
@@ -33,13 +37,21 @@ function personAlias(principal: string): string | null {
   return principal.includes(":") ? null : principal;
 }
 
+/**
+ * An alias the node minted for an account (packages/auth alias.ts). A version or comment
+ * author can instead be an agent's name or id, which reads whole.
+ */
+function isAccountAlias(alias: string): boolean {
+  return /^u_[A-Za-z0-9_-]{16}$/.test(alias);
+}
+
 /** A principal's full name from the cache. Emails stay whole, so two people sharing a local part stay distinct. */
 export function principalName(principal: string): string {
   if (principal.startsWith("org:")) return "Everyone";
   if (principal.startsWith("group:")) return `${principal.slice("group:".length)} (group)`;
   if (principal.startsWith("user:")) {
     const alias = principal.slice("user:".length);
-    return names.get(alias) ?? (alias.length > 12 ? `${alias.slice(0, 6)}…` : alias);
+    return names.get(alias) ?? (isAccountAlias(alias) ? `${alias.slice(0, 6)}…` : alias);
   }
   return principal;
 }
@@ -65,6 +77,15 @@ export function actorHandle(alias: string): string | null {
   const person = alias.startsWith("user:") ? alias.slice("user:".length) : alias;
   const handle = handles.get(person);
   return handle && handle !== names.get(person) ? handle : null;
+}
+
+/**
+ * Whether a person's name is still to come: an account alias not cached, and no lookup of it has
+ * failed or found nobody. A caller that shows nothing meanwhile, rather than the alias, must also resolve it.
+ */
+export function nameLoading(principal: string): boolean {
+  const alias = personAlias(principal);
+  return alias !== null && isAccountAlias(alias) && !names.has(alias) && !failed.has(alias) && !unknown.has(alias);
 }
 
 /** A version author: a bare alias, or a `restore:<version>` marker. */
@@ -117,10 +138,10 @@ async function flush(): Promise<void> {
       const handle = handleOf(u);
       if (handle) handles.set(u.alias, handle);
     }
-    // An alias the directory does not know names itself, so it is not asked about again.
-    for (const a of aliases) if (!names.has(a)) names.set(a, a);
+    for (const a of aliases) if (!names.has(a)) unknown.add(a);
   } catch {
     // Left unresolved; the next caller asks again.
+    for (const a of aliases) failed.add(a);
   } finally {
     for (const a of aliases) pending.delete(a);
   }
@@ -147,7 +168,7 @@ export function resolveNames(principals: readonly (string | null)[]): void {
   let added = false;
   for (const p of principals) {
     const alias = p === null ? null : personAlias(p);
-    if (alias === null || names.has(alias) || pending.has(alias)) continue;
+    if (alias === null || names.has(alias) || pending.has(alias) || unknown.has(alias)) continue;
     pending.add(alias);
     batch.add(alias);
     added = true;
@@ -171,14 +192,15 @@ export function useUserNames(principals: string[]): number {
   return version;
 }
 
-/** A circular avatar with initials on the principal's identity colour. */
+/** A circular avatar with initials on the principal's identity colour; no initials while the name loads. */
 export function Avatar({ principal, size = 22 }: { principal: string; size?: number }) {
-  const label = principalLabel(principal);
+  useUserNames([principal]);
+  const label = nameLoading(principal) ? null : principalLabel(principal);
   const seed = principal.startsWith("user:") ? principal.slice("user:".length) : principal;
   return (
     <span
       className="avatar"
-      title={label}
+      title={label ?? undefined}
       style={{
         width: size,
         height: size,
@@ -187,7 +209,7 @@ export function Avatar({ principal, size = 22 }: { principal: string; size?: num
         lineHeight: `${size}px`,
       }}
     >
-      {initials(label)}
+      {label !== null && initials(label)}
     </span>
   );
 }

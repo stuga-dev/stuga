@@ -5,11 +5,15 @@
  */
 import { Fragment } from "react";
 import type { Version } from "../../api";
-import { authorLabel } from "../../state/identity";
+import { authorLabel, nameLoading } from "../../state/identity";
 import { absoluteTime, dayLabel, fmtInt, timeOfDay, versionLabel } from "../../lib/format";
 
-/** A restore's `restore:v<seq>` author is named by that version's time while it is still in the list. */
-function authorsOf(v: Version, versions: Version[]): string {
+/**
+ * Who made a version; null while a person's name is still loading, so no raw alias shows.
+ * A restore's `restore:v<seq>` author is named by that version's time while it is still in the list.
+ */
+export function authorsOf(v: Version, versions: Version[]): string | null {
+  if (v.authors.some((a) => !a.startsWith("restore:") && nameLoading(`user:${a}`))) return null;
   const names = v.authors.map((a) => {
     const restored = /^restore:v(\d+)$/.exec(a);
     if (!restored) return authorLabel(a);
@@ -82,7 +86,8 @@ export function VersionHistory({
                     <ChangeCounts v={v} />
                   </span>
                   <span className="version-open__sub">
-                    <span className="vauthors">{authorsOf(v, versions)}</span>
+                    {/* A blank keeps the row's height until the names arrive. */}
+                    <span className="vauthors">{authorsOf(v, versions) ?? "\u00a0"}</span>
                     {v.seq === currentSeq && <span className="vcurrent">Current</span>}
                   </span>
                 </button>

@@ -12,7 +12,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { useToast } from "@astryxdesign/core/Toast";
 import { Databases } from "../api";
 import type { DatabaseOpSummary } from "@stuga/protocol/databases/types";
-import { authorLabel, useUserNames } from "../state/identity";
+import { authorLabel, nameLoading, useUserNames } from "../state/identity";
 import { AI_COAUTHOR_LABEL, absoluteTime, principalHuman, relativeTime } from "../lib/format";
 import { errorMessage } from "../lib/http/client";
 
@@ -27,10 +27,14 @@ interface ActivityPanelProps {
   onWriteDenied: () => void;
 }
 
-/** The ledger stores bare aliases, so `is_agent` (recorded on the op) decides how an actor is named. */
-function actorLabel(op: DatabaseOpSummary): string {
+/**
+ * The ledger stores bare aliases, so `is_agent` (recorded on the op) decides how an actor is named.
+ * Null while a person's name loads, so no raw alias shows.
+ */
+function actorLabel(op: DatabaseOpSummary): string | null {
   if (op.is_agent && principalHuman(op.actor) !== null) return AI_COAUTHOR_LABEL;
-  return op.is_agent ? op.actor.replace(/^agent:/, "") : authorLabel(op.actor);
+  if (op.is_agent) return op.actor.replace(/^agent:/, "");
+  return nameLoading(`user:${op.actor}`) ? null : authorLabel(op.actor);
 }
 
 /** `ts` is epoch milliseconds. */
@@ -144,7 +148,8 @@ export function ActivityPanel({ docId, refreshKey, readOnly, onReverted, onWrite
                 <div className="db-op__head">
                   <span className="db-op__actor">
                     {op.is_agent && <Badge variant="purple" label="agent" />}
-                    <strong title={op.actor}>{actorLabel(op)}</strong>
+                    {/* A blank keeps the row's height until the name arrives. */}
+                    <strong title={op.actor}>{actorLabel(op) ?? "\u00a0"}</strong>
                   </span>
                   <span className="db-op__time" title={absoluteTime(opIso(op.ts))}>
                     {relativeTime(opIso(op.ts))}
@@ -152,8 +157,11 @@ export function ActivityPanel({ docId, refreshKey, readOnly, onReverted, onWrite
                 </div>
                 <p className="db-op__summary">{op.summary}</p>
                 <div className="db-op__foot">
+                  {/* A blank keeps Revert in place until the name arrives. */}
                   {op.on_behalf_of && (
-                    <span className="db-op__for">for {authorLabel(op.on_behalf_of)}</span>
+                    <span className="db-op__for">
+                      {nameLoading(`user:${op.on_behalf_of}`) ? "\u00a0" : `for ${authorLabel(op.on_behalf_of)}`}
+                    </span>
                   )}
                   {op.reverted_by ? (
                     <Badge variant="neutral" label="Reverted" />

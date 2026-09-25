@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import * as Y from "yjs";
-import { yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
+import { blockDiffMarkdown, yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import { DOC_FLUSH_INTERVAL_MS } from "@stuga/protocol/domain/limits";
-import type { Version, VersionListing } from "../../api";
+import type { UserInfo, Version, VersionListing } from "../../api";
 
 const docs = vi.hoisted(() => ({
   versions: vi.fn(),
@@ -13,9 +13,19 @@ const docs = vi.hoisted(() => ({
   restoreVersion: vi.fn(),
   deleteVersion: vi.fn(),
 }));
+const users = vi.hoisted(() => ({ resolve: vi.fn() }));
 const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type: string }> }));
 
-vi.mock("../../api", () => ({ Docs: docs }));
+vi.mock("../../api", () => ({ Docs: docs, Users: users }));
+// Counted, to tell when the dialog re-reads the live document, and slowed down to tell how often.
+vi.mock("@stuga/crdt-ops", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@stuga/crdt-ops")>();
+  return {
+    ...actual,
+    yXmlFragmentToMarkdown: vi.fn(actual.yXmlFragmentToMarkdown),
+    blockDiffMarkdown: vi.fn(actual.blockDiffMarkdown),
+  };
+});
 vi.mock("@astryxdesign/core/Toast", () => ({
   useToast: () => (t: { body: string; type: string }) => toasts.shown.push(t),
 }));
@@ -36,14 +46,14 @@ if (!HTMLDialogElement.prototype.showModal) {
 const SETTLED_MS = DOC_FLUSH_INTERVAL_MS + 10_000;
 const MINUTE = 60_000;
 
-function version(seq: number): Version {
-  // No authors, so no name lookups.
+/** No authors by default, so no name lookups. */
+function version(seq: number, authors: string[] = []): Version {
   const ts = new Date(2026, 8, 25, 9, seq).toISOString();
-  return { doc_id: "d_1", seq, ts, authors: [], chars: null, chars_added: null, chars_removed: null };
+  return { doc_id: "d_1", seq, ts, authors, chars: null, chars_added: null, chars_removed: null };
 }
 
 function listing(seqs: number[], head_seq: number, can_manage = true): VersionListing {
-  return { versions: seqs.map(version), head_seq, can_manage };
+  return { versions: seqs.map((seq) => version(seq)), head_seq, can_manage };
 }
 
 /** A response the test settles by hand. */
@@ -112,12 +122,17 @@ async function compareWith(index: number) {
 }
 
 const dialogText = () => document.body.querySelector("dialog")?.textContent ?? "";
+const authorsCell = (rowIndex: number) => rows()[rowIndex]!.querySelector(".vauthors")!.textContent;
+const savedLine = () => document.body.querySelector(".vcompare-meta")!.textContent;
+/** Times the app has serialized the live document. */
+const reads = () => vi.mocked(yXmlFragmentToMarkdown).mock.calls.length;
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   docs.versions.mockReset();
   docs.versionContent.mockReset().mockResolvedValue({ seq: 1, text: "Hello" });
+  users.resolve.mockReset();
   toasts.shown = [];
   visibility = "visible";
   vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
@@ -369,6 +384,231 @@ describe("VersionsPanel: refresh", () => {
     await advance(SETTLED_MS + 3 * MINUTE);
     await setVisibility("visible");
     expect(docs.versions).toHaveBeenCalledTimes(1);
+    root = createRoot(host);
+  });
+});
+
+// The name cache lives for the file, so each case names its own people.
+describe("VersionsPanel: authors", () => {
+  const ada: UserInfo = { alias: "u_QH52ada7RzkP4mXe", username: "ada", display_name: "Ada", email: null };
+
+  it("shows no raw id while names load, in the list or the dialog, then the names", async () => {
+    let answer!: (r: { users: UserInfo[] }) => void;
+    users.resolve.mockReturnValue(new Promise((r) => (answer = r)));
+    await mount({ versions: [version(7, [ada.alias]), version(6)], head_seq: 7, can_manage: true });
+    expect(users.resolve).toHaveBeenCalledWith([ada.alias]);
+    // A blank that keeps the row's height.
+    expect(authorsCell(0)).toBe("\u00a0");
+    expect(host.textContent).not.toContain("u_QH52");
+    expect(authorsCell(1)).toBe("—");
+
+    await open(0);
+    expect(savedLine()).not.toContain("by");
+    expect(dialogText()).not.toContain("u_QH52");
+
+    await act(async () => answer({ users: [ada] }));
+    expect(authorsCell(0)).toBe("Ada");
+    expect(savedLine()).toContain("by Ada");
+  });
+
+  it("names a restore by the version it came from at once, with no lookup", async () => {
+    await mount({ versions: [version(8, ["restore:v6"]), version(7), version(6)], head_seq: 8, can_manage: true });
+    expect(users.resolve).not.toHaveBeenCalled();
+    expect(authorsCell(0)).toMatch(/^restored from \S/);
+    await open(0);
+    expect(savedLine()).toContain("by restored from");
+    expect(savedLine()).not.toMatch(/\bv6\b/);
+  });
+
+  it("names an agent or the co-author whole and at once, while a person's name loads", async () => {
+    const eve: UserInfo = { alias: "u_Ev3eLm0pQr8sTu2V", username: "eve", display_name: "Eve", email: null };
+    let answer!: (r: { users: UserInfo[] }) => void;
+    users.resolve.mockReturnValue(new Promise((r) => (answer = r)));
+    await mount({
+      versions: [version(8, ["DeepSeek Harness", "AI co-author"]), version(7, [eve.alias, "Claude Desktop"])],
+      head_seq: 8,
+      can_manage: true,
+    });
+    expect(authorsCell(0)).toBe("DeepSeek Harness, AI co-author");
+    expect(authorsCell(1)).toBe("\u00a0");
+    await open(0);
+    expect(savedLine()).toContain("by DeepSeek Harness, AI co-author");
+
+    await act(async () => answer({ users: [eve] }));
+    expect(authorsCell(0)).toBe("DeepSeek Harness, AI co-author");
+    expect(authorsCell(1)).toBe("Eve, Claude Desktop");
+  });
+
+  it("falls back to the short id once the lookup fails", async () => {
+    users.resolve.mockRejectedValue(new Error("offline"));
+    await mount({ versions: [version(7, ["u_Kcjz0unreachable"])], head_seq: 7, can_manage: true });
+    expect(users.resolve).toHaveBeenCalledTimes(1);
+    expect(authorsCell(0)).toBe("u_Kcjz…");
+  });
+
+  it("shows someone who has left the workspace by the short id", async () => {
+    users.resolve.mockResolvedValue({ users: [] });
+    await mount({ versions: [version(7, ["u_Zx9Pformermember"])], head_seq: 7, can_manage: true });
+    expect(users.resolve).toHaveBeenCalledTimes(1);
+    expect(authorsCell(0)).toBe("u_Zx9P…");
+    await open(0);
+    expect(savedLine()).toContain("by u_Zx9P…");
+  });
+});
+
+describe("VersionsPanel: comparing with the current document", () => {
+  const serialize = vi.mocked(yXmlFragmentToMarkdown).getMockImplementation()!;
+  const diff = vi.mocked(blockDiffMarkdown).getMockImplementation()!;
+  afterEach(() => {
+    vi.mocked(yXmlFragmentToMarkdown).mockImplementation(serialize);
+    vi.mocked(blockDiffMarkdown).mockImplementation(diff);
+  });
+
+  /** Another person's edit, arriving as a remote update. */
+  function peerWrites(text: string) {
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(ydoc));
+    const fragment = peer.getXmlFragment("default");
+    peer.transact(() => {
+      fragment.delete(0, fragment.length);
+      const p = new Y.XmlElement("paragraph");
+      p.insert(0, [new Y.XmlText(text)]);
+      fragment.insert(0, [p]);
+    });
+    Y.applyUpdate(ydoc, Y.encodeStateAsUpdate(peer, Y.encodeStateVector(ydoc)), "remote");
+  }
+
+  it("redraws the diff as someone edits while it is open", async () => {
+    contents({ 7: write("Hello") });
+    await mount(listing([7, 6], 7));
+    await open(0);
+    expect(dialogText()).toContain("No differences");
+
+    peerWrites("Hello from a peer");
+    await advance(1_000);
+    expect(dialogText()).not.toContain("No differences");
+    expect(dialogText()).toContain("Hello from a peer");
+  });
+
+  it("keeps up with steady typing, not only once it pauses", async () => {
+    contents({ 7: write("Hello") });
+    await mount(listing([7, 6], 7));
+    await open(0);
+    for (let i = 1; i <= 10; i++) {
+      write(`Hello ${"x".repeat(i)}`);
+      await advance(100);
+    }
+    expect(dialogText()).not.toContain("No differences");
+    await advance(1_000);
+    expect(dialogText()).toContain(`Hello ${"x".repeat(10)}`);
+  });
+
+  it("reads the document once on opening", async () => {
+    contents({ 7: write("Hello") });
+    await mount(listing([7, 6], 7));
+    const before = reads();
+    await open(0);
+    expect(reads() - before).toBe(1);
+    expect(dialogText()).toContain("No differences");
+  });
+
+  /** From here each read of the live document takes `serializeMs`, and each diff `diffMs`, of the clock. */
+  function readsTake(serializeMs: number, diffMs: number) {
+    let spent = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => Date.now() + spent);
+    vi.mocked(yXmlFragmentToMarkdown).mockImplementation((fragment) => {
+      spent += serializeMs;
+      return serialize(fragment);
+    });
+    vi.mocked(blockDiffMarkdown).mockImplementation((base, target) => {
+      spent += diffMs;
+      return diff(base, target);
+    });
+  }
+
+  it("does not follow a document too slow to read, and shows the latest on request", async () => {
+    contents({ 7: write("Hello") });
+    await mount(listing([7, 6], 7));
+    readsTake(100, 400);
+    await open(0);
+    expect(dialogText()).toContain("No differences");
+    expect(button("Show latest")).toBeUndefined();
+
+    const before = reads();
+    for (let i = 1; i <= 10; i++) {
+      peerWrites(`Hello ${"x".repeat(i)}`);
+      await advance(100);
+    }
+    await advance(5_000);
+    expect(reads()).toBe(before);
+    expect(dialogText()).toContain("No differences");
+
+    await act(async () => button("Show latest")!.click());
+    expect(reads()).toBe(before + 1);
+    expect(dialogText()).toContain(`Hello ${"x".repeat(10)}`);
+    expect(button("Show latest")).toBeUndefined();
+  });
+
+  it("stops following once a read runs over budget, until one is back within it", async () => {
+    contents({ 7: write("Hello") });
+    await mount(listing([7, 6], 7));
+    await open(0);
+    readsTake(40, 200);
+    peerWrites("Hello one");
+    await advance(1_000);
+    expect(dialogText()).toContain("Hello one");
+
+    const before = reads();
+    peerWrites("Hello two");
+    await advance(1_000);
+    expect(reads()).toBe(before);
+    expect(dialogText()).not.toContain("Hello two");
+
+    readsTake(10, 40);
+    await act(async () => button("Show latest")!.click());
+    expect(dialogText()).toContain("Hello two");
+    peerWrites("Hello three");
+    await advance(1_000);
+    expect(dialogText()).toContain("Hello three");
+    expect(button("Show latest")).toBeUndefined();
+  });
+
+  it("follows the document only while comparing with it", async () => {
+    contents({ 7: write("Hello"), 6: "Six" });
+    await mount(listing([7, 6], 7));
+    await open(0);
+    await compareWith(1); // v6
+    write("Hello there");
+    const before = reads();
+    await advance(1_000);
+    expect(reads()).toBe(before);
+
+    await compareWith(0); // Current document
+    expect(dialogText()).toContain("Hello there");
+  });
+
+  it("stops following once closed, dropping a redraw that was due", async () => {
+    contents({ 7: write("Hello") });
+    await mount(listing([7, 6], 7));
+    await open(0);
+    write("Hello there"); // a redraw is due
+    await close();
+    write("Hello again");
+    const before = reads();
+    await advance(1_000);
+    expect(reads()).toBe(before);
+  });
+
+  it("stops following when the panel goes away with the dialog open", async () => {
+    contents({ 7: write("Hello") });
+    await mount(listing([7, 6], 7));
+    await open(0);
+    write("Hello there");
+    await act(async () => root.unmount());
+    write("Hello again");
+    const before = reads();
+    await advance(1_000);
+    expect(reads()).toBe(before);
     root = createRoot(host);
   });
 });

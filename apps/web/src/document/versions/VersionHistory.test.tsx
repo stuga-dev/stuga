@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Version } from "../../api";
+import { rememberUsers } from "../../state/identity";
 import { VersionHistory } from "./VersionHistory";
 
 const HOUR = 3_600_000;
@@ -134,6 +135,19 @@ describe("VersionHistory", () => {
   it("falls back to the raw marker when the restored-from version is gone", () => {
     render([version({ seq: 7, ts: ago(HOUR), authors: ["restore:v2"] })]);
     expect(text()).toContain("restored from v2");
+  });
+
+  it("shows a blank rather than a raw id while a name loads", () => {
+    const alias = "u_QH52ada7RzkP4mXe";
+    const versions = [version({ seq: 7, ts: ago(HOUR), authors: [alias, "restore:v2"] })];
+    const authors = () => rows()[0]!.querySelector(".vauthors")!.textContent;
+    render(versions);
+    expect(authors()).toBe("\u00a0");
+    expect(text()).not.toContain("u_QH52");
+
+    rememberUsers([{ alias, username: "ada", display_name: "Ada", email: null }]);
+    render(versions);
+    expect(authors()).toBe("Ada, restored from v2");
   });
 
   it("opens the version that was clicked", () => {

@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import type { UserInfo } from "../api";
 
 const docs = vi.hoisted(() => ({
   getAcl: vi.fn(),
@@ -9,7 +10,7 @@ const docs = vi.hoisted(() => ({
   createShareLink: vi.fn(),
 }));
 const workspaces = vi.hoisted(() => ({ list: vi.fn() }));
-const users = vi.hoisted(() => ({ search: vi.fn() }));
+const users = vi.hoisted(() => ({ search: vi.fn(), resolve: vi.fn() }));
 
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
@@ -17,11 +18,6 @@ vi.mock("../api", async (orig) => ({
   Workspaces: workspaces,
   Folders: { getAcl: vi.fn(), setAcl: vi.fn() },
   Users: users,
-}));
-
-vi.mock("../state/identity", async (orig) => ({
-  ...(await orig<typeof import("../state/identity")>()),
-  useUserNames: () => new Map<string, string>(),
 }));
 
 const { ShareDialog } = await import("./ShareDialog");
@@ -75,6 +71,7 @@ beforeEach(async () => {
   docs.setAcl.mockResolvedValue({});
   docs.createShareLink.mockResolvedValue({ link_url: LINK });
   workspaces.list.mockResolvedValue(null);
+  users.resolve.mockResolvedValue({ users: [] });
   users.search.mockResolvedValue({
     users: [{ alias: "u-ada", username: "ada", display_name: "Ada Lovelace", email: null }],
   });
@@ -217,5 +214,61 @@ describe("inheritance", () => {
     expect(listText()).toContain("From Planning");
     await act(async () => findButton("Save").click());
     expect(docs.setAcl).toHaveBeenCalledWith("doc1", [], [], true, []);
+  });
+});
+
+// The name cache lives for the file, so each case names its own people.
+describe("people with access", () => {
+  function listText(): string {
+    return host.querySelector(".grant-list")?.textContent ?? "";
+  }
+  const avatars = () => [...host.querySelectorAll<HTMLElement>(".grant-list .avatar")];
+
+  /** Reopens the dialog on a document the owner shares with one other person through the folder, and maybe one directly. */
+  async function reopen(owner: string, other: string, direct?: string) {
+    const principals = [owner, other, ...(direct ? [direct] : [])];
+    const own_grants = { p: direct ? [direct] : [], w: [], c: [] };
+    docs.getAcl.mockResolvedValue({ ...ACL, owner, acl_principals: principals, acl_writers: [owner], own_grants });
+    await act(async () => root.render(<ShareDialog docId="doc2" onClose={() => {}} />));
+  }
+
+  it("falls back to the short id once the lookup fails", async () => {
+    users.resolve.mockRejectedValue(new Error("offline"));
+    await reopen("user:u_Kcjz0unreachable", "user:u_Wq7L0unreachable");
+
+    expect(users.resolve).toHaveBeenCalledWith(["u_Kcjz0unreachable", "u_Wq7L0unreachable"]);
+    expect(listText()).toContain("u_Kcjz…");
+    expect(listText()).toContain("u_Wq7L…");
+  });
+
+  it("shows no raw id while names load, then the names", async () => {
+    const ada: UserInfo = { alias: "u_QH52ada7RzkP4mXe", username: "ada", display_name: "Ada", email: null };
+    const bob: UserInfo = { alias: "u_Bb81bob4TqeW9nJs", username: "bob", display_name: "Bob", email: null };
+    const cy: UserInfo = { alias: "u_Cr0lcarol5Xy2WkQ", username: "cy", display_name: "Cy", email: null };
+    let answer!: (r: { users: UserInfo[] }) => void;
+    users.resolve.mockReturnValue(new Promise((r) => (answer = r)));
+    await reopen(`user:${ada.alias}`, `user:${bob.alias}`, `user:${cy.alias}`);
+
+    expect(users.resolve).toHaveBeenCalledWith([ada.alias, cy.alias, bob.alias]);
+    expect(listText()).toContain("Owner");
+    expect(listText()).toContain("From Planning");
+    // Nor in a hidden label or a tooltip.
+    expect(host.querySelector(".grant-list")!.innerHTML).not.toMatch(/u_QH52|u_Bb81|u_Cr0l/);
+    // Each avatar is its colour alone.
+    expect(avatars().map((a) => [a.textContent, a.title])).toEqual([
+      ["", ""],
+      ["", ""],
+      ["", ""],
+    ]);
+
+    await act(async () => answer({ users: [ada, bob, cy] }));
+    expect(listText()).toContain("Ada");
+    expect(listText()).toContain("Bob");
+    expect(listText()).toContain("Cy");
+    expect(avatars().map((a) => [a.textContent, a.title])).toEqual([
+      ["AD", "Ada"],
+      ["CY", "Cy"],
+      ["BO", "Bob"],
+    ]);
   });
 });

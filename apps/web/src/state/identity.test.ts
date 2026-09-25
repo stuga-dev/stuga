@@ -172,7 +172,10 @@ describe("the user directory", () => {
     { alias: "u_ada", username: "ada", display_name: "Ada", email: "ada@example.com" },
     { alias: "u_liv", username: "liv", display_name: "", email: "liv@example.com" },
     { alias: "u_kim", username: null, display_name: "", email: "kim@example.com" },
+    // Shaped as the node mints an account's alias.
+    { alias: "u_Bb81bob4TqeW9nJs", username: "bob", display_name: "Bob", email: null },
   ];
+  const BOB = "u_Bb81bob4TqeW9nJs";
 
   /** A fresh module, so no earlier case's cache answers for this one. */
   async function directory() {
@@ -245,6 +248,69 @@ describe("the user directory", () => {
     expect(actorHandle("u_gone")).toBeNull();
     expect(actorHandle("panel:u_ada")).toBeNull();
     expect(actorHandle("agent:ci")).toBeNull();
+  });
+
+  it("tells a name still to come from one that has arrived", async () => {
+    let answer!: (r: { users: UserInfo[] }) => void;
+    users.resolve.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    const { resolveNames, nameLoading } = await directory();
+    const gone = "u_QH52formerMember";
+    // Before the lookup starts too: a first render comes before its effect.
+    expect(nameLoading(`user:${BOB}`)).toBe(true);
+    resolveNames([`user:${BOB}`, gone]);
+    await settle();
+    expect(nameLoading(`user:${BOB}`)).toBe(true);
+    expect(nameLoading(BOB)).toBe(true);
+    expect(nameLoading(`panel:${BOB}`)).toBe(true);
+    answer({ users: [DIRECTORY.find((u) => u.alias === BOB)!] });
+    await settle();
+    expect(nameLoading(`user:${BOB}`)).toBe(false);
+    // Unknown to the directory.
+    expect(nameLoading(gone)).toBe(false);
+    // Nobody to look up.
+    expect(nameLoading("agent:ci")).toBe(false);
+    expect(nameLoading("group:eng")).toBe(false);
+    expect(nameLoading("org:ws_1")).toBe(false);
+  });
+
+  it("stops waiting for a name whose lookup failed, and names them once a retry succeeds", async () => {
+    users.resolve.mockRejectedValueOnce(new Error("down"));
+    const { resolveNames, nameLoading, principalLabel } = await directory();
+    resolveNames([BOB]);
+    await settle();
+    expect(nameLoading(BOB)).toBe(false);
+    expect(principalLabel(`user:${BOB}`)).toBe("u_Bb81…");
+    resolveNames([BOB]);
+    await settle();
+    expect(principalLabel(`user:${BOB}`)).toBe("Bob");
+  });
+
+  it("reads someone the directory does not know, such as a former member, by the short alias", async () => {
+    const gone = "u_QH52formerMember";
+    const { resolveNames, nameLoading, principalLabel, principalName, actorName } = await directory();
+    resolveNames([gone]);
+    await settle();
+    expect(nameLoading(gone)).toBe(false);
+    expect(principalName(`user:${gone}`)).toBe("u_QH52…");
+    expect(principalLabel(`user:${gone}`)).toBe("u_QH52…");
+    // The ledger keeps the whole alias.
+    expect(actorName(gone)).toBe(gone);
+    resolveNames([gone]);
+    await settle();
+    expect(users.resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads an author that is no account, such as an agent's name or id, whole and at once", async () => {
+    const { resolveNames, nameLoading, authorLabel, principalLabel } = await directory();
+    const authors = ["DeepSeek Harness", "Claude Desktop", "agent-conn-AbCdEf123456", "AI co-author"];
+    for (const a of authors) {
+      expect(nameLoading(`user:${a}`)).toBe(false);
+      expect(authorLabel(a)).toBe(a);
+    }
+    resolveNames(authors.map((a) => `user:${a}`));
+    await settle();
+    for (const a of authors) expect(authorLabel(a)).toBe(a);
+    expect(principalLabel("user:DeepSeek Harness")).toBe("DeepSeek Harness");
   });
 
   it("takes the handle from rows already in hand", async () => {

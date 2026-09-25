@@ -36,6 +36,10 @@ one, the release notes say there is nothing to do.
   and did not show new versions until it was reopened.
 - A version's added and removed character counts included lines that had not changed.
 - Restore and Delete showed for people who cannot use them, and the error named only the owner.
+- Comparing a version with the current document did not show edits made while the comparison was
+  open.
+- While names loaded, the Versions panel, comments, database activity and the Share dialog showed
+  people's ids, and someone who had left the workspace showed by their full id.
 - Clicking at the end of a line where a collaborator's cursor sat put your cursor at the start of the
   line, so what you typed landed before their text. Double-clicking a word their cursor sat in could
   select only part of it, and clicking their cursor's flag did nothing; it now puts your cursor there.

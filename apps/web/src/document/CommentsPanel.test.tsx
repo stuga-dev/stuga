@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { Comment } from "../api";
+import type { Comment, UserInfo } from "../api";
 
 const ctx = vi.hoisted(() => ({
   comments: [] as Comment[],
@@ -14,15 +14,10 @@ const ctx = vi.hoisted(() => ({
   reload: vi.fn(),
 }));
 
+const users = vi.hoisted(() => ({ resolve: vi.fn() }));
+
 vi.mock("../comments/comments-context", () => ({ useComments: () => ctx }));
-vi.mock("../state/identity", () => ({
-  authorLabel: (a: string) => a,
-  principalName: (p: string) => p,
-  useUserNames: () => new Map<string, string>(),
-  rememberUsers: () => {},
-  Avatar: () => null,
-}));
-vi.mock("../api", () => ({ Docs: { addComment: vi.fn() } }));
+vi.mock("../api", () => ({ Docs: { addComment: vi.fn() }, Users: users }));
 
 const { CommentsPanel } = await import("./CommentsPanel");
 
@@ -53,6 +48,7 @@ beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = function (this: HTMLElement, ...args: unknown[]) {
     scrollIntoView(this, ...args);
   } as HTMLElement["scrollIntoView"];
+  users.resolve.mockReset().mockResolvedValue({ users: [] });
   host = document.createElement("div");
   document.body.appendChild(host);
 });
@@ -114,5 +110,55 @@ describe("CommentsPanel follows the active comment", () => {
 
     expect(scrollIntoView).not.toHaveBeenCalled();
     expect(host.textContent).not.toContain("resolved");
+  });
+});
+
+// The name cache lives for the file, so each case names its own people.
+describe("CommentsPanel: authors", () => {
+  const ada: UserInfo = { alias: "u_QH52ada7RzkP4mXe", username: "ada", display_name: "Ada", email: null };
+  const bob: UserInfo = { alias: "u_Bb81bob4TqeW9nJs", username: "bob", display_name: "Bob", email: null };
+  /** The name heading each comment, root first. */
+  const authors = () => [...host.querySelectorAll(".comment-head strong")].map((s) => s.textContent);
+
+  it("falls back to the short id once the lookup fails", async () => {
+    users.resolve.mockRejectedValue(new Error("offline"));
+    ctx.comments = [comment(1, { author: "u_Kcjz0unreachable" })];
+    ctx.activeNum = null;
+
+    await mount();
+
+    expect(users.resolve).toHaveBeenCalledTimes(1);
+    expect(authors()).toEqual(["u_Kcjz…"]);
+  });
+
+  it("shows no raw id while names load, then the names", async () => {
+    let answer!: (r: { users: UserInfo[] }) => void;
+    users.resolve.mockReturnValue(new Promise((r) => (answer = r)));
+    ctx.comments = [comment(1, { author: ada.alias }), comment(2, { parent_num: 1, author: bob.alias })];
+    ctx.activeNum = null;
+
+    await mount();
+
+    expect(users.resolve).toHaveBeenCalledWith([ada.alias, bob.alias]);
+    // Blanks that keep the heading's height.
+    expect(authors()).toEqual(["\u00a0", "\u00a0"]);
+    expect(host.textContent).not.toMatch(/u_QH52|u_Bb81/);
+
+    await act(async () => answer({ users: [ada, bob] }));
+    expect(authors()).toEqual(["Ada", "Bob"]);
+  });
+
+  it("names an agent by its whole id at once, while a person's name loads", async () => {
+    const eve: UserInfo = { alias: "u_Ev3eLm0pQr8sTu2V", username: "eve", display_name: "Eve", email: null };
+    let answer!: (r: { users: UserInfo[] }) => void;
+    users.resolve.mockReturnValue(new Promise((r) => (answer = r)));
+    ctx.comments = [comment(1, { author: "agent-conn-AbCdEf123456" }), comment(2, { parent_num: 1, author: eve.alias })];
+    ctx.activeNum = null;
+
+    await mount();
+
+    expect(authors()).toEqual(["agent-conn-AbCdEf123456", "\u00a0"]);
+    await act(async () => answer({ users: [eve] }));
+    expect(authors()).toEqual(["agent-conn-AbCdEf123456", "Eve"]);
   });
 });

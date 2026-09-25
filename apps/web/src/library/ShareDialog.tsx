@@ -9,7 +9,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Docs, Folders, Users, Workspaces, type AclModel, type UserInfo } from "../api";
-import { actorHandle, Avatar, principalLabel, rememberUsers, useUserNames } from "../state/identity";
+import { actorHandle, Avatar, nameLoading, principalLabel, rememberUsers, useUserNames } from "../state/identity";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { TextInput } from "@astryxdesign/core/TextInput";
@@ -289,7 +289,7 @@ export function ShareDialog({
                 <List className="grant-list">
                   {owner && (
                     <ListItem
-                      label={principalLabel(owner)}
+                      label={rowLabel(owner)}
                       description={actorHandle(owner) ?? undefined}
                       startContent={<Avatar principal={owner} size={28} />}
                       endContent={
@@ -302,12 +302,12 @@ export function ShareDialog({
                   {grants.filter((g) => g !== owner).map((g) => (
                     <ListItem
                       key={g}
-                      label={principalLabel(g)}
+                      label={rowLabel(g)}
                       description={actorHandle(g) ?? undefined}
                       startContent={<Avatar principal={g} size={28} />}
                       endContent={
                         <Selector
-                          label={`Access for ${principalLabel(g)}`}
+                          label={nameLoading(g) ? "Access" : `Access for ${principalLabel(g)}`}
                           isLabelHidden
                           variant="ghost"
                           size="sm"
@@ -323,7 +323,7 @@ export function ShareDialog({
                   {[...inherited].map((g) => (
                     <ListItem
                       key={`inh-${g}`}
-                      label={principalLabel(g)}
+                      label={rowLabel(g)}
                       description={actorHandle(g) ?? undefined}
                       startContent={<Avatar principal={g} size={28} />}
                       endContent={
@@ -469,6 +469,11 @@ export function ShareDialog({
 
 /** One column for every row's access control, so they line up down the dialog. */
 const ROLE_WIDTH = 132;
+
+/** A row's name; a blank while a person's name loads, rather than the raw alias. */
+function rowLabel(principal: string): string {
+  return nameLoading(principal) ? "\u00a0" : principalLabel(principal);
+}
 
 /** A round icon in an avatar's place, for rows that are not a person. */
 function RowIcon({ icon }: { icon: ReactNode }) {
