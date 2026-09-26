@@ -11,6 +11,8 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-26
+
 ### Added
 
 - The plugin for Claude has an icon.
