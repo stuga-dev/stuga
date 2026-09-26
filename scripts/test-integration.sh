@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The integration suites: @stuga/db (migrations, schema snapshot, queries, job queue) and the node's
-# backup, media, jobs, agent-instructions route, search-languages and workspace-archive suites, one after the
-# other because they share one database.
+# The integration suites: every *.integration.test.ts file in @stuga/db (migrations, schema snapshot,
+# queries, job queue), then in the node, one package after the other because they share one database.
+# The unit files beside them run in `pnpm test`, not here.
 #
 #   TEST_DATABASE_URL=postgres:///stuga_test scripts/test-integration.sh    a Postgres you run
 #   scripts/test-integration.sh                                             packaging/docker/test/compose.postgres.yml
@@ -19,9 +19,8 @@ if [ -z "${SAMPLES_DIR:-}" ] && [ -f ../samples/scripts/build.mjs ]; then
 fi
 
 run_suites() {
-  pnpm --filter @stuga/db test
-  pnpm --filter @stuga/node exec vitest run src/ops src/media src/jobs src/api/agent-instructions.integration.test.ts \
-    src/search/languages.integration.test.ts src/archive
+  pnpm --filter @stuga/db exec vitest run .integration.test.ts
+  pnpm --filter @stuga/node exec vitest run .integration.test.ts
 }
 
 if [ -n "${TEST_DATABASE_URL:-}" ]; then
