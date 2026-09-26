@@ -11,6 +11,11 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+### Added
+
+- The plugin for Claude has an icon.
+- `@stuga/mcp` ships a lockfile, `npm-shrinkwrap.json`, which shows it installs no other package.
+
 ## [0.1.2] - 2026-09-26
 
 - One AI connection reaches several workspaces: you choose which, and whether it may suggest

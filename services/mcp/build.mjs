@@ -37,7 +37,7 @@ const manifest = {
   license: "AGPL-3.0-only",
   type: "module",
   bin: { "stuga-mcp": "stuga-mcp.js" },
-  files: ["stuga-mcp.js", "third-party-licenses.txt", "README.md", "LICENSE"],
+  files: ["stuga-mcp.js", "npm-shrinkwrap.json", "third-party-licenses.txt", "README.md", "LICENSE"],
   keywords: ["stuga", "mcp"],
   homepage: "https://stuga.dev",
   repository: { type: "git", url: "git+https://github.com/stuga-dev/stuga.git", directory: "services/mcp" },
@@ -45,6 +45,11 @@ const manifest = {
   publishConfig: { access: "public" },
 };
 await writeFile(join(dist, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+// Everything is bundled into stuga-mcp.js, so the lockfile holds the package alone: it tells a
+// reviewer that `npx @stuga/mcp@<version>` installs nothing else.
+const { name, license, bin, engines } = manifest;
+const lockfile = { name, version, lockfileVersion: 3, requires: true, packages: { "": { name, version, license, bin, engines } } };
+await writeFile(join(dist, "npm-shrinkwrap.json"), `${JSON.stringify(lockfile, null, 2)}\n`);
 const heading = `Third-party software in stuga-mcp.js
 
 stuga-mcp is part of Stuga, AGPL-3.0-only: LICENSE beside this file, and the source at
