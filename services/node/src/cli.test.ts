@@ -15,7 +15,8 @@ function stugaNode(args: string[], env: Record<string, string> = {}, nodeArgs: s
   });
 }
 
-describe("stuga-node", () => {
+// Each test starts stuga-node at least once, which takes seconds on a shared CI runner.
+describe("stuga-node", { timeout: 30_000 }, () => {
   it("refuses an unknown command with its usage and exit 2", () => {
     const run = stugaNode(["frobnicate"]);
     expect(run.stderr).toContain("stuga-node reset-password <username>");
