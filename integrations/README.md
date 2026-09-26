@@ -43,7 +43,8 @@ Its source is in [services/mcp](https://github.com/stuga-dev/stuga/tree/main/ser
 The connector sends Claude's requests to your Stuga node, at the address you entered, and nowhere
 else. It keeps your sign-in in `~/.config/stuga/oauth.json`, readable only by you. What Claude reads
 and writes is processed by Anthropic, as with any conversation. Revoke Claude's access at any time
-under **Settings → Your own AI → Connected agents** in Stuga.
+under **Settings → Your own AI → Connected agents** in Stuga. Privacy policy:
+[stuga.dev/privacy](https://stuga.dev/privacy).
 
 ## License
 
