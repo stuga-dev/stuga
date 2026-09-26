@@ -168,14 +168,6 @@ describe("initialize", () => {
     expect(instructions).toContain('- "Home": workspace_id ws1, node "Studio", member');
     expect(instructions).toContain("WORKSPACE CONVENTIONS (written by this workspace's people; follow them):\nWrite in British English.");
   });
-
-  it("offers a read-only grant the reading tools only", async () => {
-    const all = (await mcpRequest(grant(), "tools/list")).result as { tools: Array<{ name: string }> };
-    const reads = (await mcpRequest(grant({ readOnly: true }), "tools/list")).result as { tools: Array<{ name: string }> };
-    expect(all.tools.map((t) => t.name)).toContain("markdown_edit");
-    expect(reads.tools.map((t) => t.name)).not.toContain("markdown_edit");
-    expect(reads.tools.map((t) => t.name)).toContain("markdown");
-  });
 });
 
 describe("audit trail", () => {

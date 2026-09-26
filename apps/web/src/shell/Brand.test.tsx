@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
 import { setAuthConfigForTest } from "../lib/session/auth-config";
+import { mountInto } from "../test/form-input";
 import { Brand, nodeLabel, nodeName } from "./Brand";
 
 function configure(node: { name?: string | null; label?: string | null }) {
@@ -13,22 +13,13 @@ function configure(node: { name?: string | null; label?: string | null }) {
   });
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
 function render() {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  act(() => root!.render(<Brand />));
-  return host;
+  const mounted = mountInto();
+  act(() => mounted.root.render(<Brand />));
+  return mounted;
 }
 
 afterEach(() => {
-  act(() => root?.unmount());
-  host?.remove();
-  root = null;
-  host = null;
   setAuthConfigForTest(null);
 });
 
@@ -62,14 +53,13 @@ describe("<Brand />", () => {
   it("is Stuga's mark in the square, decorative, whatever the node is called", () => {
     for (const name of [null, "Acme"]) {
       configure({ name });
-      const el = render().querySelector("span.brand__mark")!;
+      const { host, root } = render();
+      const el = host.querySelector("span.brand__mark")!;
       // The wordmark beside it names the node.
       expect(el.textContent).toBe("");
       expect(el.querySelector("svg.brand__glyph")!.getAttribute("aria-hidden")).toBe("true");
-      act(() => root!.unmount());
-      host!.remove();
-      root = null;
-      host = null;
+      act(() => root.unmount());
+      host.remove();
     }
   });
 });

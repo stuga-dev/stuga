@@ -18,6 +18,7 @@ const { isNodeAdminAlias, listNotifications, listMembershipGroups, markNotificat
   await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockList = listNotifications as unknown as ReturnType<typeof vi.fn>;
 const mockMark = markNotificationsRead as unknown as ReturnType<typeof vi.fn>;
@@ -31,20 +32,7 @@ const REACH = {
   ws2: ["user:human-1"],
 };
 
-function ctx(over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "human-1",
-    displayName: "Ali",
-    email: "alice@example.test",
-    isAgent: false,
-    principals: ["user:human-1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: {},
-    ...over,
-  } as unknown as Ctx;
-}
+const ctx = (over: CtxOverrides = {}): Ctx => personCtx({ displayName: "Ali", principals: ["user:human-1"], ...over });
 
 async function route(c: Ctx, method: string, path: string, body?: unknown): Promise<Response> {
   const url = new URL(`https://node.test${path}`);

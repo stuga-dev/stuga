@@ -30,18 +30,14 @@ const { getCollection, expandCollectionScope, getWorkspace, createAskThread, get
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { AskToolRunner } from "@stuga/ai";
 import type { Ctx } from "../auth/context.js";
+import { fixed, personCtx, readOnlyKeyCtx, recordingJobs } from "../testing/ctx.js";
 
-const ctx = {
-  sql: {},
+const ctx = personCtx({
   alias: "ada",
-  displayName: "Ada",
   surface: "web",
-  isAgent: false,
   principals: ["user:ada"],
-  workspaceId: "ws1",
-  role: "member",
-  env: { jobs: { send: vi.fn(async () => {}) }, aiSettings: { current: () => ({ chat: { enabled: true }, embed: { enabled: true } }) } },
-} as unknown as Ctx;
+  env: { jobs: recordingJobs(), aiSettings: fixed({ chat: { enabled: true }, embed: { enabled: true } }) },
+});
 
 const reads: unknown[] = [];
 
@@ -107,16 +103,7 @@ describe("POST /api/ask", () => {
 });
 
 describe("a read-only key", () => {
-  const readOnlyKey = {
-    ...ctx,
-    alias: "agent-1",
-    displayName: "Scout",
-    surface: "api-key",
-    isAgent: true,
-    onBehalfOf: "ada",
-    principals: ["agent:agent-1", "user:ada"],
-    scope: { folders: null, readOnly: true, credentialId: "k1" },
-  } as unknown as Ctx;
+  const readOnlyKey = readOnlyKeyCtx({ displayName: "Scout", surface: "api-key", onBehalfOf: "ada", principals: ["agent:agent-1", "user:ada"], env: ctx.env });
   const THREAD = { thread_id: "ask_1", workspace_id: "ws1", owner: "agent-1", title: "", collection_id: null, created_at: "", updated_at: "" };
 
   beforeEach(() => {

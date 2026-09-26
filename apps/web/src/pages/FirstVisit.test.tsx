@@ -2,12 +2,13 @@
 /** The landing page of a sign-in through the identity provider, for someone the node does not know yet. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, StrictMode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { FirstVisit } from "./FirstVisit";
 import { getToken } from "../lib/session/tokens";
 import { hasSsoHint } from "../lib/session/provider";
 import { rememberLoginReturn } from "../lib/session/return-path";
+import { mountInto, typeInto } from "../test/form-input";
 
 const fetchMock = vi.fn<typeof fetch>();
 const assign = vi.fn();
@@ -83,14 +84,7 @@ function input(label: string): HTMLInputElement {
   return found!;
 }
 
-async function type(label: string, value: string) {
-  const el = input(label);
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(el, value);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+const type = (label: string, value: string) => typeInto(input(label), value);
 
 const button = (label: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === label);
 const isDisabled = (b: HTMLButtonElement | undefined) => !!b && (b.disabled || b.getAttribute("aria-disabled") === "true");
@@ -103,7 +97,6 @@ async function click(label: string) {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   fetchMock.mockReset();
   assign.mockReset();
   vi.stubGlobal("fetch", fetchMock);
@@ -115,15 +108,10 @@ beforeEach(() => {
   Object.defineProperty(window, "location", { configurable: true, value: live });
   localStorage.clear();
   sessionStorage.clear();
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  ({ host, root } = mountInto());
 });
 
 afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
-  vi.unstubAllGlobals();
   Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
   window.history.replaceState({}, "", "/");
 });

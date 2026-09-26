@@ -13,6 +13,7 @@ const { getDoc, addComment, getMembersByUsername, getMemberRole } = await import
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import type { Ctx } from "../auth/context.js";
+import { personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockAddComment = addComment as unknown as ReturnType<typeof vi.fn>;
@@ -40,18 +41,8 @@ const DOC = {
 
 let sent: IndexMessage[];
 
-function ctx(over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "human-7f3a",
-    displayName: "Ada Lovelace",
-    isAgent: false,
-    principals: ["user:human-7f3a", "org:ws1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: { jobs: { send: async (m: IndexMessage) => void sent.push(m) } },
-    ...over,
-  } as unknown as Ctx;
+function ctx(over: CtxOverrides = {}): Ctx {
+  return personCtx({ alias: "human-7f3a", displayName: "Ada Lovelace", env: { jobs: { send: async (m: IndexMessage) => void sent.push(m) } }, ...over });
 }
 
 function comment(c: Ctx, body: Record<string, unknown>): Promise<Response> {

@@ -30,17 +30,9 @@ const { retrieveAndRerank } = await import("./retrieve.js");
 const { createAskRunner, describeSchema } = await import("./ask-runner.js");
 import type { DocRow, FolderRow } from "@stuga/db";
 import type { ColumnSpec, DatabaseSchema } from "@stuga/protocol/databases/types";
-import type { Ctx } from "../auth/context.js";
+import { fixed, personCtx } from "../testing/ctx.js";
 
-const ctx = {
-  sql: {},
-  alias: "ada",
-  isAgent: false,
-  principals: ["user:ada"],
-  workspaceId: "ws1",
-  role: "member",
-  env: { embeddingDims: 2, searchLanguages: { current: () => [] } },
-} as unknown as Ctx;
+const ctx = personCtx({ alias: "ada", principals: ["user:ada"], env: { embeddingDims: 2, searchLanguages: fixed([]) } });
 
 const runner = (scopeDocIds: string[] | null) => createAskRunner({ ctx, aiCfg: {} as never, scopeDocIds }).runner;
 const folder = (folder_id: string) => ({ folder_id, title: folder_id, workspace_id: "ws1", acl_principals: ["user:ada"] }) as FolderRow;

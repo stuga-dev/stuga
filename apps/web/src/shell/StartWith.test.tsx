@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Root } from "react-dom/client";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const workspaces = vi.hoisted(() => ({
   create: vi.fn(),
@@ -14,7 +14,7 @@ const workspaces = vi.hoisted(() => ({
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), Workspaces: workspaces }));
 
 const { SAMPLES_RECHECK_MS, StartWith, createWorkspaceFrom, landingPath, useNewWorkspace, useWorkspaceSamples } = await import("./StartWith");
-import { chooseRadio, pickFile } from "../test/form-input";
+import { chooseRadio, mountInto, pickFile, typeInto } from "../test/form-input";
 
 const ARCHIVE = new File(["PK"], "Team handbook.stuga.zip", { type: "application/zip" });
 const PYTHON = { id: "python-specs", title: "Python specs", description: "Specs and a release plan.", name: "Python specs (sample)", langs: ["en"] };
@@ -41,31 +41,16 @@ const state = () =>
   JSON.parse(host.querySelector('[data-testid="state"]')!.textContent!) as { name: string; kind: string; picked: string | null; ready: boolean; nameOptional: boolean };
 const labels = () => [...host.querySelectorAll('input[type="radio"]')].map((r) => document.getElementById(r.getAttribute("aria-labelledby") ?? "")?.textContent);
 
-async function typeName(value: string) {
-  const input = host.querySelector<HTMLInputElement>('input[aria-label="name"]')!;
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+const typeName = (value: string) => typeInto(host.querySelector<HTMLInputElement>('input[aria-label="name"]'), value);
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   workspaces.create.mockReset();
   workspaces.createFromSample.mockReset();
   workspaces.importArchive.mockReset();
   workspaces.samples.mockReset().mockResolvedValue({ samples: [] });
   workspaces.samplesAgain.mockReset().mockResolvedValue({ samples: [] });
   workspaces.cachedSamples.mockReset().mockReturnValue(undefined);
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
+  ({ host, root } = mountInto());
 });
 
 describe("Start with", () => {
@@ -119,7 +104,7 @@ describe("Start with", () => {
     expect(host.textContent).not.toContain("Loading samples…");
 
     act(() => root.unmount());
-    root = createRoot(host);
+    ({ host, root } = mountInto());
     workspaces.cachedSamples.mockReturnValue({ samples: [LAWS] });
     workspaces.samples.mockReturnValue(new Promise(() => {}));
     await act(async () => root.render(<Harness />));

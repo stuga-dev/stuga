@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { toasts } from "../../test/toast";
+import { mountInto, typeInto } from "../../test/form-input";
 
 const folders = vi.hoisted(() => ({ create: vi.fn(), placementInstructions: vi.fn(async () => ({ inherited: [] })) }));
-const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type: string }> }));
 
 vi.mock("../../api", async (orig) => ({
   ...(await orig<typeof import("../../api")>()),
@@ -14,21 +15,10 @@ vi.mock("../../api", async (orig) => ({
   Me: { whoami: vi.fn(async () => ({ node_admin: false })) },
   Workspaces: { list: vi.fn(async () => ({ workspaces: [], active: null })) },
 }));
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string; type: string }) => toasts.shown.push(t),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../../test/toast"));
 
 const { CommandPalette } = await import("./CommandPalette");
 const { CommandPaletteProvider } = await import("./context");
-
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
 
 let host: HTMLDivElement;
 let root: Root;
@@ -51,28 +41,18 @@ async function createFolder(name: string, instructions?: string) {
     (i) => host.querySelector(`label[for="${i.id}"]`)?.textContent?.includes("Folder name"),
   );
   expect(input).toBeTruthy();
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input!, name);
-    input!.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  await typeInto(input, name);
   if (instructions !== undefined) {
     const area = host.querySelector("textarea")!;
-    const areaSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-    await act(async () => {
-      areaSetter.call(area, instructions);
-      area.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await typeInto(area, instructions);
   }
   await click([...host.querySelectorAll("button")].find((b) => b.textContent === "Create"));
 }
 
 beforeEach(async () => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.clearAllMocks();
   toasts.shown = [];
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  ({ host, root } = mountInto());
   await act(async () => {
     root.render(
       <MemoryRouter initialEntries={["/doc/d_1"]}>
@@ -85,12 +65,6 @@ beforeEach(async () => {
       </MemoryRouter>,
     );
   });
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
-  vi.clearAllMocks();
 });
 
 describe("CommandPalette keyboard", () => {

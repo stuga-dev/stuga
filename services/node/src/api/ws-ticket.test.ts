@@ -9,6 +9,7 @@ const { getDoc } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 const { verifyWsTicket } = await import("../auth/ws-ticket.js");
 import type { Ctx } from "../auth/context.js";
+import { personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const SECRET = "node-internal-secret";
@@ -21,20 +22,8 @@ const DOC = {
   acl_writers: ["user:alice"],
 };
 
-function ctx(overrides: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "alice",
-    displayName: "Alice",
-    email: null,
-    isAgent: false,
-    principals: ["user:alice"],
-    workspaceId: "ws1",
-    role: "member",
-    env: { internalSecret: SECRET },
-    ...overrides,
-  } as unknown as Ctx;
-}
+const ctx = (overrides: CtxOverrides = {}): Ctx =>
+  personCtx({ alias: "alice", displayName: "Alice", principals: ["user:alice"], env: { internalSecret: SECRET }, ...overrides });
 
 function mintFor(c: Ctx, doc = "d1"): Promise<Response> {
   const url = new URL(`https://node.test/api/ws/ticket?doc=${doc}`);

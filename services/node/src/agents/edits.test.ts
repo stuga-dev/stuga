@@ -25,6 +25,7 @@ const {
   parseCitedEdits,
 } = await import("./edits.js");
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, agentCtx, fixed, type CtxOverrides } from "../testing/ctx.js";
 import { DEFAULT_MAX_BODY_BYTES } from "../media/media.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
@@ -67,21 +68,8 @@ function fakeActor(respond: (url: string, init?: RequestInit) => Response) {
   return { calls, fetch };
 }
 
-function makeCtx(fetcher: ReturnType<typeof fakeActor>["fetch"], overrides: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "agent-1",
-    displayName: "Scout (Connector)",
-    isAgent: true,
-    onBehalfOf: "human-1",
-    principals: ["agent:agent-1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: {
-      docs: { get: () => ({ fetch: fetcher }) },
-    },
-    ...overrides,
-  } as unknown as Ctx;
+function makeCtx(fetcher: ReturnType<typeof fakeActor>["fetch"], overrides: CtxOverrides = {}): Ctx {
+  return agentCtx({ displayName: "Scout (Connector)", principals: ["agent:agent-1"], env: { docs: actorsAnswering(fetcher) }, ...overrides });
 }
 
 const jsonRes = (body: unknown, status = 200) =>
@@ -366,9 +354,9 @@ describe("proposeDocEdit hosts the agent's images", () => {
   function mediaCtx(fetcher: ReturnType<typeof fakeActor>["fetch"]): Ctx {
     return makeCtx(fetcher, {
       env: {
-        docs: { get: () => ({ fetch: fetcher }) },
+        docs: actorsAnswering(fetcher),
         publicOrigin: "https://stuga.example.test",
-        settings: { current: () => ({ maxBodyBytes: DEFAULT_MAX_BODY_BYTES }) },
+        settings: fixed({ maxBodyBytes: DEFAULT_MAX_BODY_BYTES }),
         media: {
           head: async () => null,
           put: async (k: string) => {
@@ -376,7 +364,7 @@ describe("proposeDocEdit hosts the agent's images", () => {
           },
         },
       },
-    } as unknown as Partial<Ctx>);
+    });
   }
 
   beforeEach(() => {
@@ -478,10 +466,7 @@ describe("proposeDocEdit hosts the agent's images", () => {
 describe("proposeDocEdit writes the audit ledger", () => {
   const jobsSend = vi.fn(async (_msg: Record<string, unknown>) => {});
   const ctxWithJobs = (fetcher: ReturnType<typeof fakeActor>["fetch"], surface: Ctx["surface"]) =>
-    makeCtx(fetcher, {
-      surface,
-      env: { docs: { get: () => ({ fetch: fetcher }) }, jobs: { send: jobsSend } },
-    } as unknown as Partial<Ctx>);
+    makeCtx(fetcher, { surface, env: { docs: actorsAnswering(fetcher), jobs: { send: jobsSend } } });
 
   beforeEach(() => jobsSend.mockClear());
 

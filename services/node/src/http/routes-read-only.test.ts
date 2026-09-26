@@ -5,25 +5,13 @@
  */
 import { describe, expect, it } from "vitest";
 import { READ_ONLY_MESSAGE } from "../authz/authz.js";
-import type { Ctx } from "../auth/context.js";
+import { readOnlyKeyCtx } from "../testing/ctx.js";
 import { gateRefusal, type AppRoute } from "./dispatch.js";
 import type { Method } from "./router.js";
 import { APP_ROUTES } from "./routes.js";
 
 /** An admin's key, so a gate that refuses it refuses every agent key. */
-const readOnlyKey = {
-  sql: {},
-  alias: "agent-1",
-  displayName: "Scout",
-  isAgent: true,
-  onBehalfOf: "ada",
-  surface: "api-key",
-  principals: ["agent:agent-1", "user:ada", "org:ws1"],
-  workspaceId: "ws1",
-  role: "admin",
-  scope: { folders: null, readOnly: true, credentialId: "k1" },
-  env: {},
-} as unknown as Ctx;
+const readOnlyKey = readOnlyKeyCtx({ displayName: "Scout", onBehalfOf: "ada", surface: "api-key", role: "admin" });
 
 /** A regex path as a person would write it: `:id` for a segment, `:n` for a number, `**` for the rest, `[x]` for an optional part. */
 function pathLabel(path: string | RegExp): string {

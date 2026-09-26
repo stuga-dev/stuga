@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 /** Workspace settings' Export section: who sees it, the download it starts, and its busy state. */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
+import { toasts } from "../../test/toast";
+import { mountInto } from "../../test/form-input";
 
 const workspaces = vi.hoisted(() => ({ exportArchive: vi.fn() }));
 const scope = vi.hoisted(() => ({ canManage: true, isOwner: false }));
 const saved = vi.hoisted(() => ({ files: [] as Array<{ blob: Blob; filename: string }> }));
-const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type?: string }> }));
 
 vi.mock("../../api", async (orig) => {
   const api = await orig<typeof import("../../api")>();
@@ -17,9 +18,7 @@ vi.mock("../../api", async (orig) => {
 vi.mock("../../lib/download", () => ({
   saveBlob: (blob: Blob, filename: string) => saved.files.push({ blob, filename }),
 }));
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string; type?: string }) => toasts.shown.push(t),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../../test/toast"));
 vi.mock("./SettingsLayout", () => ({
   useSettingsScope: () => ({
     isReady: true,
@@ -63,20 +62,12 @@ async function click(label: string) {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   workspaces.exportArchive.mockReset();
   scope.canManage = true;
   scope.isOwner = false;
   saved.files = [];
   toasts.shown = [];
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
+  ({ host, root } = mountInto());
 });
 
 describe("WorkspaceGeneral · Export", () => {

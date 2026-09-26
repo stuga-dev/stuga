@@ -15,6 +15,7 @@ const { getDoc } = await import("@stuga/db");
 const { proposeDocEdit } = await import("../agents/edits.js");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockProposeDocEdit = proposeDocEdit as unknown as ReturnType<typeof vi.fn>;
@@ -48,18 +49,8 @@ const actorFetch = vi.fn(async (url: string, init?: RequestInit) => {
 });
 
 /** A human collaborator with full write access to the doc. */
-function userCtx(overrides: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "bob",
-    displayName: "Bob",
-    isAgent: false,
-    principals: ["user:bob"],
-    workspaceId: "ws1",
-    role: "member",
-    env: { docs: { get: () => ({ fetch: actorFetch }) } },
-    ...overrides,
-  } as unknown as Ctx;
+function userCtx(overrides: CtxOverrides = {}): Ctx {
+  return personCtx({ alias: "bob", displayName: "Bob", principals: ["user:bob"], env: { docs: actorsAnswering(actorFetch) }, ...overrides });
 }
 
 async function call(ctx: Ctx, method: string, path: string, body?: unknown): Promise<Response> {
@@ -82,7 +73,7 @@ beforeEach(() => {
 });
 
 /** A ctx whose job queue is captured, so the audit rows can be read back. */
-function auditedCtx(overrides: Partial<Ctx> = {}): { ctx: Ctx; rows: Array<Record<string, unknown>> } {
+function auditedCtx(overrides: CtxOverrides = {}): { ctx: Ctx; rows: Array<Record<string, unknown>> } {
   const sent: Array<Record<string, unknown>> = [];
   const ctx = userCtx(overrides);
   (ctx.env as { jobs?: unknown }).jobs = { send: async (m: Record<string, unknown>) => void sent.push(m) };
@@ -276,7 +267,7 @@ describe("the REST propose answer", () => {
       isAgent: true,
       onBehalfOf: "owner-1",
       principals: ["agent:agent-1"],
-      env: { docs: { get: () => ({ fetch: actorFetch }) }, publicOrigin: "https://stuga.test" } as unknown as Ctx["env"],
+      env: { docs: actorsAnswering(actorFetch) },
     });
   const run = { id: "run_x", agent_alias: "agent-1" };
 

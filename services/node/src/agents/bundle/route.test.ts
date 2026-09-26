@@ -10,23 +10,13 @@ const { insertApiKey } = await import("@stuga/db");
 const { handleAgentBundle } = await import("./route.js");
 const { routeWorkspaceRequest } = await import("../../http/dispatch.js");
 import type { Ctx } from "../../auth/context.js";
+import { fixed, personCtx, type CtxOverrides } from "../../testing/ctx.js";
 import type { BundleSource } from "./route.js";
 
 const SERVER_JS = new TextEncoder().encode("console.log('stuga');\n");
 
-function humanCtx(over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "human-1",
-    displayName: "Liv",
-    isAgent: false,
-    principals: ["user:human-1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: { publicOrigin: "https://stuga.test", nodeId: "ktbbpahhzxoldakw", settings: { current: () => ({ nodeLabel: "Liv’s Mac" }) } },
-    ...over,
-  } as unknown as Ctx;
-}
+const humanCtx = (over: CtxOverrides = {}): Ctx =>
+  personCtx({ displayName: "Liv", principals: ["user:human-1"], env: { nodeId: "ktbbpahhzxoldakw", settings: fixed({ nodeLabel: "Liv’s Mac" }) }, ...over });
 
 /** The built artifact present. */
 function built(over: BundleSource = {}): BundleSource {
@@ -39,7 +29,7 @@ beforeEach(() => {
 
 describe("GET /api/agent-bundle", () => {
   it("is refused to agents by the route table", async () => {
-    const agent = humanCtx({ isAgent: true, alias: "agent-1", onBehalfOf: "human-1" } as Partial<Ctx>);
+    const agent = humanCtx({ isAgent: true, alias: "agent-1", onBehalfOf: "human-1" });
     const res = await routeWorkspaceRequest(agent, new Request("https://node.test/api/agent-bundle"));
     expect(res.status).toBe(403);
   });

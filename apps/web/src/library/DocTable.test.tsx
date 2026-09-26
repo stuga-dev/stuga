@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Root } from "react-dom/client";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibraryRow } from "./DocTable";
+import { mountInto } from "../test/form-input";
 
 const narrow = vi.hoisted(() => ({ value: false }));
 vi.mock("../ui/narrow", () => ({ useIsNarrow: () => narrow.value }));
@@ -83,20 +84,12 @@ async function clickName(init: MouseEventInit = {}) {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   narrow.value = false;
   onOpen.mockReset();
   onSelect.mockReset();
   onFavorite.mockReset();
   onRename.mockReset();
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
+  ({ host, root } = mountInto());
 });
 
 describe("document library row interaction", () => {

@@ -22,6 +22,7 @@ const { getDoc, createDoc } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../../http/dispatch.js");
 const { handleDatabaseImportUpload, importPageUrl, sweepExpiredImports } = await import("./staging.js");
 import type { Ctx } from "../../auth/context.js";
+import { personCtx, type CtxOverrides } from "../../testing/ctx.js";
 import type { BlobHead, BlobObject, BlobStore } from "@stuga/runtime";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
@@ -125,19 +126,8 @@ const env = () => ({
   jobs: { send: vi.fn(async () => {}) },
 });
 
-function ctxOf(overrides: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "bob",
-    displayName: "Bob",
-    isAgent: false,
-    principals: ["user:bob"],
-    workspaceId: "ws1",
-    role: "member",
-    env: env(),
-    ...overrides,
-  } as unknown as Ctx;
-}
+const ctxOf = (overrides: CtxOverrides = {}): Ctx =>
+  personCtx({ alias: "bob", displayName: "Bob", principals: ["user:bob"], env: env(), ...overrides });
 const viewer = () => ctxOf({ alias: "viv", principals: ["user:viv"] });
 const agent = () => ctxOf({ alias: "agent-1", displayName: "Codey", isAgent: true, onBehalfOf: "owner-1", principals: ["agent:agent-1"] });
 

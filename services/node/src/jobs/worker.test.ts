@@ -426,6 +426,8 @@ describe("index_doc: the version half", () => {
 
   const DOC = { doc_id: "d1", title: "Notes", title_source: "heading", search_hidden: false } as never;
   const KEY = "d1/7.bin";
+  /** The real embed would call the fake endpoint and wait out its retry backoff. */
+  const embed = async (_cfg: unknown, texts: string[]) => ({ embeddings: texts.map(() => [0, 0, 0, 1]), inputTokens: 5 });
 
   function fixture(
     recordVersion: boolean | undefined,
@@ -450,37 +452,37 @@ describe("index_doc: the version half", () => {
 
   it("records a version when the actor asked for one", async () => {
     const { db, env, msg } = fixture(true);
-    await dispatchJob(env, msg, { db, log: silentLog });
+    await dispatchJob(env, msg, { db, log: silentLog, embed });
     expect(db.recordVersion).toHaveBeenCalledTimes(1);
     expect(vi.mocked(db.recordVersion).mock.calls[0]![0]).toMatchObject({ docId: "d1", seq: 7, blobKey: KEY, versionFloor: 3 });
   });
 
   it("indexes without recording a version when the actor did not ask", async () => {
     const { db, env, msg } = fixture(false);
-    await dispatchJob(env, msg, { db, log: silentLog });
+    await dispatchJob(env, msg, { db, log: silentLog, embed });
     expect(db.recordVersion).not.toHaveBeenCalled();
     expect(db.indexDoc).toHaveBeenCalledTimes(1);
   });
 
   it("records nothing for a producer that sets no flag at all", async () => {
     const { db, env, msg } = fixture(undefined);
-    await dispatchJob(env, msg, { db, log: silentLog });
+    await dispatchJob(env, msg, { db, log: silentLog, embed });
     expect(db.recordVersion).not.toHaveBeenCalled();
   });
 
   it("names everyone since the previous version, not only the last flush's authors", async () => {
     const { db, env, msg } = fixture(true);
-    await dispatchJob(env, { ...msg, versionAuthors: ["ada", "liv", "user:alice"] } as IndexMessage, { db, log: silentLog });
+    await dispatchJob(env, { ...msg, versionAuthors: ["ada", "liv", "user:alice"] } as IndexMessage, { db, log: silentLog, embed });
     expect(vi.mocked(db.recordVersion).mock.calls[0]![0]).toMatchObject({ authors: ["ada", "liv", "user:alice"] });
 
     const older = fixture(true); // a producer that sends no versionAuthors
-    await dispatchJob(older.env, older.msg, { db: older.db, log: silentLog });
+    await dispatchJob(older.env, older.msg, { db: older.db, log: silentLog, embed });
     expect(vi.mocked(older.db.recordVersion).mock.calls[0]![0]).toMatchObject({ authors: ["user:alice"] });
   });
 
   it("only records the version of a seq already indexed: no second embed, no mentions again", async () => {
     const { db, env, msg } = fixture(true, { snapshot_seq: 7 });
-    await dispatchJob(env, msg, { db, log: silentLog });
+    await dispatchJob(env, msg, { db, log: silentLog, embed });
     expect(db.recordVersion).toHaveBeenCalledTimes(1);
     expect(db.syncDocMentions).not.toHaveBeenCalled();
     expect(db.getEmbeddingHash).not.toHaveBeenCalled();
@@ -489,9 +491,9 @@ describe("index_doc: the version half", () => {
 
     // A forced reindex of that seq (the embedding backfill) still runs.
     const forced = fixture(false, { snapshot_seq: 7 });
-    const embed = vi.fn(async (_cfg: unknown, texts: string[]) => ({ embeddings: texts.map(() => [0, 0, 0, 1]), inputTokens: 5 }));
-    await dispatchJob(forced.env, { ...forced.msg, force: true } as IndexMessage, { db: forced.db, log: silentLog, embed });
-    expect(embed).toHaveBeenCalled();
+    const backfill = vi.fn(embed);
+    await dispatchJob(forced.env, { ...forced.msg, force: true } as IndexMessage, { db: forced.db, log: silentLog, embed: backfill });
+    expect(backfill).toHaveBeenCalled();
     expect(forced.db.indexDoc).toHaveBeenCalledTimes(1);
   });
 
@@ -516,7 +518,7 @@ describe("index_doc: the version half", () => {
 
   it("advances the row's seq on the search-hidden exit, after clearing the chunks", async () => {
     const { db, env, msg } = fixture(true, { search_hidden: true, snapshot_seq: 5 });
-    await dispatchJob(env, msg, { db, log: silentLog });
+    await dispatchJob(env, msg, { db, log: silentLog, embed });
     expect(db.indexDoc).not.toHaveBeenCalled();
     expect(db.advanceSnapshotSeq).toHaveBeenCalledExactlyOnceWith("d1", 7);
     expect(vi.mocked(db.clearDocChunks).mock.invocationCallOrder[0]).toBeLessThan(
@@ -526,7 +528,7 @@ describe("index_doc: the version half", () => {
 
   it("advances the row's seq when the text is unchanged, but not past a version with that text", async () => {
     const first = fixture(false, { snapshot_seq: 5 });
-    await dispatchJob(first.env, first.msg, { db: first.db, log: silentLog });
+    await dispatchJob(first.env, first.msg, { db: first.db, log: silentLog, embed });
     expect(first.db.advanceSnapshotSeq).not.toHaveBeenCalled();
     const { embeddingHash } = vi.mocked(first.db.indexDoc).mock.calls[0]![0];
 
@@ -535,7 +537,7 @@ describe("index_doc: the version half", () => {
       const { db, env, msg } = fixture(false, { snapshot_seq: row });
       vi.mocked(db.getEmbeddingHash).mockResolvedValue(embeddingHash);
       vi.mocked(db.previousVersionSeq).mockResolvedValue(version);
-      await dispatchJob(env, msg, { db, log: silentLog });
+      await dispatchJob(env, msg, { db, log: silentLog, embed });
       expect(db.indexDoc).not.toHaveBeenCalled();
       expect(db.previousVersionSeq).toHaveBeenCalledWith("d1", 8);
       return vi.mocked(db.advanceSnapshotSeq).mock.calls;
@@ -553,16 +555,16 @@ describe("index_doc: the version half", () => {
     const { snapshotSeq: _, ...noSeq } = fixture(false).msg as Extract<IndexMessage, { kind: "index_doc" }>;
 
     const hidden = fixture(false, { search_hidden: true, snapshot_seq: 7 });
-    await dispatchJob(hidden.env, noSeq, { db: hidden.db, log: silentLog });
+    await dispatchJob(hidden.env, noSeq, { db: hidden.db, log: silentLog, embed });
     expect(hidden.db.clearDocChunks).toHaveBeenCalled();
     expect(hidden.db.advanceSnapshotSeq).not.toHaveBeenCalled();
 
     const first = fixture(false, { snapshot_seq: 7 });
-    await dispatchJob(first.env, noSeq, { db: first.db, log: silentLog });
+    await dispatchJob(first.env, noSeq, { db: first.db, log: silentLog, embed });
     const { embeddingHash } = vi.mocked(first.db.indexDoc).mock.calls[0]![0];
     const unchanged = fixture(false, { snapshot_seq: 7 });
     vi.mocked(unchanged.db.getEmbeddingHash).mockResolvedValue(embeddingHash);
-    await dispatchJob(unchanged.env, noSeq, { db: unchanged.db, log: silentLog });
+    await dispatchJob(unchanged.env, noSeq, { db: unchanged.db, log: silentLog, embed });
     expect(unchanged.db.indexDoc).not.toHaveBeenCalled();
     expect(unchanged.db.advanceSnapshotSeq).not.toHaveBeenCalled();
   });

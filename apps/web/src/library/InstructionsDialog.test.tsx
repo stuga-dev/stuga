@@ -1,36 +1,25 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MAX_AGENT_INSTRUCTIONS_CHARS } from "@stuga/protocol/domain/limits";
 import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
 import type { ItemInstructions } from "../api";
 import type { InstructionsTarget } from "./InstructionsDialog";
+import { toasts } from "../test/toast";
+import { mountInto, typeInto } from "../test/form-input";
 
 const docs = vi.hoisted(() => ({ instructions: vi.fn(), setState: vi.fn() }));
 const folders = vi.hoisted(() => ({ instructions: vi.fn(), setInstructions: vi.fn() }));
-const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type: string }> }));
 
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   Docs: docs,
   Folders: folders,
 }));
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string; type: string }) => toasts.shown.push(t),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const { InstructionsDialog } = await import("./InstructionsDialog");
-
-// jsdom's <dialog> has no showModal/close, which Astryx Dialog calls.
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
 
 const WORKSPACE: InstructionLevel = { kind: "workspace", id: "w_1", title: "Acme", text: "Write in British English." };
 const CONTRACTS: InstructionLevel = { kind: "folder", id: "f_1", title: "Contracts", text: "Never change signed terms.\nAsk first." };
@@ -49,13 +38,7 @@ async function open(target: InstructionsTarget, answer: ItemInstructions) {
   await act(async () => root.render(<InstructionsDialog isOpen target={target} onClose={onClose} />));
 }
 
-async function type(value: string) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(textarea(), value);
-    textarea().dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+const type = (value: string) => typeInto(textarea(), value);
 
 async function click(label: string) {
   const el = button(label);
@@ -64,17 +47,9 @@ async function click(label: string) {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  toasts.shown = [];
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
   vi.clearAllMocks();
+  toasts.shown = [];
+  ({ host, root } = mountInto());
 });
 
 describe("InstructionsDialog", () => {

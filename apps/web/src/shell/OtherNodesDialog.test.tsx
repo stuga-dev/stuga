@@ -1,30 +1,20 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import type { OtherNode } from "../api";
+import { toasts } from "../test/toast";
+import { mountInto, typeInto } from "../test/form-input";
 
 const otherNodes = vi.hoisted(() => ({ list: vi.fn(), add: vi.fn(), remove: vi.fn(), onChanged: vi.fn() }));
-const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type: string }> }));
 
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   OtherNodes: otherNodes,
 }));
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string; type: string }) => toasts.shown.push(t),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const { OtherNodesDialog } = await import("./OtherNodesDialog");
-
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
 
 const STUDIO: OtherNode = { id: "nb_1", label: "Studio", origin: "https://studio.example" };
 const NAS: OtherNode = { id: "nb_2", label: "nas.local:8787", origin: "http://nas.local:8787" };
@@ -44,14 +34,7 @@ function input(labelText: string): HTMLInputElement {
   return found!;
 }
 
-async function type(labelText: string, value: string) {
-  const el = input(labelText);
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(el, value);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+const type = (labelText: string, value: string) => typeInto(input(labelText), value);
 
 async function click(label: string) {
   const el = button(label);
@@ -69,19 +52,11 @@ function refused(code: string): Error {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.clearAllMocks();
   toasts.shown = [];
   otherNodes.add.mockResolvedValue({ node: STUDIO });
   otherNodes.remove.mockResolvedValue(undefined);
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
-  vi.clearAllMocks();
+  ({ host, root } = mountInto());
 });
 
 describe("OtherNodesDialog", () => {

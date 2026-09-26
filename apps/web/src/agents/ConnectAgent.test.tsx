@@ -1,22 +1,23 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { mountInto, typeInto } from "../test/form-input";
+import { toastBodies, toasts } from "../test/toast";
 
 const keys = vi.hoisted(() => ({ create: vi.fn() }));
 const agents = vi.hoisted(() => ({ setup: vi.fn(), bundle: vi.fn() }));
-const toasts = vi.hoisted(() => ({ shown: [] as string[] }));
 
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   AgentKeys: keys,
   Agents: agents,
+  // The folders a key can be confined to.
+  Folders: { list: async () => ({ folders: [] }) },
 }));
 
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string }) => toasts.shown.push(t.body),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const { ConnectAgent } = await import("./ConnectAgent");
 
@@ -82,16 +83,12 @@ function clickTab(value: string): void {
 }
 
 /** Astryx TextInput keeps its value in React state; drive it through the DOM. */
-function type(labelText: string, value: string): void {
+async function type(labelText: string, value: string): Promise<void> {
   const input = [...document.querySelectorAll("input")].find(
     (i) => (document.querySelector(`label[for="${i.id}"]`)?.textContent ?? "").includes(labelText),
   );
   expect(input, `no input labelled ${labelText}`).toBeTruthy();
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  act(() => {
-    setter.call(input!, value);
-    input!.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  await typeInto(input, value);
 }
 
 const button = (re: RegExp) =>
@@ -110,11 +107,7 @@ async function mount(setup: AgentSetup | null, props: Partial<Parameters<typeof 
   agents.setup.mockImplementation(() =>
     setup ? Promise.resolve(setup) : Promise.reject(new Error("unreachable")),
   );
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  act(() => {
-    root = createRoot(container);
-  });
+  ({ host: container, root } = mountInto());
   await act(async () => root.render(<ConnectAgent onKeyCreated={() => {}} {...props} />));
 }
 
@@ -125,11 +118,6 @@ beforeEach(async () => {
   objectUrls.revoked = [];
   root = undefined as unknown as Root;
   await mount(REACHABLE);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
 });
 
 describe("ConnectAgent", () => {
@@ -240,7 +228,7 @@ describe("ConnectAgent", () => {
     keys.create.mockResolvedValue({ name: "my-agent", token: "vk_live_abc123" });
     clickTab("other");
     expect([...document.querySelectorAll("input")].some((i) => i.placeholder === "my-agent")).toBe(true);
-    type("Agent name", "my-agent");
+    await type("Agent name", "my-agent");
     await act(async () => {
       button(/Create key/)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -265,7 +253,7 @@ describe("ConnectAgent", () => {
     await act(async () => {
       readOnly!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    type("Agent name", "scout");
+    await type("Agent name", "scout");
     await act(async () => {
       button(/Create key/)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -277,7 +265,7 @@ describe("ConnectAgent", () => {
     const onKeyCreated = vi.fn();
     await mount(REACHABLE, { onKeyCreated });
     clickTab("other");
-    type("Agent name", "another");
+    await type("Agent name", "another");
     await act(async () => {
       button(/Create key/)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -287,11 +275,11 @@ describe("ConnectAgent", () => {
   it("keeps the failed mint's message and leaves the placeholder alone", async () => {
     keys.create.mockRejectedValue(new Error("Free workspaces get one key"));
     clickTab("other");
-    type("Agent name", "nope");
+    await type("Agent name", "nope");
     await act(async () => {
       button(/Create key/)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(toasts.shown).toContain("Free workspaces get one key");
+    expect(toastBodies()).toContain("Free workspaces get one key");
     expect(text()).toContain("Bearer vk_your_key_here");
   });
   it("leads with the connector when this node can be dialled from outside", () => {
@@ -387,7 +375,7 @@ describe("ConnectAgent", () => {
     expect(objectUrls.created).toEqual([file]);
     expect(objectUrls.revoked).toEqual(["blob:stuga/1"]);
     expect(text()).toContain("install it, then restart Claude");
-    expect(toasts.shown).toContain("stuga.mcpb saved. Double-click it to install.");
+    expect(toastBodies()).toContain("stuga.mcpb saved. Double-click it to install.");
     expect(text()).toContain("stuga.mcpb saved — install it, then restart Claude");
     expect(text()).toContain("approve Stuga in your browser");
     expect(text()).not.toContain("carries a working key");
@@ -400,7 +388,7 @@ describe("ConnectAgent", () => {
     await act(async () => {
       button(/Add to Claude Desktop/)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(toasts.shown).toContain("The server ran out of disk");
+    expect(toastBodies()).toContain("The server ran out of disk");
     expect(objectUrls.created).toEqual([]);
     expect(text()).not.toContain("install it, then restart Claude");
     expect(button(/Add to Claude Desktop/)).toBeTruthy();

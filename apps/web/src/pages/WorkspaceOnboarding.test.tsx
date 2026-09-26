@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getActiveWorkspace } from "../lib/session/workspace-pointer";
-import { chooseRadio, pickFile } from "../test/form-input";
+import { chooseRadio, mountInto, pickFile, typeInto } from "../test/form-input";
 
 const services = vi.hoisted(() => ({
   create: vi.fn(),
@@ -96,17 +96,9 @@ async function click(label: string) {
   await act(async () => target!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
-async function name(value: string) {
-  const input = host.querySelector("input")!;
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+const name = (value: string) => typeInto(host.querySelector("input"), value);
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   sessionStorage.clear();
   scrolled = [];
@@ -121,14 +113,10 @@ beforeEach(() => {
   services.list.mockReset().mockResolvedValue({ workspaces: [], active: null });
   services.whoami.mockReset().mockResolvedValue({ node_admin: false });
   services.ai.mockReset();
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
+  ({ host, root } = mountInto());
 });
 
 afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
   vi.useRealTimers();
 });
 

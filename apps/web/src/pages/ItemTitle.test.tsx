@@ -1,20 +1,18 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { mountInto } from "../test/form-input";
+import { toasts } from "../test/toast";
 
 const docs = vi.hoisted(() => ({ rename: vi.fn() }));
-const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type: string }> }));
 vi.mock("../api", () => ({ Docs: docs }));
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string; type: string }) => toasts.shown.push(t),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const { useTitleRename } = await import("./ItemTitle");
 
 type Rename = ReturnType<typeof useTitleRename>;
 let current!: Rename;
-let host: HTMLDivElement;
 let root: Root;
 
 interface ProbeProps {
@@ -43,15 +41,9 @@ async function typeAndCommit(title: string) {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   docs.rename.mockReset();
   toasts.shown = [];
-  host = document.createElement("div");
-  root = createRoot(host);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
+  ({ root } = mountInto());
 });
 
 describe("useTitleRename", () => {

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 /** The run bar with a stubbed overlay: tests dictate what it painted and check the bar follows. */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import type { AgentRunHunk, AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import type { StugaProvider } from "../sync/stuga-provider";
 import { AgentRunsProvider } from "./agent-runs-context";
 import { AgentRunBar } from "./AgentRunBar";
+import { mountInto } from "../test/form-input";
 
 const ME = "me-sub";
 const T0 = 1_700_000_000_000;
@@ -105,7 +106,6 @@ async function click(el: HTMLElement): Promise<void> {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   calls = [];
   overlay.anchored = [];
   overlay.unanchored = [];
@@ -120,14 +120,7 @@ beforeEach(() => {
       headers: { "content-type": "application/json", "x-stuga-user": ME },
     });
   }) as typeof fetch;
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
+  ({ host: container, root } = mountInto());
 });
 
 describe("AgentRunBar", () => {

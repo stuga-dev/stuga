@@ -70,7 +70,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.unstubAllGlobals();
   if (!stubbed) return;
   if (originalDescriptor) Object.defineProperty(globalThis, "localStorage", originalDescriptor);
   else delete (globalThis as Record<string, unknown>).localStorage;

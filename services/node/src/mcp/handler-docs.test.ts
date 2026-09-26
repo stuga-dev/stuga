@@ -49,6 +49,7 @@ const { retrieve: restRetrieve, search: restSearch } = await import("../api/sear
 import { EMPTY_SCOPE_NOTE, RETRIEVE_AI_DISABLED_MESSAGE } from "@stuga/agent-surface/render/search";
 import { NO_INSTRUCTIONS } from "@stuga/agent-surface/render/docs";
 import type { Ctx } from "../auth/context.js";
+import { agentCtx, fixed, nodeSettings, personCtx, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
 
 const mockCreateDoc = vi.mocked(createDoc);
 const mockGetDoc = vi.mocked(getDoc);
@@ -57,7 +58,7 @@ const mockGetFolder = vi.mocked(getFolder);
 const mockGetCollection = vi.mocked(getCollection);
 const mockExpandScope = vi.mocked(expandCollectionScope);
 const mockRetrieve = vi.mocked(retrieveAndRerank);
-const jobsSend = vi.fn(async (_message: Record<string, unknown>) => {});
+const jobs = recordingJobs();
 
 const FOLDER = {
   folder_id: "f1",
@@ -69,30 +70,16 @@ const FOLDER = {
 
 let ai = { chat: { enabled: true }, embed: { enabled: true, model: "embed-1" } };
 
-function ctxOf(overrides: Record<string, unknown> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "agent-1",
-    displayName: "Connector",
-    surface: "mcp",
-    isAgent: true,
-    onBehalfOf: "human-1",
-    principals: ["agent:agent-1", "user:human-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: {
-      jobs: { send: jobsSend },
-      aiSettings: { current: () => ai },
-      publicOrigin: "https://stuga.test",
-      embeddingDims: 2,
-      searchLanguages: { current: () => [] },
-      settings: { current: () => ({ databaseOpsKeep: 500, nodeLabel: "Studio", maxBodyBytes: 1_000_000 }) },
-    },
-    ...overrides,
-  } as unknown as Ctx;
-}
+const env = () => ({
+  jobs,
+  aiSettings: { current: () => ai },
+  embeddingDims: 2,
+  searchLanguages: fixed([]),
+  settings: nodeSettings({ maxBodyBytes: 1_000_000 }),
+});
 
-const human = () => ctxOf({ alias: "human-1", isAgent: false, onBehalfOf: undefined, principals: ["user:human-1", "org:ws1"] });
+const ctxOf = (overrides: CtxOverrides = {}): Ctx => agentCtx({ surface: "mcp", env: env(), ...overrides });
+const human = () => personCtx({ surface: "mcp", displayName: "Connector", env: env() });
 
 /** One call run in `ctx`'s workspace, which is the only one the gate resolves. */
 async function callTool(ctx: Ctx, name: string, args: Record<string, unknown> = {}) {
@@ -146,9 +133,9 @@ describe("docs_create", () => {
 
   it("announces the document once, in the ledger's own vocabulary", async () => {
     await callTool(ctxOf(), "docs_create", { title: "Notes" });
-    const audit = jobsSend.mock.calls.map(([m]) => m).filter((m) => m.kind === "audit");
+    const audit = jobs.audits();
     expect(audit.map((m) => m.action)).toEqual(["doc.create", "mcp.docs_create.create"]);
-    expect(jobsSend).toHaveBeenCalledWith(expect.objectContaining({ kind: "event", type: "doc.created" }));
+    expect(jobs.send).toHaveBeenCalledWith(expect.objectContaining({ kind: "event", type: "doc.created" }));
   });
 
   it("refuses a folder the caller cannot write before inserting", async () => {

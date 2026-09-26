@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { mountInto } from "../test/form-input";
 import * as Y from "yjs";
 import { DOC_FLUSH_INTERVAL_MS } from "@stuga/protocol/domain/limits";
 
@@ -10,7 +11,6 @@ vi.mock("../api", () => ({ Docs: docs }));
 
 const { useRefreshAfterIndexing } = await import("./use-refresh-after-indexing");
 
-let host: HTMLDivElement;
 let root: Root;
 let ydoc: Y.Doc;
 const onDoc = vi.fn();
@@ -28,18 +28,15 @@ function edit(text: string) {
 const SETTLED_MS = DOC_FLUSH_INTERVAL_MS + 10_000;
 
 beforeEach(async () => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   docs.get.mockReset().mockResolvedValue({ doc_id: "d_1", title: "Meeting notes" });
   onDoc.mockReset();
   ydoc = new Y.Doc();
-  host = document.createElement("div");
-  root = createRoot(host);
+  ({ root } = mountInto());
   await act(async () => root.render(<Probe doc={ydoc} />));
 });
 
 afterEach(() => {
-  act(() => root.unmount());
   vi.useRealTimers();
 });
 
@@ -68,7 +65,7 @@ describe("useRefreshAfterIndexing", () => {
   it("stops listening when the page goes away", async () => {
     edit("Meeting notes");
     act(() => root.unmount());
-    root = createRoot(host);
+    ({ root } = mountInto());
     await act(async () => vi.advanceTimersByTime(SETTLED_MS));
     edit(" again");
     await act(async () => vi.advanceTimersByTime(SETTLED_MS));

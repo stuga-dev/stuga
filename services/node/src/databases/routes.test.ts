@@ -37,6 +37,7 @@ const { openRowPages, rowPageTitle } = await import("./row-pages.js");
 const { READ_ONLY_MESSAGE } = await import("../authz/authz.js");
 import { DATABASE_MAX_COLUMN_DESCRIPTION_CHARS } from "@stuga/protocol/databases/limits";
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, fixed, personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockTouchDoc = touchDoc as unknown as ReturnType<typeof vi.fn>;
@@ -83,23 +84,14 @@ const actorFetch = vi.fn(async (url: string, init?: RequestInit) => {
   });
 });
 
-function ctxOf(overrides: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
+function ctxOf(overrides: CtxOverrides = {}): Ctx {
+  return personCtx({
     alias: "bob",
     displayName: "Bob",
-    isAgent: false,
     principals: ["user:bob"],
-    workspaceId: "ws1",
-    role: "member",
-    env: {
-      databases: { get: () => ({ fetch: actorFetch }) },
-      docs: { get: () => ({ fetch: actorFetch }) },
-      settings: { current: () => ({ databaseOpsKeep: 500 }) },
-      jobs: { send: jobsSend },
-    },
+    env: { databases: actorsAnswering(actorFetch), docs: actorsAnswering(actorFetch), settings: fixed({ databaseOpsKeep: 500 }), jobs: { send: jobsSend } },
     ...overrides,
-  } as unknown as Ctx;
+  });
 }
 
 const viewer = () => ctxOf({ alias: "viv", principals: ["user:viv"] });

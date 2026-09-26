@@ -121,7 +121,6 @@ describe("Dock", () => {
   };
 
   async function mount(onResize?: (next: number) => void) {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);

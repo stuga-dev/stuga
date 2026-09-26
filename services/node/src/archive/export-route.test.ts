@@ -29,8 +29,9 @@ const { createServingGate } = await import("../http/serving-gate.js");
 const { archiveWorkUnderWay, holdArchiveWork } = await import("./under-way.js");
 import type { DocRow } from "@stuga/db";
 import type { Ctx } from "../auth/context.js";
+import { personCtx, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
 
-const jobsSend = vi.fn(async (_message: Record<string, unknown>) => {});
+const jobs = recordingJobs();
 /** A body several times what the response buffers, and one deflate cannot shrink below it. */
 const BIG = `# Notes\n\n${Array.from({ length: 200_000 }, (_, i) => `${i.toString(36)}${Math.random().toString(36).slice(2)}`).join(" ")}`;
 /** What a document's actor answers when the export reads it. */
@@ -60,34 +61,26 @@ function holding(docs: DocRow[]): void {
   vi.mocked(db.getDoc).mockImplementation(async (_sql, id) => docs.find((d) => d.doc_id === id) ?? null);
 }
 
-const audits = () => jobsSend.mock.calls.map(([m]) => m).filter((m) => m.kind === "audit");
+const audits = jobs.audits;
 
-function ctxOf(patch: Partial<{ isAgent: boolean; role: string; workspaceId: string; alias: string }> = {}): Ctx {
-  return {
-    sql: {},
+function ctxOf(patch: CtxOverrides = {}): Ctx {
+  return personCtx({
     surface: "web",
     alias: "u_liv",
     displayName: "Liv",
-    isAgent: false,
     principals: ["user:u_liv", "org:ws1"],
-    workspaceId: "ws1",
     role: "owner",
-    env: {
-      publicOrigin: "https://node.test",
-      extraOrigins: [],
-      jobs: { send: jobsSend },
-      docs: { get: (id: string) => ({ fetch: async () => docAnswer(id) }) },
-    },
+    env: { publicOrigin: "https://node.test", extraOrigins: [], jobs, docs: { get: (id: string) => ({ fetch: async () => docAnswer(id) }) } },
     ...(patch.isAgent ? { onBehalfOf: "u_liv" } : {}),
     ...patch,
-  } as unknown as Ctx;
+  });
 }
 
 const exportFrom = (ctx: Ctx, id = "ws1") => routeWorkspaceRequest(ctx, new Request(`https://node.test/api/workspaces/${id}/export`));
 
 beforeEach(() => {
   vi.useRealTimers();
-  jobsSend.mockClear();
+  jobs.send.mockClear();
   vi.mocked(db.getDoc).mockReset().mockResolvedValue(null);
   docAnswer = () => Response.json({ markdown: BIG });
 });
@@ -109,7 +102,7 @@ describe("workspace export route", () => {
     // The role the gate checked is ws1's, so an export of ws2 through it is refused.
     const res = await exportFrom(ctxOf({ role: "admin" }), "ws2");
     expect(res.status).toBe(400);
-    expect(jobsSend).not.toHaveBeenCalled();
+    expect(jobs.send).not.toHaveBeenCalled();
   });
 
   it("streams an admin the archive, named for the workspace, and audits it once written", async () => {
@@ -322,7 +315,12 @@ describe("how long and how many exports run", () => {
       () => "finished",
       (err: unknown) => (err as Error).message,
     );
-    const waited = await until(() => audits().length > 0, 2 * ARCHIVE_WORK_MAX_MS);
+    // Most of the 50 minutes in one step, then a second at a time across the deadline.
+    const early = ARCHIVE_WORK_MAX_MS - 2_000;
+    await new Promise((resolve) => setImmediate(resolve));
+    await vi.advanceTimersByTimeAsync(early);
+    expect(audits()).toEqual([]);
+    const waited = early + (await until(() => audits().length > 0, 4_000));
     expect(waited).toBeGreaterThanOrEqual(ARCHIVE_WORK_MAX_MS);
     expect(waited).toBeLessThanOrEqual(ARCHIVE_WORK_MAX_MS + 1_000);
     const why = `the export did not finish within ${ARCHIVE_WORK_MAX_MS / 60_000} minutes`;

@@ -3,9 +3,11 @@
  * out clears it, and a server that resolves no active workspace clears it too.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { getActiveWorkspace, setActiveWorkspace } from "./workspace-pointer";
+import { clearTokens } from "./tokens";
 
 const store = new Map<string, string>();
-vi.stubGlobal("localStorage", {
+const localStorageStub = {
   getItem: (k: string) => store.get(k) ?? null,
   setItem: (k: string, v: string) => void store.set(k, String(v)),
   removeItem: (k: string) => void store.delete(k),
@@ -14,10 +16,7 @@ vi.stubGlobal("localStorage", {
   get length() {
     return store.size;
   },
-});
-
-const { getActiveWorkspace, setActiveWorkspace } = await import("./workspace-pointer");
-const { clearTokens } = await import("./tokens");
+};
 
 /** The sync WorkspaceLayout and WorkspaceSwitcher perform. */
 function syncActive(serverActive: string | null): void {
@@ -26,6 +25,7 @@ function syncActive(serverActive: string | null): void {
 
 describe("active workspace pointer", () => {
   beforeEach(() => {
+    vi.stubGlobal("localStorage", localStorageStub);
     store.clear();
   });
 

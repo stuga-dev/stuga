@@ -20,6 +20,7 @@ const { seedBody } = await import("../documents/create.js");
 const { ImportWriteError, workspaceImportClient } = await import("./client.js");
 import type { ImportedComment } from "@stuga/db";
 import type { Ctx } from "../auth/context.js";
+import { fixed, personCtx, recordingJobs } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockRole = getMemberRole as unknown as ReturnType<typeof vi.fn>;
@@ -55,21 +56,14 @@ function ctxOf(): Ctx {
       return new Response(JSON.stringify(next.body), { status: next.status });
     },
   };
-  return {
-    sql: {},
+  return personCtx({
     surface: "web",
     alias: "u_liv",
     displayName: "Liv",
-    isAgent: false,
     principals: ["user:u_liv"],
-    workspaceId: "ws1",
     role: "owner",
-    env: {
-      databases: { get: () => actor },
-      settings: { current: () => ({ databaseOpsKeep: 500 }) },
-      jobs: { send: vi.fn(async () => {}) },
-    },
-  } as unknown as Ctx;
+    env: { databases: { get: () => actor }, settings: fixed({ databaseOpsKeep: 500 }), jobs: recordingJobs() },
+  });
 }
 
 const RATE_LIMITED = { status: 429, body: { error: "rate_limited", message: "too many mutations (max 120/min per actor)" } };

@@ -196,20 +196,9 @@ describe("round-trip invariant: doc -> markdown -> doc", () => {
     ["trailing whitespace in a paragraph", doc(p(t("trailing space here   ")))],
     ["four leading spaces (would be an indented code block)", doc(p(t("    four spaces")))],
     [
-      "hard break whose next line starts a bullet",
-      doc(p(t("first"), schema.nodes.hardBreak!.create(), t("- second"))),
-    ],
-    [
-      "hard break whose next line starts an ordered item",
-      doc(p(t("first"), schema.nodes.hardBreak!.create(), t("1. second"))),
-    ],
-    [
-      "hard break whose next line starts a blockquote",
-      doc(p(t("first"), schema.nodes.hardBreak!.create(), t("> second"))),
-    ],
-    [
-      "hard break whose next line starts a heading",
-      doc(p(t("first"), schema.nodes.hardBreak!.create(), t("# second"))),
+      // Every line after a break goes through the same line-start `state.esc`.
+      "hard breaks whose next lines start a bullet, ordered item, blockquote and heading",
+      doc(p(...["first", "- b", "1. c", "> d", "# e"].flatMap((x, i) => (i ? [schema.nodes.hardBreak!.create(), t(x)] : [t(x)])))),
     ],
     [
       "hard break inside a list item",
@@ -625,23 +614,6 @@ describe("marks around a code span", () => {
     // prosemirror-model's published types. `schema.test.ts` pins this order.
     const rank = Object.keys(schema.marks);
     expect(rank.indexOf("link")).toBeLessThan(rank.indexOf("code"));
-  });
-
-  it("still refuses emphasis inside a code span", () => {
-    // The other half of the contract: markdown CANNOT express these inside
-    // backticks, so `code` must keep evicting them. Entered from the document
-    // side, because markdown has no syntax that would even propose it.
-    for (const m of ["bold", "italic", "strike", "underline"]) {
-      // Marking code over emphasis EVICTS the emphasis...
-      const evicts = schema.marks.code!.create().addToSet([schema.marks[m]!.create()]);
-      expect(evicts.map((x) => x.type.name)).toEqual(["code"]);
-      // ...and emphasis over code is simply refused. Either way they never pair.
-      const refused = schema.marks[m]!.create().addToSet([schema.marks.code!.create()]);
-      expect(refused.map((x) => x.type.name)).toEqual(["code"]);
-    }
-    // ...while link and code sit on the same node, in rank order.
-    const both = schema.marks.code!.create().addToSet([schema.marks.link!.create({ href: "https://x.com/" })]);
-    expect(both.map((x) => x.type.name)).toEqual(["link", "code"]);
   });
 
   it("keeps `**bold `code` bold**` free of any link", () => {

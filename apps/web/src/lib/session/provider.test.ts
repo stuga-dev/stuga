@@ -52,7 +52,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.unstubAllGlobals();
   Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
   setAuthConfigForTest(null);
 });

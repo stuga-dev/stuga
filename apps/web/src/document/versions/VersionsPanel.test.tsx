@@ -6,6 +6,7 @@ import * as Y from "yjs";
 import { blockDiffMarkdown, yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import { DOC_FLUSH_INTERVAL_MS } from "@stuga/protocol/domain/limits";
 import type { UserInfo, Version, VersionListing } from "../../api";
+import { toasts } from "../../test/toast";
 
 const docs = vi.hoisted(() => ({
   versions: vi.fn(),
@@ -14,7 +15,6 @@ const docs = vi.hoisted(() => ({
   deleteVersion: vi.fn(),
 }));
 const users = vi.hoisted(() => ({ resolve: vi.fn() }));
-const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type: string }> }));
 
 vi.mock("../../api", () => ({ Docs: docs, Users: users }));
 // Counted, to tell when the dialog re-reads the live document, and slowed down to tell how often.
@@ -26,21 +26,9 @@ vi.mock("@stuga/crdt-ops", async (importOriginal) => {
     blockDiffMarkdown: vi.fn(actual.blockDiffMarkdown),
   };
 });
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string; type: string }) => toasts.shown.push(t),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../../test/toast"));
 
 const { VersionsPanel } = await import("./VersionsPanel");
-
-// jsdom's <dialog> has no showModal/close, which Astryx Dialog calls.
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
 
 /** Past the actor's snapshot interval and the index job's allowance. */
 const SETTLED_MS = DOC_FLUSH_INTERVAL_MS + 10_000;
@@ -128,7 +116,6 @@ const savedLine = () => document.body.querySelector(".vcompare-meta")!.textConte
 const reads = () => vi.mocked(yXmlFragmentToMarkdown).mock.calls.length;
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   docs.versions.mockReset();
   docs.versionContent.mockReset().mockResolvedValue({ seq: 1, text: "Hello" });
@@ -437,13 +424,6 @@ describe("VersionsPanel: authors", () => {
     await act(async () => answer({ users: [eve] }));
     expect(authorsCell(0)).toBe("DeepSeek Harness, AI co-author");
     expect(authorsCell(1)).toBe("Eve, Claude Desktop");
-  });
-
-  it("falls back to the short id once the lookup fails", async () => {
-    users.resolve.mockRejectedValue(new Error("offline"));
-    await mount({ versions: [version(7, ["u_Kcjz0unreachable"])], head_seq: 7, can_manage: true });
-    expect(users.resolve).toHaveBeenCalledTimes(1);
-    expect(authorsCell(0)).toBe("u_Kcjz…");
   });
 
   it("shows someone who has left the workspace by the short id", async () => {

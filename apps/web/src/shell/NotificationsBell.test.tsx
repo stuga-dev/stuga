@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 // The notifications store is a module-level cache; each test resets it rather
 // than re-importing, which would give the component a second React.
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { LayerProvider } from "@astryxdesign/core/Layer";
 import { getActiveWorkspace, setActiveWorkspace } from "../lib/session/workspace-pointer";
@@ -14,6 +14,7 @@ import {
   resetNotificationsForTest,
 } from "../state/notifications";
 import { NotificationsBell } from "./NotificationsBell";
+import { mountInto } from "../test/form-input";
 
 const T0 = "2026-08-19T10:00:00.000Z";
 
@@ -45,7 +46,6 @@ let responder: (url: string, method: string) => unknown;
 let gateGets: boolean;
 let gateUnread: boolean;
 let pendingGets: Array<() => void>;
-let container: HTMLDivElement;
 let root: Root;
 
 /** The router's current path. */
@@ -103,7 +103,6 @@ async function click(el: HTMLElement): Promise<void> {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   calls = [];
   gateGets = false;
   gateUnread = false;
@@ -123,14 +122,7 @@ beforeEach(() => {
       headers: { "content-type": "application/json" },
     });
   }) as typeof fetch;
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
+  ({ root } = mountInto());
 });
 
 describe("NotificationsBell", () => {

@@ -10,24 +10,13 @@ vi.mock("@stuga/db", async (orig) => ({
 const { auditEventsCursor, getMemberRole } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockCursor = auditEventsCursor as unknown as ReturnType<typeof vi.fn>;
 const mockRole = getMemberRole as unknown as ReturnType<typeof vi.fn>;
 const send = vi.fn(async (_message: unknown) => {});
 
-function ctxFor(over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "owner-1",
-    displayName: "Ada",
-    isAgent: false,
-    principals: ["user:owner-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "owner",
-    env: { jobs: { send } },
-    ...over,
-  } as unknown as Ctx;
-}
+const ctxFor = (over: CtxOverrides = {}): Ctx => personCtx({ alias: "owner-1", role: "owner", env: { jobs: { send } }, ...over });
 
 /** One batch, then the end, as a server-side cursor yields. */
 function batches(...pages: Record<string, unknown>[][]) {

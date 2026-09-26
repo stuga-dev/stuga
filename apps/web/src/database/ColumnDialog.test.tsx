@@ -1,20 +1,11 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { DATABASE_MAX_COLUMN_DESCRIPTION_CHARS } from "@stuga/protocol/databases/limits";
 import type { ColumnSpec } from "@stuga/protocol/databases/types";
 import { ColumnDialog, type ColumnDialogSubmit } from "./ColumnDialog";
-
-// jsdom's <dialog> has no showModal/close, which Astryx Dialog calls.
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
+import { mountInto } from "../test/form-input";
 
 const NOTES: ColumnSpec = {
   column_id: "c1",
@@ -57,16 +48,8 @@ async function click(label: string) {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
   vi.clearAllMocks();
+  ({ host, root } = mountInto());
 });
 
 describe("ColumnDialog", () => {

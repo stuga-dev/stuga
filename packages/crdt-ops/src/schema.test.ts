@@ -57,12 +57,19 @@ describe("the Stuga mark set", () => {
     expect(both.map((m) => m.type.name)).toEqual(["link", "code"]);
   });
 
-  it("still evicts every emphasis mark from a code span", () => {
+  it("never pairs an emphasis mark with code, from either side", () => {
+    // Markdown cannot spell emphasis inside backticks, and has no syntax that
+    // would even propose it, so this is entered from the document side.
     for (const name of MARKS.filter((m) => m !== "link" && m !== "code")) {
       const set = schema.marks.code!.create().addToSet([schema.marks[name]!.create()]);
       expect(
         set.map((m) => m.type.name),
         `code must evict ${name}`,
+      ).toEqual(["code"]);
+      const refused = schema.marks[name]!.create().addToSet([schema.marks.code!.create()]);
+      expect(
+        refused.map((m) => m.type.name),
+        `${name} over code must be refused`,
       ).toEqual(["code"]);
     }
   });

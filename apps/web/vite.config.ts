@@ -60,6 +60,8 @@ export default defineConfig(({ mode }) => ({
   },
   test: {
     setupFiles: ["./src/test/dom-setup.ts"],
+    // Before each test, so a stub lives for the test that made it.
+    unstubGlobals: true,
   },
   build: {
     // No maps in a build: the node serves all of dist unauthenticated, and a .map (hidden or not) carries the full source.

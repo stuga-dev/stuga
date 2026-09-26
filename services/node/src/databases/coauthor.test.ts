@@ -21,20 +21,15 @@ const { databaseCoauthor, tableToolRunner } = await import("./coauthor.js");
 import type { DocRow } from "@stuga/db";
 import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, fixed, personCtx } from "../testing/ctx.js";
 import type { DatabaseCall } from "./routes.js";
 
 function ctxWithActor(answer: () => Response): Ctx {
-  return {
-    sql: {},
+  return personCtx({
     alias: "bob",
-    isAgent: false,
     principals: ["user:bob"],
-    workspaceId: "ws1",
-    env: {
-      databases: { get: () => ({ fetch: vi.fn(async () => answer()) }) },
-      settings: { current: () => ({ databaseOpsKeep: 500 }) },
-    },
-  } as unknown as Ctx;
+    env: { databases: actorsAnswering(vi.fn(async () => answer())), settings: fixed({ databaseOpsKeep: 500 }) },
+  });
 }
 
 const DOC = { doc_id: "db1", title: "Projects" } as DocRow;

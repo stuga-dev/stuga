@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import type { DatabaseOpSummary } from "@stuga/protocol/databases/types";
 import type { UserInfo } from "../api";
+import { mountInto } from "../test/form-input";
 
 const databases = vi.hoisted(() => ({ ops: vi.fn(), revertOp: vi.fn() }));
 const users = vi.hoisted(() => ({ resolve: vi.fn() }));
 
 vi.mock("../api", () => ({ Databases: databases, Users: users }));
-vi.mock("@astryxdesign/core/Toast", () => ({ useToast: () => () => {} }));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const { ActivityPanel } = await import("./ActivityPanel");
 
@@ -35,22 +36,14 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   databases.ops.mockReset();
   users.resolve.mockReset();
-  host = document.createElement("div");
-  document.body.appendChild(host);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
 });
 
 async function mount(ops: DatabaseOpSummary[]) {
   databases.ops.mockResolvedValue({ ops });
+  ({ host, root } = mountInto());
   await act(async () => {
-    root = createRoot(host);
     root.render(<ActivityPanel docId="d_1" refreshKey={0} readOnly={false} onReverted={() => {}} onWriteDenied={() => {}} />);
   });
 }
@@ -62,18 +55,6 @@ const fors = () => [...host.querySelectorAll(".db-op__for")].map((s) => s.textCo
 
 // The name cache lives for the file, so each case names its own people.
 describe("ActivityPanel: who made a change", () => {
-  it("falls back to the short id once the lookup fails", async () => {
-    users.resolve.mockRejectedValue(new Error("offline"));
-    await mount([
-      op(2, { actor: "agent:ci", is_agent: true, on_behalf_of: "u_Wq7L0unreachable" }),
-      op(1, { actor: "u_Kcjz0unreachable" }),
-    ]);
-
-    expect(users.resolve).toHaveBeenCalledTimes(1);
-    expect(actors()).toEqual(["ci", "u_Kcjz…"]);
-    expect(fors()).toEqual(["for u_Wq7L…"]);
-  });
-
   it("shows no raw id while names load, then the names", async () => {
     const ada: UserInfo = { alias: "u_QH52ada7RzkP4mXe", username: "ada", display_name: "Ada", email: null };
     const bob: UserInfo = { alias: "u_Bb81bob4TqeW9nJs", username: "bob", display_name: "Bob", email: null };

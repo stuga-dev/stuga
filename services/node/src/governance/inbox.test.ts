@@ -36,6 +36,7 @@ const {
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 const { READ_ONLY_MESSAGE } = await import("../authz/authz.js");
 import type { Ctx } from "../auth/context.js";
+import { fixed, personCtx, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockGetFolder = getFolder as unknown as ReturnType<typeof vi.fn>;
@@ -49,37 +50,22 @@ const mockListEvents = listWorkspaceEvents as unknown as ReturnType<typeof vi.fn
 
 const FOLDER = { folder_id: "f1", workspace_id: "ws1", owner: "user:human-1", title: "Notes", acl_principals: ["user:human-1", "org:ws1"], acl_writers: ["user:human-1", "org:ws1"] };
 
-function humanCtx(over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "human-1",
-    displayName: "Ada",
-    email: null,
-    isAgent: false,
-    principals: ["user:human-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "member",
+const jobs = recordingJobs();
+
+function humanCtx(over: CtxOverrides = {}): Ctx {
+  return personCtx({
     env: {
-      publicOrigin: "https://stuga.test",
-      jobs: { send: async () => {} },
-      aiSettings: { current: () => ({ enabled: false, embed: { enabled: false }, chat: { enabled: false } }) },
+      jobs,
+      aiSettings: fixed({ enabled: false, embed: { enabled: false }, chat: { enabled: false } }),
       embeddingDims: 8,
-      searchLanguages: { current: () => [] },
+      searchLanguages: fixed([]),
     },
     ...over,
-  } as unknown as Ctx;
+  });
 }
 
-function agentCtx(over: Partial<Ctx> = {}): Ctx {
-  return humanCtx({
-    alias: "agent-1",
-    displayName: "bot",
-    isAgent: true,
-    onBehalfOf: "human-1",
-    principals: ["agent:agent-1", "user:human-1", "org:ws1"],
-    ...over,
-  } as Partial<Ctx>);
-}
+const agentCtx = (over: CtxOverrides = {}): Ctx =>
+  humanCtx({ alias: "agent-1", displayName: "bot", isAgent: true, onBehalfOf: "human-1", principals: ["agent:agent-1", "user:human-1", "org:ws1"], ...over });
 
 function req(method: string, path: string, body?: unknown): Request {
   return new Request(`https://stuga.test${path}`, {
@@ -102,19 +88,6 @@ beforeEach(() => {
 
 describe("a read-only key", () => {
   const ro = agentCtx({ scope: { folders: null, readOnly: true, credentialId: "k1" } });
-  it("is refused any write before the route runs", async () => {
-    for (const [m, p] of [
-      ["POST", "/api/docs"],
-      ["POST", "/api/docs/d1/propose"],
-      ["POST", "/api/docs/d1/comments"],
-      ["POST", "/api/docs/d1/media"],
-      ["PATCH", "/api/docs/d1"],
-    ] as const) {
-      const out = await call(ro, m, p, { title: "x" });
-      expect(out.status, `${m} ${p}`).toBe(403);
-      expect(out.json.error).toBe(READ_ONLY_MESSAGE);
-    }
-  });
   it("still reads, including the three reads that travel as POST", async () => {
     const docs = await call(ro, "GET", "/api/docs");
     expect(docs.status).toBe(200);
@@ -293,20 +266,13 @@ describe("PATCH /api/docs/:id/state — agent_mode", () => {
     acl_writers: ["user:human-1", "org:ws1"],
   };
   // The ledger is written through the job queue, so that is where a row shows up.
-  let sent: Array<Record<string, unknown>> = [];
+  const audit = jobs.audits;
+  const owner = () => humanCtx();
 
   beforeEach(() => {
-    sent = [];
     mockGetDoc.mockResolvedValue(DOC);
     mockSetAgentMode.mockImplementation(async (_sql: unknown, _id: string, mode: string) => ({ ...DOC, agent_mode: mode }));
   });
-
-  const audit = () => sent.filter((m) => m.kind === "audit");
-  const owner = () => {
-    const ctx = humanCtx();
-    (ctx.env as { jobs: unknown }).jobs = { send: async (m: Record<string, unknown>) => void sent.push(m) };
-    return ctx;
-  };
 
   it("refuses a word that is not review | auto", async () => {
     const out = await call(owner(), "PATCH", "/api/docs/d1/state", { agent_mode: "whenever" });
@@ -352,17 +318,10 @@ describe("the ledger rows an item's life leaves", () => {
     acl_principals: ["user:human-1", "org:ws1"],
     acl_writers: ["user:human-1", "org:ws1"],
   };
-  let sent: Array<Record<string, unknown>> = [];
-
-  function owner(): Ctx {
-    const ctx = humanCtx();
-    (ctx.env as { jobs: unknown }).jobs = { send: async (m: Record<string, unknown>) => void sent.push(m) };
-    return ctx;
-  }
-  const audit = () => sent.filter((m) => m.kind === "audit");
+  const audit = jobs.audits;
+  const owner = () => humanCtx();
 
   beforeEach(() => {
-    sent = [];
     mockGetDoc.mockResolvedValue(DOC);
   });
 
@@ -376,7 +335,7 @@ describe("the ledger rows an item's life leaves", () => {
       detail: { renamed: { from: "Roadmap", to: "Plan" }, moved: { from: null, to: "f2" } },
     });
 
-    sent = [];
+    jobs.send.mockClear();
     mockUpdateDoc.mockResolvedValue({ ...DOC, trashed: true });
     await call(owner(), "PATCH", "/api/docs/d1", { trashed: true });
     expect(audit()[0]).toMatchObject({ action: "doc.trash" });

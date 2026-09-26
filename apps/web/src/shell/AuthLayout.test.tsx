@@ -2,11 +2,12 @@
 /** A signed-out visit: invite and share links sign in where they are; anything else goes to /login. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, StrictMode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { AuthLayout } from "./AuthLayout";
 import { setAuthConfigForTest } from "../lib/session/auth-config";
 import { resetSilentAttemptForTest } from "../lib/session/provider";
+import { mountInto, typeInto } from "../test/form-input";
 
 const fetchMock = vi.fn<typeof fetch>();
 const reply = (status: number, body: unknown) =>
@@ -26,14 +27,7 @@ const button = (label: string) => [...host.querySelectorAll("button")].find((b) 
 const input = (label: string) =>
   [...host.querySelectorAll("input")].find((i) => host.querySelector(`label[for="${i.id}"]`)?.textContent?.startsWith(label));
 
-async function type(label: string, value: string) {
-  const el = input(label)!;
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(el, value);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+const type = (label: string, value: string) => typeInto(input(label), value);
 
 async function click(label: string) {
   await act(async () => button(label)!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
@@ -62,22 +56,16 @@ async function open(path: string) {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   localStorage.clear();
   sessionStorage.clear();
   resetSilentAttemptForTest();
   setAuthConfigForTest({ nodeName: "Studio" });
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  ({ host, root } = mountInto());
 });
 
 afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
-  vi.unstubAllGlobals();
   setAuthConfigForTest(null);
 });
 

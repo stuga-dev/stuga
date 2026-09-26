@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { DocSummary } from "../api";
+import { mountInto } from "../test/form-input";
 
 const databases = vi.hoisted(() => ({ schema: vi.fn(), createTable: vi.fn() }));
 /** What the page hands the runs provider, which calls it once a proposal is applied. */
@@ -128,18 +129,10 @@ const tabs = () => host.querySelector<HTMLButtonElement>('[data-testid="tabs"]')
 const tableParam = () => new URLSearchParams(search).get("table");
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   databases.schema.mockReset().mockResolvedValue(SCHEMA);
   databases.createTable.mockReset();
   runs.onApplied = null;
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
+  ({ host, root } = mountInto());
 });
 
 describe("DatabasePage", () => {

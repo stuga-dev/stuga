@@ -95,7 +95,6 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 
 /** Fire visibilitychange the way the browser would. */

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { DocSummary } from "../api";
+import { mountInto } from "../test/form-input";
 
 const docs = vi.hoisted(() => ({ get: vi.fn(), trash: vi.fn() }));
 
@@ -62,16 +63,8 @@ const byTestId = (id: string) => host.querySelector(`[data-testid="${id}"]`);
 const retryButton = () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Retry");
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   docs.get.mockReset();
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
+  ({ host, root } = mountInto());
 });
 
 describe("ItemPage", () => {
@@ -103,7 +96,7 @@ describe("ItemPage", () => {
       expect(byTestId("no-access")).not.toBeNull();
       expect(retryButton()).toBeUndefined();
       act(() => root.unmount());
-      root = createRoot(host);
+      ({ host, root } = mountInto());
     }
   });
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import type { OtherNode } from "../api";
 
 const workspaces = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), createFromSample: vi.fn(), importArchive: vi.fn(), samples: vi.fn(), cachedSamples: vi.fn() }));
@@ -13,7 +13,7 @@ vi.mock("../api", async (orig) => ({
   onWorkspaceListChanged: () => () => {},
   OtherNodes: otherNodes,
 }));
-vi.mock("@astryxdesign/core/Toast", () => ({ useToast: () => () => {} }));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 interface MenuRow {
   type?: "divider" | "section";
@@ -61,16 +61,7 @@ vi.mock("@astryxdesign/core/DropdownMenu", () => ({
 const { bookmarkHost, openableOrigin, survivesSwitch, WorkspaceSwitcher } = await import("./WorkspaceSwitcher");
 const { setAuthConfigForTest } = await import("../lib/session/auth-config");
 const { getActiveWorkspace } = await import("../lib/session/workspace-pointer");
-import { chooseRadio, pickFile } from "../test/form-input";
-
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
+import { chooseRadio, mountInto, pickFile, typeInto } from "../test/form-input";
 
 describe("survivesSwitch", () => {
   it("keeps every settings section, nested ones included", () => {
@@ -137,7 +128,7 @@ describe("the switcher's menu", () => {
   const section = (title: string) => host.querySelector(`section[aria-label="${title}"]`);
 
   beforeEach(async () => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    vi.clearAllMocks();
     // jsdom has none; the create dialog brings its error into view.
     Element.prototype.scrollIntoView = () => {};
     Object.defineProperty(window, "location", { configurable: true, value: { ...originalLocation, assign } });
@@ -155,18 +146,13 @@ describe("the switcher's menu", () => {
       changed = fn;
       return () => {};
     });
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
+    ({ host, root } = mountInto());
     await act(async () => root.render(<WorkspaceSwitcher />));
   });
 
-  afterEach(async () => {
-    await act(async () => root.unmount());
-    host.remove();
+  afterEach(() => {
     Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
     setAuthConfigForTest(null);
-    vi.clearAllMocks();
   });
 
   it("is headed by the node's name over its workspaces, with Other nodes below Create workspace", () => {
@@ -207,7 +193,7 @@ describe("the switcher's menu", () => {
   it("heads an unnamed node's workspaces by its host label, not by the product's name the brand slot shows", async () => {
     await act(async () => root.unmount());
     setAuthConfigForTest({ nodeName: null, nodeLabel: "livs-air" });
-    root = createRoot(host);
+    ({ host, root } = mountInto());
     await act(async () => root.render(<WorkspaceSwitcher />));
     expect([...host.querySelectorAll("menu h2")].map((h) => h.textContent)).toEqual(["livs-air", "Other nodes"]);
   });
@@ -279,14 +265,7 @@ describe("the switcher's menu", () => {
   describe("creating a workspace", () => {
     const open = () => document.querySelector<HTMLDialogElement>("dialog[open]")!;
     const dialogButton = (label: string) => [...open().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === label)!;
-    async function name(value: string) {
-      const input = open().querySelector<HTMLInputElement>("input:not([type]), input[type='text']")!;
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-      await act(async () => {
-        setter.call(input, value);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-    }
+    const name = (value: string) => typeInto(open().querySelector<HTMLInputElement>("input:not([type]), input[type='text']"), value);
 
     it("imports a file under the name its archive carries, enters the new workspace and opens the document it starts with", async () => {
       workspaces.importArchive.mockResolvedValue({ workspace_id: "ws3", start_doc_id: "d9" });

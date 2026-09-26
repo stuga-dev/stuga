@@ -43,6 +43,7 @@ const { READ_ONLY_MESSAGE } = await import("../authz/authz.js");
 import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
 import { MAX_AGENT_INSTRUCTIONS_CHARS } from "@stuga/protocol/domain/limits";
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, fixed, personCtx, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
 
 const mocked = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
@@ -86,7 +87,7 @@ const FOLDER_LEVEL: InstructionLevel = { kind: "folder", id: "f1", title: "Contr
 const DOC_LEVEL: InstructionLevel = { kind: "document", id: "d1", title: "Q3 plan", text: "cite the source" };
 const DB_LEVEL: InstructionLevel = { kind: "database", id: "db1", title: "Tasks", text: "one row per task" };
 
-let jobs: Array<Record<string, unknown>>;
+const jobs = recordingJobs();
 let actorCalls: string[];
 const actorFetch = vi.fn(async (url: string) => {
   actorCalls.push(url);
@@ -100,37 +101,28 @@ const actorFetch = vi.fn(async (url: string) => {
   return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
 });
 
-function person(alias: string, role: string, over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
+function person(alias: string, role: string, over: CtxOverrides = {}): Ctx {
+  return personCtx({
     alias,
     displayName: alias,
-    isAgent: false,
-    principals: [`user:${alias}`, "org:ws1"],
-    workspaceId: "ws1",
     role,
     env: {
-      jobs: { send: vi.fn(async (m: Record<string, unknown>) => void jobs.push(m)) },
-      docs: { get: () => ({ fetch: actorFetch }) },
-      databases: { get: () => ({ fetch: actorFetch }) },
-      settings: { current: () => ({ databaseOpsKeep: 500 }) },
+      jobs,
+      docs: actorsAnswering(actorFetch),
+      databases: actorsAnswering(actorFetch),
+      settings: fixed({ databaseOpsKeep: 500 }),
     },
     ...over,
-  } as unknown as Ctx;
+  });
 }
 
 const owner = () => person("alice", "member");
 const admin = () => person("carol", "admin");
 const member = () => person("bob", "member");
 /** Alice's key: her principals, never a manager. */
-const agent = (over: Partial<Ctx> = {}) =>
-  person("agent-1", "member", {
-    isAgent: true,
-    onBehalfOf: "alice",
-    principals: ["agent:agent-1", "user:alice", "org:ws1"],
-    ...over,
-  } as Partial<Ctx>);
-const readOnlyKey = () => agent({ scope: { folders: null, readOnly: true, credentialId: "k1" } } as Partial<Ctx>);
+const agent = (over: CtxOverrides = {}) =>
+  person("agent-1", "member", { isAgent: true, onBehalfOf: "alice", principals: ["agent:agent-1", "user:alice", "org:ws1"], ...over });
+const readOnlyKey = () => agent({ scope: { folders: null, readOnly: true, credentialId: "k1" } });
 
 async function call(ctx: Ctx, method: string, path: string, body?: unknown): Promise<Response> {
   const req = new Request(`https://node.test${path}`, {
@@ -140,10 +132,10 @@ async function call(ctx: Ctx, method: string, path: string, body?: unknown): Pro
   return routeWorkspaceRequest(ctx, req);
 }
 
-const auditRows = () => jobs.filter((m) => m.kind === "audit");
+const auditRows = jobs.audits;
 
 beforeEach(() => {
-  jobs = [];
+  jobs.send.mockClear();
   actorCalls = [];
   mocked(getDoc).mockReset();
   mocked(getDoc).mockImplementation(async (_sql: unknown, id: string) => (id === "db1" ? { ...DATABASE } : id === "d1" ? { ...DOC } : null));
@@ -321,7 +313,7 @@ describe("GET /api/docs/:id/instructions and /api/folders/:id/instructions", () 
   });
 
   it("answers 404 to a caller who cannot read the item", async () => {
-    const stranger = person("eve", "member", { principals: ["user:eve"], workspaceId: "ws1" } as Partial<Ctx>);
+    const stranger = person("eve", "member", { principals: ["user:eve"], workspaceId: "ws1" });
     expect((await call(stranger, "GET", "/api/docs/d1/instructions")).status).toBe(404);
     expect((await call(stranger, "GET", "/api/folders/f1/instructions")).status).toBe(404);
     expect(mocked(resolveDocInstructions)).not.toHaveBeenCalled();

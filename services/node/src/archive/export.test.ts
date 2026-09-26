@@ -40,6 +40,7 @@ const { checkArchive } = await import("./check.js");
 const { readArchive } = await import("./import.js");
 const { LIMITS } = await import("./testing/fixture.js");
 import type { Ctx } from "../auth/context.js";
+import { fixed, personCtx, recordingJobs } from "../testing/ctx.js";
 import type { ArchiveDatabase, ArchiveDoc, ArchiveManifest } from "./format.js";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
@@ -218,20 +219,16 @@ function world(): void {
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
 
 function ctxOf(): Ctx {
-  return {
-    sql: {},
+  return personCtx({
     surface: "web",
     alias: "u_liv",
     displayName: "Liv",
-    isAgent: false,
-    principals: ["user:u_liv", "org:ws1"],
-    workspaceId: "ws1",
     role: "owner",
     env: {
       publicOrigin: "https://node.test",
       extraOrigins: ["http://livs-air.local:8787"],
-      settings: { current: () => ({ databaseOpsKeep: 500 }) },
-      jobs: { send: vi.fn(async () => {}) },
+      settings: fixed({ databaseOpsKeep: 500 }),
+      jobs: recordingJobs(),
       docs: {
         get: (id: string) => ({
           fetch: async (url: string) => {
@@ -261,7 +258,7 @@ function ctxOf(): Ctx {
         get: async (key: string) => (key === `media/ws1/${PNG_HASH}` ? { arrayBuffer: async () => PNG.slice().buffer } : null),
       },
     },
-  } as unknown as Ctx;
+  });
 }
 
 beforeEach(() => {

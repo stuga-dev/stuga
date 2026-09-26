@@ -1,24 +1,23 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import type { InboxRun } from "../api";
 import { ReviewPage, madeBy, needsAttention, runActions, runStatus } from "./ReviewPage";
+import { toasts } from "../test/toast";
+import { mountInto } from "../test/form-input";
 
 const inbox = vi.hoisted(() => ({ list: vi.fn(), stats: vi.fn() }));
 const docRuns = vi.hoisted(() => ({ decide: vi.fn(), revert: vi.fn(), ack: vi.fn() }));
-const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type: string }> }));
 
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   Inbox: inbox,
   Runs: docRuns,
 }));
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string; type: string }) => toasts.shown.push(t),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 vi.mock("../shell/AppTopNav", () => ({ AppTopNav: () => null }));
 // The row menu stands in as its items' buttons.
 vi.mock("@astryxdesign/core/MoreMenu", async () => {
@@ -28,16 +27,6 @@ vi.mock("@astryxdesign/core/MoreMenu", async () => {
       items.map((item) => h("button", { key: item.label, onClick: item.onClick }, item.label)),
   };
 });
-
-// jsdom's <dialog> has no showModal/close, which Astryx Dialog calls.
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
 
 /** A run as an agent's first proposal opens it; each case moves it the way an actor does. */
 const run = (overrides: Partial<InboxRun> = {}) => ({
@@ -156,14 +145,10 @@ describe("the inbox page", () => {
   }
 
   beforeEach(() => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
+    ({ host, root } = mountInto());
   });
 
   afterEach(() => {
-    act(() => root.unmount());
-    host.remove();
     window.matchMedia = wideScreen;
   });
 
@@ -202,15 +187,8 @@ describe("the revert dialog", () => {
     toasts.shown.length = 0;
     inbox.list.mockResolvedValue({ runs: [row], filter: "attention" });
     inbox.stats.mockResolvedValue({ agents: [] });
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
+    ({ host, root } = mountInto());
     await act(async () => root.render(createElement(MemoryRouter, null, createElement(ReviewPage))));
-  });
-
-  afterEach(() => {
-    act(() => root.unmount());
-    host.remove();
   });
 
   it("cannot be closed while its revert is in flight, and keeps naming the document as it closes", async () => {

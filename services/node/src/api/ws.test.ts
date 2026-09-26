@@ -8,6 +8,7 @@ vi.mock("@stuga/db", async (importOriginal) => ({
 const { getDoc } = await import("@stuga/db");
 const { routeWebSocket } = await import("./ws.js");
 import type { Ctx } from "../auth/context.js";
+import { personCtx, type CtxOverrides } from "../testing/ctx.js";
 import type { NodeEnv } from "../env.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
@@ -24,20 +25,8 @@ const env = {
   databases: { get: () => ({ fetch: actorFetch }) },
 } as unknown as NodeEnv;
 
-function ctx(principals: string[], extra: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "alice",
-    displayName: "Alice",
-    email: null,
-    isAgent: false,
-    principals,
-    workspaceId: "ws1",
-    role: "member",
-    env,
-    ...extra,
-  } as unknown as Ctx;
-}
+const ctx = (principals: string[], extra: CtxOverrides = {}): Ctx =>
+  personCtx({ alias: "alice", displayName: "Alice", principals, env, ...extra });
 
 const DOC = {
   doc_id: "d1",

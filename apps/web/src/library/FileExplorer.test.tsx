@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import type { DocSummary, Folder } from "../api";
 import type { LibraryRow } from "./DocTable";
+import { toasts } from "../test/toast";
+import { mountInto, typeInto } from "../test/form-input";
 
 const docs = vi.hoisted(() => ({
   list: vi.fn(),
@@ -27,7 +29,6 @@ const folders = vi.hoisted(() => ({
   setInstructions: vi.fn(),
 }));
 const collections = vi.hoisted(() => ({ list: vi.fn(), addItems: vi.fn(), create: vi.fn() }));
-const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type: string }> }));
 /** A mouse-driven window this many CSS px wide, for ui/narrow.ts and Astryx AppShell's breakpoints. */
 const viewport = vi.hoisted(() => ({ width: 1280 }));
 
@@ -37,9 +38,7 @@ vi.mock("../api", async (orig) => ({
   Folders: folders,
   Collections: collections,
 }));
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string; type: string }) => toasts.shown.push(t),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 vi.mock("../state/favorites", () => ({
   useFavorites: () => ({ ids: new Set<string>(), toggle: vi.fn(async () => true) }),
 }));
@@ -100,15 +99,6 @@ Object.defineProperty(window, "matchMedia", {
 
 const { FileExplorer } = await import("./FileExplorer");
 
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
-
 const DOC: DocSummary = {
   doc_id: "d_1",
   title: "Plan",
@@ -154,21 +144,17 @@ async function click(el: HTMLElement | undefined) {
   await act(async () => el!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
-async function typeInto(labelText: string, value: string) {
+async function type(labelText: string, value: string) {
   const input = [...host.querySelectorAll("input")].find(
     (i) => (host.querySelector(`label[for="${i.id}"]`)?.textContent ?? "").includes(labelText),
   );
   expect(input, `no input labelled ${labelText}`).toBeTruthy();
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input!, value);
-    input!.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  await typeInto(input, value);
 }
 
 async function rename(to: string) {
   await click(button("Rename…", DOC.doc_id));
-  await typeInto("Document title", to);
+  await type("Document title", to);
   await click(button("Rename"));
 }
 
@@ -203,7 +189,7 @@ async function renderExplorer() {
 }
 
 beforeEach(async () => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.clearAllMocks();
   toasts.shown = [];
   docs.list.mockResolvedValue({ docs: [DOC] });
   docs.get.mockResolvedValue(DOC);
@@ -214,16 +200,8 @@ beforeEach(async () => {
   onCreateDatabase.mockReset();
   onCreateFolder.mockReset();
   onImport.mockReset();
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  ({ host, root } = mountInto());
   await renderExplorer();
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
-  vi.clearAllMocks();
 });
 
 describe("FileExplorer row actions", () => {
@@ -262,7 +240,7 @@ describe("FileExplorer row actions", () => {
     viewport.width = width;
     // A fresh mount, so the listing loads again.
     await act(async () => root.unmount());
-    root = createRoot(host);
+    ({ host, root } = mountInto());
     await renderExplorer();
     expect(host.textContent).toContain("No documents yet");
     expect(buttons().filter((b) => b.textContent === "New")).toHaveLength(1);

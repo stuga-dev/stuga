@@ -8,20 +8,11 @@ vi.mock("@stuga/db", async (orig) => ({
 
 const { getUsers } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
-import type { Ctx } from "../auth/context.js";
+import { personCtx } from "../testing/ctx.js";
 
 const mockGetUsers = getUsers as unknown as ReturnType<typeof vi.fn>;
 
-const ctx = {
-  sql: {},
-  alias: "ada",
-  displayName: "Ada",
-  isAgent: false,
-  principals: ["user:ada", "org:ws1"],
-  workspaceId: "ws1",
-  role: "member",
-  env: {},
-} as unknown as Ctx;
+const ctx = personCtx({ alias: "ada" });
 
 const ids = (n: number) => Array.from({ length: n }, (_, i) => `user:u${i}`).join(",");
 

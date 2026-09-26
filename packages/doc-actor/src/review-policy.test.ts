@@ -81,7 +81,14 @@ describe("review verdicts in the document actor", () => {
     expect(await markdownOf(dobj)).toBe(base);
     // The reviewer is told it is waiting — that is what keeps this from being a
     // silent queue, since nobody has the document open.
-    expect(ofKind(h, "notify")).toMatchObject([{ eventType: "AGENT_EDITS_PROPOSED", recipient: "alice" }]);
+    expect(ofKind(h, "notify")).toMatchObject([
+      {
+        eventType: "AGENT_EDITS_PROPOSED",
+        recipient: "alice",
+        docId: DOC,
+        body: "Claude (Connector) proposed 1 change — waiting for your review",
+      },
+    ]);
 
     // Firing the flush alarm is the only alarm there is, and it lands nothing.
     await dobj.alarm();
@@ -89,17 +96,6 @@ describe("review verdicts in the document actor", () => {
     expect(await markdownOf(dobj)).toBe(base);
     expect(events(h).some((e) => e.type === "run.proposed" && e.payload?.review === "review")).toBe(true);
     expect(events(h).some((e) => e.type === "run.applied")).toBe(false);
-  });
-
-  it("`review` parks even with the reviewer sitting on a live socket", async () => {
-    const h = harness();
-    const dobj = makeActor(h);
-    await seed(dobj);
-    await connect(dobj, h, { docId: DOC, alias: "alice" });
-    const base = await markdownOf(dobj);
-    const out = await propose(dobj, { action: "str_replace", find: "Alpha", replace: "Alpha!", review: "review" });
-    expect(out.json.mode).toBe("proposed");
-    expect(await markdownOf(dobj)).toBe(base);
   });
 
   it("`auto` commits while the reviewer is on a socket", async () => {

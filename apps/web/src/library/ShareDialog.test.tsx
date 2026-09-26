@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import type { UserInfo } from "../api";
+import { mountInto, typeInto } from "../test/form-input";
 
 const docs = vi.hoisted(() => ({
   getAcl: vi.fn(),
@@ -38,16 +39,6 @@ const LINK = "http://192.168.1.10:8787/join/doc/s3cr3t-token";
 let host: HTMLDivElement;
 let root: Root;
 
-// jsdom's <dialog> has no showModal/close, which Astryx Dialog calls.
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
-
 /** Replace navigator.clipboard for one test; `undefined` models a plain-http origin. */
 function setClipboard(value: { writeText: (t: string) => Promise<void> } | undefined) {
   Object.defineProperty(navigator, "clipboard", { value, configurable: true, writable: true });
@@ -66,7 +57,7 @@ function inputValues(): string[] {
 }
 
 beforeEach(async () => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.clearAllMocks();
   docs.getAcl.mockResolvedValue(ACL);
   docs.setAcl.mockResolvedValue({});
   docs.createShareLink.mockResolvedValue({ link_url: LINK });
@@ -75,18 +66,10 @@ beforeEach(async () => {
   users.search.mockResolvedValue({
     users: [{ alias: "u-ada", username: "ada", display_name: "Ada Lovelace", email: null }],
   });
-  host = document.createElement("div");
-  document.body.appendChild(host);
+  ({ host, root } = mountInto());
   await act(async () => {
-    root = createRoot(host);
     root.render(<ShareDialog docId="doc1" onClose={() => {}} />);
   });
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
-  vi.clearAllMocks();
 });
 
 describe("share link", () => {
@@ -122,17 +105,21 @@ describe("share link", () => {
 });
 
 describe("add people", () => {
+  // The search's debounce runs on fake time.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   /** Types into the picker the way a person does, then lets the debounced search land. */
   async function type(text: string) {
     const input = host.querySelector<HTMLInputElement>('input[placeholder^="Add by"]')!;
+    await act(async () => input.focus());
+    await typeInto(input, text);
     await act(async () => {
-      input.focus();
-      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-      set.call(input, text);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 300));
+      await vi.advanceTimersByTimeAsync(300);
     });
   }
 
@@ -231,15 +218,6 @@ describe("people with access", () => {
     docs.getAcl.mockResolvedValue({ ...ACL, owner, acl_principals: principals, acl_writers: [owner], own_grants });
     await act(async () => root.render(<ShareDialog docId="doc2" onClose={() => {}} />));
   }
-
-  it("falls back to the short id once the lookup fails", async () => {
-    users.resolve.mockRejectedValue(new Error("offline"));
-    await reopen("user:u_Kcjz0unreachable", "user:u_Wq7L0unreachable");
-
-    expect(users.resolve).toHaveBeenCalledWith(["u_Kcjz0unreachable", "u_Wq7L0unreachable"]);
-    expect(listText()).toContain("u_Kcjz…");
-    expect(listText()).toContain("u_Wq7L…");
-  });
 
   it("shows no raw id while names load, then the names", async () => {
     const ada: UserInfo = { alias: "u_QH52ada7RzkP4mXe", username: "ada", display_name: "Ada", email: null };

@@ -1,17 +1,16 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import type { AgentKeyInfo, ConnectionInfo } from "../api";
+import { mountInto, typeInto } from "../test/form-input";
+import { toastBodies, toasts } from "../test/toast";
 
 const keys = vi.hoisted(() => ({ mine: vi.fn(), rename: vi.fn(), rotate: vi.fn(), revoke: vi.fn() }));
 const connections = vi.hoisted(() => ({ mine: vi.fn(), rename: vi.fn(), revoke: vi.fn() }));
-const toasts = vi.hoisted(() => ({ shown: [] as string[] }));
 
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), AgentKeys: keys, Connections: connections }));
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string }) => toasts.shown.push(t.body),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const { ConnectedAgents } = await import("./ConnectedAgents");
 
@@ -63,21 +62,10 @@ const click = (el: Element | undefined) => {
   });
 };
 
-function type(value: string): void {
-  const input = document.querySelector("input")!;
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  act(() => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+const type = (value: string) => typeInto(document.querySelector("input"), value);
 
 async function mount() {
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  act(() => {
-    root = createRoot(container);
-  });
+  ({ host: container, root } = mountInto());
   await act(async () =>
     root.render(<ConnectedAgents activeWorkspaceId="ws1" workspaces={WORKSPACES} reloadSignal={0} />),
   );
@@ -89,11 +77,6 @@ beforeEach(async () => {
   keys.mine.mockResolvedValue({ keys: [KEY("k1"), KEY("k2")] });
   connections.mine.mockResolvedValue({ connections: [] });
   await mount();
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
 });
 
 describe("ConnectedAgents — how a connection was granted", () => {
@@ -158,7 +141,7 @@ describe("ConnectedAgents — renaming", () => {
     keys.rename.mockResolvedValue({});
     keys.mine.mockResolvedValue({ keys: [{ ...KEY("k1"), name: "Claude Code (laptop)" }, KEY("k2")] });
     click(buttons(/Rename/)[0]);
-    type("Claude Code (laptop)");
+    await type("Claude Code (laptop)");
     await act(async () => {
       buttons(/Save/)[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -168,7 +151,7 @@ describe("ConnectedAgents — renaming", () => {
 
   it("asks the node nothing when the name is unchanged or blank", async () => {
     click(buttons(/Rename/)[0]);
-    type("   ");
+    await type("   ");
     await act(async () => {
       buttons(/Save/)[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -179,12 +162,12 @@ describe("ConnectedAgents — renaming", () => {
   it("keeps the old name and says so when the node refuses", async () => {
     keys.rename.mockRejectedValue(new Error("name cannot be empty"));
     click(buttons(/Rename/)[0]);
-    type("Other");
+    await type("Other");
     await act(async () => {
       buttons(/Save/)[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     // errorMessage prefers the node's own sentence over the fallback.
-    expect(toasts.shown).toEqual(["name cannot be empty"]);
+    expect(toastBodies()).toEqual(["name cannot be empty"]);
     expect(text()).toContain("Claude Code");
   });
 });

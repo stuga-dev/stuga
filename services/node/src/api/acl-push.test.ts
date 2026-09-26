@@ -20,6 +20,7 @@ const { getDoc, setDocAcl, getFolder, setFolderAcl, folderEffectiveAcl, childInh
   await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, personCtx, recordingJobs } from "../testing/ctx.js";
 
 const m = (fn: unknown) => fn as unknown as ReturnType<typeof vi.fn>;
 
@@ -43,26 +44,11 @@ const DOC = {
 let actorCalls: string[];
 
 function ctxFor(): Ctx {
-  return {
-    sql: { unsafe: (q: string) => q },
-    alias: "owner-1",
-    displayName: "Ada",
-    isAgent: false,
-    principals: ["user:owner-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "owner",
-    env: {
-      jobs: { send: vi.fn(async () => {}) },
-      docs: {
-        get: () => ({
-          fetch: vi.fn(async (url: string) => {
-            actorCalls.push(url);
-            return new Response("{}");
-          }),
-        }),
-      },
-    },
-  } as unknown as Ctx;
+  const fetch = vi.fn(async (url: string) => {
+    actorCalls.push(url);
+    return new Response("{}");
+  });
+  return personCtx({ sql: { unsafe: (q: string) => q }, alias: "owner-1", role: "owner", env: { jobs: recordingJobs(), docs: actorsAnswering(fetch) } });
 }
 
 /** The one /revoke this request pushed, parsed. */

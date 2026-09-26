@@ -2,12 +2,13 @@
 /** The landing page of a sign-in through the identity provider, for an account the node knows. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, StrictMode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { AuthComplete, HANDOFF_FAILED_NOTICE } from "./AuthComplete";
 import { getToken } from "../lib/session/tokens";
 import { hasSsoHint, peekSilentAttempt, setSsoHint } from "../lib/session/provider";
 import { peekLoginReturn, rememberLoginReturn } from "../lib/session/return-path";
+import { mountInto } from "../test/form-input";
 
 const fetchMock = vi.fn<typeof fetch>();
 const reply = (status: number, body: unknown) =>
@@ -44,20 +45,14 @@ async function open(fragment: string) {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   localStorage.clear();
   sessionStorage.clear();
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  ({ host, root } = mountInto());
 });
 
 afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
-  vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
 });
 

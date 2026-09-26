@@ -19,6 +19,7 @@ const { getWorkspace, listWorkspacesForUser } = await import("@stuga/db");
 const { workspaceContextFor } = await import("../auth/context.js");
 const { callerFor, resolvingTo, callToolAs, mcpRequest } = await import("./testing/call.js");
 import type { Ctx, McpCaller } from "../auth/context.js";
+import { actorsAnswering, agentCtx, fixed, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetWorkspace = vi.mocked(getWorkspace);
 const mockListWorkspaces = vi.mocked(listWorkspacesForUser);
@@ -28,28 +29,20 @@ const USAGE = "Stuga lets you read and edit";
 const IO = { workspace_id: "ws1", name: "io", role: "member" };
 const SHARED = { workspace_id: "ws2", name: "Shared", role: "member" };
 
-function connectorCtx(overrides: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
+function connectorCtx(overrides: CtxOverrides = {}): Ctx {
+  return agentCtx({
     alias: "agent-conn-abc",
-    displayName: "Connector",
     surface: "mcp",
-    isAgent: true,
-    onBehalfOf: "human-1",
-    principals: ["agent:agent-conn-abc", "user:human-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "member",
     env: {
-      databases: { get: () => ({ fetch: vi.fn() }) },
-      docs: { get: () => ({ fetch: vi.fn() }) },
-      jobs: { send: vi.fn(async () => {}) },
-      aiSettings: { current: () => ({ enabled: false }) },
-      publicOrigin: "https://stuga.test",
+      databases: actorsAnswering(vi.fn()),
+      docs: actorsAnswering(vi.fn()),
+      jobs: recordingJobs(),
+      aiSettings: fixed({ enabled: false }),
       nodeId: "ktbbpahhzxoldakw",
-      settings: { current: () => ({ nodeLabel: "Studio", maxBodyBytes: 1_000_000 }) },
+      settings: fixed({ nodeLabel: "Studio", maxBodyBytes: 1_000_000 }),
     },
     ...overrides,
-  } as unknown as Ctx;
+  });
 }
 
 /** What the client is handed at handshake, before any tool exists to it. */
@@ -83,11 +76,7 @@ describe("MCP initialize", () => {
   it("names each node's own name and origin, so the model knows which node a call lands on", async () => {
     const studio = connectorCtx();
     const liv = connectorCtx({
-      env: {
-        ...studio.env,
-        publicOrigin: "http://localhost:8787",
-        settings: { current: () => ({ nodeLabel: "Liv’s Mac", maxBodyBytes: 1_000_000 }) },
-      } as unknown as Ctx["env"],
+      env: { ...studio.env, publicOrigin: "http://localhost:8787", settings: fixed({ nodeLabel: "Liv’s Mac", maxBodyBytes: 1_000_000 }) },
     });
     const [a, b] = [await initializeInstructions(callerFor(liv)), await initializeInstructions(callerFor(studio))];
     const tail = " and reaches 1 workspace; every tool names the `workspace_id` it acts in.";

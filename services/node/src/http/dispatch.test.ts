@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createApp, createRequestHandler, isAppPath, routeWorkspaceRequest } from "./dispatch.js";
 import { READ_ONLY_MESSAGE } from "../authz/authz.js";
-import type { Ctx } from "../auth/context.js";
+import { personCtx, type CtxOverrides } from "../testing/ctx.js";
 import type { NodeEnv } from "../env.js";
 import { CONSENT_PATH } from "../mcp/oauth.js";
 
@@ -60,20 +60,7 @@ describe("createRequestHandler", () => {
 });
 
 describe("the route table's gates", () => {
-  const ctx = (overrides: Record<string, unknown> = {}) =>
-    ({
-      sql: {},
-      alias: "ada",
-      displayName: "Ada",
-      email: null,
-      isAgent: false,
-      surface: "web",
-      principals: ["user:ada", "org:ws1"],
-      workspaceId: "ws1",
-      role: "member",
-      env: {},
-      ...overrides,
-    }) as unknown as Ctx;
+  const ctx = (overrides: CtxOverrides = {}) => personCtx({ alias: "ada", surface: "web", ...overrides });
   const agent = (overrides: Record<string, unknown> = {}) =>
     ctx({ isAgent: true, alias: "agent-1", onBehalfOf: "ada", surface: "api-key", ...overrides });
   const request = (method: string, path: string) => new Request(`https://node.example.test${path}`, { method });

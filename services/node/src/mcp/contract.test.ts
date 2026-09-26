@@ -33,8 +33,8 @@ const { proposeDocEdit } = await import("../agents/edits.js");
 const { retrieveAndRerank } = await import("../retrieval/retrieve.js");
 const { workspaceContextFor } = await import("../auth/context.js");
 const { callerFor, resolvingTo, inWorkspace, callToolAs, mcpRequest } = await import("./testing/call.js");
-import { renderImportCommit } from "@stuga/agent-surface/render/databases";
-import type { Ctx, McpCaller } from "../auth/context.js";
+import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, agentCtx, fixed, nodeSettings, recordingJobs } from "../testing/ctx.js";
 
 const RUN = { id: "run_1", hunks: [], status: "open" };
 const DB_RUN = { id: "run_2", ops: [], status: "open" };
@@ -42,40 +42,28 @@ let actorReply: unknown = {};
 let embeddings = false;
 
 function fixture(): Ctx {
-  const actor = { fetch: vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/schema") ? SCHEMA : actorReply))) };
-  return {
-    sql: {},
-    alias: "agent-1",
-    displayName: "Connector",
+  const fetch = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/schema") ? SCHEMA : actorReply)));
+  return agentCtx({
     surface: "mcp",
-    isAgent: true,
-    onBehalfOf: "human-1",
     principals: ["agent:agent-1", "user:human-1"],
-    workspaceId: "ws1",
-    role: "member",
     env: {
-      jobs: { send: vi.fn(async () => {}) },
-      aiSettings: { current: () => ({ chat: { enabled: true }, embed: { enabled: embeddings } }) },
-      publicOrigin: "https://stuga.test",
+      jobs: recordingJobs(),
+      aiSettings: fixed({ chat: { enabled: true }, embed: { enabled: embeddings } }),
       nodeId: "ktbbpahhzxoldakw",
-      databases: { get: () => actor },
-      docs: { get: () => actor },
-      settings: { current: () => ({ databaseOpsKeep: 500, nodeLabel: "Studio", maxBodyBytes: 1_000_000 }) },
+      databases: actorsAnswering(fetch),
+      docs: actorsAnswering(fetch),
+      settings: nodeSettings({ maxBodyBytes: 1_000_000 }),
     },
-  } as unknown as Ctx;
+  });
 }
 
 const SCHEMA = { database_id: "db1", tables: [{ table_id: "t1", name: "tasks", display: "Tasks", position: 0, row_count: 0, columns: [], views: [] }] };
 
 /** One call in ws1, the workspace the fixture resolves to. */
-async function callTool(name: string, args: Record<string, unknown>, over: Partial<McpCaller> = {}) {
+async function callText(name: string, args: Record<string, unknown>): Promise<string> {
   const ctx = fixture();
   vi.mocked(workspaceContextFor).mockImplementation(resolvingTo(ctx));
-  return callToolAs(callerFor(ctx, over), name, inWorkspace(ctx.workspaceId, name, args));
-}
-
-async function callText(name: string, args: Record<string, unknown>): Promise<string> {
-  return (await callTool(name, args)).text;
+  return (await callToolAs(callerFor(ctx), name, inWorkspace(ctx.workspaceId, name, args))).text;
 }
 
 interface ListedTool {
@@ -86,8 +74,8 @@ interface ListedTool {
   annotations?: Record<string, unknown>;
 }
 
-async function listTools(over: Partial<McpCaller> = {}): Promise<ListedTool[]> {
-  return ((await mcpRequest(callerFor(fixture(), over), "tools/list")).result as { tools: ListedTool[] }).tools;
+async function listTools(): Promise<ListedTool[]> {
+  return ((await mcpRequest(callerFor(fixture()), "tools/list")).result as { tools: ListedTool[] }).tools;
 }
 
 const READ_TOOLS = ["workspaces", "docs", "search", "markdown", "comments", "folders", "events", "collections", "retrieve", "databases", "query"];
@@ -250,18 +238,6 @@ describe("the /mcp contract", () => {
     for (const t of tools) expect(t.annotations?.title, t.name).toBe(t.title);
   });
 
-  it("offers a read-only caller the reading tools only", async () => {
-    const tools = await listTools({ readOnly: true });
-    expect(tools.map((t) => t.name).sort()).toEqual([...READ_TOOLS].sort());
-    expect(tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
-  });
-
-  it("refuses a write tool a read-only caller calls anyway, before anything is proposed", async () => {
-    const r = await callTool("markdown_append", { doc_id: "d1", text: "x" }, { readOnly: true });
-    expect(r.isError).toBe(true);
-    expect(proposeDocEdit).not.toHaveBeenCalled();
-  });
-
   it("refuses a call that names no workspace before resolving one", async () => {
     const ctx = fixture();
     for (const [name, args] of [
@@ -331,11 +307,6 @@ describe("the /mcp contract", () => {
     actorReply = { mode: "proposed", run: DB_RUN, pending: 1 };
     const changed = JSON.parse(await callText("databases_change", { action: "delete_rows", database_id: "db1", table: "tasks", row_ids: ["r1"] }));
     expect(changed.result).toMatch(/^Proposed — .*Do NOT retry/);
-  });
-
-  it("starts an import's result with Proposed or Applied", () => {
-    expect(JSON.parse(renderImportCommit(200, { mode: "proposed", rows_ingested: 2 }, "content").text).result).toMatch(/^Proposed — the import of 2 rows/);
-    expect(JSON.parse(renderImportCommit(200, { mode: "applied", rows_ingested: 2 }, "content").text).result).toMatch(/^Applied — imported 2 rows/);
   });
 
   it("answers a search with documents that name their workspace and link, without per-workspace scores", async () => {

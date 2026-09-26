@@ -87,6 +87,8 @@ describe("readLines", () => {
 });
 
 describe("fetchWithRetry — the caller's signal", () => {
+  afterEach(() => vi.useRealTimers());
+
   it("ends the wait for headers and is rethrown as-is, with no retry", async () => {
     const ctrl = new AbortController();
     // Behaves like fetch: settles only when the signal it was handed aborts.
@@ -134,9 +136,12 @@ describe("fetchWithRetry — the caller's signal", () => {
   });
 
   it("does not change the retry path when no signal is given", async () => {
+    vi.useFakeTimers();
     let n = 0;
     const doFetch = vi.fn(async () => (n++ === 0 ? new Response("busy", { status: 429 }) : new Response("ok", { status: 200 })));
-    const res = await fetchWithRetry("x", doFetch);
+    const p = fetchWithRetry("x", doFetch);
+    await vi.runAllTimersAsync();
+    const res = await p;
     expect(res.status).toBe(200);
     expect(doFetch).toHaveBeenCalledTimes(2);
   });

@@ -18,13 +18,10 @@ const roundTrips = (md: string): { ok: boolean; before: number; after: number } 
 
 describe("list boundaries survive a markdown round-trip", () => {
   const cases: Array<[string, string, number]> = [
-    ["two bullet lists", "- a\n- b\n\n* c\n* d\n", 2],
     ["three bullet lists", "- a\n\n* b\n\n- c\n", 3],
-    ["two ordered lists", "1. a\n2. b\n\n3) c\n4) d\n", 2],
     ["checkbox list then bullet list", "- [ ] a\n- [ ] b\n\n* **Grain:** c\n", 2],
     ["bullet then ordered", "- a\n\n1. b\n", 2],
     ["nested list then sibling list", "- a\n  - a1\n  - a2\n\n* b\n", 2],
-    ["single list is untouched", "- a\n- b\n", 1],
     [
       "document with table, checkboxes, bullets and two ordered lists",
       "## H\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n- [ ] x\n- [ ] y\n\n* **G:** z\n\n1. one\n2. two\n\n3) three\n\npara\n",

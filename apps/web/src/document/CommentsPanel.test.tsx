@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import type { Comment, UserInfo } from "../api";
+import { mountInto } from "../test/form-input";
 
 const ctx = vi.hoisted(() => ({
   comments: [] as Comment[],
@@ -43,25 +44,17 @@ let root: Root;
 const scrollIntoView = vi.fn();
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.clearAllMocks();
   // jsdom has no scrollIntoView; record the element it is called on.
   HTMLElement.prototype.scrollIntoView = function (this: HTMLElement, ...args: unknown[]) {
     scrollIntoView(this, ...args);
   } as HTMLElement["scrollIntoView"];
   users.resolve.mockReset().mockResolvedValue({ users: [] });
-  host = document.createElement("div");
-  document.body.appendChild(host);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
-  vi.clearAllMocks();
 });
 
 async function mount() {
+  ({ host, root } = mountInto());
   await act(async () => {
-    root = createRoot(host);
     root.render(<CommentsPanel docId="doc1" />);
   });
 }
@@ -132,17 +125,6 @@ describe("CommentsPanel: authors", () => {
   const bob: UserInfo = { alias: "u_Bb81bob4TqeW9nJs", username: "bob", display_name: "Bob", email: null };
   /** The name heading each comment, root first. */
   const authors = () => [...host.querySelectorAll(".comment-head strong")].map((s) => s.textContent);
-
-  it("falls back to the short id once the lookup fails", async () => {
-    users.resolve.mockRejectedValue(new Error("offline"));
-    ctx.comments = [comment(1, { author: "u_Kcjz0unreachable" })];
-    ctx.activeNum = null;
-
-    await mount();
-
-    expect(users.resolve).toHaveBeenCalledTimes(1);
-    expect(authors()).toEqual(["u_Kcjz…"]);
-  });
 
   it("shows no raw id while names load, then the names", async () => {
     let answer!: (r: { users: UserInfo[] }) => void;

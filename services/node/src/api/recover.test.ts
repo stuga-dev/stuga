@@ -13,6 +13,7 @@ vi.mock("@stuga/db", async (importOriginal) => ({
 const { getDoc } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, personCtx, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 
@@ -31,18 +32,14 @@ const DOC = {
 
 let actorFetch = vi.fn();
 
-function ctxOf(overrides: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
+function ctxOf(overrides: CtxOverrides = {}): Ctx {
+  return personCtx({
     alias: "owner-1",
     displayName: "Ozzie",
-    isAgent: false,
     principals: ["user:owner-1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: { docs: { get: () => ({ fetch: actorFetch }) }, jobs: { send: vi.fn(async () => {}) } },
+    env: { docs: actorsAnswering(actorFetch), jobs: recordingJobs() },
     ...overrides,
-  } as unknown as Ctx;
+  });
 }
 
 const owner = () => ctxOf();

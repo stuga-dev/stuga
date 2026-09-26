@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /** The audit requests as they leave the browser; AuditLog.test.tsx mocks this layer. */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Audit } from "./audit";
 import { Users } from "./users";
 
@@ -26,10 +26,6 @@ beforeEach(() => {
       return answered({ events: [], next_before: null });
     }),
   );
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
 });
 
 /** The query string the one request carried. */

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
+import { mountInto } from "../test/form-input";
 
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
@@ -43,18 +44,12 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  ({ host, root } = mountInto());
 });
 
 afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
-  vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
 });
 
@@ -115,7 +110,7 @@ describe("OAuthAuthorize", () => {
     expect(host.textContent).toContain("Unverified app");
 
     act(() => root.unmount());
-    root = createRoot(host);
+    ({ host, root } = mountInto());
     node(reply(200, {}), { client_name: "Claude", verified_host: "claude.ai" });
     await open(`client_id=${encodeURIComponent("https://claude.ai/meta.json")}&redirect_uri=${encodeURIComponent(REQUEST.redirectUri)}&code_challenge=${REQUEST.codeChallenge}`);
     expect(host.textContent).toContain("Verified by claude.ai");

@@ -6,13 +6,11 @@ import * as Y from "yjs";
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from "y-protocols/awareness";
 import { Editor } from "@tiptap/react";
 import { captureRelRange } from "../editor/rel-range";
+import { toastBodies, toasts } from "../test/toast";
 
-const toasts = vi.hoisted(() => ({ shown: [] as string[] }));
 const shared = vi.hoisted(() => ({ editor: null as unknown }));
 
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string }) => toasts.shown.push(t.body),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 // The tooltip needs a Layer host and no assertion is about it.
 vi.mock("@astryxdesign/core/Tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => children,
@@ -336,7 +334,7 @@ describe("going to a collaborator", () => {
     act(() => buttonFor("ada@acme.com").click());
 
     expect(editor.state.selection.from).toBe(posOf("lazy"));
-    expect(toasts.shown).toEqual([]);
+    expect(toastBodies()).toEqual([]);
     // jsdom reports zero-size rects, so the delta is jumpTo's own 12px gap below the toolbar.
     expect(scrolledIntoView).toEqual([]);
     expect(scroller.scrollTop).toBe(-12);
@@ -361,7 +359,7 @@ describe("going to a collaborator", () => {
 
     act(() => buttonFor("ada@acme.com").click());
 
-    expect(toasts.shown).toEqual([]);
+    expect(toastBodies()).toEqual([]);
     expect(editor.state.selection.from).toBe(posOf("lazy"));
   });
 
@@ -397,6 +395,6 @@ describe("going to a collaborator", () => {
     act(() => buttonFor("ada@acme.com").click());
 
     expect(editor.state.selection.from).toBe(before);
-    expect(toasts.shown).toEqual(["ada@acme.com doesn't have a cursor in this document right now."]);
+    expect(toastBodies()).toEqual(["ada@acme.com doesn't have a cursor in this document right now."]);
   });
 });

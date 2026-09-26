@@ -53,7 +53,6 @@ async function settle(): Promise<void> {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers({ shouldAdvanceTime: true });
   ydoc = new Y.Doc();
   applyMarkdownToYXmlFragment(ydoc.getXmlFragment("default"), MD);

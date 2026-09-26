@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 /** The document runs provider against a stubbed socket provider, fetch and overlay. */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import type { AgentRunHunk, AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import type { StugaProvider } from "../sync/stuga-provider";
 import { RUN_HUNK_EVENT, type RunHunkDecisionDetail } from "../editor/run-preview/plan";
 import { AgentRunsProvider, previewKeyOf, useAgentRuns, type AgentRunsCtx } from "./agent-runs-context";
+import { mountInto } from "../test/form-input";
 
 /** Records what the context hands the overlay and lets a test dictate what it painted. */
 const overlay = vi.hoisted(() => ({
@@ -73,7 +74,6 @@ interface FetchCall {
 
 let calls: FetchCall[];
 let responder: (url: string, method: string) => unknown;
-let container: HTMLDivElement;
 let root: Root;
 let latest: AgentRunsCtx;
 /** The mutable listener slot the real StugaProvider exposes. */
@@ -124,7 +124,6 @@ function hangingFetch(): (body: unknown, status?: number) => void {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   calls = [];
   overlay.calls = [];
   overlay.anchored = [];
@@ -142,14 +141,7 @@ beforeEach(() => {
       headers: { "content-type": "application/json", "x-stuga-user": ME },
     });
   }) as typeof fetch;
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
+  ({ root } = mountInto());
 });
 
 describe("AgentRunsProvider", () => {
@@ -170,7 +162,7 @@ describe("AgentRunsProvider", () => {
     ]);
 
     act(() => root.unmount());
-    root = createRoot(container);
+    ({ root } = mountInto());
     globalThis.fetch = (async () => new Response(JSON.stringify({ error: "forbidden" }), { status: 403 })) as typeof fetch;
     await mount();
     expect(latest.notices).toEqual([]);

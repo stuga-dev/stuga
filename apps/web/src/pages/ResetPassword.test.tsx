@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 /** Where a password reset link lands: a new password, a session, and a spent link sent back to sign in. */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, StrictMode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { ResetPassword } from "./ResetPassword";
 import { getToken } from "../lib/session/tokens";
 import { rememberLoginReturn } from "../lib/session/return-path";
+import { mountInto, typeInto } from "../test/form-input";
 
 const fetchMock = vi.fn<typeof fetch>();
 const reply = (status: number, body: unknown) =>
@@ -46,11 +47,7 @@ async function open(path: string) {
 async function type(label: string, value: string) {
   const el = [...host.querySelectorAll("input")].find((i) => host.querySelector(`label[for="${i.id}"]`)?.textContent?.startsWith(label));
   expect(el, `no input ${label}`).toBeTruthy();
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(el!, value);
-    el!.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  await typeInto(el, value);
 }
 
 async function click(label: string) {
@@ -66,20 +63,11 @@ const sent = (path: string) => {
 };
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   localStorage.clear();
   sessionStorage.clear();
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
-  vi.unstubAllGlobals();
+  ({ host, root } = mountInto());
 });
 
 describe("ResetPassword", () => {

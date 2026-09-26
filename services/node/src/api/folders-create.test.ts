@@ -16,22 +16,13 @@ vi.mock("../audit/record.js", async (importOriginal) => ({
 const { createFolder, getWorkspace } = await import("@stuga/db");
 const { createFolderRoute } = await import("./folders.js");
 import type { Ctx } from "../auth/context.js";
+import { personCtx, type CtxOverrides } from "../testing/ctx.js";
 import type { WorkspaceCall } from "../http/router.js";
 
 const mockCreateFolder = vi.mocked(createFolder);
 const mockGetWorkspace = vi.mocked(getWorkspace);
 
-function ctxOf(overrides: Record<string, unknown> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "bob",
-    isAgent: false,
-    principals: ["user:bob", "org:ws1"],
-    workspaceId: "ws1",
-    role: "member",
-    ...overrides,
-  } as unknown as Ctx;
-}
+const ctxOf = (overrides: CtxOverrides = {}): Ctx => personCtx({ alias: "bob", ...overrides });
 
 async function create(ctx: Ctx): Promise<Response> {
   const req = new Request("http://node/api/folders", { method: "POST", body: JSON.stringify({ title: "Plans" }) });

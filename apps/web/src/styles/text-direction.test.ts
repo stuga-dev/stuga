@@ -40,7 +40,6 @@ beforeAll(() => {
 
 /** `element` rendered into a fresh root in the page; the returned function unmounts it. */
 async function mount(element: React.ReactElement): Promise<() => void> {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   document.body.innerHTML = "";
   const root = createRoot(document.body.appendChild(document.createElement("div")));
   await act(async () => root.render(element));
@@ -209,7 +208,6 @@ describe("text direction", () => {
     };
     const folder: LibraryRow = { ...docRow(doc), id: "f_1", kind: "folder", title: "القوانين", doc: undefined };
     const rows = [{ ...docRow(doc), location: "مستندات" }, { ...folder, location: "الأرشيف" }];
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     document.body.innerHTML = "";
     const root = createRoot(document.body.appendChild(document.createElement("div")));
     await act(async () =>

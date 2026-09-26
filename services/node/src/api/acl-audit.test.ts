@@ -20,6 +20,7 @@ const {
 } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, personCtx, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockSetDocAcl = setDocAcl as unknown as ReturnType<typeof vi.fn>;
@@ -44,32 +45,12 @@ const DOC = {
 };
 
 /** Every job this request enqueued, audit rows included. */
-let jobs: Array<Record<string, unknown>>;
+const jobs = recordingJobs();
 
-function ctxFor(over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "owner-1",
-    displayName: "Ada",
-    isAgent: false,
-    principals: ["user:owner-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "owner",
-    env: {
-      jobs: {
-        send: vi.fn(async (message: Record<string, unknown>) => {
-          jobs.push(message);
-        }),
-      },
-      docs: { get: () => ({ fetch: vi.fn(async () => new Response("{}")) }) },
-    },
-    ...over,
-  } as unknown as Ctx;
-}
+const ctxFor = (over: CtxOverrides = {}): Ctx =>
+  personCtx({ alias: "owner-1", role: "owner", env: { jobs, docs: actorsAnswering(vi.fn(async () => new Response("{}"))) }, ...over });
 
-function auditRows(): Array<Record<string, unknown>> {
-  return jobs.filter((message) => message.kind === "audit");
-}
+const auditRows = jobs.audits;
 
 async function put(path: string, body: unknown, ctx: Ctx = ctxFor()): Promise<Response> {
   const url = new URL(`https://node.test${path}`);
@@ -83,7 +64,6 @@ async function put(path: string, body: unknown, ctx: Ctx = ctxFor()): Promise<Re
 
 beforeEach(() => {
   vi.clearAllMocks();
-  jobs = [];
   mockGetDoc.mockResolvedValue({ ...DOC });
   mockSetDocAcl.mockResolvedValue({ ...DOC });
   mockIsMember.mockResolvedValue(true);

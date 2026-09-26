@@ -40,13 +40,6 @@ describe("rerankChunks", () => {
     expect(out.chunks.map((c) => c.doc_id)).toEqual(["d0", "d1", "d2"]); // original order
   });
 
-  it("degrades on model error (never throws, never empty)", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("boom", { status: 500 }))));
-    const out = await rerankChunks(CFG, "q", cands(4), 2, "sonnet");
-    expect(out.degraded).toBe(true);
-    expect(out.chunks.map((c) => c.doc_id)).toEqual(["d0", "d1"]);
-  });
-
   it("fills up to N even when everything scores below the keep threshold", async () => {
     // All scores < 3, but topN=2 must still be filled (the score-OR-len rule).
     mockScores('[{"i":0,"score":1},{"i":1,"score":0},{"i":2,"score":2},{"i":3,"score":1}]');
@@ -86,10 +79,12 @@ describe("rerankChunks", () => {
     expect(out.modelId).toBe(resolveModel(CFG, "sonnet"));
   });
 
-  it("reports the model on a degraded call, since the tokens were still spent", async () => {
+  // A 400 fails on the first attempt; a 5xx would wait out the client's retry backoff.
+  it("degrades on model error (never throws, never empty) and still reports the model, since the tokens were spent", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("boom", { status: 400 }))));
     const out = await rerankChunks(CFG, "q", cands(4), 2, "sonnet");
     expect(out.degraded).toBe(true);
+    expect(out.chunks.map((c) => c.doc_id)).toEqual(["d0", "d1"]);
     expect(out.modelId).toBe(resolveModel(CFG, "sonnet"));
   });
 

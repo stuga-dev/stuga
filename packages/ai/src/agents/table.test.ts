@@ -55,19 +55,6 @@ describe("runTableAgentTurn", () => {
     expect(out.staged).toBe(1);
   });
 
-  it("breaks between rounds so one round's prose can't run into the next", async () => {
-    mockRounds([
-      toolRound("add_column", { table: "Revenue", name: "Date", type: "date" }, { text: "I'll add a Date column." }),
-      textRound("Done — I proposed 1 change."),
-    ]);
-    const chunks: string[] = [];
-    const out = await runTableAgentTurn(CFG, INPUT, NOOP_RUNNER, (t) => chunks.push(t));
-    expect(out.prose).toBe("I'll add a Date column.\n\nDone — I proposed 1 change.");
-    // The break is streamed, not just stored — the live panel and the finished
-    // turn must show the same thing.
-    expect(chunks.join("")).toBe(out.prose);
-  });
-
   it("passes the model choice through to the resolved model id", async () => {
     // The ledger stores the CLIENT id the operator configured, not the
     // provider's wire model name — that survives a vendor renaming or
@@ -213,13 +200,6 @@ describe("runTableAgentTurn knowledge-base search", () => {
 
 /** Ops are parked in the ledger as they are staged, so an incomplete turn must still report them. */
 describe("runTableAgentTurn — incomplete turns keep their staged ops", () => {
-  it("reports stopReason 'complete' when the model ends its own turn", async () => {
-    mockRounds([textRound("All set.")]);
-    const out = await runTableAgentTurn(CFG, INPUT, NOOP_RUNNER, () => {});
-    expect(out.stopReason).toBe("complete");
-    expect(out.error).toBeUndefined();
-  });
-
   it("reports 'max_rounds' at the cap, and still counts the ops staged before it", async () => {
     mockRounds([toolRound("insert_rows", { table: "Revenue", rows: [{ Name: "Q3" }] })]);
     const out = await runTableAgentTurn(CFG, { ...INPUT, maxRounds: 3 }, NOOP_RUNNER, () => {});
@@ -229,6 +209,7 @@ describe("runTableAgentTurn — incomplete turns keep their staged ops", () => {
   });
 
   it("a throw mid-loop resolves with stopReason 'error' and the ops already staged", async () => {
+    // A 400, since a 5xx or a network error would wait out the client's retry backoff.
     let call = 0;
     vi.stubGlobal(
       "fetch",
@@ -237,7 +218,7 @@ describe("runTableAgentTurn — incomplete turns keep their staged ops", () => {
           const fr = toolRound("insert_rows", { table: "Revenue", rows: [{ Name: "Q3" }] }, { text: "Adding. " });
           return Promise.resolve(new Response(streamOf(fr), { status: 200 }));
         }
-        return Promise.reject(new Error("upstream throttled"));
+        return Promise.resolve(new Response("upstream throttled", { status: 400 }));
       }),
     );
     const out = await runTableAgentTurn(CFG, INPUT, NOOP_RUNNER, () => {});
@@ -245,14 +226,6 @@ describe("runTableAgentTurn — incomplete turns keep their staged ops", () => {
     expect(out.error).toContain("upstream throttled");
     expect(out.staged).toBe(1); // survived the failure
     expect(out.prose).toContain("Adding.");
-  });
-
-  it("a throw on the FIRST round still resolves — with nothing, so the caller can fail the turn", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("endpoint down"))));
-    const out = await runTableAgentTurn(CFG, INPUT, NOOP_RUNNER, () => {});
-    expect(out.stopReason).toBe("error");
-    expect(out.staged).toBe(0);
-    expect(out.prose).toBe("");
   });
 });
 

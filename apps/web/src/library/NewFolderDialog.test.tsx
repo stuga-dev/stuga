@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MAX_AGENT_INSTRUCTIONS_CHARS } from "@stuga/protocol/domain/limits";
+import { mountInto } from "../test/form-input";
 const folders = vi.hoisted(() => ({
   placementInstructions: vi.fn(async (): Promise<{ inherited: Array<{ kind: string; id: string; title: string; text: string }> }> => ({
     inherited: [],
@@ -35,23 +36,8 @@ async function open() {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  // jsdom has no dialog methods, and Astryx Dialog calls them.
-  HTMLDialogElement.prototype.showModal = function showModal() {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close() {
-    this.open = false;
-  };
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
   vi.clearAllMocks();
+  ({ host, root } = mountInto());
 });
 
 describe("NewFolderDialog", () => {

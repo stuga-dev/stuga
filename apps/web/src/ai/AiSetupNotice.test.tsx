@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
+import { mountInto } from "../test/form-input";
 
 const me = vi.hoisted(() => ({ whoami: vi.fn() }));
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), Me: me }));
@@ -24,14 +25,7 @@ async function render() {
 }
 
 beforeEach(() => {
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
+  ({ host, root } = mountInto());
 });
 
 // One file per answer: the admin check is cached for the page load.

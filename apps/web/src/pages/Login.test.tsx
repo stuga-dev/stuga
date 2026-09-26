@@ -2,7 +2,7 @@
 /** The sign-in page: the node's name, and the identity-provider parts (the button, the silent attempt, a failed return). */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, StrictMode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { Login } from "./Login";
 import { setAuthConfigForTest } from "../lib/session/auth-config";
@@ -17,6 +17,7 @@ import {
 } from "../lib/session/provider";
 import { rememberLoginReturn } from "../lib/session/return-path";
 import { setSession } from "../lib/session/tokens";
+import { mountInto, typeInto } from "../test/form-input";
 
 /** A node nobody has named goes by its host. */
 const NODE_NAME = "livs-air.local:8787";
@@ -60,14 +61,7 @@ const button = (label: string) => [...host.querySelectorAll("button")].find((b) 
 const input = (label: string) =>
   [...host.querySelectorAll("input")].find((i) => host.querySelector(`label[for="${i.id}"]`)?.textContent?.startsWith(label));
 
-async function type(label: string, value: string) {
-  const el = input(label)!;
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(el, value);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+const type = (label: string, value: string) => typeInto(input(label), value);
 
 async function click(label: string) {
   await act(async () => button(label)!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
@@ -78,7 +72,6 @@ const startBodies = () =>
   fetchMock.mock.calls.filter(([url]) => String(url) === "/auth/oidc/start").map(([, init]) => JSON.parse(String(init!.body)) as unknown);
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   fetchMock.mockReset();
   assign.mockReset();
   replace.mockReset();
@@ -88,15 +81,10 @@ beforeEach(() => {
   sessionStorage.clear();
   resetSilentAttemptForTest();
   setAuthConfigForTest({ provider: { label: "Okta" }, nodeName: NODE_NAME });
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  ({ host, root } = mountInto());
 });
 
 afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
-  vi.unstubAllGlobals();
   Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
   setAuthConfigForTest(null);
 });
@@ -109,7 +97,7 @@ describe("Login", () => {
     expect(host.textContent).toContain("Sign in to livs-air.local:8787");
 
     act(() => root.unmount());
-    root = createRoot(host);
+    ({ host, root } = mountInto());
     setAuthConfigForTest({ nodeName: "Studio" });
     await open();
     expect(host.textContent).toContain("Sign in to Studio");
@@ -326,7 +314,7 @@ describe("Login with an identity provider", () => {
     expect(button("Continue with Okta")).toBeTruthy();
 
     act(() => root.unmount());
-    root = createRoot(host);
+    ({ host, root } = mountInto());
     setAuthConfigForTest({ provider: { label: "Okta" }, unclaimed: true, nodeName: NODE_NAME });
     await open();
     expect(button("Create administrator account")).toBeTruthy();

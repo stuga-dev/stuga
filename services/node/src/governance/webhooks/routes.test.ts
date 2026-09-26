@@ -11,6 +11,7 @@ const { insertWebhook, updateWebhook } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../../http/dispatch.js");
 const { fingerprintUrl } = await import("../../config/settings/node.js");
 import type { Ctx } from "../../auth/context.js";
+import { personCtx, type CtxOverrides } from "../../testing/ctx.js";
 
 // Registration vets the resolved address, so the fictional host needs a public answer.
 vi.mock("node:dns/promises", () => ({
@@ -25,19 +26,7 @@ const send = vi.fn(async (_message: unknown) => {});
 const HOOK_URL = "https://hooks.slack.com/services/T0000/B0000/8Xk2QpLmv9RtZa";
 const TOKEN = "8Xk2QpLmv9RtZa";
 
-function ctxFor(over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "owner-1",
-    displayName: "Ada",
-    isAgent: false,
-    principals: ["user:owner-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "owner",
-    env: { jobs: { send } },
-    ...over,
-  } as unknown as Ctx;
-}
+const ctxFor = (over: CtxOverrides = {}): Ctx => personCtx({ alias: "owner-1", role: "owner", env: { jobs: { send } }, ...over });
 
 const hookRow = (url: string) => ({
   webhook_id: "whk_1",

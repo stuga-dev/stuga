@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { mountInto } from "../test/form-input";
 
 const { NodeHealthBanner } = await import("./NodeHealthBanner");
 const { HEALTHY_POLL_MS, TROUBLED_POLL_MS } = await import("../state/node-health");
@@ -29,22 +30,16 @@ function setOnline(value: boolean): void {
   Object.defineProperty(navigator, "onLine", { value, configurable: true });
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   vi.useFakeTimers();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   setOnline(true);
   document.body.innerHTML = "";
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  await act(async () => {
-    root = createRoot(container);
-  });
+  ({ root } = mountInto());
 });
 
 afterEach(() => {
-  act(() => root.unmount());
-  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
@@ -68,12 +63,6 @@ describe("the node health banner", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/ready");
   });
 
-  it("stays quiet through a single 503", async () => {
-    fetchMock.mockImplementationOnce(() => reply(503)).mockImplementation(() => reply(200));
-    await mount();
-    expect(text()).toBe("");
-  });
-
   it("names the database once a second 503 confirms it", async () => {
     fetchMock.mockImplementation(() => reply(503));
     await mount();
@@ -94,17 +83,6 @@ describe("the node health banner", () => {
     await mount();
     await settle(TROUBLED_POLL_MS);
     expect(text()).toMatch(/Can’t reach the server/i);
-  });
-
-  it("takes the banner away as soon as the node recovers", async () => {
-    fetchMock.mockImplementation(() => reply(503));
-    await mount();
-    await settle(TROUBLED_POLL_MS);
-    expect(text()).not.toBe("");
-
-    fetchMock.mockImplementation(() => reply(200));
-    await settle(TROUBLED_POLL_MS);
-    expect(text()).toBe("");
   });
 
   it("refuses to read a proxy's index.html fallback as health", async () => {

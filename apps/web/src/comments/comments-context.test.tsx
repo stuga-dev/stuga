@@ -80,7 +80,6 @@ function Probe() {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   // jsdom has no scrollIntoView.
   HTMLElement.prototype.scrollIntoView = scrolled;
   caret.length = 0;

@@ -27,6 +27,12 @@ import {
   renderPeerCaret,
 } from "./peer-carets";
 
+// A mention's node view looks its person up.
+vi.mock("../api", async (orig) => {
+  const api = await orig<typeof import("../api")>();
+  return { ...api, Users: { ...api.Users, resolve: async () => ({ users: [] }) } };
+});
+
 /** Where a client that published nothing usable lands in the palette. */
 const paletteFor = (clientId: number) => PEER_PALETTE[clientId % PEER_PALETTE.length]!;
 

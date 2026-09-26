@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { mountInto } from "../test/form-input";
 
 const HEADINGS = [
   { level: 1, text: "المقدمة" },
@@ -28,9 +28,7 @@ const { Outline } = await import("./Outline");
 
 describe("Outline", () => {
   it("indents each heading from the side its text starts on", async () => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    const host = document.body.appendChild(document.createElement("div"));
-    const root = createRoot(host);
+    const { host, root } = mountInto();
     await act(async () => root.render(<Outline />));
     const rows = [...host.querySelectorAll<HTMLElement>(".outline-row")];
     expect(rows.map((r) => [r.textContent, r.dir, r.style.paddingInlineStart])).toEqual([
@@ -38,7 +36,5 @@ describe("Outline", () => {
       ["التعريفات", "auto", "1.6rem"],
       ["Definitions", "auto", "1.6rem"],
     ]);
-    act(() => root.unmount());
-    host.remove();
   });
 });

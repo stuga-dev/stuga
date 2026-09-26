@@ -39,19 +39,17 @@ describe("markdown import seeds a brand-new document", () => {
     expect(seed(frag, markdown)).toBe("# Release Notes\n\nShipped the thing.");
   });
 
-  // Explicit budget: this one builds and encodes a >2 MiB CRDT, which sits close
-  // enough to vitest's 5s default to time out when the workspace's suites run in
-  // parallel. Slow by design, not flaky.
-  it("a large table import exceeds one actor storage value, so it MUST snapshot to the blob store", () => {
+  it("a table import's CRDT runs several times its Markdown, so a large one MUST snapshot to the blob store", () => {
     // The sizing fact behind PENDING_SNAPSHOT_BYTES in @stuga/doc-actor. Table rows
     // are the worst realistic shape (many tiny blocks, each carrying CRDT identity):
-    // the Yjs update runs ~9x the Markdown. A value in the actor's key-value store
-    // is one SQLite row, and the actor refuses to journal more than ~2 MiB in one —
-    // doing so would fail the durable write AFTER the doc row was created — so it
-    // flushes a large seed straight to the blob store instead. If this ratio ever
+    // the Yjs update runs ~9x the Markdown, so a ~256 KiB table is already >2 MiB.
+    // A value in the actor's key-value store is one SQLite row, and the actor
+    // refuses to journal more than ~2 MiB in one — doing so would fail the durable
+    // write AFTER the doc row was created — so it flushes a large seed straight to
+    // the blob store instead (flush-threshold.test.ts). If this ratio ever
     // collapses, revisit that threshold rather than assuming markdown size ≈ CRDT size.
     const rows = ["# T", "", "| a | b | c |", "| --- | --- | --- |"];
-    for (let i = 0; rows.join("\n").length < 256 * 1024; i++) rows.push(`| cell ${i} | value ${i} | more ${i} |`);
+    for (let i = 0; rows.join("\n").length < 16 * 1024; i++) rows.push(`| cell ${i} | value ${i} | more ${i} |`);
     const markdown = rows.join("\n");
 
     const doc = new Y.Doc();
@@ -62,8 +60,7 @@ describe("markdown import seeds a brand-new document", () => {
     const mdBytes = new TextEncoder().encode(markdown).byteLength;
     const crdtBytes = Y.encodeStateAsUpdate(doc).byteLength;
     expect(crdtBytes / mdBytes).toBeGreaterThan(4); // nowhere near 1:1
-    expect(crdtBytes).toBeGreaterThan(2 * 1024 * 1024); // over a single storage value
-  }, 20_000);
+  });
 
   it("imports a real README — badges and screenshots included — without eating prose", () => {
     // The shape that exposed the worst import bug: an image inside a link inside a

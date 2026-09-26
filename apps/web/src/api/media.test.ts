@@ -52,7 +52,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.unstubAllGlobals();
   FakeXhr.last = null;
   FakeXhr.reply = { status: 200, body: "{}" };
 });

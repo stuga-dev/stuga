@@ -13,7 +13,7 @@ vi.mock("@stuga/ai", async (orig) => ({
 
 const { searchDocs } = await import("@stuga/db");
 const { searchDocuments } = await import("./search.js");
-import type { Ctx } from "../auth/context.js";
+import { fixed, personCtx } from "../testing/ctx.js";
 
 const mockSearch = searchDocs as unknown as ReturnType<typeof vi.fn>;
 
@@ -23,18 +23,15 @@ const AI: AiConfig = {
   embed: { enabled: true, provider: "ollama", baseUrl: "http://ai.test", model: "embed-1", dims: 2, searchMaxDistance: 0.6, retrievalMaxDistance: 0.9 },
 };
 
+const searcher = (aiSettings: { current: () => AiConfig }) =>
+  personCtx({ alias: "user-1", principals: ["user:user-1"], env: { embeddingDims: 2, searchLanguages: fixed([]), aiSettings } });
+
 describe("searchDocuments", () => {
   beforeEach(() => mockSearch.mockClear());
 
   it("passes the search cutoff in force at each query, so a saved change applies to the next one", async () => {
     let current = AI;
-    const ctx = {
-      sql: {},
-      alias: "user-1",
-      principals: ["user:user-1"],
-      workspaceId: "ws1",
-      env: { embeddingDims: 2, searchLanguages: { current: () => [] }, aiSettings: { current: () => current } },
-    } as unknown as Ctx;
+    const ctx = searcher({ current: () => current });
 
     await searchDocuments(ctx, { q: "paraphrase" });
     current = { ...AI, embed: { ...AI.embed, searchMaxDistance: 1.1 } };
@@ -46,13 +43,7 @@ describe("searchDocuments", () => {
   it("withholds the raw BM25 score, whose IDF counts documents the caller cannot read", async () => {
     const hit = { doc_id: "d1", title: "Probe", page_of: null, page_row: null, snippet: "⟦probe⟧", kw_rank: 4.79, sem_score: 0, score: 1 / 61 };
     mockSearch.mockResolvedValueOnce([hit]);
-    const ctx = {
-      sql: {},
-      alias: "user-1",
-      principals: ["user:user-1"],
-      workspaceId: "ws1",
-      env: { embeddingDims: 2, searchLanguages: { current: () => [] }, aiSettings: { current: () => AI } },
-    } as unknown as Ctx;
+    const ctx = searcher(fixed(AI));
 
     const answer = await searchDocuments(ctx, { q: "probe" });
 

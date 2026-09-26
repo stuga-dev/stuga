@@ -26,6 +26,7 @@ const {
 } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockList = listApiKeys as unknown as ReturnType<typeof vi.fn>;
 const mockRevoke = revokeApiKey as unknown as ReturnType<typeof vi.fn>;
@@ -51,19 +52,7 @@ function keyRow(over: Record<string, unknown> = {}) {
   };
 }
 
-function humanCtx(over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "human-1",
-    displayName: "Ada",
-    isAgent: false,
-    principals: ["user:human-1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: { publicOrigin: "https://stuga.test" },
-    ...over,
-  } as unknown as Ctx;
-}
+const humanCtx = (over: CtxOverrides = {}): Ctx => personCtx({ principals: ["user:human-1"], ...over });
 
 async function route(ctx: Ctx, method: string, path: string): Promise<Response> {
   const url = new URL(`https://node.test${path}`);

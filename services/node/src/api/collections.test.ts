@@ -28,6 +28,7 @@ const { retrieveAndRerank } = await import("../retrieval/retrieve.js");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 const { READ_ONLY_MESSAGE } = await import("../authz/authz.js");
 import type { Ctx } from "../auth/context.js";
+import { fixed, personCtx, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
 
 const mockList = vi.mocked(db.listCollections);
 const mockGet = vi.mocked(db.getCollection);
@@ -43,34 +44,18 @@ const mockRemove = vi.mocked(db.removeCollectionItems);
 const mockReadsEvery = vi.mocked(db.readsEveryMember);
 const mockGetDoc = vi.mocked(db.getDoc);
 const mockRetrieve = vi.mocked(retrieveAndRerank);
-const jobsSend = vi.fn(async (_message: Record<string, unknown>) => {});
+const jobs = recordingJobs();
+const ai = (enabled: boolean) => fixed({ enabled, chat: { enabled }, embed: { enabled } });
 
 /** A human's own session. */
-function human(over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "user-liv",
-    displayName: "Liv",
-    surface: "web",
-    isAgent: false,
-    principals: ["user:user-liv", "org:ws1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: {
-      jobs: { send: jobsSend },
-      aiSettings: { current: () => ({ enabled: false, chat: { enabled: false }, embed: { enabled: false } }) },
-    },
-    ...over,
-  } as unknown as Ctx;
-}
+const human = (over: CtxOverrides = {}): Ctx =>
+  personCtx({ alias: "user-liv", displayName: "Liv", surface: "web", env: { jobs, aiSettings: ai(false) }, ...over });
 
 /** A key that human minted: its own principal, acting on their behalf. */
-function agent(over: Partial<Ctx> = {}): Ctx {
-  return human({ alias: "agent:a1", surface: "api-key", isAgent: true, onBehalfOf: "user-liv", principals: ["agent:a1"], ...over } as Partial<Ctx>);
-}
+const agent = (over: CtxOverrides = {}): Ctx =>
+  human({ alias: "agent:a1", surface: "api-key", isAgent: true, onBehalfOf: "user-liv", principals: ["agent:a1"], ...over });
 
-const scoped = (folders: string[] | null, readOnly = false): Partial<Ctx> =>
-  ({ scope: { folders, readOnly, credentialId: "a1" } }) as unknown as Partial<Ctx>;
+const scoped = (folders: string[] | null, readOnly = false): CtxOverrides => ({ scope: { folders, readOnly, credentialId: "a1" } });
 
 const send = (ctx: Ctx, method: string, path: string, body?: unknown): Promise<Response> => {
   const url = new URL(`https://node.test${path}`);
@@ -82,16 +67,12 @@ const send = (ctx: Ctx, method: string, path: string, body?: unknown): Promise<R
 };
 
 /** Retrieval needs the node's AI switch on; search deliberately does not. */
-const aiOn = (over: Partial<Ctx> = {}): Ctx =>
-  agent({
-    env: { jobs: { send: jobsSend }, aiSettings: { current: () => ({ enabled: true, chat: { enabled: true }, embed: { enabled: true } }) } },
-    ...over,
-  } as unknown as Partial<Ctx>);
+const aiOn = (over: CtxOverrides = {}): Ctx => agent({ env: { jobs, aiSettings: ai(true) }, ...over });
 
 /** A collection owned by the human, as the DB hands it back. */
 const owned = { collection_id: "col_1", workspace_id: "ws1", owner: "user-liv", name: "Handbook", created_at: "", updated_at: "" };
 
-const audits = () => jobsSend.mock.calls.map(([m]) => m).filter((m) => m.kind === "audit");
+const audits = jobs.audits;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -248,7 +229,7 @@ describe("a person and their agents share one set of collections", () => {
   });
 
   it("refuses a guest's key a new collection", async () => {
-    const res = await send(agent({ role: "guest" } as Partial<Ctx>), "POST", "/api/collections", { name: "x" });
+    const res = await send(agent({ role: "guest" }), "POST", "/api/collections", { name: "x" });
     expect(res.status).toBe(403);
     expect(mockCreate).not.toHaveBeenCalled();
   });
@@ -322,21 +303,12 @@ describe("a read-only key", () => {
     expect((await send(readOnly(), "GET", "/api/collections/col_1")).status).toBe(200);
   });
 
-  it.each([
-    ["POST", "/api/collections", { name: "x" }],
-    ["PATCH", "/api/collections/col_1", { name: "x" }],
-    ["DELETE", "/api/collections/col_1", undefined],
-    ["POST", "/api/collections/col_1/items", { doc_ids: ["d1"] }],
-    ["DELETE", "/api/collections/col_1/items", { doc_ids: ["d1"] }],
-  ])("is refused %s %s", async (method, path, body) => {
-    const res = await send(readOnly(), method, path, body);
+  // Every route's verdict is pinned in http/routes-read-only.test.ts; this is the dispatch wiring end to end.
+  it("is refused a new collection", async () => {
+    const res = await send(readOnly(), "POST", "/api/collections", { name: "x" });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: READ_ONLY_MESSAGE });
     expect(mockCreate).not.toHaveBeenCalled();
-    expect(mockRename).not.toHaveBeenCalled();
-    expect(mockDelete).not.toHaveBeenCalled();
-    expect(mockAdd).not.toHaveBeenCalled();
-    expect(mockRemove).not.toHaveBeenCalled();
   });
 });
 

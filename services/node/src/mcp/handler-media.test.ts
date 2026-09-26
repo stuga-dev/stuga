@@ -20,6 +20,7 @@ const { workspaceContextFor } = await import("../auth/context.js");
 const { callerFor, resolvingTo, inWorkspace, callToolAs } = await import("./testing/call.js");
 import { MAX_INLINE_IMAGE_BYTES } from "@stuga/agent-surface/catalog";
 import type { Ctx } from "../auth/context.js";
+import { agentCtx, fixed, recordingJobs } from "../testing/ctx.js";
 import { DEFAULT_MAX_BODY_BYTES } from "../media/media.js";
 
 // Remote fetches vet the addresses a host resolves to, so a stubbed fetch needs a stubbed resolver.
@@ -46,20 +47,12 @@ function pngBase64(size: number): string {
 let puts: string[] = [];
 
 function connectorCtx(): Ctx {
-  return {
-    sql: {},
-    alias: "agent-1",
-    displayName: "Connector",
-    isAgent: true,
-    onBehalfOf: "human-1",
+  return agentCtx({
     principals: ["agent:agent-1"],
-    workspaceId: "ws1",
-    role: "member",
     env: {
-      publicOrigin: "https://stuga.test",
-      settings: { current: () => ({ maxBodyBytes: DEFAULT_MAX_BODY_BYTES, nodeLabel: "Studio" }) },
-      jobs: { send: vi.fn(async () => {}) },
-      aiSettings: { current: () => ({ enabled: false }) },
+      settings: fixed({ maxBodyBytes: DEFAULT_MAX_BODY_BYTES, nodeLabel: "Studio" }),
+      jobs: recordingJobs(),
+      aiSettings: fixed({ enabled: false }),
       media: {
         head: async () => null,
         put: async (k: string) => {
@@ -67,7 +60,7 @@ function connectorCtx(): Ctx {
         },
       },
     },
-  } as unknown as Ctx;
+  });
 }
 
 function doc(overrides: Record<string, unknown> = {}) {

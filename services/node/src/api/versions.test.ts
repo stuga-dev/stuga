@@ -14,6 +14,7 @@ vi.mock("@stuga/db", () => ({
 const { getDoc, deleteVersion, listVersions } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockDeleteVersion = deleteVersion as unknown as ReturnType<typeof vi.fn>;
@@ -40,21 +41,14 @@ const snapshotDelete = vi.fn(async (key: string) => {
 /** The document actor plays no part in deleting history. */
 const actorFetch = vi.fn(async () => new Response("{}", { headers: { "content-type": "application/json" } }));
 
-function ctxOf(overrides: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
+function ctxOf(overrides: CtxOverrides = {}): Ctx {
+  return personCtx({
     alias: "owner-1",
     displayName: "Ozzie",
-    isAgent: false,
     principals: ["user:owner-1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: {
-      snapshots: { delete: snapshotDelete },
-      docs: { get: () => ({ fetch: actorFetch }) },
-    },
+    env: { snapshots: { delete: snapshotDelete }, docs: actorsAnswering(actorFetch) },
     ...overrides,
-  } as unknown as Ctx;
+  });
 }
 
 const owner = () => ctxOf();

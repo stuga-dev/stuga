@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
+import { mountInto } from "../../test/form-input";
 import type { Version } from "../../api";
 import { rememberUsers } from "../../state/identity";
 import { VersionHistory } from "./VersionHistory";
@@ -32,14 +33,10 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date(2026, 7, 19, 12, 0, 0));
   opened.length = 0;
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
+  ({ host: container, root } = mountInto());
 });
 
 afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
   vi.useRealTimers();
 });
 

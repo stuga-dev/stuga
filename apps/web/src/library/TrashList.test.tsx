@@ -1,22 +1,21 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import type { DocSummary } from "../api";
 import type { LibraryRow } from "./DocTable";
+import { toasts } from "../test/toast";
+import { mountInto } from "../test/form-input";
 
 const docs = vi.hoisted(() => ({ list: vi.fn(), trash: vi.fn(), remove: vi.fn() }));
 const folders = vi.hoisted(() => ({ list: vi.fn() }));
-const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type: string }> }));
 
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   Docs: docs,
   Folders: folders,
 }));
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string; type: string }) => toasts.shown.push(t),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 // The table stands in as one row of buttons per row action.
 vi.mock("./DocTable", async (orig) => ({
   ...(await orig<typeof import("./DocTable")>()),
@@ -36,15 +35,6 @@ vi.mock("./DocTable", async (orig) => ({
 }));
 
 const { TrashList } = await import("./TrashList");
-
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
 
 const DOC: DocSummary = {
   doc_id: "d_1",
@@ -76,20 +66,12 @@ async function click(el: HTMLElement | undefined) {
 }
 
 beforeEach(async () => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.clearAllMocks();
   toasts.shown = [];
   docs.list.mockResolvedValue({ docs: [DOC] });
   folders.list.mockResolvedValue({ folders: [] });
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  ({ host, root } = mountInto());
   await act(async () => root.render(<TrashList />));
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
-  vi.clearAllMocks();
 });
 
 describe("TrashList", () => {

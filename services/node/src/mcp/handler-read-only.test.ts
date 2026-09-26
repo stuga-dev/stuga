@@ -69,6 +69,7 @@ const { workspaceContextFor } = await import("../auth/context.js");
 const { callerFor, resolvingTo, inWorkspace, callToolAs, mcpRequest } = await import("./testing/call.js");
 const { READ_ONLY_MESSAGE } = await import("../authz/authz.js");
 import type { Ctx, McpCaller } from "../auth/context.js";
+import { actorsAnswering, fixed, nodeSettings, readOnlyKeyCtx, recordingJobs } from "../testing/ctx.js";
 
 const SCHEMA = {
   database_id: "db1",
@@ -98,32 +99,24 @@ const actorFetch = vi.fn(async (url: string) => {
   };
   return new Response(JSON.stringify(answers[path] ?? {}), { status: path in answers ? 200 : 500 });
 });
-const jobsSend = vi.fn(async (_message: Record<string, unknown>) => {});
+const jobs = recordingJobs();
 const mediaPut = vi.fn(async () => {});
 
 function readOnlyKey(workspaceId = "ws1"): Ctx {
-  return {
-    sql: {},
-    alias: "agent-1",
+  return readOnlyKeyCtx({
     displayName: "Scout",
     surface: "mcp",
-    isAgent: true,
-    onBehalfOf: "human-1",
-    principals: ["agent:agent-1", "user:human-1", `org:${workspaceId}`],
     workspaceId,
-    role: "member",
-    scope: { folders: null, readOnly: true, credentialId: "k1" },
     env: {
-      databases: { get: () => ({ fetch: actorFetch }) },
-      docs: { get: () => ({ fetch: actorFetch }) },
-      settings: { current: () => ({ databaseOpsKeep: 500, maxBodyBytes: 1024 * 1024, nodeLabel: "Studio" }) },
-      jobs: { send: jobsSend },
+      databases: actorsAnswering(actorFetch),
+      docs: actorsAnswering(actorFetch),
+      settings: nodeSettings(),
+      jobs,
       media: { head: async () => null, put: mediaPut },
-      aiSettings: { current: () => ({ chat: { enabled: true }, embed: { enabled: true } }) },
-      publicOrigin: "https://stuga.test",
+      aiSettings: fixed({ chat: { enabled: true }, embed: { enabled: true } }),
       nodeId: "node-1",
     },
-  } as unknown as Ctx;
+  });
 }
 
 async function callTool(name: string, args: Record<string, unknown>, over: Partial<McpCaller> = {}) {
@@ -181,7 +174,8 @@ const CALLS: Array<[tool: string, args: Record<string, unknown>, verdict: "reads
   ["databases_change", { action: "update_view", database_id: "db1", table: "tasks", view: "Open", name: "Closed" }, "refused"],
 ];
 const READS = CALLS.filter(([, , verdict]) => verdict === "reads");
-const REFUSED = CALLS.filter(([, , verdict]) => verdict === "refused");
+// A write is refused per tool (the tools/list filter and the gate's isMutating(tool)), so one action per tool shows it.
+const REFUSED = CALLS.filter(([tool, , verdict], i) => verdict === "refused" && CALLS.findIndex(([t]) => t === tool) === i);
 
 /** The audit verb of a tool that takes no `action`. */
 const VERB: Record<string, string> = {
@@ -197,7 +191,7 @@ const VERB: Record<string, string> = {
 };
 const auditAction = (tool: string, args: Record<string, unknown>) => `mcp.${tool}.${String(args.action ?? VERB[tool])}`;
 
-const audits = () => jobsSend.mock.calls.map(([m]) => m).filter((m) => m.kind === "audit");
+const audits = jobs.audits;
 
 /** Nothing ran past the handshake, which reads the routing table and the only workspace's conventions. */
 function expectNothingRan() {

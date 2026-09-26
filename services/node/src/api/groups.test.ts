@@ -19,6 +19,7 @@ vi.mock("@stuga/db", async (importOriginal) => ({
 const { upsertGroup, listGroupMembers, getDoc, setDocAcl } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, personCtx } from "../testing/ctx.js";
 
 const mockUpsertGroup = upsertGroup as unknown as ReturnType<typeof vi.fn>;
 const mockListGroupMembers = listGroupMembers as unknown as ReturnType<typeof vi.fn>;
@@ -43,15 +44,7 @@ const DOC = {
 };
 
 function ctxOf(): Ctx {
-  return {
-    sql: {},
-    alias: "owner-1",
-    principals: ["user:owner-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "owner",
-    isAgent: false,
-    env: { docs: { get: () => ({ fetch: async () => new Response("{}") }) }, jobs: { send: jobsSend } },
-  } as unknown as Ctx;
+  return personCtx({ alias: "owner-1", role: "owner", env: { docs: actorsAnswering(async () => new Response("{}")), jobs: { send: jobsSend } } });
 }
 
 async function put(path: string, body: unknown): Promise<Response> {

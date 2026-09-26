@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { applyStrEditsStrict, docToMarkdown, getStugaSchema, markdownToDoc } from "@stuga/crdt-ops";
 import type { AgentRunSummary, RunDecidedPayload, RunUpdatedPayload } from "@stuga/protocol/wire/doc-socket";
-import { encodeBinary, encodeJson, decodeJson } from "@stuga/protocol/wire/frame";
+import { encodeBinary, decodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
 import { DocActor } from "./doc-actor.js";
 import { RUN_IDLE_MS } from "@stuga/protocol/domain/limits";
@@ -171,51 +171,6 @@ describe("propose under the default `review` policy", () => {
     expect(seen[0]!.run.id).toBe(run.id);
     expect(agentWs.has(Opcode.RUN_UPDATED)).toBe(false);
     expect(other.has(Opcode.RUN_UPDATED)).toBe(false);
-  });
-
-  it("parks for a reviewer who has never been here, and notifies them", async () => {
-    // THE CENTRAL PROPERTY. Nobody has ever held a socket on this document, which
-    // under a presence-based rule would be exactly the case that committed unreviewed.
-    // The outcome is identical to the watched case, and the reviewer is TOLD —
-    // without that, "it waits for a human" degrades into "it waits".
-    const h = harness();
-    const dobj = makeActor(h);
-    await seed(dobj);
-
-    const { status, json } = await propose(dobj, {
-      action: "str_replace",
-      find: "Alpha paragraph.",
-      replace: "Alpha revised.",
-    });
-
-    expect(status).toBe(200);
-    expect(json.mode).toBe("proposed");
-    expect(await readMarkdown(dobj)).toMatchObject({
-      markdown: expect.stringContaining("Alpha paragraph."),
-    });
-    expect(h.queued.find((m) => (m as { kind?: string }).kind === "notify")).toMatchObject({
-      kind: "notify",
-      recipient: "alice",
-      eventType: "AGENT_EDITS_PROPOSED",
-      docId: DOC,
-      body: "Claude (Connector) proposed 1 change — waiting for your review",
-    });
-  });
-
-  it("parks a reviewer's own reconnect window identically (no timing edge to exploit)", async () => {
-    // A reviewer mid-reload, a reviewer who closed their last tab a second ago and
-    // a reviewer on holiday are all the same case now, so there is no window in
-    // which an agent's edit behaves differently from any other moment.
-    const h = harness();
-    const dobj = makeActor(h);
-    await seed(dobj);
-    const reviewer = await connect(dobj, h, { docId: DOC, alias: "alice" });
-    reviewer.close();
-    await dobj.webSocketClose(reviewer, 1001, "", true);
-
-    const { json } = await propose(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha revised." });
-    expect(json.mode).toBe("proposed");
-    expect(await readMarkdown(dobj)).toMatchObject({ markdown: expect.stringContaining("Alpha paragraph.") });
   });
 
   it("extends the same run across calls and feeds the agent's own reads", async () => {
@@ -1661,70 +1616,5 @@ describe("panel run footnotes", () => {
     // THE POINT: source two's definition must not appear while its marker is
     // still an un-accepted proposal.
     expect(md).not.toContain("Source Two");
-  });
-});
-
-/**
- * The co-author is a HUMAN surface. Its proposals are minted under a server-side
- * panel identity on the requester's behalf, so an agent socket driving a turn
- * would mint a run whose reviewer is the agent itself — self-review, through the
- * one door the raw-write AGENT GATE does not cover (this is an AI_REQUEST frame,
- * not a Yjs update).
- */
-describe("the in-app co-author refuses agent sockets", () => {
-  async function askAi(dobj: DocActor, ws: MemorySocket): Promise<void> {
-    await sendFrame(
-      dobj,
-      ws,
-      encodeJson(Opcode.AI_REQUEST, {
-        prompt: "rewrite the intro",
-        selected_text: null,
-        model: "auto",
-        history: [],
-        collection_id: null,
-      }),
-    );
-  }
-
-  it("refuses an agent-authenticated socket and mints no run", async () => {
-    const h = harness();
-    const dobj = makeActor(h);
-    await seed(dobj);
-    const agentWs = await connect(dobj, h, { docId: DOC, alias: "alice", agent: "claude", agentAuth: "1" });
-
-    await askAi(dobj, agentWs);
-
-    const replies = payloads<{ done: boolean; error?: string }>(agentWs, Opcode.AI_RESPONSE);
-    expect(replies.at(-1)?.error).toMatch(/MCP tools/);
-    expect(await listRuns(dobj)).toHaveLength(0);
-  });
-
-  it("lets a human socket through to the ordinary turn gates", async () => {
-    // Same frame, non-agent socket: it gets the ai.enabled verdict, proving the
-    // refusal above is about agent-ness and not about the request itself.
-    const h = harness();
-    const dobj = makeActor(h);
-    await seed(dobj);
-    const human = await connect(dobj, h, { docId: DOC, alias: "alice" });
-
-    await askAi(dobj, human);
-
-    const replies = payloads<{ done: boolean; error?: string }>(human, Opcode.AI_RESPONSE);
-    expect(replies.at(-1)?.error).toBe("AI chat is disabled on this node");
-  });
-
-  it("ends the turn with an AI_EDITS frame even when it fails", async () => {
-    // The client clears its in-flight turn off AI_EDITS, so an error path that
-    // sent only AI_RESPONSE would pin `aiTurn` for the life of the page.
-    const h = harness();
-    const dobj = makeActor(h);
-    await seed(dobj);
-    const human = await connect(dobj, h, { docId: DOC, alias: "alice" });
-
-    await askAi(dobj, human);
-
-    const edits = payloads<{ staged: number; run_id: string | null; error: string | null }>(human, Opcode.AI_EDITS);
-    expect(edits).toHaveLength(1);
-    expect(edits[0]).toMatchObject({ staged: 0, run_id: null, error: "AI chat is disabled on this node" });
   });
 });

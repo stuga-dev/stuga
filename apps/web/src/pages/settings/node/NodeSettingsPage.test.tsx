@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useNavigate, type NavigateFunction } from "react-router-dom";
 import type { NodeAiSettings, NodeBackups, NodeOperationalSettings, NodeVersion } from "../../../api";
 import { brandingConfig, setAuthConfigForTest } from "../../../lib/session/auth-config";
 import { nodeLabel, nodeName } from "../../../shell/Brand";
+import { mountInto, typeInto } from "../../../test/form-input";
 
 const me = vi.hoisted(() => ({ whoami: vi.fn() }));
 const nodeApi = vi.hoisted(() => ({
@@ -29,18 +29,13 @@ vi.mock("../../../api", async (orig) => ({
   NodeSettings: nodeApi,
 }));
 vi.mock("./NodeAudit", () => ({ NodeAudit: () => null }));
+// A saved identity provider reloads the sign-in config.
+vi.mock("../../../lib/session/auth-config", async (orig) => ({
+  ...(await orig<typeof import("../../../lib/session/auth-config")>()),
+  loadAuthConfig: async () => {},
+}));
 
 const { NodeSettingsPage } = await import("./index");
-
-// jsdom's <dialog> has no showModal/close, which Astryx Dialog calls.
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
 
 const AI: NodeAiSettings = {
   chat: {
@@ -184,7 +179,6 @@ const RELEASE: NodeVersion = {
 const NEWER = { version: "1.10.0", released_at: "2026-12-01", security: false, notes_url: "https://github.com/stuga-dev/stuga/releases/tag/v1.10.0" };
 
 let host: HTMLDivElement;
-let root: Root;
 let navigate!: NavigateFunction;
 
 function CaptureNavigate() {
@@ -210,15 +204,6 @@ function inputs(labelText: string): HTMLInputElement[] {
   return [...host.querySelectorAll("input")].filter(
     (i) => isShown(i) && (host.querySelector(`label[for="${i.id}"]`)?.textContent ?? "").includes(labelText),
   );
-}
-
-async function typeInto(input: HTMLInputElement | undefined, value: string) {
-  expect(input).toBeTruthy();
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input!, value);
-    input!.dispatchEvent(new Event("input", { bubbles: true }));
-  });
 }
 
 /** Type and blur, which is when a NumberInput commits. */
@@ -292,19 +277,13 @@ const savedAs = (settings: NodeAiSettings) =>
 /** Let the section's requests and their re-renders finish. */
 const settle = () => act(async () => new Promise((r) => setTimeout(r, 0)));
 
-/** Render the AI section afresh over other settings. */
-async function renderWith(ai: NodeAiSettings) {
-  nodeApi.ai.mockResolvedValue(ai);
-  await remount();
-}
-
-/** Render the page afresh, over whatever the node now answers. */
-async function remount() {
-  await act(async () => root.unmount());
-  root = createRoot(host);
+/** Mount the page on one section, over whatever the node now answers. */
+async function mount(category = "ai") {
+  const page = mountInto();
+  host = page.host;
   await act(async () => {
-    root.render(
-      <MemoryRouter initialEntries={["/settings/node/ai"]}>
+    page.root.render(
+      <MemoryRouter initialEntries={[`/settings/node/${category}`]}>
         <CaptureNavigate />
         <Routes>
           <Route path="/settings/node/:category" element={<NodeSettingsPage />} />
@@ -315,39 +294,26 @@ async function remount() {
   });
 }
 
-beforeEach(async () => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+/** Mount the AI section over other settings. */
+async function renderWith(ai: NodeAiSettings) {
+  nodeApi.ai.mockResolvedValue(ai);
+  await mount();
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  setAuthConfigForTest(null);
   me.whoami.mockResolvedValue({ node_admin: true });
   nodeApi.ai.mockResolvedValue(AI);
   nodeApi.settings.mockResolvedValue(OPS);
   nodeApi.admins.mockResolvedValue({ admins: [] });
   nodeApi.version.mockResolvedValue(SOURCE);
   nodeApi.backups.mockResolvedValue(BACKUPS);
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root.render(
-      <MemoryRouter initialEntries={["/settings/node/ai"]}>
-        <CaptureNavigate />
-        <Routes>
-          <Route path="/settings/node/:category" element={<NodeSettingsPage />} />
-          <Route path="/settings/agents" element={<p>Your own AI page</p>} />
-        </Routes>
-      </MemoryRouter>,
-    );
-  });
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
-  vi.clearAllMocks();
-  setAuthConfigForTest(null);
 });
 
 describe("NodeSettingsPage", () => {
   it("keeps an unsaved AI provider draft across a switch to another section and back", async () => {
+    await mount();
     // Set-up services are summary rows, so nothing asks for a key yet.
     expect(inputs("API key")).toHaveLength(0);
     await click("Connect another provider");
@@ -437,6 +403,7 @@ describe("NodeSettingsPage", () => {
   });
 
   it("switches chat off with its providers kept, and leaves semantic search alone", async () => {
+    await mount();
     savedAs({ ...AI, chat: { ...AI.chat, enabled: false, running: false } });
     await flip("Built-in AI");
     await settle();
@@ -451,6 +418,7 @@ describe("NodeSettingsPage", () => {
   });
 
   it("sends someone with their own subscription to Your own AI, where their agent connects", async () => {
+    await mount();
     await settle();
     const link = [...host.querySelectorAll("a, button")].find((e) => e.textContent === "Your own AI");
     expect(link, "no Your own AI link").toBeDefined();
@@ -563,7 +531,7 @@ describe("NodeSettingsPage", () => {
   });
 
   it("keeps each settings section's own draft while another section is open", async () => {
-    await go("notifications");
+    await mount("notifications");
     await typeInto(inputs("Webhook URL")[0], "https://hooks.slack.com/services/T/B/X");
     await go("branding");
     await typeInto(inputs("Name")[0], "Acme");
@@ -580,7 +548,7 @@ describe("NodeSettingsPage", () => {
 
   it("saves a new identity provider as typed, with its secret and default label and scopes", async () => {
     nodeApi.saveSettings.mockResolvedValue(OPS);
-    await go("access");
+    await mount("access");
     expect(host.textContent).toContain("http://localhost:8787/auth/oidc/callback");
     expect(host.textContent).toContain("http://mac.local:8787/auth/oidc/callback");
     // Nothing to remove yet, and nothing to save until the issuer and client are named.
@@ -616,8 +584,7 @@ describe("NodeSettingsPage", () => {
     };
     nodeApi.settings.mockResolvedValue(configured);
     nodeApi.saveSettings.mockResolvedValue(configured);
-    await renderWith(AI);
-    await go("access");
+    await mount("access");
     expect(inputs("Button label")[0]!.value).toBe("Okta");
 
     await click("Save");
@@ -642,8 +609,7 @@ describe("NodeSettingsPage", () => {
     };
     nodeApi.settings.mockResolvedValue(configured);
     nodeApi.saveSettings.mockResolvedValue(OPS);
-    await renderWith(AI);
-    await go("access");
+    await mount("access");
 
     await click("Remove provider");
     expect(nodeApi.saveSettings).not.toHaveBeenCalled();
@@ -663,8 +629,7 @@ describe("NodeSettingsPage", () => {
     };
     nodeApi.settings.mockResolvedValue(configured);
     nodeApi.saveSettings.mockResolvedValue(configured);
-    await renderWith(AI);
-    await go("access");
+    await mount("access");
 
     await typeInto(inputs("Issuer URL")[0], "https://id.example.com/");
     await click("Save");
@@ -687,12 +652,12 @@ describe("NodeSettingsPage", () => {
   });
 
   it("shows no sign-in mode among the node's facts", async () => {
-    await go("about");
+    await mount("about");
     expect(host.textContent).not.toContain("Sign-in");
   });
 
   it("lists in About what agents call the node and its id, with no name to edit there", async () => {
-    await go("about");
+    await mount("about");
     expect(inputs("Name")).toHaveLength(0);
     expect(host.textContent).toContain("Known to agents as");
     expect(host.textContent).toContain("localhost");
@@ -701,7 +666,7 @@ describe("NodeSettingsPage", () => {
   });
 
   it("names Stuga's license in About and links the licenses of the packages the web app bundles", async () => {
-    await go("about");
+    await mount("about");
     expect(host.textContent).toContain("AGPL-3.0-only");
     const link = [...host.querySelectorAll("a")].find((a) => isShown(a) && a.textContent?.includes("Third-party licenses"));
     expect(link?.getAttribute("href")).toBe("/third-party-licenses.txt");
@@ -709,13 +674,13 @@ describe("NodeSettingsPage", () => {
 
   it("links in About the code the running build was made from", async () => {
     nodeApi.version.mockResolvedValue(RELEASE);
-    await go("about");
+    await mount("about");
     const link = [...host.querySelectorAll("a")].find((a) => isShown(a) && a.textContent?.includes("Source code"));
     expect(link?.getAttribute("href")).toBe("https://github.com/stuga-dev/stuga/tree/v1.9.0");
   });
 
   it("says a build from source has nothing to compare with, and offers no switch for it", async () => {
-    await go("about");
+    await mount("about");
     expect(host.textContent).toContain("0.0.0-dev · built from source");
     expect(host.textContent).toContain("Built from source: update the checkout and rebuild.");
     expect([...host.querySelectorAll('input[role="switch"]')].filter(isShown)).toHaveLength(0);
@@ -723,16 +688,14 @@ describe("NodeSettingsPage", () => {
 
   it("dates the running release, which is all a node with no way out knows about its age", async () => {
     nodeApi.version.mockResolvedValue(RELEASE);
-    await remount();
-    await go("about");
+    await mount("about");
     expect(host.textContent).toContain("1.9.0 · released Nov 3, 2026");
     expect(host.textContent).toContain("Up to date. Checked just now.");
   });
 
   it("names a newer release, how this packaging upgrades, and where its notes are", async () => {
     nodeApi.version.mockResolvedValue({ ...RELEASE, update: { ...RELEASE.update, available: NEWER } });
-    await remount();
-    await go("about");
+    await mount("about");
     expect(host.textContent).toContain("Stuga 1.10.0 is available");
     expect(host.textContent).toContain("Run ./stuga upgrade.");
     const notes = [...host.querySelectorAll("a")].find((a) => a.textContent === "Release notes");
@@ -745,8 +708,7 @@ describe("NodeSettingsPage", () => {
     const offered = { ...RELEASE, update: { ...RELEASE.update, available: NEWER, install: { available: true, status: null } } };
     nodeApi.version.mockResolvedValue(offered);
     nodeApi.installVersion.mockResolvedValue(offered);
-    await remount();
-    await go("about");
+    await mount("about");
     expect(host.textContent).toContain("The node backs up, installs it and restarts.");
     expect(host.textContent).not.toContain("Run ./stuga upgrade.");
     await click("Update now");
@@ -759,30 +721,26 @@ describe("NodeSettingsPage", () => {
 
   it("offers no Update now where the packaging upgrades another way", async () => {
     nodeApi.version.mockResolvedValue({ ...RELEASE, update: { ...RELEASE.update, available: NEWER } });
-    await remount();
-    await go("about");
+    await mount("about");
     expect([...host.querySelectorAll("button")].filter((b) => b.textContent === "Update now")).toHaveLength(0);
   });
 
   it("raises a release that fixes a vulnerability as a warning", async () => {
     nodeApi.version.mockResolvedValue({ ...RELEASE, update: { ...RELEASE.update, available: { ...NEWER, security: true } } });
-    await remount();
-    await go("about");
+    await mount("about");
     expect(host.querySelector('.astryx-banner[data-status="warning"]')?.textContent).toContain("Security update: Stuga 1.10.0");
   });
 
   it("says why the last look failed", async () => {
     nodeApi.version.mockResolvedValue({ ...RELEASE, update: { ...RELEASE.update, error: "could not reach github.com" } });
-    await remount();
-    await go("about");
+    await mount("about");
     expect(host.textContent).toContain("Couldn’t check: could not reach github.com.");
   });
 
   it("turns the look for new versions off at once, with nothing left to look with", async () => {
     nodeApi.version.mockResolvedValue(RELEASE);
     nodeApi.saveSettings.mockResolvedValue({ ...OPS, updates: { check: false } });
-    await remount();
-    await go("about");
+    await mount("about");
     await flip("Check for new versions");
     expect(nodeApi.saveSettings).toHaveBeenCalledWith({ updates: { check: false } });
     expect(nodeApi.checkVersion).not.toHaveBeenCalled();
@@ -795,8 +753,7 @@ describe("NodeSettingsPage", () => {
 
   it("says a build that is no release has nothing to compare with", async () => {
     nodeApi.version.mockResolvedValue({ ...SOURCE, version: "0.0.0-ci", build: "release" });
-    await remount();
-    await go("about");
+    await mount("about");
     expect(host.textContent).toContain("0.0.0-ci is not a release, so there is nothing to compare it with.");
   });
 
@@ -805,8 +762,7 @@ describe("NodeSettingsPage", () => {
     nodeApi.version.mockResolvedValue({ ...RELEASE, update: NO_UPDATE });
     nodeApi.saveSettings.mockResolvedValue(OPS);
     nodeApi.checkVersion.mockResolvedValue({ ...RELEASE, update: { ...RELEASE.update, available: NEWER } });
-    await remount();
-    await go("about");
+    await mount("about");
     expect(host.textContent).toContain("Not checking.");
 
     await flip("Check for new versions");
@@ -819,7 +775,7 @@ describe("NodeSettingsPage", () => {
   });
 
   it("lists the node's backups, one taken before an upgrade marked so, and where they are kept", async () => {
-    await go("backups");
+    await mount("backups");
     expect(host.textContent).toContain("The newest 7, in /backups.");
     expect(host.textContent).toContain("12 MB");
     expect(host.textContent).toContain("before upgrading from 1.8.0");
@@ -828,7 +784,7 @@ describe("NodeSettingsPage", () => {
 
   it("turns the daily backup off, and moves its hour", async () => {
     nodeApi.saveSettings.mockResolvedValue({ ...OPS, backups: { auto: false, hour: 3 } });
-    await go("backups");
+    await mount("backups");
     await flip("Back up every day");
     expect(nodeApi.saveSettings).toHaveBeenLastCalledWith({ backups: { auto: false } });
 
@@ -840,14 +796,13 @@ describe("NodeSettingsPage", () => {
 
   it("warns when the last backup failed", async () => {
     nodeApi.backups.mockResolvedValue({ ...BACKUPS, error: "not enough disk at /backups" });
-    await remount();
-    await go("backups");
+    await mount("backups");
     expect(host.querySelector('.astryx-banner[data-status="warning"]')?.textContent).toContain("not enough disk at /backups");
   });
 
   it("starts a backup now and says so while the node pauses for it", async () => {
     nodeApi.backUpNow.mockResolvedValue({ started: true });
-    await go("backups");
+    await mount("backups");
     await click("Back up now");
     expect(nodeApi.backUpNow).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain("Backing up…");
@@ -855,16 +810,15 @@ describe("NodeSettingsPage", () => {
 
   it("says why a backup waits to start", async () => {
     nodeApi.backups.mockResolvedValue({ ...BACKUPS, running: true, waiting: "a workspace is being imported or exported" });
-    await remount();
-    await go("backups");
+    await mount("backups");
     expect(host.textContent).toContain("Waiting to back up: a workspace is being imported or exported.");
   });
 
   it("saves the search languages, and says the index is rebuilding until the node is done", async () => {
+    await mount("search");
     const rebuilding = { ...OPS, search: { ...OPS.search, languages: ["ko" as const], rebuilding: true } };
     nodeApi.saveSettings.mockResolvedValue(rebuilding);
     nodeApi.settings.mockResolvedValue(rebuilding);
-    await go("search");
     expect(inputs("Korean")[0]!.checked).toBe(false);
     expect(host.textContent).not.toContain("Rebuilding the search index");
     // Under the heading, once, and not as the list's description, which its hidden label hides too.
@@ -903,8 +857,7 @@ describe("NodeSettingsPage", () => {
 
   it("says a rebuild is running when Search opens during one", async () => {
     nodeApi.settings.mockResolvedValue({ ...OPS, search: { ...OPS.search, languages: ["ar"], rebuilding: true } });
-    await remount();
-    await go("search");
+    await mount("search");
     expect(inputs("Arabic")[0]!.checked).toBe(true);
     expect(host.textContent).toContain("Rebuilding the search index");
     // A ring on Save's line, named by the words beside it rather than stacked over them.
@@ -917,8 +870,7 @@ describe("NodeSettingsPage", () => {
   it("says why the last rebuild gave up, until the next one starts", async () => {
     const failed = { ...OPS, search: { ...OPS.search, languages: ["ko" as const], error: "could not extend file: No space left on device" } };
     nodeApi.settings.mockResolvedValue(failed);
-    await remount();
-    await go("search");
+    await mount("search");
     expect(host.textContent).toContain("The search index wasn’t rebuilt");
     expect(host.textContent).toContain("No space left on device");
 
@@ -930,7 +882,7 @@ describe("NodeSettingsPage", () => {
   });
 
   it("opens Branding on an unnamed node with the product's name as the placeholder and in the preview", async () => {
-    await go("branding");
+    await mount("branding");
     expect(inputs("Name")[0]!.value).toBe("");
     expect(inputs("Name")[0]!.placeholder).toBe("Stuga");
     expect(host.textContent).toContain("Stuga");
@@ -944,7 +896,7 @@ describe("NodeSettingsPage", () => {
       node_label: "Liv’s Mac",
       branding: { accent_color: "#7c3aed" },
     });
-    await go("branding");
+    await mount("branding");
     await typeInto(inputs("Name")[0], "  Liv’s Mac ");
     await click("Save");
     await settle();
@@ -969,7 +921,7 @@ describe("NodeSettingsPage", () => {
   });
 
   it("says as it is typed why a name would be refused, and saves nothing until it is fixed", async () => {
-    await go("branding");
+    await mount("branding");
     for (const [value, says] of [
       ["\u200b\u2060", "Use at least one visible character."],
       ["Liv\u202e’s Mac", "Remove the hidden control characters."],
@@ -989,7 +941,7 @@ describe("NodeSettingsPage", () => {
 
   it("saves the name and the colour in one go, and offers no logo of the node's own", async () => {
     nodeApi.saveSettings.mockResolvedValue(OPS);
-    await go("branding");
+    await mount("branding");
     expect(visibleButtons("Upload logo")).toHaveLength(0);
     await click("Save");
     await settle();
@@ -997,12 +949,13 @@ describe("NodeSettingsPage", () => {
   });
 
   it("names only notifications the node actually sends", async () => {
-    await go("notifications");
+    await mount("notifications");
     expect(host.textContent).toContain("Send shares, requests, comments and agent edits outside the app.");
     expect(host.textContent).not.toMatch(/mention/i);
   });
 
   it("shows only the section the URL names", async () => {
+    await mount();
     expect(visibleButtons("Connect another provider")).toHaveLength(1);
     expect(inputs("Name")).toHaveLength(0);
     await go("branding");

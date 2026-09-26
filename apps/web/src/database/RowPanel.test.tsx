@@ -1,20 +1,19 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { RowRecord, TableSchema } from "@stuga/protocol/databases/types";
+import { toasts } from "../test/toast";
+import { mountInto } from "../test/form-input";
 
 const databases = vi.hoisted(() => ({ listRows: vi.fn(), openRowPage: vi.fn(), updateRows: vi.fn() }));
-const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type: string }> }));
 
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   Databases: databases,
 }));
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string; type: string }) => toasts.shown.push(t),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const { RowPanel } = await import("./RowPanel");
 
@@ -64,17 +63,9 @@ async function click(label: string) {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  toasts.shown = [];
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
   vi.clearAllMocks();
+  toasts.shown = [];
+  ({ host, root } = mountInto());
 });
 
 describe("RowPanel's page actions", () => {
@@ -114,7 +105,7 @@ describe("RowPanel's page actions", () => {
 
     databases.listRows.mockResolvedValue({ rows: [row({ _doc_id: null })], total: 1 });
     await act(async () => root.unmount());
-    root = createRoot(host);
+    ({ host, root } = mountInto());
     await render();
     expect(button("Create page")).toBeTruthy();
     expect(button("Restore page")).toBeUndefined();

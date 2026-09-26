@@ -227,8 +227,8 @@ their administrators.
   window wherever it sits in a table row or a rail. A dialog keeps its content mounted between
   openings, so it seeds its fields from props or the server when it opens, and nothing closes it
   while a save is in flight. A Tooltip on a popover trigger throws, so a header cell explains itself
-  with a native `title`. Dialog tests run in jsdom, which needs the `HTMLDialogElement` polyfill from
-  `apps/web/src/library/InstructionsDialog.test.tsx`.
+  with a native `title`. Dialog tests run in jsdom, which has no `HTMLDialogElement.showModal`; the
+  setup file `apps/web/src/test/dom-setup.ts` polyfills it for every test.
 - **One home per setting.** Bootstrap, network and secret settings come from the environment.
   Everything the Settings page edits lives in the database. No setting is read from both.
 - **Pins live in `packaging/versions.env`**, and every other copy must agree with it

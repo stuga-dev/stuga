@@ -31,12 +31,13 @@ const { callerFor, resolvingTo, inWorkspace, callToolAs, mcpRequest } = await im
 const { handleDatabaseImportUpload } = await import("../databases/imports/staging.js");
 import type { Ctx } from "../auth/context.js";
 import type { NodeEnv } from "../env.js";
+import { actorsAnswering, agentCtx, fixed, nodeSettings, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockListDocs = listDocs as unknown as ReturnType<typeof vi.fn>;
 const mockCreateDoc = createDoc as unknown as ReturnType<typeof vi.fn>;
 const mockResolveInstructions = vi.mocked(resolveDocInstructions);
-const jobsSend = vi.fn(async (_message: Record<string, unknown>) => {});
+const jobs = recordingJobs();
 
 const DB_DOC = {
   doc_id: "db1",
@@ -109,26 +110,17 @@ const actorFetch = vi.fn(async (url: string, init?: RequestInit) => {
   return new Response(JSON.stringify(canned[path] ?? {}), { status: 200 });
 });
 
-function connectorCtx(overrides: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "agent-conn-abc",
-    displayName: "Connector",
-    isAgent: true,
-    onBehalfOf: "human-1",
-    principals: ["agent:agent-conn-abc"],
-    workspaceId: "ws1",
-    role: "member",
-    env: {
-      databases: { get: () => ({ fetch: actorFetch }) },
-      docs: { get: () => ({ fetch: actorFetch }) },
-      settings: { current: () => ({ databaseOpsKeep: 500, maxBodyBytes: 1024 * 1024, nodeLabel: "Studio" }) },
-      jobs: { send: jobsSend },
-      aiSettings: { current: () => ({ enabled: false }) },
-      publicOrigin: "https://stuga.test",
-    },
-    ...overrides,
-  } as unknown as Ctx;
+/** The env every call here runs with; an import test adds blob storage to it. */
+const connectorEnv = (queue: { send: unknown } = jobs) => ({
+  databases: actorsAnswering(actorFetch),
+  docs: actorsAnswering(actorFetch),
+  settings: nodeSettings(),
+  jobs: queue,
+  aiSettings: fixed({ enabled: false }),
+});
+
+function connectorCtx(overrides: CtxOverrides = {}): Ctx {
+  return agentCtx({ alias: "agent-conn-abc", principals: ["agent:agent-conn-abc"], env: connectorEnv(), ...overrides });
 }
 
 /** One tools/call run in `ctx`'s workspace. */
@@ -164,14 +156,9 @@ describe("discovery", () => {
     expect(body.databases[0]!.database_id).toBe("db1");
   });
 
-  it("reading and writing are separate tools, and a read-only credential is offered only the reading ones", async () => {
-    const names = async (ctx: Ctx) =>
-      ((await mcpRequest(callerFor(ctx), "tools/list")).result as { tools: Array<{ name: string }> }).tools.map((t) => t.name);
-    expect(await names(connectorCtx())).toEqual(expect.arrayContaining(["databases", "query", "databases_add", "databases_change"]));
-    const reads = await names(connectorCtx({ scope: { folders: null, readOnly: true, credentialId: "grt_1" } }));
-    expect(reads).toEqual(expect.arrayContaining(["databases", "query"]));
-    expect(reads).not.toContain("databases_add");
-    expect(reads).not.toContain("databases_change");
+  it("reading and writing are separate tools", async () => {
+    const { tools } = (await mcpRequest(callerFor(connectorCtx()), "tools/list")).result as { tools: Array<{ name: string }> };
+    expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(["databases", "query", "databases_add", "databases_change"]));
   });
 });
 
@@ -304,7 +291,7 @@ describe("mutations", () => {
     await callTool(connectorCtx(), "databases_add", { action: "insert_rows", database_id: "db1", table: "projects", rows: [{ name: "x" }] });
     await callTool(connectorCtx(), "databases_change", { action: "delete_rows", database_id: "db1", table: "projects", row_ids: ["row_a"] });
     // The domain's own `database.propose` rows ride the same queue; the tool call's row is the `mcp.` one.
-    const audited = jobsSend.mock.calls.map((c) => c[0]).filter((m) => m.kind === "audit" && String(m.action).startsWith("mcp."));
+    const audited = jobs.audits().filter((m) => String(m.action).startsWith("mcp."));
     expect(audited).toEqual([
       expect.objectContaining({ action: "mcp.databases_add.insert_rows", targetKind: "database", targetId: "db1", workspaceId: "ws1", status: "ok" }),
       expect.objectContaining({ action: "mcp.databases_change.delete_rows", targetKind: "database", targetId: "db1", workspaceId: "ws1", status: "ok" }),
@@ -323,7 +310,7 @@ describe("mutations", () => {
     expect(body.result).toMatch(/Proposed —/);
     expect(body.result).toMatch(/Do NOT retry/);
     expect(body.row_ids).toEqual(["row_a", "row_b"]);
-    expect(jobsSend).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "notify" }));
+    expect(jobs.send).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "notify" }));
   });
 
   it("says Applied on an auto database, and notifies the human", async () => {
@@ -346,7 +333,7 @@ describe("mutations", () => {
     const body = JSON.parse(r.text) as { result: string };
     expect(body.result).toMatch(/Applied —/);
     expect(body.result).not.toMatch(/Proposed/);
-    expect(jobsSend).toHaveBeenCalledWith(
+    expect(jobs.send).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "notify", eventType: "DATABASE_AGENT_EDIT", recipient: "human-1" }),
     );
   });
@@ -508,7 +495,7 @@ describe("row pages", () => {
       doc_id: "db-new",
       actor: { alias: "agent-conn-abc", is_agent: true, on_behalf_of: "human-1" },
     });
-    expect(jobsSend).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "index_doc" }));
+    expect(jobs.send).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "index_doc" }));
   });
 
   it("open_page needs a row_id, and a connector that cannot write is refused before anything is made", async () => {
@@ -550,15 +537,12 @@ describe("row pages", () => {
     expect(actorCalls.some((c) => c.url.includes("/rows/link-doc") || c.url.includes("/runs/propose"))).toBe(false);
   });
 
-  it("databases action:page is a read: a view-only connector and a read-only credential both get the page", async () => {
+  // A read-only credential's page is in handler-read-only.test.ts.
+  it("databases action:page is a read: a view-only connector gets the page", async () => {
     rowWithPage({ ...PAGE });
     mockGetDoc.mockImplementation(async (_sql: unknown, id: string) => (id === "page-1" ? { ...PAGE } : { ...DB_DOC, acl_writers: ["user:human-1"] }));
     const viewOnly = await callTool(connectorCtx(), "databases", { action: "page", database_id: "db1", table: "Projects", row_id: "row_a" });
     expect(JSON.parse(viewOnly.text).doc_id).toBe("page-1");
-    const readOnly = connectorCtx({ scope: { folders: null, readOnly: true, credentialId: "grt_1" } });
-    const r = await callTool(readOnly, "databases", { action: "page", database_id: "db1", table: "Projects", row_id: "row_a" });
-    expect(r.isError).toBe(false);
-    expect(JSON.parse(r.text).doc_id).toBe("page-1");
   });
 
   it("databases action:page needs a row_id, and names an unknown row or unreadable database", async () => {
@@ -638,20 +622,7 @@ describe("bulk data and declarative schema", () => {
     };
   }
 
-  const importCtx = (blobs = memoryBlobs(), overrides: Partial<Ctx> = {}) =>
-    connectorCtx({
-      env: {
-        databases: { get: () => ({ fetch: actorFetch }) },
-        docs: { get: () => ({ fetch: actorFetch }) },
-        settings: { current: () => ({ databaseOpsKeep: 500, maxBodyBytes: 1024 * 1024, nodeLabel: "Studio" }) },
-        jobs: { send: vi.fn(async () => {}) },
-        aiSettings: { current: () => ({ enabled: false }) },
-        publicOrigin: "https://stuga.test",
-        snapshots: blobs,
-        internalSecret: "top-secret",
-      } as never,
-      ...overrides,
-    });
+  const importCtx = (blobs = memoryBlobs()) => connectorCtx({ env: { ...connectorEnv(recordingJobs()), snapshots: blobs, internalSecret: "top-secret" } });
 
   it("import with `content` stages, validates and proposes ONE flagged insert", async () => {
     const ctx = importCtx();

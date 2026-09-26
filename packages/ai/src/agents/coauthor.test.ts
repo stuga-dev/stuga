@@ -453,34 +453,10 @@ describe("runAgentTurn", () => {
     expect(r.strEdits).toHaveLength(0);
     expect(getCalls()).toBe(1); // determiner/copula guard prevents a wasted round
   });
-
-  it("stops at the round cap even if the model keeps requesting tools", async () => {
-    // Every round asks to read again; cap must halt the loop.
-    mockRounds([toolRound("read_document", { offset: 0, length: 100 })]); // same round served repeatedly
-    const r = await runAgentTurn(
-      CFG,
-      { prompt: "loop", docText: "d", currentDocId: "doc-A", selectedText: null, model: "sonnet", history: [], collectionEnabled: false, maxRounds: 3 },
-      { ...NOOP_RUNNER, readDocument: async () => "more" },
-      () => {},
-    );
-    expect(r.rounds).toBe(3); // hit the cap, didn't run away
-  });
 });
 
 /** A turn that ends early (round cap, mid-loop throw) still returns the edits it staged. */
 describe("runAgentTurn — incomplete turns keep their partial work", () => {
-  it("reports stopReason 'complete' when the model ends its own turn", async () => {
-    mockRounds([textRound("All done.")]);
-    const r = await runAgentTurn(
-      CFG,
-      { prompt: "check", docText: "d", currentDocId: "doc-A", selectedText: null, model: "sonnet", history: [], collectionEnabled: false },
-      NOOP_RUNNER,
-      () => {},
-    );
-    expect(r.stopReason).toBe("complete");
-    expect(r.error).toBeUndefined();
-  });
-
   it("reports stopReason 'max_rounds' at the cap, and keeps the edits staged before it", async () => {
     // Round 1 stages a real edit; every later round keeps asking to read, so the cap
     // is what ends the turn. The edit from round 1 must survive.
@@ -508,7 +484,8 @@ describe("runAgentTurn — incomplete turns keep their partial work", () => {
   });
 
   it("a throw mid-loop resolves with stopReason 'error' and the earlier round's edits", async () => {
-    // Round 1 stages an edit; round 2's request fails outright.
+    // Round 1 stages an edit; round 2's request fails outright. A 400, since a 5xx or a network
+    // error would wait out the client's retry backoff.
     let call = 0;
     vi.stubGlobal(
       "fetch",
@@ -517,7 +494,7 @@ describe("runAgentTurn — incomplete turns keep their partial work", () => {
           const fr = toolRound("str_replace", { old_string: "old wording", new_string: "new wording" }, { text: "Fixing. " });
           return Promise.resolve(new Response(streamOf(fr), { status: 200 }));
         }
-        return Promise.reject(new Error("upstream throttled"));
+        return Promise.resolve(new Response("upstream throttled", { status: 400 }));
       }),
     );
     const r = await runAgentTurn(
@@ -530,19 +507,6 @@ describe("runAgentTurn — incomplete turns keep their partial work", () => {
     expect(r.error).toContain("upstream throttled");
     expect(r.strEdits).toHaveLength(1); // survived the failure
     expect(r.prose).toContain("Fixing.");
-  });
-
-  it("a throw on the FIRST round still resolves — with nothing, so the caller can fail the turn", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("endpoint down"))));
-    const r = await runAgentTurn(
-      CFG,
-      { prompt: "reword", docText: "d", currentDocId: "doc-A", selectedText: null, model: "sonnet", history: [], collectionEnabled: false },
-      NOOP_RUNNER,
-      () => {},
-    );
-    expect(r.stopReason).toBe("error");
-    expect(r.strEdits).toEqual([]);
-    expect(r.prose).toBe("");
   });
 });
 

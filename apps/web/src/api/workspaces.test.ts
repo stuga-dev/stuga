@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /** A workspace export as it leaves and comes back to the browser; WorkspaceGeneral.test.tsx mocks this layer. */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Workspaces, onWorkspaceListChanged } from "./workspaces";
 
 let calls: string[];
@@ -16,10 +16,6 @@ beforeEach(() => {
       return new Response("PK", { headers: disposition ? { "content-disposition": disposition } : {} });
     }),
   );
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
 });
 
 describe("Workspaces.exportArchive", () => {

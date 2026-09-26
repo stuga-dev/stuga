@@ -10,6 +10,7 @@ vi.mock("@stuga/db", async (importOriginal) => ({
 const { getDoc, getFolder } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockGetFolder = getFolder as unknown as ReturnType<typeof vi.fn>;
@@ -43,19 +44,7 @@ const FOLDER = {
   own_grants: { p: [], w: [], c: [] },
 };
 
-function ctxFor(over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "owner-1",
-    displayName: "Ada",
-    isAgent: false,
-    principals: ["user:owner-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: {},
-    ...over,
-  } as unknown as Ctx;
-}
+const ctxFor = (over: CtxOverrides = {}): Ctx => personCtx({ alias: "owner-1", ...over });
 
 async function get(ctx: Ctx = ctxFor()): Promise<Record<string, unknown>> {
   const res = await routeWorkspaceRequest(ctx, new Request("https://node.test/api/docs/d1/acl"));

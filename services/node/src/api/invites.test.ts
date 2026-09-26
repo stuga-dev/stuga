@@ -13,6 +13,7 @@ vi.mock("@stuga/db", () => ({
 const db = await import("@stuga/db");
 const { createInvite, redeemInvite, revokeInvite } = await import("./invites.js");
 import type { AccountCtx, Ctx } from "../auth/context.js";
+import { personCtx } from "../testing/ctx.js";
 
 const mockRole = db.getMemberRole as unknown as ReturnType<typeof vi.fn>;
 const mockInsert = db.insertWorkspaceInvite as unknown as ReturnType<typeof vi.fn>;
@@ -22,19 +23,15 @@ const mockRevoke = db.revokeWorkspaceInvite as unknown as ReturnType<typeof vi.f
 const send = vi.fn(async () => {});
 
 function ctx(): Ctx {
-  return {
-    sql: {},
+  return personCtx({
     alias: "u_owner",
     displayName: "Owner",
-    email: null,
-    isAgent: false,
     surface: "web",
     requestId: "req-1",
-    env: { publicOrigin: "http://node.test:8787", jobs: { send } },
     principals: ["user:u_owner"],
-    workspaceId: "ws1",
     role: "owner",
-  } as unknown as Ctx;
+    env: { publicOrigin: "http://node.test:8787", jobs: { send } },
+  });
 }
 
 async function create(body: unknown): Promise<Response> {

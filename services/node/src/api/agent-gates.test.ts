@@ -10,6 +10,7 @@ vi.mock("@stuga/db", async (importOriginal) => ({
 const { getDoc, updateDoc } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, agentCtx as agentKeyCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockUpdateDoc = updateDoc as unknown as ReturnType<typeof vi.fn>;
@@ -27,19 +28,8 @@ const DOC = {
 };
 
 /** An agent with full write access. */
-function agentCtx(overrides: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "agent-1",
-    displayName: "Scout (Connector)",
-    isAgent: true,
-    onBehalfOf: "human-1",
-    principals: ["agent:agent-1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: { docs: { get: () => ({ fetch: actorFetch }) } },
-    ...overrides,
-  } as unknown as Ctx;
+function agentCtx(overrides: CtxOverrides = {}): Ctx {
+  return agentKeyCtx({ displayName: "Scout (Connector)", principals: ["agent:agent-1"], env: { docs: actorsAnswering(actorFetch) }, ...overrides });
 }
 
 let actorCalls: string[];

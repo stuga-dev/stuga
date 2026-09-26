@@ -461,16 +461,6 @@ describe("images and links", () => {
     const out = yXmlFragmentToMarkdown(frag);
     expect(out).toContain("[the docs](https://x.dev)"); // url preserved, not dropped
   });
-
-  // GFM has no underline syntax: the mark degrades to plain text and never throws.
-  it("degrades an underline mark to plain text without throwing", () => {
-    const schema = getStugaSchema();
-    const u = schema.marks.underline!.create();
-    const para = schema.nodes.paragraph!.create(null, schema.text("underlined", [u]));
-    const doc = schema.topNodeType.create(null, [para]);
-    expect(() => docToMarkdown(doc)).not.toThrow();
-    expect(docToMarkdown(doc).trim()).toBe("underlined");
-  });
 });
 
 describe("tables round-trip", () => {

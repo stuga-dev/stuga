@@ -19,6 +19,7 @@ const { createDoc, deleteDoc, getDoc, getFolder, getWorkspace } = await import("
 const { queueSnapshotSweep } = await import("../jobs/snapshot-sweep.js");
 const { createDocument, seedBody } = await import("./create.js");
 import type { Ctx } from "../auth/context.js";
+import { actorsAnswering, fixed, personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockCreateDoc = vi.mocked(createDoc);
 const mockDeleteDoc = vi.mocked(deleteDoc);
@@ -43,23 +44,13 @@ const FOLDER = {
   acl_writers: ["user:carol", "user:bob", "agent:agent-1"],
 };
 
-function ctxOf(overrides: Record<string, unknown> = {}): Ctx {
-  return {
-    sql: {},
+function ctxOf(overrides: CtxOverrides = {}): Ctx {
+  return personCtx({
     alias: "bob",
     displayName: "Bob",
-    isAgent: false,
-    principals: ["user:bob", "org:ws1"],
-    workspaceId: "ws1",
-    role: "member",
-    env: {
-      databases: { get: () => ({ fetch: actorFetch }) },
-      docs: { get: () => ({ fetch: actorFetch }) },
-      settings: { current: () => ({ databaseOpsKeep: 500 }) },
-      jobs: { send: jobsSend },
-    },
+    env: { databases: actorsAnswering(actorFetch), docs: actorsAnswering(actorFetch), settings: fixed({ databaseOpsKeep: 500 }), jobs: { send: jobsSend } },
     ...overrides,
-  } as unknown as Ctx;
+  });
 }
 
 const agent = (overrides: Record<string, unknown> = {}) =>

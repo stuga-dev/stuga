@@ -2,19 +2,18 @@
 /** Profile's sign-in parts: a password to set or change, and the identity provider to link or unlink. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { toasts } from "../../test/toast";
+import { mountInto, typeInto } from "../../test/form-input";
 
 const me = vi.hoisted(() => ({ whoami: vi.fn(), setDisplayName: vi.fn(), setEmail: vi.fn() }));
-const toasts = vi.hoisted(() => ({ shown: [] as Array<{ body: string; type?: string }> }));
 
 vi.mock("../../api", async (orig) => ({
   ...(await orig<typeof import("../../api")>()),
   Me: me,
 }));
-vi.mock("@astryxdesign/core/Toast", () => ({
-  useToast: () => (t: { body: string; type?: string }) => toasts.shown.push(t),
-}));
+vi.mock("@astryxdesign/core/Toast", () => import("../../test/toast"));
 vi.mock("./SettingsLayout", () => ({ useSettingsScope: () => ({ reload: vi.fn() }) }));
 
 const { Profile } = await import("./Profile");
@@ -72,11 +71,7 @@ function input(label: string): HTMLInputElement | undefined {
 async function type(label: string, value: string) {
   const el = input(label);
   expect(el, `no input ${label}`).toBeTruthy();
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(el!, value);
-    el!.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  await typeInto(el, value);
 }
 
 const button = (label: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === label);
@@ -112,7 +107,6 @@ function request(path: string): { body: Record<string, unknown>; authorization: 
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   fetchMock.mockReset();
   assign.mockReset();
   me.whoami.mockReset();
@@ -123,15 +117,10 @@ beforeEach(() => {
   sessionStorage.clear();
   setSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
   setAuthConfigForTest({ provider: { label: "Okta" } });
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  ({ host, root } = mountInto());
 });
 
 afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
-  vi.unstubAllGlobals();
   Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
   setAuthConfigForTest(null);
 });
@@ -199,7 +188,7 @@ describe("Profile · password", () => {
     PASSWORD_RULES.push({ label: "A symbol", test: (pw) => /[^A-Za-z0-9]/.test(pw) });
     try {
       act(() => root.unmount());
-      root = createRoot(host);
+      ({ host, root } = mountInto());
       await open();
       expect(hint("New password")).toBe("At least 8 characters, with a letter, a number and a symbol.");
       await type("New password", "battery9");

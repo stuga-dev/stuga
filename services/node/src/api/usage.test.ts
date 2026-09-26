@@ -15,22 +15,12 @@ vi.mock("@stuga/db", async (orig) => ({
 const { getMemberRole, usageRollup, getAskThread, listAskTurns } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { fixed, personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mock = (fn: unknown) => fn as unknown as ReturnType<typeof vi.fn>;
 
-function ctxFor(overrides: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "owner-1",
-    displayName: "Ada",
-    isAgent: false,
-    principals: ["user:owner-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "owner",
-    env: { publicOrigin: "https://stuga.test", aiSettings: { current: () => ({ enabled: true }) } },
-    ...overrides,
-  } as unknown as Ctx;
-}
+const ctxFor = (overrides: CtxOverrides = {}): Ctx =>
+  personCtx({ alias: "owner-1", role: "owner", env: { aiSettings: fixed({ enabled: true }) }, ...overrides });
 
 async function route(ctx: Ctx, method: string, path: string): Promise<Response> {
   const r = new Request(`https://node.test${path}`, { method });
@@ -130,7 +120,7 @@ describe("GET /api/usage", () => {
 
   it("refuses agents, whatever role their principal holds", async () => {
     mock(getMemberRole).mockResolvedValue("owner");
-    const res = await route(ctxFor({ isAgent: true } as Partial<Ctx>), "GET", "/api/usage");
+    const res = await route(ctxFor({ isAgent: true }), "GET", "/api/usage");
     expect(res.status).toBe(403);
   });
 });

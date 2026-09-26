@@ -10,6 +10,7 @@ vi.mock("@stuga/db", async (orig) => ({
 const { getMemberRole, listAuditEvents, auditFacets } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
+import { personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockRole = getMemberRole as unknown as ReturnType<typeof vi.fn>;
 const mockList = listAuditEvents as unknown as ReturnType<typeof vi.fn>;
@@ -18,19 +19,7 @@ const mockFacets = auditFacets as unknown as ReturnType<typeof vi.fn>;
 /** The job queue the ledger writes go to. */
 const send = vi.fn(async (_message: unknown) => {});
 
-function ctxFor(over: Partial<Ctx> = {}): Ctx {
-  return {
-    sql: {},
-    alias: "owner-1",
-    displayName: "Ada",
-    isAgent: false,
-    principals: ["user:owner-1", "org:ws1"],
-    workspaceId: "ws1",
-    role: "owner",
-    env: { jobs: { send } },
-    ...over,
-  } as unknown as Ctx;
-}
+const ctxFor = (over: CtxOverrides = {}): Ctx => personCtx({ alias: "owner-1", role: "owner", env: { jobs: { send } }, ...over });
 
 async function get(ctx: Ctx, qs = ""): Promise<Response> {
   const url = new URL(`https://node.test/api/audit${qs}`);

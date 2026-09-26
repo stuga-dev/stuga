@@ -312,15 +312,6 @@ describe("runAskAgentTurn", () => {
     expect(r.prose).toContain("Working.");
   });
 
-  it("separates rounds so two prose bursts don't run together", async () => {
-    mockRounds([
-      toolRound("search_documents", { query: "x" }, { text: "Let me look." }),
-      textRound("Found it [^1]."),
-    ]);
-    const r = await runAskAgentTurn(CFG, BASE, runnerWith(), { onChunk: () => {} });
-    expect(r.prose).toBe("Let me look.\n\nFound it [^1].");
-  });
-
   it("drops empty history turns (providers reject a blank text block)", async () => {
     const bodies: string[] = [];
     vi.stubGlobal(

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chooseRadio, pickFile } from "../test/form-input";
+import type { Root } from "react-dom/client";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { chooseRadio, mountInto, pickFile, typeInto } from "../test/form-input";
 
 const samples = vi.hoisted(() => vi.fn());
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), Workspaces: { samples, cachedSamples: () => undefined } }));
@@ -10,20 +10,9 @@ vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()),
 const { CreateWorkspaceDialog } = await import("./CreateWorkspaceDialog");
 const { ImportMayFinish } = await import("./StartWith");
 
-// jsdom's <dialog> has no showModal/close, which Astryx Dialog calls.
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
-    this.open = false;
-  };
-}
-
 const ARCHIVE = new File(["PK"], "Team handbook.stuga.zip", { type: "application/zip" });
 const LAWS = { id: "privacy-laws", title: "Privacy laws", description: "Six laws in their own languages.", name: "Privacy laws (sample)", langs: ["en", "zh"] };
 
-let host: HTMLDivElement;
 let root: Root;
 /** Each element brought into view; jsdom has no scrollIntoView. */
 let scrolled: Element[];
@@ -38,13 +27,7 @@ async function render(isOpen: boolean) {
   await act(async () => root.render(<CreateWorkspaceDialog isOpen={isOpen} onSubmit={onSubmit} onClose={onClose} />));
 }
 
-async function typeName(value: string) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(nameInput(), value);
-    nameInput().dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+const typeName = (value: string) => typeInto(nameInput(), value);
 
 async function click(label: string) {
   const target = button(label);
@@ -53,7 +36,6 @@ async function click(label: string) {
 }
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   onSubmit.mockReset().mockResolvedValue(undefined);
   samples.mockReset().mockResolvedValue({ samples: [LAWS] });
   onClose.mockReset();
@@ -61,14 +43,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = function (this: Element) {
     scrolled.push(this);
   };
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
+  ({ root } = mountInto());
 });
 
 describe("CreateWorkspaceDialog", () => {

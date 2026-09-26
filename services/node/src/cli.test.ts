@@ -45,15 +45,7 @@ describe("stuga-node", { timeout: 30_000 }, () => {
       const passes = stugaNode(["archive", "check", dir]);
       expect(passes.stdout).toBe(`${dir} passes: 0 items, 0 bodies, 0 rows, 0 images, 0 sample steps\n`);
       expect(passes.status).toBe(0);
-
-      writeFileSync(join(dir, "stray.md"), "# Stray\n");
-      const fails = stugaNode(["archive", "check", dir, "--json"]);
-      expect(JSON.parse(fails.stdout)).toMatchObject({ ok: false, issues: [{ at: "stray.md" }] });
-      expect(fails.status).toBe(2);
-
-      const usage = stugaNode(["archive", "fix", dir]);
-      expect(usage.stderr).toContain("usage: stuga-node archive check <directory> [--json]");
-      expect(usage.status).toBe(2);
+      // A failing check, --json and a refused argument are archive/check.test.ts's, in process.
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
