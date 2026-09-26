@@ -10,6 +10,8 @@ one, the release notes say there is nothing to do.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-26
+
 ### Upgrade notes
 
 - A node on 0.1.x does not upgrade to this version: its database schema starts over. Start this
