@@ -1,7 +1,7 @@
 /**
  * What the node re-asserts on every boot, unlike a migration, which runs once:
- * the server's extension files and SEARCH_LANGUAGES can change under an
- * existing database at any restart.
+ * the server's extension files can change under an existing database at any
+ * restart, and a restart can stop a rebuild of the search indexes midway.
  */
 import type { Sql } from "../client.js";
 import { reconcileSearchIndexes, type SearchLanguage } from "./search-indexes.js";
@@ -11,7 +11,7 @@ export interface RepairOutcome {
   updatedExtensions: string[];
   /** BM25 indexes this boot created (`+name`) or dropped (`-name`). */
   searchIndexChanges: string[];
-  /** BM25 indexes this boot rebuilt because another pg_search version built them. */
+  /** BM25 indexes this boot rebuilt: SearchIndexRepair.rebuilt. */
   rebuiltSearchIndexes: string[];
 }
 

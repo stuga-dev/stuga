@@ -206,6 +206,24 @@ export interface RowPage {
   groups?: RowGroup[];
   groups_truncated?: true;
   group_by?: string;
+  /** With `after` only: the `after` of the next page, or null when this one is the last. */
+  next?: string | null;
+}
+
+/** Where a listing by `after` goes on from: past the row added at `createdAt` with this rowid. */
+interface RowCursor {
+  createdAt: number;
+  rowid: number;
+}
+
+const ROW_CURSOR = /^(\d{1,16})\.(\d{1,19})$/;
+
+/** `after` as a listing takes it: "" for the first page, else a page's `next`. */
+function parseAfter(raw: unknown): RowCursor | null {
+  if (raw === "") return null;
+  const m = typeof raw === "string" ? ROW_CURSOR.exec(raw) : null;
+  if (!m) throw new OpError(400, "validation", `after must be "" or the next of the page before`);
+  return { createdAt: Number(m[1]), rowid: Number(m[2]) };
 }
 
 /**
@@ -213,12 +231,17 @@ export interface RowPage {
  * seeds all three from a saved view, and any of them named in the body wins. A
  * grouped page orders by the group key first and counts every group over the
  * whole filtered set.
+ *
+ * `after` pages the whole table in the order its rows were added, from where
+ * the page before ended, so a row deleted or added meanwhile moves no other
+ * row past a page's edge; it takes none of the above, nor `offset`.
  */
 export function listRowPage(sql: SqlHandle, meta: TableMeta, body: Body): { page: RowPage; offset: number } {
   const columns = getColumns(sql, meta.table_id);
   const rawLimit = body.limit === undefined ? DATABASE_ROWS_PAGE_MAX : Number(body.limit);
   if (!Number.isInteger(rawLimit) || rawLimit < 1) throw new OpError(400, "validation", "limit must be a positive integer");
   const limit = Math.min(rawLimit, DATABASE_ROWS_PAGE_MAX);
+  if (body.after !== undefined) return { page: listRowsAfter(sql, meta, columns, body, limit), offset: 0 };
   const offset = body.offset === undefined ? 0 : Number(body.offset);
   if (!Number.isInteger(offset) || offset < 0) throw new OpError(400, "validation", "offset must be a non-negative integer");
 
@@ -238,11 +261,7 @@ export function listRowPage(sql: SqlHandle, meta: TableMeta, body: Body): { page
   const stored = sql
     .exec(`SELECT *, ${DOC_ID_EXPR} AS "_doc_id" FROM ${t}${whereSql} ORDER BY ${orderSql(columns, sorts, groupBy)} LIMIT ? OFFSET ?`, ...built.params, limit, offset)
     .toArray();
-  const rows = stored.map((row) => {
-    const out: ListedRow = { _id: String(row._id), _created_at: row._created_at, _updated_at: row._updated_at, _doc_id: row._doc_id ?? null };
-    for (const c of columns) out[c.column_id] = row[c.name] ?? null;
-    return out;
-  });
+  const rows = stored.map((row) => listedRow(columns, row));
   const total = Number(sql.exec(`SELECT COUNT(*) AS n FROM ${t}${whereSql}`, ...built.params).one().n);
 
   const page: RowPage = { rows, total };
@@ -256,6 +275,35 @@ export function listRowPage(sql: SqlHandle, meta: TableMeta, body: Body): { page
     page.group_by = groupBy;
   }
   return { page, offset };
+}
+
+function listedRow(columns: ColumnSpec[], row: Record<string, unknown>): ListedRow {
+  const out: ListedRow = { _id: String(row._id), _created_at: row._created_at, _updated_at: row._updated_at, _doc_id: row._doc_id ?? null };
+  for (const c of columns) out[c.column_id] = row[c.name] ?? null;
+  return out;
+}
+
+/** A page of the whole table in the order its rows were added, past the cursor `body.after` names. */
+function listRowsAfter(sql: SqlHandle, meta: TableMeta, columns: ColumnSpec[], body: Body, limit: number): RowPage {
+  const shaped = ["offset", "sort", "filter", "group_by", "view_id"].filter((k) => body[k] !== undefined && body[k] !== null);
+  if (shaped.length > 0) throw new OpError(400, "validation", `after pages the whole table in the order its rows were added; it takes no ${shaped.join(", ")}`);
+  const after = parseAfter(body.after);
+  const past = after === null ? "" : ` WHERE ("_created_at" > ? OR ("_created_at" = ? AND rowid > ?))`;
+  const t = ident(meta.name);
+  const stored = sql
+    .exec(
+      `SELECT *, rowid AS "_rowid", ${DOC_ID_EXPR} AS "_doc_id" FROM ${t}${past} ORDER BY ${orderSql(columns, [], null)} LIMIT ?`,
+      ...(after === null ? [] : [after.createdAt, after.createdAt, after.rowid]),
+      limit,
+    )
+    .toArray();
+  const last = stored.at(-1);
+  const total = Number(sql.exec(`SELECT COUNT(*) AS n FROM ${t}`).one().n);
+  return {
+    rows: stored.map((row) => listedRow(columns, row)),
+    total,
+    next: stored.length < limit || !last ? null : `${Number(last._created_at)}.${Number(last._rowid)}`,
+  };
 }
 
 // ---- views ----------------------------------------------------------------------------------

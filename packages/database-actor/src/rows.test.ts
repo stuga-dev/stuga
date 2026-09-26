@@ -178,6 +178,43 @@ describe("/rows/list", () => {
     expect(page.total).toBe(3);
   });
 
+  it("pages by `after` in the order rows were added, and a row deleted between two pages moves no other past the edge", async () => {
+    const { actor } = makeActor();
+    const starter = await initStarter(actor);
+    const name = colId(starter, "Name");
+    // One write: every row added in the same millisecond, so rowid alone orders them.
+    const { row_ids } = await doJson<{ row_ids: string[] }>(actor, "/rows/insert", {
+      table_id: starter.table_id,
+      rows: Array.from({ length: 7 }, (_, i) => ({ Name: `r${i}` })),
+      actor: HUMAN,
+    });
+    type Page = ListOut & { next: string | null };
+    const page = (after: string) => doJson<Page>(actor, "/rows/list", { table_id: starter.table_id, limit: 3, after });
+    const first = await page("");
+    expect(first.rows.map((r) => r[name])).toEqual(["r0", "r1", "r2"]);
+    expect(first.next).toMatch(/^\d+\.\d+$/);
+    await doJson(actor, "/rows/delete", { table_id: starter.table_id, row_ids: [row_ids[1]], actor: HUMAN });
+    await doJson(actor, "/rows/insert", { table_id: starter.table_id, rows: [{ Name: "later" }], actor: HUMAN });
+    const second = await page(first.next!);
+    expect(second.rows.map((r) => r[name])).toEqual(["r3", "r4", "r5"]);
+    const third = await page(second.next!);
+    expect(third.rows.map((r) => r[name])).toEqual(["r6", "later"]);
+    expect(third.next).toBeNull();
+    expect(third.total).toBe(7);
+    // Without `after`, the answer is as it was.
+    expect("next" in (await doJson<ListOut>(actor, "/rows/list", { table_id: starter.table_id }))).toBe(false);
+  });
+
+  it("refuses an `after` it did not hand out, or one with a shape a listing by `after` does not take", async () => {
+    const { actor, starter } = await seeded();
+    const t = starter.table_id;
+    expect((await doFetch(actor, "/rows/list", { table_id: t, after: "row_1" })).status).toBe(400);
+    expect((await doFetch(actor, "/rows/list", { table_id: t, after: 3 })).status).toBe(400);
+    const shaped = await doFetch(actor, "/rows/list", { table_id: t, after: "", sort: { column_id: "Amount" }, offset: 1 });
+    expect(shaped.status).toBe(400);
+    expect(((await shaped.json()) as { message: string }).message).toContain("it takes no offset, sort");
+  });
+
   it("clamps limit to DATABASE_ROWS_PAGE_MAX", async () => {
     const { actor } = makeActor();
     const starter = await initStarter(actor);

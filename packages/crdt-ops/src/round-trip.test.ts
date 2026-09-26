@@ -261,6 +261,9 @@ const WORDS = [
   "a*b",
   "under_score",
   "snake_case_word",
+  "__init__",
+  "x__",
+  "file__name",
   "back`tick",
   "brack[et]",
   "paren(s)",
@@ -645,6 +648,52 @@ describe("marks around a code span", () => {
     // The eviction repair must not invent marks: with no link in the source, the
     // span carries `code` alone.
     expect(marksOf("x **b `c` b** y")).toEqual([[], ["bold"], ["code"], ["bold"], []]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UNDERSCORES IN PLAIN TEXT. A bare underscore run is inert between two letters
+// or digits; one that punctuation follows can close emphasis, so the serializer
+// escapes it and no bare run in its output ever closes.
+// ---------------------------------------------------------------------------
+describe("underscores and asterisks in plain text", () => {
+  const cases: [text: string, md: string][] = [
+    ["__init__", "\\__init\\_\\_"],
+    ["__dunder__ and __slots__", "\\__dunder\\_\\_ and \\__slots\\_\\_"],
+    ["a __b__ c", "a \\__b\\_\\_ c"],
+    ["snake_case_name", "snake_case_name"],
+    ["file__name", "file__name"],
+    ["1__2", "1__2"],
+    ["_x_", "\\_x\\_"],
+    ["__x", "\\__x"],
+    ["x__", "x\\_\\_"],
+    ["a_b_", "a_b\\_"],
+    ["___", "\\_\\_\\_"],
+    ["_*_", "\\_\\*\\_"],
+    ["2*3*4", "2\\*3\\*4"],
+    ["a**b**c", "a\\*\\*b\\*\\*c"],
+  ];
+  for (const [text, md] of cases) {
+    it(`writes ${JSON.stringify(text)} so it reads back as the same text`, () => {
+      expect(assertDocRoundTrip(doc(p(t(text))), text)).toBe(md);
+    });
+  }
+
+  it("escapes a run that a respelt neighbour leaves before punctuation", () => {
+    // `d` becomes `&#100;` so the italic can keep its leading space; the `_`
+    // before it is then followed by `&` and could close.
+    const md = assertDocRoundTrip(doc(p(t("x ", "bold"), t("a_b c_d"), t(" y", "italic"))), "respelt neighbour");
+    expect(md).toBe("**x&#32;**&#97;_b c\\_&#100;*&#32;y*");
+  });
+
+  it("holds in a heading, a table cell, a mention label and an image alt", () => {
+    assertDocRoundTrip(doc(schema.nodes.heading!.create({ level: 2 }, [t("__init__ and x__")])), "heading");
+    const row = (type: "tableHeader" | "tableCell", ...texts: string[]) =>
+      schema.nodes.tableRow!.create(null, texts.map((text) => schema.nodes[type]!.create(null, [p(t(text))])));
+    assertDocRoundTrip(doc(schema.nodes.table!.create(null, [row("tableHeader", "__a__", "b__"), row("tableCell", "__c", "d")])), "table");
+    const mention = schema.nodes.mention!.create({ alias: "u_liv", label: "__liv__" });
+    assertDocRoundTrip(doc(p(t("hi "), mention)), "mention label");
+    assertDocRoundTrip(doc(schema.nodes.image!.create({ src: "x.png", alt: "__init__" })), "image alt");
   });
 });
 

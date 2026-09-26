@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { OtherNode } from "../api";
 
-const workspaces = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn() }));
+const workspaces = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), createFromSample: vi.fn(), importArchive: vi.fn(), samples: vi.fn(), cachedSamples: vi.fn() }));
 const otherNodes = vi.hoisted(() => ({ list: vi.fn(), add: vi.fn(), remove: vi.fn(), onChanged: vi.fn() }));
 
 vi.mock("../api", async (orig) => ({
@@ -26,13 +26,14 @@ interface MenuRow {
   items?: MenuRow[];
 }
 
-/** The rows last handed to the menu, to reach a handler a disabled button would not run. */
-const menu = vi.hoisted(() => ({ items: [] as MenuRow[] }));
+/** The rows last handed to the menu, to reach a handler a disabled button would not run, and what opening it runs. */
+const menu = vi.hoisted(() => ({ items: [] as MenuRow[], onOpenChange: undefined as ((isOpen: boolean) => void) | undefined }));
 
 // The menu stands in as its rows: a section's title when it has one, as Astryx renders it, then each row as a button.
 vi.mock("@astryxdesign/core/DropdownMenu", () => ({
-  DropdownMenu: ({ items }: { items: MenuRow[] }) => {
+  DropdownMenu: ({ items, onOpenChange }: { items: MenuRow[]; onOpenChange?: (isOpen: boolean) => void }) => {
     menu.items = items;
+    menu.onOpenChange = onOpenChange;
     const row = (item: MenuRow) => (
       <button key={item.id ?? item.label} data-description={item.description} disabled={item.isDisabled} onClick={item.onClick}>
         {item.label}
@@ -59,6 +60,8 @@ vi.mock("@astryxdesign/core/DropdownMenu", () => ({
 
 const { bookmarkHost, openableOrigin, survivesSwitch, WorkspaceSwitcher } = await import("./WorkspaceSwitcher");
 const { setAuthConfigForTest } = await import("../lib/session/auth-config");
+const { getActiveWorkspace } = await import("../lib/session/workspace-pointer");
+import { chooseRadio, pickFile } from "../test/form-input";
 
 if (!HTMLDialogElement.prototype.showModal) {
   HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
@@ -135,6 +138,8 @@ describe("the switcher's menu", () => {
 
   beforeEach(async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    // jsdom has none; the create dialog brings its error into view.
+    Element.prototype.scrollIntoView = () => {};
     Object.defineProperty(window, "location", { configurable: true, value: { ...originalLocation, assign } });
     setAuthConfigForTest({ nodeName: "Liv’s Mac", nodeLabel: "Liv’s Mac" });
     workspaces.list.mockResolvedValue({
@@ -145,6 +150,7 @@ describe("the switcher's menu", () => {
       active: "ws1",
     });
     otherNodes.list.mockResolvedValue({ current: { name: "Liv’s Mac", origin: "http://localhost:8787" }, nodes: [STUDIO, NAS] });
+    workspaces.samples.mockResolvedValue({ samples: [{ id: "privacy-laws", title: "Privacy laws", description: "Six laws.", name: "Privacy laws (sample)", langs: ["en"] }] });
     otherNodes.onChanged.mockImplementation((fn: () => void) => {
       changed = fn;
       return () => {};
@@ -249,10 +255,73 @@ describe("the switcher's menu", () => {
     ]);
   });
 
+  it("reads the workspaces again when it opens, so one an import finished after the dialog stopped waiting is listed", async () => {
+    workspaces.list.mockResolvedValue({
+      workspaces: [
+        { workspace_id: "ws1", name: "Acme", role: "owner" },
+        { workspace_id: "ws2", name: "Side project", role: "member" },
+        { workspace_id: "ws3", name: "Team handbook", role: "owner" },
+      ],
+      active: "ws1",
+    });
+    await act(async () => menu.onOpenChange!(false));
+    expect(button("Team handbook")).toBeUndefined();
+    await act(async () => menu.onOpenChange!(true));
+    expect([...section("Liv’s Mac")!.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Acme", "Side project", "Team handbook"]);
+  });
+
   it("opens the dialog that lists the bookmarks", async () => {
     await act(async () => button("Add or remove nodes…")!.click());
     const dialog = document.querySelector("dialog[open]");
     expect(dialog?.textContent).toContain("Other nodes");
     expect(dialog?.textContent).toContain("https://studio.example");
+  });
+  describe("creating a workspace", () => {
+    const open = () => document.querySelector<HTMLDialogElement>("dialog[open]")!;
+    const dialogButton = (label: string) => [...open().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === label)!;
+    async function name(value: string) {
+      const input = open().querySelector<HTMLInputElement>("input:not([type]), input[type='text']")!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      await act(async () => {
+        setter.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+
+    it("imports a file under the name its archive carries, enters the new workspace and opens the document it starts with", async () => {
+      workspaces.importArchive.mockResolvedValue({ workspace_id: "ws3", start_doc_id: "d9" });
+      await act(async () => button("Create workspace")!.click());
+      await chooseRadio(open(), "From a file");
+      const file = new File(["PK"], "Team handbook.stuga.zip", { type: "application/zip" });
+      await pickFile(open(), file);
+      await act(async () => dialogButton("Create workspace").click());
+      expect(workspaces.importArchive).toHaveBeenCalledWith(file, "", "workspace_edit");
+      expect(getActiveWorkspace()).toBe("ws3");
+      expect(assign).toHaveBeenCalledWith("/doc/d9");
+    });
+
+    it("creates from a sample, enters the new workspace and opens the document it starts with", async () => {
+      workspaces.createFromSample.mockResolvedValue({ workspace_id: "ws5", start_doc_id: "d_laws" });
+      await act(async () => button("Create workspace")!.click());
+      await chooseRadio(open(), "Privacy laws");
+      await act(async () => dialogButton("Create workspace").click());
+      expect(workspaces.createFromSample).toHaveBeenCalledWith("privacy-laws", "Privacy laws (sample)", "workspace_edit");
+      expect(getActiveWorkspace()).toBe("ws5");
+      expect(assign).toHaveBeenCalledWith("/doc/d_laws");
+    });
+
+    it("enters an empty workspace at the library, and keeps the dialog open with the reason when it cannot", async () => {
+      workspaces.create.mockRejectedValueOnce(new Error("workspace name is required"));
+      await act(async () => button("Create workspace")!.click());
+      await name("Side notes");
+      await act(async () => dialogButton("Create workspace").click());
+      expect(open().textContent).toContain("workspace name is required");
+      expect(assign).not.toHaveBeenCalled();
+
+      workspaces.create.mockResolvedValueOnce({ workspace_id: "ws4" });
+      await act(async () => dialogButton("Create workspace").click());
+      expect(workspaces.create).toHaveBeenLastCalledWith("Side notes", "workspace_edit");
+      expect(assign).toHaveBeenCalledWith("/");
+    });
   });
 });

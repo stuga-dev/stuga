@@ -16,6 +16,7 @@ export async function getNodeBackups({ ctx }: WorkspaceCall): Promise<Response> 
     time_zone: schedule.timeZone,
     next_at: backups.nextAt()?.toISOString() ?? null,
     running: backups.running(),
+    waiting: backups.waiting(),
     // The last scheduled or requested backup that was tried, and why it failed.
     attempted_at: state?.backup_attempted_at ?? null,
     error: state?.backup_error ?? null,
@@ -36,7 +37,8 @@ export async function getNodeBackups({ ctx }: WorkspaceCall): Promise<Response> 
 export async function startNodeBackup({ ctx }: WorkspaceCall): Promise<Response> {
   const backups = ctx.env.backups;
   if (!backups) return error(503, "this node does not take backups of itself");
-  if (!backups.startNow()) return error(409, "a backup is already under way");
+  const refused = backups.startNow();
+  if (refused) return error(409, refused);
   recordAudit(nodeAuditCtx(ctx), { action: "node.backup.start", targetKind: "node", targetId: ctx.env.publicOrigin, detail: {} });
   return json({ started: true }, { status: 202 });
 }

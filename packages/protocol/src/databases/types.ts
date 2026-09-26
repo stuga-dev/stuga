@@ -181,6 +181,8 @@ export type DatabaseOpKind =
   | "rows.delete"
   /** A row was linked to its page document; the inverse unlinks. */
   | "rows.link_page"
+  /** Many rows were linked to new pages at once; the inverse unlinks them. */
+  | "rows.link_pages"
   | "views.create"
   | "views.update"
   | "views.delete"

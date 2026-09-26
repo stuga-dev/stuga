@@ -18,7 +18,7 @@ vi.mock("@stuga/db", async (importOriginal) => ({
   countAccountsWithoutPassword: vi.fn(async () => 0),
 }));
 
-const { saveNodeSettings, getNodeSettings, resetNodeSettings, countAccountsWithoutPassword } = await import("@stuga/db");
+const { saveNodeSettings, getNodeSettings, resetNodeSettings, countAccountsWithoutPassword, isNodeAdminAlias } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../../http/dispatch.js");
 const { recordAudit } = await import("../../audit/record.js");
 import type { Ctx } from "../../auth/context.js";
@@ -47,8 +47,24 @@ const audit = recordAudit as unknown as ReturnType<typeof vi.fn>;
 const dataDir = mkdtempSync(join(tmpdir(), "stuga-settings-route-"));
 afterAll(() => rmSync(dataDir, { recursive: true, force: true }));
 
+/** The search languages a node was set up with; a save starts a rebuild at once, which stays running. */
+function searchLanguages(languages: string[] = [], error: string | null = null) {
+  let rebuilding = false;
+  const rebuild = vi.fn(async (next: string[]) => {
+    languages = [...next];
+    rebuilding = true;
+  });
+  return {
+    current: () => languages,
+    status: () => ({ languages: [...languages], rebuilding, error }),
+    rebuild,
+    save: vi.fn(async (next: string[], _updatedBy: string | null) => void rebuild(next)),
+    stop: async () => {},
+  };
+}
+
 /** A node administrator on a node with nothing saved yet; `nodeName` is the name set, null for none. */
-function ctx(nodeName: string | null = null): Ctx {
+function ctx(nodeName: string | null = null, search = searchLanguages()): Ctx {
   return {
     sql: {},
     alias: "admin-1",
@@ -62,7 +78,7 @@ function ctx(nodeName: string | null = null): Ctx {
       port: 8787,
       databaseUrl: "postgres://stuga:stuga@db:5432/stuga",
       embeddingDims: 1024,
-      searchLanguages: [],
+      searchLanguages: search,
       restartHint: "Restart the node to apply.",
       nodeId: "abcdefghijk23456",
       settings: {
@@ -275,6 +291,103 @@ describe("the node's name", () => {
     const res = await routeWorkspaceRequest(ctx(), new Request("http://node.test/api/node/settings", { method: "DELETE" }));
     expect(res?.status).toBe(200);
     expect(reset).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the search languages", () => {
+  const get = async (c: Ctx) =>
+    (await (await routeWorkspaceRequest(c, new Request("http://node.test/api/node/settings")))!.json()) as Record<string, unknown>;
+
+  beforeEach(() => {
+    save.mockClear();
+    audit.mockClear();
+  });
+
+  it("answers the languages chosen, the choices, whether the indexes are being rebuilt and why the last rebuild gave up", async () => {
+    expect((await get(ctx(null, searchLanguages(["ko"])))).search).toEqual({
+      languages: ["ko"],
+      choices: ["ko", "ar"],
+      rebuilding: false,
+      error: null,
+    });
+    expect((await get(ctx(null, searchLanguages(["ko"], "could not extend file: No space left on device")))).search).toMatchObject({
+      rebuilding: false,
+      error: "could not extend file: No space left on device",
+    });
+  });
+
+  it("saves them on their own, starts one rebuild, and answers that it is rebuilding", async () => {
+    const search = searchLanguages();
+    const res = await put(ctx(null, search), { search: { languages: ["ar", "ko", "ar"] } });
+    expect(res?.status).toBe(200);
+    expect(search.save).toHaveBeenCalledTimes(1);
+    expect(search.save).toHaveBeenCalledWith(["ko", "ar"], "admin-1");
+    // The rest of the row is not written for them.
+    expect(save).not.toHaveBeenCalled();
+    expect(((await res!.json()) as Record<string, unknown>).search).toEqual({
+      languages: ["ko", "ar"],
+      choices: ["ko", "ar"],
+      rebuilding: true,
+      error: null,
+    });
+    const detail = audit.mock.calls.find((c) => c[1].action === "node.settings.update")![1].detail;
+    expect(detail.before.search_languages).toEqual([]);
+    expect(detail.after.search_languages).toEqual(["ko", "ar"]);
+  });
+
+  it("saves none as a choice", async () => {
+    const search = searchLanguages(["ko"]);
+    expect((await put(ctx(null, search), { search: { languages: [] } }))?.status).toBe(200);
+    expect(search.save).toHaveBeenCalledWith([], "admin-1");
+  });
+
+  it("refuses a language that is not a choice, or anything but a list, and saves nothing", async () => {
+    for (const languages of [["ko", "fr"], "ko", [1], null]) {
+      const search = searchLanguages();
+      const res = await put(ctx(null, search), { search: { languages } });
+      expect(res?.status, JSON.stringify(languages)).toBe(400);
+      expect(((await res!.json()) as { error: string }).error).toBe("search.languages must be a list of: ko, ar");
+      expect(search.save).not.toHaveBeenCalled();
+    }
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("leaves them alone when another group is saved, or the rest is reset", async () => {
+    const search = searchLanguages(["ar"]);
+    expect((await put(ctx(null, search), { updates: { check: false } }))?.status).toBe(200);
+    expect((await routeWorkspaceRequest(ctx(null, search), new Request("http://node.test/api/node/settings", { method: "DELETE" })))?.status).toBe(200);
+    expect(search.save).not.toHaveBeenCalled();
+    expect(search.rebuild).not.toHaveBeenCalled();
+    expect((await get(ctx(null, search))).search).toMatchObject({ languages: ["ar"] });
+  });
+
+  it("are a node administrator's to change", async () => {
+    (isNodeAdminAlias as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
+    const search = searchLanguages();
+    const res = await put(ctx(null, search), { search: { languages: ["ko"] } });
+    expect(res?.status).toBe(403);
+    expect(search.save).not.toHaveBeenCalled();
+  });
+
+  it("audits the other groups a save committed when writing the languages then fails, and nothing when they were all it sent", async () => {
+    const failing = searchLanguages();
+    failing.save.mockRejectedValue(new Error("connection terminated unexpectedly"));
+    const updates = () => audit.mock.calls.filter((c) => c[1].action === "node.settings.update");
+
+    await expect(put(ctx(null, failing), { node_name: "Liv's Mac", search: { languages: ["ko"] } })).rejects.toThrow("connection terminated unexpectedly");
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save.mock.calls[0]![1]).toMatchObject({ nodeName: "Liv's Mac" });
+    expect(updates()).toHaveLength(1);
+    // The languages were not saved, so the row says they did not change.
+    expect(updates()[0]![1].detail.after.search_languages).toEqual([]);
+
+    audit.mockClear();
+    await expect(put(ctx(null, failing), { search: { languages: ["ko"] } })).rejects.toThrow("connection terminated unexpectedly");
+    expect(updates()).toEqual([]);
+  });
+
+  it("are no longer an environment fact", async () => {
+    expect((await get(ctx())).node).not.toHaveProperty("search_languages");
   });
 });
 
@@ -496,7 +609,7 @@ describe("the identity provider section", () => {
     });
     // The sign-in method is no longer a read-only node fact: only the environment's are left.
     expect(Object.keys(body.node as object).sort()).toEqual(
-      ["bind", "data_dir", "database", "embedding_dims", "extra_origins", "node_id", "port", "public_origin", "search_languages"],
+      ["bind", "data_dir", "database", "embedding_dims", "extra_origins", "node_id", "port", "public_origin"],
     );
   });
 

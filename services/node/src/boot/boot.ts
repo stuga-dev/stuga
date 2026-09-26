@@ -2,9 +2,10 @@
  * Boot, in order: config → Postgres checks and writer lock → listener, which
  * says the node is starting until it serves → a backup when another version
  * served this database last → schema → settings and signing key → actor hosts,
- * stores and queue → routers → serving → background workers. The actors call
- * back in through `env.internal`, whose handler needs the finished env, so it
- * delegates through a slot filled last.
+ * stores and queue → workspaces an unfinished import left, deleted → routers →
+ * serving → background workers. The actors call back in through `env.internal`,
+ * whose handler needs the finished env, so it delegates through a slot filled
+ * last.
  */
 import { join } from "node:path";
 import {
@@ -12,6 +13,7 @@ import {
   countAccounts,
   createClient,
   embeddingColumnDims,
+  getSearchLanguages,
   initSchema,
   pgJobQueue,
   recordNodeBoot,
@@ -25,6 +27,7 @@ import { DATABASE_STORE_VERSION, DatabaseActor, type DatabaseActorEnv } from "@s
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { Heartbeat } from "@stuga/protocol/wire/opcodes";
 import { inviteRedeemedAudit } from "../api/invites.js";
+import { purgeUnfinishedImports } from "../api/workspaces.js";
 import { recordSignInAudit } from "../audit/record.js";
 import { ConfigError, parseConfig } from "../config/env.js";
 import { createAiSettingsStore } from "../config/settings/ai.js";
@@ -51,7 +54,9 @@ import { assertDatabaseLocale, assertPgSearch, assertPostgresVersion } from "./p
 import { runShutdown, SHUTDOWN_DEADLINE_MS } from "./shutdown.js";
 import { backupBeforeUpgrade } from "./upgrade-backup.js";
 import { createNodeBackups, notifyBackupFailed } from "../ops/node-backups.js";
+import { archiveWorkUnderWay, holdArchiveWork } from "../archive/under-way.js";
 import { createExclusive } from "../platform/exclusive.js";
+import { bootSearchLanguages, createSearchLanguages } from "../search/languages.js";
 
 const MAINTENANCE_INTERVAL_MS = 2 * 60_000;
 /** How long a backup of the running node waits for the requests already being answered. */
@@ -156,19 +161,23 @@ async function boot(): Promise<void> {
     throw err instanceof ConfigError ? err : new ConfigError(err instanceof Error ? err.message : String(err));
   });
 
-  const repairs = await runBootRepairs(sql, { searchLanguages: cfg.searchLanguages });
+  // Read straight after the migrations that made the column: the indexes are reconciled to it.
+  const bootLanguages = await bootSearchLanguages(sql, process.env);
+  const repairs = await runBootRepairs(sql, { searchLanguages: bootLanguages });
   if (repairs.updatedExtensions.length > 0) {
     console.info(`[node] extensions updated to this build's versions: ${repairs.updatedExtensions.join(", ")}`);
   }
   if (repairs.searchIndexChanges.length > 0) {
     console.info(
-      `[node] SEARCH_LANGUAGES=${cfg.searchLanguages.join(",") || "(none)"}: ` +
+      `[node] search languages ${bootLanguages.join(", ") || "(none)"}: ` +
         `${repairs.searchIndexChanges.join(", ")} (a + is one index built over the whole corpus, once)`,
     );
   }
   if (repairs.rebuiltSearchIndexes.length > 0) {
-    console.info(`[node] search indexes rebuilt for this pg_search: ${repairs.rebuiltSearchIndexes.join(", ")}`);
+    console.info(`[node] search indexes rebuilt: ${repairs.rebuiltSearchIndexes.join(", ")}`);
   }
+  // From here on the languages change online, from Settings and from setup.
+  const searchLanguages = createSearchLanguages({ sql, languages: bootLanguages });
 
   // Only whoever holds the setup code may make the first account, which administers the node.
   let setupCode = (await countAccounts(sql)) === 0 ? await loadOrCreateSetupCode(cfg.dataDir) : null;
@@ -243,11 +252,15 @@ async function boot(): Promise<void> {
     sql,
     aiSettings,
     settings,
+    searchLanguages,
     verifier,
     previousVersion,
     nodeId,
   };
   internalEnv = env;
+
+  // Before serving, so no import this run starts is taken for one the last run left unfinished.
+  await purgeUnfinishedImports(env);
 
   // ---- routers -------------------------------------------------------------
   const app = createApp(env);
@@ -271,6 +284,10 @@ async function boot(): Promise<void> {
       void removeSetupCode(cfg.dataDir).catch((err: unknown) => console.warn("[node] could not remove the used setup code", err));
       // Setup may have turned the look for newer versions off, in the account's own transaction.
       void settings.refresh().catch(() => {});
+      // And chosen search languages, which the indexes, built at boot for none, are rebuilt for.
+      void getSearchLanguages(sql)
+        .then((languages) => searchLanguages.rebuild(languages ?? []))
+        .catch((err: unknown) => console.warn("[node] could not read the search languages setup chose", err));
     },
     onInviteRedeemed: ({ alias, tokenHash, workspaceId, role }) =>
       recordSignInAudit(jobs, alias, workspaceId, inviteRedeemedAudit(tokenHash, role)),
@@ -322,6 +339,8 @@ async function boot(): Promise<void> {
       }
       return resume;
     },
+    busy: () => (archiveWorkUnderWay() ? "a workspace is being imported or exported" : null),
+    hold: holdArchiveWork,
     exclusive,
     notifyFailure: (message, at) => notifyBackupFailed(env, message, at),
   });
@@ -358,6 +377,7 @@ async function boot(): Promise<void> {
     const result = await runShutdown([
       { name: "HTTP listener", run: () => server.close() },
       { name: "maintenance loop", run: () => maintenance.stop() },
+      { name: "search index rebuild", run: () => searchLanguages.stop() },
       { name: "job worker", run: () => worker.stop() },
       { name: "document actors", run: () => docs.close() },
       { name: "database actors", run: () => databases.close() },

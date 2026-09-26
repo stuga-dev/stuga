@@ -62,7 +62,7 @@ export function SourcesPanel() {
                 </span>
               )}
             </div>
-            {s.detail.content && <blockquote className="sources-excerpt">{s.detail.content}</blockquote>}
+            {s.detail.content && <blockquote className="sources-excerpt" dir="auto">{s.detail.content}</blockquote>}
           </li>
         ))}
         {sources.length === 0 && <li className="empty">No citations yet. Ask the AI co-author a grounded question.</li>}

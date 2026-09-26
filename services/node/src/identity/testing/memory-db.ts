@@ -3,6 +3,7 @@
  * expiry and uniqueness rules as the SQL. For the route tests only.
  */
 import type { AccountRow, InviteJoin, OidcFlowRow, OidcTicketRow, RefreshSessionRow } from "@stuga/db";
+import { SEARCH_LANGUAGES } from "@stuga/protocol/domain/search-languages";
 import type { IdentityDb } from "../db.js";
 
 interface Invite {
@@ -25,8 +26,12 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
   const invites = new Map<string, Invite>();
   const flows = new Map<string, OidcFlowRow>();
   const tickets = new Map<string, OidcTicketRow>();
-  /** The settings row's update_check: written only by the account that claims the node. */
-  const settings: { updateCheck: boolean | null; timeZone: string | null } = { updateCheck: null, timeZone: null };
+  /** The settings row's setup choices: written only by the account that claims the node. */
+  const settings: { updateCheck: boolean | null; timeZone: string | null; searchLanguages: string[] | null } = {
+    updateCheck: null,
+    timeZone: null,
+    searchLanguages: null,
+  };
 
   const byUsername = (typed: string) => {
     const username = typed.trim().replace(/^@/, "").toLowerCase();
@@ -48,6 +53,9 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
     async countAccounts() {
       return accounts.size;
     },
+    async searchLanguages() {
+      return settings.searchLanguages ? SEARCH_LANGUAGES.filter((l) => settings.searchLanguages!.includes(l)) : null;
+    },
     async createLocalAccount(input) {
       // Synchronous from here on, so it is atomic as the SQL's lock makes it: the first account is decided once.
       const first = accounts.size === 0;
@@ -62,6 +70,7 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
       if (first) admins.add(input.alias);
       if (first && input.updateCheck === false) settings.updateCheck = false;
       if (first && input.timeZone) settings.timeZone = input.timeZone;
+      if (first && input.searchLanguages) settings.searchLanguages = [...input.searchLanguages];
       return { ok: true, account: { ...row }, joined, admin: first };
     },
     async createProviderAccount(input) {

@@ -145,6 +145,9 @@ Scope a turbo-driven command to one package with a filter: `pnpm --filter @stuga
     lose, on a server that meets [the Postgres requirements](packaging/contract.md#postgres). The
     backup suite runs `pg_dump` and `pg_restore` of the server's major from `PG_BIN`, or from
     `PATH`.
+  - The published samples' suite builds each sample from `SAMPLES_DIR`, a checkout of
+    [stuga-dev/samples](https://github.com/stuga-dev/samples), `../samples` when there is one,
+    and skips without it.
   - On an Apple silicon Mac, `packaging/macos/test/ci.sh` runs the same suites without Docker,
     against a throwaway cluster from the pinned Mac Postgres tree.
 - **The restore drill** (`packaging/test/drill-content.sh`) puts one of each kind of state into a

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { buildMcpb, bundleFilename } from "./bundle.js";
 import type { BundleConfig, BundleManifest } from "./manifest.js";
-import { readZip } from "./zip.test.js";
+import { readZip } from "../../lib/testing/read-zip.js";
 
 const SERVER_JS = new TextEncoder().encode("#!/usr/bin/env node\nconsole.log('stuga');\n");
 const LICENSE = new TextEncoder().encode("GNU AFFERO GENERAL PUBLIC LICENSE\n");
@@ -62,6 +62,10 @@ describe("buildMcpb", () => {
   it("declares the server as ESM", () => {
     const pkg = JSON.parse(build().text("server/package.json")) as Record<string, unknown>;
     expect(pkg.type).toBe("module");
+  });
+
+  it("stores every entry uncompressed, which the installer needs", () => {
+    expect(build().entries.filter((e) => e.method !== 0).map((e) => e.name)).toEqual([]);
   });
 
   it("ships the server bytes verbatim", () => {

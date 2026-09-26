@@ -85,7 +85,7 @@ function ctxOf(overrides: Record<string, unknown> = {}): Ctx {
       aiSettings: { current: () => ai },
       publicOrigin: "https://stuga.test",
       embeddingDims: 2,
-      searchLanguages: [],
+      searchLanguages: { current: () => [] },
       settings: { current: () => ({ databaseOpsKeep: 500, nodeLabel: "Studio", maxBodyBytes: 1_000_000 }) },
     },
     ...overrides,
@@ -193,7 +193,10 @@ describe("retrieve", () => {
     const mcp = JSON.parse((await callTool(ctxOf(), "retrieve", { q: "expenses", collection_id: "c1" })).text);
     expect(rest).toMatchObject({ chunks: [], degraded: true, empty_scope: true });
     expect(mcp).toEqual({ passages: [], degraded: rest.degraded, unavailable: [], note: EMPTY_SCOPE_NOTE });
-    expect(mockRetrieve.mock.calls[0]![0]).toEqual(mockRetrieve.mock.calls[1]![0]);
+    // The languages are a getter each call makes its own, read as the query is built.
+    const [restArgs, mcpArgs] = [mockRetrieve.mock.calls[0]![0], mockRetrieve.mock.calls[1]![0]];
+    expect(restArgs).toEqual({ ...mcpArgs, searchLanguages: expect.any(Function) });
+    expect(restArgs.searchLanguages()).toEqual(mcpArgs.searchLanguages());
   });
 
   it("refuses a collection the caller cannot read", async () => {

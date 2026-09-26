@@ -30,6 +30,7 @@ import {
 import type { OpDef } from "./registry.js";
 
 type RowsLinkPage = { kind: "rows.link_page"; table_id: string; row_id: string; doc_id: string; replaces: string | null };
+type RowsLinkPages = { kind: "rows.link_pages"; table_id: string; links: Array<{ row_id: string; doc_id: string }> };
 
 function batchCapError(): OpError {
   return new OpError(409, "batch_cap", `too many rows in one write (max ${DATABASE_MAX_ROWS_PER_WRITE})`);
@@ -281,5 +282,46 @@ export const rowsLinkPage: OpDef<RowsLinkPage> = {
     }
     const linked = linkRowDoc(sql, meta.table_id, p.row_id, p.doc_id, now);
     return { result: { linked, doc_id: p.doc_id, replaced }, summary: `Linked a page to a row of "${meta.display}"` };
+  },
+};
+
+/**
+ * Link many rows to their new pages in one mutation, for a bulk import that
+ * would otherwise spend one of the alias's mutations per page. Every link is
+ * checked as rowsLinkPage checks one, and none replaces a page. The revert
+ * unlinks the links it made and leaves the pages alone.
+ */
+export const rowsLinkPages: OpDef<RowsLinkPages> = {
+  parse(input, view) {
+    const table = view.table(input);
+    const raw = input.links;
+    if (!Array.isArray(raw) || raw.length === 0) throw new OpError(400, "validation", "links must be a non-empty array of { row_id, doc_id }");
+    if (raw.length > DATABASE_MAX_ROWS_PER_WRITE) throw batchCapError();
+    const links = raw.map((l) => {
+      const link = requireObject(l, "each link must be an object of { row_id, doc_id }");
+      return { row_id: requireId(link.row_id, "row_id"), doc_id: requireId(link.doc_id, "doc_id") };
+    });
+    if (new Set(links.map((l) => l.row_id)).size !== links.length || new Set(links.map((l) => l.doc_id)).size !== links.length) {
+      throw new OpError(400, "validation", "each row and each document is linked once");
+    }
+    const meta = getTable(view.sql, table.table_id);
+    const exists = existingRowIds(view.sql, meta.name, links.map((l) => l.row_id));
+    for (const { row_id: rowId, doc_id: docId } of links) {
+      if (!exists.has(rowId)) throw new OpError(404, "row_not_found", `no row ${rowId} in "${table.display}"`);
+      const current = docIdOfRow(view.sql, rowId);
+      if (current !== null && current !== docId) throw alreadyLinked(current);
+      const claimed = rowOfDoc(view.sql, docId);
+      if (claimed && claimed.row_id !== rowId) throw new OpError(409, "doc_linked", `document ${docId} is already the page of another row`);
+    }
+    return { kind: "rows.link_pages", table_id: table.table_id, links };
+  },
+  unchanged: (sql, p) => (p.links.every((l) => docIdOfRow(sql, l.row_id) === l.doc_id) ? { linked: 0 } : null),
+  // Only the links this op makes: one already in place is not its to undo.
+  capture: (sql, p) => ({ kind: "rows.link_pages", table_id: p.table_id, links: p.links.filter((l) => docIdOfRow(sql, l.row_id) !== l.doc_id) }),
+  apply(sql, p, { now }) {
+    const meta = getTable(sql, p.table_id);
+    let linked = 0;
+    for (const l of p.links) if (linkRowDoc(sql, meta.table_id, l.row_id, l.doc_id, now)) linked++;
+    return { result: { linked }, summary: `Linked ${plural(linked, "page")} to rows of "${meta.display}"` };
   },
 };

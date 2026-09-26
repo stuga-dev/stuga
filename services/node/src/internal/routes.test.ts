@@ -29,7 +29,7 @@ const actorFetch = vi.fn(async () => Response.json({ markdown: "# Other" }));
 const env = {
   sql: {},
   embeddingDims: 4,
-  searchLanguages: [],
+  searchLanguages: { current: () => [] },
   aiSettings: { current: () => ({ embed: { enabled: true } }) },
   docs: { get: () => ({ fetch: actorFetch }) },
 } as unknown as NodeEnv;

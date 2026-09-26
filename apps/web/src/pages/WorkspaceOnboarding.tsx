@@ -1,11 +1,12 @@
 /**
- * The page a signed-in member of no workspace lands on: create the first one.
+ * The page a signed-in member of no workspace lands on: create the first one,
+ * empty, from a sample or from a workspace archive.
  * A node administrator on a node with no AI set up is then shown the three
  * optional ways AI comes in, each set up in place: their own agent, which
  * brings its own model and needs no key here, the built-in AI on an API key,
  * and search by meaning.
  */
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { TopNav } from "@astryxdesign/core/TopNav";
@@ -23,18 +24,36 @@ import { Selector } from "@astryxdesign/core/Selector";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Banner } from "@astryxdesign/core/Banner";
 import { ArrowRight, LogOut, PanelsTopLeft, Plug, Search, Sparkles } from "lucide-react";
-import { Me, NodeSettings, Workspaces, type NodeAiSettings } from "../api";
+import { Me, NodeSettings, Workspaces, type CreatedWorkspace, type NodeAiSettings } from "../api";
 import { AgentClients } from "../agents/ConnectAgent";
 import { ConnectForm, type Connected } from "./settings/node/ConnectForm";
 import { HALF_COPY, endpointLabel, presetsFor } from "./settings/node/ai-form";
 import { invalidateModelOptions } from "../state/model-options";
 import { setActiveWorkspace } from "../lib/session/workspace-pointer";
-import { DEFAULT_DOC_ACCESS, type DocAccessMode } from "@stuga/protocol/domain/workspaces";
+import { ARCHIVE_WORK_MAX_MS, DEFAULT_DOC_ACCESS, type DocAccessMode } from "@stuga/protocol/domain/workspaces";
 import { WORKSPACE_ACCESS_OPTIONS, WORKSPACE_ACCESS_HELP } from "../shell/workspace-access";
+import {
+  ARCHIVE_NAME_PLACEHOLDER,
+  ImportMayFinish,
+  StartWith,
+  createWorkspaceFrom,
+  landingPath,
+  useBannerInView,
+  useNewWorkspace,
+  useWorkspaceSamples,
+} from "../shell/StartWith";
 import { logout } from "../lib/session/tokens";
 import { takeWorkspaceReturn } from "../lib/session/return-path";
 import { Brand, nodeName } from "../shell/Brand";
 import { errorMessage } from "../lib/http/client";
+
+/** How often the page looks for a workspace whose import it stopped waiting for. */
+export const IMPORT_CHECK_MS = 10_000;
+/**
+ * How long after asking for an import the page stops looking: by then the node has finished it or
+ * stopped it and deleted its workspace, with time to spare for the list to show it.
+ */
+export const IMPORT_GIVE_UP_MS = ARCHIVE_WORK_MAX_MS + 5 * 60_000;
 
 /** The node's AI settings when this person could set its AI up first, else null. */
 async function aiToConnect(): Promise<NodeAiSettings | null> {
@@ -51,29 +70,81 @@ export function WorkspaceOnboarding() {
   const nav = useNavigate();
   /** Set once the workspace exists and AI is the step left. */
   const [ai, setAi] = useState<NodeAiSettings | null>(null);
-  const [name, setName] = useState("");
+  const { name, setName, start, setStart, ready, nameOptional } = useNewWorkspace();
+  const samples = useWorkspaceSamples(true);
   const [access, setAccess] = useState<DocAccessMode>(DEFAULT_DOC_ACCESS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const errorRef = useBannerInView(error);
+  /** Where the new workspace opens once the steps here are done. */
+  const [landing, setLanding] = useState<string | null>(null);
+  /**
+   * When an import this page stopped waiting for was asked for; it may still finish. Meanwhile no
+   * other is asked for: the node refuses a second, and one asked for once it is done is a copy.
+   */
+  const [importing, setImporting] = useState<number | null>(null);
+  const importingRef = useBannerInView(importing);
+
+  // An imported or sample workspace opens at the document it starts with; else wherever the person was headed.
+  const enter = (to: string | null) => {
+    const back = takeWorkspaceReturn();
+    nav(to ?? back, { replace: true });
+  };
+
+  async function opened(workspace: CreatedWorkspace) {
+    setActiveWorkspace(workspace.workspace_id);
+    const to = workspace.start_doc_id ? landingPath(workspace) : null;
+    setLanding(to);
+    // Asked only now: a person with no workspace yet cannot read the node's settings.
+    const next = await aiToConnect();
+    if (next) setAi(next);
+    else enter(to);
+  }
 
   async function createWorkspace() {
-    const workspaceName = name.trim();
-    if (busy || !workspaceName) return;
+    if (busy || !ready || importing !== null) return;
     setBusy(true);
     setError(null);
+    const asked = Date.now();
     try {
-      const workspace = await Workspaces.create(workspaceName, access);
-      setActiveWorkspace(workspace.workspace_id);
-      // Asked only now: a person with no workspace yet cannot read the node's settings.
-      const next = await aiToConnect();
-      if (next) setAi(next);
-      else nav(takeWorkspaceReturn(), { replace: true });
+      await opened(await createWorkspaceFrom(start, name.trim(), access));
     } catch (err) {
-      setError(errorMessage(err, "Couldn't create the workspace."));
+      if (err instanceof ImportMayFinish) setImporting(asked);
+      else setError(errorMessage(err, "Couldn't create the workspace."));
     } finally {
       setBusy(false);
     }
   }
+
+  // Nothing else here lists workspaces, so the page looks for the one the import makes, until none can come.
+  useEffect(() => {
+    if (importing === null) return;
+    let alive = true;
+    const stop = () => {
+      alive = false;
+      clearInterval(timer);
+      setImporting(null);
+    };
+    const timer = setInterval(() => {
+      Workspaces.list()
+        .then(({ workspaces }) => {
+          if (!alive) return;
+          if (workspaces[0]) {
+            stop();
+            return opened(workspaces[0]);
+          }
+          if (Date.now() - importing < IMPORT_GIVE_UP_MS) return;
+          stop();
+          setError("The import didn’t finish. Try again.");
+        })
+        .catch(() => {});
+    }, IMPORT_CHECK_MS);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `opened` reads nothing that changes while the page waits
+  }, [importing]);
 
   return (
     <AppShell
@@ -98,7 +169,7 @@ export function WorkspaceOnboarding() {
             <AiChoices
               settings={ai}
               onSaved={setAi}
-              onStart={() => nav(takeWorkspaceReturn(), { replace: true })}
+              onStart={() => enter(landing)}
             />
           ) : (
             <VStack gap={6}>
@@ -106,16 +177,20 @@ export function WorkspaceOnboarding() {
                 <Heading level={1}>Create your workspace</Heading>
                 <Text color="secondary">A place for your documents. Start on your own and invite others when you’re ready.</Text>
               </VStack>
-              {error && <Banner status="error" title="Workspace creation failed" description={error} />}
+              {importing !== null && (
+                <Banner ref={importingRef} status="info" title="The import may still finish" description="This page opens the workspace when it does." />
+              )}
+              {error && <Banner ref={errorRef} status="error" title="Workspace creation failed" description={error} />}
               <VStack gap={4}>
                 <TextInput
                   label="Workspace name"
-                  placeholder="For example, My projects"
+                  placeholder={nameOptional ? ARCHIVE_NAME_PLACEHOLDER : "For example, My projects"}
                   value={name}
                   onChange={setName}
                   onEnter={createWorkspace}
-                  isRequired
+                  isRequired={!nameOptional}
                   hasAutoFocus
+                  isDisabled={busy}
                 />
                 {/* This choice is stamped on new items; it does not change existing sharing. */}
                 <Selector
@@ -124,7 +199,9 @@ export function WorkspaceOnboarding() {
                   value={access}
                   onChange={(v) => setAccess(v as DocAccessMode)}
                   options={WORKSPACE_ACCESS_OPTIONS}
+                  isDisabled={busy}
                 />
+                <StartWith value={start} onChange={setStart} samples={samples} isDisabled={busy} />
               </VStack>
               <HStack justify="end">
                 <Button
@@ -132,7 +209,7 @@ export function WorkspaceOnboarding() {
                   variant="primary"
                   icon={<PanelsTopLeft size={16} />}
                   onClick={createWorkspace}
-                  isDisabled={busy || !name.trim()}
+                  isDisabled={busy || !ready || importing !== null}
                   isLoading={busy}
                 />
               </HStack>

@@ -8,7 +8,8 @@
  *
  * Alarms are timers backed by a row in the actor's own database. On boot the
  * host re-arms every alarm it finds in `dir`, and an evicted actor keeps a cold
- * timer that reopens it when its alarm is due.
+ * timer that reopens it when its alarm is due, and closes it again once the
+ * alarm has run unless something else entered it meanwhile.
  */
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readdirSync } from "node:fs";
@@ -231,6 +232,11 @@ class HostedActor implements SocketOwner {
   readonly storage: FileActorStorage;
   readonly state: ActorState;
   lastActive = Date.now();
+  /**
+   * Whoever opened it is done with it: the namespace closes it once it is idle with no alarm
+   * pending, after the alarm that is pending has run. A request or a frame clears it.
+   */
+  released = false;
   #instance: Actor | null = null;
   #sockets = new Set<ServerSocket>();
   #timer: NodeJS.Timeout | null = null;
@@ -251,6 +257,8 @@ class HostedActor implements SocketOwner {
     private readonly factory: (state: ActorState) => Actor,
     path: string,
     private readonly opts: ActorHostOptions,
+    /** Called once an alarm has run and the lock is free again. */
+    private readonly afterAlarm: (hosted: HostedActor) => void,
   ) {
     this.storage = new FileActorStorage(path, { version: opts.storeVersion, label: `${opts.name}/${actorName}` }, () =>
       this.armAlarm(),
@@ -288,6 +296,7 @@ class HostedActor implements SocketOwner {
 
   fetch(request: Request): Promise<Response> {
     this.touch();
+    this.released = false;
     return this.mutex.run(() => {
       this.touch();
       return this.instance().fetch(request);
@@ -297,6 +306,7 @@ class HostedActor implements SocketOwner {
   deliverMessage(ws: ServerSocket, message: string | ArrayBuffer): Promise<void> {
     if (this.#done) return Promise.resolve();
     this.touch();
+    this.released = false;
     try {
       // Still offered while close() waits: a cancel ends the work it waits for.
       if (this.instance().interceptWebSocketMessage?.(ws, message)) return Promise.resolve();
@@ -447,6 +457,12 @@ class HostedActor implements SocketOwner {
       }
       this.armAlarm();
     });
+    this.afterAlarm(this);
+  }
+
+  /** Nothing running or queued, no open socket, and no alarm pending: closing it now loses nothing it has not stored. */
+  get settled(): boolean {
+    return !this.#closed && this.isIdle(0, Date.now()) && this.storage.readAlarm() === null;
   }
 
   /**
@@ -475,6 +491,7 @@ class HostedActor implements SocketOwner {
 // ---- namespace ---------------------------------------------------------------------
 
 export interface HostedNamespace extends ActorNamespace {
+  release(name: string): Promise<void>;
   /** Names of the actors currently resident in memory. */
   resident(): string[];
   /** Close every actor that has been idle for at least `idleMs` (default: the
@@ -529,10 +546,17 @@ export function createActorNamespace<Env, Meta>(
         (state) => new ActorClass(state as ActorState<Meta>, env) as Actor,
         path,
         opts,
+        (after) => void closeIfReleased(actorName, after),
       );
       actors.set(actorName, hosted);
     }
     return hosted;
+  };
+
+  /** Close a released actor that is still this name's and has settled; one with work or an alarm left stays. */
+  const closeIfReleased = async (actorName: string, hosted: HostedActor): Promise<void> => {
+    if (!hosted.released || actors.get(actorName) !== hosted || !hosted.settled) return;
+    await evict(actorName, hosted).catch((e: unknown) => console.error(`[actor ${opts.name}] closing ${actorName} failed`, e));
   };
 
   const armCold = (actorName: string, at: number): void => {
@@ -550,7 +574,8 @@ export function createActorNamespace<Env, Meta>(
         return;
       }
       try {
-        open(actorName); // reopening re-arms the alarm from its row
+        // Reopening re-arms the alarm from its row. Opened for the alarm alone, it closes again once that has run.
+        open(actorName).released = true;
       } catch (e) {
         // A store this build refuses to open: thrown out of a timer it would take the process down.
         const ctx = { namespace: opts.name, actor: actorName, entry: "alarm" };
@@ -616,6 +641,13 @@ export function createActorNamespace<Env, Meta>(
           return open(name).fetch(request);
         },
       };
+    },
+    async release(name: string) {
+      const hosted = actors.get(name);
+      // In use by someone else: the idle timeout closes it as usual.
+      if (!hosted || !hosted.isIdle(0, Date.now())) return;
+      hosted.released = true;
+      await closeIfReleased(name, hosted);
     },
     resident: () => [...actors.keys()],
     evictIdle,

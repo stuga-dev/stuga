@@ -6,7 +6,7 @@
  */
 import type { OwnGrants } from "@stuga/auth";
 import { type DocRow, detachPage, docTrashStates, getDoc, listPagesOf, updateDoc } from "@stuga/db";
-import { DATABASE_MAX_DISPLAY_LENGTH } from "@stuga/protocol/databases/limits";
+import { DATABASE_MAX_DISPLAY_LENGTH, DATABASE_MAX_ROWS_PER_WRITE } from "@stuga/protocol/databases/limits";
 import type { ColumnSpec, DatabaseSchema } from "@stuga/protocol/databases/types";
 import { recordAudit, recordEvent } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
@@ -157,6 +157,51 @@ export async function openRowPage(
   if (existing) await detachPage(ctx.sql, ctx.workspaceId, doc.doc_id, existing).catch(() => undefined);
   await afterDatabaseMutation(ctx, doc, `Created a page for a row.`);
   return { kind: "ok", doc_id: pageDoc.doc_id, created: true, restored: false };
+}
+
+/**
+ * New pages for many rows that have none, titled by the caller: filed and
+ * shared as openRowPage files one, and linked a batch at a time in one
+ * mutation each, so a bulk import does not spend the actor's per-alias budget
+ * one page at a time. A batch that cannot be linked discards its pages and
+ * fails the call; pages linked before it stay. The ids come back in order.
+ */
+export async function openRowPages(
+  ctx: Ctx,
+  db: DocRow,
+  tableId: string,
+  pages: Array<{ rowId: string; title: string }>,
+): Promise<{ kind: "ok"; doc_ids: string[] } | PageRefusal> {
+  const refused = pageWriteRefusal(ctx, db);
+  if (refused) return refused as PageRefusal;
+  const docIds: string[] = [];
+  for (let at = 0; at < pages.length; at += DATABASE_MAX_ROWS_PER_WRITE) {
+    const batch = pages.slice(at, at + DATABASE_MAX_ROWS_PER_WRITE);
+    const created: DocRow[] = [];
+    for (const page of batch) {
+      created.push(
+        await createProseDoc(ctx, {
+          title: page.title.trim().slice(0, DATABASE_MAX_DISPLAY_LENGTH) || "Untitled row",
+          parentId: db.parent_id,
+          ownGrants: pageGrantsOf(db),
+          inheritsPerms: db.inherits_perms,
+          page: { of: db.doc_id, row: `${tableId}.${page.rowId}` },
+          detail: { database_id: db.doc_id, table_id: tableId, row_id: page.rowId },
+        }),
+      );
+    }
+    const linked = await callDatabaseActor(ctx, db.doc_id, "rows/link-docs", {
+      table_id: tableId,
+      links: batch.map((page, i) => ({ row_id: page.rowId, doc_id: created[i]!.doc_id })),
+    });
+    if (!linked.ok) {
+      for (const doc of created) await discardCreatedDoc(ctx, doc);
+      return pageRefusal(linked, (await linked.json().catch(() => null)) as { message?: string } | null, "could not link the pages") as PageRefusal;
+    }
+    docIds.push(...created.map((doc) => doc.doc_id));
+    await afterDatabaseMutation(ctx, db, `Created ${batch.length} page${batch.length === 1 ? "" : "s"} for rows.`);
+  }
+  return { kind: "ok", doc_ids: docIds };
 }
 
 /** Bring a row's page back out of the trash, as the row's page. */

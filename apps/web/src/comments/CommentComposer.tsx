@@ -45,7 +45,7 @@ export function CommentComposer() {
         }
       }}
     >
-      <div className="comment-composer__quote" title={pending.anchor.quote}>
+      <div className="comment-composer__quote" dir="auto" title={pending.anchor.quote}>
         “{pending.anchor.quote}”
       </div>
       <MentionTextArea

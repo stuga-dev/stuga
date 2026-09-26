@@ -22,6 +22,7 @@ import {
   type DatabaseRunSource,
   type DatabaseRunSummary,
   type RowValue,
+  type TableSchema,
 } from "@stuga/protocol/databases/types";
 import type { Ctx } from "../../auth/context.js";
 import { resolveReviewMode } from "../../authz/review-mode.js";
@@ -338,13 +339,9 @@ export async function commitDatabaseImport(
     run = outcome.run;
     if (outcome.kind === "proposed") pending = outcome.pending;
   } else {
-    const res = await callDatabaseActor(ctx, doc.doc_id, "rows/insert", { table_id: table.table_id, rows, import: true });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { message?: string } | null;
-      return refuse(actorRefusalStatus(res), body?.message ?? "could not import rows");
-    }
+    const inserted = await insertImportedRows(ctx, doc, table, rows);
+    if (!inserted.ok) return refuse(inserted.status, inserted.message);
     mode = "applied";
-    await afterDatabaseMutation(ctx, doc, `Imported ${rows.length} row${rows.length === 1 ? "" : "s"} into "${table.display}".`);
   }
 
   const marker: ImportDone = {
@@ -372,4 +369,23 @@ export async function commitDatabaseImport(
     ...(pending !== undefined ? { pending } : {}),
   };
   return { status: 200, body: result as unknown as Record<string, unknown> };
+}
+
+/**
+ * A person's validated rows, landed as one rows.insert past the per-write cap
+ * (the table's own cap still holds): one revertible op, one Activity entry.
+ * The new rows' ids come back in the order of `rows`.
+ */
+export async function insertImportedRows(
+  ctx: Ctx,
+  doc: DocRow,
+  table: Pick<TableSchema, "table_id" | "display">,
+  rows: Array<Record<string, RowValue>>,
+): Promise<{ ok: true; row_ids: string[] } | { ok: false; status: number; message: string }> {
+  const res = await callDatabaseActor(ctx, doc.doc_id, "rows/insert", { table_id: table.table_id, rows, import: true });
+  const body = (await res.json().catch(() => null)) as { row_ids?: string[]; message?: string } | null;
+  if (!res.ok) return { ok: false, status: actorRefusalStatus(res), message: body?.message ?? "could not import rows" };
+  if (!Array.isArray(body?.row_ids)) return { ok: false, status: 502, message: "could not import rows" };
+  await afterDatabaseMutation(ctx, doc, `Imported ${rows.length} row${rows.length === 1 ? "" : "s"} into "${table.display}".`);
+  return { ok: true, row_ids: body.row_ids };
 }

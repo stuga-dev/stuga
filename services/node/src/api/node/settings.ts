@@ -9,6 +9,7 @@ import {
 } from "@stuga/db";
 import { MAX_NODE_NAME_CHARS, UNSAFE_TEXT, hasVisibleText } from "@stuga/protocol/domain/node-name";
 import { NOTIFY_SINKS } from "@stuga/protocol/domain/notify";
+import { SEARCH_LANGUAGES, parseSearchLanguages, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { nodeAuditCtx, recordAudit } from "../../audit/record.js";
 import type { Ctx } from "../../auth/context.js";
 import { removeSecretFile, writeSecretFile } from "../../config/secrets.js";
@@ -177,6 +178,7 @@ interface SettingsCandidate {
     backups: boolean;
     timeZone: boolean;
     identityProvider: boolean;
+    search: boolean;
   };
   /** Null names the node after its host. */
   nodeName: string | null;
@@ -203,6 +205,8 @@ interface SettingsCandidate {
   identityProvider: StoredIdentityProvider | null;
   /** undefined keeps the client secret on file, null deletes it, a string replaces it. */
   idpClientSecret: string | null | undefined;
+  /** undefined keeps them; a change rebuilds the search indexes. */
+  searchLanguages: SearchLanguage[] | undefined;
 }
 
 /**
@@ -231,10 +235,11 @@ async function parseSettingsCandidate(
     backups: body.backups !== undefined,
     timeZone: body.time_zone !== undefined,
     identityProvider: body.identity_provider !== undefined && !opts.probe,
+    search: body.search !== undefined && !opts.probe,
   };
   if (!Object.values(sent).some(Boolean)) {
     return {
-      error: "nothing to save: send node_name, limits, maintenance, notify, branding, updates, backups, time_zone or identity_provider",
+      error: "nothing to save: send node_name, limits, maintenance, notify, branding, updates, backups, time_zone, identity_provider or search",
       status: 400,
     };
   }
@@ -244,6 +249,7 @@ async function parseSettingsCandidate(
   const branding = (body.branding ?? {}) as Record<string, unknown>;
   const updates = (body.updates ?? {}) as Record<string, unknown>;
   const backups = (body.backups ?? {}) as Record<string, unknown>;
+  const search = (body.search ?? {}) as Record<string, unknown>;
 
   // ---- the node's name. Empty goes back to the default, the host.
   let nodeName = row?.node_name ?? null;
@@ -385,6 +391,14 @@ async function parseSettingsCandidate(
     }
   }
 
+  // ---- search languages: only the choices this build offers.
+  let searchLanguages: SearchLanguage[] | undefined;
+  if (sent.search && search.languages !== undefined) {
+    const parsed = parseSearchLanguages(search.languages);
+    if (!parsed) return { error: `search.languages must be a list of: ${SEARCH_LANGUAGES.join(", ")}`, status: 400 };
+    searchLanguages = parsed;
+  }
+
   // ---- identity provider. The client secret is write-only, like the notify credentials.
   let identityProvider = storedIdentityProvider(row);
   let idpClientSecret: string | null | undefined;
@@ -416,6 +430,7 @@ async function parseSettingsCandidate(
     timeZone,
     identityProvider,
     idpClientSecret,
+    searchLanguages,
   };
 }
 
@@ -423,6 +438,7 @@ async function nodeSettingsResponse(ctx: Ctx): Promise<Response> {
   const row = await getNodeSettings(ctx.sql);
   const saved = ctx.env.settings.current();
   const secrets = ctx.env.settings.secrets();
+  const search = ctx.env.searchLanguages.status();
 
   return json({
     node_name: saved.nodeName,
@@ -455,6 +471,13 @@ async function nodeSettingsResponse(ctx: Ctx): Promise<Response> {
     // The backups themselves, and whether one is running: GET /api/node/backups.
     backups: { auto: saved.backups.auto, hour: saved.backups.hour },
     time_zone: saved.timeZone,
+    // The languages chosen; while `rebuilding`, and after a rebuild that gave up (`error`), search uses those both sets share.
+    search: {
+      languages: search.languages,
+      choices: SEARCH_LANGUAGES,
+      rebuilding: search.rebuilding,
+      error: search.error,
+    },
     identity_provider: {
       issuer: row?.idp_issuer ?? null,
       client_id: row?.idp_client_id ?? null,
@@ -481,7 +504,6 @@ async function nodeSettingsResponse(ctx: Ctx): Promise<Response> {
       data_dir: ctx.env.dataDir,
       database: redactUrl(ctx.env.databaseUrl),
       embedding_dims: ctx.env.embeddingDims,
-      search_languages: ctx.env.searchLanguages,
     },
     updated_by: row?.updated_by ?? null,
     updated_at: row?.updated_at ?? null,
@@ -510,6 +532,7 @@ async function saveNodeSettings(ctx: Ctx, req: Request): Promise<Response> {
   if ("error" in parsed) return error(parsed.status, parsed.error);
 
   const before = ctx.env.settings.current();
+  const searchBefore = ctx.env.searchLanguages.status().languages;
   const { row } = parsed;
 
   // Labels for what the files will hold, written with the row; the files follow the commit.
@@ -525,8 +548,11 @@ async function saveNodeSettings(ctx: Ctx, req: Request): Promise<Response> {
   if (idpSecret === null) idpSecretLabel = null;
   else if (typeof idpSecret === "string") idpSecretLabel = sha256Hex(idpSecret).slice(0, 8);
 
+  // The search languages are written on their own, after the row: a save of them alone leaves the row as it is.
+  const rowSent = Object.entries(parsed.sent).some(([group, sent]) => sent && group !== "search");
+
   // One transaction: a new issuer, or none, takes every subject linked under the old one with it.
-  const { unlinkedAccounts } = await saveSettingsRow(ctx.sql, {
+  const { unlinkedAccounts } = !rowSent ? { unlinkedAccounts: 0 } : await saveSettingsRow(ctx.sql, {
     nodeName: parsed.nodeName,
     maxUploadBytes: parsed.maxUploadBytes,
     auditRetentionDays: parsed.auditRetentionDays,
@@ -550,11 +576,17 @@ async function saveNodeSettings(ctx: Ctx, req: Request): Promise<Response> {
     [SMTP_URL_FILE, parsed.smtpUrl],
     [IDP_CLIENT_SECRET_FILE, idpSecret],
   ]);
-  // The change has committed, so it is audited even when the refresh fails.
+  // Once a change has committed it is audited, even when the languages' write or the refresh then fails.
+  let committed = rowSent;
   try {
+    if (parsed.searchLanguages) {
+      // Online: the answer says it is rebuilding, and search keeps answering meanwhile.
+      await ctx.env.searchLanguages.save(parsed.searchLanguages, ctx.alias);
+      committed = true;
+    }
     await ctx.env.settings.refresh();
   } finally {
-    auditSave(ctx, parsed, before, unlinkedAccounts);
+    if (committed) auditSave(ctx, parsed, { ...before, searchLanguages: searchBefore }, unlinkedAccounts);
   }
   return nodeSettingsResponse(ctx);
 }
@@ -563,7 +595,12 @@ async function saveNodeSettings(ctx: Ctx, req: Request): Promise<Response> {
  * The audit row of a committed save. The provider and the unlinked count come
  * from the request and the transaction, so a failed refresh cannot lose them.
  */
-function auditSave(ctx: Ctx, parsed: SettingsCandidate, before: ResolvedNodeSettings, unlinkedAccounts: number): void {
+function auditSave(
+  ctx: Ctx,
+  parsed: SettingsCandidate,
+  before: ResolvedNodeSettings & { searchLanguages: SearchLanguage[] },
+  unlinkedAccounts: number,
+): void {
   const after = ctx.env.settings.current();
   recordAudit(nodeAuditCtx(ctx), {
     action: "node.settings.update",
@@ -584,6 +621,7 @@ function auditSave(ctx: Ctx, parsed: SettingsCandidate, before: ResolvedNodeSett
         backups: before.backups,
         time_zone: before.timeZone,
         identity_provider: auditedProvider(storedIdentityProvider(parsed.row)),
+        search_languages: before.searchLanguages,
       },
       after: {
         node_name: after.nodeName,
@@ -599,6 +637,7 @@ function auditSave(ctx: Ctx, parsed: SettingsCandidate, before: ResolvedNodeSett
         time_zone: after.timeZone,
         identity_provider: auditedProvider(parsed.identityProvider),
         identity_provider_secret_changed: parsed.idpClientSecret !== undefined,
+        search_languages: ctx.env.searchLanguages.status().languages,
         ...(unlinkedAccounts > 0 ? { identity_provider_unlinked_accounts: unlinkedAccounts } : {}),
       },
     },

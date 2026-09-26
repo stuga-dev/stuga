@@ -33,7 +33,7 @@ describe("searchDocuments", () => {
       alias: "user-1",
       principals: ["user:user-1"],
       workspaceId: "ws1",
-      env: { embeddingDims: 2, searchLanguages: [], aiSettings: { current: () => current } },
+      env: { embeddingDims: 2, searchLanguages: { current: () => [] }, aiSettings: { current: () => current } },
     } as unknown as Ctx;
 
     await searchDocuments(ctx, { q: "paraphrase" });
@@ -51,7 +51,7 @@ describe("searchDocuments", () => {
       alias: "user-1",
       principals: ["user:user-1"],
       workspaceId: "ws1",
-      env: { embeddingDims: 2, searchLanguages: [], aiSettings: { current: () => AI } },
+      env: { embeddingDims: 2, searchLanguages: { current: () => [] }, aiSettings: { current: () => AI } },
     } as unknown as Ctx;
 
     const answer = await searchDocuments(ctx, { q: "probe" });

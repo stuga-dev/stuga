@@ -1,4 +1,5 @@
 /** Sign-in, sign-up and the account's own credentials, against the node's auth routes. */
+import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { authRequest } from "./auth-request";
 import { AuthError } from "./errors";
 import { clearLinkPending, clearSsoHint, markLinkPending, startProviderSignIn } from "./provider";
@@ -30,6 +31,8 @@ export async function signUp(
     setupCode?: string;
     /** This browser's time zone, which setup gives the node for its schedule. */
     timeZone?: string;
+    /** Setup's choice of the languages search gets a tokenizer for. */
+    searchLanguages?: SearchLanguage[];
   } = {},
 ): Promise<Session> {
   const body: Record<string, unknown> = { username, password };
@@ -38,6 +41,7 @@ export async function signUp(
   if (more.updateCheck !== undefined) body.update_check = more.updateCheck;
   if (more.setupCode?.trim()) body.setup_code = more.setupCode.trim();
   if (more.timeZone) body.time_zone = more.timeZone;
+  if (more.searchLanguages) body.search_languages = more.searchLanguages;
   return toSession(await authPost("/auth/register", body));
 }
 

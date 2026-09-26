@@ -1,4 +1,4 @@
-/** A workspace's name and its default document access. Members see it read-only. */
+/** A workspace's name, its default document access and its export. Members see it read-only. */
 import { useEffect, useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { Divider } from "@astryxdesign/core/Divider";
@@ -16,6 +16,7 @@ import { useSettingsScope } from "./SettingsLayout";
 import { PageColumn } from "../../ui/PageColumn";
 import { Workspaces } from "../../api";
 import { setActiveWorkspace } from "../../lib/session/workspace-pointer";
+import { saveBlob } from "../../lib/download";
 import { errorMessage } from "../../lib/http/client";
 
 export function WorkspaceGeneral() {
@@ -24,6 +25,7 @@ export function WorkspaceGeneral() {
   const [name, setName] = useState("");
   const [defaultAccess, setDefaultAccess] = useState<DocAccessMode>(DEFAULT_DOC_ACCESS);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
 
   // Re-seeded on a workspace switch.
@@ -54,6 +56,19 @@ export function WorkspaceGeneral() {
       toast({ body: errorMessage(e, "Couldn't save settings."), type: "error" });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function exportWorkspace() {
+    if (!workspace) return;
+    setExporting(true);
+    try {
+      const { blob, filename } = await Workspaces.exportArchive(workspace.workspace_id);
+      saveBlob(blob, filename);
+    } catch (e) {
+      toast({ body: errorMessage(e, "Couldn't export the workspace."), type: "error" });
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -97,6 +112,19 @@ export function WorkspaceGeneral() {
             </HStack>
           )}
         </VStack>
+
+        {canManage && (
+          <>
+            <Divider />
+            <VStack gap={3}>
+              <Heading level={2}>Export</Heading>
+              <Text color="secondary">Everything you can open, as one .stuga.zip file.</Text>
+              <HStack justify="end">
+                <Button label="Export workspace" onClick={exportWorkspace} isLoading={exporting} />
+              </HStack>
+            </VStack>
+          </>
+        )}
 
         {isOwner && (
           <>

@@ -198,3 +198,12 @@ export async function destroyActorStorage(
     .fetch(`http://actor/destroy?${idParam}=${encodeURIComponent(docId)}`, { method: "POST" })
     .catch(() => {});
 }
+
+/**
+ * A pass over many items is done with this one: its actor closes as soon as nothing it holds only
+ * in memory would be lost, rather than staying open for the idle timeout. Best-effort.
+ */
+export async function releaseActor(env: Pick<NodeEnv, "docs" | "databases">, docId: string, docType: "prose" | "database"): Promise<void> {
+  const actors = docType === "database" ? env.databases : env.docs;
+  await actors.release?.(docId).catch(() => {});
+}

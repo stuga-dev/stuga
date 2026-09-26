@@ -6,6 +6,17 @@ export async function listComments(sql: Sql, docId: string): Promise<CommentRow[
   return sql<CommentRow[]>`SELECT * FROM comments WHERE doc_id = ${docId} ORDER BY num ASC`;
 }
 
+/** The workspace's live documents with more than `max` comments, and how many each has: what an export checks first. */
+export async function listDocsWithCommentsOver(sql: Sql, workspaceId: string, max: number): Promise<Array<{ doc_id: string; comments: number }>> {
+  return sql<Array<{ doc_id: string; comments: number }>>`
+    SELECT c.doc_id, count(*)::int AS comments
+    FROM comments c JOIN docs d ON d.doc_id = c.doc_id
+    WHERE d.workspace_id = ${workspaceId} AND d.trashed = FALSE
+    GROUP BY c.doc_id
+    HAVING count(*) > ${max}
+    ORDER BY c.doc_id`;
+}
+
 export async function getComment(sql: Sql, docId: string, num: number): Promise<CommentRow | null> {
   const rows = await sql<CommentRow[]>`SELECT * FROM comments WHERE doc_id = ${docId} AND num = ${num}`;
   return rows[0] ?? null;
@@ -41,6 +52,57 @@ export async function addComment(
              ${anchorStart}, ${anchorEnd}, ${anchorQuote}, ${jsonb(tx, c.mentions ?? [])} FROM n
       RETURNING *`;
     return rows[0]!;
+  });
+}
+
+/** A comment's author when it came from a workspace archive: the name it carried, never an account. */
+export const IMPORTED_AUTHOR_PREFIX = "imported:";
+
+/** One comment as an archive carries it; `parentNum` names another in the same batch. */
+export interface ImportedComment {
+  num: number;
+  parentNum: number | null;
+  authorName: string;
+  body: string;
+  anchorQuote: string | null;
+  resolved: boolean;
+  /** ISO 8601. */
+  createdAt: string;
+}
+
+/**
+ * Add a document's comments from an archive in one transaction, numbered after
+ * any it has, keeping their times, threads and resolution. They mention no one
+ * and carry no anchor, since an anchor does not survive a new document; the
+ * quote stays. Roots come before their replies.
+ */
+export async function importComments(sql: Sql, docId: string, comments: ImportedComment[]): Promise<void> {
+  if (comments.length === 0) return;
+  await sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${docId}))`;
+    const counted = await tx<{ base: number }[]>`SELECT COALESCE(MAX(num), 0)::int AS base FROM comments WHERE doc_id = ${docId}`;
+    const base = counted[0]!.base;
+    const nums = new Map<number, number>();
+    const rows = comments.map((c, i) => {
+      const parentNum = c.parentNum === null ? null : nums.get(c.parentNum);
+      if (parentNum === undefined) throw new Error(`comment ${c.num} replies to ${c.parentNum}, which is not before it`);
+      nums.set(c.num, base + i + 1);
+      return {
+        doc_id: docId,
+        num: base + i + 1,
+        parent_num: parentNum,
+        author: `${IMPORTED_AUTHOR_PREFIX}${c.authorName}`,
+        body: c.body,
+        anchor_quote: parentNum === null ? c.anchorQuote : null,
+        resolved: c.resolved,
+        created_at: c.createdAt,
+        updated_at: c.createdAt,
+      };
+    });
+    // Roots first, so each reply's foreign key finds its root.
+    for (const chunk of [rows.filter((r) => r.parent_num === null), rows.filter((r) => r.parent_num !== null)]) {
+      for (let at = 0; at < chunk.length; at += 1000) await tx`INSERT INTO comments ${tx(chunk.slice(at, at + 1000))}`;
+    }
   });
 }
 

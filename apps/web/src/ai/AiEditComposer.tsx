@@ -44,7 +44,7 @@ export function AiEditComposer() {
         }
       }}
     >
-      <div className="ai-edit-composer__quote" title={selectionEdit.quote}>
+      <div className="ai-edit-composer__quote" dir="auto" title={selectionEdit.quote}>
         “{selectionEdit.quote}”
       </div>
       <div className="ai-edit-composer__actions">

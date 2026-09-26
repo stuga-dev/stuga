@@ -357,7 +357,7 @@ export function CommandPalette() {
                 id={optionId(c)}
                 density="compact"
                 startContent={c.icon}
-                label={c.label}
+                label={<span className="bidi-line">{c.label}</span>}
                 isHighlighted={i === activeIndex}
                 endContent={c.hint ? <Text type="supporting" color="secondary">{c.hint}</Text> : undefined}
                 onClick={() => void runAt(i)}

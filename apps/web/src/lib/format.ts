@@ -1,3 +1,5 @@
+import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
+
 /** Thousands-separated integer. */
 export const fmtInt = (n: number): string => n.toLocaleString();
 
@@ -69,7 +71,18 @@ export function absoluteTime(iso: string): string {
 /** The in-app co-author's name, spelled once so every surface agrees. */
 export const AI_COAUTHOR_LABEL = "AI co-author";
 
+/** What each of the node's search languages is called. */
+export const SEARCH_LANGUAGE_LABELS: Record<SearchLanguage, string> = {
+  ko: "Korean",
+  ar: "Arabic",
+};
+
 /** The person a `panel:<alias>` co-author principal belongs to; null for any other principal. */
 export function principalHuman(alias: string): string | null {
   return alias.startsWith("panel:") ? alias.slice("panel:".length) : null;
+}
+
+/** The name an archive gave an `imported:<name>` comment author, which is no account; null for any other author. */
+export function importedAuthor(author: string): string | null {
+  return author.startsWith("imported:") ? author.slice("imported:".length) : null;
 }

@@ -99,7 +99,7 @@ async function handleInternalRetrieve(req: Request, env: NodeEnv): Promise<Respo
     sql: env.sql,
     aiCfg: ai,
     embeddingDims: env.embeddingDims,
-    searchLanguages: env.searchLanguages,
+    searchLanguages: () => env.searchLanguages.current(),
     alias,
     principals,
     workspaceId,

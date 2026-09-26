@@ -5,15 +5,15 @@
  * Other nodes lists the bookmarks: opening one navigates the whole page to its
  * origin, where that node's own session applies. Alone, neither heading shows.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DropdownMenu, type DropdownMenuOption } from "@astryxdesign/core/DropdownMenu";
-import { useToast } from "@astryxdesign/core/Toast";
 import { PanelsTopLeft, Plus, Check, Server, ServerPlus, Settings2 } from "lucide-react";
 import { OtherNodes, Workspaces, onWorkspaceListChanged, type OtherNode, type WorkspaceInfo } from "../api";
 import { getActiveWorkspace, setActiveWorkspace } from "../lib/session/workspace-pointer";
 import { nodeLabel } from "./Brand";
 import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { OtherNodesDialog } from "./OtherNodesDialog";
+import { createWorkspaceFrom, landingPath, type StartChoice } from "./StartWith";
 import type { DocAccessMode } from "@stuga/protocol/domain/workspaces";
 
 /**
@@ -32,29 +32,30 @@ export function WorkspaceSwitcher() {
   const [showCreate, setShowCreate] = useState(false);
   const [otherNodes, setOtherNodes] = useState<OtherNode[]>([]);
   const [showNodes, setShowNodes] = useState(false);
-  const toast = useToast();
+
+  const alive = useRef(true);
+  const readWorkspaces = useCallback(() => {
+    Workspaces.list()
+      .then(({ workspaces, active }) => {
+        if (!alive.current) return;
+        setWorkspaces(workspaces);
+        setActive(active);
+        // Adopt the server's resolution, null included, so a stale id stops riding requests.
+        if (getActiveWorkspace() !== active) setActiveWorkspace(active);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
-    let alive = true;
-    function read() {
-      Workspaces.list()
-        .then(({ workspaces, active }) => {
-          if (!alive) return;
-          setWorkspaces(workspaces);
-          setActive(active);
-          // Adopt the server's resolution, null included, so a stale id stops riding requests.
-          if (getActiveWorkspace() !== active) setActiveWorkspace(active);
-        })
-        .catch(() => {});
-    }
-    read();
+    alive.current = true;
+    readWorkspaces();
     // A rename on the page below would otherwise leave this naming the old name.
-    const stop = onWorkspaceListChanged(read);
+    const stop = onWorkspaceListChanged(readWorkspaces);
     return () => {
-      alive = false;
+      alive.current = false;
       stop();
     };
-  }, []);
+  }, [readWorkspaces]);
 
   useEffect(() => {
     let alive = true;
@@ -82,14 +83,11 @@ export function WorkspaceSwitcher() {
     window.location.assign(survivesSwitch(here) ? here : "/");
   }
 
-  async function createWorkspace(name: string, defaultDocAccess: DocAccessMode) {
-    try {
-      const ws = await Workspaces.create(name, defaultDocAccess);
-      setActiveWorkspace(ws.workspace_id);
-      window.location.assign("/");
-    } catch {
-      toast({ body: "Couldn't create the workspace.", type: "error" });
-    }
+  // A failure is the dialog's to show; a new workspace opens with a reload, like a switch.
+  async function createWorkspace(name: string, defaultDocAccess: DocAccessMode, start: StartChoice) {
+    const ws = await createWorkspaceFrom(start, name, defaultDocAccess);
+    setActiveWorkspace(ws.workspace_id);
+    window.location.assign(landingPath(ws));
   }
 
   // A node's name only tells it apart from another: with no other node kept, it would name the obvious.
@@ -146,6 +144,8 @@ export function WorkspaceSwitcher() {
         placement="below"
         hasChevron
         items={items}
+        // Read again on opening: an import the create dialog stopped waiting for lands later.
+        onOpenChange={(isOpen) => isOpen && readWorkspaces()}
       />
       <CreateWorkspaceDialog
         isOpen={showCreate}

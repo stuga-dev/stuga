@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { createClient, closeClients } from "./client.js";
 import { seedWorkspaces } from "./testing/fixtures.js";
 import { initSchema } from "./schema/migrate.js";
-import { createDoc } from "./docs.js";
-import { addComment, listComments, deleteComment, syncDocMentions } from "./comments.js";
+import { createDoc, updateDoc } from "./docs.js";
+import { addComment, importComments, listComments, listDocsWithCommentsOver, deleteComment, syncDocMentions } from "./comments.js";
 import type { Sql } from "./client.js";
 
 const URL = process.env.TEST_DATABASE_URL;
@@ -109,5 +109,53 @@ describe.skipIf(!URL)("comment threads", () => {
     await deleteComment(sql, "d3", r1.num);
     const rows = await listComments(sql, "d3");
     expect(rows.map((c) => c.num).sort((a, b) => a - b)).toEqual([root.num, 3]);
+  });
+  it("imports comments after the ones a document has, keeping times, threads, resolution and quotes", async () => {
+    await createDoc(sql, { workspaceId: WS, docId: "d4", owner: "user:alice", title: "Doc", aclPrincipals: ["user:alice"] });
+    await addComment(sql, { docId: "d4", author: "alice", body: "already here" });
+    await importComments(sql, "d4", [
+      { num: 7, parentNum: null, authorName: "Liv", body: "Is this the final wording?", anchorQuote: "final", resolved: true, createdAt: "2026-03-01T09:30:00Z" },
+      { num: 9, parentNum: 7, authorName: "Editor", body: "Yes.", anchorQuote: "ignored on a reply", resolved: false, createdAt: "2026-03-02T10:00:00+02:00" },
+      { num: 12, parentNum: null, authorName: "Liv", body: "Unanchored.", anchorQuote: null, resolved: false, createdAt: "1999-12-31T23:59:59.5Z" },
+    ]);
+    const rows = await listComments(sql, "d4");
+    expect(rows.map((c) => [c.num, c.parent_num, c.author, c.anchor_quote, c.resolved])).toEqual([
+      [1, null, "alice", null, false],
+      [2, null, "imported:Liv", "final", true],
+      [3, 2, "imported:Editor", null, false],
+      [4, null, "imported:Liv", null, false],
+    ]);
+    expect(new Date(rows[1]!.created_at).toISOString()).toBe("2026-03-01T09:30:00.000Z");
+    expect(new Date(rows[2]!.created_at).toISOString()).toBe("2026-03-02T08:00:00.000Z");
+    expect(new Date(rows[3]!.updated_at).toISOString()).toBe("1999-12-31T23:59:59.500Z");
+    expect(rows.slice(1).every((c) => c.mentions.length === 0 && c.anchor_start === null && c.anchor_end === null)).toBe(true);
+    // The next comment someone writes follows them.
+    expect((await addComment(sql, { docId: "d4", author: "alice", body: "next" })).num).toBe(5);
+  });
+
+  it("imports nothing when a reply names a thread that is not before it", async () => {
+    await createDoc(sql, { workspaceId: WS, docId: "d5", owner: "user:alice", title: "Doc", aclPrincipals: ["user:alice"] });
+    await expect(
+      importComments(sql, "d5", [
+        { num: 1, parentNum: 2, authorName: "Liv", body: "early reply", anchorQuote: null, resolved: false, createdAt: "2026-03-01T09:30:00Z" },
+        { num: 2, parentNum: null, authorName: "Liv", body: "root", anchorQuote: null, resolved: false, createdAt: "2026-03-01T09:30:00Z" },
+      ]),
+    ).rejects.toThrow(/not before it/);
+    expect(await listComments(sql, "d5")).toEqual([]);
+  });
+
+  it("names the workspace's live documents with more comments than a cap, and how many", async () => {
+    await seedWorkspaces(sql, "ws-other");
+    const doc = async (docId: string, comments: number, ws = WS) => {
+      await createDoc(sql, { workspaceId: ws, docId, owner: "user:alice", title: docId, aclPrincipals: ["user:alice"] });
+      for (let i = 0; i < comments; i++) await addComment(sql, { docId, author: "alice", body: `c${i}` });
+    };
+    await doc("busy", 3);
+    await doc("quiet", 2);
+    await doc("trashed", 3);
+    await updateDoc(sql, "trashed", { trashed: true });
+    await doc("elsewhere", 3, "ws-other");
+    expect(await listDocsWithCommentsOver(sql, WS, 2)).toEqual([{ doc_id: "busy", comments: 3 }]);
+    expect(await listDocsWithCommentsOver(sql, WS, 3)).toEqual([]);
   });
 });

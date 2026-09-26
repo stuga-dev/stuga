@@ -143,10 +143,12 @@ export function Outline({ width }: { width?: number }) {
                 key={i}
                 ref={isActive ? activeRef : undefined}
                 className={`outline-row${isActive ? " outline-row--active" : ""}`}
-                style={{ paddingLeft: `${(it.level - 1) * 0.8}rem` }}
+                // The heading's own direction, so an Arabic one indents from the right, where it starts.
+                dir="auto"
+                style={{ paddingInlineStart: `${(it.level - 1) * 0.8}rem` }}
                 aria-current={isActive ? "location" : undefined}
               >
-                <Item as="div" density="compact" label={it.text} labelLines={1} onClick={() => goTo(it.pos)} />
+                <Item as="div" density="compact" label={<span className="bidi-line">{it.text}</span>} onClick={() => goTo(it.pos)} />
               </div>
             );
           })}

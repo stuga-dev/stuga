@@ -73,7 +73,7 @@ To set another environment variable from [Configuration](../configuration.md), a
 `/Library/LaunchDaemons/dev.stuga.node.plist` and reload the node:
 
 ```sh
-sudo plutil -replace EnvironmentVariables.SEARCH_LANGUAGES -string ko /Library/LaunchDaemons/dev.stuga.node.plist
+sudo plutil -replace EnvironmentVariables.MEDIA_COOKIE_SAMESITE -string strict /Library/LaunchDaemons/dev.stuga.node.plist
 sudo launchctl bootout system/dev.stuga.node
 sudo launchctl bootstrap system /Library/LaunchDaemons/dev.stuga.node.plist
 ```
@@ -222,7 +222,7 @@ The build flags set the node's address and port. To set any other variable from
 **Start** in the menu bar:
 
 ```sh
-plutil -replace EnvironmentVariables.SEARCH_LANGUAGES -string ko \
+plutil -replace EnvironmentVariables.MEDIA_COOKIE_SAMESITE -string strict \
   "$HOME/Library/Application Support/Stuga Local/launchd/dev.stuga.local.node.plist"
 ```
 

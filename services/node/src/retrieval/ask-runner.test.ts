@@ -39,7 +39,7 @@ const ctx = {
   principals: ["user:ada"],
   workspaceId: "ws1",
   role: "member",
-  env: { embeddingDims: 2, searchLanguages: [] },
+  env: { embeddingDims: 2, searchLanguages: { current: () => [] } },
 } as unknown as Ctx;
 
 const runner = (scopeDocIds: string[] | null) => createAskRunner({ ctx, aiCfg: {} as never, scopeDocIds }).runner;

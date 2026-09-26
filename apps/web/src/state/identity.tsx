@@ -2,11 +2,13 @@
  * Principals as people read them: a display projection over the user directory,
  * resolved in batches and cached for the life of the tab. ACLs spell a person
  * `user:<alias>`; the audit ledger and usage records use the bare alias,
- * `agent:<id>`, or `panel:<alias>` for a person's co-author.
+ * `agent:<id>`, or `panel:<alias>` for a person's co-author. A comment carried
+ * in from an archive names its author `imported:<name>`, which no directory knows.
  */
 import { useEffect } from "react";
+import { SAMPLE_AGENT_ALIAS, SAMPLE_AGENT_NAME } from "@stuga/protocol/domain/workspaces";
 import { Users } from "../api";
-import { AI_COAUTHOR_LABEL, principalHuman } from "../lib/format";
+import { AI_COAUTHOR_LABEL, importedAuthor, principalHuman } from "../lib/format";
 import { createStore, useStore } from "../lib/store";
 
 /** alias → display name */
@@ -29,9 +31,12 @@ const failed = new Set<string>();
 /** Aliases the directory has no row for, such as a former member or an agent's name: not asked about again. */
 const unknown = new Set<string>();
 
-/** The person a principal or ledger alias names; null for agents, groups and the workspace. */
+/** The person a principal or ledger alias names; null for agents, groups, the workspace and imported authors. */
 function personAlias(principal: string): string | null {
-  if (principal.startsWith("user:")) return principal.slice("user:".length);
+  if (principal.startsWith("user:")) {
+    const alias = principal.slice("user:".length);
+    return importedAuthor(alias) === null ? alias : null;
+  }
   const human = principalHuman(principal);
   if (human !== null) return human;
   return principal.includes(":") ? null : principal;
@@ -88,9 +93,12 @@ export function nameLoading(principal: string): boolean {
   return alias !== null && isAccountAlias(alias) && !names.has(alias) && !failed.has(alias) && !unknown.has(alias);
 }
 
-/** A version author: a bare alias, or a `restore:<version>` marker. */
+/** A version or comment author: a bare alias, a `restore:<version>` marker, or an `imported:<name>` author. */
 export function authorLabel(author: string): string {
   if (author.startsWith("restore:")) return `restored from ${author.slice("restore:".length)}`;
+  if (author === SAMPLE_AGENT_ALIAS) return SAMPLE_AGENT_NAME;
+  const imported = importedAuthor(author);
+  if (imported !== null) return `${imported} · imported`;
   return principalLabel(`user:${author}`);
 }
 

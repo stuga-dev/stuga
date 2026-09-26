@@ -5,6 +5,7 @@
  */
 import { randomBytes } from "node:crypto";
 import type { TransactionSql } from "postgres";
+import { SEARCH_LANGUAGES, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import type { NodeAiSettingsRow, NodeSettingsRow, NodeStateRow, StoredChatEndpoint } from "./types.js";
 import { jsonb } from "./sql.js";
 import type { Sql } from "./client.js";
@@ -204,16 +205,28 @@ export async function saveNodeSettings(sql: Sql, input: NodeSettingsInput): Prom
 
 /**
  * Delete the settings row, the identity provider with it, and every link to a
- * provider, in one transaction. Returns the provider that was set, for the audit.
+ * provider, in one transaction. The search languages stay: the indexes were
+ * built for them. Returns the provider that was set, for the audit.
  */
 export async function resetNodeSettings(
   sql: Sql,
 ): Promise<{ identityProvider: StoredProviderColumns | null; unlinkedAccounts: number }> {
   return (await sql.begin(async (tx) => {
     await lockSettings(tx);
-    const [before] = await tx<Array<{ idp_issuer: string | null; idp_client_id: string | null; idp_label: string | null; idp_scopes: string | null }>>`
+    const [before] = await tx<
+      Array<{
+        idp_issuer: string | null;
+        idp_client_id: string | null;
+        idp_label: string | null;
+        idp_scopes: string | null;
+        search_languages: string[] | null;
+      }>
+    >`
       DELETE FROM node_settings WHERE id = TRUE
-      RETURNING idp_issuer, idp_client_id, idp_label, idp_scopes`;
+      RETURNING idp_issuer, idp_client_id, idp_label, idp_scopes, search_languages`;
+    if (before?.search_languages) {
+      await tx`INSERT INTO node_settings (id, search_languages) VALUES (TRUE, ${before.search_languages}::text[])`;
+    }
     const identityProvider =
       before?.idp_issuer && before.idp_client_id
         ? { issuer: before.idp_issuer, clientId: before.idp_client_id, label: before.idp_label, scopes: before.idp_scopes }
@@ -221,6 +234,33 @@ export async function resetNodeSettings(
     // With no provider left, no subject can mean anything, whether or not one was set a moment ago.
     return { identityProvider, unlinkedAccounts: await forgetProviderLinks(tx) };
   })) as { identityProvider: StoredProviderColumns | null; unlinkedAccounts: number };
+}
+
+/**
+ * The languages keyword search was set up for, or null when nobody has chosen:
+ * setup has not run, and no boot took languages from SEARCH_LANGUAGES or from
+ * existing search indexes. A language this build does not know is left out.
+ */
+export async function getSearchLanguages(sql: Sql): Promise<SearchLanguage[] | null> {
+  const [row] = await sql<{ search_languages: string[] | null }[]>`
+    SELECT search_languages FROM node_settings WHERE id = TRUE`;
+  const stored = row?.search_languages;
+  return stored ? SEARCH_LANGUAGES.filter((l) => stored.includes(l)) : null;
+}
+
+/** Save the search languages alone; the rest of the row is left as it is. `[]` is a choice: none. */
+export async function saveSearchLanguages(
+  sql: Sql,
+  languages: readonly SearchLanguage[],
+  updatedBy: string | null,
+): Promise<void> {
+  await sql`
+    INSERT INTO node_settings (id, search_languages, updated_by)
+    VALUES (TRUE, ${[...languages]}::text[], ${updatedBy})
+    ON CONFLICT (id) DO UPDATE SET
+      search_languages = EXCLUDED.search_languages,
+      updated_by       = EXCLUDED.updated_by,
+      updated_at       = now()`;
 }
 
 /** Null on a database no node has finished booting against. */

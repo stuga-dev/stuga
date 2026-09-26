@@ -108,10 +108,15 @@
 .doc-table__page-mark-name { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-table__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-table__title .astryx-link:hover { text-decoration: underline; }
+/* A document's Link and its Text shrink to the cell, so the title inside them truncates. */
+.doc-table__title .astryx-link { max-width: 100%; }
+.doc-table__title .astryx-text { min-width: 0; }
 .doc-table__muted {
   color: var(--color-text-secondary);
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Titles and names read in their own text's direction, and a cut one loses its end, not its start. */
+.doc-table__title, .doc-table__page-mark-name, .doc-table__muted { unicode-bidi: plaintext; text-align: start; }
 .doc-table__chev { color: var(--color-text-secondary); flex: 0 0 auto; }
 /* Never truncated: the title is what ellipses. */
 .doc-state-marks { display: inline-flex; align-items: center; gap: 0.25rem; flex: 0 0 auto; }
@@ -174,7 +179,8 @@
 .doc-list-head__title { display: inline-flex; align-items: center; gap: 0.6rem; min-width: 0; }
 /* The echoed query is user text of any length, so it truncates rather than pushing the way back off the row. */
 .doc-list-head__query { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.snippet { color: var(--color-text-secondary); font-size: 0.85rem; }
+/* Document text, so it reads in its own direction. */
+.snippet { display: block; unicode-bidi: plaintext; text-align: start; color: var(--color-text-secondary); font-size: 0.85rem; }
 .snippet mark { background: var(--color-background-yellow); color: inherit; }
 
 .folder-picker-tree { max-height: 320px; overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius-element); padding: 0.4rem; }

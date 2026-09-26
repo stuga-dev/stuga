@@ -17,7 +17,7 @@ vi.mock("../jobs/snapshot-sweep.js", async (importOriginal) => ({
 
 const { createDoc, deleteDoc, getDoc, getFolder, getWorkspace } = await import("@stuga/db");
 const { queueSnapshotSweep } = await import("../jobs/snapshot-sweep.js");
-const { createDocument } = await import("./create.js");
+const { createDocument, seedBody } = await import("./create.js");
 import type { Ctx } from "../auth/context.js";
 
 const mockCreateDoc = vi.mocked(createDoc);
@@ -206,6 +206,8 @@ describe("createDocument", () => {
     expect(seeded.ok).toBe(true);
     expect(inserted().title).toBe("Minutes");
     expect(actorCalls[0]!.url).toContain("/apply-edits");
+    // Saved by the backstop, as any other write.
+    expect(actorCalls[0]!.body).toEqual({ str_edits: [{ old_string: "", new_string: "# Minutes\n\nbody" }], agent: "bob" });
 
     vi.clearAllMocks();
     actorAnswer = { status: 200, body: { applied: false } };
@@ -214,6 +216,12 @@ describe("createDocument", () => {
     expect(mockQueueSweep).toHaveBeenCalledWith({}, docId);
     expect(mockDeleteDoc).toHaveBeenCalledTimes(1);
     expect(actorCalls.some((c) => c.url === `http://actor/destroy?docId=${docId}`)).toBe(true);
+  });
+
+  it("asks the actor to save a seeded body before answering only when told to", async () => {
+    expect(await seedBody(ctxOf(), "d1", "# Plan", { flush: true })).toBe(true);
+    expect(await seedBody(ctxOf(), "d1", "# Plan")).toBe(true);
+    expect(actorCalls.map((c) => c.body.flush)).toEqual([true, undefined]);
   });
 
   it("announces the document once it is complete", async () => {

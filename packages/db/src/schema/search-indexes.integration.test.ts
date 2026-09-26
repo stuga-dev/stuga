@@ -106,6 +106,14 @@ describe.skipIf(!URL)("the BM25 keyword leg", () => {
     expect(present.map((r) => r.indexname)).toEqual(["doc_chunks_bm25_v1", "docs_bm25_v1"]);
   });
 
+  it("indexes a write as it is made, so no query tokenizes rows again", async () => {
+    await seed("fresh", "Ocean planet", "The ocean covers most of the planet surface.");
+    const segments = await sql<{ mutable: boolean }[]>`
+      SELECT mutable FROM paradedb.index_info('docs_bm25_v1')`;
+    expect(segments.length).toBeGreaterThan(0);
+    expect(segments.every((s) => !s.mutable)).toBe(true);
+  });
+
   it("ranks a doc that carries the terms above one that merely mentions them", async () => {
     await seed("strong", "Ocean planet", "The ocean covers most of the planet surface.");
     await seed("weak", "Notes", "A single ocean mention, and nothing about a planet at all.");
@@ -330,7 +338,7 @@ describe.skipIf(!URL)("the BM25 keyword leg", () => {
   });
 });
 
-describe.skipIf(!URL)("the BM25 keyword leg with SEARCH_LANGUAGES=[ko, ar]", () => {
+describe.skipIf(!URL)("the BM25 keyword leg with search languages ko and ar", () => {
   const WS2 = "ws-pgsearch-langs";
   const ALICE2 = ["user:alice", `org:${WS2}`];
 
@@ -355,7 +363,7 @@ describe.skipIf(!URL)("the BM25 keyword leg with SEARCH_LANGUAGES=[ko, ar]", () 
       principals: ALICE2,
       query,
       queryEmbedding: null,
-      searchLanguages: ["ko", "ar"],
+      searchLanguages: () => ["ko", "ar"],
     });
 
   beforeAll(async () => {
@@ -434,7 +442,7 @@ describe.skipIf(!URL)("the BM25 keyword leg with SEARCH_LANGUAGES=[ko, ar]", () 
         principals: ALICE2,
         query,
         queryEmbedding: null,
-        searchLanguages: ["ko", "ar"],
+        searchLanguages: () => ["ko", "ar"],
       });
 
     it("segments a Korean question into words, particle and all", async () => {
@@ -488,6 +496,20 @@ describe.skipIf(!URL)("the boot repair's index sweep", () => {
       SELECT obj_description(c.oid, 'pg_class') AS built_by
       FROM pg_class c WHERE c.relname = ANY(${BM25})`;
     expect(marks.map((m) => m.built_by)).toEqual([`pg_search ${ext?.default_version}`, `pg_search ${ext?.default_version}`]);
+    expect((await runBootRepairs(sql)).rebuiltSearchIndexes).toEqual([]);
+  });
+
+  // pg_search's default, a mutable segment every query tokenizes again, stands in for an index
+  // built before the indexes were built to index each write as it is made.
+  it("rebuilds an index that leaves writes unindexed until a query, to index each write", async () => {
+    await runBootRepairs(sql);
+    await sql`ALTER INDEX docs_bm25_v1 RESET (mutable_segment_rows)`;
+
+    const out = await runBootRepairs(sql);
+    expect(out.searchIndexChanges).toEqual([]);
+    expect(out.rebuiltSearchIndexes).toEqual(["docs_bm25_v1"]);
+    const [docs] = await sql<{ reloptions: string[] }[]>`SELECT reloptions FROM pg_class WHERE relname = 'docs_bm25_v1'`;
+    expect(docs?.reloptions).toContain("mutable_segment_rows=0");
     expect((await runBootRepairs(sql)).rebuiltSearchIndexes).toEqual([]);
   });
 });

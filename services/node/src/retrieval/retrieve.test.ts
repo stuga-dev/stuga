@@ -51,7 +51,7 @@ function args(overrides: Partial<RetrieveArgs> = {}): RetrieveArgs {
     workspaceId: "ws1",
     query: "q",
     scopeDocIds: null,
-    searchLanguages: [],
+    searchLanguages: () => [],
     embeddingDims: 4,
     topN: 4,
     ...overrides,

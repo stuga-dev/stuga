@@ -14,6 +14,7 @@ import type * as Y from "yjs";
 import { Docs, type Comment, type CommentAnchor } from "../api";
 import { useSharedEditor } from "../editor/editor-context";
 import { anchorFromSelection, resolveAnchorRange } from "./anchor";
+import { commentRange } from "./comment-highlight";
 
 /**
  * How long a resolved thread's anchor stays lit after it is clicked in the
@@ -197,7 +198,9 @@ export function CommentsProvider({
       onReveal?.(num);
       if (!editor || !ydoc) return;
       const c = comments.find((x) => x.num === num);
-      if (!c?.anchor_start || !c.anchor_end) return;
+      if (!c) return;
+      const range = commentRange(ydoc, editor.state, c);
+      if (!range) return;
       // A resolved thread has no standing highlight, so scrolling to it alone
       // drops the reader into the middle of a paragraph with no indication of
       // which words were discussed. Paint the range for FLASH_MS instead —
@@ -236,8 +239,6 @@ export function CommentsProvider({
         flashFrame.current = null;
         setFlashNum(null);
       }
-      const range = resolveAnchorRange(ydoc, editor.state, c.anchor_start, c.anchor_end);
-      if (!range) return;
       editor.chain().focus().setTextSelection(range.from).run();
       requestAnimationFrame(() => {
         const dom = editor.view.domAtPos(range.from);

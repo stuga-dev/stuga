@@ -76,7 +76,7 @@ export function CitationPopover({
   return (
     <div ref={ref} className="citation-popover" style={{ top, left }} role="dialog" aria-label="Citation">
       {excerpt ? (
-        <blockquote className="citation-popover__excerpt">{excerpt}</blockquote>
+        <blockquote className="citation-popover__excerpt" dir="auto">{excerpt}</blockquote>
       ) : (
         <p className="citation-popover__empty">No excerpt available.</p>
       )}

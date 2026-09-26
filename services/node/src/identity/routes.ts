@@ -35,6 +35,7 @@ import {
   usernameCandidates,
 } from "@stuga/protocol/domain/username";
 import { hostLabel } from "@stuga/protocol/domain/node-name";
+import { SEARCH_LANGUAGES, parseSearchLanguages } from "@stuga/protocol/domain/search-languages";
 import type { IdentityProviderSettings } from "../config/settings/node.js";
 import { clientAddress } from "../platform/http-server.js";
 import type { RateLimiter } from "../platform/rate-limit.js";
@@ -236,6 +237,8 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
       node_label: deps.nodeLabel?.() ?? hostLabel(deps.publicOrigin),
       origin: deps.publicOrigin,
       branding: { accent_color: b.accentColor },
+      // What setup starts from: the search languages a boot took from SEARCH_LANGUAGES or from existing search indexes; null when it took none.
+      search_languages: unclaimed ? await db.searchLanguages() : null,
     });
   }
 
@@ -253,6 +256,11 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     const updateCheck = body.update_check as boolean | undefined;
     // And the time zone the node's schedule runs in, which is the browser's: an unknown name is dropped, not refused.
     const timeZone = knownTimeZone(body.time_zone);
+    // And the languages search gets a tokenizer for: only the choices this build offers.
+    const searchLanguages = body.search_languages === undefined ? undefined : parseSearchLanguages(body.search_languages);
+    if (searchLanguages === null) {
+      return fail(400, "bad_request", `search_languages must be a list of: ${SEARCH_LANGUAGES.join(", ")}`);
+    }
     const refused = await usernameRefusal(username);
     if (refused) return refused;
     const weak = passwordPolicy(password);
@@ -290,6 +298,7 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
       mayClaim,
       updateCheck,
       ...(timeZone ? { timeZone } : {}),
+      ...(searchLanguages ? { searchLanguages } : {}),
     });
     if (!made.ok) {
       if (made.reason === "username_taken") return usernameTaken(username);

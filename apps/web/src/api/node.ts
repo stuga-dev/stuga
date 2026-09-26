@@ -1,3 +1,4 @@
+import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { api } from "../lib/http/client";
 import type { AuditCursor, AuditEvent } from "./audit";
 import type { MemberCandidate } from "./workspaces";
@@ -207,6 +208,11 @@ export interface NodeOperationalSettings {
   backups: { auto: boolean; hour: number };
   /** The node's time zone for scheduled work, an IANA name. */
   time_zone: string;
+  /**
+   * The languages search gets a tokenizer for. While `rebuilding`, and after a rebuild that gave up
+   * (`error` says why), search uses the languages the old and the new choice share.
+   */
+  search: { languages: SearchLanguage[]; choices: SearchLanguage[]; rebuilding: boolean; error: string | null };
   identity_provider: IdentityProviderSettings;
   /** A sentence saying how an environment change takes effect. */
   restart_hint: string;
@@ -221,8 +227,6 @@ export interface NodeOperationalSettings {
     data_dir: string;
     database: string;
     embedding_dims: number;
-    /** Empty means the generic tokenizer only. */
-    search_languages: string[];
   };
   updated_by: string | null;
   updated_at: string | null;
@@ -245,6 +249,8 @@ export interface NodeOperationalSettingsInput {
   backups?: { auto?: boolean; hour?: number };
   /** An IANA name; null returns to UTC. */
   time_zone?: string | null;
+  /** A change rebuilds the search indexes. */
+  search?: { languages: SearchLanguage[] };
   /** Null removes it. `client_secret` is a credential; an empty `label` or `scopes` restores the default. */
   identity_provider?: { issuer: string; client_id: string; client_secret?: string; label?: string; scopes?: string } | null;
 }
@@ -258,6 +264,8 @@ export interface NodeBackups {
   next_at: string | null;
   /** A backup is under way, or waiting to start. */
   running: boolean;
+  /** Why a backup waits to start, such as a workspace being imported; null when none does. */
+  waiting: string | null;
   /** The last daily or requested backup that was tried, and why it failed. */
   attempted_at: string | null;
   error: string | null;

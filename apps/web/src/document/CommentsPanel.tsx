@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Docs, type Comment } from "../api";
 import { useComments } from "../comments/comments-context";
+import { importedAuthor } from "../lib/format";
 import { authorLabel, nameLoading, useUserNames } from "../state/identity";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Button } from "@astryxdesign/core/Button";
@@ -154,9 +155,24 @@ function deleteCopy(target: { isRoot: boolean; replies: number } | null): { titl
   return { title: "Delete this comment?", description: "The comment is removed for everyone. This can’t be undone." };
 }
 
-/** A blank while the name loads, rather than the raw alias, so the heading keeps its height. */
-function authorText(author: string): string {
-  return nameLoading(`user:${author}`) ? "\u00a0" : authorLabel(author);
+/**
+ * A blank while the name loads, rather than the raw alias, so the heading keeps its height. An
+ * imported author's name is isolated, so no direction mark in it can reorder the marker after it.
+ */
+function AuthorName({ author }: { author: string }) {
+  if (nameLoading(`user:${author}`)) return "\u00a0";
+  const imported = importedAuthor(author);
+  if (imported === null) return authorLabel(author);
+  return (
+    <>
+      <bdi>{imported}</bdi> · imported
+    </>
+  );
+}
+
+/** The alias behind the name, which tells two of one name apart; none for an imported author, whose name is all there is. */
+function authorTitle(author: string): string | undefined {
+  return importedAuthor(author) === null ? author : undefined;
 }
 
 /** A root comment, its replies, and a reply box. */
@@ -194,12 +210,14 @@ function CommentThread({
   return (
     <li ref={ref} className={`comment-item${active ? " active" : ""}${root.resolved ? " resolved" : ""}`}>
       {root.anchor_quote && (
-        <button className="comment-quote" title="Jump to highlighted text" onClick={onJump}>
+        <button className="comment-quote" dir="auto" title="Jump to highlighted text" onClick={onJump}>
           “{root.anchor_quote}”
         </button>
       )}
       <div className="comment-head">
-        <strong title={root.author}>{authorText(root.author)}</strong>
+        <strong title={authorTitle(root.author)}>
+          <AuthorName author={root.author} />
+        </strong>
         <span className="comment-actions">
           <Button label={root.resolved ? "Reopen" : "Resolve"} variant="ghost" size="sm" onClick={onResolve} />
           <Button label="Delete" variant="ghost" size="sm" onClick={() => onDelete(root.num)} tooltip="Delete comment" />
@@ -212,7 +230,9 @@ function CommentThread({
           {replies.map((r) => (
             <li key={r.num} className="comment-reply">
               <div className="comment-head">
-                <strong title={r.author}>{authorText(r.author)}</strong>
+                <strong title={authorTitle(r.author)}>
+                  <AuthorName author={r.author} />
+                </strong>
                 <span className="comment-actions">
                   <Button label="Delete" variant="ghost" size="sm" onClick={() => onDelete(r.num)} tooltip="Delete reply" />
                 </span>

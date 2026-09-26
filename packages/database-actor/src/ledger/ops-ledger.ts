@@ -68,6 +68,7 @@ export type InverseJson =
       /** The page this link replaced, which the revert points the row back at. */
       prev_doc_id: string | null;
     }
+  | { kind: "rows.link_pages"; table_id: string; links: Array<{ row_id: string; doc_id: string }> }
   | { kind: "columns.add"; table_id: string; column_id: string }
   | { kind: "columns.rename"; table_id: string; column_id: string; prev_display: string }
   | { kind: "columns.set_description"; table_id: string; column_id: string; prev_description: string | null }
@@ -335,6 +336,17 @@ export function applyInverse(sql: SqlHandle, inv: InverseJson, now: number): Rev
         }
       }
       return { restored: 1, missing: 0 };
+    }
+
+    case "rows.link_pages": {
+      // As one link's revert: a row pointing at another page by now keeps it.
+      let restored = 0;
+      for (const link of inv.links) {
+        if (docIdOfRow(sql, link.row_id) !== link.doc_id) continue;
+        unlinkRowDoc(sql, link.row_id);
+        restored++;
+      }
+      return { restored, missing: inv.links.length - restored };
     }
 
     case "columns.add": {

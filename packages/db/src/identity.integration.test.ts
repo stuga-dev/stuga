@@ -35,7 +35,7 @@ import {
   unlinkIdentity,
   updateLocalPassword,
 } from "./identity.js";
-import { getNodeSettings } from "./node.js";
+import { getNodeSettings, getSearchLanguages } from "./node.js";
 import { createOidcFlow } from "./oidc.js";
 import { provisionWorkspace, addWorkspaceMember, insertWorkspaceInvite } from "./workspaces.js";
 import { seedUser } from "./testing/fixtures.js";
@@ -262,6 +262,23 @@ describe.skipIf(!URL)("local accounts", () => {
     const later = await createLocalAccount(sql, { alias: "u2", username: "bob", passwordHash: "h", inviteHash: "many", updateCheck: false });
     expect(later).toMatchObject({ ok: true, admin: false });
     expect(await getNodeSettings(sql)).toMatchObject({ update_check: true });
+  });
+
+  it("stores setup's search languages with the first account, and takes them from nobody after", async () => {
+    await sql`DELETE FROM node_settings`;
+    await createLocalAccount(sql, { alias: "u1", username: "ada", passwordHash: "h", mayClaim: true, searchLanguages: ["ko"] });
+    expect(await getSearchLanguages(sql)).toEqual(["ko"]);
+
+    await provisionWorkspace(sql, { workspaceId: "ws", name: "W", owner: "u1" });
+    await insertWorkspaceInvite(sql, { tokenHash: "many", workspaceId: "ws", role: "member", createdBy: "u1", expiresAt: null, maxUses: 100 });
+    await createLocalAccount(sql, { alias: "u2", username: "bob", passwordHash: "h", inviteHash: "many", searchLanguages: [] });
+    expect(await getSearchLanguages(sql)).toEqual(["ko"]);
+  });
+
+  it("stores setup's choice of no search languages as a choice", async () => {
+    await sql`DELETE FROM node_settings`;
+    await createLocalAccount(sql, { alias: "u1", username: "ada", passwordHash: "h", mayClaim: true, searchLanguages: [] });
+    expect(await getSearchLanguages(sql)).toEqual([]);
   });
 
   it("writes no settings row for a first account that leaves the look for newer versions on", async () => {

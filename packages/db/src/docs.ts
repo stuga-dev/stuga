@@ -156,6 +156,27 @@ export async function listEditableDocs(
 }
 
 /**
+ * One page of every live document the principals may read, databases and row pages included, in
+ * doc_id order after `after` (null for the first page): what a workspace export walks.
+ */
+export async function listExportDocs(
+  sql: Sql,
+  principals: string[],
+  workspaceId: string,
+  after: string | null,
+  limit = 500,
+): Promise<DocRow[]> {
+  return sql<DocRow[]>`
+    SELECT ${docCols(sql)} FROM docs
+    WHERE workspace_id = ${workspaceId}
+      AND acl_principals && ${principals}
+      AND trashed = FALSE
+      ${after === null ? sql`` : sql`AND doc_id > ${after}`}
+    ORDER BY doc_id
+    LIMIT ${Math.min(Math.max(limit, 1), 1000)}`;
+}
+
+/**
  * Prose documents the principals may read and search, for the ask agent. `q`
  * is a glob title filter; `parentIds` confines to folders and `docIds` to a
  * collection's documents, and an empty list means nothing rather than everything.

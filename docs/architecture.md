@@ -67,23 +67,28 @@ built.
 | `documents/` | Document creation and the access checks routes share. |
 | `databases/` | Database routes, agent proposals, staged imports, row pages. |
 | `agents/` | Agent keys, the document propose path, agent setup, the installers, the `.mcpb` extension. |
+| `archive/` | The [workspace archive](workspace-archive.md): its format, export and import, the samples list and Sample agent, and `stuga-node archive check`. |
+| `mentions/` | Who an @mention may notify. |
 | `governance/` | The event feed, the review inbox, webhooks. |
 | `retrieval/` | Collection scope, the retrieval pipeline, the Ask tool runner. |
+| `search/` | The search languages, and the rebuild of the keyword indexes, while the node serves, when they change. |
 | `media/`, `audit/` | Media storage and serving; writing and reading the audit ledger. |
 | `mcp/` | `/mcp`, and the OAuth authorization server whose grants and tokens it accepts. |
 | `internal/` | The routes actors call back into. |
 | `jobs/` | Job handlers and the maintenance tick. |
 | `ops/` | Backup, verify, restore and list, and the backups a running node takes of itself. |
 | `net/` | Address classification and outbound URL vetting. |
+| `lib/` | The ZIP reader and writer. |
 | `updates/` | The daily look for a newer version: the release list, the comparison, and the notice to administrators; and the request to the packaging's upgrade helper behind **Update now**. |
 | `writer-lock.ts` | The Postgres advisory locks that allow one node per database and keep a node and a backup or restore apart. |
 
 Boot runs in order: parse the environment; check the Postgres major, pg_search and the database
 collation; take the writer lock; listen, answering that the node is starting; back up the database
 when another version served it last; apply migrations and boot repairs; load the settings and the
-signing key; create the actor namespaces, blob stores and job queue; build the routers; serve; start
-the job worker and the maintenance tick, which runs every two minutes. On SIGTERM the node stops the
-same pieces in reverse and gives up after 25 seconds.
+signing key; create the actor namespaces, blob stores and job queue; delete any workspace an
+unfinished import left; build the routers; serve; start the job worker and the maintenance tick,
+which runs every two minutes. On SIGTERM the node stops the same pieces in reverse and gives up
+after 25 seconds.
 
 ## Requests
 
@@ -163,10 +168,12 @@ in `packages/runtime/src/interfaces.ts`, and the host guarantees:
   alarm. The host stamps the file with the version of what its namespace keeps, and refuses one that
   a newer build stamped.
 - **Durable alarms.** One alarm slot per actor. A pending alarm survives eviction and restart; the
-  host re-arms every alarm it finds on boot. A failed alarm handler is retried with backoff.
+  host re-arms every alarm it finds on boot, and an actor reopened for its alarm alone closes again
+  once the alarm has run. A failed alarm handler is retried with backoff.
 - **Sockets with typed session state.** An actor accepts the server half of a socket with
   `acceptWebSocket(ws, meta)`. `meta` is typed per actor and lives as long as the socket, which is
-  enough because the host evicts only actors with no open sockets (after ten idle minutes) and a
+  enough because the host evicts only actors with no open sockets (after ten idle minutes, or once a
+  caller done with one, such as an export or an import, releases it and no alarm is pending) and a
   restart or a backup's pause closes every socket with 1012. Clients reconnect and re-sync; one that
   leaves while the actor waits to close has its last frames and its close handled first.
 - **Heartbeat in the host.** The client sends the text frame `ping` on a timer, and the host answers
@@ -179,7 +186,8 @@ acknowledgement, sync done, write rejected, document reset, document epoch, pers
 the co-author's request, response, edits and cancel, and run-ledger updates. Unknown opcodes are
 ignored at both ends, so no version handshake is needed. The actor journals updates to its own
 storage and flushes a snapshot to `env.snapshots` after 100 updates, 30 seconds after an unflushed
-edit, and when a socket closes. It records versions with their authors and hosts the co-author turn.
+edit, when a socket closes, and before it answers a workspace import's write of a body. It records
+versions with their authors and hosts the co-author turn.
 It refuses raw Yjs writes from an agent's socket (`approval_required`): agent content arrives only as
 proposals.
 
@@ -210,7 +218,8 @@ one transaction under an advisory lock, and records each with a checksum in `sch
 applied migration is frozen, so a schema change is a new numbered file. The node refuses a database
 written by a newer build. Two things are re-asserted on every boot instead
 (`schema/boot-repairs.ts`): extensions are updated to the installed binaries, and the BM25 indexes are
-reconciled to `SEARCH_LANGUAGES` and rebuilt when a different pg_search version built them. The node reads the migration SQL from its source tree at runtime.
+reconciled to the node's search languages and rebuilt when a different pg_search version built them,
+or a rebuild the node stopped in the middle left them invalid. The node reads the migration SQL from its source tree at runtime.
 
 **Tenancy.** `workspace_id` is the hard tenant filter on every tenant-owned row, and foreign keys to
 `workspaces` cascade on delete.
@@ -231,8 +240,9 @@ WHERE d.workspace_id = $1
 pg_search, under an ICU tokenizer: Unicode word breaks for scripts that space their words, and
 dictionary breaks for those that do not. `马里亚纳海沟` indexes as 马里·亚·纳·海沟, not six
 characters, and Japanese segments the same way. Korean and Arabic are split only at spaces, which
-leaves a particle attached to its word; `SEARCH_LANGUAGES` adds a Korean dictionary tokenizer or
-Arabic stemming as an extra field. English matches by stem with stopwords ignored, so `plan` finds
+leaves a particle attached to its word; the node's
+[search languages](configuration.md#search-languages) add a Korean dictionary tokenizer or Arabic
+stemming as an extra field. English matches by stem with stopwords ignored, so `plan` finds
 `planning`. The search box needs every non-stopword term of the query (a query of stopwords alone
 matches them as written) and tolerates a one-letter typo in a title. The semantic leg is pgvector
 HNSW over chunk embeddings, keeping chunks within the node's
@@ -241,6 +251,16 @@ the same statement, and the tenant, trash, hidden-from-search, ACL and key-scope
 each leg.
 Search is permission-correct and current by construction: it reads the live rows, so an ACL change
 applies to the very next query.
+
+pg_search reads only the newest valid BM25 index on a table, and a query naming a field that index
+lacks fails. So a change of search languages rebuilds online (`services/node/src/search/languages.ts`):
+queries name only the languages the old and the new set share; table by table, the new index is
+built with `CREATE INDEX CONCURRENTLY` and the old one dropped the same way; and only then do queries
+name the new set. A query that read the languages before the swap and fails on a missing field is run
+once more with the languages read again. A restore leaves the BM25 indexes out and the boot builds
+them, since a backup taken midway can hold two on one table, which pg_search refuses to create. A
+backup from before the setting keeps them: it never holds two, and their names are its only record
+of the languages, which the boot takes as the setting.
 
 Every snapshot flush queues an `index_doc` job. It extracts the text, splits it into sections, embeds
 the sections that changed, and replaces the document's chunks. How chunks are cut and how Ask

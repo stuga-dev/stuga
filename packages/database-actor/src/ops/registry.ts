@@ -10,7 +10,7 @@ import { setOpStatus } from "../ledger/runs.js";
 import { OpError, type Body } from "../request.js";
 import { newId, type SqlHandle } from "../schema-ops.js";
 import { columnsAdd, columnsDelete, columnsRename, columnsSetDescription, columnsSetType } from "./columns.js";
-import { rowsDelete, rowsInsert, rowsLinkPage, rowsUpdate } from "./rows.js";
+import { rowsDelete, rowsInsert, rowsLinkPage, rowsLinkPages, rowsUpdate } from "./rows.js";
 import type { SchemaView } from "./schema-view.js";
 import { tablesCreate, tablesDelete, tablesRename } from "./tables.js";
 import { viewsCreate, viewsDelete, viewsUpdate } from "./views.js";
@@ -67,6 +67,7 @@ const OPS = {
   "rows.update": rowsUpdate,
   "rows.delete": rowsDelete,
   "rows.link_page": rowsLinkPage,
+  "rows.link_pages": rowsLinkPages,
 } satisfies Record<OpPayload["kind"], unknown>;
 
 export function opDef(kind: OpPayload["kind"]): OpDef {

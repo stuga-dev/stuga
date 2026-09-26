@@ -3,7 +3,7 @@
  * the environment fixes at boot, `NodeServices` what the process wires up from
  * it, including the settings stores for everything editable at runtime.
  */
-import type { SearchLanguage, Sql } from "@stuga/db";
+import type { Sql } from "@stuga/db";
 import type { ActorNamespace, BlobStore, InternalApi, JobQueue } from "@stuga/runtime";
 import type { AuthConfig, TokenVerifier } from "@stuga/auth";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
@@ -11,6 +11,7 @@ import type { RateLimiter } from "./platform/rate-limit.js";
 import type { AiSettingsStore, ProviderBaseUrls } from "./config/settings/ai.js";
 import type { NodeSettingsStore } from "./config/settings/node.js";
 import type { NodeBackups } from "./ops/node-backups.js";
+import type { SearchLanguages } from "./search/languages.js";
 
 export interface NotifyConfig {
   /** slack | teams | discord | email | webhook | none */
@@ -32,8 +33,6 @@ export interface NodeConfig {
   auth: AuthConfig;
   /** Width of `doc_chunks.embedding`, read from the catalog at boot. */
   embeddingDims: number;
-  /** Extra BM25 tokenizers; changing them rebuilds the indexes at boot. */
-  searchLanguages: SearchLanguage[];
   /** The HMAC root for socket tickets, media tickets and upload signatures. */
   internalSecret: string;
   mediaCookieSameSite: "Lax" | "Strict" | "None";
@@ -54,6 +53,8 @@ export interface NodeConfig {
   stdioEntry: string | undefined;
   /** Base URL per AI provider when a settings row names none. */
   aiProviderBaseUrls: ProviderBaseUrls;
+  /** Where the sample workspaces are published, laid out as a GitHub release list (SAMPLES_URL). */
+  samplesUrl: string;
 }
 
 interface NodeServices {
@@ -61,6 +62,8 @@ interface NodeServices {
   aiSettings: AiSettingsStore;
   /** Every other setting the Settings page edits. */
   settings: NodeSettingsStore;
+  /** The languages keyword search answers for, and the rebuild of its indexes when they change. */
+  searchLanguages: SearchLanguages;
   /** Verifies a bearer session token against the node's own signing key. */
   verifier: TokenVerifier;
   /** One actor per prose document: the live CRDT session. */

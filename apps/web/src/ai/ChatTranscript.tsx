@@ -78,7 +78,7 @@ export function ChatTranscript({
       {turns.map((t, i) => (
         <div key={i} className={`ai-turn ai-turn-${t.role}`}>
           {t.quote && (
-            <div className="ai-turn-quote" title={t.quote}>
+            <div className="ai-turn-quote" dir="auto" title={t.quote}>
               {t.quote}
             </div>
           )}

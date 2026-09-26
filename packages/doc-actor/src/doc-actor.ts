@@ -127,7 +127,9 @@ export class DocActor implements Actor<SessionMeta> {
   /**
    * Apply surgical edits with no review step: the Markdown import seed. The
    * edits apply to the live markdown (a stale find is skipped) and merge against
-   * it, so concurrent edits elsewhere survive.
+   * it, so concurrent edits elsewhere survive. With `flush`, they are saved
+   * before the answer rather than by the backstop, so the version and its author
+   * are recorded and a caller writing many documents can release each at once.
    */
   private async applyEdits(req: Request): Promise<Response> {
     await this.store.ensureLoaded();
@@ -135,6 +137,7 @@ export class DocActor implements Actor<SessionMeta> {
       str_edits?: Array<{ old_string: string; new_string: string }>;
       citations?: AiCitation[];
       agent?: string;
+      flush?: boolean;
     } | null;
     if (!body || !Array.isArray(body.str_edits) || body.str_edits.length === 0) {
       return Response.json({ error: "no edits" }, { status: 400 });
@@ -143,6 +146,8 @@ export class DocActor implements Actor<SessionMeta> {
     const next = applyCitedStrEdits(current, body.str_edits, body.citations ?? []);
     if (next === current) return Response.json({ applied: false, seq: this.store.seq });
     await this.store.commitMarkdown(next, current, { agent: body.agent || "agent" }, "headless-large");
+    // A failed save stays pending, and the backstop retries it as for any write.
+    if (body.flush === true) await this.store.flush("headless");
     return Response.json({ applied: true, seq: this.store.seq });
   }
 

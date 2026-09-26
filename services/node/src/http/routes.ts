@@ -86,8 +86,9 @@ import {
   recoverDocument,
   restoreVersion,
 } from "../api/versions.js";
-import { createWorkspace, deleteWorkspace, listWorkspaces, updateWorkspace } from "../api/workspaces.js";
+import { createWorkspace, deleteWorkspace, importWorkspace, listWorkspaceSamples, listWorkspaces, updateWorkspace } from "../api/workspaces.js";
 import { mintSocketTicket } from "../api/ws.js";
+import { exportWorkspaceRoute } from "../archive/export-route.js";
 import { getAgentBundle } from "../agents/bundle/route.js";
 import { getAgentInstaller } from "../agents/install.js";
 import { getAgentSetup } from "../agents/setup.js";
@@ -158,6 +159,7 @@ function api(method: Method | readonly Method[] | "*", path: Path, handler: (cal
 const methodNotAllowed = async (): Promise<Response> => error(405, "method not allowed");
 
 const WORKSPACE_ADMIN = { humanOnly: "agents cannot manage workspaces" };
+const WORKSPACE_EXPORT = { ...WORKSPACE_ADMIN, workspaceAdmin: "export the workspace" };
 const KEYS = { humanOnly: "agents cannot manage api keys", guestForbidden: "manage api keys" };
 const WEBHOOKS = { humanOnly: "agents cannot manage webhooks", workspaceAdmin: "manage webhooks" };
 const NODE = { nodeAdmin: true };
@@ -226,6 +228,9 @@ export const APP_ROUTES: readonly AppRoute[] = [
   // Before any membership exists: workspace discovery and creation, and redemptions.
   { method: "GET", path: "/api/workspaces", ...ACCOUNT, handler: listWorkspaces },
   { method: "POST", path: "/api/workspaces", ...ACCOUNT, handler: createWorkspace },
+  // The archive is the body, bounded by the node's upload limit like any other.
+  { method: "POST", path: "/api/workspaces/import", ...ACCOUNT, handler: importWorkspace },
+  { method: "GET", path: "/api/workspace-samples", ...ACCOUNT, handler: listWorkspaceSamples },
   { method: "POST", path: "/api/invites/redeem", ...ACCOUNT, handler: redeemInvite },
   { method: "POST", path: "/api/share-links/redeem", ...ACCOUNT, handler: redeemShareLink },
   // The switcher's Other nodes, which a person without a workspace has too.
@@ -324,6 +329,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("POST", /^\/api\/workspaces\/([^/]+)\/invites$/, createInvite, WORKSPACE_ADMIN),
   api("GET", /^\/api\/workspaces\/([^/]+)\/invites$/, listInvites, WORKSPACE_ADMIN),
   api("DELETE", /^\/api\/workspaces\/([^/]+)\/invites\/([^/]+)$/, revokeInvite, WORKSPACE_ADMIN),
+  api("GET", /^\/api\/workspaces\/([^/]+)\/export$/, exportWorkspaceRoute, WORKSPACE_EXPORT),
   api("*", /^\/api\/workspaces(\/.*)?$/, methodNotAllowed, WORKSPACE_ADMIN),
 
   api("GET", "/api/usage", getUsage, { humanOnly: "agents cannot view the usage dashboard" }),

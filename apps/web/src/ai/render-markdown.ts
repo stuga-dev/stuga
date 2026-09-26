@@ -6,11 +6,13 @@
  */
 import MarkdownIt from "markdown-it";
 import { renderImageCaptions } from "../editor/image-caption-markdown";
+import { renderTextDirection } from "../editor/text-direction-markdown";
 import { denseFootnoteMap } from "@stuga/crdt-ops";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 renderImageCaptions(md);
+renderTextDirection(md);
 
 /** Env threaded through md.render to the text rule. */
 interface CiteEnv {

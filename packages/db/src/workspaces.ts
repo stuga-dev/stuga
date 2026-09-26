@@ -74,7 +74,8 @@ export interface HumanAuth {
 /**
  * A human caller's directory row, workspace membership and groups in one
  * statement, read live on every request. `requestedWorkspaceId` applies only
- * where the caller is a member; otherwise the earliest-joined workspace is used.
+ * where the caller is a member; otherwise the earliest-joined workspace is used,
+ * never one still being imported.
  */
 export async function resolveHumanAuth(
   sql: Sql,
@@ -99,9 +100,10 @@ export async function resolveHumanAuth(
       SELECT workspace_id, role FROM workspace_members
       WHERE alias = ${alias} AND workspace_id = ${requestedWorkspaceId}
     ), earliest AS (
-      SELECT workspace_id, role FROM workspace_members
-      WHERE alias = ${alias}
-      ORDER BY joined_at, workspace_id
+      SELECT m.workspace_id, m.role FROM workspace_members m
+      JOIN workspaces w ON w.workspace_id = m.workspace_id
+      WHERE m.alias = ${alias} AND w.import_started_at IS NULL
+      ORDER BY m.joined_at, m.workspace_id
       LIMIT 1
     ), resolved AS (
       SELECT workspace_id, role FROM pinned
@@ -247,11 +249,12 @@ export async function updateWorkspaceSettings(
   return rows[0] ?? null;
 }
 
+/** The workspaces a person belongs to, in the order they joined, but none still being imported. */
 export async function listWorkspacesForUser(sql: Sql, alias: string): Promise<Array<WorkspaceRow & { role: WorkspaceRole }>> {
   return sql<Array<WorkspaceRow & { role: WorkspaceRole }>>`
     SELECT w.*, m.role FROM workspaces w
     JOIN workspace_members m ON m.workspace_id = w.workspace_id
-    WHERE m.alias = ${alias}
+    WHERE m.alias = ${alias} AND w.import_started_at IS NULL
     ORDER BY m.joined_at`;
 }
 
@@ -262,15 +265,17 @@ export async function getWorkspace(sql: Sql, workspaceId: string): Promise<Works
 
 /**
  * Create a workspace owned by `owner`, atomically. An omitted
- * `defaultDocAccess` leaves the column to its schema DEFAULT.
+ * `defaultDocAccess` leaves the column to its schema DEFAULT. `importing`
+ * marks it as an archive's until finishWorkspaceImport.
  */
 export async function provisionWorkspace(
   sql: Sql,
-  input: { workspaceId: string; name: string; owner: string; defaultDocAccess?: DocAccessMode },
+  input: { workspaceId: string; name: string; owner: string; defaultDocAccess?: DocAccessMode; importing?: boolean },
 ): Promise<WorkspaceRow> {
   return sql.begin(async (tx) => {
     const insert: Record<string, unknown> = { workspace_id: input.workspaceId, name: input.name };
     if (input.defaultDocAccess !== undefined) insert.default_doc_access = input.defaultDocAccess;
+    if (input.importing) insert.import_started_at = tx`now()`;
     const rows = await tx<WorkspaceRow[]>`
       INSERT INTO workspaces ${tx(insert)}
       RETURNING *`;
@@ -278,6 +283,23 @@ export async function provisionWorkspace(
       INSERT INTO workspace_members ${tx({ workspace_id: input.workspaceId, alias: input.owner, role: "owner" })}`;
     return rows[0]!;
   });
+}
+
+/** An imported workspace is whole: it is listed from now on. False when there is no such import under way. */
+export async function finishWorkspaceImport(sql: Sql, workspaceId: string): Promise<boolean> {
+  const rows = await sql`
+    UPDATE workspaces SET import_started_at = NULL
+    WHERE workspace_id = ${workspaceId} AND import_started_at IS NOT NULL
+    RETURNING workspace_id`;
+  return rows.length > 0;
+}
+
+/** The workspaces an import was still writing when the node stopped, oldest first. */
+export async function listUnfinishedImports(sql: Sql): Promise<Array<Pick<WorkspaceRow, "workspace_id" | "name" | "import_started_at">>> {
+  return sql<Array<Pick<WorkspaceRow, "workspace_id" | "name" | "import_started_at">>>`
+    SELECT workspace_id, name, import_started_at FROM workspaces
+    WHERE import_started_at IS NOT NULL
+    ORDER BY import_started_at, workspace_id`;
 }
 
 /**

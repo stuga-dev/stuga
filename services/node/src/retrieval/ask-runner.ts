@@ -89,7 +89,7 @@ export function createAskRunner(args: AskRunnerArgs): AskRunnerHandle {
         const { chunks, degraded } = await retrieveAndRerank({
           sql: ctx.sql,
           embeddingDims: ctx.env.embeddingDims,
-          searchLanguages: ctx.env.searchLanguages,
+          searchLanguages: () => ctx.env.searchLanguages.current(),
           aiCfg,
           alias: ctx.alias,
           principals: ctx.principals,

@@ -207,3 +207,75 @@ describe("the ledger half", () => {
     expect((await list(actor, { table_id: starter.table_id })).rows.find((r) => r._id === a)!._doc_id).toBe("doc_B");
   });
 });
+
+describe("linking many rows to their pages at once", () => {
+  const linkMany = (actor: ReturnType<typeof makeActor>["actor"], body: Record<string, unknown>) => doFetch(actor, "/rows/link-docs", { actor: HUMAN, ...body });
+
+  it("links every row in one mutation, recorded as one op, and repeats as a no-op", async () => {
+    const { actor } = makeActor();
+    const starter = await initStarter(actor);
+    const { row_ids: rows } = await doJson<{ row_ids: string[] }>(actor, "/rows/insert", {
+      table_id: starter.table_id,
+      rows: Array.from({ length: 150 }, (_, i) => ({ Name: `row ${i}` })),
+      actor: HUMAN,
+    });
+    const links = rows.map((row_id, i) => ({ row_id, doc_id: `doc_${i}` }));
+    // More pages than one alias's mutations in a minute, so one link at a time would run out.
+    const res = await linkMany(actor, { table_id: starter.table_id, links });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ linked: 150 });
+    const listed = await list(actor, { table_id: starter.table_id, limit: 200 });
+    expect(new Map(listed.rows.map((r) => [r._id, r._doc_id]))).toEqual(new Map(links.map((l) => [l.row_id, l.doc_id])));
+
+    expect(await (await linkMany(actor, { table_id: starter.table_id, links })).json()).toEqual({ linked: 0 });
+    const ops = (await doJson<OpsOut>(actor, "/ops", undefined)).ops.filter((o) => o.kind === "rows.link_pages");
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ summary: 'Linked 150 pages to rows of "Table 1"', revertible: true });
+  });
+
+  it("refuses the whole batch for one link a single link would refuse, and links none of it", async () => {
+    const { actor, starter, a, b, c } = await seeded();
+    await link(actor, { table_id: starter.table_id, row_id: a, doc_id: "doc_A" });
+    const cases: Array<[Array<{ row_id: string; doc_id: string }>, number, string]> = [
+      [[{ row_id: b, doc_id: "doc_B" }, { row_id: a, doc_id: "doc_Z" }], 409, "already_linked"],
+      [[{ row_id: b, doc_id: "doc_B" }, { row_id: c, doc_id: "doc_A" }], 409, "doc_linked"],
+      [[{ row_id: b, doc_id: "doc_B" }, { row_id: "row_nope", doc_id: "doc_X" }], 404, "row_not_found"],
+      [[{ row_id: b, doc_id: "doc_B" }, { row_id: b, doc_id: "doc_C" }], 400, "validation"],
+      [[{ row_id: b, doc_id: "doc_B" }, { row_id: c, doc_id: "doc_B" }], 400, "validation"],
+      [[{ row_id: b, doc_id: "" }], 400, "validation"],
+    ];
+    for (const [links, status, slug] of cases) {
+      const res = await linkMany(actor, { table_id: starter.table_id, links });
+      expect(res.status, JSON.stringify(links)).toBe(status);
+      expect(((await res.json()) as { error: string }).error).toBe(slug);
+    }
+    expect((await linkMany(actor, { table_id: starter.table_id, links: [] })).status).toBe(400);
+    const tooMany = Array.from({ length: 501 }, (_, i) => ({ row_id: `row_${i}`, doc_id: `doc_${i}` }));
+    expect((await linkMany(actor, { table_id: starter.table_id, links: tooMany })).status).toBe(409);
+    const listed = await list(actor, { table_id: starter.table_id });
+    expect(listed.rows.map((r) => r._doc_id ?? null).sort()).toEqual(["doc_A", null, null]);
+  });
+
+  it("reverts the links it made, leaving one it found in place and one re-linked since", async () => {
+    const { actor, starter, a, b, c } = await seeded();
+    await link(actor, { table_id: starter.table_id, row_id: a, doc_id: "doc_A" });
+    const out = await doJson<{ linked: number }>(actor, "/rows/link-docs", {
+      table_id: starter.table_id,
+      links: [
+        { row_id: a, doc_id: "doc_A" },
+        { row_id: b, doc_id: "doc_B" },
+        { row_id: c, doc_id: "doc_C" },
+      ],
+      actor: AGENT,
+    });
+    expect(out.linked).toBe(2);
+    await link(actor, { table_id: starter.table_id, row_id: c, doc_id: "doc_C2", replaces: "doc_C" });
+    const op = (await doJson<OpsOut>(actor, "/ops", undefined)).ops.find((o) => o.kind === "rows.link_pages")!;
+    const reverted = await doJson<{ restored: number; missing: number }>(actor, "/ops/revert", { op_id: op.op_id, actor: HUMAN });
+    expect(reverted).toMatchObject({ restored: 1, missing: 1 });
+    const pages = new Map((await list(actor, { table_id: starter.table_id })).rows.map((r) => [r._id, r._doc_id]));
+    expect(pages).toEqual(new Map([[a, "doc_A"], [b, null], [c, "doc_C2"]]));
+    // The pages themselves are the node's: nothing is queued for the trash.
+    expect(await take(actor)).toEqual({ trash: [], restore: [] });
+  });
+});

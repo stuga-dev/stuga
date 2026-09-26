@@ -245,10 +245,12 @@ export async function createDocument(ctx: Ctx, input: CreateDocumentInput): Prom
 /**
  * Write an imported body through the actor's apply-edits path, so the import is
  * journaled, flushed and indexed like typed content. An empty old_string on an
- * empty document is an append. An agent's is proposed like its other writes,
- * so it waits for review.
+ * empty document is an append, so the document must be empty and the body not.
+ * An agent's is proposed like its other writes, so it waits for review. With
+ * `flush`, a person's is saved as a version before this returns, so the caller
+ * can release the document's actor at once.
  */
-async function seedBody(ctx: Ctx, docId: string, markdown: string): Promise<boolean> {
+export async function seedBody(ctx: Ctx, docId: string, markdown: string, opts: { flush?: boolean } = {}): Promise<boolean> {
   if (ctx.isAgent) {
     const source = ctx.surface === "mcp" ? "connector" : "stdio";
     const proposed = await proposeDocEdit(ctx, { docId, action: "write", text: markdown, source }).catch(() => null);
@@ -260,7 +262,7 @@ async function seedBody(ctx: Ctx, docId: string, markdown: string): Promise<bool
       method: "POST",
       headers: { "content-type": "application/json" },
       // The alias, not the display name: it lands in versions.authors, which the UI resolves.
-      body: JSON.stringify({ str_edits: [{ old_string: "", new_string: markdown }], agent: ctx.alias }),
+      body: JSON.stringify({ str_edits: [{ old_string: "", new_string: markdown }], agent: ctx.alias, flush: opts.flush }),
     })
     .then(async (res) => (res.ok ? ((await res.json().catch(() => null)) as { applied?: boolean } | null) : null))
     .catch(() => null);

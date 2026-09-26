@@ -4,6 +4,7 @@
  */
 import type { TransactionSql } from "postgres";
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
+import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import type { AccountRow, DirectoryRow, NodeAdminRow, RefreshSessionRow, UserRow } from "./types.js";
 import { daysAgo, escapeLike } from "./sql.js";
 import { redeemWorkspaceInviteIn } from "./workspaces.js";
@@ -223,6 +224,8 @@ export async function createLocalAccount(
     updateCheck?: boolean;
     /** The time zone setup's browser is in, an IANA name, kept as the node's when this is the first account. */
     timeZone?: string;
+    /** The search languages setup chose, kept as the node's when this is the first account; `[]` chose none. */
+    searchLanguages?: readonly SearchLanguage[];
   },
 ): Promise<NewAccount<"username_taken" | "setup_code_required">> {
   const { alias, username } = input;
@@ -241,6 +244,7 @@ export async function createLocalAccount(
       const choices = {
         ...(input.updateCheck === false ? { update_check: false } : {}),
         ...(input.timeZone ? { time_zone: input.timeZone } : {}),
+        ...(input.searchLanguages ? { search_languages: [...input.searchLanguages] } : {}),
       };
       if (first && Object.keys(choices).length > 0) {
         await tx`

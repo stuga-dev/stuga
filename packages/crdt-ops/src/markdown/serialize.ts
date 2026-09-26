@@ -10,7 +10,7 @@
  * multi-paragraph footnote; per-cell alignments that disagree within a column.
  */
 import { mentionHref } from "@stuga/protocol/domain/mentions";
-import { MarkdownSerializer, defaultMarkdownSerializer } from "prosemirror-markdown";
+import { MarkdownSerializer, MarkdownSerializerState, defaultMarkdownSerializer } from "prosemirror-markdown";
 import { Fragment } from "prosemirror-model";
 import type { Node as PMNode, Schema } from "prosemirror-model";
 import {
@@ -59,11 +59,32 @@ function codeSpanPad(node: any): string {
 const ESCAPE_EXTRA = /&(?=#\d+;|#[xX][0-9a-fA-F]+;|[a-zA-Z][a-zA-Z0-9]{1,31};)|<(?=[a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^\s<>]*>|[^\s<>@]+@[^\s<>]+>)/g;
 
 /**
+ * `esc` leaves an underscore bare between two `\w` characters, `_` among them,
+ * so `__init__` comes out as `\__init_\_`, whose bare runs pair up as emphasis.
+ * An underscore run can close emphasis only when punctuation or whitespace
+ * follows it, so escaping every bare run that no letter or digit follows leaves
+ * nothing to close, and an opening run such as `\__init` stays literal. Runs
+ * between two letters or digits (`snake_case`) stay bare.
+ */
+function escapeClosingUnderscores(md: string): string {
+  return md.replace(/\\[\s\S]|_+/g, (m: string, at: number) =>
+    m[0] === "_" && !/[a-zA-Z0-9]/.test(md[at + m.length] ?? "") ? m.replace(/_/g, "\\_") : m,
+  );
+}
+
+/** `state.esc` with the underscore repair, for text written outside `serializeText`. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function esc(state: any, s: string): string {
+  return escapeClosingUnderscores(state.esc(s));
+}
+
+/**
  * Serialize a text node so re-parsing yields the same text node. Line-start
  * escapes apply to every output line, including after a hard break (the stock
  * handler only escapes at block start), plus hazards `esc` misses: `1)` list
  * markers (we emit `)` ourselves), a bare `1.`, `===` after a hard break (setext
- * underline), a trailing `#` run in a heading, and whitespace markdown would eat.
+ * underline), a trailing `#` run in a heading, whitespace markdown would eat, and
+ * an underscore run that could close emphasis.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function serializeText(state: any, node: any, parent: any, index: number): void {
@@ -102,6 +123,8 @@ function serializeText(state: any, node: any, parent: any, index: number): void 
     // After the whitespace rules: an edge already encoded or escaped is punctuation.
     if (i === 0 && guardStart) s = refFirstChar(s);
     if (i === lines.length - 1 && guardEnd) s = refLastChar(s);
+    // Last: a respelt last character (`&#100;`) is punctuation to the run before it.
+    s = escapeClosingUnderscores(s);
     state.out += s;
     if (i !== lines.length - 1) state.out += "\n";
   }
@@ -152,6 +175,44 @@ function cellToInline(cell: any): string {
 }
 
 let serializerCache: MarkdownSerializer | null = null;
+
+/** Past this many characters, all but the last TAIL_KEEP of the output are set aside. */
+const TAIL_MAX = 64;
+const TAIL_KEEP = 8;
+
+/**
+ * The serializer's state with `out` holding only the output's last characters. Every read of
+ * `out`, here and in prosemirror-markdown, looks only at its end (has a line begun, is a `!`
+ * before a link), but through a regular expression, which reads a string whole: over the whole
+ * output that made a body's serialization quadratic in its length. The rest is kept aside and
+ * joined once at the end. Set aside only past TAIL_KEEP characters, so `^` still means the start.
+ */
+class TailState extends (MarkdownSerializerState as unknown as new (
+  nodes: MarkdownSerializer["nodes"],
+  marks: MarkdownSerializer["marks"],
+  options: MarkdownSerializer["options"],
+) => MarkdownSerializerState) {
+  private written: string[] = [];
+  private tail = "";
+
+  get out(): string {
+    return this.tail;
+  }
+
+  set out(value: string) {
+    if (value.length <= TAIL_MAX) {
+      this.tail = value;
+      return;
+    }
+    this.written.push(value.slice(0, -TAIL_KEEP));
+    this.tail = value.slice(-TAIL_KEEP);
+  }
+
+  /** Everything written. */
+  output(): string {
+    return this.written.join("") + this.tail;
+  }
+}
 
 /** How many immediately preceding siblings share this node's type. Adjacent
  *  same-type lists fuse on re-parse unless their marker or delimiter alternates. */
@@ -235,7 +296,7 @@ export function docToMarkdown(doc: PMNode): string {
         text: serializeText,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         image(state: any, node: any) {
-          state.write(imageMarkdown(node, (s: string) => state.esc(s)));
+          state.write(imageMarkdown(node, (s: string) => esc(state, s)));
           state.closeBlock(node);
         },
         // GFM pipe table: row 0 is the header. Alignment is per column in GFM and
@@ -274,7 +335,7 @@ export function docToMarkdown(doc: PMNode): string {
         tableHeader() {},
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         mention(state: any, node: any) {
-          state.write(`[@${state.esc(String(node.attrs.label))}](${mdUrl(mentionHref(String(node.attrs.alias)))})`);
+          state.write(`[@${esc(state, String(node.attrs.label))}](${mdUrl(mentionHref(String(node.attrs.alias)))})`);
         },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         footnoteReference(state: any, node: any) {
@@ -325,5 +386,9 @@ export function docToMarkdown(doc: PMNode): string {
       { escapeExtraCharacters: ESCAPE_EXTRA },
     );
   }
-  return serializerCache.serialize(expelMarkEdgeWhitespace(doc));
+  // What `serialize` does, on a TailState.
+  const { nodes, marks, options } = serializerCache;
+  const state = new TailState(nodes, marks, { ...options });
+  state.renderContent(expelMarkEdgeWhitespace(doc));
+  return state.output();
 }

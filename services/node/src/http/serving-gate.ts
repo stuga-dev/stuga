@@ -6,7 +6,9 @@
  * other request gets a 503 it can retry.
  *
  * Once open, requests go to the live handlers, and the gate counts the ones
- * still being answered, so a pause can wait for them to finish.
+ * still being answered, so a pause can wait for them to finish. A response
+ * whose body is still being written counts until that is done, when its
+ * handler says so (answeredUntil).
  */
 import type { RequestHandler } from "../platform/http-server.js";
 
@@ -42,6 +44,19 @@ export interface ServingGate {
   drain(timeoutMs: number): Promise<boolean>;
 }
 
+/** Responses whose body is written after their handler returns, with what settles once it is. */
+const writing = new WeakMap<Response, Promise<unknown>>();
+
+/**
+ * Count `response` as being answered until `done` settles rather than until its handler returns:
+ * for a body written as the client reads it, from the actors a pause for a backup closes.
+ * `done` must settle however the body ends, the client going away included.
+ */
+export function answeredUntil(response: Response, done: Promise<unknown>): Response {
+  writing.set(response, done);
+  return response;
+}
+
 export function createServingGate(): ServingGate {
   let live: Live | null = null;
   let paused: Pause | null = "starting";
@@ -60,11 +75,17 @@ export function createServingGate(): ServingGate {
     return async (req) => {
       if (paused || !live) return notServing(req, paused ?? "starting");
       inFlight += 1;
+      let res: Response;
       try {
-        return await pick(live)(req);
-      } finally {
+        res = await pick(live)(req);
+      } catch (err) {
         settle();
+        throw err;
       }
+      const done = writing.get(res);
+      if (done) void done.then(settle, settle);
+      else settle();
+      return res;
     };
   };
 

@@ -128,6 +128,48 @@ describe("register", () => {
     expect(mem.accounts.size).toBe(0);
   });
 
+  it("stores setup's search languages with the account that claims the node, and nobody else's", async () => {
+    let firstAccounts = 0;
+    const r = () => createIdentityRouter(baseDeps({ onFirstAccount: () => void firstAccounts++ }));
+    const body = (username: string, extra: Record<string, unknown>) => ({ username, password: "correct horse", setup_code: TYPED_CODE, ...extra });
+    expect((await r().handle(post("/auth/register", body("ada", { search_languages: ["ar", "ko"] })))).status).toBe(201);
+    expect(mem.settings.searchLanguages).toEqual(["ko", "ar"]);
+    // The node rebuilds its search indexes for them once the account is made.
+    expect(firstAccounts).toBe(1);
+
+    mem.invites.set(sha256Hex("an-invite"), { tokenHash: sha256Hex("an-invite"), usesLeft: 1 });
+    expect((await r().handle(post("/auth/register", body("grace", { invite: "an-invite", search_languages: [] })))).status).toBe(201);
+    expect(mem.settings.searchLanguages).toEqual(["ko", "ar"]);
+    expect(firstAccounts).toBe(1);
+
+    // None chosen is a choice; not sending the field leaves the node's alone.
+    mem = memoryDb();
+    expect((await register("ada", { search_languages: [] })).status).toBe(201);
+    expect(mem.settings.searchLanguages).toEqual([]);
+    mem = memoryDb();
+    expect((await register("ada")).status).toBe(201);
+    expect(mem.settings.searchLanguages).toBeNull();
+  });
+
+  it("tells setup the search languages a boot took before it, and nobody once the node is claimed", async () => {
+    const config = async () => ((await (await router().handle(new Request(ORIGIN + "/auth/config"))).json()) as Record<string, unknown>).search_languages;
+    expect(await config()).toBeNull();
+    // What a boot adopts from SEARCH_LANGUAGES on a node nobody has set up.
+    mem.settings.searchLanguages = ["ko"];
+    expect(await config()).toEqual(["ko"]);
+    await register("ada", { search_languages: ["ko"] });
+    expect(await config()).toBeNull();
+  });
+
+  it("refuses search languages that are not a list of the choices", async () => {
+    for (const search_languages of ["ko", ["ko", "fr"], [null], { ko: true }, null]) {
+      const res = await register("ada", { search_languages });
+      expect(res.status, JSON.stringify(search_languages)).toBe(400);
+      expect((await res.json()).message).toMatch(/search_languages must be a list of: ko, ar/);
+    }
+    expect(mem.accounts.size).toBe(0);
+  });
+
   it("claiming the node needs its setup code, typed however loosely", async () => {
     const none = await register("ada", { setup_code: undefined });
     expect(none.status).toBe(403);
@@ -376,7 +418,7 @@ describe("well-known + config", () => {
 
   it("GET /auth/config reports the provider and whether the node is claimed", async () => {
     // With no name set there is none to show, and the node is told apart by its host, without the port.
-    const node = { node_name: null, node_label: "localhost", origin: ORIGIN, branding: { accent_color: null } };
+    const node = { node_name: null, node_label: "localhost", origin: ORIGIN, branding: { accent_color: null }, search_languages: null };
     const before = await router().handle(new Request(ORIGIN + "/auth/config"));
     expect(await before.json()).toEqual({ provider: null, unclaimed: true, ...node });
     await register();

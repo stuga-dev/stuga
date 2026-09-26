@@ -60,6 +60,12 @@ export function stugaEditorExtensions(deps: {
       link: false,
       codeBlock: false,
       code: false,
+      // Lists and quotes take the direction of their first text, so an Arabic list has its
+      // markers on the right. Rendered attributes only, never node attrs; editor.css gives
+      // every other block the direction of its own text.
+      bulletList: { HTMLAttributes: { dir: "auto" } },
+      orderedList: { HTMLAttributes: { dir: "auto" } },
+      blockquote: { HTMLAttributes: { dir: "auto" } },
     }),
     // After StarterKit, so `link` out-ranks `code` and a linked code span exports as [`x`](url).
     StugaCode,

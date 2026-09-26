@@ -125,6 +125,12 @@ export interface ActorHandle {
 /** Every actor of one class, addressed by a stable name (e.g. the doc id). */
 export interface ActorNamespace {
   get(name: string): ActorHandle;
+  /**
+   * The caller is done with this actor, as after one pass over many: unless something else is using
+   * it, it closes now, or once its pending alarm has run and left none, so what it holds only in
+   * memory until then is kept. A request or a frame before that keeps it open as usual.
+   */
+  release?(name: string): Promise<void>;
 }
 
 // ---- blobs --------------------------------------------------------------------

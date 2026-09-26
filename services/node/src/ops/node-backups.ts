@@ -9,7 +9,12 @@
  * takes both halves as it would of a stopped node. Then everything resumes.
  *
  * A failed daily backup is recorded, and every node administrator hears of it
- * once; the next one is tried at the next scheduled hour.
+ * once; the next one is tried at the next scheduled hour. A backup never starts
+ * while the node is doing work it waits for (`busy`), such as a workspace
+ * import, which can run longer than the pause may: it is tried again at each
+ * maintenance tick, and fails once it has waited BACKUP_WAIT_MAX_MS. While one
+ * waits, no new such work starts (`hold`), so it starts once what is under way
+ * is done.
  */
 import { getNodeState, recordBackupAttempt, type Sql } from "@stuga/db";
 import type { NotifyDeliverMessage } from "@stuga/protocol/internal/jobs";
@@ -47,10 +52,12 @@ export function backupDue(now: Date, schedule: BackupSchedule, state: { attempte
 export interface NodeBackups {
   /** Take the daily backup if it is due. The maintenance tick calls it, one tick at a time. */
   runIfDue(now?: Date): Promise<void>;
-  /** Start a backup now, behind whatever maintenance is running; false when one is already under way. */
-  startNow(): boolean;
-  /** Whether a backup is under way now. */
+  /** Start a backup now, behind whatever maintenance is running; null once started, else why not. */
+  startNow(): string | null;
+  /** Whether a backup is under way now, or one asked for waits to start. */
   running(): boolean;
+  /** Why a backup waits to start; null when none does. */
+  waiting(): string | null;
   /** When the next daily backup starts; null when they are off. */
   nextAt(now?: Date): Date | null;
   /** The schedule in force. */
@@ -98,6 +105,10 @@ export interface NodeBackupsDeps {
   schedule: () => BackupSchedule;
   /** Make the node quiet; resolves to what makes it serve again. */
   quiesce: () => Promise<() => Promise<void>>;
+  /** What the node is doing that a backup waits for, as a reason; null when nothing. */
+  busy: () => string | null;
+  /** Keep such work from starting while a backup waits (true), or let it start again. */
+  hold: (waiting: boolean) => void;
   /** Runs work one at a time with the maintenance tick. */
   exclusive: <T>(work: () => Promise<T>) => Promise<T>;
   /** Tell the node's administrators a daily backup failed. */
@@ -105,16 +116,43 @@ export interface NodeBackupsDeps {
   log?: Pick<Console, "info" | "error">;
 }
 
+/** A backup not taken because the node is busy with work it waits for: not a failure, until it has waited BACKUP_WAIT_MAX_MS. */
+class BackupWaits extends Error {}
+
+/** How long a backup waits for such work before it fails, so the administrators hear why none was taken. */
+export const BACKUP_WAIT_MAX_MS = 3 * 60 * 60_000;
+
+/** Why a backup that waited BACKUP_WAIT_MAX_MS failed. */
+const stillWaiting = (busy: string): string => `still waiting after ${BACKUP_WAIT_MAX_MS / 3_600_000} hours: ${busy}`;
+
 export function createNodeBackups(d: NodeBackupsDeps): NodeBackups {
   const log = d.log ?? console;
   let underWay = false;
   /** Asked for, and waiting for the maintenance tick to finish. */
   let queued = false;
+  /** Why the daily backup waits, once said. */
+  let waiting: string | null = null;
+  /** When the daily backup began to wait. */
+  let waitingSince: Date | null = null;
+  /** Why the backup asked for waits, and since when; the maintenance tick tries it again. */
+  let asked: { why: string; since: Date } | null = null;
+
+  /** Hold new such work while either backup waits. */
+  const holdWhileWaiting = (): void => d.hold(waitingSince !== null || asked !== null);
 
   async function takeOne(why: string): Promise<BackupResult> {
     underWay = true;
     try {
-      const resume = await d.quiesce();
+      const busy = d.busy();
+      if (busy) throw new BackupWaits(busy);
+      let resume: () => Promise<void>;
+      try {
+        resume = await d.quiesce();
+      } catch (err) {
+        // Such work that began just before the pause keeps the requests from finishing.
+        const began = d.busy();
+        throw began ? new BackupWaits(began) : err;
+      }
       try {
         const result = await runBackup(d.env, { writer: d.writer });
         log.info(`[node] ${why} backup complete: ${result.path}`);
@@ -127,42 +165,73 @@ export function createNodeBackups(d: NodeBackupsDeps): NodeBackups {
     }
   }
 
+  /** Take the backup asked for, or leave it waiting while the node is busy, until it has waited BACKUP_WAIT_MAX_MS. */
+  async function takeAsked(now: Date): Promise<void> {
+    try {
+      await takeOne("requested");
+      asked = null;
+      await recordBackupAttempt(d.sql, { at: now, error: null });
+    } catch (err) {
+      if (err instanceof BackupWaits) {
+        if (asked?.why !== err.message) log.info(`[node] the requested backup waits: ${err.message}`);
+        asked = { why: err.message, since: asked?.since ?? now };
+        if (now.getTime() - asked.since.getTime() < BACKUP_WAIT_MAX_MS) return;
+      }
+      asked = null;
+      const message = err instanceof BackupWaits ? stillWaiting(err.message) : messageOf(err);
+      log.error(`[node] the requested backup failed: ${message}`);
+      await recordBackupAttempt(d.sql, { at: now, error: message });
+    } finally {
+      holdWhileWaiting();
+    }
+  }
+
   return {
     async runIfDue(now = new Date()) {
       if (underWay || queued) return;
+      if (asked) await takeAsked(now);
       const schedule = d.schedule();
-      if (!schedule.auto) return;
-      const state = await getNodeState(d.sql);
-      if (!state || !backupDue(now, schedule, { attemptedAt: state.backup_attempted_at, firstBootAt: state.first_boot_at })) return;
+      const state = schedule.auto ? await getNodeState(d.sql) : null;
+      if (!state || !backupDue(now, schedule, { attemptedAt: state.backup_attempted_at, firstBootAt: state.first_boot_at })) {
+        waiting = waitingSince = null;
+        holdWhileWaiting();
+        return;
+      }
       try {
         await takeOne("daily");
+        waiting = waitingSince = null;
         await recordBackupAttempt(d.sql, { at: now, error: null });
       } catch (err) {
-        const message = messageOf(err);
+        if (err instanceof BackupWaits) {
+          waitingSince ??= now;
+          if (now.getTime() - waitingSince.getTime() < BACKUP_WAIT_MAX_MS) {
+            if (waiting !== err.message) log.info(`[node] the daily backup waits: ${err.message}`);
+            waiting = err.message;
+            return;
+          }
+        }
+        waiting = waitingSince = null;
+        const message = err instanceof BackupWaits ? stillWaiting(err.message) : messageOf(err);
         log.error(`[node] the daily backup failed: ${message}`);
         await recordBackupAttempt(d.sql, { at: now, error: message });
         await d.notifyFailure(message, now).catch((e: unknown) => log.error("[node] could not tell the administrators", e));
+      } finally {
+        holdWhileWaiting();
       }
     },
     startNow() {
-      if (underWay || queued) return false;
+      if (underWay || queued || asked) return "a backup is already under way";
       queued = true;
       void d
         .exclusive(async () => {
           queued = false;
-          const at = new Date();
-          try {
-            await takeOne("requested");
-            await recordBackupAttempt(d.sql, { at, error: null });
-          } catch (err) {
-            log.error(`[node] the requested backup failed: ${messageOf(err)}`);
-            await recordBackupAttempt(d.sql, { at, error: messageOf(err) });
-          }
+          await takeAsked(new Date());
         })
         .catch((err: unknown) => log.error("[node] could not record a backup", err));
-      return true;
+      return null;
     },
-    running: () => underWay || queued,
+    running: () => underWay || queued || asked !== null,
+    waiting: () => asked?.why ?? waiting,
     nextAt(now = new Date()) {
       const schedule = d.schedule();
       return schedule.auto ? nextScheduled(now, schedule.hour, schedule.timeZone) : null;

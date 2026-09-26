@@ -313,6 +313,30 @@ describe("the user directory", () => {
     expect(principalLabel("user:DeepSeek Harness")).toBe("DeepSeek Harness");
   });
 
+  it("reads Sample agent, the one agent with no key, by its name", async () => {
+    const { nameLoading, authorLabel } = await directory();
+    expect(nameLoading("user:agent-sample")).toBe(false);
+    expect(authorLabel("agent-sample")).toBe("Sample agent");
+  });
+
+  it("reads an imported author as its archive named it, never as an account, and never looks it up", async () => {
+    const { resolveNames, nameLoading, authorLabel } = await directory();
+    resolveNames(["u_ada"]);
+    await settle();
+    users.resolve.mockClear();
+    for (const author of ["imported:Liv", "imported:u_ada", "imported:liv@example.com", "imported:Ops team"]) {
+      expect(nameLoading(`user:${author}`)).toBe(false);
+      resolveNames([`user:${author}`, author]);
+    }
+    await settle();
+    expect(users.resolve).not.toHaveBeenCalled();
+    expect(authorLabel("imported:Liv")).toBe("Liv · imported");
+    // Not the account that alias names, and an email stays whole.
+    expect(authorLabel("imported:u_ada")).toBe("u_ada · imported");
+    expect(authorLabel("imported:liv@example.com")).toBe("liv@example.com · imported");
+    expect(authorLabel("imported:Ops team")).toBe("Ops team · imported");
+  });
+
   it("takes the handle from rows already in hand", async () => {
     const { rememberUsers, actorHandle } = await directory();
     rememberUsers([{ alias: "u_ann", username: null, display_name: "Ann", email: "ann@example.com" }]);

@@ -13,12 +13,6 @@ import { NodeSettings as NodeApi, type NodeOperationalSettings, type NodeVersion
 import { calendarDay, relativeTime, versionLabel } from "../../../lib/format";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 
-/** Display names for SEARCH_LANGUAGES codes. */
-const SEARCH_LANGUAGE_LABELS: Record<string, string> = {
-  ko: "Korean",
-  ar: "Arabic",
-};
-
 /** What the node's environment and first boot fixed, read-only, and what it knows about newer versions. */
 export function AboutSection({ ops, onSaved }: { ops: NodeOperationalSettings; onSaved: (s: NodeOperationalSettings) => void }) {
   const [version, setVersion] = useState<NodeVersion | null>(null);
@@ -41,11 +35,6 @@ export function AboutSection({ ops, onSaved }: { ops: NodeOperationalSettings; o
           </MetadataListItem>
           <MetadataListItem label="Data directory">{ops.node.data_dir}</MetadataListItem>
           <MetadataListItem label="Database">{ops.node.database}</MetadataListItem>
-          <MetadataListItem label="Search languages">
-            {ops.node.search_languages.length > 0
-              ? ops.node.search_languages.map((l) => SEARCH_LANGUAGE_LABELS[l] ?? l).join(", ")
-              : "None — every document gets the generic multi-language tokenizer only"}
-          </MetadataListItem>
           {/* What agents and the switcher call the node: its name under Branding, else its host. */}
           <MetadataListItem label="Known to agents as">{ops.node_label}</MetadataListItem>
           {/* Chosen at the first start and kept through a rename. */}

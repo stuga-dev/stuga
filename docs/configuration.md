@@ -40,6 +40,7 @@ How these fit together, and what each way of reaching a node protects, is in
 | `EXTRA_ORIGINS` | none | Further exact origins browsers may call from, comma-separated. Wildcards are refused. The node's own IP addresses and local names, at `PUBLIC_ORIGIN`'s http or https, need no entry ([Network access](network-access.md#public_origin-and-extra_origins)). An agent that calls the node at one of these signs in there ([Agents signing in](network-access.md#agents-signing-in)). |
 | `TRUST_PROXY_HEADERS` | `false` | Take the client address from `X-Forwarded-For` or `X-Real-IP`. Turn it on only behind a reverse proxy that sets them. |
 | `TLS_CERT_DIR` | none | A directory holding `<hostname>/fullchain.pem` and `<hostname>/privkey.pem`. When set, the node serves https only. |
+| `SAMPLES_URL` | `https://github.com/stuga-dev/samples/releases` | Where the sample workspaces under **Start with** come from, laid out as GitHub's release list: the node reads the list from `<SAMPLES_URL>/latest/download/index.json`, keeps it an hour, and downloads a sample from `<SAMPLES_URL>/download/<tag>/<id>.stuga.zip`. The requests carry nothing about the node or anyone on it. For a network without internet access, serve a release's assets at those paths and point this at the server. No credentials, query or fragment. |
 
 ### Accounts and sign-in
 
@@ -66,7 +67,6 @@ letter or a digit. These are reserved: `admin`, `administrator`, `root`, `stuga`
 | Variable | Default | |
 |---|---|---|
 | `AI_EMBED_DIMS` | `1024` | The width of embedding vectors, fixed when the database is created. Pick it to match your embedding model, at most 2000. The node refuses to start when it differs from the database: [Change the embedding width](operations.md#change-the-embedding-width). |
-| `SEARCH_LANGUAGES` | none | Extra keyword tokenizers, comma-separated: `ko` segments Korean words, and `ar` stems Arabic. Every language gets a general tokenizer that already segments Chinese and Japanese. A change rebuilds the search indexes at the next start. |
 | `MEDIA_COOKIE_SAMESITE` | `lax` | `lax`, `strict` or `none`, for the cookie that authorizes images. |
 
 ### Packaging hints
@@ -95,9 +95,10 @@ and node administrators also see **This node**.
 | This node → **Notifications** | Where notifications go: Slack, Microsoft Teams, Discord, a plain webhook or email, with **Send a test**. |
 | This node → **Access** | The node's address and accepted origins (read-only), the [identity provider](#identity-provider), administrators, the node's audit log, and account recovery links. |
 | This node → **Storage** | The largest upload, how long audit history, AI usage records and idle Ask threads are kept, and how many changes each database keeps in its Activity feed. |
+| This node → **Search** | The [search languages](#search-languages): Korean and Arabic, each off unless chosen. |
 | This node → **Backups** | The daily backup, on unless turned off, and its hour in the node's time zone, which first-run setup takes from the browser; **Back up now**; and the backups the node keeps ([Operations](operations.md#the-nodes-own-backups)). |
 | This node → **Branding** | The node's name and the colour that marks the selected item. |
-| This node → **About** | The address, listen address, data directory, database, search languages, the node's [name](#the-nodes-name-and-id) as agents know it, node ID, and the version with the day it was released. Under **Updates**: a newer version when the node knows of one, with **Update now** on a Mac, and **Check for new versions**, which is also asked at first-run setup ([Operations](operations.md#learning-of-a-new-version)). |
+| This node → **About** | The address, listen address, data directory, database, the node's [name](#the-nodes-name-and-id) as agents know it, node ID, and the version with the day it was released. Under **Updates**: a newer version when the node knows of one, with **Update now** on a Mac, and **Check for new versions**, which is also asked at first-run setup ([Operations](operations.md#learning-of-a-new-version)). |
 | This workspace → **General**, **Members**, **Agents** | The workspace, its members and invite links, and the workspace's instructions for agents and its webhooks. Folders, documents and databases keep their own instructions in their ⋯ menu ([agents.md](agents.md#instructions-for-agents)). |
 | This workspace → **Audit log**, **AI usage** | The workspace's audit history and AI use. |
 
@@ -121,6 +122,30 @@ ranking and the rerank decide what is kept. How far apart related text lands dep
 model, so set the cutoffs for the model you use: raise one when paraphrases are missed, lower it when
 unrelated documents come back. Keyword matches are not affected. Clear a field and save to return to
 its default.
+
+### Search languages
+
+Keyword search gives every text a general tokenizer, which splits Chinese and Japanese into words as
+well as the languages that space theirs. Korean and Arabic it splits only at spaces, so a word with a
+particle attached is missed. Two languages get a tokenizer of their own when chosen: **Korean**
+segments Korean words, and **Arabic** stems Arabic. Each one adds a field to the search indexes, so
+a node carries only the ones it chose. First-run setup asks, and a node administrator changes them
+under **Settings → This node → Search**.
+
+Saving rebuilds the keyword indexes while the node runs. Until the rebuild is done, search keeps
+answering with the languages the old and the new choice share, and the section says it is
+rebuilding. Saving other languages meanwhile stops it and rebuilds for those. A rebuild that keeps
+failing gives up after five tries, and the section says why; search then keeps to the shared
+languages until they are saved again or the node restarts. A node stopped midway finishes the
+rebuild when it starts again.
+
+`SEARCH_LANGUAGES`, the environment variable this setting replaces, is read until the node has the
+setting: a node started with it before anyone has chosen takes its value as the setting, which
+first-run setup shows ticked, and ignores the variable from then on. Started without it, such a node
+takes the languages its search indexes are built for, so a node upgraded from an earlier version
+keeps them either way. Indexes built for neither Korean nor Arabic give no setting, so the node reads
+the variable again at its next start. An earlier version still reads the variable, so keep it while
+the node may go back to one.
 
 ### The node's name and ID
 

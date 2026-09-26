@@ -57,6 +57,8 @@ export const ACTION_LABEL: Record<string, string> = {
   "webhook.delete": "Webhook deleted",
   "webhook.update": "Webhook changed",
   "workspace.agent_instructions": "Workspace agent instructions changed",
+  "workspace.export": "Workspace exported",
+  "workspace.import": "Workspace imported",
 };
 
 /** Transport codes, relabelled to say whether a person or a program made the request. */

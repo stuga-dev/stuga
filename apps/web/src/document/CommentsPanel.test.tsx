@@ -114,6 +114,19 @@ describe("CommentsPanel follows the active comment", () => {
 });
 
 // The name cache lives for the file, so each case names its own people.
+describe("CommentsPanel: the quoted passage", () => {
+  it("takes its own text's direction, so an Arabic quote is marked where it starts", async () => {
+    ctx.comments = [comment(1, { anchor_quote: "نص مقتبس" })];
+    ctx.activeNum = null;
+
+    await mount();
+
+    const quote = host.querySelector<HTMLButtonElement>(".comment-quote")!;
+    expect(quote.textContent).toBe("“نص مقتبس”");
+    expect(quote.dir).toBe("auto");
+  });
+});
+
 describe("CommentsPanel: authors", () => {
   const ada: UserInfo = { alias: "u_QH52ada7RzkP4mXe", username: "ada", display_name: "Ada", email: null };
   const bob: UserInfo = { alias: "u_Bb81bob4TqeW9nJs", username: "bob", display_name: "Bob", email: null };
@@ -146,6 +159,29 @@ describe("CommentsPanel: authors", () => {
 
     await act(async () => answer({ users: [ada, bob] }));
     expect(authors()).toEqual(["Ada", "Bob"]);
+  });
+
+  it("names an imported author as the archive did, with no lookup, and shows no storage prefix on hover", async () => {
+    ctx.comments = [comment(1, { author: "imported:Liv" }), comment(2, { parent_num: 1, author: "imported:Ops team" })];
+    ctx.activeNum = null;
+
+    await mount();
+
+    expect(users.resolve).not.toHaveBeenCalled();
+    expect(authors()).toEqual(["Liv · imported", "Ops team · imported"]);
+    expect([...host.querySelectorAll(".comment-head strong")].map((s) => s.getAttribute("title"))).toEqual([null, null]);
+    // Isolated from the marker, so a direction mark in the name cannot turn it around.
+    expect([...host.querySelectorAll(".comment-head strong > bdi")].map((b) => b.textContent)).toEqual(["Liv", "Ops team"]);
+  });
+
+  it("names Sample agent, which posts a sample's comment, as the rest of the app does", async () => {
+    ctx.comments = [comment(1, { author: "agent-sample" })];
+    ctx.activeNum = null;
+
+    await mount();
+
+    expect(authors()).toEqual(["Sample agent"]);
+    expect(host.querySelector(".comment-head strong")!.getAttribute("title")).toBe("agent-sample");
   });
 
   it("names an agent by its whole id at once, while a person's name loads", async () => {

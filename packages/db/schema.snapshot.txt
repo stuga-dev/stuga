@@ -242,7 +242,7 @@ TABLE docs
   CONSTRAINT docs_pkey PRIMARY KEY (doc_id)
   CONSTRAINT docs_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
   INDEX docs_acl_gin CREATE INDEX docs_acl_gin ON public.docs USING gin (acl_principals)
-  INDEX docs_bm25_v1 CREATE INDEX docs_bm25_v1 ON public.docs USING bm25 (doc_id, ((title)::pdb.icu), ((search_text)::pdb.icu('stemmer=english', 'stopwords_language=english')), ((((title || ' '::text) || search_text))::pdb.icu('alias=all_text')), ((((title || ' '::text) || search_text))::pdb.icu('stemmer=english', 'stopwords_language=english', 'alias=all_text_en'))) WITH (key_field=doc_id)
+  INDEX docs_bm25_v1 CREATE INDEX docs_bm25_v1 ON public.docs USING bm25 (doc_id, ((title)::pdb.icu), ((search_text)::pdb.icu('stemmer=english', 'stopwords_language=english')), ((((title || ' '::text) || search_text))::pdb.icu('alias=all_text')), ((((title || ' '::text) || search_text))::pdb.icu('stemmer=english', 'stopwords_language=english', 'alias=all_text_en'))) WITH (key_field=doc_id, mutable_segment_rows='0')
   INDEX docs_commenters_gin CREATE INDEX docs_commenters_gin ON public.docs USING gin (acl_commenters)
   INDEX docs_owner_idx CREATE INDEX docs_owner_idx ON public.docs USING btree (owner)
   INDEX docs_page_of_idx CREATE INDEX docs_page_of_idx ON public.docs USING btree (workspace_id, page_of) WHERE (page_of IS NOT NULL)
@@ -364,6 +364,7 @@ TABLE node_settings
   node_name text
   notify_sink text
   notify_webhook_label text
+  search_languages ARRAY
   smtp_label text
   time_zone text
   update_check boolean
@@ -682,6 +683,7 @@ TABLE workspaces
   default_doc_access text NOT NULL DEFAULT 'workspace_edit'::text
   embedding_backfill_at timestamp with time zone
   embedding_backfill_cursor text
+  import_started_at timestamp with time zone
   name text NOT NULL
   workspace_id text NOT NULL
   CONSTRAINT workspaces_pkey PRIMARY KEY (workspace_id)

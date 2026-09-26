@@ -9,17 +9,18 @@ import { harness, makeActor } from "../test/harness.js";
  * paragraph, so its durable log must carry the seed's structs: replayed on a
  * fresh instance without them, the update would park, the document would decode
  * empty and the flush would skip indexing. A never-edited document still arms nothing.
+ * With `flush`, the write is saved as a version before the answer instead.
  */
 
 const MD = "# Import probe\n\nBody paragraph.\n\n- alpha\n- bravo\n";
 
 /** POST /apply-edits with an empty old_string — the Markdown-import seed path. */
-const importMarkdown = (doc: DocActor, docId: string) =>
+const importMarkdown = (doc: DocActor, docId: string, opts: { flush?: boolean } = {}) =>
   doc.fetch(
     new Request(`http://actor/apply-edits?docId=${docId}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ str_edits: [{ old_string: "", new_string: MD }], agent: "tester" }),
+      body: JSON.stringify({ str_edits: [{ old_string: "", new_string: MD }], agent: "tester", ...opts }),
     }),
   );
 
@@ -80,5 +81,40 @@ describe("headless import persistence", () => {
 
     expect(h.state.storage.map.has("pending")).toBe(false);
     expect(h.state.storage.alarm).toBeNull();
+  });
+
+  it("with flush, saves the import as a version with its author before answering, leaving nothing for the backstop", async () => {
+    const h = harness();
+    const res = await importMarkdown(makeActor(h), "doc1", { flush: true });
+
+    expect(await res.json()).toEqual({ applied: true, seq: 1 });
+    expect(h.snapshots.keys()).toEqual(["doc1/1.bin"]);
+    expect(h.queued).toMatchObject([
+      { kind: "index_doc", docId: "doc1", snapshotSeq: 1, title: "Import probe", reason: "headless", recordVersion: true, versionAuthors: ["tester"] },
+    ]);
+    expect(h.state.storage.map.has("pending")).toBe(false);
+    expect(h.state.storage.alarm).toBeNull();
+  });
+
+  it("without flush, leaves the save to the backstop", async () => {
+    const h = harness();
+    const res = await importMarkdown(makeActor(h), "doc1");
+
+    expect(await res.json()).toEqual({ applied: true, seq: 0 });
+    expect(h.snapshots.keys()).toEqual([]);
+    expect(h.queued).toEqual([]);
+    expect(h.state.storage.map.has("pending")).toBe(true);
+    expect(h.state.storage.alarm).not.toBeNull();
+  });
+
+  it("with flush, a save that fails still applies, and stays pending for the backstop to retry", async () => {
+    const h = harness();
+    h.snapshots.put = () => Promise.reject(new Error("No space left on device"));
+    const res = await importMarkdown(makeActor(h), "doc1", { flush: true });
+
+    expect(await res.json()).toEqual({ applied: true, seq: 0 });
+    expect(h.queued).toEqual([]);
+    expect(h.state.storage.map.has("pending")).toBe(true);
+    expect(h.state.storage.alarm).not.toBeNull();
   });
 });

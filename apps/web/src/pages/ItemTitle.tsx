@@ -70,7 +70,7 @@ export function ItemTitle({ rename, readOnly, label }: { rename: TitleRename; re
       disabled={readOnly}
       title={readOnly ? rename.title : "Click to rename"}
     >
-      <Text type="large" weight="semibold" maxLines={1}>
+      <Text type="large" weight="semibold" maxLines={1} className="bidi-line">
         {rename.title}
       </Text>
     </button>

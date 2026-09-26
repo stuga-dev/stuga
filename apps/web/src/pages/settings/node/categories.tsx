@@ -1,14 +1,15 @@
 /** The node settings sections, shared by the settings rail and the page. */
 import type { ReactNode } from "react";
-import { Archive, Bell, Bot, HardDrive, Info, Palette, ShieldCheck } from "lucide-react";
+import { Archive, Bell, Bot, HardDrive, Info, Palette, Search, ShieldCheck } from "lucide-react";
 
-export type NodeCategory = "ai" | "notifications" | "access" | "storage" | "backups" | "branding" | "about";
+export type NodeCategory = "ai" | "notifications" | "access" | "storage" | "search" | "backups" | "branding" | "about";
 
 export const NODE_CATEGORIES: Array<{ key: NodeCategory; label: string; icon: ReactNode }> = [
   { key: "ai", label: "AI providers", icon: <Bot size={16} /> },
   { key: "notifications", label: "Notifications", icon: <Bell size={16} /> },
   { key: "access", label: "Access", icon: <ShieldCheck size={16} /> },
   { key: "storage", label: "Storage", icon: <HardDrive size={16} /> },
+  { key: "search", label: "Search", icon: <Search size={16} /> },
   { key: "backups", label: "Backups", icon: <Archive size={16} /> },
   { key: "branding", label: "Branding", icon: <Palette size={16} /> },
   { key: "about", label: "About", icon: <Info size={16} /> },

@@ -64,7 +64,7 @@ function humanCtx(over: Partial<Ctx> = {}): Ctx {
       jobs: { send: async () => {} },
       aiSettings: { current: () => ({ enabled: false, embed: { enabled: false }, chat: { enabled: false } }) },
       embeddingDims: 8,
-      searchLanguages: [],
+      searchLanguages: { current: () => [] },
     },
     ...over,
   } as unknown as Ctx;

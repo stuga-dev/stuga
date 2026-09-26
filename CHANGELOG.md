@@ -21,6 +21,12 @@ one, the release notes say there is nothing to do.
 - Skills, prompts and scripts that call the MCP tools by name need the new names, and a
   `workspace_id` on every call. Running the Codex or Antigravity installer again replaces the Stuga
   Skill it installed.
+- A node keeps its search languages: at its first start of this version it takes `SEARCH_LANGUAGES`,
+  or without it the languages its search indexes are built for, as the search languages setting,
+  and ignores the variable from then on. A node whose indexes are built for neither Korean nor
+  Arabic has no setting yet, so it reads the variable at each start until one is saved. Change them
+  in **Settings → This node → Search**. Keep the variable while the node may go back to an earlier
+  version, which still reads it.
 
 ### Added
 
@@ -47,6 +53,27 @@ one, the release notes say there is nothing to do.
   `/plugin marketplace add stuga-dev/stuga-plugin` and `/plugin install stuga@stuga`. Each release
   publishes it from `integrations/` to stuga-dev/stuga-plugin, and the server to npm as
   `@stuga/mcp`, so any client that starts local servers can run `npx -y @stuga/mcp`.
+- Search languages are a node setting: Korean and Arabic keyword search are chosen at first-run
+  setup and in **Settings → This node → Search**. A change rebuilds the search indexes while the node
+  runs, and search keeps answering meanwhile. `PUT /api/node/settings` takes `search: { languages }`,
+  `GET` answers `search` in place of `node.search_languages`, and `POST /auth/register` takes
+  `search_languages`.
+- A workspace can be exported as a workspace archive, one `.stuga.zip` of Markdown, rows, images and
+  a manifest, from **Settings → This workspace → General → Export**: everything you can open, with
+  its comments, views and row pages. `GET /api/workspaces/:id/export` does the same for a workspace
+  owner or admin. `docs/workspace-archive.md` describes the format.
+- A new workspace can start from an archive: **Start with → From a file** when you create one, or
+  `POST /api/workspaces/import`. Its comments keep their threads, times and authors' names. It shows
+  nowhere until the import is done, and a node stopped partway deletes it when it starts again. A
+  backup, the daily one or **Back up now**, waits up to three hours while a workspace is being
+  imported or exported, and no new import or export starts while it waits.
+- `stuga-node archive check <directory>` checks an unzipped workspace archive.
+- Sample workspaces: **Start with** offers samples of real, openly licensed material, such as
+  Python specs, a team handbook, market research and privacy laws in six languages. The node
+  downloads the list and the chosen sample from
+  [stuga-dev/samples](https://github.com/stuga-dev/samples), or from a mirror `SAMPLES_URL` names,
+  and checks each download against the list. Sample agent's changes wait in **Review AI edits**.
+  `GET /api/workspace-samples`, and `sample` on `POST /api/workspaces`.
 
 ### Changed
 
@@ -70,9 +97,14 @@ one, the release notes say there is nothing to do.
 - **The Claude Desktop extension is one extension, `stuga`, for every node, and carries no key.** It
   asks for the node's address and an optional key. `GET /api/agent-bundle` serves it.
 - **Your own AI** offers the **Claude** tab only when the node's public address is https as well.
+- A restore of a backup from this version on leaves the search indexes to the node, which builds
+  them when it starts.
 - The setup link, invite links and share links stay in the address bar, so they can be copied from
   there. Opened signed out, an invite or share link shows sign-in at its own address instead of
   moving to `/login`.
+- Right-to-left text, such as Arabic, reads right to left: in a document's paragraphs, headings,
+  lists, quotes and table cells, and in titles, the outline, comments, Ask and AI answers, and the
+  changes in **Review AI edits**. Code stays left to right.
 
 ### Removed
 
@@ -81,6 +113,9 @@ one, the release notes say there is nothing to do.
 
 ### Fixed
 
+- Keyword search went over up to the last thousand document saves again on every query, so a search
+  over long documents took seconds. The node rebuilds its keyword index once when it first starts
+  this version.
 - A document or folder an agent created stayed private to the person it acted for, whatever the
   workspace's default access, so other members could not see it until that person shared it. It now
   gets the default, like one the person creates. Items made before this release keep their sharing.
@@ -108,6 +143,10 @@ one, the release notes say there is nothing to do.
   select only part of it, and clicking their cursor's flag did nothing; it now puts your cursor there.
 - A backup that paused a document while someone had unsaved edits logged errors, could list a version
   the document did not keep, and lost the last edits of someone who closed the document meanwhile.
+- A name such as `__init__` came back from a document's Markdown, in an export or an agent's read,
+  with `init` in italics.
+- A database dropped the view you had chosen when it reloaded, as it does when a proposal is applied
+  or someone else changes it.
 
 ## [0.1.1] - 2026-09-24
 

@@ -5,12 +5,14 @@ import {
   getNodeAiSettings,
   getNodeSettings,
   getNodeState,
+  getSearchLanguages,
   lastNodeBoot,
   recordBackupAttempt,
   recordNodeBoot,
   recordUpdateCheck,
   resetNodeSettings,
   saveNodeSettings,
+  saveSearchLanguages,
   upsertNodeAiSettings,
 } from "./node.js";
 import { createOidcFlow, createOidcTicket } from "./oidc.js";
@@ -225,6 +227,25 @@ describe.skipIf(!URL)("node_settings", () => {
       /check constraint/,
     );
     expect(await subjects()).toEqual(["sub-u1", "sub-u2", null]);
+  });
+
+  it("keeps the search languages apart: none chosen, none, or some, through every other save and a reset", async () => {
+    expect(await getSearchLanguages(sql)).toBeNull();
+    await saveSearchLanguages(sql, [], null);
+    expect(await getSearchLanguages(sql)).toEqual([]);
+    await saveSearchLanguages(sql, ["ko", "ar"], "admin-1");
+    expect(await getSearchLanguages(sql)).toEqual(["ko", "ar"]);
+    expect(await getNodeSettings(sql)).toMatchObject({ updated_by: "admin-1" });
+
+    await saveNodeSettings(sql, { ...base, nodeName: "Liv's Mac" });
+    expect(await getSearchLanguages(sql)).toEqual(["ko", "ar"]);
+    await resetNodeSettings(sql);
+    expect(await getNodeSettings(sql)).toMatchObject({ node_name: null, updated_by: null });
+    expect(await getSearchLanguages(sql)).toEqual(["ko", "ar"]);
+
+    // A language this build does not know, say one a newer version saved, is left out.
+    await sql`UPDATE node_settings SET search_languages = '{fr,ar}'`;
+    expect(await getSearchLanguages(sql)).toEqual(["ar"]);
   });
 
   it("resets the row, the provider and every subject together, and says which provider it was", async () => {

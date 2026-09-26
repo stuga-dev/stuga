@@ -227,7 +227,8 @@ export function DocTable({
                   onActivate(r);
                 }}
               >
-                {r.title || "Untitled"}
+                {/* Link and its Text are flex boxes, so the direction and the ellipsis go on the text's own box. */}
+                <span className="bidi-line">{r.title || "Untitled"}</span>
               </Link>
             ) : (
               r.title || (r.kind === "folder" ? "Untitled folder" : "Untitled")

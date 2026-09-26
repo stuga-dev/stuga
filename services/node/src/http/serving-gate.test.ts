@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createServingGate } from "./serving-gate.js";
+import { answeredUntil, createServingGate } from "./serving-gate.js";
 
 const ORIGIN = "http://localhost:8787";
 const get = (path: string, accept = "*/*") => new Request(ORIGIN + path, { headers: { accept } });
@@ -74,5 +74,26 @@ describe("the serving gate", () => {
     finish();
     expect(await (await answering).text()).toBe("done");
     expect(await drained).toBe(true);
+  });
+
+  it("counts a response whose body is written after its handler returns until that is done, however it ends", async () => {
+    const gate = createServingGate();
+    let written!: () => void;
+    let broken!: (err: Error) => void;
+    const done = [new Promise<void>((resolve) => (written = resolve)), new Promise<void>((_, reject) => (broken = reject))];
+    gate.open({ handler: async () => answeredUntil(new Response("streaming"), done.shift()!), upgrade: live.upgrade });
+
+    await gate.handler(get("/api/export"));
+    gate.pause("maintenance");
+    expect(await gate.drain(20)).toBe(false);
+    const drained = gate.drain(1000);
+    written();
+    expect(await drained).toBe(true);
+
+    gate.open();
+    await gate.handler(get("/api/export"));
+    expect(await gate.drain(20)).toBe(false);
+    broken(new Error("the client went away"));
+    expect(await gate.drain(1000)).toBe(true);
   });
 });

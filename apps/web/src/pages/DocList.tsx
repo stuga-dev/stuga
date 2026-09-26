@@ -399,7 +399,11 @@ export function DocList() {
                     <Item
                       as="li"
                       key={r.doc_id}
-                      label={r.page_of ? `${pageParentLabel(r.page_of)} › ${r.title || "Untitled"}` : r.title || "Untitled"}
+                      label={
+                        <span className="bidi-line">
+                          {r.page_of ? `${pageParentLabel(r.page_of)} › ${r.title || "Untitled"}` : r.title || "Untitled"}
+                        </span>
+                      }
                       description={<span className="snippet" dangerouslySetInnerHTML={{ __html: sanitize(r.snippet) }} />}
                       startContent={<FileText size={16} />}
                       onClick={() => nav(`/doc/${r.doc_id}`)}

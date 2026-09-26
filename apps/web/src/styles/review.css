@@ -46,6 +46,8 @@ ins.ai-preview-insert { padding: 0 0.1rem; }
 .ai-preview-hunk--pending { opacity: 0.5; }
 /* The word form's <ins>/<del> spans carry the colour instead of a block fill. */
 .ai-preview-ghost--words { display: block; }
+/* It stands in for a paragraph, so it takes the direction of its text as the paragraph does. */
+.ai-preview-ghost--words .ai-preview-hunk { unicode-bidi: plaintext; text-align: start; }
 /* A removal inserts nothing, so its ghost has no green fill. */
 .ai-preview-ghost--removal {
   display: block; margin: 0.15rem 0; padding: 0.1rem 0.4rem;
@@ -120,7 +122,11 @@ ol > .ai-preview-ghost { list-style: none; margin-left: 0; }
 .agent-run-change__marker--add { color: var(--color-text-green); }
 .agent-run-change__marker--remove { color: var(--color-text-red); }
 .agent-run-change__marker--change { color: var(--color-text-secondary); }
-.agent-run-change__text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Document text, so it reads in its own direction, and a cut one loses its end, not its start. */
+.agent-run-change__text {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  unicode-bidi: plaintext; text-align: start;
+}
 .agent-run-change__note { flex: 0 0 auto; font-size: var(--text-body-size); color: var(--color-text-secondary); font-style: italic; }
 .agent-run-change__actions { flex: 0 0 auto; display: inline-flex; gap: 0.3rem; }
 

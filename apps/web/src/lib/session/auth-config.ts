@@ -5,6 +5,7 @@
  * link. An administrator may add one identity provider beside them, which the
  * node talks to itself: the browser only follows the addresses it hands out.
  */
+import { parseSearchLanguages, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 
 /** The node's colour, which marks the selected item; null means not set. */
 export interface BrandingConfig {
@@ -23,6 +24,8 @@ export interface AuthClientConfig {
   /** The address the node knows itself by; null only when the config could not be fetched. */
   origin: string | null;
   branding: BrandingConfig;
+  /** While unclaimed: the search languages the node took from SEARCH_LANGUAGES or its search indexes, which setup starts from; null when it took none. */
+  searchLanguages: SearchLanguage[] | null;
 }
 
 interface AuthConfigResponse {
@@ -32,6 +35,7 @@ interface AuthConfigResponse {
   node_label?: string | null;
   origin?: string | null;
   branding?: { accent_color?: string | null } | null;
+  search_languages?: unknown;
 }
 
 /**
@@ -45,6 +49,7 @@ const FALLBACK_CONFIG: AuthClientConfig = {
   nodeLabel: null,
   origin: null,
   branding: { accentColor: null },
+  searchLanguages: null,
 };
 
 let cachedConfig: AuthClientConfig | null = null;
@@ -61,6 +66,7 @@ function parseConfig(raw: AuthConfigResponse): AuthClientConfig {
     nodeLabel: text(raw.node_label),
     origin: text(raw.origin),
     branding: { accentColor: raw.branding?.accent_color ?? null },
+    searchLanguages: parseSearchLanguages(raw.search_languages),
   };
 }
 
@@ -119,4 +125,9 @@ export function providerLabel(): string | null {
 /** True while this node has no account, so the visitor is setting it up rather than signing in. */
 export function nodeUnclaimed(): boolean {
   return authConfig().unclaimed;
+}
+
+/** The search languages setup starts from, when the node took some from SEARCH_LANGUAGES or its search indexes; else null. */
+export function setupSearchLanguages(): SearchLanguage[] | null {
+  return authConfig().searchLanguages;
 }

@@ -7,10 +7,12 @@ import MarkdownIt from "markdown-it";
 import { blockDiffMarkdown, type BlockDiffMarkdown } from "@stuga/crdt-ops";
 import { Switch } from "@astryxdesign/core/Switch";
 import { renderImageCaptions } from "../editor/image-caption-markdown";
+import { renderTextDirection } from "../editor/text-direction-markdown";
 
 // html:false escapes raw HTML in document text, so the output is safe to inject.
 const md = new MarkdownIt({ html: false, linkify: true });
 renderImageCaptions(md);
+renderTextDirection(md);
 
 export function useBlockDiff(base: string | null, target: string | null): { blocks: BlockDiffMarkdown[]; changed: boolean } {
   return useMemo(() => {

@@ -39,7 +39,8 @@ with an invite link.
 **Check for new versions** on that page is ticked: once a day the node asks GitHub for the list of
 releases, says nothing about itself, and tells its administrators when a newer one is out. Untick it
 on a node that cannot or should not reach the internet, and the node never asks
-([Operations](operations.md#learning-of-a-new-version)).
+([Operations](operations.md#learning-of-a-new-version)). The next page reads the list of samples
+from GitHub as well, unless [SAMPLES_URL](configuration.md#network) points the node at a mirror.
 
 **Check:** the node's log says `first account created; it administers this node`.
 
@@ -49,6 +50,20 @@ Stuga asks you to **Create your workspace**. Documents, databases, members and p
 belong to one workspace, and nothing crosses between workspaces. You can add more later. The
 workspace switcher in the top bar lists them, and **Add another node…** there keeps a shortcut to
 another Stuga node ([Several nodes](network-access.md#several-nodes)).
+
+**Start with** picks what the workspace holds at first:
+
+- **Empty workspace**.
+- A sample, such as **Privacy laws**: a workspace of real, openly licensed material. The node reads
+  the list of samples from [github.com/stuga-dev/samples](https://github.com/stuga-dev/samples) when
+  the page or dialog opens, keeps it an hour, and downloads the sample you choose when you create the
+  workspace. When its last look for the list failed, as it does without internet access, it says
+  **Samples need an internet connection**; [SAMPLES_URL](configuration.md#network) points the node at
+  a mirror. The new workspace opens at the sample's **Start here** document. **Sample agent**'s
+  changes, written in advance, wait for your review in **Review AI edits**, and its comment mentions
+  you.
+- **From a file**: a `.stuga.zip` exported from Stuga ([Workspace archive](workspace-archive.md)).
+  With no name typed, the workspace keeps the one it had.
 
 **Check:** you reach the document list and can create a document.
 

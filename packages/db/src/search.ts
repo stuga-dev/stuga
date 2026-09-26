@@ -263,8 +263,12 @@ export interface SearchInput {
   scopeDocIds?: string[] | null;
   /** A scoped credential's folders, subtrees already expanded. */
   scopeFolderIds?: string[] | null;
-  /** Must match the languages the BM25 indexes were built with; an unbuilt one fails the query. */
-  searchLanguages?: readonly SearchLanguage[];
+  /**
+   * The languages the BM25 indexes answer for, read as the SQL is built: a
+   * query naming one the index lacks fails. They change while the indexes are
+   * rebuilt, so this is a getter rather than a value read earlier.
+   */
+  searchLanguages?: () => readonly SearchLanguage[];
 }
 
 export interface AskInput {
@@ -279,7 +283,8 @@ export interface AskInput {
   limit?: number;
   scopeDocIds?: string[] | null;
   scopeFolderIds?: string[] | null;
-  searchLanguages?: readonly SearchLanguage[];
+  /** As in SearchInput. */
+  searchLanguages?: () => readonly SearchLanguage[];
 }
 
 function normalizeQueryLimit(value: number | undefined, fallback: number): number {
@@ -301,9 +306,15 @@ function normalizeQueryLimit(value: number | undefined, fallback: number): numbe
  * can recall a document but never outrank a real match. kw_rank must stay a
  * bare pdb.score(): wrapped in arithmetic, ORDER BY leaves the index's top-K.
  */
-function keywordLeg(sql: Sql, input: SearchInput, scopeFilter: Fragment, candidates: number): Fragment {
+function keywordLeg(
+  sql: Sql,
+  input: SearchInput,
+  languages: readonly SearchLanguage[],
+  scopeFilter: Fragment,
+  candidates: number,
+): Fragment {
   let langLegs = sql``;
-  for (const lang of input.searchLanguages ?? []) {
+  for (const lang of languages) {
     langLegs = sql`${langLegs}, paradedb.match_conjunction(${`all_text_${lang}`}, ${input.query})`;
   }
   return sql`
@@ -339,9 +350,15 @@ function keywordLeg(sql: Sql, input: SearchInput, scopeFilter: Fragment, candida
  * so a natural-language question matches a passage on any significant term.
  * Chunk 0 carries the title, so a title-only match cites the opening passage.
  */
-function chunkKeywordLeg(sql: Sql, input: AskInput, scopeFilter: Fragment, candidates: number): Fragment {
+function chunkKeywordLeg(
+  sql: Sql,
+  input: AskInput,
+  languages: readonly SearchLanguage[],
+  scopeFilter: Fragment,
+  candidates: number,
+): Fragment {
   let langLegs = sql``;
-  for (const lang of input.searchLanguages ?? []) {
+  for (const lang of languages) {
     langLegs = sql`${langLegs}, paradedb.match_disjunction(${`chunk_text_${lang}`}, ${input.query})`;
   }
   return sql`
@@ -378,6 +395,25 @@ function withVectorScan<T>(sql: Sql, limit: number, run: (tx: TransactionSql) =>
   }) as Promise<T>;
 }
 
+/**
+ * Build and run a query naming the languages in force. A rebuild of the search
+ * indexes can make one of them unknown between the read and the query, which
+ * fails naming the field; read again, the languages are the ones that now
+ * answer, so the query is run once more.
+ */
+async function withSearchLanguages<T>(
+  input: { searchLanguages?: () => readonly SearchLanguage[] },
+  run: (languages: readonly SearchLanguage[]) => Promise<T>,
+): Promise<T> {
+  const languages = () => input.searchLanguages?.() ?? [];
+  try {
+    return await run(languages());
+  } catch (err) {
+    if (!(err instanceof Error && /is not part of the pg_search index/.test(err.message))) throw err;
+    return run(languages());
+  }
+}
+
 /** Hybrid search, one row per document. */
 export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchResult[]> {
   const limit = normalizeQueryLimit(input.limit, 20);
@@ -385,17 +421,16 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
   if (input.scopeDocIds && input.scopeDocIds.length === 0) return [];
   const scopeFilter = scopeFragment(sql, input.scopeDocIds ?? null, input.scopeFolderIds ?? null);
   const qvec = vectorLiteral(input.queryEmbedding, input.embeddingDims);
-  const kwLeg = keywordLeg(sql, input, scopeFilter, candidates);
   const semLimit = candidates * 4;
 
   // Reciprocal Rank Fusion: each leg a document appears in adds 1/(60 + its rank
   // there), and a leg it is absent from adds nothing.
-  return withVectorScan(sql, semLimit, (tx) => tx<SearchResult[]>`
+  return withSearchLanguages(input, (languages) => withVectorScan(sql, semLimit, (tx) => tx<SearchResult[]>`
     WITH q AS (
       SELECT ${qvec}::vector AS qvec
     ),
     kw_candidates AS (
-      ${kwLeg}
+      ${keywordLeg(sql, input, languages, scopeFilter, candidates)}
     ),
     kw_ranked AS (
       SELECT k.*, rank() OVER (ORDER BY k.kw_rank DESC) AS kw_pos
@@ -450,7 +485,7 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
     FROM fused f
     JOIN docs d ON d.doc_id = f.doc_id
     ORDER BY f.score DESC, d.doc_id
-    LIMIT ${limit}`);
+    LIMIT ${limit}`));
 }
 
 /** Hybrid retrieval of individual passages for cited answers, without the per-document collapse. */
@@ -460,9 +495,8 @@ export async function askDocs(sql: Sql, input: AskInput): Promise<AskChunk[]> {
   if (input.scopeDocIds && input.scopeDocIds.length === 0) return [];
   const scopeFilter = scopeFragment(sql, input.scopeDocIds ?? null, input.scopeFolderIds ?? null);
   const qvec = vectorLiteral(input.queryEmbedding, input.embeddingDims);
-  const kwLeg = chunkKeywordLeg(sql, input, scopeFilter, candidates);
   // Reciprocal Rank Fusion, as in searchDocs, over passages.
-  return withVectorScan(sql, candidates, (tx) => tx<AskChunk[]>`
+  return withSearchLanguages(input, (languages) => withVectorScan(sql, candidates, (tx) => tx<AskChunk[]>`
     WITH q AS (
       SELECT ${qvec}::vector AS qvec
     ),
@@ -492,7 +526,7 @@ export async function askDocs(sql: Sql, input: AskInput): Promise<AskChunk[]> {
       FROM chunk_hits s
     ),
     kw_hits AS (
-      ${kwLeg}
+      ${chunkKeywordLeg(sql, input, languages, scopeFilter, candidates)}
     ),
     kw_ranked AS (
       SELECT k.*, rank() OVER (ORDER BY k.kw_rank DESC) AS kw_pos
@@ -517,5 +551,5 @@ export async function askDocs(sql: Sql, input: AskInput): Promise<AskChunk[]> {
     -- An empty passage would spend a citation on nothing.
     WHERE ch.content <> ''
     ORDER BY f.score DESC, f.doc_id, f.chunk_index
-    LIMIT ${limit}`);
+    LIMIT ${limit}`));
 }

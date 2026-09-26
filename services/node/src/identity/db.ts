@@ -12,6 +12,7 @@ import {
   findAccountBySub,
   findAccountByUsername,
   findRefreshSession,
+  getSearchLanguages,
   getUserDisplayName,
   isWorkspaceInviteRedeemable,
   linkIdentity,
@@ -31,12 +32,15 @@ import {
   type OidcFlowRow,
   type OidcTicketRow,
   type RefreshSessionRow,
+  type SearchLanguage,
   type Sql,
 } from "@stuga/db";
 
 export interface IdentityDb {
   /** Zero means nobody has claimed the node. */
   countAccounts(): Promise<number>;
+  /** The node's search languages, null until chosen: by setup, or before it by a boot, from SEARCH_LANGUAGES or from existing search indexes. */
+  searchLanguages(): Promise<SearchLanguage[] | null>;
   /**
    * Decides under one lock whether this is the node's first account, which is
    * granted node administration in the same transaction (`admin`) and needs
@@ -56,6 +60,8 @@ export interface IdentityDb {
     updateCheck?: boolean;
     /** Setup's browser's time zone, the node's for scheduled work; stored with the first account, and only with it. */
     timeZone?: string;
+    /** Setup's search languages, `[]` for none; stored with the first account, and only with it. */
+    searchLanguages?: readonly SearchLanguage[];
   }): Promise<NewAccount<"username_taken" | "setup_code_required">>;
   /**
    * Never the first account (`setup_required`); needs an invite as a later password account does.
@@ -113,6 +119,7 @@ export interface IdentityDb {
 export function identityDb(sql: Sql): IdentityDb {
   return {
     countAccounts: () => countAccounts(sql),
+    searchLanguages: () => getSearchLanguages(sql),
     createLocalAccount: (input) => createLocalAccount(sql, input),
     createProviderAccount: (input) => createProviderAccount(sql, input),
     findAccountByUsername: (username) => findAccountByUsername(sql, username),

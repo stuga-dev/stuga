@@ -161,6 +161,11 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
             onClick={() => void backUpNow()}
           />
         </HStack>
+        {state?.waiting && (
+          <Text type="supporting" color="secondary">
+            Waiting to back up: {state.waiting}.
+          </Text>
+        )}
         {state && state.backups.length === 0 && (
           <Text type="supporting" color="secondary">
             No backups yet.

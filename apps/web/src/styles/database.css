@@ -147,7 +147,7 @@
 .db-td { position: relative; }
 .db-td--checkbox { padding: 0.15rem 0.5rem; }
 .db-cell {
-  display: block; width: 100%; min-height: 2.1rem; text-align: left;
+  display: block; width: 100%; min-height: 2.1rem;
   background: transparent; border: none; cursor: pointer; color: var(--color-text-primary);
   font: inherit; padding: 0.4rem 0.5rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -215,6 +215,10 @@
   padding: 0.6rem 0.9rem; border-top: 1px solid var(--color-border);
   display: flex; flex-direction: column; gap: 0.35rem; align-items: flex-start; flex: 0 0 auto;
 }
+
+/* Values and names read in their own text's direction, and a cut one loses its end, not its start. */
+.db-cell, .db-cell-input, .db-col-head__label, .db-group-row__label,
+.row-panel__title, .row-panel__label, .row-panel__input, .row-panel__textarea { unicode-bidi: plaintext; text-align: start; }
 
 /* --- import dialog --- */
 .db-import__file {

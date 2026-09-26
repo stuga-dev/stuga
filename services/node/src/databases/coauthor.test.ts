@@ -71,7 +71,7 @@ describe("the table co-author's query tool", () => {
 });
 
 describe("the table co-author's collection search", () => {
-  const ctx = () => ({ ...ctxWithActor(() => new Response("{}")), env: { embeddingDims: 2, searchLanguages: [] } }) as unknown as Ctx;
+  const ctx = () => ({ ...ctxWithActor(() => new Response("{}")), env: { embeddingDims: 2, searchLanguages: { current: () => [] } } }) as unknown as Ctx;
   const COLLECTION = { collection_id: "col1", workspace_id: "ws1", owner: "bob", name: "Specs", created_at: "", updated_at: "" };
 
   it("searches exactly the selected collection's documents", async () => {

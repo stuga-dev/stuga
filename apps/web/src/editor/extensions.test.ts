@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { getSchema } from "@tiptap/react";
-import { DOMParser, type Schema } from "@tiptap/pm/model";
+import { DOMParser, DOMSerializer, type Schema } from "@tiptap/pm/model";
 import * as Y from "yjs";
 import { getStugaSchema } from "@stuga/crdt-ops";
 import { stugaEditorExtensions } from "./extensions";
@@ -84,5 +84,21 @@ describe("editor schema parity with @stuga/crdt-ops", () => {
       return DOMParser.fromSchema(schema).parse(dom.body).toJSON();
     };
     expect(parse(editor)).toEqual(parse(server));
+  });
+
+  it("renders lists and quotes with dir=auto, a DOM attribute the document never holds", () => {
+    const html = '<ul dir="rtl"><li><p>أ</p></li></ul><ol><li><p>b</p></li></ol><blockquote><p>ج</p></blockquote>';
+    const dom = new window.DOMParser().parseFromString(html, "text/html");
+    const doc = DOMParser.fromSchema(editor).parse(dom.body);
+    // Parsing drops a pasted `dir`, so both schemas hold the same document.
+    expect(doc.toJSON()).toEqual(DOMParser.fromSchema(server).parse(dom.body).toJSON());
+    const out = document.createElement("div");
+    out.appendChild(DOMSerializer.fromSchema(editor).serializeFragment(doc.content));
+    expect([...out.children].map((el) => `${el.tagName.toLowerCase()} ${el.getAttribute("dir")}`)).toEqual([
+      "ul auto",
+      "ol auto",
+      "blockquote auto",
+    ]);
+    expect(out.querySelector("p")!.hasAttribute("dir")).toBe(false);
   });
 });

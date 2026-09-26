@@ -74,7 +74,7 @@ export async function searchDocuments(ctx: Ctx, request: SearchRequest): Promise
   const results = await searchDocs(ctx.sql, {
     embeddingDims: ctx.env.embeddingDims,
     maxDistance: ai.embed.searchMaxDistance,
-    searchLanguages: ctx.env.searchLanguages,
+    searchLanguages: () => ctx.env.searchLanguages.current(),
     principals: ctx.principals,
     workspaceId: ctx.workspaceId,
     query: q,
@@ -110,7 +110,7 @@ export async function retrievePassages(ctx: Ctx, request: SearchRequest): Promis
   const { chunks, degraded } = await retrieveAndRerank({
     sql: ctx.sql,
     embeddingDims: ctx.env.embeddingDims,
-    searchLanguages: ctx.env.searchLanguages,
+    searchLanguages: () => ctx.env.searchLanguages.current(),
     aiCfg: ai,
     alias: ctx.alias,
     principals: ctx.principals,

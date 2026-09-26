@@ -55,7 +55,14 @@ To back up while running, the node pauses for a moment: it answers new requests 
 says it is making a backup, lets the requests already under way finish, stops its background jobs
 and closes every document and database. It keeps its hold on the database throughout, so nothing
 else can start writing. Then it takes the same backup `backup` takes of a stopped node, and serves
-again. Open documents reconnect by themselves.
+again. Open documents reconnect by themselves. If requests are still under way after a minute, the
+node serves again without a backup, and the backup fails.
+
+No backup starts while a workspace is being imported or exported, which can take longer than that.
+The backup waits, the daily one or one from **Back up now**, and is tried every two minutes until
+none is; one still waiting after three hours fails. While it waits, no new import or export starts,
+so it starts once the ones under way are done, and **Backups** says why it waits. An import or export
+stops after 50 minutes, and an export also stops when its download has read nothing for a minute.
 
 A daily backup that fails is shown on **Backups**, and every node administrator gets a notification,
 in the app and through the [notification sink](configuration.md#settings-in-the-app) when one is set.
@@ -95,7 +102,10 @@ It also refuses when the backup does not verify, when Postgres cannot load pg_se
 is no room for a second copy of both halves. Then it:
 
 1. extracts the archive beside the data directory, into `<DATA_DIR>.restore-<stamp>`;
-2. restores the dump into a new database, `<database>_restore_<stamp>`;
+2. restores the dump into a new database, `<database>_restore_<stamp>`, without the search indexes,
+   which the node builds when it starts. A backup from before the
+   [search languages](configuration.md#search-languages) were a setting keeps its own, whose names
+   are its only record of them;
 3. swaps by renaming, keeping the current halves as `<database>_replaced_<stamp>` and
    `<DATA_DIR>.replaced-<stamp>`.
 
@@ -116,6 +126,25 @@ and a name set in Settings, are in the database, so the restored node keeps them
 never named goes by the host of the restored node's `PUBLIC_ORIGIN`.
 
 Practise a restore once, before the node holds anything you would miss.
+
+## Move a workspace to another node
+
+A backup moves a whole node. One workspace moves as a [workspace archive](workspace-archive.md):
+
+1. On the old node, a workspace owner or admin chooses **Settings → This workspace → General →
+   Export workspace**. The `<name>.stuga.zip` it downloads holds everything that person can open.
+2. On the other node, **Create a workspace** with **Start with → From a file**, and choose the
+   file. With no name typed, the workspace keeps the one it had. The file must be within that
+   node's upload limit, 10 MB unless an administrator raises it in **Settings → This node →
+   Storage**, up to 50 MB.
+
+The new workspace has the folders, documents, databases with their rows, views and row pages,
+images, comments, agent instructions, and each document's review mode, lock and search setting.
+Whoever imports it owns everything in it, under the new workspace's default access. It does not
+have the version history, the review and Activity history, sharing, members, collections,
+favorites, or when rows were created and updated: invite the members and share again. A comment
+shows its author's name marked as imported, and a mention is plain text. The old workspace stays
+as it was until someone deletes it.
 
 ## Reset a password
 

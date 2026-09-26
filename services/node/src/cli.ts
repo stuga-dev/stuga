@@ -1,10 +1,11 @@
 /**
- * stuga-node serve|backup|verify|restore|list|reset-password|media-scan.
+ * stuga-node serve|backup|verify|restore|list|reset-password|media-scan|archive.
  *
- * backup, verify, restore and list take --json for one JSON object on stdout; with it only
- * notes and errors go to stderr. Operator command exit codes: 0 done, 2 refused with nothing
- * changed, 3 failed with nothing changed, 4 failed after a change; serve exits 1 when it cannot
- * start. Operator commands never boot a node, so none is a second writer beside a running one.
+ * backup, verify, restore, list and archive check take --json for one JSON object on stdout; with
+ * it only notes and errors go to stderr. Operator command exit codes: 0 done, 2 refused with
+ * nothing changed, 3 failed with nothing changed, 4 failed after a change; serve exits 1 when it
+ * cannot start. Operator commands never boot a node, so none is a second writer beside a running
+ * one.
  */
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -27,7 +28,8 @@ const USAGE = `usage:
   stuga-node restore <backup> [--yes] [--json]
   stuga-node list [--json]
   ${RESET_PASSWORD_USAGE}
-  ${MEDIA_SCAN_USAGE}`;
+  ${MEDIA_SCAN_USAGE}
+  stuga-node archive check <directory> [--json]`;
 
 const tell = (line: string): void => void process.stderr.write(`${line}\n`);
 
@@ -107,6 +109,11 @@ async function run(argv: string[]): Promise<ExitCode> {
       return await runResetPassword(target, () => parseOpsConfig(process.env), (text) => void process.stdout.write(text));
     }
     if (command === "media-scan") return await mediaScan(rest);
+    if (command === "archive") {
+      // Imported here so no other command loads the Markdown parser.
+      const { runArchiveCommand } = await import("./archive/check.js");
+      return await runArchiveCommand(rest, (text) => void process.stdout.write(text));
+    }
     if (!command || !["backup", "verify", "restore", "list"].includes(command)) throw refused(USAGE);
     const env = parseBackupEnv(process.env);
 

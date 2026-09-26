@@ -160,7 +160,7 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
   return (
     <div className="dock-panel row-panel" aria-label="Row">
       <div className="row-panel__head">
-        <Text type="large" weight="semibold" maxLines={2}>
+        <Text type="large" weight="semibold" maxLines={2} className="row-panel__title">
           {rowTitle(columns, row)}
         </Text>
         <Text type="supporting" color="secondary">

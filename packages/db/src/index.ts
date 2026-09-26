@@ -23,5 +23,19 @@ export * from "./audit.js";
 export * from "./node.js";
 export { runBootRepairs, type RepairOutcome } from "./schema/boot-repairs.js";
 export { initSchema, readSchemaVersion, SCHEMA_VERSION, type MigrationOutcome } from "./schema/migrate.js";
-export { SEARCH_LANGUAGES, preloadsPgSearch, type SearchLanguage } from "./schema/search-indexes.js";
+export {
+  SEARCH_LANGUAGES,
+  createSearchIndex,
+  dropSearchIndex,
+  indexedSearchLanguages,
+  isPlainIndexName,
+  isSearchIndexName,
+  listSearchIndexes,
+  preloadsPgSearch,
+  SEARCH_LANGUAGES_SCHEMA,
+  searchIndexShapes,
+  type PresentSearchIndex,
+  type SearchIndexShape,
+  type SearchLanguage,
+} from "./schema/search-indexes.js";
 export { pgJobQueue, startJobWorker, type JobBatch, type JobMessage } from "./jobs.js";

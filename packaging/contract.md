@@ -75,6 +75,7 @@ The version appears in these places:
 | `list [--json]` | List backups, unfinished work, and what restores kept. |
 | `reset-password <username>` | Print a password reset link. |
 | `media-scan [--reclaim] [--empty-trash[=<days>]] [--grace-hours=<hours>]` | Report or reclaim media that no document references. |
+| `archive check <directory> [--json]` | Check an unzipped workspace archive against format version 1, `docs/workspace-archive.md`. Exits 2 when it does not pass. |
 
 A `<backup>` is a path, or a bare name under `BACKUP_DIR`. With `--json`, a command writes one JSON
 object to stdout and writes notes and errors to stderr. Without it, `backup` prints
@@ -111,10 +112,10 @@ edits lives in the database.
 | `EXTRA_ORIGINS` | none | Further exact origins that browsers may call from, comma-separated. |
 | `TRUST_PROXY_HEADERS` | `false` | Believe `X-Forwarded-For` and `X-Real-IP` for the client address. Set it only behind a reverse proxy. |
 | `TLS_CERT_DIR` | none | A directory of `<host>/fullchain.pem` and `privkey.pem`. When set, the node serves https. |
+| `SAMPLES_URL` | `https://github.com/stuga-dev/samples/releases` | Where the sample workspaces come from, laid out as a GitHub release list; a mirror for a network without internet access. |
 | `NODE_SIGNING_KEY` | `<DATA_DIR>/identity/signing.jwk` | The session token signing key. |
 | `ACCESS_TOKEN_TTL_SECONDS`, `REFRESH_TOKEN_TTL_SECONDS`, `REFRESH_ROTATION_GRACE_SECONDS` | `3600`, `2592000`, `60` | Session token lifetimes. |
 | `AI_EMBED_DIMS` | `1024` | The embedding width. It is fixed when the database is created. |
-| `SEARCH_LANGUAGES` | none | Extra BM25 analyzers: `ko`, `ar`. |
 | `MEDIA_COOKIE_SAMESITE` | `lax` | `lax`, `strict` or `none`. |
 | `WEB_DIST_DIR` | `<app>/apps/web/dist` | The web assets. |
 | `PG_BIN` | `PATH` | The directory of `pg_dump` and `pg_restore`, of the server's major. |

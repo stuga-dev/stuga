@@ -33,7 +33,7 @@ vi.mock("@stuga/auth", async (importOriginal) => ({
 const { getDoc, touchDoc, createDoc, deleteDoc, updateDoc, getFolder, docTrashStates, listPagesOf, detachPage } = await import("@stuga/db");
 const { queueSnapshotSweep } = await import("../jobs/snapshot-sweep.js");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
-const { rowPageTitle } = await import("./row-pages.js");
+const { openRowPages, rowPageTitle } = await import("./row-pages.js");
 const { READ_ONLY_MESSAGE } = await import("../authz/authz.js");
 import { DATABASE_MAX_COLUMN_DESCRIPTION_CHARS } from "@stuga/protocol/databases/limits";
 import type { Ctx } from "../auth/context.js";
@@ -843,6 +843,49 @@ describe("doc-only surfaces refuse databases cleanly", () => {
       const res = await call(ctxOf(), method, path, body);
       expect(res.status, `${method} ${path}`).toBe(404);
     }
+    expect(actorCalls).toEqual([]);
+  });
+});
+
+describe("many row pages at once", () => {
+  const PAGE = { ...DB_DOC, doc_type: "prose" };
+  const pages = (n: number) => Array.from({ length: n }, (_, i) => ({ rowId: `r${i}`, title: ` Row ${i} ` }));
+
+  beforeEach(() => {
+    mockCreateDoc.mockImplementation(async (_sql: unknown, input: Record<string, unknown>) => ({ ...PAGE, doc_id: input.docId, title: input.title }));
+  });
+
+  it("files each page beside the database with its sharing, and links a batch in one mutation", async () => {
+    const db = { ...DB_DOC, parent_id: "f1", own_grants: { p: ["user:viv"], w: [], c: [] } };
+    mockGetFolder.mockResolvedValue({ folder_id: "f1", workspace_id: "ws1", acl_principals: ["org:ws1"], acl_writers: [] });
+    actorRoutes = { "/rows/link-docs": { body: { linked: 501 } } };
+
+    const out = await openRowPages(ctxOf(), db as never, "t1", pages(501));
+    expect(out.kind).toBe("ok");
+    const ids = (out as { doc_ids: string[] }).doc_ids;
+    expect(ids).toHaveLength(501);
+    expect(mockCreateDoc).toHaveBeenCalledTimes(501);
+    expect(mockCreateDoc.mock.calls[0]![1]).toMatchObject({ docId: ids[0], title: "Row 0", parentId: "f1", pageOf: "db1", pageRow: "t1.r0" });
+    expect((mockCreateDoc.mock.calls[0]![1] as { ownGrants: unknown }).ownGrants).toEqual({ p: ["user:viv", "user:owner-1"], w: ["user:owner-1"], c: [] });
+    // No row read and no schema read: the caller names each title.
+    expect(actorCalls.map((c) => new URL(c.url).pathname)).toEqual(["/rows/link-docs", "/rows/link-docs"]);
+    expect(actorCalls[0]!.body.links).toHaveLength(500);
+    expect((actorCalls[1]!.body.links as unknown[])[0]).toEqual({ row_id: "r500", doc_id: ids[500] });
+    expect(actorCalls[0]!.body).toMatchObject({ table_id: "t1", actor: { alias: "bob", is_agent: false } });
+  });
+
+  it("discards a batch the actor refuses and answers with its refusal", async () => {
+    actorRoutes = { "/rows/link-docs": { status: 429, body: { error: "rate_limited", message: "too many mutations (max 120/min per actor)" } } };
+    const out = await openRowPages(ctxOf(), { ...DB_DOC } as never, "t1", pages(3));
+    expect(out).toEqual({ kind: "error", status: 429, message: "too many mutations (max 120/min per actor)" });
+    expect(mockDeleteDoc).toHaveBeenCalledTimes(3);
+    expect(mockTouchDoc).not.toHaveBeenCalled();
+  });
+
+  it("creates nothing for a caller who may not write the database, or while it is locked", async () => {
+    expect(await openRowPages(viewer(), { ...DB_DOC } as never, "t1", pages(2))).toMatchObject({ kind: "error", status: 403 });
+    expect(await openRowPages(ctxOf(), { ...DB_DOC, locked: true } as never, "t1", pages(2))).toMatchObject({ kind: "error", status: 423 });
+    expect(mockCreateDoc).not.toHaveBeenCalled();
     expect(actorCalls).toEqual([]);
   });
 });

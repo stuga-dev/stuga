@@ -56,6 +56,7 @@ export class DatabaseActor implements Actor<SessionMeta> {
       "POST /rows/update": mutation("rows.update"),
       "POST /rows/delete": mutation("rows.delete"),
       "POST /rows/link-doc": mutation("rows.link_page"),
+      "POST /rows/link-docs": mutation("rows.link_pages"),
       "POST /doc-links/take": () => this.takeDocLinks(),
       "POST /query": (req) => this.query(req),
       "GET /ops": (_req, url) => handleOpsList(this.db, url),

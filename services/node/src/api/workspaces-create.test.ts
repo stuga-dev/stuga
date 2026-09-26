@@ -112,6 +112,25 @@ describe("POST /api/workspaces", () => {
     expect(mockProvision).not.toHaveBeenCalled();
   });
 
+  it("answers with the new workspace as its owner sees it, and nothing an import adds", async () => {
+    mockProvision.mockResolvedValue({
+      workspace_id: "ws-new",
+      name: "Acme",
+      default_doc_access: "private",
+      agent_instructions: "",
+      created_at: "2026-01-01T00:00:00.000Z",
+    });
+    const res = await create({ name: "Acme", default_doc_access: "private" });
+    expect(await res.json()).toEqual({
+      workspace_id: "ws-new",
+      name: "Acme",
+      role: "owner",
+      default_doc_access: "private",
+      agent_instructions: "",
+      created_at: "2026-01-01T00:00:00.000Z",
+    });
+  });
+
   it("requires a name, checked first", async () => {
     const res = await create({ name: "   ", default_doc_access: "private" });
     expect(res.status).toBe(400);

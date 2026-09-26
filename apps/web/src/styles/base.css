@@ -16,6 +16,12 @@ button { font: inherit; }
   user-select: none;
 }
 
+/* A one-line title: it reads in its own text's direction and truncates at its own end. */
+.bidi-line {
+  display: block; unicode-bidi: plaintext; text-align: start;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* The drag strip beside a side panel. Invisible at rest, since the panel draws its own border. */
 .resize-handle {
   flex: 0 0 5px; align-self: stretch; cursor: col-resize;

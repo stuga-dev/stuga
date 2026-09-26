@@ -1,20 +1,13 @@
 /**
- * The BM25 indexes the keyword leg of search reads. Their shape depends on
- * SEARCH_LANGUAGES, so they are reconciled on every boot rather than created by
- * a migration.
+ * The BM25 indexes the keyword leg of search reads. Their shape depends on the
+ * node's search languages, so they are reconciled on every boot rather than
+ * created by a migration, and rebuilt online when the setting changes.
  */
+import { SEARCH_LANGUAGES, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import type { Sql } from "../client.js";
+import { migrationId } from "./migrate.js";
 
-/**
- * A language pg_search gets a more accurate tokenizer for, beyond the generic
- * `pdb.icu` every corpus gets. ICU segments Chinese and Japanese on its own but
- * treats Korean and Arabic as already spaced, so a glued-on particle (Korean 의,
- * Arabic ل) stays attached. `ko` uses a Korean dictionary segmenter; `ar` adds
- * Arabic stemming, which strips ال but not a bare ل.
- */
-export type SearchLanguage = "ko" | "ar";
-
-export const SEARCH_LANGUAGES: readonly SearchLanguage[] = ["ko", "ar"];
+export { SEARCH_LANGUAGES, type SearchLanguage };
 
 const INDEX_NAME = /^[a-z_][a-z0-9_]*$/;
 
@@ -52,13 +45,30 @@ const ENGLISH = "'stemmer=english', 'stopwords_language=english'";
 const CHUNK_TEXT = "coalesce(doc_title, '') || ' ' || coalesce(heading_path, '') || ' ' || content";
 
 /**
+ * Each write indexed as it is made, for the docs index, whose rows are whole documents: by default
+ * pg_search keeps its last 1,000 rows unindexed in a mutable segment that every query tokenizes
+ * again, which over a few long documents makes a search take seconds. Chunks are short, so their
+ * index keeps the default and is spared a segment per write.
+ */
+const INDEXED_ON_WRITE = "mutable_segment_rows = 0";
+
+/** One BM25 index of a language set. */
+export interface SearchIndexShape {
+  table: "docs" | "doc_chunks";
+  /** Encodes the shape: the table, the version of its fields and the languages. */
+  name: string;
+  /** What follows `ON <table>` in its CREATE INDEX. */
+  definition: string;
+}
+
+/**
  * The index NAME encodes its shape: reconcile drops every bm25 index on these
  * tables that is not named here, so changing a field or tokenizer means changing
  * the suffix. `all_text` keeps words as written beside the stemmed `all_text_en`,
  * so a stopword-only title still matches; `search_text` is indexed under its own
  * name because pdb.snippet() cannot highlight an aliased field.
  */
-function bm25Indexes(languages: readonly SearchLanguage[]): readonly { table: string; name: string; ddl: string }[] {
+export function searchIndexShapes(languages: readonly SearchLanguage[]): readonly SearchIndexShape[] {
   const langs = [...new Set(languages)].sort();
   const suffix = langs.length ? `_${langs.join("_")}` : "";
   const docsExtra = langs
@@ -71,22 +81,20 @@ function bm25Indexes(languages: readonly SearchLanguage[]): readonly { table: st
     {
       table: "docs",
       name: `docs_bm25_v1${suffix}`,
-      ddl: `CREATE INDEX docs_bm25_v1${suffix} ON docs
-              USING bm25 (
+      definition: `USING bm25 (
                 doc_id,
                 (title::pdb.icu),
                 (search_text::pdb.icu(${ENGLISH})),
                 ((title || ' ' || search_text)::pdb.icu('alias=all_text')),
                 ((title || ' ' || search_text)::pdb.icu(${ENGLISH}, 'alias=all_text_en'))${docsExtra}
               )
-              WITH (key_field = 'doc_id')`,
+              WITH (key_field = 'doc_id', ${INDEXED_ON_WRITE})`,
     },
     {
       // key_field need not be unique: the index identifies a row by its ctid.
       table: "doc_chunks",
       name: `doc_chunks_bm25_v1${suffix}`,
-      ddl: `CREATE INDEX doc_chunks_bm25_v1${suffix} ON doc_chunks
-              USING bm25 (
+      definition: `USING bm25 (
                 doc_id,
                 ((${CHUNK_TEXT})::pdb.icu(${ENGLISH}, 'alias=chunk_text'))${chunksExtra}
               )
@@ -95,38 +103,22 @@ function bm25Indexes(languages: readonly SearchLanguage[]): readonly { table: st
   ];
 }
 
-export interface SearchIndexRepair {
-  /** Indexes created (`+name`) or dropped (`-name`) to match the languages. */
-  changes: string[];
-  /** Indexes rebuilt because another pg_search version built them. */
-  rebuilt: string[];
+/** A bm25 index on a searched table, as the catalog has it. */
+export interface PresentSearchIndex {
+  name: string;
+  table: string;
+  /** False while a concurrent build is under way, and after one failed. */
+  valid: boolean;
+  /** The comment `markBuilt` left: which pg_search built it. */
+  builtBy: string | null;
 }
 
-/**
- * Make the database's BM25 indexes exactly the ones `languages` define: drop any
- * other bm25 index on the searched tables and build each missing one. Building
- * over an existing corpus is slow, and happens once per shape change.
- *
- * Each index's comment names the pg_search that built it. A release may change
- * the on-disk format and not every one says so, so an index built by any other
- * version, or by an unknown one, is rebuilt rather than trusted.
- */
-export async function reconcileSearchIndexes(sql: Sql, languages: readonly SearchLanguage[]): Promise<SearchIndexRepair> {
-  const changes: string[] = [];
-  const rebuilt: string[] = [];
-  const indexes = bm25Indexes(languages);
-  const wanted = new Set(indexes.map((i) => i.name));
-
-  // The installed binary's version, which is what writes the index, even when
-  // the catalog entry could not be brought level with it.
-  const [ext] = await sql<{ default_version: string }[]>`
-    SELECT default_version FROM pg_available_extensions WHERE name = 'pg_search'`;
-  const builtBy = `pg_search ${ext?.default_version ?? "unknown"}`;
-  const markBuilt = (name: string) =>
-    sql.unsafe(`COMMENT ON INDEX "${name}" IS '${builtBy.replaceAll("'", "''")}'`);
-
-  const present = await sql<{ indexname: string; built_by: string | null }[]>`
-    SELECT c.relname AS indexname, obj_description(c.oid, 'pg_class') AS built_by
+/** Every bm25 index on the searched tables, valid or not. */
+export async function listSearchIndexes(sql: Sql): Promise<PresentSearchIndex[]> {
+  const tables = searchIndexShapes([]).map((i) => i.table);
+  return sql<PresentSearchIndex[]>`
+    SELECT c.relname AS name, t.relname AS "table", i.indisvalid AS valid,
+           obj_description(c.oid, 'pg_class') AS "builtBy"
     FROM pg_class c
     JOIN pg_index i ON i.indexrelid = c.oid
     JOIN pg_class t ON t.oid = i.indrelid
@@ -134,26 +126,155 @@ export async function reconcileSearchIndexes(sql: Sql, languages: readonly Searc
     JOIN pg_namespace n ON n.oid = t.relnamespace
     WHERE am.amname = 'bm25'
       AND n.nspname = 'public'
-      AND t.relname = ANY(${indexes.map((i) => i.table)})`;
+      AND t.relname = ANY(${tables})
+    ORDER BY c.oid`;
+}
 
-  for (const { indexname, built_by } of present) {
-    if (wanted.has(indexname)) {
-      if (built_by === builtBy) continue;
-      await sql.unsafe(`REINDEX INDEX "${indexname}"`);
-      await markBuilt(indexname);
-      rebuilt.push(indexname);
-      continue;
-    }
-    if (!INDEX_NAME.test(indexname)) continue;
-    await sql.unsafe(`DROP INDEX IF EXISTS "${indexname}"`);
-    changes.push(`-${indexname}`);
+/** Whether an index name can be written into DDL as it is; one that cannot is left alone. */
+export function isPlainIndexName(name: string): boolean {
+  return INDEX_NAME.test(name);
+}
+
+/** Whether an index is named as the BM25 indexes Stuga builds are, whatever its languages and version. */
+export function isSearchIndexName(name: string): boolean {
+  return searchIndexShapes([]).some((i) => name.startsWith(`${i.table}_bm25_`));
+}
+
+/**
+ * The schema that made the search languages a setting, and brought the online
+ * rebuild with it. A database before it records its languages only in its
+ * indexes' names, and never holds two on one table.
+ */
+export const SEARCH_LANGUAGES_SCHEMA: number = migrationId("0003_search_languages.sql");
+
+/**
+ * The languages a valid docs index is built for, read off its name; null when
+ * none is named for a set of them. For a database from before the languages
+ * were a setting, whose indexes are the only record of them.
+ */
+export async function indexedSearchLanguages(sql: Sql): Promise<SearchLanguage[] | null> {
+  const valid = new Set((await listSearchIndexes(sql)).filter((i) => i.valid).map((i) => i.name));
+  const sets = SEARCH_LANGUAGES.reduce<SearchLanguage[][]>((all, l) => [...all, ...all.map((set) => [...set, l])], [[]]);
+  return sets.find((set) => valid.has(searchIndexShapes(set)[0]!.name)) ?? null;
+}
+
+/**
+ * What an index's comment says about the pg_search that built it: the installed
+ * binary's version, which is what writes the index, even when the catalog entry
+ * could not be brought level with it.
+ */
+async function builtByThisPgSearch(sql: Sql): Promise<string> {
+  const [ext] = await sql<{ default_version: string }[]>`
+    SELECT default_version FROM pg_available_extensions WHERE name = 'pg_search'`;
+  return `pg_search ${ext?.default_version ?? "unknown"}`;
+}
+
+async function markBuilt(sql: Sql, name: string, builtBy: string): Promise<void> {
+  await sql.unsafe(`COMMENT ON INDEX "${name}" IS '${builtBy.replaceAll("'", "''")}'`);
+}
+
+/** Run one statement that `signal` cancels; it then fails as cancelled, and one never sent is not sent. */
+async function cancellable(signal: AbortSignal | undefined, statement: () => ReturnType<Sql["unsafe"]>): Promise<void> {
+  signal?.throwIfAborted();
+  const query = statement();
+  const cancel = () => query.cancel();
+  signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    await query;
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+  }
+}
+
+/**
+ * Build one index and mark it with the pg_search that built it. Concurrently,
+ * writes go on while it builds and queries keep reading the table's other
+ * index until this one is valid; a failed concurrent build leaves an invalid
+ * index under the name, which has to be dropped before the name is built again.
+ * A plain build is refused while the table has any other bm25 index.
+ */
+export async function createSearchIndex(
+  sql: Sql,
+  index: SearchIndexShape,
+  opts: { concurrently?: boolean; signal?: AbortSignal } = {},
+): Promise<void> {
+  const concurrently = opts.concurrently ? "CONCURRENTLY " : "";
+  await cancellable(opts.signal, () =>
+    sql.unsafe(`CREATE INDEX ${concurrently}${index.name} ON ${index.table} ${index.definition}`),
+  );
+  await markBuilt(sql, index.name, await builtByThisPgSearch(sql));
+}
+
+/** Drop one index if it is there. Concurrently, queries and writes go on meanwhile. */
+export async function dropSearchIndex(
+  sql: Sql,
+  name: string,
+  opts: { concurrently?: boolean; signal?: AbortSignal } = {},
+): Promise<void> {
+  if (!isPlainIndexName(name)) throw new Error(`not an index name Stuga builds: ${JSON.stringify(name)}`);
+  const concurrently = opts.concurrently ? "CONCURRENTLY " : "";
+  await cancellable(opts.signal, () => sql.unsafe(`DROP INDEX ${concurrently}IF EXISTS "${name}"`));
+}
+
+export interface SearchIndexRepair {
+  /** Indexes created (`+name`) or dropped (`-name`) to match the languages. */
+  changes: string[];
+  /**
+   * Indexes rebuilt because another pg_search version built them, a build did not finish, or they
+   * were built to leave writes unindexed until a query.
+   */
+  rebuilt: string[];
+}
+
+/** Those of the indexes named that lack INDEXED_ON_WRITE, as every index built before it did. */
+async function indexedOnQuery(sql: Sql, names: readonly string[]): Promise<Set<string>> {
+  const rows = await sql<{ name: string }[]>`
+    SELECT c.relname AS name FROM pg_class c
+    WHERE c.relnamespace = 'public'::regnamespace AND c.relname = ANY(${names})
+      AND NOT coalesce(c.reloptions, '{}') @> ARRAY['mutable_segment_rows=0']`;
+  return new Set(rows.map((r) => r.name));
+}
+
+/**
+ * Make the database's BM25 indexes exactly the ones `languages` define: drop any
+ * other bm25 index on the searched tables and build each missing one. Building
+ * over an existing corpus is slow, and happens once per shape change. Plain
+ * statements, since nothing is searching yet; a table holds only one bm25 index
+ * by the time one is built.
+ *
+ * Each index's comment names the pg_search that built it. A release may change
+ * the on-disk format and not every one says so, so an index built by any other
+ * version, or by an unknown one, is rebuilt rather than trusted. So is one left
+ * invalid by an online rebuild the node stopped in the middle of, and one built
+ * before INDEXED_ON_WRITE, which is switched to it first.
+ */
+export async function reconcileSearchIndexes(sql: Sql, languages: readonly SearchLanguage[]): Promise<SearchIndexRepair> {
+  const changes: string[] = [];
+  const rebuilt: string[] = [];
+  const indexes = searchIndexShapes(languages);
+  const wanted = new Set(indexes.map((i) => i.name));
+  const builtBy = await builtByThisPgSearch(sql);
+  const present = await listSearchIndexes(sql);
+
+  for (const { name } of present) {
+    if (wanted.has(name) || !isPlainIndexName(name)) continue;
+    await dropSearchIndex(sql, name);
+    changes.push(`-${name}`);
   }
 
-  const have = new Set(present.map((p) => p.indexname));
+  const onQuery = await indexedOnQuery(sql, indexes.filter((i) => i.definition.includes(INDEXED_ON_WRITE)).map((i) => i.name));
+  for (const { name, valid, builtBy: by } of present) {
+    if (!wanted.has(name) || (valid && by === builtBy && !onQuery.has(name))) continue;
+    if (onQuery.has(name)) await sql.unsafe(`ALTER INDEX "${name}" SET (${INDEXED_ON_WRITE})`);
+    await sql.unsafe(`REINDEX INDEX "${name}"`);
+    await markBuilt(sql, name, builtBy);
+    rebuilt.push(name);
+  }
+
+  const have = new Set(present.map((p) => p.name));
   for (const index of indexes) {
     if (have.has(index.name)) continue;
-    await sql.unsafe(index.ddl);
-    await markBuilt(index.name);
+    await createSearchIndex(sql, index);
     changes.push(`+${index.name}`);
   }
   return { changes, rebuilt };

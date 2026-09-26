@@ -55,7 +55,7 @@ function agentCtx(scope?: { folders: string[] | null; readOnly: boolean }): Ctx 
       publicOrigin: "https://stuga.test",
       settings: { current: () => ({ nodeLabel: "Studio", maxBodyBytes: 1024 * 1024 }) },
       embeddingDims: 2,
-      searchLanguages: [],
+      searchLanguages: { current: () => [] },
     },
   } as unknown as Ctx;
 }

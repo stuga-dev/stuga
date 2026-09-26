@@ -6,8 +6,8 @@
 import { join, resolve } from "node:path";
 import type { AiProvider } from "@stuga/ai";
 import type { AuthConfig } from "@stuga/auth";
-import { SEARCH_LANGUAGES } from "@stuga/db";
 import { EMBEDDING_DIMS, MAX_EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
+import { SEARCH_LANGUAGES, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { APP_ROOT } from "../app-root.js";
 import type { NodeConfig } from "../env.js";
 import { loadOrCreateInternalSecret } from "./secrets.js";
@@ -32,6 +32,8 @@ const DEFAULT_PUBLIC_ORIGIN = "http://localhost:8787";
 const DEFAULT_BIND = "127.0.0.1";
 const DEFAULT_PORT = 8787;
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
+/** The releases of stuga-dev/samples, whose newest lists the sample workspaces. */
+const DEFAULT_SAMPLES_URL = "https://github.com/stuga-dev/samples/releases";
 const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 3600;
 const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 2_592_000;
 /** Absorbs a renewal whose response was lost in flight; a stolen token is still worthless minutes later. */
@@ -131,6 +133,16 @@ function baseUrl(env: Env, name: string, fallback: string): string {
   return raw.replace(/\/+$/, "");
 }
 
+/** A base the node appends paths to: no credentials, query or fragment, and no trailing slash. */
+function pathBase(env: Env, name: string, fallback: string): string {
+  const raw = str(env, name) ?? fallback;
+  const url = httpUrl(name, raw);
+  if (url.username || url.password || /[?#]/.test(raw)) {
+    throw new ConfigError(`${name} must be an http(s) URL without credentials, a query or a fragment, got "${raw}"`);
+  }
+  return url.href.replace(/\/+$/, "");
+}
+
 // ---- parsers ---------------------------------------------------------------
 
 function requiredDatabaseUrl(env: Env): string {
@@ -151,7 +163,6 @@ export interface OpsConfig {
   dataDir: string;
   publicOrigin: string;
   embeddingDims: number;
-  searchLanguages: NodeConfig["searchLanguages"];
 }
 
 /**
@@ -165,8 +176,18 @@ export function parseOpsConfig(env: Env = process.env): OpsConfig {
     dataDir: requiredDataDir(env),
     publicOrigin: origin(env, "PUBLIC_ORIGIN", DEFAULT_PUBLIC_ORIGIN),
     embeddingDims: int(env, "AI_EMBED_DIMS", EMBEDDING_DIMS, { min: 1, max: MAX_EMBEDDING_DIMS }),
-    searchLanguages: list(env, "SEARCH_LANGUAGES", SEARCH_LANGUAGES),
   };
+}
+
+/**
+ * SEARCH_LANGUAGES, which chose the search languages before they were a node
+ * setting, in the order the setting keeps. Read only by the boot of a node that
+ * has never chosen, which adopts it; null when it is not set.
+ */
+export function legacySearchLanguages(env: Env): SearchLanguage[] | null {
+  if (str(env, "SEARCH_LANGUAGES") === undefined) return null;
+  const listed = list(env, "SEARCH_LANGUAGES", SEARCH_LANGUAGES);
+  return SEARCH_LANGUAGES.filter((l) => listed.includes(l));
 }
 
 /** The node's own sessions. An identity provider is a node setting, not an environment variable. */
@@ -202,7 +223,6 @@ export function parseConfig(env: Env = process.env, opts: { internalSecret?: str
     port: int(env, "PORT", DEFAULT_PORT, { min: 0, max: 65535 }),
     auth: authConfig(env, ops),
     embeddingDims: ops.embeddingDims,
-    searchLanguages: ops.searchLanguages,
     internalSecret: opts.internalSecret ?? loadOrCreateInternalSecret(ops.dataDir),
     mediaCookieSameSite: sameSite(env),
     // Off by default: a node published straight onto a port receives whatever
@@ -213,6 +233,7 @@ export function parseConfig(env: Env = process.env, opts: { internalSecret?: str
     upgradeHint: str(env, "STUGA_UPGRADE_HINT") ?? DEFAULT_UPGRADE_HINT,
     stdioEntry: env.STUGA_STDIO_ENTRY,
     aiProviderBaseUrls: providerBaseUrls(baseUrl(env, "AI_OLLAMA_DEFAULT_URL", DEFAULT_OLLAMA_URL)),
+    samplesUrl: pathBase(env, "SAMPLES_URL", DEFAULT_SAMPLES_URL),
   };
   const tlsCertDir = str(env, "TLS_CERT_DIR");
   if (tlsCertDir) cfg.tlsCertDir = resolve(tlsCertDir);

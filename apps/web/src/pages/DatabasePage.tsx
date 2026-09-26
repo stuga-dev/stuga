@@ -106,9 +106,12 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
     if ((e as { status?: number }).status === 403) setWriteDenied(true);
   }
 
-  // A ref keeps loadSchema stable while it reads the current tab.
+  // Refs keep loadSchema stable while it reads the current tab and URL: a reload long after the
+  // first would otherwise write back the URL of the first render, dropping the view chosen since.
   const activeTidRef = useRef<string | null>(null);
   activeTidRef.current = activeTid;
+  const urlRef = useRef({ tableParam, wantsImport, setSearchParams });
+  urlRef.current = { tableParam, wantsImport, setSearchParams };
 
   const loadSchema = useCallback(async (): Promise<DatabaseSchema | null> => {
     try {
@@ -118,6 +121,7 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
       setSchemaError(false);
       setRowsKey((k) => k + 1);
       // The URL wins over the tab on screen, and whatever is settled on is written back.
+      const { tableParam, wantsImport, setSearchParams } = urlRef.current;
       const wanted = tableParam && tables.some((t) => t.table_id === tableParam) ? tableParam : null;
       const held = activeTidRef.current;
       const open = wanted ?? (held && tables.some((t) => t.table_id === held) ? held : (tables[0]?.table_id ?? null));
@@ -139,7 +143,6 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
       setSchemaError(true);
       return null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the URL params are read on the load they arrive with
   }, [docId]);
 
   useEffect(() => {
@@ -216,7 +219,7 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
     try {
       const r = await Databases.createTable(docId, display);
       await loadSchema();
-      setActiveTid(r.table.table_id);
+      selectTable(r.table.table_id);
     } catch (e) {
       noteWriteError(e);
       toast({ body: errorMessage(e, "Couldn't create the table."), type: "error" });

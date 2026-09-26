@@ -11,8 +11,8 @@
 @keyframes ai-pulse { 0%, 100% { opacity: 0.3; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
 /* The passage a user turn was scoped to, clamped to a few lines. */
 .ai-turn-quote {
-  font-size: var(--text-body-size); color: var(--color-text-secondary); border-left: 2px solid var(--color-accent);
-  padding: 0.1rem 0 0.1rem 0.5rem; margin-bottom: 0.35rem; white-space: pre-wrap;
+  font-size: var(--text-body-size); color: var(--color-text-secondary); border-inline-start: 2px solid var(--color-accent);
+  padding: 0.1rem 0; padding-inline-start: 0.5rem; margin-bottom: 0.35rem; white-space: pre-wrap;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
 }
 
@@ -52,18 +52,23 @@
 .ai-md h2 { font-size: 1.05rem; }
 .ai-md h3 { font-size: 0.98rem; }
 .ai-md h4 { font-size: 0.92rem; }
-.ai-md ul, .ai-md ol { margin: 0.5rem 0; padding-left: 1.3rem; }
+.ai-md ul, .ai-md ol { margin: 0.5rem 0; padding-inline-start: 1.3rem; }
 .ai-md li { margin: 0.2rem 0; }
 .ai-md li > p { margin: 0.2rem 0; }
 .ai-md a { color: var(--color-accent); text-decoration: underline; }
 .ai-md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82em; background: var(--color-accent-muted); border-radius: 4px; padding: 0.05rem 0.3rem; }
 .ai-md pre { background: var(--color-accent-muted); border-radius: var(--radius-element); padding: 0.6rem 0.75rem; overflow-x: auto; margin: 0.6rem 0; }
 .ai-md pre code { background: none; padding: 0; font-size: 0.8rem; }
-.ai-md blockquote { margin: 0.6rem 0; padding-left: 0.7rem; border-left: 3px solid var(--color-border); color: var(--color-text-secondary); }
+.ai-md blockquote { margin: 0.6rem 0; padding-inline-start: 0.7rem; border-inline-start: 3px solid var(--color-border); color: var(--color-text-secondary); }
 .ai-md table { border-collapse: collapse; margin: 0.6rem 0; font-size: 0.82rem; display: block; overflow-x: auto; }
-.ai-md th, .ai-md td { border: 1px solid var(--color-border); padding: 0.25rem 0.5rem; text-align: left; vertical-align: top; }
+.ai-md th, .ai-md td { border: 1px solid var(--color-border); padding: 0.25rem 0.5rem; vertical-align: top; }
 .ai-md th { background: var(--color-accent-muted); font-weight: 600; }
 .ai-md hr { border: none; border-top: 1px solid var(--color-border); margin: 0.8rem 0; }
+/* Each block takes the direction of its own text, so an Arabic answer reads right to left. Lists and
+   quotes follow their first text (`dir="auto"`, from text-direction-markdown.ts). Code stays left to right,
+   and inline code keeps its own order inside an Arabic line. */
+.ai-md :is(p, h1, h2, h3, h4, h5, h6, li, blockquote, th, td) { unicode-bidi: plaintext; text-align: start; }
+.ai-md :is(pre, code) { unicode-bidi: isolate; direction: ltr; }
 /* Image captions: a widget in the editor and a <figure> in rendered markdown, styled alike.
    Here rather than in editor.css because the Ask page renders markdown without the editor. */
 .stuga-image-figure { margin: 0; }
@@ -168,10 +173,18 @@
 .citation-ref:hover { text-decoration: underline; }
 /* CitationPopover.tsx clamps the fixed card to the window with this width's half; change both together. */
 .citation-popover { position: fixed; transform: translateX(-50%); z-index: 200; width: 320px; max-width: 90vw; background: var(--color-background-surface); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: var(--shadow-med); padding: 0.7rem 0.8rem; font-size: 0.85rem; }
-.citation-popover__excerpt { margin: 0 0 0.5rem; padding: 0 0 0 0.6rem; border-left: 3px solid var(--color-accent); color: var(--color-text-primary); font-style: italic; max-height: 8rem; overflow-y: auto; }
+.citation-popover__excerpt { margin: 0 0 0.5rem; padding: 0; padding-inline-start: 0.6rem; border-inline-start: 3px solid var(--color-accent); color: var(--color-text-primary); font-style: italic; max-height: 8rem; overflow-y: auto; }
 .citation-popover__empty { margin: 0 0 0.5rem; color: var(--color-text-secondary); }
 .citation-popover__source { display: flex; align-items: center; gap: 0.3rem; color: var(--color-text-secondary); font-size: 0.8rem; margin-bottom: 0.5rem; overflow: hidden; }
 .citation-popover__source svg { flex: 0 0 auto; }
 .citation-popover__source-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .citation-popover__open { display: inline-block; background: transparent; border: none; color: var(--color-accent); cursor: pointer; padding: 0; font: inherit; text-decoration: none; }
 .citation-popover__open:hover { text-decoration: underline; }
+
+/* Questions (typed, sent and saved), quoted selections, captions and cited sources read in their own
+   direction, like the answers; a quote or excerpt with a bar (dir="auto") has it where it starts.
+   SideNavItem takes only a string label, so the rail's is reached inside it. */
+.ask-turn__question, .ai-turn-user, .ai-composer textarea, .ask-composer__box textarea,
+.ask-rail__row .astryx-side-nav-item > button > span, .ai-input-quote__text, .ai-turn-quote,
+.stuga-image-caption, .ai-source__title, .ask-source-card__title, .ask-source-card__section,
+.ask-source-card__excerpt, .citation-popover__excerpt, .citation-popover__source-name { unicode-bidi: plaintext; text-align: start; }

@@ -84,6 +84,7 @@ const BACKUPS: NodeBackups = {
   time_zone: "UTC",
   next_at: "2026-09-24T03:00:00Z",
   running: false,
+  waiting: null,
   attempted_at: "2026-09-23T03:00:00Z",
   error: null,
   dir: "/backups",
@@ -119,6 +120,7 @@ const OPS: NodeOperationalSettings = {
   updates: { check: true },
   backups: { auto: true, hour: 3 },
   time_zone: "UTC",
+  search: { languages: [], choices: ["ko", "ar"], rebuilding: false, error: null },
   identity_provider: {
     issuer: null,
     client_id: null,
@@ -142,7 +144,6 @@ const OPS: NodeOperationalSettings = {
     data_dir: "/data",
     database: "stuga",
     embedding_dims: 1024,
-    search_languages: [],
   },
   updated_by: null,
   updated_at: null,
@@ -850,6 +851,82 @@ describe("NodeSettingsPage", () => {
     await click("Back up now");
     expect(nodeApi.backUpNow).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain("Backing up…");
+  });
+
+  it("says why a backup waits to start", async () => {
+    nodeApi.backups.mockResolvedValue({ ...BACKUPS, running: true, waiting: "a workspace is being imported or exported" });
+    await remount();
+    await go("backups");
+    expect(host.textContent).toContain("Waiting to back up: a workspace is being imported or exported.");
+  });
+
+  it("saves the search languages, and says the index is rebuilding until the node is done", async () => {
+    const rebuilding = { ...OPS, search: { ...OPS.search, languages: ["ko" as const], rebuilding: true } };
+    nodeApi.saveSettings.mockResolvedValue(rebuilding);
+    nodeApi.settings.mockResolvedValue(rebuilding);
+    await go("search");
+    expect(inputs("Korean")[0]!.checked).toBe(false);
+    expect(host.textContent).not.toContain("Rebuilding the search index");
+    // Under the heading, once, and not as the list's description, which its hidden label hides too.
+    expect(host.textContent!.split("Chinese, Japanese and English need nothing extra.")).toHaveLength(2);
+    expect(host.querySelector('[role="group"][aria-describedby]')).toBeNull();
+
+    vi.useFakeTimers();
+    try {
+      const wait = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
+      await act(async () => inputs("Korean")[0]!.click());
+      await click("Save");
+      await wait(0);
+      expect(nodeApi.saveSettings).toHaveBeenCalledWith({ search: { languages: ["ko"] } });
+      expect(inputs("Korean")[0]!.checked).toBe(true);
+      expect(host.textContent).toContain("Rebuilding the search index");
+      // A status a screen reader announces, named by the words shown; aria-labelledby wins over aria-label.
+      const statuses = [...host.querySelectorAll('[role="status"]')].map(
+        (el) => document.getElementById(el.getAttribute("aria-labelledby") ?? "")?.textContent ?? el.getAttribute("aria-label"),
+      );
+      expect(statuses).toContain("Rebuilding the search index…");
+
+      await wait(2000);
+      expect(nodeApi.settings).toHaveBeenCalledTimes(2);
+      expect(host.textContent).toContain("Rebuilding the search index");
+
+      nodeApi.settings.mockResolvedValue({ ...rebuilding, search: { ...rebuilding.search, rebuilding: false } });
+      await wait(2000);
+      expect(nodeApi.settings).toHaveBeenCalledTimes(3);
+      expect(host.textContent).not.toContain("Rebuilding the search index");
+      await wait(10_000);
+      expect(nodeApi.settings).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says a rebuild is running when Search opens during one", async () => {
+    nodeApi.settings.mockResolvedValue({ ...OPS, search: { ...OPS.search, languages: ["ar"], rebuilding: true } });
+    await remount();
+    await go("search");
+    expect(inputs("Arabic")[0]!.checked).toBe(true);
+    expect(host.textContent).toContain("Rebuilding the search index");
+    // A ring on Save's line, named by the words beside it rather than stacked over them.
+    const ring = host.querySelector<HTMLElement>('[role="status"][aria-labelledby]')!;
+    const words = document.getElementById(ring.getAttribute("aria-labelledby")!)!;
+    expect(words.textContent).toBe("Rebuilding the search index…");
+    expect(ring.nextElementSibling).toBe(words);
+  });
+
+  it("says why the last rebuild gave up, until the next one starts", async () => {
+    const failed = { ...OPS, search: { ...OPS.search, languages: ["ko" as const], error: "could not extend file: No space left on device" } };
+    nodeApi.settings.mockResolvedValue(failed);
+    await remount();
+    await go("search");
+    expect(host.textContent).toContain("The search index wasn’t rebuilt");
+    expect(host.textContent).toContain("No space left on device");
+
+    nodeApi.saveSettings.mockResolvedValue({ ...failed, search: { ...failed.search, rebuilding: true, error: null } });
+    await click("Save");
+    expect(nodeApi.saveSettings).toHaveBeenCalledWith({ search: { languages: ["ko"] } });
+    expect(host.textContent).not.toContain("The search index wasn’t rebuilt");
+    expect(host.textContent).toContain("Rebuilding the search index");
   });
 
   it("opens Branding on an unnamed node with the product's name as the placeholder and in the preview", async () => {

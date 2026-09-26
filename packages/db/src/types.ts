@@ -12,6 +12,8 @@ export interface WorkspaceRow {
   embedding_backfill_cursor: string | null;
   /** Conventions handed to every agent that connects; empty when none were written. */
   agent_instructions: string;
+  /** Set while an archive is imported into it, which hides it from every list; null otherwise. */
+  import_started_at: string | null;
   created_at: string;
 }
 

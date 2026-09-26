@@ -18,6 +18,7 @@ import { AiSection } from "./AiSection";
 import { NotificationsSection } from "./NotificationsSection";
 import { AccessSection } from "./AccessSection";
 import { StorageSection } from "./StorageSection";
+import { SearchSection } from "./SearchSection";
 import { BackupsSection } from "./BackupsSection";
 import { BrandingSection } from "./BrandingSection";
 import { AboutSection } from "./AboutSection";
@@ -79,6 +80,7 @@ export function NodeSettingsPage() {
           <AccessSection ops={ops} onSaved={setOps} />
         </Activity>
         <Activity mode={shown("storage")}>{ops && <StorageSection ops={ops} onSaved={setOps} />}</Activity>
+        <Activity mode={shown("search")}>{ops && <SearchSection ops={ops} onSaved={setOps} />}</Activity>
         <Activity mode={shown("backups")}>{ops && category === "backups" && <BackupsSection ops={ops} onSaved={setOps} />}</Activity>
         <Activity mode={shown("branding")}>{ops && <BrandingSection ops={ops} onSaved={setOps} />}</Activity>
         <Activity mode={shown("about")}>{ops && <AboutSection ops={ops} onSaved={setOps} />}</Activity>

@@ -1,6 +1,6 @@
 import type { DocAccessMode } from "@stuga/protocol/domain/workspaces";
 import type { InviteRole, WorkspaceRole } from "@stuga/protocol/domain/roles";
-import { api } from "../lib/http/client";
+import { api, apiFailure, authedFetch } from "../lib/http/client";
 import { cachedResource } from "../lib/store";
 
 export interface WorkspaceInfo {
@@ -46,22 +46,65 @@ export interface InviteInfo {
   use_count: number;
 }
 
+/** A workspace just made; one imported from an archive or a sample names the document to open first. */
+export interface CreatedWorkspace extends WorkspaceInfo {
+  start_doc_id?: string;
+}
+
+/** A published sample workspace a new one can start from. */
+export interface WorkspaceSample {
+  id: string;
+  title: string;
+  description: string;
+  /** The new workspace's name. */
+  name: string;
+  /** The languages of its text, as primary language tags. */
+  langs: string[];
+}
+
+/** The samples the node can offer; `unavailable` when it could not read their list. */
+export interface WorkspaceSamples {
+  samples: WorkspaceSample[];
+  unavailable?: boolean;
+}
+
 interface WorkspaceList {
   workspaces: WorkspaceInfo[];
   active: string | null;
 }
 
 const workspaceList = cachedResource(() => api<WorkspaceList>("/api/workspaces"), 5_000);
+const sampleList = cachedResource(() => api<WorkspaceSamples>("/api/workspace-samples"), 60_000);
 
 /** Called whenever a write may have changed the workspace list, so long-lived controls can re-read it. */
 export function onWorkspaceListChanged(fn: () => void): () => void {
   return workspaceList.subscribe(fn);
 }
 
+/** The name a download's Content-Disposition gives: the UTF-8 `filename*` when there is one. */
+function attachmentName(res: Response): string | null {
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const utf8 = /filename\*=UTF-8''([^;\s]+)/i.exec(disposition);
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8[1]!);
+    } catch {
+      // The plain name below.
+    }
+  }
+  return /filename="([^"]+)"/.exec(disposition)?.[1] ?? null;
+}
+
+/** An export's download, and an import's request, which the node answers once the import is done, each take as long as the workspace is large. */
+const ARCHIVE_TIMEOUT_MS = 60 * 60_000;
+
+/** A write that may change the list, failed ones included: an import the browser stopped waiting for goes on. */
 async function invalidating<T>(request: Promise<T>): Promise<T> {
-  const result = await request;
-  workspaceList.invalidate();
-  return result;
+  try {
+    return await request;
+  } finally {
+    workspaceList.invalidate();
+  }
 }
 
 export const Workspaces = {
@@ -74,6 +117,32 @@ export const Workspaces = {
         method: "POST",
         body: JSON.stringify({ name, default_doc_access: defaultDocAccess }),
       }),
+    ),
+  /** The samples a new workspace can start from, as the node lists them. */
+  samples: () => sampleList.get(),
+  /** The samples asked for again, rather than as last listed: for a list the node could not offer. */
+  samplesAgain: () => {
+    sampleList.invalidate();
+    return sampleList.get();
+  },
+  /** The samples as last listed, while that list is fresh; else undefined. */
+  cachedSamples: () => sampleList.peek(),
+  /** A new workspace holding a published sample, which the node downloads; the caller becomes the owner. */
+  createFromSample: (sample: string, name: string, defaultDocAccess: DocAccessMode) =>
+    invalidating(
+      api<CreatedWorkspace>("/api/workspaces", {
+        method: "POST",
+        body: JSON.stringify({ name, default_doc_access: defaultDocAccess, sample }),
+        timeoutMs: ARCHIVE_TIMEOUT_MS,
+      }),
+    ),
+  /** A new workspace holding a workspace archive's contents; the caller becomes the owner. */
+  importArchive: (file: File, name: string, defaultDocAccess: DocAccessMode) =>
+    invalidating(
+      api<CreatedWorkspace>(
+        `/api/workspaces/import?name=${encodeURIComponent(name)}&default_doc_access=${encodeURIComponent(defaultDocAccess)}`,
+        { method: "POST", headers: { "content-type": "application/zip" }, body: file, timeoutMs: ARCHIVE_TIMEOUT_MS },
+      ),
     ),
   update: (
     workspaceId: string,
@@ -90,6 +159,20 @@ export const Workspaces = {
         body: JSON.stringify({ confirm }),
       }),
     ),
+  /** Everything the caller can open, as a `.stuga.zip` archive; owners and admins. Fetched, since a link cannot carry the bearer. */
+  exportArchive: async (workspaceId: string): Promise<{ blob: Blob; filename: string }> => {
+    const path = `/api/workspaces/${workspaceId}/export`;
+    const res = await authedFetch(path, { timeoutMs: ARCHIVE_TIMEOUT_MS });
+    if (!res.ok) throw await apiFailure(path, "GET", res);
+    let blob: Blob;
+    try {
+      blob = await res.blob();
+    } catch {
+      // The node breaks the download when it cannot finish the archive; the browser's own words say less.
+      throw new Error("The export stopped before it finished.");
+    }
+    return { blob, filename: attachmentName(res) ?? "workspace.stuga.zip" };
+  },
   members: (workspaceId: string) =>
     api<{ members: MemberInfo[] }>(`/api/workspaces/${workspaceId}/members`),
   /** Adds an existing account by username at once; nothing is sent. */

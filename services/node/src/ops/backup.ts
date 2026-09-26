@@ -16,7 +16,7 @@
  */
 import { chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { embeddingColumnDims, readSchemaVersion } from "@stuga/db";
+import { embeddingColumnDims, getSearchLanguages, indexedSearchLanguages, readSchemaVersion } from "@stuga/db";
 import type { BackupEnv } from "./env.js";
 import {
   databaseName,
@@ -87,13 +87,19 @@ async function describeDatabase(sql: LockSql): Promise<{
   postgresVersionNum: number;
   extensions: Record<string, string>;
   embeddingDims: number | null;
+  searchLanguages: string[];
   databaseBytes: number;
 }> {
+  // The backup before an upgrade runs before the migrations, so on a database that may predate the search languages
+  // setting; there, the indexes say which languages it served.
   const [facts] = await sql<
-    { has_state: boolean; has_chunks: boolean; version_num: string; bytes: string }[]
+    { has_state: boolean; has_chunks: boolean; has_search_languages: boolean; version_num: string; bytes: string }[]
   >`
     SELECT to_regclass('public.node_state') IS NOT NULL        AS has_state,
            to_regclass('public.doc_chunks') IS NOT NULL        AS has_chunks,
+           EXISTS (SELECT 1 FROM pg_attribute
+                   WHERE attrelid = to_regclass('public.node_settings')
+                     AND attname = 'search_languages' AND NOT attisdropped) AS has_search_languages,
            current_setting('server_version_num')               AS version_num,
            pg_database_size(current_database())::text          AS bytes`;
   const stugaVersion = facts!.has_state
@@ -112,6 +118,7 @@ async function describeDatabase(sql: LockSql): Promise<{
     postgresVersionNum: Number(facts!.version_num),
     extensions,
     embeddingDims: facts!.has_chunks ? await embeddingColumnDims(dbSql) : null,
+    searchLanguages: (facts!.has_search_languages ? await getSearchLanguages(dbSql) : await indexedSearchLanguages(dbSql)) ?? [],
     databaseBytes: Number(facts!.bytes),
   };
 }
@@ -211,7 +218,7 @@ export async function runBackup(env: BackupEnv, deps: BackupDeps = {}): Promise<
       postgres_version_num: db.postgresVersionNum,
       extensions: db.extensions,
       embedding_dims: db.embeddingDims,
-      search_languages: [...env.searchLanguages],
+      search_languages: db.searchLanguages,
       public_origin: env.publicOrigin,
       database_bytes: db.databaseBytes,
       data_dir_bytes: dataDirBytes,

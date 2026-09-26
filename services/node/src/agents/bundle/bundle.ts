@@ -18,7 +18,7 @@ import {
   type BundleConfig,
 } from "./manifest.js";
 import { MCP_BUNDLE_FILENAME } from "@stuga/protocol/domain/node-name";
-import { zipStored } from "./zip.js";
+import { zipFiles } from "../../lib/zip.js";
 
 /** The name Your own AI saves the extension under: the product's, for every node. */
 export const bundleFilename = MCP_BUNDLE_FILENAME;
@@ -41,7 +41,8 @@ export interface McpbInput {
 const utf8 = (text: string) => new TextEncoder().encode(text);
 
 export function buildMcpb({ serverJs, license, thirdPartyLicenses, cfg }: McpbInput): Uint8Array<ArrayBuffer> {
-  return zipStored([
+  // Stored, not deflated: the installer has failed on deflated archives.
+  return zipFiles([
     { name: MANIFEST_PATH, data: utf8(`${JSON.stringify(bundleManifest(cfg), null, 2)}\n`) },
     { name: ICON_PATH, data: ICON_PNG },
     { name: SERVER_PACKAGE_PATH, data: utf8(SERVER_PACKAGE_JSON) },
@@ -50,7 +51,7 @@ export function buildMcpb({ serverJs, license, thirdPartyLicenses, cfg }: McpbIn
     { name: SERVER_CONFIG_PATH, data: utf8(JSON.stringify(sidecarConfig(cfg))) },
     { name: SERVER_LICENSE_PATH, data: license },
     { name: SERVER_NOTICES_PATH, data: thirdPartyLicenses },
-  ]);
+  ], "stored");
 }
 
 /** What the server falls back to when the host passes it no environment: the node it came from, and no key. */

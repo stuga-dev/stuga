@@ -192,6 +192,66 @@ describe("Login · a username the node refuses", () => {
     expect(registered().at(-1)).toMatchObject({ update_check: false });
   });
 
+  it("offers the search languages at setup, ticking those the browser reads, and sends the choice with the account", async () => {
+    const languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["ko-KR", "en-US"]);
+    try {
+      setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME });
+      fetchMock.mockImplementation(async () => reply(409, { error: "username_taken", message: "that username is taken" }));
+      await open("/login?setup=ABCDE-12345");
+      expect(input("Korean")!.checked).toBe(true);
+      expect(input("Arabic")!.checked).toBe(false);
+      expect(host.textContent).toContain("Chinese, Japanese and English need nothing extra.");
+
+      await type("Username", "ada");
+      await type("Password", "battery staple 9");
+      await click("Create administrator account");
+      expect(registered().at(-1)).toMatchObject({ username: "ada", search_languages: ["ko"] });
+
+      await act(async () => input("Arabic")!.click());
+      await act(async () => input("Korean")!.click());
+      await click("Create administrator account");
+      expect(registered().at(-1)).toMatchObject({ search_languages: ["ar"] });
+    } finally {
+      languages.mockRestore();
+    }
+  });
+
+  it("ticks no search language for a browser that reads none of them, and sends that none were chosen", async () => {
+    const languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["zh-CN", "en"]);
+    try {
+      setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME });
+      fetchMock.mockImplementation(async () => reply(409, { error: "username_taken", message: "that username is taken" }));
+      await open("/login?setup=ABCDE-12345");
+      expect(input("Korean")!.checked).toBe(false);
+      expect(input("Arabic")!.checked).toBe(false);
+
+      await type("Username", "ada");
+      await type("Password", "battery staple 9");
+      await click("Create administrator account");
+      expect(registered().at(-1)).toMatchObject({ search_languages: [] });
+    } finally {
+      languages.mockRestore();
+    }
+  });
+
+  it("starts from the search languages the node already has, over the browser's", async () => {
+    const languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["en-US"]);
+    try {
+      setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME, searchLanguages: ["ko"] });
+      fetchMock.mockImplementation(async () => reply(409, { error: "username_taken", message: "that username is taken" }));
+      await open("/login?setup=ABCDE-12345");
+      expect(input("Korean")!.checked).toBe(true);
+      expect(input("Arabic")!.checked).toBe(false);
+
+      await type("Username", "ada");
+      await type("Password", "battery staple 9");
+      await click("Create administrator account");
+      expect(registered().at(-1)).toMatchObject({ search_languages: ["ko"] });
+    } finally {
+      languages.mockRestore();
+    }
+  });
+
   it("takes the setup code from the link the node printed, asks nothing, and leaves the link in the address bar", async () => {
     setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME });
     fetchMock.mockImplementation(async () => reply(201, { access_token: "at-1", refresh_token: "rt-1", expires_in: 900 }));
@@ -240,10 +300,12 @@ describe("Login · a username the node refuses", () => {
     fetchMock.mockImplementation(async () => reply(409, { error: "username_taken", message: "that username is taken" }));
     await open();
     expect(input("Check for new versions")).toBeUndefined();
+    expect(input("Korean")).toBeUndefined();
     await type("Username", "ada");
     await type("Password", "battery staple 9");
     await click("Create account");
     expect(registered().at(-1)).not.toHaveProperty("update_check");
+    expect(registered().at(-1)).not.toHaveProperty("search_languages");
   });
 
   it("drops the suggestion when the visitor switches to sign in", async () => {

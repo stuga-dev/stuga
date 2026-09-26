@@ -30,6 +30,8 @@ interface Env {
 /** A small actor exercising every host feature through its fetch surface. */
 class TestActor implements Actor {
   closes = 0;
+  /** Held in memory only until the alarm stores it, like the doc actor's authors until its flush. */
+  memory: string | null = null;
   constructor(
     readonly state: ActorState<{ alias: string }>,
     readonly env: Env,
@@ -57,6 +59,12 @@ class TestActor implements Actor {
       }
       case "/get-alarm":
         return Response.json({ alarm: await storage.getAlarm() });
+      case "/remember": {
+        this.memory = url.searchParams.get("value");
+        await storage.put("rearm", Number(url.searchParams.get("rearm") ?? "0"));
+        await storage.setAlarm(Date.now() + Number(url.searchParams.get("in") ?? "0"));
+        return new Response("remembered");
+      }
       case "/put": {
         const bytes = new Uint8Array(await req.arrayBuffer());
         await storage.put(url.searchParams.get("key")!, { bytes, nested: { list: [1, 2, 3] } });
@@ -167,6 +175,12 @@ class TestActor implements Actor {
     await sleep(10);
     const fired = ((await this.state.storage.get<number>("alarmFired")) ?? 0) + 1;
     await this.state.storage.put("alarmFired", fired);
+    if (this.memory !== null) await this.state.storage.put("remembered", this.memory);
+    const rearm = (await this.state.storage.get<number>("rearm")) ?? 0;
+    if (rearm > 0) {
+      await this.state.storage.put("rearm", rearm - 1);
+      await this.state.storage.setAlarm(Date.now() + 20);
+    }
     this.env.log.push("alarm:end");
   }
 }
@@ -338,7 +352,9 @@ describe("alarms", () => {
     expect(ns2.resident()).toEqual([]); // armed cold; not opened until due
     await until(() => env.log.length >= 2);
     expect(env.log).toEqual(["alarm:start", "alarm:end"]);
-    expect(ns2.resident()).toEqual(["doc-x/y"]);
+    // Opened for its alarm alone, and closed again once that has run.
+    await until(() => ns2.resident().length === 0);
+    expect(ns2.resident()).toEqual([]);
     expect(await (await ns2.get("doc-x/y").fetch("http://actor/get?key=alarmFired")).text()).toBe("1");
   });
 
@@ -430,7 +446,10 @@ describe("pause and resume", () => {
     ns.resume();
     await until(() => env.log.filter((l) => l === "alarm:end").length === 2);
     expect(env.log.filter((l) => l === "alarm:end")).toHaveLength(2);
-    expect([...ns.resident()].sort()).toEqual(["cold", "resident"]);
+    // Each was opened for its alarm alone, so each closes again.
+    await until(() => ns.resident().length === 0);
+    expect(ns.resident()).toEqual([]);
+    for (const name of ["cold", "resident"]) expect(await (await ns.get(name).fetch("http://actor/get?key=alarmFired")).text()).toBe("1");
   });
 
   it.each([
@@ -603,6 +622,74 @@ describe("eviction", () => {
     expect(env.log).toEqual(["close:4000", "close:slow:end"]);
     await done;
     ns.resume();
+  });
+});
+
+describe("release", () => {
+  it("closes an actor nothing else is using at once, and reopens it from disk on the next request", async () => {
+    const ns = host(tempDir(), { log: [] });
+    await ns.get("d1").fetch("http://actor/put?key=k", { method: "POST", body: new Uint8Array([9]) });
+    await ns.release("d1");
+    expect(ns.resident()).toEqual([]);
+    expect(((await (await ns.get("d1").fetch("http://actor/get?key=k")).json()) as { bytes: number[] }).bytes).toEqual([9]);
+    expect(ns.resident()).toEqual(["d1"]);
+  });
+
+  it("opens nothing for an actor that is not open", async () => {
+    const ns = host(tempDir(), { log: [] });
+    await ns.release("never");
+    expect(ns.resident()).toEqual([]);
+  });
+
+  it("leaves an actor with an open socket or work in flight to the idle timeout", async () => {
+    const env: Env = { log: [] };
+    const ns = host(tempDir(), env);
+    const server = serverSocketOf(await ns.get("live").fetch("http://actor/connect", { headers: { upgrade: "websocket" } }));
+    await ns.release("live");
+    const slow = ns.get("busy").fetch("http://actor/slow");
+    await until(() => env.log.includes("fetch:start"));
+    await ns.release("busy");
+    await slow;
+    expect([...ns.resident()].sort()).toEqual(["busy", "live"]);
+    // Not released: once its peer leaves, it stays open as any other.
+    server.close();
+    await server.owner!.deliverClose(server, 1000, "", true);
+    expect([...ns.resident()].sort()).toEqual(["busy", "live"]);
+  });
+
+  it("waits for a pending alarm, so what the actor held in memory is stored before it closes", async () => {
+    const env: Env = { log: [] };
+    const ns = host(tempDir(), env);
+    await ns.get("d1").fetch("http://actor/remember?value=authors&in=40");
+    await ns.release("d1");
+    expect(ns.resident()).toEqual(["d1"]);
+    await until(() => ns.resident().length === 0);
+    expect(env.log).toEqual(["alarm:start", "alarm:end"]);
+    expect(ns.resident()).toEqual([]);
+    expect(await (await ns.get("d1").fetch("http://actor/get?key=remembered")).text()).toBe("authors");
+  });
+
+  it("stays open while an alarm leaves another pending, and closes once none is", async () => {
+    const env: Env = { log: [] };
+    const ns = host(tempDir(), env);
+    await ns.get("d1").fetch("http://actor/remember?value=x&in=20&rearm=1");
+    await ns.release("d1");
+    await until(() => env.log.filter((l) => l === "alarm:end").length === 1);
+    expect(ns.resident()).toEqual(["d1"]);
+    await until(() => ns.resident().length === 0);
+    expect(env.log.filter((l) => l === "alarm:end")).toHaveLength(2);
+    expect(ns.resident()).toEqual([]);
+  });
+
+  it("keeps an actor open that a request entered after the release", async () => {
+    const env: Env = { log: [] };
+    const ns = host(tempDir(), env);
+    await ns.get("d1").fetch("http://actor/set-alarm?in=30");
+    await ns.release("d1");
+    await ns.get("d1").fetch("http://actor/count");
+    await until(() => env.log.includes("alarm:end"));
+    await sleep(20);
+    expect(ns.resident()).toEqual(["d1"]);
   });
 });
 
