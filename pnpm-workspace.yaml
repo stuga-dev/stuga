@@ -6,8 +6,6 @@ allowBuilds:
   "@astryxdesign/cli": false
   "@astryxdesign/core": false
   esbuild: true
-minimumReleaseAgeExclude:
-  - '@types/node@26.6.3'
 overrides:
   "@types/node": "~26.6.2"
   "@tiptap/core": "3.31.3"
