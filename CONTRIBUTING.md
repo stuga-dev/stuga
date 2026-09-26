@@ -51,7 +51,8 @@ and `pnpm build` runs both.
 
 ## Running from source
 
-You need Node 22 (`.nvmrc`) and pnpm 9, which corepack provides (`corepack enable`).
+You need Node 26 (`.nvmrc`) and pnpm 12 (`packageManager` in `package.json`). Node 26 no longer
+bundles corepack: `npm install -g corepack && corepack enable`, or install pnpm 12 directly.
 
 ```sh
 pnpm install

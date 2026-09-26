@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fail when a pin outside packaging/versions.env disagrees with it: .nvmrc, the root package.json's
-# packageManager and @types/node, every Dockerfile ARG default named in versions.env, and the
-# Postgres major the node's preflight accepts.
+# packageManager, @types/node (package.json and its pnpm-workspace.yaml override), every Dockerfile
+# ARG default named in versions.env, and the Postgres major the node's preflight accepts.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,7 +32,7 @@ nvmrc="$(tr -d '[:space:]' < .nvmrc)"
 manager="$(sed -n 's/^  "packageManager": "\(.*\)",$/\1/p' package.json)"
 [ "$manager" = "pnpm@$PNPM_VERSION" ] || mismatch "package.json packageManager is $manager, versions.env PNPM_VERSION is $PNPM_VERSION"
 
-types="$(sed -n 's/.*"@types\/node": "[~^]\{0,1\}\([0-9]*\)\..*/\1/p' package.json | sort -u)"
+types="$(sed -n 's/.*"@types\/node": "[~^]\{0,1\}\([0-9]*\)\..*/\1/p' package.json pnpm-workspace.yaml | sort -u)"
 [ -n "$types" ] || mismatch "package.json pins no @types/node"
 for major in $types; do
   [ "$major" = "$node_major" ] || mismatch "package.json pins @types/node $major.x, versions.env NODE_VERSION is $NODE_VERSION"

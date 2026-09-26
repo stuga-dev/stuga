@@ -11,6 +11,10 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+### Changed
+
+- The node runs on Node.js 26 (was 22), in the Docker image and in the Mac app.
+
 ## [0.1.3] - 2026-09-26
 
 ### Added

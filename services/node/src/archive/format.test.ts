@@ -264,7 +264,7 @@ describe("parseManifest", () => {
     ["a page id in a filter", (m) => (obligations(m).views[0].filter = { column: "_doc_id", op: "eq", value: "doc_1" }), "items[3].tables[0].views[0].filter.op", "_doc_id only takes"],
     ["a row id that is no row key", (m) => (obligations(m).views[0].filter = { column: "_id", op: "eq", value: "row 1" }), "items[3].tables[0].views[0].filter.value", "row key"],
     ["a config over 16 KiB", (m) => (obligations(m).views[0].config = { x: "x".repeat(16 * 1024) }), "items[3].tables[0].views[0].config", "larger than"],
-    ["a config nested past what JSON can write", (m) => (obligations(m).views[0].config = JSON.parse(`${'{"a":'.repeat(20_000)}1${"}".repeat(20_000)}`)), "items[3].tables[0].views[0].config", "nested too deeply"],
+    ["a deeply nested config", (m) => (obligations(m).views[0].config = JSON.parse(`${'{"a":'.repeat(20_000)}1${"}".repeat(20_000)}`)), "items[3].tables[0].views[0].config", "larger than"],
     ["a view without config", (m) => delete obligations(m).views[0].config, "items[3].tables[0].views[0].config", "must be an object"],
     ["a page row that is no row key", (m) => (obligations(m).pages[0].row = "gdpr breach"), "items[3].tables[0].pages[0].row", "row key"],
     ["two pages for one row", (m) => obligations(m).pages.push({ ...obligations(m).pages[0], file: "Obligations/pages/other.md" }), "items[3].tables[0].pages[1].row", "has one page"],

@@ -129,7 +129,7 @@ package.
 
 - A Mac with Apple silicon, on macOS 13 or later.
 - The Xcode Command Line Tools, for `git` and `swiftc`: `xcode-select --install`.
-- Node.js 22 and pnpm 9 (`corepack enable`), to build the web app.
+- Node.js 26 and pnpm 12, to build the web app.
 - Internet access during the build. The Postgres and Node.js downloads are checked against the
   checksums pinned in `packaging/versions.env`.
 

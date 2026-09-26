@@ -109,7 +109,7 @@ if [ "$uninstall" = yes ]; then
   exit 0
 fi
 
-command -v pnpm > /dev/null || { echo "error: pnpm is needed to build the web app (corepack enable)" >&2; exit 1; }
+command -v pnpm > /dev/null || { echo "error: pnpm is needed to build the web app (see CONTRIBUTING.md)" >&2; exit 1; }
 # shellcheck source=../build/lib/devtools.sh
 . "$BUILD/lib/devtools.sh"
 use_working_developer_tools

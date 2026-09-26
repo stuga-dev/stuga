@@ -23,7 +23,7 @@ docker build -t "$suite" --build-arg NODE_IMAGE="$image" --build-arg PNPM_VERSIO
 ARG NODE_IMAGE
 FROM ${NODE_IMAGE}
 ARG PNPM_VERSION
-RUN corepack enable && corepack prepare "pnpm@${PNPM_VERSION}" --activate
+RUN npm install -g "pnpm@${PNPM_VERSION}"
 # The image runs as production; the suite needs the workspace's dev dependencies.
 ENV NODE_ENV=test
 WORKDIR /src
