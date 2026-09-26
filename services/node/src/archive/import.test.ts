@@ -405,7 +405,8 @@ describe("reading an archive", () => {
     // Ten full tables and the two rows already there.
     expect(await refusal(tables(10))).toBe(`Obligations/Bulk 9.jsonl: takes the archive past ${ARCHIVE_MAX_ROWS} rows`);
     expect((await readArchive(tables(9), LIMITS)).index.tables.size).toBe(11);
-  });
+    // Half a million rows, built and read twice: seconds on a shared CI runner.
+  }, 30_000);
 
   it.each<[string, (m: Json, f: Record<string, string | Uint8Array>) => void, RegExp]>([
     ["a newer version", (m) => void (m.version = 2), /^stuga\.json: version: the archive is version 2, from a newer Stuga/],
