@@ -6,11 +6,18 @@ becomes its version's release notes, and its date and whether it has a **Securit
 a running node learns about the version.
 
 An entry's **Upgrade notes** section says what someone running a node has to decide or do. Without
-one, the release notes say there is nothing to do.
+one, the release notes say there is nothing to do. A few lines under the version heading, before
+its first section, are its summary: the release notes show that and link here for the rest.
 
 ## [Unreleased]
 
 ## [0.1.2] - 2026-09-26
+
+- One AI connection reaches several workspaces: you choose which, and whether it may suggest
+  changes. A plugin for Claude installs it.
+- Export a workspace as one file, and start a new one from a file or a sample workspace.
+- Korean and Arabic search are a node setting, and right-to-left text reads right to left.
+- Version history keeps every edit, and a restore can be undone.
 
 ### Upgrade notes
 

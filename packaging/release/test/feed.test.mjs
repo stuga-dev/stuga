@@ -92,6 +92,15 @@ test("release notes keep an entry's text that sits under no heading", () => {
   );
 });
 
+test("an entry with a summary carries it and a link to the whole entry, not every section", () => {
+  const changelog = "## [1.3.0] - 2026-12-01\n\nRow pages, and faster search.\n\n### Added\n\n- Row pages.\n\n### Fixed\n\n- Slow search.\n";
+  assert.equal(
+    releaseNotes(parseChangelog(changelog), "1.3.0"),
+    "## Upgrade notes\n\nNothing to do.\n\n## What changed\n\nRow pages, and faster search.\n\n" +
+      "[Every change](https://github.com/stuga-dev/stuga/blob/v1.3.0/CHANGELOG.md#130---2026-12-01)\n",
+  );
+});
+
 test("a malformed entry is an error, not a release nobody hears about", () => {
   assert.throws(() => parseChangelog("## 1.0.0 - 2026-10-01\n"), /not a release heading/);
   assert.throws(() => parseChangelog("## [1.0] - 2026-10-01\n"), /not a version/);

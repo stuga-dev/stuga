@@ -97,15 +97,32 @@ function entryFor(entries, version) {
   return entry;
 }
 
-/** Upgrade notes lead, because they are what someone running a node has to act on. */
+const REPOSITORY = "https://github.com/stuga-dev/stuga";
+
+/** GitHub's anchor for an entry's heading: `## [1.2.3] - 2026-01-31` is `#123---2026-01-31`. */
+function anchorFor(entry) {
+  return `${entry.version.replaceAll(".", "")}---${entry.date}`;
+}
+
+/**
+ * Upgrade notes lead, because they are what someone running a node has to act on. An entry's text
+ * under no heading is its summary: the notes carry it and a link to the whole entry. An entry
+ * without one is carried whole.
+ */
 export function releaseNotes(entries, version) {
   const entry = entryFor(entries, version);
   const upgrade = entry.sections.find((s) => s.title === "Upgrade notes");
   const rest = entry.sections.filter((s) => s !== upgrade);
+  const summary = rest.find((s) => s.title === "");
   const out = ["## Upgrade notes", "", upgrade?.body || "Nothing to do."];
-  if (rest.length > 0) {
+  if (summary) {
+    out.push("", "## What changed", "", summary.body);
+    if (rest.length > 1) {
+      out.push("", `[Every change](${REPOSITORY}/blob/v${version}/CHANGELOG.md#${anchorFor(entry)})`);
+    }
+  } else if (rest.length > 0) {
     out.push("", "## What changed");
-    for (const s of rest) out.push("", ...(s.title ? [`### ${s.title}`, ""] : []), s.body);
+    for (const s of rest) out.push("", `### ${s.title}`, "", s.body);
   }
   return `${out.join("\n")}\n`;
 }

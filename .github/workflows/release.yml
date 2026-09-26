@@ -321,18 +321,10 @@ jobs:
           set -euo pipefail
           cat >> notes.md <<'ASSETS'
 
-          ## Assets
+          ## Install
 
-          Mac: `Stuga.pkg`, notarized; the same package as `Stuga-<version>.pkg`, which a node's Update now installs.
-          Docker, in one step: `curl -fsSL https://github.com/stuga-dev/stuga/releases/latest/download/install.sh | bash`.
-          By hand, these three in one directory:
-          - `compose.yml` — pinned to this release's images
-          - `env.example` — copy to `.env`
-          - `stuga` — `chmod +x` it
-
-          `releases.json` is the list of releases a running node reads to learn of a newer version.
-
-          Install: docs/install/docker.md
+          - Mac: `Stuga.pkg` below ([guide](https://github.com/stuga-dev/stuga/blob/main/docs/install/macos.md)).
+          - Docker: `curl -fsSL https://github.com/stuga-dev/stuga/releases/latest/download/install.sh | bash` ([guide](https://github.com/stuga-dev/stuga/blob/main/docs/install/docker.md)).
           ASSETS
           V="${GITHUB_REF_NAME#v}"
           # A name without the version, so releases/latest/download/Stuga.pkg is always the newest.
