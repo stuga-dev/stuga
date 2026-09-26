@@ -12,7 +12,6 @@ import {
   findAccountBySub,
   findAccountByUsername,
   findRefreshSession,
-  getSearchLanguages,
   getUserDisplayName,
   isWorkspaceInviteRedeemable,
   linkIdentity,
@@ -39,8 +38,6 @@ import {
 export interface IdentityDb {
   /** Zero means nobody has claimed the node. */
   countAccounts(): Promise<number>;
-  /** The node's search languages, null until chosen: by setup, or before it by a boot, from SEARCH_LANGUAGES or from existing search indexes. */
-  searchLanguages(): Promise<SearchLanguage[] | null>;
   /**
    * Decides under one lock whether this is the node's first account, which is
    * granted node administration in the same transaction (`admin`) and needs
@@ -119,7 +116,6 @@ export interface IdentityDb {
 export function identityDb(sql: Sql): IdentityDb {
   return {
     countAccounts: () => countAccounts(sql),
-    searchLanguages: () => getSearchLanguages(sql),
     createLocalAccount: (input) => createLocalAccount(sql, input),
     createProviderAccount: (input) => createProviderAccount(sql, input),
     findAccountByUsername: (username) => findAccountByUsername(sql, username),

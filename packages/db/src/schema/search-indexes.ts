@@ -5,7 +5,6 @@
  */
 import { SEARCH_LANGUAGES, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import type { Sql } from "../client.js";
-import { migrationId } from "./migrate.js";
 
 export { SEARCH_LANGUAGES, type SearchLanguage };
 
@@ -138,24 +137,6 @@ export function isPlainIndexName(name: string): boolean {
 /** Whether an index is named as the BM25 indexes Stuga builds are, whatever its languages and version. */
 export function isSearchIndexName(name: string): boolean {
   return searchIndexShapes([]).some((i) => name.startsWith(`${i.table}_bm25_`));
-}
-
-/**
- * The schema that made the search languages a setting, and brought the online
- * rebuild with it. A database before it records its languages only in its
- * indexes' names, and never holds two on one table.
- */
-export const SEARCH_LANGUAGES_SCHEMA: number = migrationId("0003_search_languages.sql");
-
-/**
- * The languages a valid docs index is built for, read off its name; null when
- * none is named for a set of them. For a database from before the languages
- * were a setting, whose indexes are the only record of them.
- */
-export async function indexedSearchLanguages(sql: Sql): Promise<SearchLanguage[] | null> {
-  const valid = new Set((await listSearchIndexes(sql)).filter((i) => i.valid).map((i) => i.name));
-  const sets = SEARCH_LANGUAGES.reduce<SearchLanguage[][]>((all, l) => [...all, ...all.map((set) => [...set, l])], [[]]);
-  return sets.find((set) => valid.has(searchIndexShapes(set)[0]!.name)) ?? null;
 }
 
 /**

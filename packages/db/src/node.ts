@@ -237,9 +237,8 @@ export async function resetNodeSettings(
 }
 
 /**
- * The languages keyword search was set up for, or null when nobody has chosen:
- * setup has not run, and no boot took languages from SEARCH_LANGUAGES or from
- * existing search indexes. A language this build does not know is left out.
+ * The languages keyword search was set up for, or null when nobody has chosen,
+ * which is none. A language this build does not know is left out.
  */
 export async function getSearchLanguages(sql: Sql): Promise<SearchLanguage[] | null> {
   const [row] = await sql<{ search_languages: string[] | null }[]>`

@@ -12,21 +12,8 @@ one, the release notes say there is nothing to do.
 
 ### Upgrade notes
 
-- Apps that signed in to the node through OAuth, such as Claude Code, Codex, Antigravity and Claude
-  on the web, have to sign in again: the keys those sign-ins created are revoked. Each person then
-  chooses the app's workspaces and access.
-- Replace the Claude Desktop extension: remove the old **Stuga** extension in Claude Desktop, add
-  the new one from **Settings → Your own AI**, and revoke the old extension's key under
-  **Connected agents**.
-- Skills, prompts and scripts that call the MCP tools by name need the new names, and a
-  `workspace_id` on every call. Running the Codex or Antigravity installer again replaces the Stuga
-  Skill it installed.
-- A node keeps its search languages: at its first start of this version it takes `SEARCH_LANGUAGES`,
-  or without it the languages its search indexes are built for, as the search languages setting,
-  and ignores the variable from then on. A node whose indexes are built for neither Korean nor
-  Arabic has no setting yet, so it reads the variable at each start until one is saved. Change them
-  in **Settings → This node → Search**. Keep the variable while the node may go back to an earlier
-  version, which still reads it.
+- A node on 0.1.x does not upgrade to this version: its database schema starts over. Start this
+  version with a new database and data directory.
 
 ### Added
 
@@ -97,8 +84,7 @@ one, the release notes say there is nothing to do.
 - **The Claude Desktop extension is one extension, `stuga`, for every node, and carries no key.** It
   asks for the node's address and an optional key. `GET /api/agent-bundle` serves it.
 - **Your own AI** offers the **Claude** tab only when the node's public address is https as well.
-- A restore of a backup from this version on leaves the search indexes to the node, which builds
-  them when it starts.
+- A restore leaves the search indexes to the node, which builds them when it starts.
 - The setup link, invite links and share links stay in the address bar, so they can be copied from
   there. Opened signed out, an invite or share link shows sign-in at its own address instead of
   moving to `/login`.
@@ -110,15 +96,15 @@ one, the release notes say there is nothing to do.
 
 - `POST /api/agent-bundle`, and the key it minted into each download.
 - `STUGA_WORKSPACE`, and the `workspace` field of the stdio server's config files.
+- `SEARCH_LANGUAGES`: the search languages are a node setting.
 
 ### Fixed
 
 - Keyword search went over up to the last thousand document saves again on every query, so a search
-  over long documents took seconds. The node rebuilds its keyword index once when it first starts
-  this version.
+  over long documents took seconds.
 - A document or folder an agent created stayed private to the person it acted for, whatever the
   workspace's default access, so other members could not see it until that person shared it. It now
-  gets the default, like one the person creates. Items made before this release keep their sharing.
+  gets the default, like one the person creates.
 - A Markdown body an agent sent with `POST /api/docs` landed at once. It is now proposed and waits
   for review, like the agent's other writes.
 - Signing in with a password went to the library instead of the page that sent you to sign in, such

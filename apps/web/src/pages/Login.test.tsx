@@ -234,24 +234,6 @@ describe("Login · a username the node refuses", () => {
     }
   });
 
-  it("starts from the search languages the node already has, over the browser's", async () => {
-    const languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["en-US"]);
-    try {
-      setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME, searchLanguages: ["ko"] });
-      fetchMock.mockImplementation(async () => reply(409, { error: "username_taken", message: "that username is taken" }));
-      await open("/login?setup=ABCDE-12345");
-      expect(input("Korean")!.checked).toBe(true);
-      expect(input("Arabic")!.checked).toBe(false);
-
-      await type("Username", "ada");
-      await type("Password", "battery staple 9");
-      await click("Create administrator account");
-      expect(registered().at(-1)).toMatchObject({ search_languages: ["ko"] });
-    } finally {
-      languages.mockRestore();
-    }
-  });
-
   it("takes the setup code from the link the node printed, asks nothing, and leaves the link in the address bar", async () => {
     setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME });
     fetchMock.mockImplementation(async () => reply(201, { access_token: "at-1", refresh_token: "rt-1", expires_in: 900 }));

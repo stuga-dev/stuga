@@ -10,19 +10,16 @@ import { spawnSync } from "node:child_process";
 import { chmod, mkdtemp, mkdir, readdir, readFile, rename, rm, stat, truncate, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createDoc,
   createSearchIndex,
-  getSearchLanguages,
   initSchema,
   listSearchIndexes,
   runBootRepairs,
   SCHEMA_VERSION,
-  SEARCH_LANGUAGES_SCHEMA,
   searchIndexShapes,
 } from "@stuga/db";
-import { bootSearchLanguages } from "../search/languages.js";
 import { ConfigError } from "../config/env.js";
 import { PARTIAL_OWNER, runBackup } from "./backup.js";
 import { parseBackupEnv, type BackupEnv } from "./env.js";
@@ -222,19 +219,12 @@ describe.skipIf(!URL)("stuga-node backup, verify and restore", { timeout: 60_000
       await expect(runVerify(envFor(), result.path)).resolves.toMatchObject({ path: result.path });
     });
 
-    it("names the node's search languages, and on a database from before the setting those its indexes were built for", async () => {
+    it("names the node's search languages", async () => {
       await app`INSERT INTO node_settings (id, search_languages) VALUES (TRUE, '{ar}')`;
-      await runBootRepairs(app as never, { searchLanguages: ["ko"] });
       try {
         expect((await runBackup(envFor())).manifest.search_languages).toEqual(["ar"]);
-        // The backup before an upgrade reads a database the migrations have not reached yet.
-        await app`ALTER TABLE node_settings DROP COLUMN search_languages`;
-        const aSecondLater = new Date(Date.now() + 1000);
-        expect((await runBackup(envFor(), { now: () => aSecondLater })).manifest.search_languages).toEqual(["ko"]);
       } finally {
-        await app`ALTER TABLE node_settings ADD COLUMN IF NOT EXISTS search_languages TEXT[]`;
         await app`DELETE FROM node_settings`;
-        await runBootRepairs(app as never);
       }
     });
 
@@ -461,29 +451,6 @@ describe.skipIf(!URL)("stuga-node backup, verify and restore", { timeout: 60_000
       expect(await listSearchIndexes(app as never)).toEqual([]);
       await runBootRepairs(app as never);
       expect((await listSearchIndexes(app as never)).map((i) => i.name).sort()).toEqual(["doc_chunks_bm25_v1", "docs_bm25_v1"]);
-    });
-
-    it("keeps the search indexes of a backup from before the search languages were a setting, the only record of them", async () => {
-      await runBootRepairs(app as never, { searchLanguages: ["ko"] });
-      try {
-        const aSecondLater = new Date(Date.now() + 1000);
-        const older = (await runBackup(envFor(), { now: () => aSecondLater })).path;
-        await rehash(older, (m) => void (m.schema_version = SEARCH_LANGUAGES_SCHEMA - 1));
-        await app.end({ timeout: 5 });
-        app = sessionConnection(dbUrl);
-
-        const result = await runRestore(envFor(), older, { confirmed: true });
-        expect(result.notes.join(" ")).not.toMatch(/builds its search indexes/);
-        expect((await listSearchIndexes(app as never)).map((i) => i.name).sort()).toEqual(["doc_chunks_bm25_v1_ko", "docs_bm25_v1_ko"]);
-        // The node that starts on it, with SEARCH_LANGUAGES long gone, keeps Korean.
-        vi.spyOn(console, "info").mockImplementation(() => {});
-        expect(await bootSearchLanguages(app as never, {})).toEqual(["ko"]);
-        expect(await getSearchLanguages(app as never)).toEqual(["ko"]);
-      } finally {
-        vi.restoreAllMocks();
-        await app`DELETE FROM node_settings`;
-        await runBootRepairs(app as never);
-      }
     });
 
     it("refuses without confirmation, and changes nothing", async () => {

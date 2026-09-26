@@ -21,7 +21,7 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Check, LayoutGrid, LogIn, ShieldCheck, Sparkles, UserPlus, Users, Wand2 } from "lucide-react";
 import { Brand, PRODUCT_NAME, nodeName } from "../shell/Brand";
-import { authConfigUnavailable, loadAuthConfig, nodeUnclaimed, providerLabel, setupSearchLanguages } from "../lib/session/auth-config";
+import { authConfigUnavailable, loadAuthConfig, nodeUnclaimed, providerLabel } from "../lib/session/auth-config";
 import {
   clearSilentAttempt,
   clearSsoHint,
@@ -118,8 +118,8 @@ export function Login() {
   const [password, setPassword] = useState("");
   /** Setup only: the one request the node makes on its own account, so whoever sets it up sees it first. */
   const [updateCheck, setUpdateCheck] = useState(true);
-  /** Setup only: what search gets a tokenizer for, starting from the languages the node already has, else the languages this browser reads. */
-  const [searchLanguages, setSearchLanguages] = useState(() => setupSearchLanguages() ?? browserSearchLanguages());
+  /** Setup only: what search gets a tokenizer for, starting from the languages this browser reads. */
+  const [searchLanguages, setSearchLanguages] = useState(browserSearchLanguages);
   /** Setup only: the node's setup code, from the link it printed (?setup=) or typed. */
   const [setupCode, setSetupCode] = useState(() => new URLSearchParams(location.search).get("setup") ?? "");
   /** Asked for unless the link brought it, and again when the node refused the one it brought. */

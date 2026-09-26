@@ -172,10 +172,11 @@ on Linux and on macOS.
 
 ## Schema changes
 
-A released migration is never edited: nodes have already applied it. A schema change is a new file,
-`0002_short_name.sql` and up, appended to `MIGRATIONS` in `packages/db/src/schema/migrate.ts`, with
-contiguous numbers as the schema version. The node applies pending migrations in one transaction
-when it boots, and refuses to start when an applied file has changed.
+Until Stuga has its first public users, `0001_initial.sql` is the whole schema and a change edits it
+in place. The node refuses to start when an applied file has changed, so recreate your dev database
+afterwards. From then on a schema change is a new file, `0002_short_name.sql` and up, appended to
+`MIGRATIONS` in `packages/db/src/schema/migrate.ts`, with contiguous numbers as the schema version;
+the node applies pending migrations in one transaction when it boots.
 
 The structured databases are not Postgres: each one is SQLite inside its actor, created by
 `ensureSchema` in `packages/database-actor/src/schema-ops.ts`, which has no migration mechanism of

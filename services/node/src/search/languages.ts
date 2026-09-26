@@ -16,8 +16,6 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   createSearchIndex,
   dropSearchIndex,
-  getSearchLanguages,
-  indexedSearchLanguages,
   isPlainIndexName,
   listSearchIndexes,
   saveSearchLanguages,
@@ -25,7 +23,6 @@ import {
   type SearchLanguage,
   type Sql,
 } from "@stuga/db";
-import { legacySearchLanguages, type Env } from "../config/env.js";
 
 export interface SearchLanguagesStatus {
   /** The languages chosen last. */
@@ -217,40 +214,4 @@ export function createSearchLanguages(deps: {
       await running;
     },
   };
-}
-
-/**
- * The languages the boot reconciles the indexes to: the node's setting. A node
- * that has never chosen takes one: SEARCH_LANGUAGES from its environment, or
- * else the languages its search indexes are built for, which on a database from
- * before the setting are the only record of them. From then on the variable is
- * ignored. Indexes built for no extra language record nothing, so such a node
- * reads the variable again at its next start.
- */
-export async function bootSearchLanguages(sql: Sql, env: Env): Promise<SearchLanguage[]> {
-  const stored = await getSearchLanguages(sql);
-  if (stored !== null) {
-    if (env.SEARCH_LANGUAGES?.trim()) {
-      console.warn("[node] SEARCH_LANGUAGES is ignored: the search languages are set in Settings → This node → Search");
-    }
-    return stored;
-  }
-  const legacy = legacySearchLanguages(env);
-  if (legacy !== null) {
-    await saveSearchLanguages(sql, legacy, null);
-    console.info(
-      `[node] SEARCH_LANGUAGES=${legacy.join(",")} is now the node's search languages setting; ` +
-        "the variable is ignored from here on, and the setting is in Settings → This node → Search",
-    );
-    return legacy;
-  }
-  // None is left unrecorded, as it is on a new node, whose setup then offers the browser's languages.
-  const indexed = await indexedSearchLanguages(sql);
-  if (!indexed?.length) return [];
-  await saveSearchLanguages(sql, indexed, null);
-  console.info(
-    `[node] the search indexes are built for ${indexed.join(",")}, which is now the node's search languages setting, ` +
-      "in Settings → This node → Search",
-  );
-  return indexed;
 }

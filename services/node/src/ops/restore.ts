@@ -20,7 +20,7 @@
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { isSearchIndexName, preloadsPgSearch, SEARCH_LANGUAGES_SCHEMA } from "@stuga/db";
+import { isSearchIndexName, preloadsPgSearch } from "@stuga/db";
 import { TRASH_RETENTION_DAYS } from "@stuga/protocol/domain/limits";
 import { pgSearchProblem } from "../boot/preflight.js";
 import { mib, nodeRunningRefusal } from "./backup.js";
@@ -99,22 +99,18 @@ async function emptyDatabase(sql: LockSql, name: string): Promise<void> {
 }
 
 export interface RestoreDumpOptions {
-  /** Restore the search indexes too, rather than leave them to the node's boot. */
-  searchIndexes: boolean;
   signal?: AbortSignal;
 }
 
 /**
- * Restore the dump. Without `searchIndexes` it leaves out the search indexes,
- * which the node's boot builds for its search languages: a dump taken while the
- * node rebuilt them can hold two on one table, and pg_search refuses to create
- * the second.
+ * Restore the dump without its search indexes, which the node's boot builds for
+ * its search languages: a dump taken while the node rebuilt them can hold two on
+ * one table, and pg_search refuses to create the second.
  */
 export async function defaultRestoreDump(env: BackupEnv, dump: string, sideUrl: string, opts: RestoreDumpOptions): Promise<void> {
   const { signal } = opts;
   const restore = (...list: string[]) =>
     run(pgTool(env, "pg_restore"), ["--no-owner", "--no-acl", "--exit-on-error", ...list, `--dbname=${sideUrl}`, dump], { signal });
-  if (opts.searchIndexes) return restore();
   const dir = await mkdtemp(join(tmpdir(), "stuga-restore-"));
   try {
     const list = join(dir, "toc.list");
@@ -306,13 +302,11 @@ export async function runRestore(
       throw await unchanged(signal?.aborted ? "interrupted while extracting the backup" : `extracting the backup failed (${messageOf(err)})`);
     }
 
-    // 3. Restore into a side database. A dump from before the search languages were a setting keeps its search
-    // indexes: their names are the only record of its languages, and it never holds two on one table.
-    const searchIndexes = manifest.schema_version < SEARCH_LANGUAGES_SCHEMA;
+    // 3. Restore into a side database.
     try {
       // Explicit, not the server's default: the node refuses a database with any other collation.
       await maintenance`CREATE DATABASE ${maintenance(side)} TEMPLATE template0 ENCODING 'UTF8' LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8'`;
-      await (deps.restoreDump ?? defaultRestoreDump)(env, join(dir, DUMP_NAME), withDatabase(env.databaseUrl, side), { searchIndexes, signal });
+      await (deps.restoreDump ?? defaultRestoreDump)(env, join(dir, DUMP_NAME), withDatabase(env.databaseUrl, side), { signal });
       throwIfInterrupted(signal, "");
     } catch (err) {
       throw await unchanged(signal?.aborted ? "interrupted while restoring the database" : `restoring the database failed (${messageOf(err)})`);
@@ -349,7 +343,7 @@ export async function runRestore(
       throw await unchanged(`the restore failed while swapping (${reason}); everything was put back`);
     }
 
-    if (!searchIndexes) notes.push("the node builds its search indexes when it starts, which on a large database takes a while");
+    notes.push("the node builds its search indexes when it starts, which on a large database takes a while");
     notes.push(
       "within minutes of starting, the node's maintenance runs against today's date: " +
         `trash older than ${TRASH_RETENTION_DAYS} days and audit rows past their retention are removed for good`,

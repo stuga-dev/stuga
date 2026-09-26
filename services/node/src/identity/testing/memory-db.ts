@@ -3,7 +3,6 @@
  * expiry and uniqueness rules as the SQL. For the route tests only.
  */
 import type { AccountRow, InviteJoin, OidcFlowRow, OidcTicketRow, RefreshSessionRow } from "@stuga/db";
-import { SEARCH_LANGUAGES } from "@stuga/protocol/domain/search-languages";
 import type { IdentityDb } from "../db.js";
 
 interface Invite {
@@ -52,9 +51,6 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
   const db: IdentityDb = {
     async countAccounts() {
       return accounts.size;
-    },
-    async searchLanguages() {
-      return settings.searchLanguages ? SEARCH_LANGUAGES.filter((l) => settings.searchLanguages!.includes(l)) : null;
     },
     async createLocalAccount(input) {
       // Synchronous from here on, so it is atomic as the SQL's lock makes it: the first account is decided once.

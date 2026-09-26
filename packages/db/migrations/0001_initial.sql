@@ -29,6 +29,10 @@ CREATE TABLE workspaces (
     -- only after their job runs, so the pass must move forward on its own cursor.
     embedding_backfill_cursor TEXT,
     agent_instructions        TEXT NOT NULL DEFAULT '',
+    -- Set while an archive is being imported into the workspace, which is then listed
+    -- nowhere, and cleared once the import is done; a node stopped partway deletes
+    -- it when it starts again rather than leave it half-built.
+    import_started_at         TIMESTAMPTZ,
     created_at                TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX workspaces_embedding_backfill_idx
@@ -452,27 +456,76 @@ CREATE INDEX api_keys_owner_idx ON api_keys (owner);
 CREATE UNIQUE INDEX api_keys_agent_uniq ON api_keys (agent_id);
 CREATE INDEX api_keys_ws_idx ON api_keys (workspace_id);
 
--- Dynamic client registration; last_used_at NULL = never used past registration.
+-- A client is registered dynamically, or identified by the URL of its metadata
+-- document. last_used_at NULL = never used past registration.
 CREATE TABLE oauth_clients (
-    client_id          TEXT PRIMARY KEY,
-    client_secret_hash TEXT,
-    redirect_uris      TEXT[] NOT NULL DEFAULT '{}',
-    client_name        TEXT NOT NULL DEFAULT '',
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_used_at       TIMESTAMPTZ
+    client_id           TEXT PRIMARY KEY,
+    client_secret_hash  TEXT,
+    redirect_uris       TEXT[] NOT NULL DEFAULT '{}',
+    client_name         TEXT NOT NULL DEFAULT '',
+    kind                TEXT NOT NULL DEFAULT 'dcr' CHECK (kind IN ('dcr', 'cimd')),
+    metadata_fetched_at TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at        TIMESTAMPTZ
 );
 CREATE INDEX oauth_clients_last_used_idx ON oauth_clients (last_used_at);
 
+-- A code carries what the person consented to, not the workspace they had open.
 CREATE TABLE oauth_codes (
-    code_hash      TEXT PRIMARY KEY,
-    client_id      TEXT NOT NULL,
-    user_alias     TEXT NOT NULL,
-    workspace_id   TEXT NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-    redirect_uri   TEXT NOT NULL,
-    code_challenge TEXT NOT NULL,
-    expires_at     TIMESTAMPTZ NOT NULL
+    code_hash       TEXT PRIMARY KEY,
+    client_id       TEXT NOT NULL,
+    user_alias      TEXT NOT NULL,
+    -- NULL = every workspace, now and later.
+    workspace_scope TEXT[],
+    access          TEXT NOT NULL CHECK (access IN ('read', 'propose')),
+    redirect_uri    TEXT NOT NULL,
+    code_challenge  TEXT NOT NULL,
+    expires_at      TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX oauth_codes_expiry_idx ON oauth_codes (expires_at);
+
+-- One person's authorization of one client: it belongs to its person and the
+-- workspaces they chose, and its tokens expire and refresh. Revoked, never
+-- deleted: runs and audit rows name its agent for as long as they are kept.
+CREATE TABLE oauth_grants (
+    grant_id        TEXT PRIMARY KEY,
+    client_id       TEXT NOT NULL,
+    -- What runs are attributed to: the name the client registered, or one its person gave it.
+    name            TEXT NOT NULL DEFAULT '',
+    -- The host that served the client's metadata document; NULL = registered dynamically, so unverified.
+    client_host     TEXT,
+    owner           TEXT NOT NULL REFERENCES users(alias) ON DELETE CASCADE,
+    -- The agent acts as agent:<agent_id>.
+    agent_id        TEXT NOT NULL UNIQUE,
+    -- The workspaces it may act in; NULL = every workspace its owner belongs to, now and later.
+    workspace_scope TEXT[],
+    access          TEXT NOT NULL DEFAULT 'propose' CHECK (access IN ('read', 'propose')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at    TIMESTAMPTZ,
+    revoked_at      TIMESTAMPTZ,
+    revoked_by      TEXT
+);
+-- Signing in again from the same client renews its grant, so its agent keeps one identity.
+CREATE UNIQUE INDEX oauth_grants_live_uniq ON oauth_grants (owner, client_id) WHERE revoked_at IS NULL;
+CREATE INDEX oauth_grants_owner_idx ON oauth_grants (owner, created_at DESC);
+
+-- Only the sha-256 of a token is stored.
+CREATE TABLE oauth_tokens (
+    token_hash TEXT PRIMARY KEY,
+    grant_id   TEXT NOT NULL REFERENCES oauth_grants(grant_id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL CHECK (kind IN ('access', 'refresh')),
+    -- One sign-in's chain of tokens; a spent refresh token presented again ends the chain.
+    family_id  TEXT NOT NULL,
+    -- When that sign-in happened: however often it refreshes, the chain ends a year on.
+    family_started_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    -- A refresh token is spent once exchanged.
+    used_at    TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX oauth_tokens_grant_idx ON oauth_tokens (grant_id);
+CREATE INDEX oauth_tokens_family_idx ON oauth_tokens (family_id);
+CREATE INDEX oauth_tokens_expiry_idx ON oauth_tokens (expires_at);
 
 -- One row per model call. A ledger: it outlives the workspace it names.
 CREATE TABLE ai_usage (
@@ -558,6 +611,9 @@ CREATE TABLE node_settings (
     backup_hour               SMALLINT CHECK (backup_hour IS NULL OR backup_hour BETWEEN 0 AND 23),
     -- The node's time zone for scheduled work, an IANA name; NULL is UTC. Setup sends the browser's.
     time_zone                 TEXT CHECK (time_zone IS NULL OR length(time_zone) BETWEEN 1 AND 64),
+    -- The extra keyword tokenizers, language codes (ko, ar) checked by the node rather
+    -- than a CHECK, so a new language needs no migration. NULL: nobody has chosen, which is none.
+    search_languages          TEXT[],
     -- The identity provider, at most one. The client secret is a file; this is its fingerprint.
     idp_issuer                TEXT,
     idp_client_id             TEXT,

@@ -237,8 +237,6 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
       node_label: deps.nodeLabel?.() ?? hostLabel(deps.publicOrigin),
       origin: deps.publicOrigin,
       branding: { accent_color: b.accentColor },
-      // What setup starts from: the search languages a boot took from SEARCH_LANGUAGES or from existing search indexes; null when it took none.
-      search_languages: unclaimed ? await db.searchLanguages() : null,
     });
   }
 

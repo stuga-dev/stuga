@@ -9,6 +9,7 @@ import {
   askDocs,
   closeClients,
   createClient,
+  getSearchLanguages,
   initSchema,
   listSearchIndexes,
   runBootRepairs,
@@ -19,7 +20,7 @@ import {
 import { EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { sessionConnection, withDatabase, type LockSql } from "../writer-lock.js";
-import { bootSearchLanguages, createSearchLanguages, type SearchLanguages } from "./languages.js";
+import { createSearchLanguages, type SearchLanguages } from "./languages.js";
 
 const URL = process.env.TEST_DATABASE_URL;
 const DB = `stuga_searchlang_${process.pid}`;
@@ -257,7 +258,7 @@ describe.skipIf(!URL)("changing the search languages online", () => {
     expect(await indexes()).toEqual(["doc_chunks_bm25_v1", "docs_bm25_v1", "docs_bm25_v1_ko (invalid)"]);
 
     // The setting was saved before the rebuild began, so the next boot reads it and reconciles to it.
-    const repairs = await runBootRepairs(sql, { searchLanguages: await bootSearchLanguages(sql, {}) });
+    const repairs = await runBootRepairs(sql, { searchLanguages: (await getSearchLanguages(sql)) ?? [] });
     expect(repairs.searchIndexChanges.sort()).toEqual(["+doc_chunks_bm25_v1_ko", "-doc_chunks_bm25_v1", "-docs_bm25_v1"]);
     expect(repairs.rebuiltSearchIndexes).toEqual(["docs_bm25_v1_ko"]);
     expect(await indexes()).toEqual(["doc_chunks_bm25_v1_ko", "docs_bm25_v1_ko"]);

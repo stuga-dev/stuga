@@ -214,10 +214,9 @@ key for socket tickets, media tickets and import upload signatures.
 
 **Schema.** The numbered files in `packages/db/migrations/` are the whole schema. The runner
 (`packages/db/src/schema/migrate.ts`) applies the migrations a database has not seen, in order, in
-one transaction under an advisory lock, and records each with a checksum in `schema_migrations`. An
-applied migration is frozen, so a schema change is a new numbered file. The node refuses a database
-written by a newer build. Two things are re-asserted on every boot instead
-(`schema/boot-repairs.ts`): extensions are updated to the installed binaries, and the BM25 indexes are
+one transaction under an advisory lock, and records each with a checksum in `schema_migrations`. The
+node refuses a database on which an applied file has changed, or one written by a newer build. Two
+things are re-asserted on every boot instead (`schema/boot-repairs.ts`): extensions are updated to the installed binaries, and the BM25 indexes are
 reconciled to the node's search languages and rebuilt when a different pg_search version built them,
 or a rebuild the node stopped in the middle left them invalid. The node reads the migration SQL from its source tree at runtime.
 
@@ -258,9 +257,7 @@ queries name only the languages the old and the new set share; table by table, t
 built with `CREATE INDEX CONCURRENTLY` and the old one dropped the same way; and only then do queries
 name the new set. A query that read the languages before the swap and fails on a missing field is run
 once more with the languages read again. A restore leaves the BM25 indexes out and the boot builds
-them, since a backup taken midway can hold two on one table, which pg_search refuses to create. A
-backup from before the setting keeps them: it never holds two, and their names are its only record
-of the languages, which the boot takes as the setting.
+them, since a backup taken midway can hold two on one table, which pg_search refuses to create.
 
 Every snapshot flush queues an `index_doc` job. It extracts the text, splits it into sections, embeds
 the sections that changed, and replaces the document's chunks. How chunks are cut and how Ask

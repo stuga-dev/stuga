@@ -151,16 +151,6 @@ describe("register", () => {
     expect(mem.settings.searchLanguages).toBeNull();
   });
 
-  it("tells setup the search languages a boot took before it, and nobody once the node is claimed", async () => {
-    const config = async () => ((await (await router().handle(new Request(ORIGIN + "/auth/config"))).json()) as Record<string, unknown>).search_languages;
-    expect(await config()).toBeNull();
-    // What a boot adopts from SEARCH_LANGUAGES on a node nobody has set up.
-    mem.settings.searchLanguages = ["ko"];
-    expect(await config()).toEqual(["ko"]);
-    await register("ada", { search_languages: ["ko"] });
-    expect(await config()).toBeNull();
-  });
-
   it("refuses search languages that are not a list of the choices", async () => {
     for (const search_languages of ["ko", ["ko", "fr"], [null], { ko: true }, null]) {
       const res = await register("ada", { search_languages });
@@ -418,7 +408,7 @@ describe("well-known + config", () => {
 
   it("GET /auth/config reports the provider and whether the node is claimed", async () => {
     // With no name set there is none to show, and the node is told apart by its host, without the port.
-    const node = { node_name: null, node_label: "localhost", origin: ORIGIN, branding: { accent_color: null }, search_languages: null };
+    const node = { node_name: null, node_label: "localhost", origin: ORIGIN, branding: { accent_color: null } };
     const before = await router().handle(new Request(ORIGIN + "/auth/config"));
     expect(await before.json()).toEqual({ provider: null, unclaimed: true, ...node });
     await register();

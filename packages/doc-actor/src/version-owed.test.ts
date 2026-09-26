@@ -13,7 +13,6 @@ import { encodeBinary } from "@stuga/protocol/wire/frame";
 import { CloseCode, Opcode } from "@stuga/protocol/wire/opcodes";
 import { yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import { DocActor } from "./doc-actor.js";
-import { hashText } from "./store/retention.js";
 import { connect, disconnect, frameBuffer, harness, makeActor, type Harness, type MemorySocket } from "../test/harness.js";
 
 // Counted, so a test can say how often the actor serialized the document.
@@ -541,120 +540,6 @@ describe("restoring a version", () => {
     await actor.alarm(); // seq 3, a version
 
     expect(lastJob(h)).toMatchObject({ snapshotSeq: 3, recordVersion: true, authors: ["liv"], versionAuthors: ["liv"] });
-  });
-});
-
-describe("a document whose last version v0.1.x recorded", () => {
-  /** "alpha" as seq 1 under the plain-text hash v0.1.x stored; returns a cold instance of this build. */
-  async function upgraded(h: Harness): Promise<DocActor> {
-    const before = makeActor(h);
-    await edit(before, "", "alpha", "liv");
-    await fireAlarm(h, before); // seq 1
-    const stored = meta(h);
-    await h.state.storage.put("meta", { ...stored, ring: { ...stored.ring, lastHash: hashText("alpha") } });
-    return makeActor(h);
-  }
-
-  it("records nothing while its text is unchanged: no duplicate version, no checkpoint", async () => {
-    const h = harness();
-    const actor = await upgraded(h);
-    await edit(actor, "alpha", "alpha bravo", "ada");
-    await edit(actor, "alpha bravo", "alpha", "ada");
-    vi.setSystemTime(Date.now() + VERSION_INTERVAL_MS);
-    await fireAlarm(h, actor); // seq 2, due
-
-    expect(lastJob(h)).toMatchObject({ snapshotSeq: 2, recordVersion: false });
-    expect(h.state.storage.alarm).toBeNull();
-    await disconnect(actor, await connect(actor, h, { docId: DOC, alias: "bob" }));
-    expect(indexJobs(h)).toHaveLength(2);
-
-    expect((await restore(actor, 1)).status).toBe(200);
-    expect(indexJobs(h).slice(2)).toMatchObject([{ snapshotSeq: 3, recordVersion: true, authors: ["restore:v1"] }]);
-  });
-
-  it("records changed text, and from then on compares the Markdown", async () => {
-    const h = harness();
-    const actor = await upgraded(h);
-    await edit(actor, "alpha", "alpha bravo", "ada");
-    vi.setSystemTime(Date.now() + VERSION_INTERVAL_MS);
-    await fireAlarm(h, actor); // seq 2, a version
-    expect(lastJob(h)).toMatchObject({ snapshotSeq: 2, recordVersion: true });
-    expect(meta(h).ring.lastHash).toMatch(/^md:/);
-
-    await edit(actor, "alpha bravo", "**alpha bravo**", "ada");
-    vi.setSystemTime(Date.now() + VERSION_INTERVAL_MS);
-    await fireAlarm(h, actor); // seq 3, formatting only
-
-    expect(lastJob(h)).toMatchObject({ snapshotSeq: 3, recordVersion: true });
-  });
-
-  it("compares the Markdown from the first load: an image, a link or a heading is a change", async () => {
-    for (const changed of ["alpha\n\n![x](https://e.test/x.png)", "[alpha](https://e.test/a)", "# alpha"]) {
-      const h = harness();
-      const actor = await upgraded(h);
-      await connect(actor, h, { docId: DOC, alias: "bob" }); // loads it
-      expect(meta(h).ring.lastHash).toMatch(/^md:/);
-
-      await edit(actor, "alpha", changed, "ada");
-      vi.setSystemTime(Date.now() + VERSION_INTERVAL_MS);
-      await fireAlarm(h, actor); // seq 2, due
-
-      expect(lastJob(h)).toMatchObject({ snapshotSeq: 2, recordVersion: true });
-      expect(snapshotMarkdown(h, 2)).toBe(changed);
-    }
-  });
-
-  it("first records a formatting-only change when restored", async () => {
-    const h = harness();
-    const actor = await upgraded(h);
-    await edit(actor, "alpha", "# alpha", "ada"); // unsaved
-
-    expect((await restore(actor, 1)).status).toBe(200);
-
-    expect(indexJobs(h).slice(1)).toMatchObject([
-      { snapshotSeq: 2, recordVersion: true, versionAuthors: ["ada"] },
-      { snapshotSeq: 3, recordVersion: true, authors: ["restore:v1"] },
-    ]);
-    expect(snapshotMarkdown(h, 2)).toBe("# alpha");
-  });
-
-  it("reads the last version's hash from its own snapshot when the head is past it", async () => {
-    const h = harness();
-    const before = makeActor(h);
-    await edit(before, "", "alpha", "liv");
-    await fireAlarm(h, before); // seq 1
-    vi.setSystemTime(Date.now() + 60_000);
-    await edit(before, "alpha", "**alpha**", "ada");
-    await fireAlarm(h, before); // seq 2, no version
-    const stored = meta(h);
-    await h.state.storage.put("meta", { ...stored, ring: { ...stored.ring, lastHash: hashText("alpha") } });
-    await h.state.storage.deleteAlarm();
-
-    const revived = makeActor(h);
-    await connect(revived, h, { docId: DOC, alias: "bob" });
-    await fireAlarm(h, revived);
-
-    expect(lastJob(h)).toMatchObject({ snapshotSeq: 2, recordVersion: true });
-  });
-
-  it("keeps comparing plain text when the last version's snapshot cannot be read", async () => {
-    const h = harness();
-    const before = makeActor(h);
-    await edit(before, "", "alpha", "liv");
-    await fireAlarm(h, before); // seq 1
-    vi.setSystemTime(Date.now() + 60_000);
-    await edit(before, "alpha", "alpha bravo", "ada");
-    await fireAlarm(h, before); // seq 2, no version
-    const stored = meta(h);
-    await h.state.storage.put("meta", { ...stored, ring: { ...stored.ring, lastHash: hashText("alpha") } });
-    await h.snapshots.delete(snapshotKey(DOC, 1));
-
-    const revived = makeActor(h);
-    await connect(revived, h, { docId: DOC, alias: "bob" });
-    expect(meta(h).ring.lastHash).toBe(hashText("alpha"));
-    await fireAlarm(h, revived);
-
-    expect(lastJob(h)).toMatchObject({ snapshotSeq: 2, recordVersion: true });
   });
 });
 

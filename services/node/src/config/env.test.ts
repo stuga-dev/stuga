@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MAX_EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
-import { ConfigError, legacySearchLanguages, parseConfig, parseOpsConfig, type Env } from "./env.js";
+import { ConfigError, parseConfig, parseOpsConfig, type Env } from "./env.js";
 
 const BASE: Env = { DATABASE_URL: "postgres://stuga@localhost:5432/stuga", DATA_DIR: "/srv/stuga/data" };
 
@@ -149,23 +149,5 @@ describe("parseOpsConfig", () => {
   it("reads the same required variables as the node", () => {
     expect(() => parseOpsConfig({ DATABASE_URL: BASE["DATABASE_URL"] })).toThrow(/DATA_DIR/);
     expect(parseOpsConfig(BASE)).toMatchObject({ dataDir: "/srv/stuga/data", publicOrigin: "http://localhost:8787" });
-  });
-});
-
-describe("legacySearchLanguages", () => {
-  it("is null when SEARCH_LANGUAGES is not set, and the languages it lists when it is", () => {
-    expect(legacySearchLanguages(BASE)).toBeNull();
-    expect(legacySearchLanguages({ ...BASE, SEARCH_LANGUAGES: "  " })).toBeNull();
-    expect(legacySearchLanguages({ ...BASE, SEARCH_LANGUAGES: "KO, ar,ko" })).toEqual(["ko", "ar"]);
-    expect(legacySearchLanguages({ ...BASE, SEARCH_LANGUAGES: "," })).toEqual([]);
-  });
-
-  it("refuses a language it does not know", () => {
-    expect(() => legacySearchLanguages({ ...BASE, SEARCH_LANGUAGES: "ko,fr" })).toThrow(/SEARCH_LANGUAGES entries must be one of ko, ar/);
-  });
-
-  it("is no longer part of the node's configuration", () => {
-    expect(cfg({ SEARCH_LANGUAGES: "ko" })).not.toHaveProperty("searchLanguages");
-    expect(parseOpsConfig({ ...BASE, SEARCH_LANGUAGES: "ko" })).not.toHaveProperty("searchLanguages");
   });
 });

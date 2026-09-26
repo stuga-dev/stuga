@@ -7,7 +7,6 @@ import { join, resolve } from "node:path";
 import type { AiProvider } from "@stuga/ai";
 import type { AuthConfig } from "@stuga/auth";
 import { EMBEDDING_DIMS, MAX_EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
-import { SEARCH_LANGUAGES, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { APP_ROOT } from "../app-root.js";
 import type { NodeConfig } from "../env.js";
 import { loadOrCreateInternalSecret } from "./secrets.js";
@@ -76,20 +75,6 @@ function oneOf<T extends string>(env: Env, name: string, allowed: readonly T[], 
   const v = raw.toLowerCase() as T;
   if (!allowed.includes(v)) throw new ConfigError(`${name} must be one of ${allowed.join(", ")}, got "${raw}"`);
   return v;
-}
-
-/** A comma-separated list, each entry checked against `allowed` and deduped. */
-function list<T extends string>(env: Env, name: string, allowed: readonly T[]): T[] {
-  const raw = str(env, name);
-  if (raw === undefined) return [];
-  const out = new Set<T>();
-  for (const entry of raw.split(",").map((v) => v.trim().toLowerCase()).filter(Boolean)) {
-    if (!allowed.includes(entry as T)) {
-      throw new ConfigError(`${name} entries must be one of ${allowed.join(", ")}, got "${entry}"`);
-    }
-    out.add(entry as T);
-  }
-  return [...out];
 }
 
 function httpUrl(name: string, raw: string): URL {
@@ -177,17 +162,6 @@ export function parseOpsConfig(env: Env = process.env): OpsConfig {
     publicOrigin: origin(env, "PUBLIC_ORIGIN", DEFAULT_PUBLIC_ORIGIN),
     embeddingDims: int(env, "AI_EMBED_DIMS", EMBEDDING_DIMS, { min: 1, max: MAX_EMBEDDING_DIMS }),
   };
-}
-
-/**
- * SEARCH_LANGUAGES, which chose the search languages before they were a node
- * setting, in the order the setting keeps. Read only by the boot of a node that
- * has never chosen, which adopts it; null when it is not set.
- */
-export function legacySearchLanguages(env: Env): SearchLanguage[] | null {
-  if (str(env, "SEARCH_LANGUAGES") === undefined) return null;
-  const listed = list(env, "SEARCH_LANGUAGES", SEARCH_LANGUAGES);
-  return SEARCH_LANGUAGES.filter((l) => listed.includes(l));
 }
 
 /** The node's own sessions. An identity provider is a node setting, not an environment variable. */

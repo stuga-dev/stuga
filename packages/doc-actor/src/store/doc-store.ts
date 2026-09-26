@@ -154,8 +154,6 @@ export class DocStore {
         });
       }
     }
-    // Before the log replays over the head, which may be the version the hash describes.
-    if (this.ring.legacyHash) await this.upgradeLegacyHash();
     // The durable log holds edits the last instance acked but never snapshotted.
     const pending = await this.storage.get<Uint8Array>("pending");
     if (pending && pending.byteLength > 0) {
@@ -179,36 +177,6 @@ export class DocStore {
       if (!this.pending) this.pending = Y.encodeStateAsUpdate(this.doc, beforeSeed);
     }
     this.loaded = true;
-  }
-
-  /**
-   * Replace the plain-text hash v0.1.x stored with the version hash of the version it
-   * describes, read from that version's snapshot (the ring keeps it), and save it, so
-   * formatting counts from the first load. Left to compare plain text when the snapshot
-   * cannot be read.
-   */
-  private async upgradeLegacyHash(): Promise<void> {
-    const newest = this.ring.newest;
-    if (newest === 0) return;
-    let version = this.doc;
-    if (newest !== this.seq || this.hydrationIncomplete) {
-      try {
-        const obj = await this.env.snapshots.get(snapshotKey(this.docId, newest));
-        if (!obj) return;
-        version = new Y.Doc();
-        Y.applyUpdate(version, new Uint8Array(await obj.arrayBuffer()));
-      } catch (err) {
-        console.warn("version hash: kept the v0.1.x one; the version's snapshot could not be read", { docId: this.docId, seq: newest, err: String(err) });
-        return;
-      }
-    }
-    this.ring.rehash(versionHash(this.docId, version, extractText(version)));
-    if (this.destroyed) return;
-    try {
-      await this.storeMeta();
-    } catch (err) {
-      console.warn("version hash: not saved; the next save keeps it", { docId: this.docId, err: String(err) });
-    }
   }
 
   private onDocUpdate(update: Uint8Array, origin: unknown): void {
@@ -356,7 +324,7 @@ export class DocStore {
     const plain = extractText(this.doc);
     if (this.parkedOnly(plain)) return null;
     const hash = versionHash(this.docId, this.doc, plain);
-    return this.ring.changedSince(hash, plain) ? { plain, hash } : null;
+    return this.ring.changedSince(hash) ? { plain, hash } : null;
   }
 
   /** Hand the version authors to a version being recorded; edits from now on count toward the next one. */
@@ -521,7 +489,7 @@ export class DocStore {
           bytes: snapshot.byteLength,
         });
       } else {
-        recordedVersion = hash !== null && this.ring.changedSince(hash, plain);
+        recordedVersion = hash !== null && this.ring.changedSince(hash);
         if (recordedVersion) evictedVersion = this.ring.note(nextSeq, now, hash!);
         // Enqueue before committing clean state: if the send fails, durable state
         // is untouched and the flush reruns; a duplicate job is absorbed downstream.

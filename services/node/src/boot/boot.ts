@@ -56,7 +56,7 @@ import { backupBeforeUpgrade } from "./upgrade-backup.js";
 import { createNodeBackups, notifyBackupFailed } from "../ops/node-backups.js";
 import { archiveWorkUnderWay, holdArchiveWork } from "../archive/under-way.js";
 import { createExclusive } from "../platform/exclusive.js";
-import { bootSearchLanguages, createSearchLanguages } from "../search/languages.js";
+import { createSearchLanguages } from "../search/languages.js";
 
 const MAINTENANCE_INTERVAL_MS = 2 * 60_000;
 /** How long a backup of the running node waits for the requests already being answered. */
@@ -161,8 +161,8 @@ async function boot(): Promise<void> {
     throw err instanceof ConfigError ? err : new ConfigError(err instanceof Error ? err.message : String(err));
   });
 
-  // Read straight after the migrations that made the column: the indexes are reconciled to it.
-  const bootLanguages = await bootSearchLanguages(sql, process.env);
+  // The indexes are reconciled to the node's search languages; none until setup chooses.
+  const bootLanguages = (await getSearchLanguages(sql)) ?? [];
   const repairs = await runBootRepairs(sql, { searchLanguages: bootLanguages });
   if (repairs.updatedExtensions.length > 0) {
     console.info(`[node] extensions updated to this build's versions: ${repairs.updatedExtensions.join(", ")}`);

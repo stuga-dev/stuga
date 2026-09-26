@@ -5,7 +5,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SearchLanguage, Sql } from "@stuga/db";
-import { bootSearchLanguages, createSearchLanguages, type SearchLanguages } from "./languages.js";
+import { createSearchLanguages, type SearchLanguages } from "./languages.js";
 
 interface FakeIndex {
   name: string;
@@ -23,7 +23,7 @@ interface Step {
 /** A statement's failure or hold, chosen by the test; undefined runs it. */
 type Hook = (statement: string) => Promise<void> | void;
 
-function fakePostgres(indexes: string[], opts: { stored?: string[] | null } = {}) {
+function fakePostgres(indexes: string[]) {
   const catalog: FakeIndex[] = indexes.map((name) => ({
     name,
     table: name.startsWith("docs_") ? "docs" : "doc_chunks",
@@ -32,7 +32,7 @@ function fakePostgres(indexes: string[], opts: { stored?: string[] | null } = {}
   }));
   const steps: Step[] = [];
   const cancelled: string[] = [];
-  let stored = opts.stored ?? null;
+  let stored: string[] | null = null;
   let coordinator: SearchLanguages | null = null;
   let hook: Hook = () => {};
   let saveHook: (languages: string[]) => Promise<void> | void = () => {};
@@ -393,58 +393,5 @@ describe("a save of the languages", () => {
       "CREATE INDEX CONCURRENTLY docs_bm25_v1_ar ON docs",
       "CREATE INDEX CONCURRENTLY doc_chunks_bm25_v1_ar ON doc_chunks",
     ]);
-  });
-});
-
-describe("the languages a boot starts with", () => {
-  it("adopts SEARCH_LANGUAGES once, when nothing was ever chosen, and ignores it from then on", async () => {
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const pg = fakePostgres(BASE);
-    expect(await bootSearchLanguages(pg.sql, { SEARCH_LANGUAGES: "ar,ko" })).toEqual(["ko", "ar"]);
-    expect(pg.stored()).toEqual(["ko", "ar"]);
-    expect(info).toHaveBeenCalledWith(expect.stringContaining("SEARCH_LANGUAGES=ko,ar is now the node's search languages setting"));
-
-    // The next boot reads the setting, with or without the variable.
-    expect(await bootSearchLanguages(pg.sql, {})).toEqual(["ko", "ar"]);
-    expect(warn).not.toHaveBeenCalled();
-
-    // An administrator chose Arabic alone; the variable, still set, changes nothing.
-    const chosen = fakePostgres(BASE, { stored: ["ar"] });
-    expect(await bootSearchLanguages(chosen.sql, { SEARCH_LANGUAGES: "ko" })).toEqual(["ar"]);
-    expect(chosen.stored()).toEqual(["ar"]);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("SEARCH_LANGUAGES is ignored"));
-  });
-
-  it("keeps none chosen as a choice, and is none when nothing was chosen or set", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(await bootSearchLanguages(fakePostgres(BASE, { stored: [] }).sql, { SEARCH_LANGUAGES: "ko" })).toEqual([]);
-    const fresh = fakePostgres(BASE);
-    expect(await bootSearchLanguages(fresh.sql, {})).toEqual([]);
-    expect(fresh.stored()).toBeNull();
-  });
-
-  it("takes, when nothing was chosen or set, the languages the search indexes are built for, as on a database from before the setting", async () => {
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    const KOREAN = ["docs_bm25_v1_ko", "doc_chunks_bm25_v1_ko"];
-    const upgraded = fakePostgres(KOREAN);
-    expect(await bootSearchLanguages(upgraded.sql, {})).toEqual(["ko"]);
-    expect(upgraded.stored()).toEqual(["ko"]);
-    expect(info).toHaveBeenCalledWith(expect.stringContaining("the search indexes are built for ko"));
-
-    // SEARCH_LANGUAGES, when set, comes first.
-    const set = fakePostgres(KOREAN);
-    expect(await bootSearchLanguages(set.sql, { SEARCH_LANGUAGES: "ar" })).toEqual(["ar"]);
-    expect(set.stored()).toEqual(["ar"]);
-
-    // An index a build left invalid is no record.
-    const stopped = fakePostgres(BASE);
-    stopped.catalog.push({ name: "docs_bm25_v1_ko", table: "docs", valid: false, builtBy: null });
-    expect(await bootSearchLanguages(stopped.sql, {})).toEqual([]);
-    expect(stopped.stored()).toBeNull();
-  });
-
-  it("refuses a language SEARCH_LANGUAGES names that this build does not know, as before", async () => {
-    await expect(bootSearchLanguages(fakePostgres(BASE).sql, { SEARCH_LANGUAGES: "ko,fr" })).rejects.toThrow(/SEARCH_LANGUAGES entries/);
   });
 });

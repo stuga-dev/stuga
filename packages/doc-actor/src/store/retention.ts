@@ -16,7 +16,7 @@ import type { BlobStore } from "@stuga/runtime";
 /** Versions run on wall-clock time, so VERSION_KEEP of them cover hours of work, not a burst of flushes. */
 export const VERSION_INTERVAL_MS = 5 * 60_000;
 
-/** Marks a Markdown hash; the plain-text hash a v0.1.x store holds has no prefix. */
+/** Marks a Markdown hash. */
 const MARKDOWN_HASH = "md:";
 /** Marks the plain-text hash of a document the Markdown serializer cannot read. */
 const TEXT_HASH = "txt:";
@@ -37,7 +37,7 @@ export function versionHash(docId: string, doc: Y.Doc, plain: string): string {
   }
 }
 
-/** sha-256 of a document's plain text: the version hash v0.1.x stored, and the fallback for a document with no Markdown. */
+/** sha-256 of a document's plain text: the fallback for a document with no Markdown. */
 export function hashText(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
@@ -47,7 +47,7 @@ export interface RingState {
   seqs: number[];
   /** Epoch ms of the last recorded version; 0 when none. */
   lastAt: number;
-  /** `versionHash` of the last recorded version, or `hashText` in a store v0.1.x wrote; "" when none. */
+  /** `versionHash` of the last recorded version; "" when none. */
   lastHash: string;
 }
 
@@ -78,29 +78,14 @@ export class VersionRing {
     return this.state.lastHash;
   }
 
-  /** Whether the last version's hash is the plain-text one v0.1.x stored. */
-  get legacyHash(): boolean {
-    const last = this.state.lastHash;
-    return last !== "" && !last.startsWith(MARKDOWN_HASH) && !last.startsWith(TEXT_HASH);
-  }
-
   /** Whether a snapshot at `seq` is due for a version: the first snapshot, someone leaving, or the interval. */
   due(seq: number, reason: string, now: number): boolean {
     return seq === 1 || reason === "eviction" || now >= this.nextAt;
   }
 
-  /**
-   * Whether a document whose `versionHash` is `hash` differs from the last version.
-   * Against a v0.1.x hash its plain `text` is compared, so an upgrade records no duplicate.
-   */
-  changedSince(hash: string, text: string): boolean {
-    if (this.legacyHash) return hashText(text) !== this.state.lastHash;
+  /** Whether a document whose `versionHash` is `hash` differs from the last version. */
+  changedSince(hash: string): boolean {
     return hash !== this.state.lastHash;
-  }
-
-  /** Replace a v0.1.x hash with the `versionHash` of the version it describes. */
-  rehash(hash: string): void {
-    this.state = { ...this.state, lastHash: hash };
   }
 
   /** Replaced whole on every change, so a held snapshot is a real copy for rollback. */

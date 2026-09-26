@@ -14,12 +14,7 @@ import type { Queryable } from "../sql.js";
  * Migration filenames in apply order. Explicit, so a stray file cannot change
  * what runs. Append only: an applied file is frozen by its checksum.
  */
-export const MIGRATIONS: readonly string[] = [
-  "0001_initial.sql",
-  "0002_oauth_grants.sql",
-  "0003_search_languages.sql",
-  "0004_workspace_imports.sql",
-];
+export const MIGRATIONS: readonly string[] = ["0001_initial.sql"];
 
 /** `0007_foo.sql` → 7. Throws on a filename that is not numbered. */
 export function migrationId(filename: string): number {

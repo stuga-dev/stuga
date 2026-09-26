@@ -103,9 +103,7 @@ is no room for a second copy of both halves. Then it:
 
 1. extracts the archive beside the data directory, into `<DATA_DIR>.restore-<stamp>`;
 2. restores the dump into a new database, `<database>_restore_<stamp>`, without the search indexes,
-   which the node builds when it starts. A backup from before the
-   [search languages](configuration.md#search-languages) were a setting keeps its own, whose names
-   are its only record of them;
+   which the node builds when it starts;
 3. swaps by renaming, keeping the current halves as `<database>_replaced_<stamp>` and
    `<DATA_DIR>.replaced-<stamp>`.
 

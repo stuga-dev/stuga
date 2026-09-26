@@ -11,7 +11,6 @@ import {
   nodeUnclaimed,
   providerLabel,
   setAuthConfigForTest,
-  setupSearchLanguages,
 } from "./auth-config";
 import { AuthError, describeError, StorageBlockedError } from "./errors";
 import { hasSsoHint, selectAccountDue, setSsoHint } from "./provider";
@@ -94,7 +93,6 @@ describe("loadAuthConfig", () => {
     node_label: "Acme",
     origin: "https://acme.example",
     branding: { accent_color: "#7c3aed" },
-    search_languages: null,
   };
 
   it("reads a node with no identity provider from /auth/config", async () => {
@@ -110,16 +108,6 @@ describe("loadAuthConfig", () => {
     fetchMock.mockResolvedValueOnce(json(200, { provider: null, unclaimed: true }));
     await loadAuthConfig();
     expect(nodeUnclaimed()).toBe(true);
-    expect(setupSearchLanguages()).toBeNull();
-  });
-
-  it("reads the search languages setup starts from, and none from a list that is not of the choices", async () => {
-    fetchMock.mockResolvedValueOnce(json(200, { provider: null, unclaimed: true, search_languages: ["ar", "ko"] }));
-    await loadAuthConfig();
-    expect(setupSearchLanguages()).toEqual(["ko", "ar"]);
-    fetchMock.mockResolvedValueOnce(json(200, { provider: null, unclaimed: true, search_languages: ["ko", "fr"] }));
-    await loadAuthConfig();
-    expect(setupSearchLanguages()).toBeNull();
   });
 
   it("reads the identity provider's button text, and nothing else about it", async () => {
@@ -139,7 +127,6 @@ describe("loadAuthConfig", () => {
       nodeLabel: "Acme",
       origin: "https://acme.example",
       branding: { accentColor: "#7c3aed" },
-      searchLanguages: null,
     });
   });
 
@@ -174,7 +161,6 @@ describe("loadAuthConfig", () => {
       nodeLabel: null,
       origin: null,
       branding: { accentColor: null },
-      searchLanguages: null,
     });
     expect(authConfigUnavailable()).toBe(true);
     expect(nodeUnclaimed()).toBe(false);

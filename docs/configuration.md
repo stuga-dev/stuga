@@ -139,14 +139,6 @@ failing gives up after five tries, and the section says why; search then keeps t
 languages until they are saved again or the node restarts. A node stopped midway finishes the
 rebuild when it starts again.
 
-`SEARCH_LANGUAGES`, the environment variable this setting replaces, is read until the node has the
-setting: a node started with it before anyone has chosen takes its value as the setting, which
-first-run setup shows ticked, and ignores the variable from then on. Started without it, such a node
-takes the languages its search indexes are built for, so a node upgraded from an earlier version
-keeps them either way. Indexes built for neither Korean nor Arabic give no setting, so the node reads
-the variable again at its next start. An earlier version still reads the variable, so keep it while
-the node may go back to one.
-
 ### The node's name and ID
 
 The node's name is shown in the top bar, the browser tab and the sign-in page, and agents are told
