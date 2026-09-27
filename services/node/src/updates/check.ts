@@ -131,9 +131,9 @@ export async function checkForUpdates(env: JobsEnv, d: JobDeps, version: string)
 }
 
 /**
- * The maintenance tick's stage. It looks only when the node has been claimed, so whoever set it up
- * has seen the switch, and the switch is read from the row itself once a look is due: the snapshot
- * in memory may be a tick behind a setup that turned it off.
+ * The maintenance tick's stage. It looks only when the node has been claimed, so a node nobody has
+ * set up makes no request, and the switch is read from the row itself once a look is due: the
+ * snapshot in memory may be a tick behind an administrator who turned it off.
  */
 export async function lookForUpdates(env: JobsEnv, d: JobDeps, version: string, now = Date.now()): Promise<void> {
   if (!isReleaseVersion(version)) return;

@@ -3,6 +3,7 @@
  * node's search languages, so they are reconciled on every boot rather than
  * created by a migration, and rebuilt online when the setting changes.
  */
+import { createHash } from "node:crypto";
 import { SEARCH_LANGUAGES, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import type { Sql } from "../client.js";
 
@@ -22,20 +23,67 @@ export function preloadsPgSearch(setting: string): boolean {
   });
 }
 
-// A per-language column only sees text containing its script: lindera(korean)
-// mis-segments Chinese, which would reintroduce character-level false positives.
-const LANG_SCRIPT_RANGE: Record<SearchLanguage, string> = {
-  ko: "가-힣",
-  ar: "؀-ۿ",
+/** The letters of a script, as a regex bracket's ranges. */
+const LATIN = "A-Za-zÀ-ÖØ-öø-ɏ";
+const CYRILLIC = "Ѐ-ӿ";
+const HAN = "㐀-䶿一-鿿";
+const KANA = "ぁ-ヿ";
+
+/**
+ * Each language's column: the script whose text it sees, and its tokenizer. A column only sees
+ * text containing its script, so a Chinese document costs the Latin languages nothing, and
+ * lindera(korean) never mis-segments Chinese into character-level false positives. Chinese also
+ * skips text with kana, which is Japanese written partly in Chinese characters. Stopwords are
+ * dropped for a language pg_search has a list for.
+ */
+const LANGUAGE_COLUMNS: Record<SearchLanguage, { script: string; unless?: string; tokenizer: (alias: string) => string }> = {
+  ar: { script: "؀-ۿ", tokenizer: stemmed("arabic") },
+  cs: { script: LATIN, tokenizer: stemmed("czech", { stopwords: true }) },
+  da: { script: LATIN, tokenizer: stemmed("danish", { stopwords: true }) },
+  de: { script: LATIN, tokenizer: stemmed("german", { stopwords: true }) },
+  el: { script: "Ͱ-Ͽἀ-῾", tokenizer: stemmed("greek") },
+  es: { script: LATIN, tokenizer: stemmed("spanish", { stopwords: true }) },
+  fi: { script: LATIN, tokenizer: stemmed("finnish", { stopwords: true }) },
+  fr: { script: LATIN, tokenizer: stemmed("french", { stopwords: true }) },
+  hu: { script: LATIN, tokenizer: stemmed("hungarian", { stopwords: true }) },
+  it: { script: LATIN, tokenizer: stemmed("italian", { stopwords: true }) },
+  ja: { script: KANA, tokenizer: (alias) => `pdb.lindera(japanese, 'alias=${alias}')` },
+  ko: { script: "가-힣", tokenizer: (alias) => `pdb.lindera(korean, 'alias=${alias}')` },
+  nl: { script: LATIN, tokenizer: stemmed("dutch", { stopwords: true }) },
+  no: { script: LATIN, tokenizer: stemmed("norwegian", { stopwords: true }) },
+  pl: { script: LATIN, tokenizer: stemmed("polish", { stopwords: true }) },
+  pt: { script: LATIN, tokenizer: stemmed("portuguese", { stopwords: true }) },
+  ro: { script: LATIN, tokenizer: stemmed("romanian") },
+  ru: { script: CYRILLIC, tokenizer: stemmed("russian", { stopwords: true }) },
+  sv: { script: LATIN, tokenizer: stemmed("swedish", { stopwords: true }) },
+  ta: { script: "஀-௿", tokenizer: stemmed("tamil") },
+  tr: { script: LATIN, tokenizer: stemmed("turkish") },
+  zh: { script: HAN, unless: KANA, tokenizer: (alias) => `pdb.jieba('alias=${alias}')` },
 };
 
-const LANG_CAST: Record<SearchLanguage, (alias: string) => string> = {
-  ko: (alias) => `pdb.lindera(korean, 'alias=${alias}')`,
-  ar: (alias) => `pdb.icu('stemmer=arabic', 'alias=${alias}')`,
-};
+function stemmed(language: string, opts: { stopwords?: boolean } = {}): (alias: string) => string {
+  const stopwords = opts.stopwords ? `, 'stopwords_language=${language}'` : "";
+  return (alias) => `pdb.icu('stemmer=${language}'${stopwords}, 'alias=${alias}')`;
+}
 
 function gated(lang: SearchLanguage, expr: string): string {
-  return `(CASE WHEN (${expr}) ~ '[${LANG_SCRIPT_RANGE[lang]}]' THEN (${expr}) ELSE '' END)`;
+  const { script, unless } = LANGUAGE_COLUMNS[lang];
+  const skip = unless ? ` AND (${expr}) !~ '[${unless}]'` : "";
+  return `(CASE WHEN (${expr}) ~ '[${script}]'${skip} THEN (${expr}) ELSE '' END)`;
+}
+
+/** Postgres cuts a longer identifier short, which would leave reconcile looking for a name it can never find. */
+const MAX_IDENTIFIER = 63;
+
+/**
+ * What an index name adds for its languages: their codes while the longest name fits, else a hash
+ * of them, which still changes with the set.
+ */
+function languageSuffix(langs: readonly string[]): string {
+  if (!langs.length) return "";
+  const readable = `_${langs.join("_")}`;
+  if (`doc_chunks_bm25_v1${readable}`.length <= MAX_IDENTIFIER) return readable;
+  return `_h${createHash("sha256").update(langs.join(",")).digest("hex").slice(0, 12)}`;
 }
 
 const ENGLISH = "'stemmer=english', 'stopwords_language=english'";
@@ -69,12 +117,12 @@ export interface SearchIndexShape {
  */
 export function searchIndexShapes(languages: readonly SearchLanguage[]): readonly SearchIndexShape[] {
   const langs = [...new Set(languages)].sort();
-  const suffix = langs.length ? `_${langs.join("_")}` : "";
+  const suffix = languageSuffix(langs);
   const docsExtra = langs
-    .map((l) => `,\n              (${gated(l, "title || ' ' || search_text")}::${LANG_CAST[l](`all_text_${l}`)})`)
+    .map((l) => `,\n              (${gated(l, "title || ' ' || search_text")}::${LANGUAGE_COLUMNS[l].tokenizer(`all_text_${l}`)})`)
     .join("");
   const chunksExtra = langs
-    .map((l) => `,\n              (${gated(l, CHUNK_TEXT)}::${LANG_CAST[l](`chunk_text_${l}`)})`)
+    .map((l) => `,\n              (${gated(l, CHUNK_TEXT)}::${LANGUAGE_COLUMNS[l].tokenizer(`chunk_text_${l}`)})`)
     .join("");
   return [
     {

@@ -228,9 +228,8 @@ administrators only:
   once per release, in the app and through the [notification sink](configuration.md#settings-in-the-app)
   when one is set.
 
-**Check for new versions** turns this off and on. It is on unless someone turns it off, and
-first-run setup asks before the node has made a single request: a node set up with it unticked
-never looks. **Check now** looks at once. A node built from source, or on any version that is not a
+**Check for new versions** turns this off and on. It is on unless someone turns it off, and a
+node makes its first request only once someone has set it up. **Check now** looks at once. A node built from source, or on any version that is not a
 plain `1.2.3`, never looks.
 
 **A node that cannot reach the internet** learns nothing on its own, and a look that fails is tried

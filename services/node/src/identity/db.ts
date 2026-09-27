@@ -53,8 +53,6 @@ export interface IdentityDb {
     inviteHash?: string | null;
     /** The caller checked the setup code: only then may this be the first account. */
     mayClaim?: boolean;
-    /** Setup's choice about looking for newer versions; `false` is stored with the first account, and only with it. */
-    updateCheck?: boolean;
     /** Setup's browser's time zone, the node's for scheduled work; stored with the first account, and only with it. */
     timeZone?: string;
     /** Setup's search languages, `[]` for none; stored with the first account, and only with it. */

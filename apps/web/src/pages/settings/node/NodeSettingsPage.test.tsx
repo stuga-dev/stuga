@@ -5,7 +5,8 @@ import { MemoryRouter, Route, Routes, useNavigate, type NavigateFunction } from 
 import type { NodeAiSettings, NodeBackups, NodeOperationalSettings, NodeVersion } from "../../../api";
 import { brandingConfig, setAuthConfigForTest } from "../../../lib/session/auth-config";
 import { nodeLabel, nodeName } from "../../../shell/Brand";
-import { mountInto, typeInto } from "../../../test/form-input";
+import { dropdown, mountInto, toggleOptions, typeInto } from "../../../test/form-input";
+import { SEARCH_LANGUAGES_LABEL } from "../../../ui/SearchLanguageList";
 
 const me = vi.hoisted(() => ({ whoami: vi.fn() }));
 const nodeApi = vi.hoisted(() => ({
@@ -819,20 +820,17 @@ describe("NodeSettingsPage", () => {
     const rebuilding = { ...OPS, search: { ...OPS.search, languages: ["ko" as const], rebuilding: true } };
     nodeApi.saveSettings.mockResolvedValue(rebuilding);
     nodeApi.settings.mockResolvedValue(rebuilding);
-    expect(inputs("Korean")[0]!.checked).toBe(false);
+    expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("English");
     expect(host.textContent).not.toContain("Rebuilding the search index");
-    // Under the heading, once, and not as the list's description, which its hidden label hides too.
-    expect(host.textContent!.split("Chinese, Japanese and English need nothing extra.")).toHaveLength(2);
-    expect(host.querySelector('[role="group"][aria-describedby]')).toBeNull();
 
     vi.useFakeTimers();
     try {
       const wait = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
-      await act(async () => inputs("Korean")[0]!.click());
+      await toggleOptions(host, SEARCH_LANGUAGES_LABEL, "Korean");
       await click("Save");
       await wait(0);
       expect(nodeApi.saveSettings).toHaveBeenCalledWith({ search: { languages: ["ko"] } });
-      expect(inputs("Korean")[0]!.checked).toBe(true);
+      expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("English, Korean");
       expect(host.textContent).toContain("Rebuilding the search index");
       // A status a screen reader announces, named by the words shown; aria-labelledby wins over aria-label.
       const statuses = [...host.querySelectorAll('[role="status"]')].map(
@@ -858,7 +856,7 @@ describe("NodeSettingsPage", () => {
   it("says a rebuild is running when Search opens during one", async () => {
     nodeApi.settings.mockResolvedValue({ ...OPS, search: { ...OPS.search, languages: ["ar"], rebuilding: true } });
     await mount("search");
-    expect(inputs("Arabic")[0]!.checked).toBe(true);
+    expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("Arabic, English");
     expect(host.textContent).toContain("Rebuilding the search index");
     // A ring on Save's line, named by the words beside it rather than stacked over them.
     const ring = host.querySelector<HTMLElement>('[role="status"][aria-labelledby]')!;

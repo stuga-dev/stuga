@@ -1,12 +1,18 @@
 /**
  * Languages keyword search gets a more accurate tokenizer for, beyond the
  * general one every text gets. That one segments Chinese and Japanese on its
- * own but treats Korean and Arabic as already spaced, so a glued-on particle
- * (Korean 의, Arabic ل) stays attached. `ko` adds a Korean dictionary
- * segmenter; `ar` adds Arabic stemming, which strips ال but not a bare ل. Each
- * one is a column in the search indexes, so a node carries only those it chose.
+ * own and splits other languages at spaces, keeping each word as written;
+ * English it also stems. `zh` adds jieba, which keeps a compound whole beside
+ * its parts (人工智能), so a whole-word match ranks first; `ja` and `ko` add a
+ * Lindera dictionary, so a glued-on Korean particle (해구의) comes apart; every
+ * other choice adds pg_search's stemmer for the language, so `maisons` finds
+ * `maison`. Each one is a column in the search indexes, so a node carries only
+ * those it chose. ISO 639-1 codes, in the order the node keeps them.
  */
-export const SEARCH_LANGUAGES = ["ko", "ar"] as const;
+export const SEARCH_LANGUAGES = [
+  "ar", "cs", "da", "de", "el", "es", "fi", "fr", "hu", "it", "ja",
+  "ko", "nl", "no", "pl", "pt", "ro", "ru", "sv", "ta", "tr", "zh",
+] as const;
 
 export type SearchLanguage = (typeof SEARCH_LANGUAGES)[number];
 

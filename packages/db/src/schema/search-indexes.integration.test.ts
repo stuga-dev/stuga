@@ -10,7 +10,7 @@ import { createClient, closeClients, type Sql } from "../client.js";
 import { seedWorkspaces } from "../testing/fixtures.js";
 import { initSchema } from "./migrate.js";
 import { runBootRepairs } from "./boot-repairs.js";
-import { preloadsPgSearch } from "./search-indexes.js";
+import { preloadsPgSearch, SEARCH_LANGUAGES, searchIndexShapes } from "./search-indexes.js";
 import { askDocs, indexDoc, searchDocs } from "../search.js";
 import { createDoc, setDocSearchHidden, updateDoc } from "../docs.js";
 
@@ -451,6 +451,106 @@ describe.skipIf(!URL)("the BM25 keyword leg with search languages ko and ar", ()
       const ids = (await ask2("마리아나 해구")).map((c) => c.doc_id);
       expect(ids).toEqual(["trench"]);
     });
+  });
+});
+
+describe.skipIf(!URL)("the BM25 keyword leg with every search language", () => {
+  const WS3 = "ws-pgsearch-every-lang";
+  const ALICE3 = ["user:alice", `org:${WS3}`];
+  const EVERY = searchIndexShapes(SEARCH_LANGUAGES).map((i) => i.name);
+
+  async function seed3(docId: string, title: string, body: string) {
+    await createDoc(sql, { docId, workspaceId: WS3, owner: "user:alice", title, aclPrincipals: ["user:alice"] });
+    await indexDoc(sql, {
+      embeddingDims: EMBEDDING_DIMS,
+      docId,
+      snapshotSeq: 1,
+      title,
+      searchText: body,
+      embeddingHash: `h-${docId}`,
+      chunks: [{ content: body, embedding: null, headingPath: null, embedHash: `eh-${docId}` }],
+    });
+  }
+
+  const search3 = async (query: string) =>
+    (
+      await searchDocs(sql, {
+        embeddingDims: EMBEDDING_DIMS,
+        maxDistance: 0.6,
+        workspaceId: WS3,
+        principals: ALICE3,
+        query,
+        queryEmbedding: null,
+        searchLanguages: () => SEARCH_LANGUAGES,
+      })
+    ).map((r) => r.doc_id);
+
+  beforeAll(async () => {
+    await initSchema(sql);
+    const out = await runBootRepairs(sql, { searchLanguages: SEARCH_LANGUAGES });
+    expect(out.searchIndexChanges.filter((c) => c.startsWith("+")).sort()).toEqual(EVERY.map((n) => `+${n}`).sort());
+  });
+
+  afterAll(async () => {
+    await runBootRepairs(sql);
+  });
+
+  beforeEach(async () => {
+    await sql`TRUNCATE docs CASCADE`;
+    await seedWorkspaces(sql, WS3);
+  });
+
+  it("builds indexes whose names Postgres keeps whole", async () => {
+    const present = await sql<{ indexname: string }[]>`
+      SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = ANY(${EVERY})`;
+    expect(present.map((r) => r.indexname).sort()).toEqual([...EVERY].sort());
+  });
+
+  it("finds each language's word in another of its forms, which English stemming would miss", async () => {
+    const cases = [
+      ["fr", "Le cheval du village", "chevaux"],
+      ["de", "Die Häuser der Altstadt", "Haus"],
+      ["es", "Las canciones del verano", "canción"],
+      ["ru", "Между домами старого города", "дом"],
+      ["el", "Τα σπίτια του χωριού", "σπίτι"],
+      ["tr", "Köydeki evlerden biri", "ev"],
+      ["ko", "마리아나 해구의 생물 다양성", "해구"],
+    ] as const;
+    for (const [lang, text] of cases) await seed3(lang, text, text);
+    for (const [lang, , query] of cases) expect(await search3(query), query).toEqual([lang]);
+  });
+
+  it("drops a language's stopwords, so an article the document lacks does not stop a match", async () => {
+    await seed3("fr", "Maison", "Une maison au bord du lac");
+    expect(await search3("la maison")).toEqual(["fr"]);
+  });
+
+  it("still segments Chinese into words alongside every column", async () => {
+    await seed3("trench", "深海探测报告", "中国科学院发布了最新的深海探测报告，涉及马里亚纳海沟的生物多样性调查。");
+    await seed3("noise", "马匹护理与沟通", "马匹护理与沟通要点；亚洲纳税指南；海关里程说明。");
+    expect(await search3("马里亚纳海沟")).toEqual(["trench"]);
+  });
+
+  it("finds a Chinese word the general tokenizer splits wrongly beside its neighbour", async () => {
+    // ICU splits this as 人工·翻译·和智·能手·机.
+    await seed3("phone", "人工翻译和智能手机", "人工翻译和智能手机");
+    expect(await search3("智能手机")).toEqual(["phone"]);
+  });
+
+  it("ranks a Chinese compound above its parts found apart", async () => {
+    await seed3("apart", "需要人工审核的智能系统", "需要人工审核的智能系统");
+    await seed3("whole", "人工智能的发展", "人工智能的发展");
+    expect(await search3("人工智能")).toEqual(["whole", "apart"]);
+  });
+
+  it("gives Chinese and Japanese each only their own documents", async () => {
+    await seed3("zh", "中国的公司", "中国的公司");
+    await seed3("ja", "中国の会社", "中国の会社");
+    const inField = async (field: string, query: string) =>
+      (await sql<{ doc_id: string }[]>`
+        SELECT doc_id FROM docs WHERE doc_id @@@ paradedb.match(${field}, ${query}) ORDER BY doc_id`).map((r) => r.doc_id);
+    expect(await inField("all_text_zh", "中国")).toEqual(["zh"]);
+    expect(await inField("all_text_ja", "中国")).toEqual(["ja"]);
   });
 });
 

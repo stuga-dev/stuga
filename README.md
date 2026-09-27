@@ -51,7 +51,7 @@ handles it on its vendor's servers.
 
 One request is the node's own: once a day it asks GitHub for the list of Stuga releases, to tell its
 admins when a newer one is out. The request says nothing about the node, not even its version, and
-the comparison happens on the node. First-run setup asks before the first one is made, and
+the comparison happens on the node. The first one is made once someone has set the node up, and
 **Check for new versions** under **Settings → This node → About** turns it off
 ([docs/operations.md](docs/operations.md#learning-of-a-new-version)). On a Mac, **Update now** there
 downloads the release's package from GitHub, when an administrator chooses it.

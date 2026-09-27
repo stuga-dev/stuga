@@ -12,6 +12,7 @@ import {
   type AuthConfig,
   type LocalKeys,
 } from "@stuga/auth";
+import { SEARCH_LANGUAGES } from "@stuga/protocol/domain/search-languages";
 import { PEER_ADDRESS_HEADER } from "../platform/http-server.js";
 import { createIdentityRouter, type IdentityDeps, type IdentityEvent, type TokenPair } from "./routes.js";
 import { memoryDb } from "./testing/memory-db.js";
@@ -106,40 +107,18 @@ describe("register", () => {
     expect(mem.admins.has(account!.alias)).toBe(true);
   });
 
-  it("stores setup's choice not to look for newer versions with the account that claims the node, and nobody else's", async () => {
-    expect((await register("ada", { update_check: false })).status).toBe(201);
-    expect(mem.settings.updateCheck).toBe(false);
-
-    // A later account carrying the field changes nothing: the node is claimed, and the setting is an administrator's.
-    mem = memoryDb();
-    expect((await register("ada")).status).toBe(201);
-    mem.invites.set(sha256Hex("an-invite"), { tokenHash: sha256Hex("an-invite"), usesLeft: 1 });
-    expect((await register("grace", { invite: "an-invite", update_check: false })).status).toBe(201);
-    expect(mem.settings.updateCheck).toBeNull();
-  });
-
-  it("leaves the default alone when setup keeps looking for newer versions on, and refuses anything but a boolean", async () => {
-    expect((await register("ada", { update_check: true })).status).toBe(201);
-    expect(mem.settings.updateCheck).toBeNull();
-
-    mem = memoryDb();
-    const res = await register("ada", { update_check: "false" });
-    expect(res.status).toBe(400);
-    expect(mem.accounts.size).toBe(0);
-  });
-
   it("stores setup's search languages with the account that claims the node, and nobody else's", async () => {
     let firstAccounts = 0;
     const r = () => createIdentityRouter(baseDeps({ onFirstAccount: () => void firstAccounts++ }));
     const body = (username: string, extra: Record<string, unknown>) => ({ username, password: "correct horse", setup_code: TYPED_CODE, ...extra });
-    expect((await r().handle(post("/auth/register", body("ada", { search_languages: ["ar", "ko"] })))).status).toBe(201);
-    expect(mem.settings.searchLanguages).toEqual(["ko", "ar"]);
+    expect((await r().handle(post("/auth/register", body("ada", { search_languages: ["ko", "fr", "ar"] })))).status).toBe(201);
+    expect(mem.settings.searchLanguages).toEqual(["ar", "fr", "ko"]);
     // The node rebuilds its search indexes for them once the account is made.
     expect(firstAccounts).toBe(1);
 
     mem.invites.set(sha256Hex("an-invite"), { tokenHash: sha256Hex("an-invite"), usesLeft: 1 });
     expect((await r().handle(post("/auth/register", body("grace", { invite: "an-invite", search_languages: [] })))).status).toBe(201);
-    expect(mem.settings.searchLanguages).toEqual(["ko", "ar"]);
+    expect(mem.settings.searchLanguages).toEqual(["ar", "fr", "ko"]);
     expect(firstAccounts).toBe(1);
 
     // None chosen is a choice; not sending the field leaves the node's alone.
@@ -152,10 +131,10 @@ describe("register", () => {
   });
 
   it("refuses search languages that are not a list of the choices", async () => {
-    for (const search_languages of ["ko", ["ko", "fr"], [null], { ko: true }, null]) {
+    for (const search_languages of ["ko", ["ko", "en"], [null], { ko: true }, null]) {
       const res = await register("ada", { search_languages });
       expect(res.status, JSON.stringify(search_languages)).toBe(400);
-      expect((await res.json()).message).toMatch(/search_languages must be a list of: ko, ar/);
+      expect((await res.json()).message).toContain(`search_languages must be a list of: ${SEARCH_LANGUAGES.join(", ")}`);
     }
     expect(mem.accounts.size).toBe(0);
   });

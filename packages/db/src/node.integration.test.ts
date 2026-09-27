@@ -233,18 +233,18 @@ describe.skipIf(!URL)("node_settings", () => {
     expect(await getSearchLanguages(sql)).toBeNull();
     await saveSearchLanguages(sql, [], null);
     expect(await getSearchLanguages(sql)).toEqual([]);
-    await saveSearchLanguages(sql, ["ko", "ar"], "admin-1");
-    expect(await getSearchLanguages(sql)).toEqual(["ko", "ar"]);
+    await saveSearchLanguages(sql, ["ar", "ko"], "admin-1");
+    expect(await getSearchLanguages(sql)).toEqual(["ar", "ko"]);
     expect(await getNodeSettings(sql)).toMatchObject({ updated_by: "admin-1" });
 
     await saveNodeSettings(sql, { ...base, nodeName: "Liv's Mac" });
-    expect(await getSearchLanguages(sql)).toEqual(["ko", "ar"]);
+    expect(await getSearchLanguages(sql)).toEqual(["ar", "ko"]);
     await resetNodeSettings(sql);
     expect(await getNodeSettings(sql)).toMatchObject({ node_name: null, updated_by: null });
-    expect(await getSearchLanguages(sql)).toEqual(["ko", "ar"]);
+    expect(await getSearchLanguages(sql)).toEqual(["ar", "ko"]);
 
     // A language this build does not know, say one a newer version saved, is left out.
-    await sql`UPDATE node_settings SET search_languages = '{fr,ar}'`;
+    await sql`UPDATE node_settings SET search_languages = '{xx,ar}'`;
     expect(await getSearchLanguages(sql)).toEqual(["ar"]);
   });
 

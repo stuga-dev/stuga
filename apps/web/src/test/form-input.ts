@@ -44,3 +44,24 @@ export async function pickFile(container: ParentNode, file: File): Promise<void>
   Object.defineProperty(input!, "files", { value: [file], configurable: true });
   await act(async () => input!.dispatchEvent(new Event("change", { bubbles: true })));
 }
+
+/** The trigger of the dropdown whose label starts with `label`; its text names what is chosen. */
+export function dropdown(container: ParentNode, label: string): HTMLElement {
+  const labelEl = [...container.querySelectorAll("label")].find((l) => l.textContent?.startsWith(label));
+  expect(labelEl, `no dropdown ${label}`).toBeDefined();
+  return document.getElementById(labelEl!.htmlFor)!;
+}
+
+/** Toggle each option named in the dropdown whose label starts with `label`, then close it. */
+export async function toggleOptions(container: ParentNode, label: string, ...options: string[]): Promise<void> {
+  const trigger = dropdown(container, label);
+  const click = (el: Element) => act(async () => void el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await click(trigger);
+  const listbox = document.getElementById(trigger.getAttribute("aria-controls")!)!;
+  for (const option of options) {
+    const row = [...listbox.querySelectorAll('[role="option"]')].find((o) => o.textContent === option);
+    expect(row, `no option ${option}`).toBeDefined();
+    await click(row!);
+  }
+  await click(trigger);
+}

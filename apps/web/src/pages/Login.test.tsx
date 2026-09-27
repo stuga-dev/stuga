@@ -17,7 +17,8 @@ import {
 } from "../lib/session/provider";
 import { rememberLoginReturn } from "../lib/session/return-path";
 import { setSession } from "../lib/session/tokens";
-import { mountInto, typeInto } from "../test/form-input";
+import { dropdown, mountInto, toggleOptions, typeInto } from "../test/form-input";
+import { SEARCH_LANGUAGES_LABEL } from "../ui/SearchLanguageList";
 
 /** A node nobody has named goes by its host. */
 const NODE_NAME = "livs-air.local:8787";
@@ -162,61 +163,37 @@ describe("Login · a username the node refuses", () => {
     expect(input("Username")!.value).toBe("admin-2");
   });
 
-  it("asks at setup whether the node may look for new versions, on unless unticked, and sends the answer with the account", async () => {
+  it("leaves the look for new versions to Settings: setup neither asks nor sends it", async () => {
     setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME });
     fetchMock.mockImplementation(async () => reply(409, { error: "username_taken", message: "that username is taken" }));
     await open("/login?setup=ABCDE-12345");
-    const box = input("Check for new versions")!;
-    expect(box.checked).toBe(true);
-    expect(host.textContent).toContain("Checks GitHub daily. Sends no node data.");
+    expect(input("Check for new versions")).toBeUndefined();
 
     await type("Username", "ada");
     await type("Password", "battery staple 9");
     await click("Create administrator account");
-    expect(registered().at(-1)).toMatchObject({ username: "ada", update_check: true });
-
-    await act(async () => box.click());
-    await click("Create administrator account");
-    expect(registered().at(-1)).toMatchObject({ update_check: false });
+    expect(registered().at(-1)).not.toHaveProperty("update_check");
   });
 
-  it("offers the search languages at setup, ticking those the browser reads, and sends the choice with the account", async () => {
+  it("offers the languages of the documents at setup, English alone until more are chosen, and sends the choice with the account", async () => {
+    // The browser's languages choose nothing: whoever sets the node up picks.
     const languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["ko-KR", "en-US"]);
     try {
       setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME });
       fetchMock.mockImplementation(async () => reply(409, { error: "username_taken", message: "that username is taken" }));
       await open("/login?setup=ABCDE-12345");
-      expect(input("Korean")!.checked).toBe(true);
-      expect(input("Arabic")!.checked).toBe(false);
-      expect(host.textContent).toContain("Chinese, Japanese and English need nothing extra.");
+      expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("English");
 
       await type("Username", "ada");
       await type("Password", "battery staple 9");
       await click("Create administrator account");
-      expect(registered().at(-1)).toMatchObject({ username: "ada", search_languages: ["ko"] });
+      expect(registered().at(-1)).toMatchObject({ username: "ada", search_languages: [] });
 
-      await act(async () => input("Arabic")!.click());
-      await act(async () => input("Korean")!.click());
+      // English is always on: its row does not toggle, and it is never sent.
+      await toggleOptions(host, SEARCH_LANGUAGES_LABEL, "Chinese", "French", "English");
+      expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("Chinese, English, French");
       await click("Create administrator account");
-      expect(registered().at(-1)).toMatchObject({ search_languages: ["ar"] });
-    } finally {
-      languages.mockRestore();
-    }
-  });
-
-  it("ticks no search language for a browser that reads none of them, and sends that none were chosen", async () => {
-    const languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["zh-CN", "en"]);
-    try {
-      setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME });
-      fetchMock.mockImplementation(async () => reply(409, { error: "username_taken", message: "that username is taken" }));
-      await open("/login?setup=ABCDE-12345");
-      expect(input("Korean")!.checked).toBe(false);
-      expect(input("Arabic")!.checked).toBe(false);
-
-      await type("Username", "ada");
-      await type("Password", "battery staple 9");
-      await click("Create administrator account");
-      expect(registered().at(-1)).toMatchObject({ search_languages: [] });
+      expect(registered().at(-1)).toMatchObject({ search_languages: ["fr", "zh"] });
     } finally {
       languages.mockRestore();
     }
@@ -269,12 +246,10 @@ describe("Login · a username the node refuses", () => {
     rememberLoginReturn("/join/inv_abc");
     fetchMock.mockImplementation(async () => reply(409, { error: "username_taken", message: "that username is taken" }));
     await open();
-    expect(input("Check for new versions")).toBeUndefined();
-    expect(input("Korean")).toBeUndefined();
+    expect(host.textContent).not.toContain(SEARCH_LANGUAGES_LABEL);
     await type("Username", "ada");
     await type("Password", "battery staple 9");
     await click("Create account");
-    expect(registered().at(-1)).not.toHaveProperty("update_check");
     expect(registered().at(-1)).not.toHaveProperty("search_languages");
   });
 

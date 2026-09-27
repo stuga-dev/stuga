@@ -250,20 +250,6 @@ describe.skipIf(!URL)("local accounts", () => {
     await sql`TRUNCATE users, local_accounts, node_admins, workspaces, workspace_members CASCADE`;
   });
 
-  it("stores setup's choice not to look for newer versions with the first account, and takes it from nobody after", async () => {
-    await sql`DELETE FROM node_settings`;
-    const first = await createLocalAccount(sql, { alias: "u1", username: "ada", passwordHash: "h", mayClaim: true, updateCheck: false });
-    expect(first).toMatchObject({ ok: true, admin: true });
-    expect(await getNodeSettings(sql)).toMatchObject({ update_check: false, updated_by: "u1" });
-
-    await sql`UPDATE node_settings SET update_check = TRUE`;
-    await provisionWorkspace(sql, { workspaceId: "ws", name: "W", owner: "u1" });
-    await insertWorkspaceInvite(sql, { tokenHash: "many", workspaceId: "ws", role: "member", createdBy: "u1", expiresAt: null, maxUses: 100 });
-    const later = await createLocalAccount(sql, { alias: "u2", username: "bob", passwordHash: "h", inviteHash: "many", updateCheck: false });
-    expect(later).toMatchObject({ ok: true, admin: false });
-    expect(await getNodeSettings(sql)).toMatchObject({ update_check: true });
-  });
-
   it("stores setup's search languages with the first account, and takes them from nobody after", async () => {
     await sql`DELETE FROM node_settings`;
     await createLocalAccount(sql, { alias: "u1", username: "ada", passwordHash: "h", mayClaim: true, searchLanguages: ["ko"] });
@@ -281,9 +267,9 @@ describe.skipIf(!URL)("local accounts", () => {
     expect(await getSearchLanguages(sql)).toEqual([]);
   });
 
-  it("writes no settings row for a first account that leaves the look for newer versions on", async () => {
+  it("writes no settings row for a first account that brings no setup choices", async () => {
     await sql`DELETE FROM node_settings`;
-    await createLocalAccount(sql, { alias: "u1", username: "ada", passwordHash: "h", mayClaim: true, updateCheck: true });
+    await createLocalAccount(sql, { alias: "u1", username: "ada", passwordHash: "h", mayClaim: true });
     expect(await getNodeSettings(sql)).toBeNull();
   });
 

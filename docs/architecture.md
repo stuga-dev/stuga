@@ -238,11 +238,12 @@ WHERE d.workspace_id = $1
 **Hybrid search is one SQL statement** (`packages/db/src/search.ts`). The keyword leg is BM25 through
 pg_search, under an ICU tokenizer: Unicode word breaks for scripts that space their words, and
 dictionary breaks for those that do not. `马里亚纳海沟` indexes as 马里·亚·纳·海沟, not six
-characters, and Japanese segments the same way. Korean and Arabic are split only at spaces, which
-leaves a particle attached to its word; the node's
-[search languages](configuration.md#search-languages) add a Korean dictionary tokenizer or Arabic
-stemming as an extra field. English matches by stem with stopwords ignored, so `plan` finds
-`planning`. The search box needs every non-stopword term of the query (a query of stopwords alone
+characters, and Japanese segments the same way. English matches by stem with stopwords ignored, so
+`plan` finds `planning`. The node's [search languages](configuration.md#search-languages) each add a
+field: jieba for Chinese, a Lindera dictionary for Japanese or Korean, or a language's stemmer. A
+field sees only text containing its script, so a Chinese document costs the Latin-script languages
+nothing, and the Chinese field skips text with kana. An index name that would pass Postgres's 63 characters carries a
+hash of its languages in place of their codes. The search box needs every non-stopword term of the query (a query of stopwords alone
 matches them as written) and tolerates a one-letter typo in a title. The semantic leg is pgvector
 HNSW over chunk embeddings, keeping chunks within the node's
 [match cutoff](configuration.md#match-cutoffs). The two legs are fused with Reciprocal Rank Fusion in

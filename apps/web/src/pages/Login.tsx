@@ -16,7 +16,6 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Divider } from "@astryxdesign/core/Divider";
 import { Banner } from "@astryxdesign/core/Banner";
-import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Check, LayoutGrid, LogIn, ShieldCheck, Sparkles, UserPlus, Users, Wand2 } from "lucide-react";
@@ -75,12 +74,6 @@ function browserTimeZone(): string | undefined {
   }
 }
 
-/** The search languages this browser's own languages name, by primary subtag: ko-KR asks for Korean. */
-function browserSearchLanguages(): SearchLanguage[] {
-  const primary = new Set(navigator.languages.map((tag) => tag.split("-")[0]!.toLowerCase()));
-  return SEARCH_LANGUAGES.filter((l) => primary.has(l));
-}
-
 /** `path` with ?provider=failed, as the node sends a failed link back to the page that started it. */
 function withFailedOutcome(path: string): string {
   // Already a same-origin path (safeReturn): the base only lets URL parse it.
@@ -116,10 +109,8 @@ export function Login() {
   const [username, setUsername] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
-  /** Setup only: the one request the node makes on its own account, so whoever sets it up sees it first. */
-  const [updateCheck, setUpdateCheck] = useState(true);
-  /** Setup only: what search gets a tokenizer for, starting from the languages this browser reads. */
-  const [searchLanguages, setSearchLanguages] = useState(browserSearchLanguages);
+  /** Setup only: what search gets a tokenizer for beyond English; none until chosen. */
+  const [searchLanguages, setSearchLanguages] = useState<SearchLanguage[]>([]);
   /** Setup only: the node's setup code, from the link it printed (?setup=) or typed. */
   const [setupCode, setSetupCode] = useState(() => new URLSearchParams(location.search).get("setup") ?? "");
   /** Asked for unless the link brought it, and again when the node refused the one it brought. */
@@ -259,7 +250,7 @@ export function Login() {
         const session = await signUp(normalizeUsername(username), password, {
           name,
           invite: inviteToken ?? undefined,
-          ...(view === "setup" ? { updateCheck, setupCode, timeZone: browserTimeZone(), searchLanguages } : {}),
+          ...(view === "setup" ? { setupCode, timeZone: browserTimeZone(), searchLanguages } : {}),
         });
         // The node is claimed now, so a later visit to this page must not offer setup again.
         if (view === "setup") void loadAuthConfig();
@@ -401,15 +392,7 @@ export function Login() {
                   {showPasswordRules && <PasswordRules password={password} />}
 
                   {view === "setup" && (
-                    <>
-                      <CheckboxInput
-                        label="Check for new versions"
-                        description="Checks GitHub daily. Sends no node data."
-                        value={updateCheck}
-                        onChange={(checked) => setUpdateCheck(checked)}
-                      />
-                      <SearchLanguageList choices={SEARCH_LANGUAGES} value={searchLanguages} onChange={setSearchLanguages} />
-                    </>
+                    <SearchLanguageList choices={SEARCH_LANGUAGES} value={searchLanguages} onChange={setSearchLanguages} size="lg" />
                   )}
 
                   <Button

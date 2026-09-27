@@ -11,9 +11,26 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+### Added
+
+- Twenty more search languages beside Korean and Arabic. **Chinese** adds jieba word segmentation
+  and **Japanese** a Lindera dictionary; Czech, Danish, Dutch, Finnish, French, German, Greek,
+  Hungarian, Italian, Norwegian, Polish, Portuguese, Romanian, Russian, Spanish, Swedish, Tamil and
+  Turkish each add pg_search's stemmer, so a word is found in another of its forms, `chevaux` for
+  `cheval`.
+
 ### Changed
 
 - The node runs on Node.js 26 (was 22), in the Docker image and in the Mac app.
+- First-run setup no longer asks about checking for new versions: it is on, and **Settings → This
+  node → About** turns it off. `POST /auth/register` no longer takes `update_check`.
+- Search languages are now **Languages in your documents**, a searchable list at setup and in
+  **Settings → This node → Search**, with English always on. Setup starts from English alone.
+
+### Fixed
+
+- A browser still signed in to a node that was since wiped or reinstalled opens its setup link
+  with the setup code filled in, instead of on a page that asks for it.
 
 ## [0.1.3] - 2026-09-26
 

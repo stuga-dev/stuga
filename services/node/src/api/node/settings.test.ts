@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startMockProvider, type MockProvider } from "@stuga/auth/testing";
 import type { NodeSettingsRow } from "@stuga/db";
+import { SEARCH_LANGUAGES } from "@stuga/protocol/domain/search-languages";
 
 vi.mock("@stuga/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@stuga/db")>()),
@@ -306,7 +307,7 @@ describe("the search languages", () => {
   it("answers the languages chosen, the choices, whether the indexes are being rebuilt and why the last rebuild gave up", async () => {
     expect((await get(ctx(null, searchLanguages(["ko"])))).search).toEqual({
       languages: ["ko"],
-      choices: ["ko", "ar"],
+      choices: [...SEARCH_LANGUAGES],
       rebuilding: false,
       error: null,
     });
@@ -318,21 +319,21 @@ describe("the search languages", () => {
 
   it("saves them on their own, starts one rebuild, and answers that it is rebuilding", async () => {
     const search = searchLanguages();
-    const res = await put(ctx(null, search), { search: { languages: ["ar", "ko", "ar"] } });
+    const res = await put(ctx(null, search), { search: { languages: ["ko", "fr", "ko"] } });
     expect(res?.status).toBe(200);
     expect(search.save).toHaveBeenCalledTimes(1);
-    expect(search.save).toHaveBeenCalledWith(["ko", "ar"], "admin-1");
+    expect(search.save).toHaveBeenCalledWith(["fr", "ko"], "admin-1");
     // The rest of the row is not written for them.
     expect(save).not.toHaveBeenCalled();
     expect(((await res!.json()) as Record<string, unknown>).search).toEqual({
-      languages: ["ko", "ar"],
-      choices: ["ko", "ar"],
+      languages: ["fr", "ko"],
+      choices: [...SEARCH_LANGUAGES],
       rebuilding: true,
       error: null,
     });
     const detail = audit.mock.calls.find((c) => c[1].action === "node.settings.update")![1].detail;
     expect(detail.before.search_languages).toEqual([]);
-    expect(detail.after.search_languages).toEqual(["ko", "ar"]);
+    expect(detail.after.search_languages).toEqual(["fr", "ko"]);
   });
 
   it("saves none as a choice", async () => {
@@ -342,11 +343,11 @@ describe("the search languages", () => {
   });
 
   it("refuses a language that is not a choice, or anything but a list, and saves nothing", async () => {
-    for (const languages of [["ko", "fr"], "ko", [1], null]) {
+    for (const languages of [["ko", "en"], "ko", [1], null]) {
       const search = searchLanguages();
       const res = await put(ctx(null, search), { search: { languages } });
       expect(res?.status, JSON.stringify(languages)).toBe(400);
-      expect(((await res!.json()) as { error: string }).error).toBe("search.languages must be a list of: ko, ar");
+      expect(((await res!.json()) as { error: string }).error).toBe(`search.languages must be a list of: ${SEARCH_LANGUAGES.join(", ")}`);
       expect(search.save).not.toHaveBeenCalled();
     }
     expect(save).not.toHaveBeenCalled();

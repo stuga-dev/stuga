@@ -73,8 +73,28 @@ export const AI_COAUTHOR_LABEL = "AI co-author";
 
 /** What each of the node's search languages is called. */
 export const SEARCH_LANGUAGE_LABELS: Record<SearchLanguage, string> = {
-  ko: "Korean",
   ar: "Arabic",
+  cs: "Czech",
+  da: "Danish",
+  de: "German",
+  el: "Greek",
+  es: "Spanish",
+  fi: "Finnish",
+  fr: "French",
+  hu: "Hungarian",
+  it: "Italian",
+  ja: "Japanese",
+  ko: "Korean",
+  nl: "Dutch",
+  no: "Norwegian",
+  pl: "Polish",
+  pt: "Portuguese",
+  ro: "Romanian",
+  ru: "Russian",
+  sv: "Swedish",
+  ta: "Tamil",
+  tr: "Turkish",
+  zh: "Chinese",
 };
 
 /** The person a `panel:<alias>` co-author principal belongs to; null for any other principal. */

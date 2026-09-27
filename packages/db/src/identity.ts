@@ -217,11 +217,6 @@ export async function createLocalAccount(
      * account lock, so a registration without it never becomes the first account, whatever it raced.
      */
     mayClaim?: boolean;
-    /**
-     * What setup chose about looking for newer versions. Only the first account's choice counts,
-     * and `false` is stored with the account, so a node told not to look never does.
-     */
-    updateCheck?: boolean;
     /** The time zone setup's browser is in, an IANA name, kept as the node's when this is the first account. */
     timeZone?: string;
     /** The search languages setup chose, kept as the node's when this is the first account; `[]` chose none. */
@@ -242,7 +237,6 @@ export async function createLocalAccount(
       await tx`INSERT INTO local_accounts ${tx({ alias, password_hash: input.passwordHash })}`;
       if (first) await tx`INSERT INTO node_admins ${tx({ alias, granted_by: null })}`;
       const choices = {
-        ...(input.updateCheck === false ? { update_check: false } : {}),
         ...(input.timeZone ? { time_zone: input.timeZone } : {}),
         ...(input.searchLanguages ? { search_languages: [...input.searchLanguages] } : {}),
       };

@@ -95,10 +95,10 @@ and node administrators also see **This node**.
 | This node → **Notifications** | Where notifications go: Slack, Microsoft Teams, Discord, a plain webhook or email, with **Send a test**. |
 | This node → **Access** | The node's address and accepted origins (read-only), the [identity provider](#identity-provider), administrators, the node's audit log, and account recovery links. |
 | This node → **Storage** | The largest upload, how long audit history, AI usage records and idle Ask threads are kept, and how many changes each database keeps in its Activity feed. |
-| This node → **Search** | The [search languages](#search-languages): Korean and Arabic, each off unless chosen. |
+| This node → **Search** | **Languages in your documents**: the [search languages](#search-languages), English always and each other off unless chosen. |
 | This node → **Backups** | The daily backup, on unless turned off, and its hour in the node's time zone, which first-run setup takes from the browser; **Back up now**; and the backups the node keeps ([Operations](operations.md#the-nodes-own-backups)). |
 | This node → **Branding** | The node's name and the colour that marks the selected item. |
-| This node → **About** | The address, listen address, data directory, database, the node's [name](#the-nodes-name-and-id) as agents know it, node ID, and the version with the day it was released. Under **Updates**: a newer version when the node knows of one, with **Update now** on a Mac, and **Check for new versions**, which is also asked at first-run setup ([Operations](operations.md#learning-of-a-new-version)). |
+| This node → **About** | The address, listen address, data directory, database, the node's [name](#the-nodes-name-and-id) as agents know it, node ID, and the version with the day it was released. Under **Updates**: a newer version when the node knows of one, with **Update now** on a Mac, and **Check for new versions** ([Operations](operations.md#learning-of-a-new-version)). |
 | This workspace → **General**, **Members**, **Agents** | The workspace, its members and invite links, and the workspace's instructions for agents and its webhooks. Folders, documents and databases keep their own instructions in their ⋯ menu ([agents.md](agents.md#instructions-for-agents)). |
 | This workspace → **Audit log**, **AI usage** | The workspace's audit history and AI use. |
 
@@ -126,11 +126,24 @@ its default.
 ### Search languages
 
 Keyword search gives every text a general tokenizer, which splits Chinese and Japanese into words as
-well as the languages that space theirs. Korean and Arabic it splits only at spaces, so a word with a
-particle attached is missed. Two languages get a tokenizer of their own when chosen: **Korean**
-segments Korean words, and **Arabic** stems Arabic. Each one adds a field to the search indexes, so
-a node carries only the ones it chose. First-run setup asks, and a node administrator changes them
-under **Settings → This node → Search**.
+well as the languages that space theirs, and keeps each word as written; English is also matched by
+stem, always. The field **Languages in your documents** adds a tokenizer for each language chosen:
+
+- **Chinese** adds jieba, which segments words the general tokenizer splits wrongly beside their
+  neighbours (`智能手机` in `和智能手机`) and keeps a compound whole beside its parts, so a document
+  with `人工智能` ranks above one with `人工` and `智能` apart.
+- **Japanese** and **Korean** add a Lindera dictionary; a Korean word with a particle attached is
+  found.
+- Each of the others matches words by stem, so `maisons` finds `maison`: Arabic, Czech, Danish,
+  Dutch, Finnish, French, German, Greek, Hungarian, Italian, Norwegian, Polish, Portuguese,
+  Romanian, Russian, Spanish, Swedish, Tamil and Turkish, which are the stemmers pg_search has. Most
+  also leave out the language's stopwords, as English does.
+
+Each one adds a field to the search indexes, which sees only text in the language's script; Chinese
+also skips text with kana, which is Japanese. Every language written in Latin letters indexes all
+Latin text again, so choose the ones your documents use rather than all of them. First-run setup
+asks, with English alone until more are chosen, and a node administrator changes them under
+**Settings → This node → Search**.
 
 Saving rebuilds the keyword indexes while the node runs. Until the rebuild is done, search keeps
 answering with the languages the old and the new choice share, and the section says it is

@@ -282,7 +282,7 @@ async function boot(): Promise<void> {
       console.info("[node] first account created; it administers this node", { alias });
       setupCode = null;
       void removeSetupCode(cfg.dataDir).catch((err: unknown) => console.warn("[node] could not remove the used setup code", err));
-      // Setup may have turned the look for newer versions off, in the account's own transaction.
+      // Setup gave the node its time zone, in the account's own transaction.
       void settings.refresh().catch(() => {});
       // And chosen search languages, which the indexes, built at boot for none, are rebuilt for.
       void getSearchLanguages(sql)

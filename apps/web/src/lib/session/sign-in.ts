@@ -25,8 +25,6 @@ export async function signUp(
   more: {
     name?: string;
     invite?: string;
-    /** Setup's choice about looking for newer versions; the node takes it only from the account that claims it. */
-    updateCheck?: boolean;
     /** The node's setup code, which only the node's first account needs. */
     setupCode?: string;
     /** This browser's time zone, which setup gives the node for its schedule. */
@@ -38,7 +36,6 @@ export async function signUp(
   const body: Record<string, unknown> = { username, password };
   if (more.name?.trim()) body.name = more.name.trim();
   if (more.invite?.trim()) body.invite = more.invite.trim();
-  if (more.updateCheck !== undefined) body.update_check = more.updateCheck;
   if (more.setupCode?.trim()) body.setup_code = more.setupCode.trim();
   if (more.timeZone) body.time_zone = more.timeZone;
   if (more.searchLanguages) body.search_languages = more.searchLanguages;

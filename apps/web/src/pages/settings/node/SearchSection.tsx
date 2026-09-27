@@ -6,7 +6,7 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 import { NodeSettings as NodeApi, type NodeOperationalSettings } from "../../../api";
-import { SEARCH_LANGUAGES_NOTE, SearchLanguageList } from "../../../ui/SearchLanguageList";
+import { SEARCH_LANGUAGES_LABEL, SearchLanguageList } from "../../../ui/SearchLanguageList";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 
 /** How often the page asks whether the search index has been rebuilt. */
@@ -63,10 +63,7 @@ export function SearchSection({ ops, onSaved }: { ops: NodeOperationalSettings; 
       <SectionStatusBanners status={status} />
       {error && !rebuilding && !status.error && <Banner status="warning" title="The search index wasn’t rebuilt" description={error} />}
       <VStack gap={3}>
-        <Heading level={2}>Search languages</Heading>
-        <Text type="supporting" color="secondary">
-          {SEARCH_LANGUAGES_NOTE}
-        </Text>
+        <Heading level={2}>{SEARCH_LANGUAGES_LABEL}</Heading>
         <SearchLanguageList choices={ops.search.choices} value={languages} onChange={setLanguages} isDisabled={busy} isLabelHidden />
         <HStack gap={3} vAlign="center" wrap="wrap">
           <Button label="Save" variant="primary" size="sm" isLoading={busy} onClick={() => void save()} />

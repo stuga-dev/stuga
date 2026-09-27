@@ -26,8 +26,7 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
   const flows = new Map<string, OidcFlowRow>();
   const tickets = new Map<string, OidcTicketRow>();
   /** The settings row's setup choices: written only by the account that claims the node. */
-  const settings: { updateCheck: boolean | null; timeZone: string | null; searchLanguages: string[] | null } = {
-    updateCheck: null,
+  const settings: { timeZone: string | null; searchLanguages: string[] | null } = {
     timeZone: null,
     searchLanguages: null,
   };
@@ -64,7 +63,6 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
       accounts.set(input.alias, row);
       names.set(input.alias, input.displayName);
       if (first) admins.add(input.alias);
-      if (first && input.updateCheck === false) settings.updateCheck = false;
       if (first && input.timeZone) settings.timeZone = input.timeZone;
       if (first && input.searchLanguages) settings.searchLanguages = [...input.searchLanguages];
       return { ok: true, account: { ...row }, joined, admin: first };

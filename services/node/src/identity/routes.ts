@@ -247,12 +247,7 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     const password = field(body, "password");
     const name = field(body, "name").trim().slice(0, MAX_NAME);
     const invite = field(body, "invite").trim();
-    // Setup asks whether the node may look for newer versions. Only the account that claims the node gets a say.
-    if (body.update_check !== undefined && typeof body.update_check !== "boolean") {
-      return fail(400, "bad_request", "update_check must be true or false");
-    }
-    const updateCheck = body.update_check as boolean | undefined;
-    // And the time zone the node's schedule runs in, which is the browser's: an unknown name is dropped, not refused.
+    // Setup gives the node the time zone its schedule runs in, which is the browser's: an unknown name is dropped, not refused.
     const timeZone = knownTimeZone(body.time_zone);
     // And the languages search gets a tokenizer for: only the choices this build offers.
     const searchLanguages = body.search_languages === undefined ? undefined : parseSearchLanguages(body.search_languages);
@@ -294,7 +289,6 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
       displayName,
       inviteHash,
       mayClaim,
-      updateCheck,
       ...(timeZone ? { timeZone } : {}),
       ...(searchLanguages ? { searchLanguages } : {}),
     });
