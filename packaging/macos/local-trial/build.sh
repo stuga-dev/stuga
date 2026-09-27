@@ -155,7 +155,7 @@ build="$(mktemp -d)"
 trap 'rm -rf "$build"' EXIT
 app="$build/Stuga.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-swiftc -swift-version 5 -O -o "$app/Contents/MacOS/Stuga" "$HERE/Stuga.swift"
+swiftc -swift-version 5 -O -o "$app/Contents/MacOS/Stuga" "$HERE/main.swift" "$HERE/Lifecycle.swift" "$HERE/../app/Health.swift"
 info="$app/Contents/Info.plist"
 cat > "$info" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

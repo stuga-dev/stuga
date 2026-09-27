@@ -1,10 +1,29 @@
 #!/bin/bash
 # Before a Stuga package installs: stop the node and its Postgres, so the new runtime starts clean.
 # The helper is left alone: it may be the job running this installer.
+#
+# First it marks Stuga as stopped on purpose (status/installing), so the menu-bar app does not
+# report it; postinstall clears the mark once Stuga runs again. Stopping short here ends the install,
+# so the mark goes too. The app ignores a mark older than half an hour, which an install that stopped
+# between the two scripts leaves.
 set -euo pipefail
 
+# Not local: the EXIT trap runs after main has returned. It cannot go by the exit status, which a
+# signal leaves at 0.
+mark="" finished=no
+unmark_unless_finished() {
+  [ "$finished" = yes ] || [ -z "$mark" ] || rm -f "$mark"
+}
+trap unmark_unless_finished EXIT
+
 main() {
-  local label i
+  local root="${STUGA_ROOT:-/Library/Application Support/Stuga}" label i
+  # A first install has nothing running to mark.
+  if [ -d "$root" ]; then
+    install -d -m 0755 "$root/status"
+    mark="$root/status/installing"
+    touch "$mark"
+  fi
   for label in dev.stuga.node dev.stuga.postgres; do
     launchctl print "system/$label" > /dev/null 2>&1 || continue
     launchctl bootout "system/$label" || true
@@ -14,6 +33,7 @@ main() {
       sleep 1
     done
   done
+  finished=yes
 }
 
 main "$@"

@@ -5,6 +5,10 @@
 # the data before it changes anything. build-pkg.sh fills in the version.
 set -euo pipefail
 
+# preinstall's mark that Stuga is stopped on purpose goes however this ends: Stuga runs again, or
+# the menu-bar app should say that it does not.
+trap 'rm -f "/Library/Application Support/Stuga/status/installing"' EXIT
+
 main() {
   local version="@VERSION@" port=8787
   local root="/Library/Application Support/Stuga" logs="/Library/Logs/Stuga"
@@ -45,6 +49,7 @@ main() {
     launchctl bootout "system/$label" > /dev/null 2>&1 || true
     launchctl bootstrap system "/Library/LaunchDaemons/$label.plist"
   done
+  rm -f "$root/status/installing"
   # Never reloaded here: an upgrade the helper started is running inside it.
   launchctl print system/dev.stuga.helper > /dev/null 2>&1 ||
     launchctl bootstrap system /Library/LaunchDaemons/dev.stuga.helper.plist

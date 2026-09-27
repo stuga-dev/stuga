@@ -21,6 +21,10 @@ its first section, are its summary: the release notes show that and link here fo
 - **Ranking** in **Settings → This node → AI providers**: TypeSafe's Jev, directly or through
   OpenRouter, puts the most relevant passages first for Ask and agents. It ranks as well as a large
   chat model at a fraction of the time and cost. Without it, Built-in AI ranks as before.
+- The Mac menu-bar app says when Stuga has stopped, cannot reach its database or stops responding,
+  and is still failing a minute later: once, in an alert with **Restart Stuga…** and **Show Logs**.
+  Starting, however slowly, backing up and installing an update, from **Update now** or a downloaded
+  `Stuga.pkg`, do not count.
 
 ### Changed
 

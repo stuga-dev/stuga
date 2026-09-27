@@ -1,6 +1,7 @@
 // Stuga (local trial): a menu-bar launcher that runs Stuga's Postgres and node as LaunchAgents
-// in your own launchd domain, waits for /ready, and opens the node in the browser. Quitting
-// stops both. Built by build.sh, which writes these Info.plist keys:
+// in your own launchd domain, waits for /ready, and opens the node in the browser; ../app/Health.swift
+// tells a slow start from a failure, which it then says once. Quitting stops both. Built by
+// build.sh, which writes these Info.plist keys:
 //   StugaRoot   the runtime and data root (…/Application Support/Stuga Local)
 //   StugaLogs   where launchd and the node write their logs
 //   StugaPort   the node's port; readiness and the port check use 127.0.0.1
@@ -12,8 +13,16 @@ import Foundation
 import SystemConfiguration
 
 struct Failure: Error {
-    let message: String
-    init(_ message: String) { self.message = message }
+    let heading: String
+    let detail: String?
+    init(_ message: String) {
+        heading = "Could not start"
+        detail = message
+    }
+    init(_ fault: Fault, detail: String?) {
+        heading = fault.title
+        self.detail = detail
+    }
 }
 
 struct Config {
@@ -70,13 +79,31 @@ func run(_ path: String, _ arguments: [String]) -> (status: Int32, output: Strin
     return (process.terminationStatus, String(decoding: data, as: UTF8.self))
 }
 
+/// A log's last lines, from its last 64 KB.
+func tail(_ path: String) -> [String] {
+    guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
+    defer { try? handle.close() }
+    let end = (try? handle.seekToEnd()) ?? 0
+    try? handle.seek(toOffset: end > 65_536 ? end - 65_536 : 0)
+    return String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self).split(separator: "\n").map(String.init)
+}
+
+func modified(_ path: String) -> Date {
+    (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date ?? .distantPast
+}
+
 /// The two launchd jobs, and the facts about them the menu shows.
-final class Services {
+final class Services: JobControl {
     let config: Config
     init(_ config: Config) { self.config = config }
 
+    func job(_ label: String) -> Job {
+        let result = run("/bin/launchctl", ["print", "\(config.domain)/\(label)"])
+        return Job(print: result.status == 0 ? result.output : nil)
+    }
+
     func isLoaded(_ label: String) -> Bool {
-        run("/bin/launchctl", ["print", "\(config.domain)/\(label)"]).status == 0
+        job(label).loaded
     }
 
     func bootstrap(_ label: String) throws {
@@ -95,18 +122,40 @@ final class Services {
         while isLoaded(label) && Date() < deadline { Thread.sleep(forTimeInterval: 0.5) }
     }
 
-    /// Does the node answer /ready with 200?
-    func isReady() -> Bool {
+    /// Tells a slow start from a failure (Health.swift). Only `work` touches it.
+    var watch = Watch()
+
+    /// /ready's answer and both jobs, for the watch.
+    func look() -> Look {
         var request = URLRequest(url: config.url.appendingPathComponent("ready"))
         request.timeoutInterval = 2
         let done = DispatchSemaphore(value: 0)
-        var ok = false
-        URLSession.shared.dataTask(with: request) { _, response, _ in
-            ok = (response as? HTTPURLResponse)?.statusCode == 200
+        var answer: (status: Int, body: Data?)?
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            if let http = response as? HTTPURLResponse { answer = (http.statusCode, data) }
             done.signal()
         }.resume()
         _ = done.wait(timeout: .now() + 3)
-        return ok
+        return Look(ready: Ready(status: answer?.status, body: answer?.body), node: job(config.nodeLabel), postgres: job(config.postgresLabel))
+    }
+
+    /// What the logs add to a stopped node: why it stopped, when they say.
+    func detail(_ fault: Fault) -> String? {
+        guard fault == .nodeStopped else { return nil }
+        // The wrapper's last word is the latest try: still waiting for Postgres, or given up on it.
+        if let wrapper = tail(config.logs + "/node-wrapper.log").last,
+           wrapper.contains("Postgres has not accepted connections") || wrapper.contains("waiting for Postgres") {
+            return "Postgres is not accepting connections."
+        }
+        // Else the node's own log, one per weekday: its last word, when that is why it stopped.
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: config.logs)) ?? []
+        let newest = names.filter { $0.hasPrefix("node-") && $0.hasSuffix(".log") && $0 != "node-wrapper.log" }
+            .map { config.logs + "/" + $0 }
+            .max { modified($0) < modified($1) }
+        guard let newest, let last = tail(newest).last(where: { $0.hasPrefix("[node] ") }),
+              last.hasPrefix("[node] configuration error: ") || last.hasPrefix("[node] failed to start")
+        else { return nil }
+        return String(last.dropFirst("[node] ".count))
     }
 
     /// Is something already listening on the port?
@@ -169,11 +218,6 @@ final class Services {
     }
 }
 
-enum Phase: Equatable {
-    case stopped, settingUp, starting, running, stopping
-    case failed(String)
-}
-
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let config = Config.fromBundle()
     lazy var services = Services(config)
@@ -186,6 +230,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// someone sets the node up it copies the setup link, since the address alone asks for the code.
     let addressItem = NSMenuItem(title: "Copy Address", action: #selector(copyAddress), keyEquivalent: "c")
     let toggleItem = NSMenuItem(title: "Stop", action: #selector(toggle), keyEquivalent: "")
+    /// After a failure: the reason, which can run long, in the alert rather than the status line.
+    let detailsItem = NSMenuItem(title: "Show Details…", action: #selector(announceFailure), keyEquivalent: "")
 
     /// The address in force: the built one until a start re-derives it from the host name.
     var origin: URL
@@ -195,13 +241,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
-    /// A start or stop is in progress; the poll leaves the phase alone meanwhile.
-    var busy = false
     var openedBrowser = false
     var pollTimer: Timer?
 
-    var phase: Phase = .stopped {
-        didSet { refresh() }
+    /// Starts and stops, and which is the latest (Lifecycle.swift).
+    lazy var lifecycle: Lifecycle = {
+        let lifecycle = Lifecycle(
+            jobs: services, node: config.nodeLabel, postgres: config.postgresLabel,
+            work: { [work] in work.async(execute: $0) },
+            main: { DispatchQueue.main.async(execute: $0) }
+        )
+        lifecycle.changed = { [unowned self] before in
+            refresh()
+            // Once per failure, from the run loop rather than inside the setter.
+            if phase.failed && !before.failed {
+                perform(#selector(announceFailure), with: nil, afterDelay: 0)
+            }
+        }
+        return lifecycle
+    }()
+
+    var busy: Bool {
+        get { lifecycle.busy }
+        set { lifecycle.busy = newValue }
+    }
+
+    var phase: Phase {
+        get { lifecycle.phase }
+        set { lifecycle.phase = newValue }
     }
 
     /// Stuga's mark, the web app's path as a template image the menu bar tints. The drawing sits
@@ -236,6 +303,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         statusLine.isEnabled = false
         menu.addItem(statusLine)
+        detailsItem.target = self
+        menu.addItem(detailsItem)
         menu.addItem(.separator())
         for item in config.origin == config.url && !config.originFollowsHostName ? [openItem, toggleItem] : [openItem, addressItem, toggleItem] {
             item.target = self
@@ -291,15 +360,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func toggle() {
-        if phase == .running || phase == .starting {
-            stop(then: nil)
-        } else {
-            start()
+        switch phase.action {
+        case .start?: start()
+        case .stop?: stop(then: nil)
+        case .restart?: stop { self.start() }
+        case nil: break
         }
     }
 
     @objc func showLogs() {
         NSWorkspace.shared.open(URL(fileURLWithPath: config.logs))
+    }
+
+    /// The menu keeps the failure; this makes sure someone sees it.
+    @objc func announceFailure() {
+        guard case .failed(let heading, let detail) = phase else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = heading
+        alert.informativeText = detail ?? ""
+        alert.addButton(withTitle: "Show Logs")
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn { showLogs() }
     }
 
     @objc func showData() {
@@ -311,16 +394,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func start() {
         guard !busy else { return }
         busy = true
+        let mine = lifecycle.begin()
         phase = .starting
+        // Main-queue updates from this start, unless a stop or another start has come since.
+        func update(_ change: @escaping () -> Void) { lifecycle.finish(mine, change) }
         work.async { [self] in
             do {
                 if !services.isLoaded(config.nodeLabel) && services.portIsTaken() {
                     throw Failure("port \(config.port) is already in use by another program")
                 }
                 if !services.hasCluster {
-                    DispatchQueue.main.async { self.phase = .settingUp }
+                    update { self.phase = .settingUp }
                     try services.createCluster()
-                    DispatchQueue.main.async { self.phase = .starting }
+                    update { self.phase = .starting }
                 }
                 try services.bootstrap(config.postgresLabel)
                 // Follow a renamed Mac so invite links carry a name that resolves; sessions
@@ -330,18 +416,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     try services.setPublicOrigin(live)
                 }
                 let inForce = services.publicOrigin() ?? config.origin
-                DispatchQueue.main.async { self.origin = inForce; self.refresh() }
+                update { self.origin = inForce; self.refresh() }
                 try services.bootstrap(config.nodeLabel)
-                // A first start migrates the database and builds its search
-                // indexes before it serves anything.
-                let deadline = Date().addingTimeInterval(300)
-                while !services.isReady() {
-                    guard Date() < deadline else {
-                        throw Failure("Stuga did not answer within 5 minutes — see the logs")
+                // A first start migrates the database and builds its search indexes before it
+                // serves anything, however long that takes; only a failure ends the wait.
+                waiting: while lifecycle.attempt == mine {
+                    switch services.watch.observe(services.look(), at: Date()).health {
+                    case .serving: break waiting
+                    case .down(let fault): throw Failure(fault, detail: services.detail(fault))
+                    case .starting, .installing: Thread.sleep(forTimeInterval: 1)
                     }
-                    Thread.sleep(forTimeInterval: 1)
                 }
-                DispatchQueue.main.async {
+                update {
                     self.busy = false
                     self.phase = .running
                     if !self.openedBrowser {
@@ -350,46 +436,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             } catch {
-                let message = (error as? Failure)?.message ?? "\(error)"
-                DispatchQueue.main.async {
+                let failure = error as? Failure ?? Failure("\(error)")
+                update {
                     self.busy = false
-                    self.phase = .failed(message)
+                    self.phase = .failed(heading: failure.heading, detail: failure.detail)
                 }
             }
         }
     }
 
     func stop(then done: (() -> Void)?) {
-        busy = true
-        phase = .stopping
-        work.async { [self] in
-            // The node first: it holds connections a Postgres shutdown would otherwise cut.
-            services.bootout(config.nodeLabel, timeout: 90)
-            services.bootout(config.postgresLabel, timeout: 330)
-            DispatchQueue.main.async {
-                self.busy = false
-                self.phase = .stopped
-                done?()
-            }
-        }
+        lifecycle.stop(then: done)
     }
 
     func poll() {
         guard !busy else { return }
         work.async { [self] in
-            let loaded = services.isLoaded(config.nodeLabel)
-            let ready = loaded && services.isReady()
+            let look = services.look()
+            // Not loaded: stopped, by this app or by hand.
+            let health = look.node.loaded ? services.watch.observe(look, at: Date()).health : nil
+            var detail: String?
+            if case .down(let fault) = health { detail = services.detail(fault) }
             DispatchQueue.main.async {
                 guard !self.busy else { return }
-                if ready {
-                    self.phase = .running
-                } else if loaded {
-                    // launchd is (re)starting it: KeepAlive after a crash, or waiting for Postgres.
-                    self.phase = .starting
-                } else if case .failed = self.phase {
-                    // Keep the reason on screen until the next start.
-                } else {
-                    self.phase = .stopped
+                // A failure stays on screen until the node serves or the next start.
+                guard health == .serving || !self.phase.failed else { return }
+                switch health {
+                case .serving: self.phase = .running
+                // launchd is (re)starting it: KeepAlive after a crash, or waiting for Postgres.
+                case .starting, .installing: self.phase = .starting
+                case .down(let fault): self.phase = .failed(heading: fault.title, detail: detail)
+                case nil: self.phase = .stopped
                 }
             }
         }
@@ -410,8 +487,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusLine.title = "Running at \(origin.absoluteString)"
         case .stopping:
             statusLine.title = "Stopping…"
-        case .failed(let message):
-            statusLine.title = "Could not start: \(message)"
+        case .failed(let heading, _):
+            statusLine.title = heading
         }
         // The mark, dimmed until the node answers; a warning sign when it could not start.
         if case .failed = phase {
@@ -427,8 +504,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openItem.isEnabled = phase == .running
         // The node deletes its setup code once claimed, and the poll refreshes every few seconds.
         addressItem.title = FileManager.default.fileExists(atPath: config.root + "/data/node/setup-code") ? "Copy Setup Link" : "Copy Address"
-        toggleItem.title = (phase == .running || phase == .starting) ? "Stop" : "Start"
-        toggleItem.isEnabled = !busy
+        if case .failed(_, let detail?) = phase {
+            detailsItem.isHidden = detail.isEmpty
+        } else {
+            detailsItem.isHidden = true
+        }
+        toggleItem.title = phase.action?.title ?? "Stop"
+        // Stop stays available while starting: a node that never answers must not trap the owner.
+        toggleItem.isEnabled = phase.action != nil && (!busy || phase == .starting)
     }
 }
 

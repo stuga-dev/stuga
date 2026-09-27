@@ -2,7 +2,8 @@
 // daemons (dev.stuga.node, dev.stuga.postgres) from boot, whether or not anyone is logged in; this
 // app only shows their state and opens the node. It reads the node's address and port from the
 // node's job definition, which anyone may read, and asks for an administrator's password for what
-// changes the system: restarting Stuga, reading the setup code, uninstalling.
+// changes the system: restarting Stuga, reading the setup code, uninstalling. Health.swift decides
+// when Stuga has stopped rather than started slowly; this app then says so, once.
 import AppKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
@@ -55,7 +56,30 @@ func asAdministrator(_ command: String, prompt: String) -> String? {
 }
 
 enum State: Equatable {
-    case missing, starting, running, unclaimed, stopped
+    case missing, starting, running, unclaimed, installing
+    case down(Fault)
+}
+
+/// A job as launchd has it; anyone may ask.
+func job(_ label: String) -> Job {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+    process.arguments = ["print", "system/\(label)"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    // Unable to ask is not evidence that anything ended.
+    guard (try? process.run()) != nil else { return Job(loaded: true) }
+    let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    process.waitUntilExit()
+    return Job(print: process.terminationStatus == 0 ? output : nil)
+}
+
+/// A package's preinstall marks it installing before it stops Stuga, and its postinstall clears the
+/// mark once Stuga is started again.
+func installing() -> Bool {
+    let mark = (try? FileManager.default.attributesOfItem(atPath: root + "/status/installing"))?[.modificationDate] as? Date
+    return Watch.installing(markedAt: mark, now: Date())
 }
 
 /// Stuga's mark, the web app's path as a template image the menu bar tints. The drawing sits low in
@@ -101,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var node: Node? = Node.read()
     /// Read once per unclaimed spell, so opening, copying and the QR code ask for the password once.
     var setupCode: String?
+    var watch = Watch()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Back at every login, so the menu is there whenever someone is.
@@ -139,23 +164,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func poll() {
         DispatchQueue.global().async {
             let node = Node.read()
-            var next: State = .missing
+            var look: Look?
+            var unclaimed = false
             if let node {
-                if let ready = fetch(node.local.appendingPathComponent("ready")) {
-                    next = ready.status == 200 ? .running : .starting
-                    if next == .running, let config = fetch(node.local.appendingPathComponent("auth/config")),
-                       let json = try? JSONSerialization.jsonObject(with: config.body) as? [String: Any],
-                       json["unclaimed"] as? Bool == true {
-                        next = .unclaimed
-                    }
-                } else {
-                    next = .stopped
+                let ready = fetch(node.local.appendingPathComponent("ready"))
+                look = Look(
+                    ready: Ready(status: ready?.status, body: ready?.body),
+                    node: job("dev.stuga.node"),
+                    postgres: job("dev.stuga.postgres"),
+                    installing: installing()
+                )
+                if look?.ready == .serving, let config = fetch(node.local.appendingPathComponent("auth/config")),
+                   let json = try? JSONSerialization.jsonObject(with: config.body) as? [String: Any] {
+                    unclaimed = json["unclaimed"] as? Bool == true
                 }
             }
             DispatchQueue.main.async {
                 self.node = node
-                self.state = next
+                guard let look else {
+                    self.watch.reset()
+                    self.state = .missing
+                    return
+                }
+                let (health, announce) = self.watch.observe(look, at: Date())
+                switch health {
+                case .serving: self.state = unclaimed ? .unclaimed : .running
+                case .starting: self.state = .starting
+                case .installing: self.state = .installing
+                case .down(let fault): self.state = .down(fault)
+                }
+                // From the run loop, so the alert does not hold up the main queue.
+                if let announce { self.perform(#selector(self.announce(_:)), with: announce.title, afterDelay: 0) }
             }
+        }
+    }
+
+    /// The menu shows the state; this makes sure someone sees it, once per failure.
+    @objc func announce(_ title: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = "Restarting Stuga often fixes this. The logs say what happened."
+        alert.addButton(withTitle: "Restart Stuga…")
+        alert.addButton(withTitle: "Show Logs")
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: restart()
+        case .alertSecondButtonReturn: showLogs()
+        default: break
         }
     }
 
@@ -167,9 +224,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .starting: statusLine.title = "Starting…"
         case .running: statusLine.title = "Running at \(address)"
         case .unclaimed: statusLine.title = "Ready to set up at \(address)"
-        case .stopped: statusLine.title = "Stuga is not answering"
+        case .installing: statusLine.title = "Installing an update…"
+        case .down(let fault): statusLine.title = fault.title
         }
-        if state == .stopped {
+        if case .down = state {
             button.image = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "Stuga")
             button.image?.isTemplate = true
         } else {
@@ -258,8 +316,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func restart() {
         state = .starting
         DispatchQueue.global().async {
-            asAdministrator("launchctl kickstart -k system/dev.stuga.postgres; launchctl kickstart -k system/dev.stuga.node", prompt: "Stuga needs your password to restart.")
-            DispatchQueue.main.async { self.poll() }
+            let restarted = asAdministrator("launchctl kickstart -k system/dev.stuga.postgres; launchctl kickstart -k system/dev.stuga.node", prompt: "Stuga needs your password to restart.") != nil
+            DispatchQueue.main.async {
+                // Restarted on purpose, not a crash.
+                if restarted { self.watch.reset() }
+                self.poll()
+            }
         }
     }
 

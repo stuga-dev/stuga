@@ -27,7 +27,7 @@ its Postgres test suites against this exact build before every release.
 
 | Item | |
 |---|---|
-| The status line | `Running at <address>`, `Ready to set up at <address>`, `Starting…`, or `Stuga is not answering`. |
+| The status line | `Running at <address>`, `Ready to set up at <address>`, `Starting…`, `Installing an update…`, or what is wrong once Stuga has been failing for a minute, such as `Stuga is not responding`. |
 | **Open Stuga** | Opens the node in your browser. While nobody has claimed it, **Set Up Stuga…** reads the setup code, which needs an administrator's password, and opens the setup page. |
 | **Copy Address** | Copies the address other devices use. While nobody has claimed the node it is **Copy Setup Link**, which copies the setup page's link with the code in it, for setting up from another browser. |
 | **Show Address as QR Code…** | Shows that address for a phone's camera; while nobody has claimed the node, **Show Setup Link as QR Code…** shows the setup link instead. |
@@ -37,6 +37,10 @@ its Postgres test suites against this exact build before every release.
 | **Quit Menu** | Quits the menu only. Stuga keeps running. |
 
 Double-clicking Stuga in Applications opens the node too.
+
+When Stuga stops, cannot reach its database or stops responding, and is still failing a minute
+later, the menu says so once, in an alert with **Restart Stuga…** and **Show Logs**. Starting,
+however slowly, backing up and installing an update do not count.
 
 ### Network
 
@@ -192,10 +196,11 @@ way of reaching the node protects, and how to put HTTPS in front of it.
 
 | Item | |
 |---|---|
-| The status line | `Running at <address>`, `Starting…`, `Stuga is stopped`, or `Could not start:` with the reason. |
+| The status line | `Running at <address>`, `Starting…`, `Stuga is stopped`, `Could not start`, or what is wrong once Stuga has been failing for a minute. An alert says it too, once. |
+| **Show Details…** | After a failure, shows that alert again, with the reason from the logs. |
 | **Open Stuga** | Opens the node's address in your browser, or its setup page while nobody has claimed it. |
 | **Copy Address** | Copies the address other devices use, or the setup link (**Copy Setup Link**) while nobody has claimed the node. It is absent with `--local-only`. |
-| **Stop** / **Start** | Stops or starts Postgres and the node. |
+| **Stop** / **Start** | Stops or starts Postgres and the node. After a failure it is **Restart**, which stops both and starts them again. |
 | **Show Logs** | Opens the logs folder. |
 | **Show Data Folder** | Opens the data folder. |
 | **Quit Stuga** | Stops the node and Postgres, then quits. |
