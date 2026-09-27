@@ -334,6 +334,10 @@ TABLE node_ai_settings
   embed_model text
   embed_provider text
   id boolean NOT NULL DEFAULT true
+  rerank_api_key_fp text
+  rerank_base_url text
+  rerank_enabled boolean
+  rerank_model text
   retrieval_max_distance double precision
   search_max_distance double precision
   updated_at timestamp with time zone NOT NULL DEFAULT now()

@@ -1,12 +1,12 @@
 /**
- * Retry / backoff classification shared by every client: transient failures
+ * Retry / backoff classification shared by the non-Pi clients: transient failures
  * (429, 5xx, network) retry with bounded attempts; other 4xx fail fast. Exercised
  * through embed() because it is the simplest caller with a single request.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { embed } from "../retrieval/embed.js";
-import { AiError, fetchWithRetry, joinUrl, readLines } from "./transport.js";
-import { CFG, streamOf } from "../test-helpers.js";
+import { embed } from "./retrieval/embed.js";
+import { AiError, fetchWithRetry, joinUrl } from "./transport.js";
+import { CFG } from "./test-helpers.js";
 
 const OK = JSON.stringify({ data: [{ index: 0, embedding: Array.from({ length: 1024 }, () => 0) }], usage: { prompt_tokens: 3 } });
 
@@ -78,14 +78,6 @@ describe("joinUrl", () => {
   });
 });
 
-describe("readLines", () => {
-  it("splits on newlines across read boundaries, strips CR, and flushes the final unterminated line", async () => {
-    const out: string[] = [];
-    for await (const line of readLines(streamOf(["a\r\nb", "c\n", "d"]))) out.push(line);
-    expect(out).toEqual(["a", "bc", "d"]);
-  });
-});
-
 describe("fetchWithRetry — the caller's signal", () => {
   afterEach(() => vi.useRealTimers());
 
@@ -119,10 +111,10 @@ describe("fetchWithRetry — the caller's signal", () => {
         ),
     );
     const res = await fetchWithRetry("x", doFetch, { signal: ctrl.signal });
-    const lines = readLines(res.body!);
-    expect((await lines.next()).value).toBe("first");
+    const reader = res.body!.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("first\n");
     ctrl.abort(new Error("stop"));
-    await expect(lines.next()).rejects.toThrow("stop");
+    await expect(reader.read()).rejects.toThrow("stop");
   });
 
   it("cuts a backoff sleep short and makes no further attempt", async () => {

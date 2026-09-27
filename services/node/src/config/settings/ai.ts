@@ -7,8 +7,9 @@ import { getNodeAiSettings, type Sql, type StoredChatEndpoint } from "@stuga/db"
 import { readSecretFile } from "../secrets.js";
 import { createSettingsStore, type SettingsStore } from "./store.js";
 
-/** Filename under <DATA_DIR>/secrets. */
+/** Filenames under <DATA_DIR>/secrets. */
 export const EMBED_KEY_FILE = "ai-embed";
+export const RERANK_KEY_FILE = "ai-rerank";
 
 export function chatKeyFile(endpointId: string): string {
   return `ai-chat-${endpointId}`;
@@ -41,6 +42,7 @@ interface AiSecretState {
   /** Per stored chat endpoint id. */
   chat: Record<string, KeyState>;
   embed: KeyState;
+  rerank: KeyState;
 }
 
 export type AiSettingsStore = SettingsStore<AiConfig, AiSecretState>;
@@ -59,6 +61,11 @@ export interface AiStoredSettings {
   embedModel?: string | null;
   searchMaxDistance?: number | null;
   retrievalMaxDistance?: number | null;
+  /** False switches the reranker off while it stays set up. */
+  rerankEnabled?: boolean | null;
+  rerankBaseUrl?: string | null;
+  rerankModel?: string | null;
+  rerankApiKey?: string | null;
 }
 
 const trimSlash = (s: string): string => s.replace(/\/+$/, "");
@@ -115,8 +122,18 @@ export function resolveAi(stored: AiStoredSettings | null, embeddingDims: number
   };
   if (embedApiKey !== undefined) embed.apiKey = embedApiKey;
 
-  // Derived "any AI at all"; each surface gates on its own half.
-  return { enabled: chat.enabled || embed.enabled, chat, embed };
+  // The reranker is set up by a model and where to reach it; without one the chat model reranks.
+  const rerankBaseUrl = trimSlash(st.rerankBaseUrl ?? "");
+  const rerankModel = st.rerankModel ?? "";
+  const rerank: AiConfig["rerank"] = {
+    enabled: (st.rerankEnabled ?? true) && rerankModel !== "" && rerankBaseUrl !== "",
+    baseUrl: rerankBaseUrl,
+    model: rerankModel,
+  };
+  if (st.rerankApiKey) rerank.apiKey = st.rerankApiKey;
+
+  // Derived "any AI at all"; each surface gates on its own part.
+  return { enabled: chat.enabled || embed.enabled, chat, embed, rerank };
 }
 
 export function createAiSettingsStore(deps: {
@@ -142,19 +159,23 @@ export function createAiSettingsStore(deps: {
       chatEndpoints.push(ep);
     }
     const embedKey = readSecretFile(deps.dataDir, EMBED_KEY_FILE);
+    const rerankKey = readSecretFile(deps.dataDir, RERANK_KEY_FILE);
+    const keyState = (key: string | null, fingerprint: string | null | undefined): KeyState => ({
+      set: key !== null,
+      fingerprint: fingerprint ?? null,
+      stale: !!fingerprint && key === null,
+    });
     const secrets: AiSecretState = {
       chat,
-      embed: {
-        set: embedKey !== null,
-        fingerprint: row?.embed_api_key_fp ?? null,
-        stale: !!row?.embed_api_key_fp && embedKey === null,
-      },
+      embed: keyState(embedKey, row?.embed_api_key_fp),
+      rerank: keyState(rerankKey, row?.rerank_api_key_fp),
     };
     const staleChat = Object.values(chat).some((k) => k.stale);
-    if (staleChat || secrets.embed.stale) {
+    if (staleChat || secrets.embed.stale || secrets.rerank.stale) {
       console.warn("[node] an AI provider key is recorded in the database but missing from DATA_DIR/secrets", {
         chat: staleChat,
         embed: secrets.embed.stale,
+        rerank: secrets.rerank.stale,
       });
     }
 
@@ -170,6 +191,10 @@ export function createAiSettingsStore(deps: {
         embedModel: row?.embed_model ?? null,
         searchMaxDistance: row?.search_max_distance ?? null,
         retrievalMaxDistance: row?.retrieval_max_distance ?? null,
+        rerankEnabled: row?.rerank_enabled ?? null,
+        rerankBaseUrl: row?.rerank_base_url ?? null,
+        rerankModel: row?.rerank_model ?? null,
+        rerankApiKey: rerankKey,
       },
       deps.embeddingDims,
       deps.baseUrls,

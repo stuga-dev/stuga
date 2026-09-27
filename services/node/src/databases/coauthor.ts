@@ -72,13 +72,13 @@ export function tableToolRunner(
       const parsed = (await res.json().catch(() => null)) as Record<string, unknown> | null;
       if (!res.ok || !parsed) {
         const msg = (parsed as { message?: string } | null)?.message ?? "the change was refused";
-        return { text: `error: ${msg}`, isError: true, staged: false };
+        return { staged: false, error: msg };
       }
       const run = parsed.run as DatabaseRunSummary | undefined;
       if (run) runId = run.id;
       const minted = (parsed.minted ?? {}) as Record<string, unknown>;
       const mintedNote = Object.keys(minted).length ? ` ${JSON.stringify(minted)}` : "";
-      return { text: `ok: staged for the user's review.${mintedNote}`, isError: false, staged: true };
+      return { staged: true, text: `ok: staged for the user's review.${mintedNote}` };
     },
     // Offered only with a collection selected. Never throws: a refusal is text the model can act on.
     searchCollection: collectionId

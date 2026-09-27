@@ -1,10 +1,11 @@
 /** The AI provider form: presets, the write-only key contract, and what a save sends. */
 import type { NodeAiSettings, NodeAiSettingsInput } from "../../../api";
 
-/** What each half is called and is for, the same in Settings and at first run. */
+/** What each part is called and is for, the same in Settings and at first run. */
 export const HALF_COPY = {
   chat: { title: "Built-in AI", about: "The co-author, Ask and the table assistant, for every member, on your API key." },
   search: { title: "Search by meaning", about: "Finds text by meaning, not only exact words, for search, Ask and agents." },
+  rerank: { title: "Ranking", about: "Puts the most relevant passages first, for Ask and agents." },
 } as const;
 
 export const PROVIDERS = [
@@ -300,3 +301,35 @@ export function chatInputWith(
   return toInput(next, { chat: change.clearKeyOf ? { [change.clearKeyOf]: true } : {}, embed: false }, base, "chat");
 }
 
+/** Where a System One ranker is served, and the model to ask for there. */
+export const RERANK_PRESETS = [
+  { value: "typesafe", label: "TypeSafe", baseUrl: "https://api.typesafe.ai/v1", model: "jev-latest" },
+  { value: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "~typesafe/jev-latest" },
+  { value: "custom", label: "Something else…", baseUrl: "", model: "" },
+];
+
+export function rerankPresetFor(baseUrl: string): string {
+  return RERANK_PRESETS.find((p) => p.value !== "custom" && p.baseUrl === baseUrl)?.value ?? "custom";
+}
+
+/** The ranker as the form edits it. The key is write-only, so it starts empty. */
+export interface RerankForm {
+  baseUrl: string;
+  model: string;
+  key: string;
+}
+
+/** The saved ranker, or TypeSafe's defaults when none is set up. */
+export function rerankFormOf(s: NodeAiSettings): RerankForm {
+  if (!s.rerank.model) return { baseUrl: RERANK_PRESETS[0]!.baseUrl, model: RERANK_PRESETS[0]!.model, key: "" };
+  return { baseUrl: s.rerank.base_url, model: s.rerank.model, key: "" };
+}
+
+/** A save of the ranker alone; a blank key keeps the stored one, `clearKey` deletes it. */
+export function rerankInput(f: RerankForm, opts: { clearKey?: boolean; enabled?: boolean } = {}): NodeAiSettingsInput {
+  const rerank: NonNullable<NodeAiSettingsInput["rerank"]> = { base_url: f.baseUrl.trim(), model: f.model.trim() };
+  if (opts.enabled !== undefined) rerank.enabled = opts.enabled;
+  if (f.key) rerank.api_key = f.key;
+  else if (opts.clearKey) rerank.api_key = "";
+  return { rerank };
+}

@@ -1,4 +1,4 @@
-/** HTTP plumbing shared by the provider clients. */
+/** HTTP plumbing for the endpoints Pi does not serve: embeddings, model listings, System One. */
 
 /**
  * A model-endpoint failure. `retryable` is true for 429, 5xx and network faults;
@@ -109,54 +109,4 @@ export function jsonHeaders(apiKey: string | undefined, extra: Record<string, st
 /** Join a base URL and a path without doubling or dropping the slash. */
 export function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
-}
-
-/** Yield the body line by line, without terminators; a final unterminated line is yielded at close. */
-export async function* readLines(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      yield buf.slice(0, nl).replace(/\r$/, "");
-      buf = buf.slice(nl + 1);
-    }
-  }
-  buf += decoder.decode();
-  if (buf) yield buf.replace(/\r$/, "");
-}
-
-/** The JSON payload of every SSE `data:` line; event names are ignored and non-JSON lines skipped. */
-export async function* readSseJson<T = unknown>(body: ReadableStream<Uint8Array>): AsyncGenerator<T> {
-  for await (const line of readLines(body)) {
-    if (!line.startsWith("data:")) continue;
-    const data = line.slice(5).trim();
-    if (!data || data === "[DONE]") continue;
-    let parsed: T;
-    try {
-      parsed = JSON.parse(data) as T;
-    } catch {
-      continue;
-    }
-    yield parsed;
-  }
-}
-
-/** Yield every non-blank line of a newline-delimited JSON stream, parsed. */
-export async function* readNdjson<T = unknown>(body: ReadableStream<Uint8Array>): AsyncGenerator<T> {
-  for await (const line of readLines(body)) {
-    const t = line.trim();
-    if (!t) continue;
-    let parsed: T;
-    try {
-      parsed = JSON.parse(t) as T;
-    } catch {
-      continue;
-    }
-    yield parsed;
-  }
 }

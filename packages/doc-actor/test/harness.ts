@@ -36,6 +36,7 @@ export function disabledAi(): AiConfig {
     enabled: false,
     chat: { enabled: false, defaultModel: "none", endpoints: [{ id: "default", provider: "ollama", baseUrl: "http://localhost:11434", models: [] }] },
     embed: { enabled: false, provider: "ollama", baseUrl: "http://localhost:11434", model: "none", dims: 1024, searchMaxDistance: 0.6, retrievalMaxDistance: 0.9 },
+    rerank: { enabled: false, baseUrl: "", model: "" },
   };
 }
 

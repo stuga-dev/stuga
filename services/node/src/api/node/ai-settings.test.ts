@@ -4,7 +4,7 @@
  * cutoffs are range-checked and put in force on save. A save that would run a provider is sent with
  * that half switched off, so no probe makes an outbound request.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,6 +33,7 @@ const EMPTY_AI: AiConfig = {
   enabled: false,
   chat: { enabled: false, defaultModel: "", endpoints: [] },
   embed: { enabled: false, provider: "ollama", baseUrl: "http://127.0.0.1:11434", model: "bge-m3", dims: 1024, searchMaxDistance: 0.6, retrievalMaxDistance: 0.9 },
+  rerank: { enabled: false, baseUrl: "", model: "" },
 };
 
 /** A node administrator, with nothing configured yet. */
@@ -50,7 +51,7 @@ function ctx(ai: AiConfig = EMPTY_AI): Ctx {
       aiSettings: {
         current: () => ai,
         refresh: async () => {},
-        secrets: () => ({ chat: {}, embed: { set: false, fingerprint: null, stale: false } }),
+        secrets: () => ({ chat: {}, embed: { set: false, fingerprint: null, stale: false }, rerank: { set: false, fingerprint: null, stale: false } }),
       },
     },
   } as unknown as Ctx;
@@ -184,6 +185,10 @@ describe("PUT /api/node/ai-settings: semantic match cutoffs", () => {
         embed_api_key_fp: input.embedApiKeyFp,
         search_max_distance: input.searchMaxDistance,
         retrieval_max_distance: input.retrievalMaxDistance,
+        rerank_enabled: input.rerankEnabled,
+        rerank_base_url: input.rerankBaseUrl,
+        rerank_model: input.rerankModel,
+        rerank_api_key_fp: input.rerankApiKeyFp,
         updated_by: input.updatedBy,
         updated_at: new Date(),
       } as NodeAiSettingsRow;
@@ -265,6 +270,7 @@ describe("each half's switch", () => {
     (await (await routeWorkspaceRequest(admin(), new Request("http://node.test/api/node/ai-settings")))!.json()) as {
       chat: { enabled: boolean; running: boolean; default_model: string; endpoints: Array<{ id: string }> };
       embed: { enabled: boolean; running: boolean };
+      rerank: { enabled: boolean; running: boolean; base_url: string; model: string; api_key_set: boolean };
     };
 
   beforeEach(async () => {
@@ -284,6 +290,10 @@ describe("each half's switch", () => {
         embed_api_key_fp: input.embedApiKeyFp,
         search_max_distance: input.searchMaxDistance,
         retrieval_max_distance: input.retrievalMaxDistance,
+        rerank_enabled: input.rerankEnabled,
+        rerank_base_url: input.rerankBaseUrl,
+        rerank_model: input.rerankModel,
+        rerank_api_key_fp: input.rerankApiKeyFp,
         updated_by: input.updatedBy,
         updated_at: new Date(),
       } as NodeAiSettingsRow;
@@ -322,5 +332,67 @@ describe("each half's switch", () => {
 
     expect((await put(admin(), { embed: { enabled: false, provider: "ollama", base_url: "", model: "" } }))?.status).toBe(200);
     expect(row).toMatchObject({ embed_enabled: null, embed_model: null });
+  });
+
+  describe("the reranker", () => {
+    const JEV = { base_url: "https://api.typesafe.test/v1", model: "jev-latest" };
+    /** A System One endpoint that answers, or refuses with `status`; records each request. */
+    const systemOne = (status = 200) => {
+      const calls: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          calls.push(String(url));
+          return status === 200
+            ? new Response(JSON.stringify({ model: "jev-1.13.0", answers: { ok: { type: "noul", noul: 0.9 } } }), { status })
+            : new Response("invalid api key", { status });
+        }),
+      );
+      return calls;
+    };
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("is set up by a model, where to reach it and a key, probed before it is saved", async () => {
+      const calls = systemOne();
+      expect((await put(admin(), { rerank: { ...JEV, api_key: "ts-key" } }))?.status).toBe(200);
+      expect(calls).toEqual(["https://api.typesafe.test/v1/systemone"]);
+      expect(row).toMatchObject({ rerank_enabled: null, rerank_model: "jev-latest", rerank_base_url: JEV.base_url });
+      expect(row?.rerank_api_key_fp).toMatch(/^[0-9a-f]{8}$/);
+      expect(readFileSync(join(dataDir, "secrets", "ai-rerank"), "utf8").trim()).toBe("ts-key");
+      expect((await get()).rerank).toMatchObject({ enabled: true, running: true, model: "jev-latest", api_key_set: true });
+      expect(store.current().rerank).toMatchObject({ enabled: true, apiKey: "ts-key" });
+    });
+
+    it("refuses a model with nowhere to reach it", async () => {
+      const res = await put(admin(), { rerank: { model: "jev-latest", api_key: "ts-key" } });
+      expect(res?.status).toBe(400);
+      expect(upsert).not.toHaveBeenCalled();
+    });
+
+    it("writes nothing when the probe fails", async () => {
+      systemOne(401);
+      const res = await put(admin(), { rerank: { ...JEV, api_key: "wrong" } });
+      expect(res?.status).toBe(422);
+      expect(await res?.json()).toMatchObject({ stage: "rerank", message: expect.stringContaining("invalid api key") });
+      expect(upsert).not.toHaveBeenCalled();
+    });
+
+    it("switches off with its setup kept, without probing it again", async () => {
+      systemOne();
+      await put(admin(), { rerank: { ...JEV, api_key: "ts-key" } });
+      const calls = systemOne();
+      expect((await put(admin(), { rerank: { ...JEV, enabled: false } }))?.status).toBe(200);
+      expect(calls).toEqual([]);
+      expect((await get()).rerank).toMatchObject({ enabled: false, running: false, model: "jev-latest", api_key_set: true });
+    });
+
+    it("is removed by clearing its model, which forgets its key", async () => {
+      systemOne();
+      await put(admin(), { rerank: { ...JEV, api_key: "ts-key" } });
+      expect((await put(admin(), { rerank: { model: "" } }))?.status).toBe(200);
+      expect(row).toMatchObject({ rerank_enabled: null, rerank_model: null, rerank_base_url: null, rerank_api_key_fp: null });
+      expect(existsSync(join(dataDir, "secrets", "ai-rerank"))).toBe(false);
+      expect((await get()).rerank).toMatchObject({ enabled: true, running: false, api_key_set: false });
+    });
   });
 });

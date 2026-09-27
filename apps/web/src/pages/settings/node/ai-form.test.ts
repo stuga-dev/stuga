@@ -28,6 +28,7 @@ const settings = (endpoints: ReturnType<typeof provider>[], defaultModel = endpo
     search_max_distance: null,
     retrieval_max_distance: null,
   },
+  rerank: { enabled: true, running: false, base_url: "", model: "", api_key_set: false, api_key_fingerprint: null, api_key_stale: false },
   embedding_column_dims: 1024,
   max_distance_defaults: { search: 0.6, retrieval: 0.9 },
   provider_base_urls: BASE,

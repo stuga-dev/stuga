@@ -88,9 +88,11 @@ document the asker cannot open never reaches the model.
 ## Reranking and the per-document cap
 
 `retrieveAndRerank` (`services/node/src/retrieval/retrieve.ts`) is the pipeline every surface uses:
-embed the question, fetch 24 candidates with `askDocs`, have the chat model score each candidate's
-relevance from 0 to 10 in one call, and keep the best. Two guards live here so no surface can
-skip them:
+embed the question, fetch 24 candidates with `askDocs`, have a judge score every candidate in one
+request, and keep the best. The judge is the **Ranking** model when one is set up (TypeSafe's Jev,
+answering one yes/no question per candidate), otherwise the chat model while chat is on (a 0–10 score
+per candidate); with neither, passages keep their fusion order. Two guards live here so no surface
+can skip them:
 
 - **At most three passages per document come first.** Sections of one document cluster in embedding
   space, so an uncapped top eight is often eight sections of one document, which reads one source's
@@ -105,7 +107,7 @@ Tokens spent on the embedding and the rerank are recorded against the asker.
 ## The Ask loop
 
 `runAskAgentTurn` (`packages/ai/src/agents/ask.ts`) is the read-only sibling of the co-author and the
-table assistant: the same provider code and loop, with tools that can only look.
+table assistant: the same loop, with tools that can only look.
 
 | Tool | What it does |
 |---|---|

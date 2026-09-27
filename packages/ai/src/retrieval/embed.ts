@@ -5,7 +5,7 @@
  */
 import { EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
 import type { AiConfig, AiEndpoint } from "../config.js";
-import { AiError, fetchWithRetry, joinUrl, jsonHeaders } from "../providers/transport.js";
+import { AiError, fetchWithRetry, joinUrl, jsonHeaders } from "../transport.js";
 
 export interface EmbedResult {
   /** One vector per input text, in input order. */

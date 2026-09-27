@@ -5,7 +5,9 @@ packages:
 allowBuilds:
   "@astryxdesign/cli": false
   "@astryxdesign/core": false
+  "@google/genai": false
   esbuild: true
+  protobufjs: false
 overrides:
   "@types/node": "~26.6.2"
   "@tiptap/core": "3.31.3"

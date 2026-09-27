@@ -35,7 +35,7 @@ package may depend on:
 | `@stuga/runtime` | nothing | The actor contract, the in-process actor host, sockets, SQLite storage and the filesystem blob store. `@stuga/runtime/testing` is an in-memory host. |
 | `@stuga/auth` | protocol | Token signing and verification, API keys, the tokens OAuth hands agents, password hashing, ACL checks, and the client side of sign-in through an identity provider. No database access. |
 | `@stuga/db` | protocol | The Postgres client, the migration runner and boot repairs, queries per domain, search, the job queue. |
-| `@stuga/ai` | protocol | Provider clients, chunking, embeddings, reranking, and the agent loops of the co-author, the table assistant and Ask. |
+| `@stuga/ai` | protocol | The agent loop the co-author, the table assistant and Ask share, and every chat request, on Pi (`@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`); embeddings, chunking, and reranking by a System One model or the chat model. |
 | `@stuga/crdt-ops` | protocol | Markdown to and from Yjs, block-level edits, footnotes. Shared by the browser, the node and the document actor. |
 | `@stuga/doc-actor` | runtime, crdt-ops, ai, protocol | The document actor. |
 | `@stuga/database-actor` | runtime, protocol | The database actor. |

@@ -1,19 +1,19 @@
 /**
- * The loop mechanics the co-author, ask and table agents share: stream rounds,
- * join them into one answer, dispatch tools, and report failures in the result
- * rather than throwing. Each agent supplies its tools, prompt and finish policy.
+ * The loop the co-author, ask and table agents share, on Pi's `Agent`: Pi
+ * streams each round, validates each tool call against its schema, runs the
+ * calls in order, and replays each vendor's reasoning and tool calls between
+ * rounds. This module maps its events to prose, usage, the agent's finish
+ * policy and a stop reason, and reports failures in the result rather than
+ * throwing.
  */
+import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
+import { clampThinkingLevel, type Api, type AssistantMessage, type ImageContent, type Model, type Static, type StopReason, type TSchema } from "@earendil-works/pi-ai";
 import type { AskStopReason } from "@stuga/protocol/api/ask";
 import type { AiHistoryItem } from "@stuga/protocol/wire/doc-socket";
+import { streamChat } from "../chat.js";
 import type { AiConfig } from "../config.js";
-import { streamTurn } from "../providers/dispatch.js";
-import { ZERO_USAGE, type ContentBlock, type TokenUsage, type ToolSpec, type ToolUse, type TurnMessage } from "../types.js";
-
-/** The result of executing one tool call. */
-export interface ToolOutcome {
-  text: string;
-  isError?: boolean;
-}
+import { chatTarget } from "../models.js";
+import { addUsage, usageOf, ZERO_USAGE, type TokenUsage } from "../types.js";
 
 /**
  * What to do when the model tries to end its turn. `nudge` sends one more user
@@ -32,12 +32,10 @@ export type FinishDecision =
 
 /** What the finishing round produced, for the hook to decide on. */
 export interface FinishContext {
-  /** The provider's stop reason for the round, if it reported one. */
-  stopReason: string | undefined;
+  /** Why the round ended: "end_turn", "max_tokens", or the provider's own word. */
+  stopReason: string;
   /** Assistant text from this round only. */
   roundText: string;
-  /** Tool calls this round requested. */
-  toolUses: number;
   /** 1-based index of the round that just completed. */
   round: number;
   maxRounds: number;
@@ -47,21 +45,19 @@ export interface AgentLoopSpec {
   cfg: AiConfig;
   modelId: string;
   system: string;
-  tools: ToolSpec[];
+  tools: AgentTool[];
   maxRounds: number;
   maxTokens: number;
   /** Prior turns; blank ones are dropped. */
   history: AiHistoryItem[];
   /** The user turn that starts this exchange (prompt + any context preamble). */
   seed: string;
-  /** Blocks (images) placed before the seed text: models attend better when the instruction follows the image. */
-  seedPrefix?: ContentBlock[];
+  /** Placed before the seed text: models attend better when the instruction follows the image. */
+  seedImages?: ImageContent[];
   /** Cuts the stream in flight; the turn ends "aborted" with finished rounds intact. */
   signal?: AbortSignal;
   /** Runs before every round after the first; a non-empty string stops the turn with "budget". */
   beforeRound?: (round: number) => Promise<string | null | undefined | void>;
-  /** Executes one tool call; a throw is reported to the model as an error result. */
-  dispatch: (tool: ToolUse) => Promise<ToolOutcome>;
   /** Omitted = always accept. */
   onFinishAttempt?: (ctx: FinishContext) => FinishDecision;
   /** Streamed assistant text, including the blank line injected between rounds. */
@@ -82,6 +78,40 @@ export interface AgentLoopResult {
   error?: string;
 }
 
+/**
+ * Reasoning effort for a model that has one, clamped to the levels it offers;
+ * a model without one gets no reasoning controls at all.
+ */
+const THINKING = "low";
+
+/** Pi's stop reasons in the vocabulary finish hooks are written against. */
+const FINISH_STOP: Partial<Record<StopReason, string>> = { stop: "end_turn", length: "max_tokens" };
+
+/**
+ * A tool whose result is text. A throw reaches the model as an error result
+ * worded "error: <message>"; arguments that fail the schema never reach `run`.
+ */
+export function textTool<T extends TSchema>(
+  name: string,
+  description: string,
+  parameters: T,
+  run: (args: Static<T>) => Promise<string>,
+): AgentTool<T> {
+  return {
+    name,
+    label: name,
+    description,
+    parameters,
+    execute: async (_id, args) => {
+      try {
+        return { content: [{ type: "text", text: await run(args) }], details: undefined };
+      } catch (e) {
+        throw new Error(`error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  };
+}
+
 /** Providers reject empty text blocks, so one stored empty turn would fail every later turn of the thread. */
 export function filterHistory(history: AiHistoryItem[]): AiHistoryItem[] {
   return history.filter((h) => h.content.trim() !== "");
@@ -99,126 +129,144 @@ export function filterCited<T extends { n: number }>(text: string, citations: T[
  * finished rounds' prose and staged work intact.
  */
 export async function runAgentLoop(spec: AgentLoopSpec): Promise<AgentLoopResult> {
-  const { cfg, modelId, system, tools, maxRounds, maxTokens, dispatch, onChunk } = spec;
-
-  const messages: TurnMessage[] = [
-    ...filterHistory(spec.history).map((h) => ({ role: h.role, content: [{ text: h.content }] as ContentBlock[] })),
-    { role: "user", content: [...(spec.seedPrefix ?? []), { text: spec.seed }] },
-  ];
-
-  let prose = "";
-  let rounds = 0;
   const usage: TokenUsage = { ...ZERO_USAGE };
-
-  // Falling out of the loop means the round cap was reached.
-  let stopReason: AskStopReason = "max_rounds";
+  let prose = "";
+  let roundText = "";
+  let rounds = 0;
+  // Set when the loop decides the ending; otherwise the last response decides it.
+  let stopReason: AskStopReason | undefined;
   let error: string | undefined;
+  let last: AssistantMessage | undefined;
 
+  if (spec.signal?.aborted) return { prose, usage, rounds, stopReason: "aborted" };
+
+  let target: ReturnType<typeof chatTarget>;
   try {
-    while (rounds < maxRounds) {
-      if (spec.signal?.aborted) {
-        stopReason = "aborted";
-        break;
-      }
+    target = chatTarget(spec.cfg, spec.modelId);
+  } catch (e) {
+    return { prose, usage, rounds, stopReason: "error", error: e instanceof Error ? e.message : String(e) };
+  }
+  const { model, apiKey } = target;
+  const maxTokens = model.maxTokens > 0 ? Math.min(spec.maxTokens, model.maxTokens) : spec.maxTokens;
+
+  const agent = new Agent({
+    initialState: {
+      systemPrompt: spec.system,
+      model,
+      thinkingLevel: model.reasoning ? clampThinkingLevel(model, THINKING) : "off",
+      tools: spec.tools,
+      messages: filterHistory(spec.history).map(
+        (h): AgentMessage => (h.role === "user" ? { role: "user", content: h.content, timestamp: 0 } : assistantText(model, h.content)),
+      ),
+    },
+    getApiKey: () => apiKey,
+    streamFn: (m, context, options) => streamChat(m, context, { ...options, maxTokens }),
+    // Edits compose against working copies, so a round's calls run in the order the model made them.
+    toolExecution: "sequential",
+    // A nudge after an empty round queues a stand-in answer and the nudge together.
+    followUpMode: "all",
+    prepareRequest: async () => {
+      // Stopped between rounds: the request is cut before it is sent, so it is no round.
+      if (agent.signal?.aborted) return;
       if (rounds > 0 && spec.beforeRound) {
         const stop = await spec.beforeRound(rounds);
         if (stop) {
           stopReason = "budget";
           error = stop;
-          break;
+          agent.abort();
+          return;
         }
       }
       rounds++;
-      const toolUses: ToolUse[] = [];
-      let roundText = "";
+      roundText = "";
       spec.onRoundStart?.();
-
-      // The system prompt is byte-stable across rounds, so it is the cached prefix.
-      const gen = streamTurn(
-        cfg,
-        { modelId, cachedPrefix: system, messages, maxTokens, tools, signal: spec.signal },
-        {
-          onUsage: (u) => {
-            usage.inputTokens += u.inputTokens;
-            usage.outputTokens += u.outputTokens;
-            usage.cacheReadInputTokens += u.cacheReadInputTokens;
-            usage.cacheWriteInputTokens += u.cacheWriteInputTokens;
-          },
-          onToolUse: (t) => toolUses.push(t),
-        },
-      );
-
-      let next = await gen.next();
-      while (!next.done) {
-        // Separate rounds with a blank line, streamed too so live and stored prose match.
-        if (roundText === "" && prose !== "" && !prose.endsWith("\n")) {
-          prose += "\n\n";
-          onChunk("\n\n");
-        }
-        roundText += next.value;
-        prose += next.value;
-        onChunk(next.value);
-        next = await gen.next();
+    },
+    finishTurn: async ({ message, toolResults }) => {
+      if (message.stopReason === "error" || message.stopReason === "aborted") return;
+      if (toolResults.length > 0) {
+        if (rounds < spec.maxRounds) return;
+        stopReason = "max_rounds";
+        return { action: "end" };
       }
-      const turnStopReason = next.value;
-
-      const assistantContent: ContentBlock[] = [];
-      if (roundText) assistantContent.push({ text: roundText });
-      for (const t of toolUses) {
-        assistantContent.push({ toolUse: { toolUseId: t.toolUseId, name: t.name, input: t.input } });
-      }
-      if (assistantContent.length) messages.push({ role: "assistant", content: assistantContent });
-
-      if (turnStopReason !== "tool_use" || toolUses.length === 0) {
-        const decision = spec.onFinishAttempt?.({
-          stopReason: turnStopReason,
-          roundText,
-          toolUses: toolUses.length,
-          round: rounds,
-          maxRounds,
-        }) ?? { action: "accept" };
-        if (decision.action === "nudge") {
-          // Providers require user/assistant alternation; a round that emitted nothing pushed no assistant turn.
-          if (messages[messages.length - 1]?.role === "user") {
-            messages.push({ role: "assistant", content: [{ text: decision.placeholder ?? "(no response)" }] });
-          }
-          messages.push({ role: "user", content: [{ text: decision.message }] });
-          if (decision.resetProse) {
-            prose = "";
-            spec.onResetProse?.();
-          }
-          continue;
-        }
+      // The model tried to end its turn.
+      const decision = spec.onFinishAttempt?.({
+        stopReason: FINISH_STOP[message.stopReason] ?? message.stopReason,
+        roundText,
+        round: rounds,
+        maxRounds: spec.maxRounds,
+      }) ?? { action: "accept" };
+      if (decision.action === "accept") {
         stopReason = "complete";
-        break;
+        return { action: "end" };
       }
+      if (rounds >= spec.maxRounds) {
+        stopReason = "max_rounds";
+        return { action: "end" };
+      }
+      if (decision.resetProse) {
+        prose = "";
+        spec.onResetProse?.();
+      }
+      // Keeps user/assistant alternation for providers that require it.
+      if (!hasVisibleContent(message)) agent.followUp(assistantText(model, decision.placeholder ?? "(no response)"));
+      agent.followUp({ role: "user", content: decision.message, timestamp: Date.now() });
+      return;
+    },
+  });
 
-      const results: ContentBlock[] = [];
-      for (const t of toolUses) {
-        let outcome: ToolOutcome;
-        try {
-          outcome = await dispatch(t);
-        } catch (e) {
-          outcome = { text: `error: ${e instanceof Error ? e.message : String(e)}`, isError: true };
-        }
-        results.push({
-          toolResult: {
-            toolUseId: t.toolUseId,
-            content: [{ text: outcome.text }],
-            status: outcome.isError ? "error" : "success",
-          },
-        });
+  agent.subscribe((event) => {
+    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+      const delta = event.assistantMessageEvent.delta;
+      if (!delta) return;
+      // Separate rounds with a blank line, streamed too so live and stored prose match.
+      if (roundText === "" && prose !== "" && !prose.endsWith("\n")) {
+        prose += "\n\n";
+        spec.onChunk("\n\n");
       }
-      messages.push({ role: "user", content: results });
+      roundText += delta;
+      prose += delta;
+      spec.onChunk(delta);
+    } else if (event.type === "message_end" && event.message.role === "assistant") {
+      last = event.message;
+      addUsage(usage, usageOf(event.message.usage));
     }
+  });
+
+  const onAbort = () => agent.abort();
+  spec.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    await agent.prompt({ role: "user", content: [...(spec.seedImages ?? []), { type: "text", text: spec.seed }], timestamp: Date.now() });
   } catch (e) {
-    if (spec.signal?.aborted) {
-      stopReason = "aborted";
-    } else {
-      stopReason = "error";
-      error = e instanceof Error ? e.message : String(e);
-    }
+    stopReason ??= spec.signal?.aborted ? "aborted" : "error";
+    error ??= e instanceof Error ? e.message : String(e);
+  } finally {
+    spec.signal?.removeEventListener("abort", onAbort);
   }
 
+  if (!stopReason) {
+    if (last?.stopReason === "aborted") stopReason = "aborted";
+    else if (last?.stopReason === "error") {
+      stopReason = "error";
+      error = last.errorMessage ?? "the model request failed";
+    } else stopReason = "complete";
+  }
   return { prose, usage, rounds, stopReason, error };
+}
+
+/** A text-only assistant turn attributed to this model, so Pi replays it as the model's own. */
+function assistantText(model: Model<Api>, text: string): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+}
+
+function hasVisibleContent(message: AgentMessage): boolean {
+  return message.role === "assistant" && message.content.some((b) => b.type === "toolCall" || (b.type === "text" && b.text.trim() !== ""));
 }

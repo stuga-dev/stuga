@@ -29,7 +29,7 @@ interface AiChatEndpointSettings {
   api_key_stale: boolean;
 }
 
-/** Each half runs once it is set up; its switch only turns it off, keeping it. */
+/** Each part runs once it is set up; its switch only turns it off, keeping it. */
 export interface NodeAiSettings {
   chat: {
     /** Chat's switch: false keeps the providers but stops chat. */
@@ -46,6 +46,17 @@ export interface NodeAiSettings {
     search_max_distance: number | null;
     /** The same for Ask, agents' retrieve and the assistants' document search. */
     retrieval_max_distance: number | null;
+  };
+  /** A System One model that ranks passages; without one, chat does while it runs. */
+  rerank: {
+    enabled: boolean;
+    running: boolean;
+    /** Empty while not set up. */
+    base_url: string;
+    model: string;
+    api_key_set: boolean;
+    api_key_fingerprint: string | null;
+    api_key_stale: boolean;
   };
   embedding_column_dims: number;
   /** What each cutoff is when none is stored. */
@@ -70,6 +81,7 @@ export interface AiProbe {
   /** A save skips endpoints it did not change; a test probes everything enabled. */
   chat: ChatEndpointProbe[];
   embed: { ok: boolean; model?: string; dims?: number; message?: string; skipped?: boolean };
+  rerank: { ok: boolean; model?: string; latency_ms?: number; message?: string; skipped?: boolean };
 }
 
 /** `api_key`: absent keeps the stored key, "" deletes it, a value replaces it. Anything omitted is left as stored. */
@@ -92,6 +104,14 @@ export interface NodeAiSettingsInput {
     api_key?: string;
     search_max_distance?: number | null;
     retrieval_max_distance?: number | null;
+  };
+  /** No model removes the ranker and forgets its key and switch. */
+  rerank?: {
+    /** Absent keeps the stored switch. */
+    enabled?: boolean;
+    base_url: string;
+    model: string;
+    api_key?: string;
   };
 }
 

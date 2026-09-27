@@ -8,11 +8,13 @@ import type { AskStopReason } from "@stuga/protocol/api/ask";
 import { DATABASE_COLUMN_TYPES } from "@stuga/protocol/databases/types";
 import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
 import type { AiCitation, AiHistoryItem } from "@stuga/protocol/wire/doc-socket";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Type, type Static, type TSchema } from "@earendil-works/pi-ai";
 import type { AiConfig } from "../config.js";
 import { resolveModel } from "../models.js";
-import type { TokenUsage, ToolSpec, ToolUse } from "../types.js";
-import { runAgentLoop, filterCited, type ToolOutcome } from "./loop.js";
-import { appendCitations, MAX_OUTPUT_TOKENS, SEARCH_COLLECTION_TOOL } from "./tools.js";
+import type { TokenUsage } from "../types.js";
+import { filterCited, runAgentLoop, textTool } from "./loop.js";
+import { appendCitations, MAX_OUTPUT_TOKENS, searchCollectionTool } from "./tools.js";
 import { instructionsBlock } from "./agent-instructions.js";
 
 export interface TableAgentInput {
@@ -39,8 +41,8 @@ export interface TableToolRunner {
   getSchema(): Promise<string>;
   /** Read-only SELECT; the result JSON, or throws with the SQL error. */
   query(input: { sql: string; params?: Array<string | number | null> }): Promise<string>;
-  /** Stage one op (the run-propose body shape). The text carries minted ids, or the refusal as isError. */
-  stageOp(op: Record<string, unknown>): Promise<{ text: string; isError: boolean; staged: boolean }>;
+  /** Stage one op (the run-propose body shape): the text carries minted ids; a refusal comes back as `error`. */
+  stageOp(op: Record<string, unknown>): Promise<{ staged: true; text: string } | { staged: false; error: string }>;
   /** Failures come back as `text` with no citations. */
   searchCollection?(input: { query: string }): Promise<{ text: string; citations: AiCitation[] }>;
 }
@@ -80,122 +82,10 @@ Proposing changes (each call stages ONE change for the user to Accept or Reject 
 Making a change means CALLING a tool — describing it in prose stages nothing and the user sees nothing to accept.
 Guidance: read before you write (query for _ids, get_schema for column names and types); batch related rows into ONE insert_rows/update_rows call rather than many; make the smallest set of changes that satisfies the request; briefly say what you proposed and why. A tool error means that one change was refused — fix the input and retry that change, or explain why it cannot be done.`;
 
-function buildTools(collectionEnabled: boolean): ToolSpec[] {
-  const table = { table: { type: "string", description: "Table reference: table_id, physical name, or display name." } };
-  const cell = { type: ["string", "number", "boolean", "null"] };
-  const tools: ToolSpec[] = [
-    {
-      name: "get_schema",
-      description: "Read the database schema: tables, typed columns with their descriptions, row counts, and your pending proposals.",
-      inputSchema: { json: { type: "object", properties: {} } },
-    },
-    {
-      name: "query",
-      description:
-        "Run ONE read-only SELECT (SQLite). Bind user values via params and ? placeholders. Select _id for rows you may change.",
-      inputSchema: {
-        json: {
-          type: "object",
-          properties: {
-            sql: { type: "string", description: "The SELECT statement." },
-            params: { type: "array", items: cell, description: "Bound values for ? placeholders." },
-          },
-          required: ["sql"],
-        },
-      },
-    },
-    {
-      name: "insert_rows",
-      description: "Propose inserting rows. Each row is an object of column name → value.",
-      inputSchema: {
-        json: {
-          type: "object",
-          properties: {
-            ...table,
-            rows: { type: "array", items: { type: "object", additionalProperties: cell }, description: "Rows to insert." },
-          },
-          required: ["table", "rows"],
-        },
-      },
-    },
-    {
-      name: "update_rows",
-      description: "Propose updating rows by _id (get _ids from query, or from an insert_rows result).",
-      inputSchema: {
-        json: {
-          type: "object",
-          properties: {
-            ...table,
-            updates: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: { _id: { type: "string" }, values: { type: "object", additionalProperties: cell } },
-                required: ["_id", "values"],
-              },
-            },
-          },
-          required: ["table", "updates"],
-        },
-      },
-    },
-    {
-      name: "delete_rows",
-      description: "Propose deleting rows by _id.",
-      inputSchema: {
-        json: {
-          type: "object",
-          properties: { ...table, row_ids: { type: "array", items: { type: "string" } } },
-          required: ["table", "row_ids"],
-        },
-      },
-    },
-    {
-      name: "add_column",
-      description: `Propose a new column. type: ${DATABASE_COLUMN_TYPES.join(" | ")} (single_select needs choices).`,
-      inputSchema: {
-        json: {
-          type: "object",
-          properties: {
-            ...table,
-            name: { type: "string", description: "Column display name." },
-            type: { type: "string", enum: [...DATABASE_COLUMN_TYPES] },
-            choices: { type: "array", items: { type: "string" }, description: "single_select only: the allowed values." },
-          },
-          required: ["table", "name", "type"],
-        },
-      },
-    },
-    {
-      name: "create_table",
-      description: "Propose a new empty table (then add_column / insert_rows against it).",
-      inputSchema: {
-        json: { type: "object", properties: { name: { type: "string", description: "Table display name." } }, required: ["name"] },
-      },
-    },
-  ];
-  if (collectionEnabled) tools.push(SEARCH_COLLECTION_TOOL);
-  return tools;
-}
-
-/** The run-propose op body for a staging tool call, or null for other tools. */
-function opOf(t: ToolUse): Record<string, unknown> | null {
-  const input = (t.input ?? {}) as Record<string, unknown>;
-  switch (t.name) {
-    case "insert_rows":
-      return { kind: "rows.insert", table: input.table, rows: input.rows };
-    case "update_rows":
-      return { kind: "rows.update", table: input.table, updates: input.updates };
-    case "delete_rows":
-      return { kind: "rows.delete", table: input.table, row_ids: input.row_ids };
-    case "add_column":
-      return { kind: "columns.add", table: input.table, display: input.name, type: input.type, choices: input.choices };
-    case "create_table":
-      return { kind: "tables.create", display: input.name };
-    default:
-      return null;
-  }
-}
+const TABLE = Type.String({ description: "Table reference: table_id, physical name, or display name." });
+/** One `type` list rather than `anyOf`, which some OpenAI-compatible servers mishandle. */
+const CELL = Type.Unsafe<string | number | boolean | null>({ type: ["string", "number", "boolean", "null"] });
+const ROW = Type.Object({}, { additionalProperties: CELL });
 
 export type TableAgentActivity =
   | { kind: "thinking" }
@@ -214,7 +104,6 @@ export async function runTableAgentTurn(
   const maxRounds = input.maxRounds ?? DEFAULT_MAX_ROUNDS;
   const modelId = resolveModel(cfg, input.model);
   const collectionEnabled = input.collectionEnabled === true && typeof runner.searchCollection === "function";
-  const tools = buildTools(collectionEnabled);
   const system =
     SYSTEM.replace("{{SEARCH_TOOL}}", collectionEnabled ? `${SEARCH_TOOL_LINE}\n` : "") +
     instructionsBlock(input.instructions);
@@ -230,55 +119,85 @@ export async function runTableAgentTurn(
   let staged = 0;
   const citations: AiCitation[] = [];
 
-  const dispatch = async (t: ToolUse): Promise<ToolOutcome> => {
-    let text: string;
-    let isError = false;
-    if (t.name === "get_schema") {
-      onStatus?.({ kind: "reading" });
-      text = await runner.getSchema();
-    } else if (t.name === "query") {
-      onStatus?.({ kind: "querying" });
-      const q = (t.input ?? {}) as { sql?: unknown; params?: unknown };
-      if (typeof q.sql !== "string" || q.sql.trim() === "") {
-        text = "error: sql is required";
-        isError = true;
-      } else {
-        text = await runner.query({
-          sql: q.sql,
-          params: Array.isArray(q.params)
-            ? q.params.map((p) => (typeof p === "boolean" ? (p ? 1 : 0) : (p as string | number | null)))
-            : undefined,
-        });
-      }
-    } else if (t.name === "search_collection") {
-      const q = String(((t.input ?? {}) as { query?: unknown }).query ?? "").trim();
-      if (!q) {
-        text = "error: query is required";
-        isError = true;
-      } else if (!runner.searchCollection) {
-        text = "error: knowledge-base search is unavailable for this session";
-        isError = true;
-      } else {
-        onStatus?.({ kind: "searching", query: q });
-        const found = await runner.searchCollection({ query: q });
+  /** A tool that stages one change, built from its arguments as a run-propose op. */
+  const stagingTool = <T extends TSchema>(name: string, description: string, parameters: T, op: (args: Static<T>) => Record<string, unknown>) =>
+    textTool(name, description, parameters, async (args) => {
+      onStatus?.({ kind: "proposing" });
+      const out = await runner.stageOp(op(args));
+      if (!out.staged) throw new Error(out.error);
+      staged++;
+      return out.text;
+    });
+
+  const tools: AgentTool[] = [
+    textTool(
+      "get_schema",
+      "Read the database schema: tables, typed columns with their descriptions, row counts, and your pending proposals.",
+      Type.Object({}),
+      async () => {
+        onStatus?.({ kind: "reading" });
+        return runner.getSchema();
+      },
+    ),
+    textTool(
+      "query",
+      "Run ONE read-only SELECT (SQLite). Bind user values via params and ? placeholders. Select _id for rows you may change.",
+      Type.Object({
+        sql: Type.String({ description: "The SELECT statement." }),
+        params: Type.Optional(Type.Array(CELL, { description: "Bound values for ? placeholders." })),
+      }),
+      async ({ sql, params }) => {
+        onStatus?.({ kind: "querying" });
+        if (!sql.trim()) throw new Error("sql is required");
+        return runner.query({ sql, params: params?.map((p) => (typeof p === "boolean" ? (p ? 1 : 0) : p)) });
+      },
+    ),
+    stagingTool(
+      "insert_rows",
+      "Propose inserting rows. Each row is an object of column name → value.",
+      Type.Object({ table: TABLE, rows: Type.Array(ROW, { description: "Rows to insert." }) }),
+      ({ table, rows }) => ({ kind: "rows.insert", table, rows }),
+    ),
+    stagingTool(
+      "update_rows",
+      "Propose updating rows by _id (get _ids from query, or from an insert_rows result).",
+      Type.Object({ table: TABLE, updates: Type.Array(Type.Object({ _id: Type.String(), values: ROW })) }),
+      ({ table, updates }) => ({ kind: "rows.update", table, updates }),
+    ),
+    stagingTool(
+      "delete_rows",
+      "Propose deleting rows by _id.",
+      Type.Object({ table: TABLE, row_ids: Type.Array(Type.String()) }),
+      ({ table, row_ids }) => ({ kind: "rows.delete", table, row_ids }),
+    ),
+    stagingTool(
+      "add_column",
+      `Propose a new column. type: ${DATABASE_COLUMN_TYPES.join(" | ")} (single_select needs choices).`,
+      Type.Object({
+        table: TABLE,
+        name: Type.String({ description: "Column display name." }),
+        type: Type.String({ enum: [...DATABASE_COLUMN_TYPES] }),
+        choices: Type.Optional(Type.Array(Type.String(), { description: "single_select only: the allowed values." })),
+      }),
+      ({ table, name, type, choices }) => ({ kind: "columns.add", table, display: name, type, choices }),
+    ),
+    stagingTool(
+      "create_table",
+      "Propose a new empty table (then add_column / insert_rows against it).",
+      Type.Object({ name: Type.String({ description: "Table display name." }) }),
+      ({ name }) => ({ kind: "tables.create", display: name }),
+    ),
+  ];
+  if (collectionEnabled) {
+    tools.push(
+      searchCollectionTool(async (query) => {
+        onStatus?.({ kind: "searching", query });
+        const found = await runner.searchCollection!({ query });
         appendCitations(citations, found.citations);
-        text = found.text || "No relevant passages found.";
-      }
-    } else {
-      const op = opOf(t);
-      if (!op) {
-        text = `error: unknown tool ${t.name}`;
-        isError = true;
-      } else {
-        onStatus?.({ kind: "proposing" });
-        const out = await runner.stageOp(op);
-        text = out.text;
-        isError = out.isError;
-        if (out.staged) staged++;
-      }
-    }
-    return { text, isError };
-  };
+        return found.text || "No relevant passages found.";
+      }),
+    );
+  }
 
   const result = await runAgentLoop({
     cfg,
@@ -290,7 +209,6 @@ export async function runTableAgentTurn(
     history: input.history,
     seed: `${contextBlock}\n\nRequest: ${input.prompt}`,
     signal: input.signal,
-    dispatch,
     onChunk,
     onRoundStart: () => onStatus?.({ kind: "thinking" }),
   });

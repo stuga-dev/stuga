@@ -30,7 +30,7 @@ export interface AiConfig {
    */
   enabled: boolean;
   chat: {
-    /** In-app chat surfaces: the co-author, Ask, table AI, rerank. */
+    /** In-app chat surfaces: the co-author, Ask, table AI, and the rerank when no reranker is set up. */
     enabled: boolean;
     /** The client id "auto" resolves to. */
     defaultModel: string;
@@ -47,5 +47,18 @@ export interface AiConfig {
     searchMaxDistance: number;
     /** The same cutoff for retrieval: Ask, agents' retrieve, and the assistants' document search. */
     retrievalMaxDistance: number;
+  };
+  /**
+   * A System One model that reranks retrieval: TypeSafe's Jev, direct or
+   * through OpenRouter. Without it the chat model judges, while chat is on.
+   */
+  rerank: {
+    /** Set up and switched on. */
+    enabled: boolean;
+    /** e.g. https://api.typesafe.ai/v1, https://openrouter.ai/api/v1 */
+    baseUrl: string;
+    /** e.g. jev-latest, or typesafe/jev-latest on OpenRouter */
+    model: string;
+    apiKey?: string;
   };
 }

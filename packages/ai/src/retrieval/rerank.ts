@@ -1,12 +1,13 @@
 /**
- * LLM reranking of retrieval candidates: one call scores every candidate 0–10
- * and the top N are kept. Any failure degrades to the similarity order, and the
- * result is never short of N while candidates remain.
+ * Reranking of retrieval candidates by a judge that scores every candidate in
+ * one request: Jev over System One when it is set up, otherwise the chat model
+ * when chat is on, otherwise none. The top N by score are kept; any failure
+ * degrades to the similarity order, never short of N while candidates remain.
  */
+import { completeText } from "../chat.js";
 import type { AiConfig } from "../config.js";
-import { resolveModel } from "../models.js";
-import { streamTurn } from "../providers/dispatch.js";
 import { ZERO_USAGE, type TokenUsage } from "../types.js";
+import { askSystemOne, type NoulQuestion } from "./system-one.js";
 
 export interface RerankCandidate {
   doc_id: string;
@@ -18,7 +19,7 @@ export interface RerankCandidate {
 }
 
 export interface RerankResult {
-  /** The top N after reranking, or in similarity order when degraded. */
+  /** The top N after reranking, or in similarity order when degraded or unjudged. */
   chunks: RerankCandidate[];
   usage: TokenUsage;
   degraded: boolean;
@@ -26,16 +27,15 @@ export interface RerankResult {
   modelId: string | null;
 }
 
+/** One score per candidate, in candidate order; higher is more relevant. */
+interface Verdict {
+  scores: number[] | null;
+  usage: TokenUsage;
+  modelId: string | null;
+}
+
 /** Per-candidate content shown to the judge. */
 const SNIPPET_CHARS = 1200;
-/** Keep a candidate scoring at least this (0–10). */
-const KEEP_SCORE = 3;
-
-const SYSTEM = `You are a search relevance judge. Given a user query and numbered
-document snippets, rate how well EACH snippet helps answer or act on the query.
-Score each 0-10 (10 = directly answers it; 0 = irrelevant). Judge only relevance,
-not writing quality. Respond with ONLY a JSON array of {"i":<number>,"score":<0-10>}
-for every snippet, no prose.`;
 
 /** Rerank `candidates`, which must be in similarity order (the fallback and tiebreaker), keeping the best `topN`. */
 export async function rerankChunks(
@@ -43,7 +43,6 @@ export async function rerankChunks(
   query: string,
   candidates: RerankCandidate[],
   topN: number,
-  model = "auto",
   opts: {
     /**
      * Skip the call only at or below this many candidates (default `topN`). For
@@ -52,57 +51,65 @@ export async function rerankChunks(
     rankAbove?: number;
   } = {},
 ): Promise<RerankResult> {
-  if (candidates.length === 0) return { chunks: [], usage: { ...ZERO_USAGE }, degraded: false, modelId: null };
-  if (candidates.length <= (opts.rankAbove ?? topN))
-    return { chunks: candidates, usage: { ...ZERO_USAGE }, degraded: false, modelId: null };
+  const unjudged = { chunks: candidates.slice(0, topN), usage: { ...ZERO_USAGE }, degraded: false, modelId: null };
+  if (candidates.length <= (opts.rankAbove ?? topN)) return unjudged;
+  const judge = cfg.rerank.enabled ? judgeWithSystemOne : cfg.chat.enabled ? judgeWithChat : null;
+  if (!judge) return unjudged;
 
-  const list = candidates
-    .map((c, i) => {
-      const label = c.heading_path ? `${c.title || "Untitled"} — ${c.heading_path}` : c.title || "Untitled";
-      return `[${i}] ${label}\n${c.content.slice(0, SNIPPET_CHARS).trim()}`;
-    })
-    .join("\n\n");
-  const turnText = `Query: ${query}\n\nSnippets:\n${list}`;
+  const { scores, usage, modelId } = await judge(cfg, query, candidates);
+  if (!scores) return { chunks: candidates.slice(0, topN), usage, degraded: true, modelId };
+  const ranked = candidates
+    .map((c, i) => ({ c, i, score: scores[i] ?? 0 }))
+    .sort((a, b) => b.score - a.score || a.i - b.i)
+    .map((r) => r.c);
+  return { chunks: ranked.slice(0, topN), usage, degraded: false, modelId };
+}
 
-  const modelId = resolveModel(cfg, model);
+function passageOf(c: RerankCandidate) {
+  return { title: c.title || "Untitled", section: c.heading_path ?? "", text: c.content.slice(0, SNIPPET_CHARS).trim() };
+}
 
-  let full = "";
-  let usage: TokenUsage = { ...ZERO_USAGE };
+/**
+ * Every candidate is one yes/no question over a state holding the query and all
+ * the passages, so a search costs one request whatever the candidate count.
+ */
+async function judgeWithSystemOne(cfg: AiConfig, query: string, candidates: RerankCandidate[]): Promise<Verdict> {
+  const question = (id: string): NoulQuestion => ({
+    type: "noul",
+    instructions: `Does passage ${id} help answer the query?`,
+    criteria: {
+      true: "The passage states the information the query asks for, or information needed to answer it",
+      false: "The passage is only on a related topic, or is irrelevant to the query",
+    },
+  });
+  const ids = candidates.map((_, i) => `p${i}`);
   try {
-    for await (const delta of streamTurn(
-      cfg,
-      {
-        modelId,
-        system: SYSTEM,
-        messages: [{ role: "user", content: [{ text: turnText }] }],
-        maxTokens: 1024,
-      },
-      (u) => {
-        usage = u;
-      },
-    )) {
-      full += delta;
-    }
-    const scores = parseScores(full, candidates.length);
-    if (!scores) return degrade(candidates, topN, usage, modelId);
-
-    const ranked = candidates
-      .map((c, i) => ({ c, i, score: scores[i] ?? 0 }))
-      .sort((a, b) => b.score - a.score || a.i - b.i);
-
-    const kept: RerankCandidate[] = [];
-    for (const r of ranked) {
-      if (r.score >= KEEP_SCORE || kept.length < topN) kept.push(r.c);
-      if (kept.length >= topN && r.score < KEEP_SCORE) break;
-    }
-    return { chunks: kept.slice(0, topN), usage, degraded: false, modelId };
+    const out = await askSystemOne(
+      cfg.rerank,
+      { query, passages: Object.fromEntries(candidates.map((c, i) => [ids[i], passageOf(c)])) },
+      Object.fromEntries(ids.map((id) => [id, question(id)])),
+    );
+    return { scores: ids.map((id) => out.probabilities[id]!), usage: { ...ZERO_USAGE, inputTokens: out.inputTokens }, modelId: out.model };
   } catch {
-    return degrade(candidates, topN, usage, modelId);
+    return { scores: null, usage: { ...ZERO_USAGE }, modelId: cfg.rerank.model };
   }
 }
 
-function degrade(candidates: RerankCandidate[], topN: number, usage: TokenUsage, modelId: string): RerankResult {
-  return { chunks: candidates.slice(0, topN), usage, degraded: true, modelId };
+const JUDGE_SYSTEM = `You are a search relevance judge. Given a user query and numbered
+document snippets, rate how well EACH snippet helps answer or act on the query.
+Score each 0-10 (10 = directly answers it; 0 = irrelevant). Judge only relevance,
+not writing quality. Respond with ONLY a JSON array of {"i":<number>,"score":<0-10>}
+for every snippet, no prose.`;
+
+async function judgeWithChat(cfg: AiConfig, query: string, candidates: RerankCandidate[]): Promise<Verdict> {
+  const list = candidates
+    .map((c, i) => {
+      const p = passageOf(c);
+      return `[${i}] ${p.section ? `${p.title} — ${p.section}` : p.title}\n${p.text}`;
+    })
+    .join("\n\n");
+  const out = await completeText(cfg, { system: JUDGE_SYSTEM, prompt: `Query: ${query}\n\nSnippets:\n${list}`, maxTokens: 1024 });
+  return { scores: out.error ? null : parseScores(out.text, candidates.length), usage: out.usage, modelId: out.modelId };
 }
 
 /** The judge's JSON array as index → score, tolerating surrounding prose or fences. */

@@ -32,6 +32,10 @@ const ROW = {
   embedApiKeyFp: null,
   searchMaxDistance: null,
   retrievalMaxDistance: null,
+  rerankEnabled: null,
+  rerankBaseUrl: null,
+  rerankModel: null,
+  rerankApiKeyFp: null,
   updatedBy: "admin-1",
 };
 

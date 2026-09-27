@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
 import { embed, embedDims } from "./embed.js";
-import { AiError } from "../providers/transport.js";
+import { AiError } from "../transport.js";
 import { CFG } from "../test-helpers.js";
 
 const vec = (n: number, fill = 0.1) => Array.from({ length: n }, () => fill);

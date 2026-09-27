@@ -97,10 +97,8 @@ export async function retrieveAndRerank(args: RetrieveArgs): Promise<RetrieveRes
   // Reranked to a wider set so the per-document cap has something to backfill
   // from. `rankAbove: topN` keeps the judge running whenever there are more
   // candidates than will be shown, not only more than the widened request.
-  const reranked = await rerankChunks(aiCfg, query, candidates, Math.min(topN * 2, CANDIDATE_LIMIT), "auto", {
-    rankAbove: topN,
-  });
-  // `auto` resolves at call time: usage names the model that ran; null means no call happened.
+  const reranked = await rerankChunks(aiCfg, query, candidates, Math.min(topN * 2, CANDIDATE_LIMIT), { rankAbove: topN });
+  // The judge is chosen at call time: usage names the model that ran; null means no call happened.
   if (reranked.modelId && (reranked.usage.inputTokens || reranked.usage.outputTokens)) {
     await insertAiUsage(sql, {
       alias,

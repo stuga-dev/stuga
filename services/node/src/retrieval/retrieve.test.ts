@@ -29,6 +29,7 @@ const AI = {
   enabled: true,
   chat: { enabled: true, defaultModel: "chat-1", endpoints: [{ id: "default", provider: "openai", baseUrl: "http://ai.test", models: [] }] },
   embed: { enabled: true, provider: "openai", baseUrl: "http://ai.test", model: "embed-model-1", dims: 4, searchMaxDistance: 0.6, retrievalMaxDistance: 0.9 },
+  rerank: { enabled: false, baseUrl: "", model: "" },
 } as unknown as AiConfig;
 
 /** `spec` like "a a a a b c" → one chunk per token, doc_id = the token. */
@@ -98,7 +99,7 @@ describe("retrieveAndRerank", () => {
   it("over-fetches from the reranker so the cap has something to backfill with", async () => {
     mockRerank.mockResolvedValue({ chunks: chunks("a b c d"), usage: ZERO, degraded: false });
     await retrieveAndRerank(args({ topN: 4 }));
-    expect(mockRerank).toHaveBeenCalledWith(expect.anything(), "q", expect.anything(), 8, "auto", { rankAbove: 4 });
+    expect(mockRerank).toHaveBeenCalledWith(expect.anything(), "q", expect.anything(), 8, { rankAbove: 4 });
   });
 
   it("filters the semantic leg by the configuration's retrieval cutoff", async () => {

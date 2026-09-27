@@ -10,7 +10,7 @@ import { CFG, mockRounds, textRound, toolRound, streamOf } from "../test-helpers
 const NOOP_RUNNER: TableToolRunner = {
   getSchema: async () => "{}",
   query: async () => "[]",
-  stageOp: async () => ({ text: "ok: staged", isError: false, staged: true }),
+  stageOp: async () => ({ staged: true as const, text: "ok: staged" }),
 };
 
 const INPUT = {
@@ -49,7 +49,7 @@ describe("runTableAgentTurn", () => {
 
   it("stages a mutation through the runner as the model emits it", async () => {
     mockRounds([toolRound("insert_rows", { table: "Revenue", rows: [{ Name: "Q3" }] }), textRound("Proposed one row.")]);
-    const stageOp = vi.fn(async () => ({ text: "ok: staged", isError: false, staged: true }));
+    const stageOp = vi.fn(async () => ({ staged: true as const, text: "ok: staged" }));
     const out = await runTableAgentTurn(CFG, INPUT, { ...NOOP_RUNNER, stageOp }, () => {});
     expect(stageOp).toHaveBeenCalledWith({ kind: "rows.insert", table: "Revenue", rows: [{ Name: "Q3" }] });
     expect(out.staged).toBe(1);

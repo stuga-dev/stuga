@@ -1,8 +1,9 @@
 /**
- * Chat and semantic search, each set up on its own: either runs without the
- * other, as semantic search does for an outside agent that brings its own chat.
- * Setting a half up turns it on. Its switch, shown once it is set up, turns it
- * off and keeps it; Remove forgets it. Shown as Built-in AI and Search by meaning.
+ * Chat, semantic search and the ranker, each set up on its own: any runs without
+ * the others, as semantic search does for an outside agent that brings its own
+ * chat. Setting a part up turns it on. Its switch, shown once it is set up, turns
+ * it off and keeps it; Remove forgets it. Shown as Built-in AI, Search by meaning
+ * and Ranking.
  */
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
@@ -27,6 +28,7 @@ import {
   HALF_COPY,
   NO_CLEARED_KEYS,
   PROVIDERS,
+  RERANK_PRESETS,
   allChatModelIds,
   chatInputWith,
   endpointLabel,
@@ -34,6 +36,9 @@ import {
   modelOptions,
   presetFor,
   presetsFor,
+  rerankFormOf,
+  rerankInput,
+  rerankPresetFor,
   toForm,
   toInput,
   withSavedHalf,
@@ -41,6 +46,7 @@ import {
   type BaseUrls,
   type ChatEndpointForm,
   type Form,
+  type RerankForm,
 } from "./ai-form";
 import { ConnectForm, type Connected } from "./ConnectForm";
 import { SectionStatusBanners, useSectionStatus } from "./status";
@@ -58,6 +64,7 @@ function ProbeBanner({ probe, labels }: { probe: AiProbe; labels: Record<string,
   const rows = [
     ...probe.chat.filter((r) => !r.skipped).map((r) => line(labels[r.id] ?? r.id, r)),
     ...(probe.embed.skipped ? [] : [line(HALF_COPY.search.title, probe.embed)]),
+    ...(probe.rerank.skipped ? [] : [line(HALF_COPY.rerank.title, probe.rerank)]),
   ];
   if (rows.length === 0) return null;
   return (
@@ -121,7 +128,7 @@ function ServiceRow({ title, detail, children }: { title: string; detail: string
   );
 }
 
-type Confirm = { kind: "remove-provider"; id: string } | { kind: "remove-search" } | { kind: "reembed" };
+type Confirm = { kind: "remove-provider"; id: string } | { kind: "remove-search" } | { kind: "reembed" } | { kind: "remove-rerank" };
 
 export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onSaved: (settings: NodeAiSettings) => void }) {
   const nav = useNavigate();
@@ -149,6 +156,10 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   const [form, setForm] = useState<Form>(() => toForm(settings));
   const [embedKeyCleared, setEmbedKeyCleared] = useState(false);
   const [foundEmbed, setFoundEmbed] = useState<string[]>([]);
+  /** The ranker as edited so far, while it is being set up or edited. */
+  const [rerankDraft, setRerankDraft] = useState<RerankForm | null>(null);
+  const [rerankKeyCleared, setRerankKeyCleared] = useState(false);
+  const rerankSetUp = !!settings.rerank.model;
 
   function applied(next: NodeAiSettings) {
     onSaved(next);
@@ -291,6 +302,44 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       applied((await NodeApi.saveAi({ embed: { provider: "", base_url: "", model: "", api_key: "" } })).settings);
       setEditingSearch(false);
     });
+
+  // ---- ranking ----
+
+  const setRerankOn = (on: boolean) =>
+    act("rerank-switch", async () => {
+      applied((await NodeApi.saveAi(rerankInput(rerankFormOf(settings), { enabled: on }))).settings);
+    });
+
+  function editRerank() {
+    setRerankDraft(rerankFormOf(settings));
+    setRerankKeyCleared(false);
+  }
+
+  const saveRerank = () =>
+    act("save-rerank", async () => {
+      if (!rerankDraft) return;
+      const res = await NodeApi.saveAi(rerankInput(rerankDraft, { clearKey: rerankKeyCleared }));
+      applied(res.settings);
+      setProbe(res.probe);
+      setRerankDraft(null);
+    });
+
+  // Switched on for the test, so a switched-off ranker is asked too.
+  const testRerank = () =>
+    act("test-rerank", async () => {
+      if (!rerankDraft) return;
+      setProbe(await NodeApi.testAi(rerankInput(rerankDraft, { clearKey: rerankKeyCleared, enabled: true })));
+    });
+
+  const removeRerank = () =>
+    act("remove-rerank", async () => {
+      applied((await NodeApi.saveAi(rerankInput({ baseUrl: "", model: "", key: "" }))).settings);
+      setRerankDraft(null);
+    });
+
+  /** What ranks passages while no ranker is set up. */
+  const rerankFallback = settings.chat.running ? "Built-in AI ranks passages." : "Passages keep their search order.";
+  const rerankLabel = (baseUrl: string) => RERANK_PRESETS.find((p) => p.value === rerankPresetFor(baseUrl) && p.value !== "custom")?.label ?? baseUrl;
 
   // ---- the page ----
 
@@ -575,6 +624,78 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
         )}
       </VStack>
 
+      <Divider />
+
+      <VStack gap={3}>
+        <HalfHead
+          {...HALF_COPY.rerank}
+          toggle={
+            rerankSetUp && (
+              <Switch
+                label={HALF_COPY.rerank.title}
+                isLabelHidden
+                value={settings.rerank.enabled}
+                isDisabled={busy === "rerank-switch"}
+                onChange={(v: boolean) => void setRerankOn(v)}
+              />
+            )
+          }
+        />
+
+        {!rerankSetUp && !rerankDraft && <NotSetUp note={`Not set up: ${rerankFallback.toLowerCase()}`} onSetUp={editRerank} />}
+
+        {rerankSetUp && !rerankDraft && (
+          <ServiceRow
+            title={rerankLabel(settings.rerank.base_url)}
+            detail={[settings.rerank.model, settings.rerank.api_key_stale ? "key file missing" : null].filter(Boolean).join(" · ")}
+          >
+            <Button label="Edit" variant="ghost" size="sm" onClick={editRerank} />
+            <Button label="Remove" variant="ghost" size="sm" isLoading={busy === "remove-rerank"} onClick={() => setConfirm({ kind: "remove-rerank" })} />
+          </ServiceRow>
+        )}
+
+        {rerankDraft && (
+          <Card variant="muted">
+            <VStack gap={3}>
+              <Selector
+                label="Service"
+                options={RERANK_PRESETS.map((o) => ({ value: o.value, label: o.label }))}
+                value={rerankPresetFor(rerankDraft.baseUrl)}
+                onChange={(v: string) => {
+                  const preset = RERANK_PRESETS.find((x) => x.value === v);
+                  if (preset) setRerankDraft({ ...rerankDraft, baseUrl: preset.baseUrl, model: preset.model });
+                }}
+              />
+              <VStack gap={1}>
+                <TextInput
+                  label="API key"
+                  type="password"
+                  value={rerankDraft.key}
+                  placeholder={settings.rerank.api_key_set ? "Leave blank to keep the current key" : "Not set"}
+                  onChange={(v: string) => setRerankDraft({ ...rerankDraft, key: v })}
+                />
+                <StoredSecret
+                  onFile={settings.rerank.api_key_set ? `Key set · ${settings.rerank.api_key_fingerprint ?? "on file"}` : null}
+                  removed={rerankKeyCleared}
+                  onRemove={() => setRerankKeyCleared(true)}
+                  removeLabel="Remove key"
+                  removedNote="The key will be removed when you save."
+                />
+              </VStack>
+              <TextInput label="Model" value={rerankDraft.model} onChange={(v: string) => setRerankDraft({ ...rerankDraft, model: v })} />
+              <Collapsible trigger="Advanced" defaultIsOpen={rerankPresetFor(rerankDraft.baseUrl) === "custom"}>
+                <TextInput label="Base URL" value={rerankDraft.baseUrl} onChange={(v: string) => setRerankDraft({ ...rerankDraft, baseUrl: v })} />
+              </Collapsible>
+              <HStack gap={2}>
+                <Button label="Save" variant="primary" size="sm" isLoading={busy === "save-rerank"} onClick={() => void saveRerank()} />
+                <Button label="Test" variant="secondary" size="sm" isLoading={busy === "test-rerank"} onClick={() => void testRerank()} />
+                <Button label="Cancel" variant="ghost" size="sm" onClick={() => setRerankDraft(null)} />
+              </HStack>
+            </VStack>
+          </Card>
+        )}
+      </VStack>
+
       <AlertDialog
         isOpen={removingProvider !== null}
         title={`Remove ${removingProvider ? (labels[removingProvider] ?? "this provider") : "this provider"}?`}
@@ -596,6 +717,17 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
         onAction={() => {
           setConfirm(null);
           void removeSearch();
+        }}
+      />
+      <AlertDialog
+        isOpen={confirm?.kind === "remove-rerank"}
+        title="Remove ranking?"
+        description={`Its key is deleted. ${rerankFallback}`}
+        onOpenChange={(open) => !open && setConfirm(null)}
+        actionLabel="Remove"
+        onAction={() => {
+          setConfirm(null);
+          void removeRerank();
         }}
       />
       <AlertDialog

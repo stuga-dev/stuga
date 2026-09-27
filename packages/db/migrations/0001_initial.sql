@@ -552,8 +552,8 @@ CREATE INDEX ai_usage_ws_month_idx ON ai_usage (workspace_id, created_at);
 -- ============================================================================
 CREATE TABLE node_ai_settings (
     id                     BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
-    -- Each half runs once configured: chat when a provider offers a model, semantic
-    -- search when an embedding model is set. FALSE switches that half off, keeping it.
+    -- Each part runs once configured: chat when a provider offers a model, semantic
+    -- search when an embedding model is set. FALSE switches that part off, keeping it.
     chat_enabled           BOOLEAN,
     embed_enabled          BOOLEAN,
     chat_default_model     TEXT,
@@ -566,6 +566,12 @@ CREATE TABLE node_ai_settings (
     -- Maximum cosine distance for the semantic leg of search and of retrieval; NULL takes the default.
     search_max_distance    DOUBLE PRECISION CHECK (search_max_distance > 0 AND search_max_distance <= 2),
     retrieval_max_distance DOUBLE PRECISION CHECK (retrieval_max_distance > 0 AND retrieval_max_distance <= 2),
+    -- A System One reranker (TypeSafe's Jev), set up when a model is set; FALSE switches it off,
+    -- keeping it. Without one, the chat model reranks while chat is on.
+    rerank_enabled         BOOLEAN,
+    rerank_base_url        TEXT,
+    rerank_model           TEXT,
+    rerank_api_key_fp      TEXT,
     updated_by             TEXT,
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );

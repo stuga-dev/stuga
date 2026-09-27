@@ -1,5 +1,7 @@
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Type } from "@earendil-works/pi-ai";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
-import type { ToolSpec } from "../types.js";
+import { textTool } from "./loop.js";
 
 /** Characters one read_document call may return. */
 export const READ_CHUNK_MAX = 12_000;
@@ -11,18 +13,25 @@ export const READ_CHUNK_MAX = 12_000;
  */
 export const MAX_OUTPUT_TOKENS = 16_000;
 
-/** Offered only when a Collection is in scope; a tool that can only fail teaches the model to distrust its tools. */
-export const SEARCH_COLLECTION_TOOL: ToolSpec = {
-  name: "search_collection",
-  description: "Search the selected knowledge base of documents; returns cited passages.",
-  inputSchema: {
-    json: {
-      type: "object",
-      properties: { query: { type: "string", description: "What to search for." } },
-      required: ["query"],
-    },
-  },
-};
+/** A search query, trimmed; blank is refused. */
+export function queryOf(query: string): string {
+  const q = query.trim();
+  if (!q) throw new Error("query is required");
+  return q;
+}
+
+/**
+ * Offered only when a Collection is in scope; a tool that can only fail teaches
+ * the model to distrust its tools. `run` gets the trimmed query.
+ */
+export function searchCollectionTool(run: (query: string) => Promise<string>): AgentTool {
+  return textTool(
+    "search_collection",
+    "Search the selected knowledge base of documents; returns cited passages.",
+    Type.Object({ query: Type.String({ description: "What to search for." }) }),
+    async ({ query }) => run(queryOf(query)),
+  );
+}
 
 /**
  * Append one search's citations, numbered after those already collected. The

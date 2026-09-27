@@ -18,9 +18,15 @@ its first section, are its summary: the release notes show that and link here fo
   Hungarian, Italian, Norwegian, Polish, Portuguese, Romanian, Russian, Spanish, Swedish, Tamil and
   Turkish each add pg_search's stemmer, so a word is found in another of its forms, `chevaux` for
   `cheval`.
+- **Ranking** in **Settings → This node → AI providers**: TypeSafe's Jev, directly or through
+  OpenRouter, puts the most relevant passages first for Ask and agents. It ranks as well as a large
+  chat model at a fraction of the time and cost. Without it, Built-in AI ranks as before.
 
 ### Changed
 
+- The co-author, Ask and the table assistant run on Pi's agent runtime. Models Pi knows get their
+  vendor's handling: Kimi K3 keeps its reasoning between tool rounds, OpenAI goes through its
+  Responses API, and a model that cannot see images is told so. Reasoning models think at a low effort.
 - The node runs on Node.js 26 (was 22), in the Docker image and in the Mac app.
 - First-run setup no longer asks about checking for new versions: it is on, and **Settings → This
   node → About** turns it off. `POST /auth/register` no longer takes `update_check`.
@@ -31,6 +37,8 @@ its first section, are its summary: the release notes show that and link here fo
 
 - A browser still signed in to a node that was since wiped or reinstalled opens its setup link
   with the setup code filled in, instead of on a page that asks for it.
+- With **Built-in AI** switched off, Ask's and agents' retrieval no longer sends passages to the chat
+  provider to rank them.
 
 ## [0.1.3] - 2026-09-26
 

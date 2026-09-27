@@ -1,39 +1,9 @@
-/** Routes a streamed turn to the configured endpoint that owns its model, and lists a provider's models. */
-import type { AiConfig, AiEndpoint, ChatEndpoint } from "../config.js";
-import type { StopReason, TurnHandlersArg, TurnRequest } from "../types.js";
-import { anthropicHeaders, anthropicStream } from "./anthropic.js";
-import { ollamaStream } from "./ollama.js";
-import { openaiStream } from "./openai.js";
+/** A provider's own model listing, for the settings picker. */
+import type { AiEndpoint } from "./config.js";
 import { AiError, joinUrl, jsonHeaders } from "./transport.js";
 
-/** The endpoint listing `modelId`; an id no endpoint lists goes to the first endpoint. */
-function resolveEndpoint(cfg: AiConfig, modelId: string): ChatEndpoint {
-  const owner = cfg.chat.endpoints.find((ep) => ep.models.some((m) => m.id === modelId));
-  if (owner) return owner;
-  const fallback = cfg.chat.endpoints[0];
-  if (!fallback) throw new Error("no chat endpoint is configured");
-  return fallback;
-}
-
-export function streamTurn(
-  cfg: AiConfig,
-  req: TurnRequest,
-  handlers?: TurnHandlersArg,
-): AsyncGenerator<string, StopReason | undefined> {
-  const endpoint = resolveEndpoint(cfg, req.modelId);
-  switch (endpoint.provider) {
-    case "anthropic":
-      return anthropicStream(endpoint, req, handlers);
-    case "openai":
-      return openaiStream(endpoint, req, handlers);
-    case "ollama":
-      return ollamaStream(endpoint, req, handlers);
-    default: {
-      const p: never = endpoint.provider;
-      throw new Error(`unknown AI provider: ${String(p)}`);
-    }
-  }
-}
+/** The Messages API version the listing request names. */
+const ANTHROPIC_VERSION = "2023-06-01";
 
 /**
  * Ask a provider which models it offers, so an operator enters a key rather
@@ -94,7 +64,7 @@ async function fetchModels(ep: AiEndpoint): Promise<ListedModel[]> {
         (j.models ?? []).map((m) => ({ id: m.name, at: dateMs(m.modified_at) })),
       );
     case "anthropic":
-      return fetchListed(joinUrl(ep.baseUrl, "/v1/models"), anthropicHeaders(ep), (j: { data?: Array<{ id?: string; created_at?: string }> }) =>
+      return fetchListed(joinUrl(ep.baseUrl, "/v1/models"), anthropicHeaders(ep.apiKey), (j: { data?: Array<{ id?: string; created_at?: string }> }) =>
         (j.data ?? []).map((m) => ({ id: m.id, at: dateMs(m.created_at) })),
       );
     case "openai":
@@ -118,4 +88,8 @@ async function fetchListed<T>(
   const r = await fetch(url, { headers });
   if (!r.ok) throw new AiError(`models ${r.status}: ${await r.text()}`, r.status, false);
   return extract((await r.json()) as T).filter((m): m is ListedModel => !!m.id);
+}
+
+function anthropicHeaders(apiKey: string | undefined): Record<string, string> {
+  return { "anthropic-version": ANTHROPIC_VERSION, ...(apiKey ? { "x-api-key": apiKey } : {}) };
 }

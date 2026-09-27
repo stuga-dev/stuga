@@ -23,7 +23,7 @@ packages/
                      and an in-memory host for tests (@stuga/runtime/testing)
   db/                the Postgres schema (migrations/), every query, the job queue
   auth/              token signing and verification, principals, access checks
-  ai/                model provider clients, embeddings and chunking, the agent turn loop
+  ai/                the agent loop and chat requests on Pi, embeddings, chunking, reranking
   crdt-ops/          Markdown and Yjs operations shared by the browser and the document actor
   doc-actor/         the per-document actor: live Y.Doc, runs, snapshots
   database-actor/    the per-database actor: SQLite tables, read-only SQL, runs

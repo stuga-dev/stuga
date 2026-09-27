@@ -517,6 +517,11 @@ export interface NodeAiSettingsRow {
   search_max_distance: number | null;
   /** Maximum cosine distance for retrieval's semantic leg. */
   retrieval_max_distance: number | null;
+  /** False switches the reranker off while it stays set up. */
+  rerank_enabled: boolean | null;
+  rerank_base_url: string | null;
+  rerank_model: string | null;
+  rerank_api_key_fp: string | null;
   updated_by: string | null;
   updated_at: Date;
 }

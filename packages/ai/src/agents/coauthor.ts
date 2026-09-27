@@ -9,11 +9,13 @@ import type { AskStopReason } from "@stuga/protocol/api/ask";
 import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
 import type { AiCitation, AiHistoryItem, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
 import { findFuzzyMatch } from "@stuga/protocol/text/fuzzy-match";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Type, type ImageContent, type TSchema } from "@earendil-works/pi-ai";
 import type { AiConfig } from "../config.js";
-import { resolveModel } from "../models.js";
-import { imageFormatFor, type ContentBlock, type TokenUsage, type ToolSpec, type ToolUse } from "../types.js";
-import { runAgentLoop, filterCited, type ToolOutcome } from "./loop.js";
-import { appendCitations, MAX_OUTPUT_TOKENS, READ_CHUNK_MAX, SEARCH_COLLECTION_TOOL } from "./tools.js";
+import { acceptsImages, resolveModel } from "../models.js";
+import { imageMime, type TokenUsage } from "../types.js";
+import { filterCited, runAgentLoop, textTool } from "./loop.js";
+import { appendCitations, MAX_OUTPUT_TOKENS, READ_CHUNK_MAX, searchCollectionTool } from "./tools.js";
 import { instructionsBlock, otherDocInstructionsNote } from "./agent-instructions.js";
 
 export interface AgentInput {
@@ -152,78 +154,17 @@ const ATTACHMENT_LINES_BLIND =
 const SEARCH_TOOL_LINE =
   "- search_collection(query): search the user's selected knowledge base for relevant passages. Cite facts you use with a [^n] footnote marker.";
 
-const DOC_ID_PROP = {
-  doc_id: {
-    type: "string",
-    description: "Target document id (from list_documents). Omit to act on the current document.",
-  },
-} as const;
+const DOC_ID = Type.Optional(
+  Type.String({ description: "Target document id (from list_documents). Omit to act on the current document." }),
+);
 
-function buildTools(collectionEnabled: boolean): ToolSpec[] {
-  const docId = collectionEnabled ? DOC_ID_PROP : {};
-  const tools: ToolSpec[] = [
-    {
-      name: "read_document",
-      description: "Read a slice of a document (offset + length in characters).",
-      inputSchema: {
-        json: {
-          type: "object",
-          properties: {
-            ...docId,
-            offset: { type: "integer", description: "Start character offset (0-based)." },
-            length: { type: "integer", description: `Chars to read (max ${READ_CHUNK_MAX}).` },
-          },
-        },
-      },
-    },
-    {
-      name: "str_replace",
-      description: "Propose a surgical edit: replace an exact, unique old_string with new_string.",
-      inputSchema: {
-        json: {
-          type: "object",
-          properties: {
-            ...docId,
-            old_string: { type: "string", description: "Exact text to replace (unique in the doc)." },
-            new_string: { type: "string", description: "Replacement text (empty to delete)." },
-          },
-          required: ["old_string", "new_string"],
-        },
-      },
-    },
-    {
-      name: "insert_text",
-      description:
-        "Add NEW content that isn't replacing anything: append to the end of the document, or insert right after an existing anchor. Use this (not str_replace) for an empty document or to add a new paragraph/section.",
-      inputSchema: {
-        json: {
-          type: "object",
-          properties: {
-            ...docId,
-            text: { type: "string", description: "The markdown to insert." },
-            after: {
-              type: "string",
-              description:
-                "Optional exact, unique anchor to insert AFTER. Omit to append to the end of the document.",
-            },
-          },
-          required: ["text"],
-        },
-      },
-    },
-  ];
-  if (collectionEnabled) {
-    tools.push(
-      {
-        name: "list_documents",
-        description: "List other documents you can read and edit (returns id + title for each).",
-        inputSchema: { json: { type: "object", properties: {} } },
-      },
-      SEARCH_COLLECTION_TOOL,
-    );
-  }
-  return tools;
+/** A document tool's arguments; `doc_id` is offered only when other documents are in scope. */
+function docArgs<P extends Record<string, TSchema>>(multiDoc: boolean, props: P) {
+  const withId = Type.Object({ doc_id: DOC_ID, ...props });
+  return multiDoc ? withId : (Type.Object(props) as unknown as typeof withId);
 }
+
+const PAST_END = "[empty — offset is at or past the end of the document]";
 
 function docPreview(docText: string): string {
   if (docText.length <= PREVIEW_CHARS) return docText;
@@ -248,12 +189,13 @@ export async function runAgentTurn(
   const maxRounds = input.maxRounds ?? DEFAULT_MAX_ROUNDS;
   const modelId = resolveModel(cfg, input.model);
   const attachments = input.attachments ?? [];
-  // Attachments without bytes, or of a type no model takes, are listed by url only.
-  const imageBlocks: ContentBlock[] = attachments.flatMap((a) => {
-    const format = a.bytes && a.mime ? imageFormatFor(a.mime) : null;
-    return format && a.bytes ? [{ image: { format, source: { bytes: a.bytes } } } as ContentBlock] : [];
+  // Attachments without bytes, of a type no model takes, or for a model that cannot see, are listed by url only.
+  const sees = acceptsImages(cfg, modelId);
+  const images: ImageContent[] = attachments.flatMap((a) => {
+    const mimeType = sees && a.bytes && a.mime ? imageMime(a.mime) : null;
+    return mimeType && a.bytes ? [{ type: "image" as const, data: a.bytes, mimeType }] : [];
   });
-  const canSee = imageBlocks.length > 0;
+  const canSee = images.length > 0;
   // Instructions go last: most salient, and the prompt is unchanged when there are none.
   const system =
     SYSTEM.replace("{{SEARCH_TOOL}}", input.collectionEnabled ? SEARCH_TOOL_LINE : "")
@@ -262,7 +204,6 @@ export async function runAgentTurn(
         "{{ATTACHMENTS}}",
         attachments.length === 0 ? "" : canSee ? ATTACHMENT_LINES_VISION : ATTACHMENT_LINES_BLIND,
       ) + instructionsBlock(input.instructions, { crossDocument: input.collectionEnabled });
-  const tools = buildTools(input.collectionEnabled);
 
   // Per-document working copies, so a later edit can target text an earlier one
   // produced. Other documents are loaded lazily; the key sentinel cannot collide with an id.
@@ -298,44 +239,127 @@ export async function runAgentTurn(
   let nudgedForMissingEdit = false;
   let nudgedForTruncation = false;
 
-  const dispatch = async (t: ToolUse): Promise<ToolOutcome> => {
-    if (t.name === "read_document") onStatus?.({ kind: "reading" });
-    else if (t.name === "search_collection") {
-      const q = String(((t.input ?? {}) as Record<string, unknown>).query ?? "").trim();
-      onStatus?.({ kind: "searching", query: q });
-    } else if (t.name === "str_replace" || t.name === "insert_text") onStatus?.({ kind: "editing" });
-    const docId = ((t.input ?? {}) as Record<string, unknown>).doc_id as string | undefined;
+  /**
+   * The document a call acts on: the current one unless it names another, whose
+   * working copy is loaded on first use. An unopenable document is refused.
+   */
+  const targetFor = async (docId: string | undefined): Promise<EditTarget> => {
     const key = keyFor(docId);
+    if (!working.has(key)) {
+      const opened = await runner.openDocument(docId!);
+      if (!opened) throw new Error(`cannot open document "${docId}" — check the id from list_documents and that you can edit it.`);
+      if ("error" in opened) throw new Error(opened.error);
+      working.set(key, opened.markdown);
+      docMeta.set(key, { title: opened.title, baseline: opened.markdown, instructions: opened.instructions ?? [] });
+    }
     const isCurrent = key === CURRENT;
-    return runToolCall(t, runner, {
-      namesDoc: !!docId,
-      ensureLoaded: async () => {
-        if (working.has(key)) return null;
-        const opened = await runner.openDocument(docId!);
-        if (!opened) {
-          return `error: cannot open document "${docId}" — check the id from list_documents and that you can edit it.`;
-        }
-        if ("error" in opened) return `error: ${opened.error}`;
-        working.set(key, opened.markdown);
-        docMeta.set(key, { title: opened.title, baseline: opened.markdown, instructions: opened.instructions ?? [] });
-        return null;
+    return {
+      text: () => working.get(key) ?? "",
+      stage: (next, edit) => {
+        working.set(key, next);
+        if (isCurrent) strEdits.push(edit);
+        else (otherEdits.get(key) ?? otherEdits.set(key, []).get(key)!).push(edit);
       },
-      listDocuments: () => runner.listDocuments(),
-      getWorking: () => working.get(key) ?? "",
       instructionsNote: () => {
         const meta = docMeta.get(key);
         if (isCurrent || !meta || noted.has(key)) return "";
         noted.add(key);
         return otherDocInstructionsNote(meta.title, meta.instructions, input.instructions ?? [], fencedLevels);
       },
-      setWorking: (w) => working.set(key, w),
-      pushEdit: (e) => {
-        if (isCurrent) strEdits.push(e);
-        else (otherEdits.get(key) ?? otherEdits.set(key, []).get(key)!).push(e);
-      },
-      pushCitations: (cs) => appendCitations(citations, cs),
-    });
+    };
   };
+
+  const multiDoc = input.collectionEnabled;
+  const tools: AgentTool[] = [
+    textTool(
+      "read_document",
+      "Read a slice of a document (offset + length in characters).",
+      docArgs(multiDoc, {
+        offset: Type.Optional(Type.Integer({ description: "Start character offset (0-based)." })),
+        length: Type.Optional(Type.Integer({ description: `Chars to read (max ${READ_CHUNK_MAX}).` })),
+      }),
+      async (args) => {
+        onStatus?.({ kind: "reading" });
+        const offset = Math.max(0, args.offset ?? 0);
+        const length = Math.min(READ_CHUNK_MAX, Math.max(1, args.length ?? READ_CHUNK_MAX));
+        // The current document is read live, so concurrent edits show; a named one from its working copy.
+        if (!args.doc_id) return (await runner.readDocument({ offset, length })) || PAST_END;
+        const target = await targetFor(args.doc_id);
+        return target.instructionsNote() + (target.text().slice(offset, offset + length) || PAST_END);
+      },
+    ),
+    textTool(
+      "str_replace",
+      "Propose a surgical edit: replace an exact, unique old_string with new_string.",
+      docArgs(multiDoc, {
+        old_string: Type.String({ description: "Exact text to replace (unique in the doc)." }),
+        new_string: Type.String({ description: "Replacement text (empty to delete)." }),
+      }),
+      async ({ doc_id, old_string, new_string }) => {
+        onStatus?.({ kind: "editing" });
+        if (!old_string) throw new Error("old_string is required (use a non-empty, unique snippet)");
+        const target = await targetFor(doc_id);
+        const doc = target.text();
+        // Stage the document's own text at the match, which may differ typographically from what the model sent.
+        const m = uniqueMatch(doc, old_string, {
+          missing: "old_string not found in the current document. Read the relevant section and copy the exact text.",
+          ambiguous: "old_string is not unique — it appears multiple times. Include more surrounding context to make it unique.",
+        });
+        target.stage(doc.slice(0, m.index) + new_string + doc.slice(m.index + m.matched.length), { old_string: m.matched, new_string });
+        return staged("ok: edit staged for the user's review.", target);
+      },
+    ),
+    textTool(
+      "insert_text",
+      "Add NEW content that isn't replacing anything: append to the end of the document, or insert right after an existing anchor. Use this (not str_replace) for an empty document or to add a new paragraph/section.",
+      docArgs(multiDoc, {
+        text: Type.String({ description: "The markdown to insert." }),
+        after: Type.Optional(
+          Type.String({ description: "Optional exact, unique anchor to insert AFTER. Omit to append to the end of the document." }),
+        ),
+      }),
+      async ({ doc_id, text, after }) => {
+        onStatus?.({ kind: "editing" });
+        if (!text) throw new Error("text is required");
+        const target = await targetFor(doc_id);
+        const doc = target.text();
+        if (after) {
+          const m = uniqueMatch(doc, after, {
+            missing: "'after' anchor not found. Read the section and copy exact text, or omit 'after' to append.",
+            ambiguous: "'after' anchor is not unique — add more context.",
+          });
+          const end = m.index + m.matched.length;
+          const sep = text.startsWith("\n") ? "" : "\n\n";
+          target.stage(doc.slice(0, end) + sep + text + doc.slice(end), { old_string: m.matched, new_string: `${m.matched}${sep}${text}` });
+        } else {
+          // An empty old_string means append.
+          const sep = doc.length && !doc.endsWith("\n") ? "\n\n" : "";
+          target.stage(`${doc}${sep}${text}`, { old_string: "", new_string: `${sep}${text}` });
+        }
+        return staged("ok: insertion staged for the user's review.", target);
+      },
+    ),
+  ];
+  if (multiDoc) {
+    tools.push(
+      textTool(
+        "list_documents",
+        "List other documents you can read and edit (returns id + title for each).",
+        Type.Object({}),
+        async () => {
+          const docs = await runner.listDocuments();
+          if (docs.length === 0) return "No other documents are available to edit.";
+          return docs.map((d) => `- ${d.doc_id}: ${d.title || "(untitled)"}`).join("\n");
+        },
+      ),
+      searchCollectionTool(async (query) => {
+        onStatus?.({ kind: "searching", query });
+        const found = await runner.searchCollection({ query });
+        appendCitations(citations, found.citations);
+        return found.text || "No relevant passages found.";
+      }),
+    );
+  }
 
   const result = await runAgentLoop({
     cfg,
@@ -346,12 +370,11 @@ export async function runAgentTurn(
     maxTokens: MAX_OUTPUT_TOKENS,
     history: input.history,
     seed: `${contextBlock}\nRequest: ${input.prompt}`,
-    seedPrefix: imageBlocks,
+    seedImages: images,
     signal: input.signal,
-    dispatch,
     onFinishAttempt: (ctx) => {
       // Neither nudge fires once an edit is staged, and each leaves a round for the answer.
-      const canNudge = ctx.round < ctx.maxRounds && ctx.toolUses === 0 && strEdits.length === 0;
+      const canNudge = ctx.round < ctx.maxRounds && strEdits.length === 0;
 
       if (canNudge && ctx.stopReason === "max_tokens" && !nudgedForTruncation) {
         nudgedForTruncation = true;
@@ -422,18 +445,20 @@ function soundsLikeIntendedEdit(text: string): boolean {
   return EDIT_VERB.test(t.slice(lead.index));
 }
 
-interface EditCtx {
-  /** The call passed a doc_id, so it reads and edits that document's working copy. */
-  namesDoc: boolean;
-  /** Null once the document's working copy is loaded, or the tool error that refused it. */
-  ensureLoaded(): Promise<string | null>;
-  listDocuments(): Promise<Array<{ doc_id: string; title: string }>>;
-  getWorking(): string;
+/** Where an edit lands: one document's working copy. */
+interface EditTarget {
+  text(): string;
+  /** Replace the working copy and record the edit that produced it. */
+  stage(next: string, edit: AiStrEdit): void;
   /** Once per other document per turn, the note on its instructions for the first read or edit result; else "". */
   instructionsNote(): string;
-  setWorking(w: string): void;
-  pushEdit(e: AiStrEdit): void;
-  pushCitations(cs: AiCitation[]): void;
+}
+
+/** The unique match of `needle`, allowing for typography, or a refusal saying why there is none. */
+function uniqueMatch(haystack: string, needle: string, refusal: { missing: string; ambiguous: string }) {
+  const m = findFuzzyMatch(haystack, needle, { wantUnique: true });
+  if (m) return m;
+  throw new Error(findFuzzyMatch(haystack, needle) ? refusal.ambiguous : refusal.missing);
 }
 
 /**
@@ -441,87 +466,7 @@ interface EditCtx {
  * edits it before reading it: an append needs no read, and the note still lets
  * it revise what it staged.
  */
-function staged(result: string, edit: EditCtx): string {
-  const note = edit.instructionsNote();
+function staged(result: string, target: EditTarget): string {
+  const note = target.instructionsNote();
   return note ? `${result}\n\n${note}` : result;
-}
-
-async function runToolCall(
-  t: ToolUse,
-  runner: ToolRunner,
-  edit: EditCtx,
-): Promise<{ text: string; isError: boolean }> {
-  const input = (t.input ?? {}) as Record<string, unknown>;
-  try {
-    if (t.name === "list_documents") {
-      const docs = await edit.listDocuments();
-      if (docs.length === 0) return { text: "No other documents are available to edit.", isError: false };
-      return { text: docs.map((d) => `- ${d.doc_id}: ${d.title || "(untitled)"}`).join("\n"), isError: false };
-    }
-    if (edit.namesDoc) {
-      const refused = await edit.ensureLoaded();
-      if (refused) return { text: refused, isError: true };
-    }
-    if (t.name === "read_document") {
-      const offset = Math.max(0, Number(input.offset ?? 0) | 0);
-      const length = Math.min(READ_CHUNK_MAX, Math.max(1, Number(input.length ?? READ_CHUNK_MAX) | 0));
-      // The current document is read live, so concurrent edits show.
-      if (edit.namesDoc) {
-        const text = edit.getWorking().slice(offset, offset + length);
-        return { text: edit.instructionsNote() + (text || "[empty — offset is at or past the end of the document]"), isError: false };
-      }
-      const text = await runner.readDocument({ offset, length });
-      return { text: text || "[empty — offset is at or past the end of the document]", isError: false };
-    }
-    if (t.name === "search_collection") {
-      const query = String(input.query ?? "").trim();
-      if (!query) return { text: "error: query is required", isError: true };
-      const { text, citations } = await runner.searchCollection({ query });
-      edit.pushCitations(citations);
-      return { text: text || "No relevant passages found.", isError: false };
-    }
-    if (t.name === "str_replace") {
-      const oldStr = String(input.old_string ?? "");
-      const newStr = String(input.new_string ?? "");
-      if (!oldStr) return { text: "error: old_string is required (use a non-empty, unique snippet)", isError: true };
-      const working = edit.getWorking();
-      // Stage the document's own text at the match, which may differ typographically from what the model sent.
-      const m = findFuzzyMatch(working, oldStr, { wantUnique: true });
-      if (!m) {
-        const any = findFuzzyMatch(working, oldStr);
-        if (!any) return { text: "error: old_string not found in the current document. Read the relevant section and copy the exact text.", isError: true };
-        return { text: "error: old_string is not unique — it appears multiple times. Include more surrounding context to make it unique.", isError: true };
-      }
-      edit.setWorking(working.slice(0, m.index) + newStr + working.slice(m.index + m.matched.length));
-      edit.pushEdit({ old_string: m.matched, new_string: newStr });
-      return { text: staged("ok: edit staged for the user's review.", edit), isError: false };
-    }
-    if (t.name === "insert_text") {
-      const text = String(input.text ?? "");
-      if (!text) return { text: "error: text is required", isError: true };
-      const after = input.after === undefined ? undefined : String(input.after);
-      const working = edit.getWorking();
-      if (after !== undefined && after !== "") {
-        const m = findFuzzyMatch(working, after, { wantUnique: true });
-        if (!m) {
-          const any = findFuzzyMatch(working, after);
-          if (!any) return { text: "error: 'after' anchor not found. Read the section and copy exact text, or omit 'after' to append.", isError: true };
-          return { text: "error: 'after' anchor is not unique — add more context.", isError: true };
-        }
-        const anchor = m.matched;
-        const sep = text.startsWith("\n") ? "" : "\n\n";
-        edit.setWorking(working.slice(0, m.index + anchor.length) + sep + text + working.slice(m.index + anchor.length));
-        edit.pushEdit({ old_string: anchor, new_string: `${anchor}${sep}${text}` });
-      } else {
-        // An empty old_string means append.
-        const sep = working.length && !working.endsWith("\n") ? "\n\n" : "";
-        edit.setWorking(`${working}${sep}${text}`);
-        edit.pushEdit({ old_string: "", new_string: `${sep}${text}` });
-      }
-      return { text: staged("ok: insertion staged for the user's review.", edit), isError: false };
-    }
-    return { text: `error: unknown tool ${t.name}`, isError: true };
-  } catch (e) {
-    return { text: `error: ${e instanceof Error ? e.message : String(e)}`, isError: true };
-  }
 }

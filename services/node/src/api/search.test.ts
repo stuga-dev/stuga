@@ -21,6 +21,7 @@ const AI: AiConfig = {
   enabled: true,
   chat: { enabled: false, defaultModel: "", endpoints: [] },
   embed: { enabled: true, provider: "ollama", baseUrl: "http://ai.test", model: "embed-1", dims: 2, searchMaxDistance: 0.6, retrievalMaxDistance: 0.9 },
+  rerank: { enabled: false, baseUrl: "", model: "" },
 };
 
 const searcher = (aiSettings: { current: () => AiConfig }) =>

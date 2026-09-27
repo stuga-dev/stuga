@@ -6,8 +6,8 @@ import {
   type ChatEndpoint,
   embed,
   listModels,
-  resolveModel,
-  streamTurn,
+  probeChat,
+  probeSystemOne,
 } from "@stuga/ai";
 import { sha256Hex } from "@stuga/auth";
 import {
@@ -25,6 +25,7 @@ import {
   type AiStoredSettings,
   EMBED_KEY_FILE,
   MAX_DISTANCE_DEFAULTS,
+  RERANK_KEY_FILE,
   chatKeyFile,
   isMaxDistance,
   resolveAi,
@@ -39,8 +40,9 @@ interface CandidateBody {
    *  undefined = leave the stored key alone, null = delete it, a string = replace it. */
   chatKeys: Array<{ id: string; key: string | null | undefined }>;
   embedKey: string | null | undefined;
-  /** Which halves the request carried; an omitted half is left exactly as stored. */
-  sent: { chat: boolean; embed: boolean };
+  rerankKey: string | null | undefined;
+  /** Which parts the request carried; an omitted part is left exactly as stored. */
+  sent: { chat: boolean; embed: boolean; rerank: boolean };
 }
 
 const PROVIDERS = new Set<AiProvider>(["anthropic", "openai", "ollama"]);
@@ -86,11 +88,17 @@ function str(v: unknown): string | null | undefined {
 async function parseCandidate(ctx: Ctx, req: Request): Promise<CandidateBody | { error: string; status: number }> {
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) return { error: "expected a JSON object", status: 400 };
-  // An omitted half is taken from the stored row, never reset to provider defaults.
-  const sent = { chat: body.chat !== undefined, embed: body.embed !== undefined };
-  if (!sent.chat && !sent.embed) return { error: "nothing to save: send chat, embed, or both", status: 400 };
+  // An omitted part is taken from the stored row, never reset to provider defaults.
+  const sent = { chat: body.chat !== undefined, embed: body.embed !== undefined, rerank: body.rerank !== undefined };
+  if (!sent.chat && !sent.embed && !sent.rerank) return { error: "nothing to save: send chat, embed or rerank", status: 400 };
   const chat = (body.chat ?? {}) as Record<string, unknown>;
   const embed_ = (body.embed ?? {}) as Record<string, unknown>;
+  const rerank_ = (body.rerank ?? {}) as Record<string, unknown>;
+
+  const rerankBaseUrl = cleanBaseUrl(rerank_.base_url);
+  if (rerankBaseUrl === undefined && rerank_.base_url !== undefined) return { error: "rerank.base_url must be an absolute http(s) URL", status: 400 };
+  const rerankModel = sent.rerank ? (str(rerank_.model) ?? null) : undefined;
+  if (rerankModel && !rerankBaseUrl) return { error: "rerank.base_url is required with a rerank model", status: 400 };
 
   const embedProvider = str(embed_.provider);
   if (embedProvider && !PROVIDERS.has(embedProvider as AiProvider)) {
@@ -158,11 +166,14 @@ async function parseCandidate(ctx: Ctx, req: Request): Promise<CandidateBody | {
 
   // undefined = leave the stored key alone; null = delete it; a string = replace.
   const embedKey = !sent.embed || embed_.api_key === undefined ? undefined : str(embed_.api_key);
+  // Removing the reranker forgets its key.
+  const rerankKey = !sent.rerank ? undefined : rerankModel === null ? null : rerank_.api_key === undefined ? undefined : str(rerank_.api_key);
   const chatKeys = parsedEndpoints.map((e) => ({ id: e.id, key: e.apiKey }));
 
   const row = await getNodeAiSettings(ctx.sql);
   // "Keep" means the key file: the resolved config may carry a key inherited from the first chat endpoint.
   const keptEmbed = embedKey === undefined ? readSecretFile(ctx.env.dataDir, EMBED_KEY_FILE) : embedKey;
+  const keptRerank = rerankKey === undefined ? readSecretFile(ctx.env.dataDir, RERANK_KEY_FILE) : rerankKey;
 
   // The live endpoints, with their keys: what "keep this key" and an omitted chat half keep.
   const liveChat = ctx.env.aiSettings.current().chat.endpoints;
@@ -205,11 +216,23 @@ async function parseCandidate(ctx: Ctx, req: Request): Promise<CandidateBody | {
       embed_.search_max_distance === undefined ? (row?.search_max_distance ?? null) : (embed_.search_max_distance as number | null),
     retrievalMaxDistance:
       embed_.retrieval_max_distance === undefined ? (row?.retrieval_max_distance ?? null) : (embed_.retrieval_max_distance as number | null),
+
+    // No model is how the reranker is removed; like the other parts, it then has no switch to leave off.
+    rerankEnabled: sent.rerank
+      ? !rerankModel
+        ? null
+        : typeof rerank_.enabled === "boolean"
+          ? rerank_.enabled
+          : (row?.rerank_enabled ?? null)
+      : (row?.rerank_enabled ?? null),
+    rerankBaseUrl: sent.rerank ? (rerankModel ? rerankBaseUrl! : null) : (row?.rerank_base_url ?? null),
+    rerankModel: sent.rerank ? rerankModel! : (row?.rerank_model ?? null),
+    rerankApiKey: keptRerank,
   };
 
   // The width is the column's, never the request's.
   const candidate = resolveAi(stored, ctx.env.embeddingDims, ctx.env.aiProviderBaseUrls);
-  return { candidate, stored, chatKeys, embedKey, sent };
+  return { candidate, stored, chatKeys, embedKey, rerankKey, sent };
 }
 
 interface ChatEndpointProbeResult {
@@ -225,6 +248,7 @@ interface ProbeResult {
   ok: boolean;
   chat: ChatEndpointProbeResult[];
   embed: { ok: boolean; model?: string; dims?: number; message?: string; skipped?: boolean };
+  rerank: { ok: boolean; model?: string; latency_ms?: number; message?: string; skipped?: boolean };
 }
 
 /** Which parts of the configuration a save is actually changing. */
@@ -234,6 +258,7 @@ interface Changed {
    *  absent, since there is nothing new to verify about it. */
   chatEndpointIds: string[];
   embed: boolean;
+  rerank: boolean;
 }
 
 function whatChanged(before: AiConfig, after: AiConfig): Changed {
@@ -251,6 +276,10 @@ function whatChanged(before: AiConfig, after: AiConfig): Changed {
       before.embed.baseUrl !== after.embed.baseUrl ||
       before.embed.model !== after.embed.model ||
       before.embed.apiKey !== after.embed.apiKey,
+    rerank:
+      before.rerank.baseUrl !== after.rerank.baseUrl ||
+      before.rerank.model !== after.rerank.model ||
+      before.rerank.apiKey !== after.rerank.apiKey,
   };
 }
 
@@ -261,12 +290,20 @@ function whatChanged(before: AiConfig, after: AiConfig): Changed {
  */
 async function probeEndpoints(
   candidate: AiConfig,
-  only: Changed = { chatEndpointIds: candidate.chat.endpoints.map((e) => e.id), embed: true },
+  only: Changed = { chatEndpointIds: candidate.chat.endpoints.map((e) => e.id), embed: true, rerank: true },
 ): Promise<ProbeResult> {
-  const out: ProbeResult = { ok: false, chat: [], embed: { ok: false } };
+  const out: ProbeResult = { ok: false, chat: [], embed: { ok: false }, rerank: { ok: true, skipped: true } };
   if (!candidate.embed.enabled) out.embed = { ok: true, skipped: true, message: "embeddings are off" };
   const probeEmbed = only.embed && candidate.embed.enabled;
-  if (!candidate.enabled) return { ...out, ok: true };
+
+  if (only.rerank && candidate.rerank.enabled) {
+    const started = Date.now();
+    const failure = await probeSystemOne(candidate.rerank);
+    out.rerank = failure
+      ? { ok: false, model: candidate.rerank.model, message: failure }
+      : { ok: true, model: candidate.rerank.model, latency_ms: Date.now() - started };
+  }
+  if (!candidate.enabled) return { ...out, ok: out.rerank.ok };
 
   // Only what `only` names: an untouched endpoint is in force either way, and
   // must not block an unrelated save. "Test connection" probes everything.
@@ -283,21 +320,12 @@ async function probeEndpoints(
         continue;
       }
       // A single-endpoint config, so one broken endpoint never fails another's probe.
-      const probeCfg: AiConfig = { ...candidate, chat: { enabled: true, defaultModel: ep.models[0]!.id, endpoints: [ep] } };
+      const model = ep.models[0]!.id;
       const started = Date.now();
-      try {
-        const gen = streamTurn(probeCfg, {
-          modelId: resolveModel(probeCfg),
-          messages: [{ role: "user", content: [{ text: "ping" }] }],
-          maxTokens: 1,
-        });
-        // One delta proves endpoint, key and model; the generator is closed, not drained.
-        await gen.next();
-        await gen.return(undefined as never).catch(() => undefined);
-        out.chat.push({ id: ep.id, ok: true, model: ep.models[0]!.id, latency_ms: Date.now() - started });
-      } catch (e) {
-        out.chat.push({ id: ep.id, ok: false, model: ep.models[0]!.id, message: e instanceof Error ? e.message : String(e) });
-      }
+      const failure = await probeChat({ ...candidate, chat: { enabled: true, defaultModel: model, endpoints: [ep] } }, model);
+      out.chat.push(
+        failure ? { id: ep.id, ok: false, model, message: failure } : { id: ep.id, ok: true, model, latency_ms: Date.now() - started },
+      );
     }
   }
 
@@ -314,7 +342,7 @@ async function probeEndpoints(
     }
   }
 
-  out.ok = out.chat.every((c) => c.ok) && out.embed.ok;
+  out.ok = out.chat.every((c) => c.ok) && out.embed.ok && out.rerank.ok;
   return out;
 }
 
@@ -358,6 +386,15 @@ async function aiSettingsResponse(ctx: Ctx): Promise<Response> {
       search_max_distance: row?.search_max_distance ?? null,
       retrieval_max_distance: row?.retrieval_max_distance ?? null,
     },
+    rerank: {
+      enabled: row?.rerank_enabled !== false,
+      running: ai.rerank.enabled,
+      base_url: ai.rerank.baseUrl,
+      model: ai.rerank.model,
+      api_key_set: keys.rerank.set,
+      api_key_fingerprint: keys.rerank.fingerprint,
+      api_key_stale: keys.rerank.stale,
+    },
     embedding_column_dims: ctx.env.embeddingDims,
     // What each cutoff is when none is stored.
     max_distance_defaults: MAX_DISTANCE_DEFAULTS,
@@ -371,19 +408,20 @@ async function aiSettingsResponse(ctx: Ctx): Promise<Response> {
 async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
   const parsed = await parseCandidate(ctx, req);
   if ("error" in parsed) return error(parsed.status, parsed.error);
-  const { candidate, stored, chatKeys, embedKey, sent } = parsed;
+  const { candidate, stored, chatKeys, embedKey, rerankKey, sent } = parsed;
 
   const before = ctx.env.aiSettings.current();
   const changed = whatChanged(before, candidate);
   const probe = await probeEndpoints(candidate, {
     chatEndpointIds: sent.chat ? changed.chatEndpointIds : [],
     embed: sent.embed && changed.embed,
+    rerank: sent.rerank && changed.rerank,
   });
   if (!probe.ok) {
     // Nothing has been written yet.
     const failedChat = probe.chat.find((c) => !c.ok);
-    const stage = failedChat ? "chat" : "embed";
-    const detail = failedChat ?? probe.embed;
+    const stage = failedChat ? "chat" : !probe.embed.ok ? "embed" : "rerank";
+    const detail = failedChat ?? (stage === "embed" ? probe.embed : probe.rerank);
     return json(
       {
         error: "probe_failed",
@@ -402,9 +440,13 @@ async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
     else writeSecretFile(ctx.env.dataDir, chatKeyFile(id), key);
   }
   // A removed endpoint's key file is left behind, inert.
-  if (embedKey !== undefined) {
-    if (embedKey === null) removeSecretFile(ctx.env.dataDir, EMBED_KEY_FILE);
-    else writeSecretFile(ctx.env.dataDir, EMBED_KEY_FILE, embedKey);
+  for (const [file, key] of [
+    [EMBED_KEY_FILE, embedKey],
+    [RERANK_KEY_FILE, rerankKey],
+  ] as const) {
+    if (key === undefined) continue;
+    if (key === null) removeSecretFile(ctx.env.dataDir, file);
+    else writeSecretFile(ctx.env.dataDir, file, key);
   }
 
   await upsertNodeAiSettings(ctx.sql, {
@@ -426,6 +468,10 @@ async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
     embedApiKeyFp: stored.embedApiKey ? fingerprint(stored.embedApiKey) : null,
     searchMaxDistance: stored.searchMaxDistance ?? null,
     retrievalMaxDistance: stored.retrievalMaxDistance ?? null,
+    rerankEnabled: stored.rerankEnabled ?? null,
+    rerankBaseUrl: stored.rerankBaseUrl ?? null,
+    rerankModel: stored.rerankModel ?? null,
+    rerankApiKeyFp: stored.rerankApiKey ? fingerprint(stored.rerankApiKey) : null,
     updatedBy: ctx.alias,
   });
   await ctx.env.aiSettings.refresh();
@@ -452,16 +498,22 @@ async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
     targetKind: "node",
     targetId: ctx.env.publicOrigin,
     detail: {
-      saved: [sent.chat ? "chat" : null, sent.embed ? "embed" : null].filter(Boolean),
-      switched_on: { chat: stored.chatEnabled !== false, embed: stored.embedEnabled !== false },
+      saved: [sent.chat ? "chat" : null, sent.embed ? "embed" : null, sent.rerank ? "rerank" : null].filter(Boolean),
+      switched_on: { chat: stored.chatEnabled !== false, embed: stored.embedEnabled !== false, rerank: stored.rerankEnabled !== false },
       // Full base URLs, both sides: a repoint to a proxy would receive every prompt. No keys or fingerprints.
       chat_base_urls: { before: before.chat.endpoints.map((e) => e.baseUrl), after: after.chat.endpoints.map((e) => e.baseUrl) },
       embed_base_url: { before: before.embed.baseUrl, after: after.embed.baseUrl },
+      rerank_base_url: { before: before.rerank.baseUrl, after: after.rerank.baseUrl },
+      rerank_model: { before: before.rerank.model, after: after.rerank.model },
       chat_model: { before: before.chat.defaultModel, after: after.chat.defaultModel },
       embed_model: { before: before.embed.model, after: after.embed.model },
       search_max_distance: { before: before.embed.searchMaxDistance, after: after.embed.searchMaxDistance },
       retrieval_max_distance: { before: before.embed.retrievalMaxDistance, after: after.embed.retrievalMaxDistance },
-      key_changed: { chat: chatKeys.filter((k) => k.key !== undefined).map((k) => k.id), embed: embedKey !== undefined },
+      key_changed: {
+        chat: chatKeys.filter((k) => k.key !== undefined).map((k) => k.id),
+        embed: embedKey !== undefined,
+        rerank: rerankKey !== undefined,
+      },
       reembed,
     },
   });
@@ -475,6 +527,7 @@ async function resetAiSettings(ctx: Ctx): Promise<Response> {
   await clearNodeAiSettings(ctx.sql);
   for (const ep of before.chat.endpoints) removeSecretFile(ctx.env.dataDir, chatKeyFile(ep.id));
   removeSecretFile(ctx.env.dataDir, EMBED_KEY_FILE);
+  removeSecretFile(ctx.env.dataDir, RERANK_KEY_FILE);
   await ctx.env.aiSettings.refresh();
   recordAudit(nodeAuditCtx(ctx), {
     action: "node.ai_settings.reset",
@@ -497,6 +550,7 @@ export async function testAiSettings({ ctx, req }: WorkspaceCall): Promise<Respo
     detail: {
       chat_base_urls: parsed.candidate.chat.endpoints.map((e) => e.baseUrl),
       embed_base_url: parsed.candidate.embed.baseUrl,
+      rerank_base_url: parsed.candidate.rerank.baseUrl,
       ok: probe.ok,
     },
   });

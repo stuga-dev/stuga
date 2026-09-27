@@ -16,6 +16,20 @@ const resolve = (stored: AiStoredSettings | null) => resolveAi(stored, 1024, BAS
 
 const endpoint = (e: Partial<ChatEndpoint>): ChatEndpoint => ({ id: "ep1", provider: "openai", baseUrl: "https://api.openai.test/v1", models: [], ...e });
 
+describe("resolveAi: the reranker", () => {
+  const JEV = { rerankBaseUrl: "https://api.typesafe.test/v1/", rerankModel: "jev-latest", rerankApiKey: "ts-key" };
+
+  it("runs once a model and where to reach it are set, with its key", () => {
+    expect(resolve(JEV).rerank).toEqual({ enabled: true, baseUrl: "https://api.typesafe.test/v1", model: "jev-latest", apiKey: "ts-key" });
+  });
+
+  it("stays off while it is not set up, and when switched off", () => {
+    expect(resolve(null).rerank).toMatchObject({ enabled: false, model: "" });
+    expect(resolve({ rerankModel: "jev-latest" }).rerank.enabled).toBe(false);
+    expect(resolve({ ...JEV, rerankEnabled: false }).rerank).toMatchObject({ enabled: false, model: "jev-latest" });
+  });
+});
+
 describe("resolveAi", () => {
   const ollama = (models: string[]) =>
     endpoint({ provider: "ollama", baseUrl: BASE_URLS.ollama, models: models.map((id) => ({ id, name: id })) });

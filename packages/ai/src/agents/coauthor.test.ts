@@ -978,10 +978,12 @@ describe("another document's instructions", () => {
 
   /** The text of the latest tool result in the n-th request. */
   function lastToolResult(n: number): string {
-    type Block = { type?: string; content?: Array<{ text?: string }> };
+    // A tool result's content is a string or text blocks; the Messages API takes both.
+    type Block = { type?: string; content?: string | Array<{ text?: string }> };
     const messages = sentBody<{ messages: Array<{ content: Block[] | string }> }>(n).messages;
     const results = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.type === "tool_result");
-    return (results.at(-1)?.content ?? []).map((c) => c.text ?? "").join("");
+    const content = results.at(-1)?.content ?? [];
+    return typeof content === "string" ? content : content.map((c) => c.text ?? "").join("");
   }
 
   it("notes the levels the current document lacks ahead of the first read's text, and only there", async () => {

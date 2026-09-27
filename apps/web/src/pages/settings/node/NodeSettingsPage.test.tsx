@@ -67,6 +67,7 @@ const AI: NodeAiSettings = {
     search_max_distance: null,
     retrieval_max_distance: null,
   },
+  rerank: { enabled: true, running: false, base_url: "", model: "", api_key_set: false, api_key_fingerprint: null, api_key_stale: false },
   embedding_column_dims: 1024,
   max_distance_defaults: { search: 0.6, retrieval: 0.9 },
   provider_base_urls: { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com", ollama: "http://127.0.0.1:11434" },
@@ -273,7 +274,7 @@ async function confirmIn(label: string) {
 
 /** The next save answers with these settings, as the node would after writing them. */
 const savedAs = (settings: NodeAiSettings) =>
-  nodeApi.saveAi.mockResolvedValue({ settings, probe: { ok: true, chat: [], embed: { ok: true, skipped: true } }, reembed: null });
+  nodeApi.saveAi.mockResolvedValue({ settings, probe: { ok: true, chat: [], embed: { ok: true, skipped: true }, rerank: { ok: true, skipped: true } }, reembed: null });
 
 /** Let the section's requests and their re-renders finish. */
 const settle = () => act(async () => new Promise((r) => setTimeout(r, 0)));
@@ -460,6 +461,31 @@ describe("NodeSettingsPage", () => {
     await confirmIn("Remove");
     await settle();
     expect(nodeApi.saveAi).toHaveBeenCalledWith({ embed: { provider: "", base_url: "", model: "", api_key: "" } });
+  });
+
+  it("sets ranking up on TypeSafe's defaults, saying what ranks until then", async () => {
+    await renderWith(AI);
+    expect(host.textContent).toContain("Not set up: built-in ai ranks passages.");
+    savedAs(AI);
+    await clickNth("Set up", 1);
+    await typeInto(inputs("API key")[0], "ts-key");
+    await click("Save");
+    await settle();
+    expect(nodeApi.saveAi).toHaveBeenCalledWith({ rerank: { base_url: "https://api.typesafe.ai/v1", model: "jev-latest", api_key: "ts-key" } });
+  });
+
+  it("removes ranking only after asking, forgetting its key", async () => {
+    await renderWith({
+      ...AI,
+      rerank: { enabled: true, running: true, base_url: "https://api.typesafe.ai/v1", model: "jev-latest", api_key_set: true, api_key_fingerprint: "ab12cd34", api_key_stale: false },
+    });
+    expect(host.textContent).toContain("TypeSafe");
+    savedAs(AI);
+    await clickNth("Remove", 1);
+    expect(nodeApi.saveAi).not.toHaveBeenCalled();
+    await confirmIn("Remove");
+    await settle();
+    expect(nodeApi.saveAi).toHaveBeenCalledWith({ rerank: { base_url: "", model: "" } });
   });
 
   it("leaves unset cutoffs empty under their defaults, and an untouched save keeps them unset", async () => {

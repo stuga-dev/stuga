@@ -31,6 +31,7 @@ export const CFG: AiConfig = {
     searchMaxDistance: 0.6,
     retrievalMaxDistance: 0.9,
   },
+  rerank: { enabled: false, baseUrl: "https://rerank.example.test/v1", model: "jev-latest", apiKey: "rerank-key" },
 };
 
 const te = new TextEncoder();
@@ -139,17 +140,6 @@ export function sentBody<T = Record<string, unknown>>(n = 0): T {
   return JSON.parse((call[1] as RequestInit).body as string) as T;
 }
 
-/** Drain a stream generator, collecting its text and RETURN value. */
-export async function drain(gen: AsyncGenerator<string, string | undefined>): Promise<{ text: string; stopReason?: string }> {
-  let text = "";
-  let r = await gen.next();
-  while (!r.done) {
-    text += r.value;
-    r = await gen.next();
-  }
-  return { text, stopReason: r.value };
-}
-
 // ---- Other wire formats, for the tests that point the config elsewhere ------
 
 /** An OpenAI-compatible SSE body from chunk objects, terminated by `[DONE]`. */
@@ -168,24 +158,5 @@ export function openaiTextRound(text: string, usage = DEFAULT_USAGE): string[] {
     openaiDelta({ content: text }),
     openaiDelta({}, "stop"),
     { choices: [], usage: { prompt_tokens: usage.inputTokens, completion_tokens: usage.outputTokens } },
-  ]);
-}
-
-/** A newline-delimited JSON body from chunk objects. */
-export function ndjson(chunks: unknown[]): string[] {
-  return chunks.map((c) => `${JSON.stringify(c)}\n`);
-}
-
-/** A complete Ollama text reply: content chunks, then the `done` line with counts. */
-export function ollamaTextRound(text: string, usage = DEFAULT_USAGE): string[] {
-  return ndjson([
-    { message: { role: "assistant", content: text }, done: false },
-    {
-      message: { role: "assistant", content: "" },
-      done: true,
-      done_reason: "stop",
-      prompt_eval_count: usage.inputTokens,
-      eval_count: usage.outputTokens,
-    },
   ]);
 }

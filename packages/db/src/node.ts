@@ -30,6 +30,10 @@ export async function upsertNodeAiSettings(
     embedApiKeyFp: string | null;
     searchMaxDistance: number | null;
     retrievalMaxDistance: number | null;
+    rerankEnabled: boolean | null;
+    rerankBaseUrl: string | null;
+    rerankModel: string | null;
+    rerankApiKeyFp: string | null;
     updatedBy: string;
   },
 ): Promise<void> {
@@ -46,6 +50,10 @@ export async function upsertNodeAiSettings(
       embed_api_key_fp: input.embedApiKeyFp,
       search_max_distance: input.searchMaxDistance,
       retrieval_max_distance: input.retrievalMaxDistance,
+      rerank_enabled: input.rerankEnabled,
+      rerank_base_url: input.rerankBaseUrl,
+      rerank_model: input.rerankModel,
+      rerank_api_key_fp: input.rerankApiKeyFp,
       updated_by: input.updatedBy,
     })}
     ON CONFLICT (id) DO UPDATE SET
@@ -59,6 +67,10 @@ export async function upsertNodeAiSettings(
       embed_api_key_fp       = EXCLUDED.embed_api_key_fp,
       search_max_distance    = EXCLUDED.search_max_distance,
       retrieval_max_distance = EXCLUDED.retrieval_max_distance,
+      rerank_enabled         = EXCLUDED.rerank_enabled,
+      rerank_base_url        = EXCLUDED.rerank_base_url,
+      rerank_model           = EXCLUDED.rerank_model,
+      rerank_api_key_fp      = EXCLUDED.rerank_api_key_fp,
       updated_by             = EXCLUDED.updated_by,
       updated_at             = now()`;
 }
