@@ -76,8 +76,8 @@ describe("renderDatabasePropose", () => {
     );
     expect(out).toEqual({
       result:
-        "Applied — inserted 1 row(s) into tasks. This database is set to apply agent changes at once, so it landed without " +
-        "review; the user has been notified and can review or revert it from the table's Activity panel.",
+        "Applied — inserted 1 row(s) into tasks. This database is set to let AI edits apply directly, so it landed without " +
+        "waiting for review; the user has been notified and can review or revert it from the table's Activity panel.",
       row_ids: ["r1"],
       inserted: 1,
     });

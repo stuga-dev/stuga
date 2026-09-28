@@ -27,6 +27,7 @@ export function DocDock({
   docId,
   ydoc,
   provider,
+  agentAuto,
   width,
   onResize,
 }: {
@@ -34,6 +35,8 @@ export function DocDock({
   docId: string;
   ydoc: Y.Doc | null;
   provider: StugaProvider | null;
+  /** The document applies agent changes at once, the co-author's included. */
+  agentAuto: boolean;
   width: number;
   onResize: (next: number) => void;
 }) {
@@ -51,7 +54,7 @@ export function DocDock({
           actions: <AiNewChatButton />,
           render: () =>
             provider ? (
-              <AiPanel />
+              <AiPanel agentAuto={agentAuto} />
             ) : (
               <VStack gap={2} hAlign="center" paddingBlock={8}>
                 <Spinner label="Connecting…" />

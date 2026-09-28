@@ -79,7 +79,7 @@ export function renderPropose(res: ProposeBody): string {
       );
     case "auto_applied":
       return (
-        `Applied (server seq ${res.seq}) — ${res.reason}, so the edit landed without review; ` +
+        `Applied (server seq ${res.seq}) — ${res.reason}, so the edit landed without waiting for review; ` +
         `the user has been notified and can review or revert at ${res.review_url}.${mediaNote(res.media_note)}` +
         instructionsPointer(res.instructions_labels, "`docs` action:metadata")
       );

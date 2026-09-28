@@ -350,11 +350,11 @@ export class RunLedger {
   }
 
   /**
-   * The markdown to commit after a decision: `markdown` with this run's footnote
+   * The markdown to commit after a decision or an `auto` apply: `markdown` with this run's footnote
    * definitions reconciled against the markers that survived. Idempotent, and a
    * no-op for runs without citations.
    */
-  commitTarget(markdown: string, body: RunBody): string {
+  commitTarget(markdown: string, body: Pick<RunBody, "citations">): string {
     const citations = body.citations;
     if (!citations?.length) return markdown;
     // Stored citations already carry their document numbers.

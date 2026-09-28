@@ -1097,3 +1097,25 @@ describe("another document's instructions", () => {
     expect(lastToolResult(1)).toBe("plan body");
   });
 });
+
+describe("a document set to apply agent changes at once", () => {
+  const base = { prompt: "fix the typo", docText: "Helo world.", currentDocId: "doc-A", selectedText: null, model: "sonnet", history: [], collectionEnabled: false };
+  const systemAt = (n: number) => (sentBody<{ system?: Array<{ text?: string }> }>(n).system ?? []).map((b) => b.text ?? "").join("\n");
+  const lastMessageAt = (n: number) => JSON.stringify(sentBody<{ messages: unknown[] }>(n).messages.at(-1));
+  const rounds = () => [toolRound("str_replace", { old_string: "Helo", new_string: "Hello" }), textRound("Fixed.")];
+
+  it("tells the model its edits wait for review by default", async () => {
+    mockRounds(rounds());
+    await runAgentTurn(CFG, base, NOOP_RUNNER, () => {});
+    expect(systemAt(0)).toContain("they are NOT applied until the\nuser accepts");
+    expect(lastMessageAt(1)).toContain("ok: edit staged for the user's review.");
+  });
+
+  it("tells the model its edits to this document land when the turn ends", async () => {
+    mockRounds(rounds());
+    await runAgentTurn(CFG, { ...base, applyAtOnce: true }, NOOP_RUNNER, () => {});
+    expect(systemAt(0)).toContain("Edits to the current document apply when your turn ends");
+    expect(systemAt(0)).not.toContain("NOT applied until");
+    expect(lastMessageAt(1)).toContain("ok: edit staged; it applies when your turn ends.");
+  });
+});

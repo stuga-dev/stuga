@@ -3,7 +3,7 @@
 Stuga treats AI agents as users with their own write path. An agent connects over MCP, reads and
 searches whatever its credential reaches, and proposes changes. Every content write goes through the
 run ledger, where it is attributed, shown change by change, and waits for review unless the document
-is set to apply agent changes at once. This page covers connecting clients, credentials, the tools,
+is set to let AI edits apply directly. This page covers connecting clients, credentials, the tools,
 and what the ledger shows.
 
 **Settings → Your own AI** in Stuga has the setup for the node you are running, with its address already
@@ -456,10 +456,10 @@ Whether an agent's change waits is a setting on each document and database, `age
 | `review` | The default. The change waits for a person for as long as that takes. The reviewer is notified, and only their decision lands it. |
 | `auto` | The change applies at once. It is still recorded, attributed, notified and revertible. |
 
-The owner or a workspace admin changes it from the ⋯ menu beside **Share**: **Let agents apply
-changes at once**, and **Make agent changes wait for review** to switch back. While it is on, the
-item shows an **Agents apply at once** chip, and lists mark it. Every change of the setting is in the
-audit ledger.
+The owner or a workspace admin changes it from the ⋯ menu beside **Share**: **Let AI edits apply
+directly**, and **Make AI edits wait for review** to switch back. It covers every agent and the
+in-app co-author, which is why the UI says AI edits. While it is on, the item shows an **AI edits
+apply directly** chip, and lists mark it. Every change of the setting is in the audit ledger.
 
 The setting never depends on whether someone has the document open. The same agent making the same
 edit gets the same outcome at any hour, so a person can predict it and an agent can plan around it.
@@ -482,13 +482,14 @@ action `metadata` (and `GET /api/docs/:id` for an agent) answers the same questi
 
 The agent's owner reviews everything it proposes and is notified either way.
 
-**The in-app AI co-author** stages its turn on the document you are working in as one run that waits
-for your review, even on an `auto` document, and sends no notification, since you are watching it.
-With **All documents** or a collection as the panel's search scope, it can also propose edits to
-other documents you can edit. Those follow each document's own setting, like any agent's, and you are
-notified for each, so they stay findable after the chat scrolls away.
+**The in-app AI co-author** follows the same setting. Its turn on the document you are working in is
+one run, which waits for your review or, on an `auto` document, applies when the turn ends. It sends
+no notification, since you are watching it. The table assistant's changes likewise wait or apply as
+it makes them. With **All documents** or a collection as the panel's search scope, the co-author can
+also propose edits to other documents you can edit. Those follow each document's own setting, and
+you are notified for each, so they stay findable after the chat scrolls away.
 
-Before switching a document to apply at once, look at that agent's record in the review inbox.
+Before letting AI edits to a document apply directly, look at that agent's record in the review inbox.
 
 ## The review inbox
 

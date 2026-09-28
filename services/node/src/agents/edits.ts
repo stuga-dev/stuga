@@ -39,7 +39,7 @@ export type ProposeOutcome =
   // a failed download is a note on a completed edit, never a failure of it.
   // `doc` is the row the write was authorized against, so an answer can name what applies to it without a re-read.
   | { kind: "proposed"; run: AgentRunSummary; pending: number; mediaNote?: string; review: ReviewMode; reason: string; doc: DocRow }
-  | { kind: "auto_applied"; run: AgentRunSummary; seq: number; mediaNote?: string; review: ReviewMode; reason: string; doc: DocRow }
+  | { kind: "auto_applied"; run: AgentRunSummary; seq: number; applied: number; mediaNote?: string; review: ReviewMode; reason: string; doc: DocRow }
   | { kind: "noop" }
   | { kind: "error"; message: string; retryable?: boolean; status?: number };
 
@@ -110,6 +110,8 @@ interface ProposeResponse {
   run?: AgentRunSummary;
   pending?: number;
   seq?: number;
+  /** `auto_applied`: the hunks of this proposal that landed. */
+  applied?: number;
   /** The actor parked an `auto` proposal because the run holds undecided work. */
   parked_behind_pending?: boolean;
   error?: string;
@@ -119,7 +121,7 @@ interface ProposeResponse {
 
 /** Why an `auto` document parked this one anyway. */
 const HELD_REASON =
-  "this document applies agent changes at once, but your earlier changes in this run are still waiting for the user";
+  "this document lets AI edits apply directly, but your earlier changes in this run are still waiting for the user";
 
 function docActor(ctx: Ctx, docId: string) {
   return ctx.env.docs.get(docId);
@@ -264,7 +266,16 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
         targetLabel: doc.title,
         detail: { run_id: body.run.id, mode: "auto_applied", edit: input.action, seq: body.seq ?? 0, review: review.mode },
       });
-      return { kind: "auto_applied", run: body.run, seq: body.seq ?? 0, mediaNote, review: review.mode, reason: review.reason, doc };
+      return {
+        kind: "auto_applied",
+        run: body.run,
+        seq: body.seq ?? 0,
+        applied: body.applied ?? 0,
+        mediaNote,
+        review: review.mode,
+        reason: review.reason,
+        doc,
+      };
     }
     if (body?.mode === "noop") return { kind: "noop" };
     return { kind: "error", message: "propose failed (unexpected response)", status: 502 };

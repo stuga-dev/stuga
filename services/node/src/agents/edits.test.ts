@@ -589,7 +589,7 @@ describe("proposeBody", () => {
       proposeBody({ kind: "proposed", run: RUN, pending: 2, mediaNote: note, review: "review", reason: "waits", doc }, url),
     ).toEqual({ mode: "proposed", run: RUN, pending: 2, review: "review", reason: "waits", media_note: note });
     expect(
-      proposeBody({ kind: "auto_applied", run: RUN, seq: 3, mediaNote: note, review: "auto", reason: "at once", doc }, url),
+      proposeBody({ kind: "auto_applied", run: RUN, seq: 3, applied: 1, mediaNote: note, review: "auto", reason: "at once", doc }, url),
     ).toEqual({ mode: "auto_applied", run: RUN, seq: 3, review: "auto", reason: "at once", review_url: url, media_note: note });
   });
 

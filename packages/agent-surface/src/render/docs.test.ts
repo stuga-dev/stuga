@@ -152,12 +152,12 @@ describe("renderPropose", () => {
       mode: "auto_applied",
       run: run({ auto_applied: true }),
       seq: 42,
-      reason: "this document is set to apply agent changes at once",
+      reason: "this document is set to let AI edits apply directly",
       review_url: "https://stuga.test/doc/doc-1",
     });
     expect(out).toBe(
-      "Applied (server seq 42) — this document is set to apply agent changes at once, so the edit landed " +
-        "without review; the user has been notified and can review or revert at https://stuga.test/doc/doc-1.",
+      "Applied (server seq 42) — this document is set to let AI edits apply directly, so the edit landed " +
+        "without waiting for review; the user has been notified and can review or revert at https://stuga.test/doc/doc-1.",
     );
   });
 

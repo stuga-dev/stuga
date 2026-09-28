@@ -216,7 +216,7 @@ export function AgentSettings() {
             Agent edits wait until someone accepts or rejects them.
           </Text>
           <Text color="secondary">
-            To auto-apply edits for an item, choose <strong>Let agents apply changes at once</strong> from its ⋯ menu.
+            To let them apply directly on one item, choose <strong>Let AI edits apply directly</strong> from its ⋯ menu.
             Check the agent’s record in <Link onClick={() => nav("/review")}>Review AI edits</Link> first.
           </Text>
         </VStack>

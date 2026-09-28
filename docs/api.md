@@ -141,7 +141,7 @@ The reply is one of:
 
 ```json
 { "mode": "proposed",     "run": {…}, "pending": 1, "review": "review", "reason": "this document waits for review" }
-{ "mode": "auto_applied", "run": {…}, "seq": 42,    "review": "auto",   "reason": "this document is set to apply agent changes at once", "review_url": "…" }
+{ "mode": "auto_applied", "run": {…}, "seq": 42,    "review": "auto",   "reason": "this document is set to let AI edits apply directly", "review_url": "…" }
 { "mode": "noop", "message": "no changes: the document already matches the requested state." }
 ```
 
@@ -151,7 +151,7 @@ agent that wrote without reading learns they exist. `GET /api/docs/:id` returns 
 
 `proposed` is the normal outcome: the edit waits in a run for a person to accept or reject, and the
 reviewer has been notified. That is success. Do not retry it, and do not rewrite the document because
-the change looks missing. `auto_applied` means the document applies agent changes at once, so the
+the change looks missing. `auto_applied` means the document lets AI edits apply directly, so the
 edit landed, recorded and revertible, and the reviewer was notified. Which of the two happens is the
 document's `agent_mode` ([agents.md](agents.md#agent-changes-wait-for-review-or-apply-at-once)).
 

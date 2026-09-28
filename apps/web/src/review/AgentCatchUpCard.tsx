@@ -69,7 +69,7 @@ export function AgentCatchUpCard({ docId, ydoc }: { docId: string; ydoc: Y.Doc |
           <CatchUpBanner
             key={run.id}
             title={n > 0 ? `${run.agent} made ${n} edit${n === 1 ? "" : "s"} to this document` : `${run.agent} edited this document`}
-            description="Already applied by this document’s auto-apply setting."
+            description="Applied directly, as this document is set to."
             view={<Button label="View changes" variant="secondary" size="sm" onClick={() => openChanges(run.id, run.agent)} />}
             revert={
               !run.reverted && (

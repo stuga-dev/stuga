@@ -2,7 +2,7 @@
  * The document co-author loop. The model reads the current document in slices,
  * optionally searches a Collection, and emits find/replace edits validated
  * against per-document working copies. The caller proposes the returned edits
- * to each document's run ledger for review. Environment-free: reads and
+ * to each document's run ledger. Environment-free: reads and
  * searches go through the injected ToolRunner.
  */
 import type { AskStopReason } from "@stuga/protocol/api/ask";
@@ -33,6 +33,8 @@ export interface AgentInput {
   maxRounds?: number;
   /** A tool call that omits doc_id, or names this id, acts on the current document. */
   currentDocId: string;
+  /** The current document applies this turn's edits when it ends, without review. */
+  applyAtOnce?: boolean;
   /**
    * Images attached to this turn, already in the media store. The model places
    * them with an ordinary edit. With `bytes` (base64) it can see them; without,
@@ -116,8 +118,7 @@ You have:
   append to the end (omit "after") or insert right after a unique anchor. Use
   this for an EMPTY document or to add a new paragraph/section (str_replace can't
   add to an empty doc — there's nothing to match).
-Edits are shown to the user to Accept or Reject — they are NOT applied until the
-user accepts.
+{{REVIEW}}
 {{SEARCH_TOOL}}
 {{MULTIDOC_TOOLS}}{{ATTACHMENTS}}
 Proposing an edit means CALLING str_replace or insert_text — describing the
@@ -153,6 +154,10 @@ const ATTACHMENT_LINES_BLIND =
   `you have only their filenames and urls. They are already uploaded — ${ATTACHMENT_PLACEMENT} ` +
   "Base alt text on the filename and the user's instruction; do not describe image content you " +
   "have not been shown.";
+
+const REVIEW_LINE = "Edits are shown to the user to Accept or Reject — they are NOT applied until the\nuser accepts.";
+const APPLY_AT_ONCE_LINE =
+  "Edits to the current document apply when your turn ends, without review: this\ndocument is set to apply agent changes at once. The user can revert them.";
 
 const SEARCH_TOOL_LINE =
   "- search_collection(query): search the user's selected knowledge base for relevant passages. Cite facts you use with a [^n] footnote marker.";
@@ -201,7 +206,8 @@ export async function runAgentTurn(
   const canSee = images.length > 0;
   // Instructions go last: most salient, and the prompt is unchanged when there are none.
   const system =
-    SYSTEM.replace("{{SEARCH_TOOL}}", input.collectionEnabled ? SEARCH_TOOL_LINE : "")
+    SYSTEM.replace("{{REVIEW}}", input.applyAtOnce ? APPLY_AT_ONCE_LINE : REVIEW_LINE)
+      .replace("{{SEARCH_TOOL}}", input.collectionEnabled ? SEARCH_TOOL_LINE : "")
       .replace("{{MULTIDOC_TOOLS}}", input.collectionEnabled ? MULTIDOC_TOOL_LINES : "")
       .replace(
         "{{ATTACHMENTS}}",
@@ -257,6 +263,7 @@ export async function runAgentTurn(
     }
     const isCurrent = key === CURRENT;
     return {
+      atOnce: isCurrent && input.applyAtOnce === true,
       text: () => working.get(key) ?? "",
       stage: (next, edit) => {
         working.set(key, next);
@@ -309,7 +316,7 @@ export async function runAgentTurn(
           ambiguous: "old_string is not unique — it appears multiple times. Include more surrounding context to make it unique.",
         });
         target.stage(doc.slice(0, m.index) + new_string + doc.slice(m.index + m.matched.length), { old_string: m.matched, new_string });
-        return staged("ok: edit staged for the user's review.", target);
+        return staged("edit", target);
       },
     ),
     textTool(
@@ -339,7 +346,7 @@ export async function runAgentTurn(
           const sep = doc.length && !doc.endsWith("\n") ? "\n\n" : "";
           target.stage(`${doc}${sep}${text}`, { old_string: "", new_string: `${sep}${text}` });
         }
-        return staged("ok: insertion staged for the user's review.", target);
+        return staged("insertion", target);
       },
     ),
   ];
@@ -450,6 +457,8 @@ function soundsLikeIntendedEdit(text: string): boolean {
 
 /** Where an edit lands: one document's working copy. */
 interface EditTarget {
+  /** The edit applies when the turn ends instead of waiting for review. */
+  atOnce: boolean;
   text(): string;
   /** Replace the working copy and record the edit that produced it. */
   stage(next: string, edit: AiStrEdit): void;
@@ -469,7 +478,8 @@ function uniqueMatch(haystack: string, needle: string, refusal: { missing: strin
  * edits it before reading it: an append needs no read, and the note still lets
  * it revise what it staged.
  */
-function staged(result: string, target: EditTarget): string {
+function staged(what: "edit" | "insertion", target: EditTarget): string {
+  const result = target.atOnce ? `ok: ${what} staged; it applies when your turn ends.` : `ok: ${what} staged for the user's review.`;
   const note = target.instructionsNote();
   return note ? `${result}\n\n${note}` : result;
 }

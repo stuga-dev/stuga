@@ -4,7 +4,9 @@
  * internal API carrying the session's principals, and the node enforces the ACL.
  * Every call degrades rather than failing the turn.
  */
+import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { parseInstructionLevels, type InstructionLevel } from "@stuga/protocol/domain/instructions";
+import { parseReviewMode } from "@stuga/protocol/domain/runs";
 import type { AiCitation, AiCrossDocProposal, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
 import { CITATION_EXCERPT_CHARS } from "@stuga/protocol/wire/doc-socket";
 import type { ToolRunner } from "@stuga/ai";
@@ -37,6 +39,22 @@ export async function fetchInstructionStack(internal: InternalApi, docId: string
   } catch (e) {
     console.warn("instructions for agents unavailable for this turn", { docId, err: String(e) });
     return [];
+  }
+}
+
+/**
+ * Whether this turn's edits to the document wait for review or apply at once,
+ * per the document's own setting. Unknown means `review`: a failed read never
+ * becomes a silent commit.
+ */
+export async function fetchReviewMode(internal: InternalApi, docId: string, meta: SessionMeta): Promise<ReviewMode> {
+  try {
+    const res = await post(internal, "/internal/review-mode", { workspaceId: meta.workspaceId, docId, principals: meta.principals });
+    if (!res.ok) return "review";
+    return parseReviewMode(((await res.json()) as { mode?: unknown } | null)?.mode);
+  } catch (e) {
+    console.warn("review mode unavailable for this turn; its edits wait for review", { docId, err: String(e) });
+    return "review";
   }
 }
 
@@ -194,9 +212,11 @@ export async function proposeCrossDoc(
         edits: g.strEdits,
         citations: g.citations,
       });
-      const data = (await res.json().catch(() => null)) as { kind?: string; pending?: number; message?: string } | null;
-      if (res.ok && (data?.kind === "proposed" || data?.kind === "auto_applied")) {
+      const data = (await res.json().catch(() => null)) as { kind?: string; pending?: number; applied?: number; message?: string } | null;
+      if (res.ok && data?.kind === "proposed") {
         out.push({ doc_id: g.docId, title: g.title, staged: data.pending ?? g.strEdits.length, mode: "proposed" });
+      } else if (res.ok && data?.kind === "auto_applied") {
+        out.push({ doc_id: g.docId, title: g.title, staged: data.applied ?? g.strEdits.length, mode: "applied" });
       } else if (res.ok && data?.kind === "noop") {
         out.push({ doc_id: g.docId, title: g.title, staged: 0, mode: "proposed" });
       } else {

@@ -100,6 +100,29 @@ describe("/internal/agent-instructions", () => {
   });
 });
 
+describe("/internal/review-mode", () => {
+  const DOC = { doc_id: "d1", workspace_id: "ws1", doc_type: "prose", trashed: false, agent_mode: "auto", acl_writers: ["user:ada"] };
+  const call = (body: Record<string, unknown>) => post("/internal/review-mode", { workspaceId: "ws1", docId: "d1", principals: ["user:ada"], ...body });
+
+  it("answers the document's own setting to a writer", async () => {
+    mockGetDoc.mockResolvedValue(DOC);
+    expect(await call({})).toEqual({ status: 200, body: { mode: "auto" } });
+    mockGetDoc.mockResolvedValue({ ...DOC, agent_mode: "review" });
+    expect((await call({})).body).toEqual({ mode: "review" });
+  });
+
+  it("answers `review` for anything it cannot vouch for", async () => {
+    mockGetDoc.mockResolvedValue(DOC);
+    expect((await call({ principals: ["user:bob"] })).body).toEqual({ mode: "review" });
+    expect((await call({ workspaceId: "ws2" })).body).toEqual({ mode: "review" });
+    expect((await call({ workspaceId: undefined })).body).toEqual({ mode: "review" });
+    mockGetDoc.mockResolvedValue({ ...DOC, trashed: true });
+    expect((await call({})).body).toEqual({ mode: "review" });
+    mockGetDoc.mockResolvedValue(null);
+    expect((await call({})).body).toEqual({ mode: "review" });
+  });
+});
+
 describe("a co-author turn with a collection selected", () => {
   const session = { principals: ["user:ada"], workspaceId: "ws1", alias: "ada", collection_id: "col_1" };
   const COLLECTION = { collection_id: "col_1", workspace_id: "ws1", owner: "ada", name: "Launch", created_at: "", updated_at: "" };
@@ -280,7 +303,7 @@ describe("/internal/propose-doc-edit", () => {
   });
 
   it("reports a proposal that committed at once as applied", async () => {
-    mockPropose.mockResolvedValue({ kind: "auto_applied", run: { id: "run_1" } });
-    expect((await post("/internal/propose-doc-edit", body)).body).toEqual({ kind: "auto_applied", run_id: "run_1" });
+    mockPropose.mockResolvedValue({ kind: "auto_applied", run: { id: "run_1" }, applied: 2 });
+    expect((await post("/internal/propose-doc-edit", body)).body).toEqual({ kind: "auto_applied", run_id: "run_1", applied: 2 });
   });
 });

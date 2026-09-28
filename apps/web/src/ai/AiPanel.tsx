@@ -1,7 +1,8 @@
 /**
  * The document's AI co-author chat. A turn's edits land in the document's run
- * ledger server-side, so they are decided on the ghost diff or the run bar;
- * this panel only reports what each turn proposed.
+ * ledger server-side, so they are decided on the ghost diff or the run bar, or
+ * applied at once on a document set that way; this panel only reports what
+ * each turn did.
  */
 import { useRef, useState } from "react";
 import { IconButton } from "@astryxdesign/core/IconButton";
@@ -34,7 +35,7 @@ export function AiNewChatButton() {
   );
 }
 
-export function AiPanel() {
+export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
   const { turns, streaming, model, setModel, collectionId, setCollectionId, send, stop, attachments, attachImages, removeAttachment } =
     useAiCoauthor();
   const [input, setInput] = useState("");
@@ -73,8 +74,10 @@ export function AiPanel() {
         empty={
           <>
             Ask for changes to this document — “tighten the opening paragraph”, “add a summary at the top”, “turn the
-            notes at the end into a table”. Every edit appears in the document as a suggestion you accept or reject
-            there. This chat is private: only edits you accept reach version history.
+            notes at the end into a table”.{" "}
+            {agentAuto
+              ? "AI edits to this document apply directly: they land when a turn ends, recorded and revertible. This chat is private."
+              : "Every edit appears in the document as a suggestion you accept or reject there. This chat is private: only edits you accept reach version history."}
           </>
         }
       />

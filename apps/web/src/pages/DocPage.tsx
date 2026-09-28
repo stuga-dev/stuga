@@ -264,7 +264,15 @@ export function DocPage({ doc }: { doc: DocSummary }) {
             )}
           </main>
           {dock.state.visible && dock.state.active && (
-            <DocDock dock={dock} docId={docId} ydoc={provider?.doc ?? null} provider={provider} width={dockW} onResize={setDockW} />
+            <DocDock
+              dock={dock}
+              docId={docId}
+              ydoc={provider?.doc ?? null}
+              provider={provider}
+              agentAuto={agentMode === "auto"}
+              width={dockW}
+              onResize={setDockW}
+            />
           )}
         </div>
         {showShare && <ShareDialog docId={docId} onClose={() => setShowShare(false)} />}

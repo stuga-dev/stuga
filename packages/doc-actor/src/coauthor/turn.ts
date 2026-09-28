@@ -1,7 +1,8 @@
 /**
  * One in-app co-author turn. The turn ends in a proposal, never a direct edit:
- * everything the model wrote parks in this document's run ledger as a `panel`
- * run under `panel:<human>`, reviewed by the human who asked.
+ * everything the model wrote goes to this document's run ledger as a `panel`
+ * run under `panel:<human>`, where the document's own setting decides, as for
+ * any agent, whether it waits for the human who asked or applies at once.
  */
 import type { AiEditsPayload, AiRequest, AiResponseChunk, AiCitation } from "@stuga/protocol/wire/doc-socket";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
@@ -15,7 +16,7 @@ import { proposeRunEdit } from "../ledger/propose.js";
 import type { RunLedger } from "../ledger/run-store.js";
 import { safeSend, type DocSocket } from "../session.js";
 import type { RateLimiter } from "../sync/gates.js";
-import { crossDocTools, fetchInstructionStack, hostAgentImages, proposeCrossDoc } from "./cross-doc.js";
+import { crossDocTools, fetchInstructionStack, fetchReviewMode, hostAgentImages, proposeCrossDoc } from "./cross-doc.js";
 import { clampAiRequest, loadAttachmentPixels, sanitizeAttachments } from "./inputs.js";
 
 /** Display name of the co-author on its run bar (matches the tables' panel). */
@@ -120,6 +121,10 @@ export class CoAuthor {
       // panel turn proposes only at its end, so no hunk of its own appears mid-turn.
       const projection = await this.ledger.projectionFor(panelAlias);
       const ownPending = projection.pending;
+      // Per turn, so switching the setting applies to the next message. The run's
+      // own undecided hunks hold this turn's edits back even on `auto`.
+      const review = await fetchReviewMode(this.env.internal, docId, meta);
+      const applyAtOnce = review === "auto" && ownPending.length === 0;
       const citations: AiCitation[] = [];
       const runner: ToolRunner = {
         // Re-serialized per call so a collaborator's concurrent edits show.
@@ -141,6 +146,7 @@ export class CoAuthor {
           history: req.history,
           collectionEnabled: !!req.collection_id,
           currentDocId: docId,
+          applyAtOnce,
           // Per turn, so an edited instruction, or a move to another folder, applies to the next message.
           instructions: await fetchInstructionStack(this.env.internal, docId, meta),
           attachments: await loadAttachmentPixels(this.env.internal, sanitizeAttachments(req.attachments), meta.workspaceId),
@@ -178,15 +184,17 @@ export class CoAuthor {
       const mediaWarning = await hostAgentImages(this.env.internal, docId, result.strEdits, meta);
 
       let staged = 0;
+      let applied = 0;
       let runId: string | null = null;
       let proposeError: string | null = null;
       if (result.strEdits.length > 0) {
-        safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { status: "Proposing changes…", done: false } satisfies AiResponseChunk));
+        const status = applyAtOnce ? "Applying changes…" : "Proposing changes…";
+        safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { status, done: false } satisfies AiResponseChunk));
         const out = await proposeRunEdit(this.ledger, {
           op: { action: "cited_edits", edits: result.strEdits, citations: result.citations },
           source: "panel",
-          review: "review",
-          // Staged in front of the reviewer who asked; mail would be noise.
+          review,
+          // In front of the reviewer who asked; mail would be noise.
           notifyReviewer: false,
           agent: PANEL_AGENT,
           agentAlias: panelAlias,
@@ -199,7 +207,11 @@ export class CoAuthor {
         if (out.mode === "proposed") {
           staged = out.pending;
           runId = out.run.id;
-          recordPanelPropose(this.env.jobs, docId, meta, panelAlias, out.run.id, out.pending);
+          recordPanelPropose(this.env.jobs, docId, meta, panelAlias, out.run.id, { mode: "proposed", pending: out.pending });
+        } else if (out.mode === "auto_applied") {
+          applied = out.applied;
+          runId = out.run.id;
+          recordPanelPropose(this.env.jobs, docId, meta, panelAlias, out.run.id, { mode: "auto_applied", seq: out.seq });
         } else if (out.mode === "error") {
           proposeError = proposeFailure(out);
         }
@@ -207,11 +219,13 @@ export class CoAuthor {
       const crossDocs = await proposeCrossDoc(this.env.internal, result.docEdits, meta, req.collection_id ?? null, panelAlias, PANEL_AGENT);
 
       const stopped =
-        result.stopReason === "aborted"
-          ? staged > 0 || crossDocs.length > 0
+        result.stopReason !== "aborted"
+          ? null
+          : staged > 0 || crossDocs.some((d) => d.mode === "proposed")
             ? "Stopped. The changes it had already made are staged for review."
-            : "Stopped."
-          : null;
+            : applied > 0 || crossDocs.some((d) => d.mode === "applied")
+              ? "Stopped. The changes it had already made were applied."
+              : "Stopped.";
 
       safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { done: true } satisfies AiResponseChunk));
       recordUsage(tokens);
@@ -220,6 +234,7 @@ export class CoAuthor {
         ws,
         encodeJson(Opcode.AI_EDITS, {
           staged,
+          applied,
           run_id: runId,
           cross_docs: crossDocs,
           citations: result.citations,
@@ -247,7 +262,7 @@ export class CoAuthor {
     safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { done: true, error } satisfies AiResponseChunk));
     safeSend(
       ws,
-      encodeJson(Opcode.AI_EDITS, { staged: 0, run_id: null, cross_docs: [], error, notice: null } satisfies AiEditsPayload),
+      encodeJson(Opcode.AI_EDITS, { staged: 0, applied: 0, run_id: null, cross_docs: [], error, notice: null } satisfies AiEditsPayload),
     );
   }
 }

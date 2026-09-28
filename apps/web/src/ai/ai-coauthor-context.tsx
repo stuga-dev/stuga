@@ -213,6 +213,7 @@ export function AiCoauthorProvider({
                 next.citations = payload.citations;
               }
               if (payload.staged > 0) next.staged = payload.staged;
+              if (payload.applied > 0) next.applied = payload.applied;
               if (payload.cross_docs?.length) next.crossDocs = payload.cross_docs;
               if (payload.error) next.proposeError = payload.error;
               if (payload.notice) next.notice = payload.notice;

@@ -27,6 +27,7 @@ export function DatabaseDock({
   table,
   rowId,
   readOnly,
+  agentAuto,
   rowsKey,
   editsKey,
   onRowSaved,
@@ -42,6 +43,8 @@ export function DatabaseDock({
   table: TableSchema | null;
   rowId: string | null;
   readOnly: boolean;
+  /** The database applies agent changes at once, the co-author's included. */
+  agentAuto: boolean;
   /** Bumped when rows change. */
   rowsKey: number;
   /** Bumped when the grid edits a cell. */
@@ -62,7 +65,7 @@ export function DatabaseDock({
           id: "ai",
           label: "AI co-author",
           icon: <Sparkles size={15} />,
-          render: () => <TableAiPanel docId={docId} activeTable={table?.display ?? null} />,
+          render: () => <TableAiPanel docId={docId} activeTable={table?.display ?? null} agentAuto={agentAuto} />,
         },
         {
           id: "activity",

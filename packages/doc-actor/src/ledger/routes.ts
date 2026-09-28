@@ -93,7 +93,7 @@ export async function handleRunPropose(ledger: RunLedger, req: Request): Promise
         parked_behind_pending: result.parkedBehindPending,
       });
     case "auto_applied":
-      return Response.json({ mode: "auto_applied", run: result.run, seq: result.seq });
+      return Response.json({ mode: "auto_applied", run: result.run, seq: result.seq, applied: result.applied });
     case "error":
       return Response.json({ error: result.error, message: result.message, count: result.count }, { status: result.status });
   }

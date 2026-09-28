@@ -1,8 +1,9 @@
 /**
  * The structured-database co-author loop: schema and read-only SQL for reads,
  * and writes staged through the runner as the model emits them. Each staged op
- * is a run-ledger proposal, so the model gets per-op validation feedback and
- * the pre-minted ids it needs to chain follow-up ops onto pending work.
+ * is a run-ledger proposal, parked or applied at once per the database's
+ * setting, so the model gets per-op validation feedback and the pre-minted ids
+ * it needs to chain follow-up ops onto pending work.
  */
 import type { AskStopReason } from "@stuga/protocol/api/ask";
 import { DATABASE_COLUMN_TYPES } from "@stuga/protocol/databases/types";
@@ -29,6 +30,8 @@ export interface TableAgentInput {
   history: AiHistoryItem[];
   /** Expose search_collection (only when the runner can serve it). */
   collectionEnabled?: boolean;
+  /** The database applies agent changes at once, without review. */
+  applyAtOnce?: boolean;
   maxRounds?: number;
   /** The instructions for agents that apply to the database, outermost first; appended to the system prompt. */
   instructions?: InstructionLevel[];
@@ -42,8 +45,11 @@ export interface TableToolRunner {
   getSchema(): Promise<string>;
   /** Read-only SELECT; the result JSON, or throws with the SQL error. */
   query(input: { sql: string; params?: Array<string | number | null> }): Promise<string>;
-  /** Stage one op (the run-propose body shape): the text carries minted ids; a refusal comes back as `error`. */
-  stageOp(op: Record<string, unknown>): Promise<{ staged: true; text: string } | { staged: false; error: string }>;
+  /**
+   * Stage one op (the run-propose body shape): the text carries minted ids, `applied` says it
+   * landed at once; a refusal comes back as `error`.
+   */
+  stageOp(op: Record<string, unknown>): Promise<{ staged: true; applied: boolean; text: string } | { staged: false; error: string }>;
   /** Failures come back as `text` with no citations. */
   searchCollection?(input: { query: string }): Promise<{ text: string; citations: AiCitation[] }>;
 }
@@ -51,8 +57,10 @@ export interface TableToolRunner {
 export interface TableAgentResult {
   /** Prose across the whole turn, already streamed. */
   prose: string;
-  /** Ops staged this turn. */
+  /** Ops staged this turn for review. */
   staged: number;
+  /** Ops applied at once this turn. */
+  applied: number;
   /** Sources the prose cited. Citations never go into cells, which are typed user data. */
   citations: AiCitation[];
   usage: TokenUsage;
@@ -76,7 +84,7 @@ Reading:
 - get_schema(): the tables, their typed columns (with column_id and physical SQL name), and row counts. Entries marked "pending": true are your OWN not-yet-accepted proposals.
 - query(sql, params?): ONE read-only SELECT (SQLite dialect; JOINs between tables work). Select _id whenever you plan to update or delete rows. Results reflect live data plus nothing of your pending proposals — the schema read is what includes those.
 {{SEARCH_TOOL}}NEVER put a [^n] citation marker inside a cell value. Cell values are typed data the user designed the columns for — a marker would corrupt a text cell and fail to coerce into a number or date one. Cite in your prose; the sources are shown to the user beside it.
-Proposing changes (each call stages ONE change for the user to Accept or Reject in their grid — changes are NOT applied until accepted):
+{{WRITES}}
 - insert_rows(table, rows): rows are objects of column name → value. Returns the new rows' _ids — use them to reference these rows in later calls even before they are accepted.
 - update_rows(table, updates): updates are [{_id, values}].
 - delete_rows(table, row_ids).
@@ -85,6 +93,11 @@ A files cell holds links to files stored with the database, one per line. You ca
 - create_table(name): a new empty table (add columns next).
 Making a change means CALLING a tool — describing it in prose stages nothing and the user sees nothing to accept.
 Guidance: read before you write (query for _ids, get_schema for column names and types); batch related rows into ONE insert_rows/update_rows call rather than many; make the smallest set of changes that satisfies the request; briefly say what you proposed and why. A tool error means that one change was refused — fix the input and retry that change, or explain why it cannot be done.`;
+
+const REVIEW_LINE =
+  "Proposing changes (each call stages ONE change for the user to Accept or Reject in their grid — changes are NOT applied until accepted):";
+const APPLY_AT_ONCE_LINE =
+  "Making changes (this database is set to apply agent changes at once: each call applies ONE change without review, and the user can revert it):";
 
 const TABLE = Type.String({ description: "Table reference: table_id, physical name, or display name." });
 /** One `type` list rather than `anyOf`, which some OpenAI-compatible servers mishandle. */
@@ -109,7 +122,10 @@ export async function runTableAgentTurn(
   const modelId = resolveModel(cfg, input.model);
   const collectionEnabled = input.collectionEnabled === true && typeof runner.searchCollection === "function";
   const system =
-    SYSTEM.replace("{{SEARCH_TOOL}}", collectionEnabled ? `${SEARCH_TOOL_LINE}\n` : "") +
+    SYSTEM.replace("{{SEARCH_TOOL}}", collectionEnabled ? `${SEARCH_TOOL_LINE}\n` : "").replace(
+      "{{WRITES}}",
+      input.applyAtOnce ? APPLY_AT_ONCE_LINE : REVIEW_LINE,
+    ) +
     instructionsBlock(input.instructions);
 
   const schemaSeed =
@@ -121,6 +137,7 @@ export async function runTableAgentTurn(
     (input.activeTable ? `\nThe user is currently looking at the table "${input.activeTable}".` : "");
 
   let staged = 0;
+  let applied = 0;
   const citations: AiCitation[] = [];
 
   /** A tool that stages one change, built from its arguments as a run-propose op. */
@@ -129,7 +146,8 @@ export async function runTableAgentTurn(
       onStatus?.({ kind: "proposing" });
       const out = await runner.stageOp(op(args));
       if (!out.staged) throw new Error(out.error);
-      staged++;
+      if (out.applied) applied++;
+      else staged++;
       return out.text;
     });
 
@@ -220,6 +238,7 @@ export async function runTableAgentTurn(
   return {
     prose: result.prose,
     staged,
+    applied,
     // Cell values are not scanned: markers are forbidden there.
     citations: filterCited(result.prose, citations),
     usage: result.usage,

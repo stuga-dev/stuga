@@ -41,13 +41,14 @@ export function useTableAi(docId: string, activeTable: string | null) {
         {
           onToken: (text) => patchLast((t) => ({ ...t, text: t.text + text, status: undefined })),
           onStatus: (label) => patchLast((t) => (t.text ? t : { ...t, status: label })),
-          onDone: (staged, _runId, citations, notice) => {
+          onDone: ({ staged, applied, citations, notice }) => {
             finish();
             const sources = citedSources(citations);
             patchLast((t) => ({
               ...t,
               status: undefined,
               ...(staged > 0 ? { staged } : {}),
+              ...(applied > 0 ? { applied } : {}),
               ...(sources.length > 0 ? { sources, citations } : {}),
               ...(notice ? { notice } : {}),
             }));

@@ -21,11 +21,13 @@ export interface ChatTurn {
   citations?: AiCitation[];
   /** Assistant turns: how many changes the turn proposed on the item on screen. */
   staged?: number;
+  /** Assistant turns: how many changes the turn applied at once on the item on screen. */
+  applied?: number;
   /** Assistant turns: proposals raised in other documents. */
   crossDocs?: AiCrossDocProposal[];
   /** Assistant turns: the reply finished but its edits could not be proposed. */
   proposeError?: string;
-  /** Assistant turns: the turn ended early; anything it proposed is still reviewable. */
+  /** Assistant turns: the turn ended early; anything it made is kept. */
   notice?: string;
 }
 
@@ -122,6 +124,14 @@ export function ChatTranscript({
               </Text>
             </div>
           )}
+          {t.applied !== undefined && t.applied > 0 && (
+            <div className="ai-staged">
+              <Zap size={13} aria-hidden />
+              <Text type="supporting" color="secondary">
+                Applied {t.applied} change{t.applied === 1 ? "" : "s"}.
+              </Text>
+            </div>
+          )}
           {t.crossDocs?.map((d) =>
             d.mode === "error" ? (
               <div key={d.doc_id} className="ai-staged ai-staged--error">
@@ -133,12 +143,14 @@ export function ChatTranscript({
               <button
                 key={d.doc_id}
                 className="ai-staged ai-staged--crossdoc"
-                title={`Open “${d.title || "Untitled"}” to review`}
+                title={d.mode === "applied" ? `Open “${d.title || "Untitled"}”` : `Open “${d.title || "Untitled"}” to review`}
                 onClick={() => nav(`/doc/${d.doc_id}`)}
               >
                 <Files size={13} aria-hidden />
                 <Text type="supporting" color="secondary">
-                  Proposed {d.staged} change{d.staged === 1 ? "" : "s"} in “{d.title || "Untitled"}” — open it to review.
+                  {d.mode === "applied"
+                    ? `Applied ${d.staged} change${d.staged === 1 ? "" : "s"} in “${d.title || "Untitled"}”.`
+                    : `Proposed ${d.staged} change${d.staged === 1 ? "" : "s"} in “${d.title || "Untitled"}” — open it to review.`}
                 </Text>
               </button>
             ),

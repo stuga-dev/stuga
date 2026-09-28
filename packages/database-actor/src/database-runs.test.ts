@@ -83,7 +83,7 @@ describe("propose: park or apply", () => {
     expect((await listRows(actor, starter.table_id)).total).toBe(1);
   });
 
-  it("source panel parks even when the resolved policy says `auto`", async () => {
+  it("source panel applies at once when the resolved policy says `auto`, like any agent", async () => {
     const h = makeState();
     const { actor } = makeActor(h);
     const starter = await initStarter(actor);
@@ -92,8 +92,8 @@ describe("propose: park or apply", () => {
       { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "panel" }] },
       { source: "panel", agent: "AI co-author", review: "auto" },
     );
-    expect(out.mode).toBe("proposed");
-    expect((await listRows(actor, starter.table_id)).total).toBe(0);
+    expect(out.mode).toBe("applied");
+    expect((await listRows(actor, starter.table_id)).total).toBe(1);
   });
 
   it("reject applies nothing and closes the run rejected", async () => {
@@ -390,23 +390,21 @@ describe("run revert and ack", () => {
 });
 
 describe("run bounds and ordering", () => {
-  it("panel proposals never self-apply, even carrying an `auto` verdict", async () => {
+  it("a panel run holding undecided ops parks the next one even on `auto`", async () => {
     const h = makeState();
     const { actor } = makeActor(h);
     const starter = await initStarter(actor);
-    const landed = await proposeAuto(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "connector" }] });
-    expect(landed.mode).toBe("applied");
+    const PANEL = { source: "panel", agent: "AI co-author", actor: { alias: `panel:${HUMAN.alias}`, is_agent: true, on_behalf_of: HUMAN.alias } };
+    // A turn from before the switch, still waiting…
+    await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "waiting" }] }, { ...PANEL, review: "review" });
 
-    const out = await propose(
-      actor,
-      { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "panel-parked" }] },
-      { source: "panel", agent: "AI co-author", review: "auto", actor: { alias: `panel:${HUMAN.alias}`, is_agent: true, on_behalf_of: HUMAN.alias } },
-    );
+    // …so the next op may depend on it and cannot land ahead of it.
+    const out = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "panel-parked" }] }, { ...PANEL, review: "auto" });
     expect(out.mode).toBe("proposed");
-    expect((await listRows(actor, starter.table_id)).total).toBe(1);
+    expect((await listRows(actor, starter.table_id)).total).toBe(0);
     const run = (await doJson<{ run: DatabaseRunSummary }>(actor, `/runs/detail?runId=${out.run.id}`, undefined)).run;
     expect(run.status).toBe("open");
-    expect(run.ops[0]!.status).toBe("pending");
+    expect(run.ops.map((o) => o.status)).toEqual(["pending", "pending"]);
   });
 
   it("an `auto` run at the total-op cap rolls over instead of growing forever", async () => {

@@ -351,7 +351,7 @@ export class StugaProvider {
       this.aiTurn = null;
       const message = "The connection dropped during this turn. Anything it staged will appear in the review bar.";
       turn.onDone(message);
-      turn.onEdits({ staged: 0, run_id: null, cross_docs: [], error: message, notice: null });
+      turn.onEdits({ staged: 0, applied: 0, run_id: null, cross_docs: [], error: message, notice: null });
     }
     if (code === CloseCode.ACCESS_REVOKED) {
       this.shouldReconnect = false;

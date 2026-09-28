@@ -14,6 +14,7 @@ import {
   docToMarkdown,
   getStugaSchema,
   markdownToDoc,
+  type CitationInput,
 } from "@stuga/crdt-ops";
 import { appendMarkdown } from "../append.js";
 import { PENDING_RUN_MAX, pendingOf, runBlobKey, type RunBody, type RunLedger } from "./run-store.js";
@@ -36,7 +37,7 @@ export interface ProposeRunInput {
   review: ReviewMode;
   /**
    * Whether to tell the reviewer. Only the co-author's turn on this document opts
-   * out — its reviewer is watching it stage; its cross-document proposals arrive
+   * out — its reviewer is watching it land; its cross-document proposals arrive
    * over the route and notify like any other.
    */
   notifyReviewer?: boolean;
@@ -56,7 +57,7 @@ export interface ProposeRunInput {
 export type ProposeRunResult =
   | { mode: "noop" }
   | { mode: "proposed"; run: AgentRunSummary; pending: number; parkedBehindPending?: boolean }
-  | { mode: "auto_applied"; run: AgentRunSummary; seq: number }
+  | { mode: "auto_applied"; run: AgentRunSummary; seq: number; applied: number }
   | { mode: "error"; status: number; error: string; message?: string; count?: number };
 
 function appendHunks(body: RunBody, hunks: Array<{ old_string: string; new_string: string }>, review: ReviewMode): AgentRunHunk[] {
@@ -170,7 +171,10 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
   // `computed` was diffed against `working`, which includes the pending hunks, so
   // it cannot commit ahead of them.
   const parkedBehindPending = existingPending.length > 0;
-  const commit = shouldCommit(input.review, input.source, parkedBehindPending);
+  const commit = shouldCommit(input.review, parkedBehindPending);
+  // Kept under their document numbers, so a later turn's [^1] cannot overwrite an earlier one.
+  const citations =
+    op.action === "cited_edits" && op.citations.length > 0 ? mergeCitations(open?.body.citations, op.citations, renumber) : undefined;
   // Verify the hunks land before minting any ledger state, so a stale agent leaves nothing behind.
   let plan: { markdown: string; applied: Set<number> } | null = null;
   if (commit) {
@@ -184,7 +188,8 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
 
   const agentName = input.agent || agentAlias;
   // Before any further storage await, so the fragment cannot shift after `current` was read.
-  if (commit) await store.commitMarkdown(plan!.markdown, current, { agent: agentName }, "run-large");
+  // A cited edit staged only the body, so its definitions are written here, as on accept.
+  if (commit) await store.commitMarkdown(ledger.commitTarget(plan!.markdown, { citations }), current, { agent: agentName }, "run-large");
 
   const now = Date.now();
   let stored = open?.stored;
@@ -220,15 +225,7 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
   if (input.client) stored.client = input.client;
   if (input.model) stored.model = input.model;
   stored.review_mode = stricterReviewMode(stored.review_mode, input.review);
-  // Citations are kept under their document numbers, so a later turn's [^1] cannot overwrite an earlier one.
-  if (op.action === "cited_edits" && op.citations.length > 0) {
-    const merged = new Map((runBody.citations ?? []).map((c) => [c.n, c]));
-    for (const c of op.citations) {
-      const to = renumber.get(c.n);
-      if (to !== undefined) merged.set(to, { ...c, n: to });
-    }
-    runBody.citations = [...merged.values()].sort((a, b) => a.n - b.n);
-  }
+  if (citations) runBody.citations = citations;
 
   if (!commit) {
     await ledger.save(stored, runBody);
@@ -262,12 +259,29 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
   stored.auto_applied = true;
   // The run stays open, so a whole `auto` session groups into one catch-up card.
   await ledger.save(stored, runBody);
-  await ledger.notify(stored, "AGENT_EDITS_APPLIED", `${stored.agent} edited this document — applied at once by policy`);
+  if (input.notifyReviewer !== false) {
+    await ledger.notify(stored, "AGENT_EDITS_APPLIED", `${stored.agent} edited this document — applied at once by policy`);
+  }
+  const applied = plan!.applied.size;
   ledger.emitEvent("run.applied", stored, agentActorOf(agentAlias), "agent", {
     review: input.review,
     decided_by: "policy:auto",
-    applied: added.filter((h) => h.status === "auto_applied").length,
-    conflicts: added.filter((h) => h.status === "conflict").length,
+    applied,
+    conflicts: added.length - applied,
   });
-  return { mode: "auto_applied", run: ledger.summaryOf(stored, runBody), seq: store.seq };
+  return { mode: "auto_applied", run: ledger.summaryOf(stored, runBody), seq: store.seq, applied };
+}
+
+/** A run's citations with a proposal's added under the numbers its markers landed as. */
+function mergeCitations(
+  existing: CitationInput[] | undefined,
+  proposed: AiCitation[],
+  renumber: Map<number, number>,
+): CitationInput[] {
+  const merged = new Map((existing ?? []).map((c) => [c.n, c]));
+  for (const c of proposed) {
+    const to = renumber.get(c.n);
+    if (to !== undefined) merged.set(to, { ...c, n: to });
+  }
+  return [...merged.values()].sort((a, b) => a.n - b.n);
 }

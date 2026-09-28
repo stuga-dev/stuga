@@ -10,6 +10,7 @@ import type { AiCitation, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
 import { retrieveAndRerank } from "../retrieval/retrieve.js";
 import { COLLECTION_UNAVAILABLE, OPEN_DOCUMENT_ONLY, OUTSIDE_COLLECTION, sessionCollectionScope } from "../retrieval/scope.js";
 import { proposeDocEdit } from "../agents/edits.js";
+import { agentReviewMode } from "../authz/review-mode.js";
 import { json } from "../http/respond.js";
 import { matchRoute, type PathMatch, type Route } from "../http/router.js";
 import { hostExternalImages, ingestWarning, type HostedImage } from "../media/media-ingest.js";
@@ -32,6 +33,7 @@ const INTERNAL_ROUTES: readonly InternalRoute[] = [
   { method: "POST", path: "/internal/propose-doc-edit", handler: handleInternalProposeDocEdit },
   { method: "POST", path: "/internal/media-ingest", handler: handleInternalMediaIngest },
   { method: "POST", path: "/internal/agent-instructions", handler: handleInternalAgentInstructions },
+  { method: "POST", path: "/internal/review-mode", handler: handleInternalReviewMode },
 ];
 
 /** Answer one in-process request from an actor. */
@@ -141,6 +143,19 @@ async function handleInternalAgentInstructions(req: Request, env: NodeEnv): Prom
       ? await resolveDocInstructions(env.sql, doc, principals)
       : await resolveFolderInstructions(env.sql, workspaceId, null, principals);
   return json({ levels });
+}
+
+/**
+ * Whether the co-author's turn on a document waits for review or applies at once: asked per turn,
+ * so switching the setting applies to the next message. Anything but a document the principals
+ * can write in this workspace is `review`, never a silent commit.
+ */
+async function handleInternalReviewMode(req: Request, env: NodeEnv): Promise<Response> {
+  const body = (await req.json().catch(() => ({}))) as { workspaceId?: unknown; docId?: unknown; principals?: unknown };
+  const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";
+  const doc = workspaceId && typeof body.docId === "string" && body.docId ? await getDoc(env.sql, body.docId) : null;
+  const writable = !!doc && !doc.trashed && doc.workspace_id === workspaceId && hasAccess(doc.acl_writers, principalsOf(body));
+  return json({ mode: writable ? agentReviewMode(doc).mode : "review" });
 }
 
 /** The documents the principals may edit, inside the turn's scope, for the co-author's list_documents tool. */
@@ -302,5 +317,5 @@ async function handleInternalProposeDocEdit(req: Request, env: NodeEnv): Promise
   if (out.kind === "error") return json({ kind: "error", message: out.message }, { status: out.status ?? 400 });
   if (out.kind === "noop") return json({ kind: "noop" });
   if (out.kind === "proposed") return json({ kind: "proposed", pending: out.pending, run_id: out.run.id });
-  return json({ kind: "auto_applied", run_id: out.run.id });
+  return json({ kind: "auto_applied", run_id: out.run.id, applied: out.applied });
 }

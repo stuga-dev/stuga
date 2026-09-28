@@ -35,7 +35,7 @@ export function renderDatabasePropose(res: DatabaseProposeBody, applied: string,
   const instructions = instructionsPointer(instructions_labels, "`databases` action:schema");
   if (mode === "proposed") {
     const why = held
-      ? " This database applies agent changes at once, but your earlier changes in this run are still waiting for the user."
+      ? " This database lets AI edits apply directly, but your earlier changes in this run are still waiting for the user."
       : "";
     return JSON.stringify({
       result:
@@ -48,7 +48,7 @@ export function renderDatabasePropose(res: DatabaseProposeBody, applied: string,
   if (mode === "applied") {
     return JSON.stringify({
       result:
-        `Applied — ${applied} This database is set to apply agent changes at once, so it landed without review; the ` +
+        `Applied — ${applied} This database is set to let AI edits apply directly, so it landed without waiting for review; the ` +
         `user has been notified and can review or revert it from the table's Activity panel.${note}${instructions}`,
       ...minted,
       ...rest,

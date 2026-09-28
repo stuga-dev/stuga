@@ -39,10 +39,9 @@ describe("run ledger rules", () => {
     expect(parseReviewMode(undefined)).toBe("review");
   });
 
-  it("commits only auto proposals that are not the panel's and not behind pending work", () => {
-    expect(shouldCommit("auto", "connector", false)).toBe(true);
-    expect(shouldCommit("review", "connector", false)).toBe(false);
-    expect(shouldCommit("auto", "panel", false)).toBe(false);
-    expect(shouldCommit("auto", "stdio", true)).toBe(false);
+  it("commits only auto proposals that are not behind pending work", () => {
+    expect(shouldCommit("auto", false)).toBe(true);
+    expect(shouldCommit("review", false)).toBe(false);
+    expect(shouldCommit("auto", true)).toBe(false);
   });
 });

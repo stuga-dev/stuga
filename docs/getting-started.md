@@ -122,8 +122,8 @@ on, and how each workspace is labelled when you have more than one node
 ([One connection](agents.md#one-connection-and-which-node-a-call-lands-on)).
 
 An agent never changes a document silently. Its edits wait for review, you are notified, and
-**Review AI edits** in the sidebar lists everything waiting. To let agents change one document or
-database at once, open it and choose **Let agents apply changes at once** from the **⋯** menu
+**Review AI edits** in the sidebar lists everything waiting. To let AI edits to one document or
+database apply directly, open it and choose **Let AI edits apply directly** from the **⋯** menu
 beside **Share**. Those changes are still recorded, attributed and revertible.
 
 **Check:** ask the agent to propose an edit, and accept it in the document.

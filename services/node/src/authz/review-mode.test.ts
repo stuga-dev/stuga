@@ -14,7 +14,7 @@ describe("resolveReviewMode", () => {
   it("lands it on an `auto` document", () => {
     const out = resolveReviewMode(ctx(true), doc("auto"));
     expect(out.mode).toBe("auto");
-    expect(out.reason).toContain("apply agent changes at once");
+    expect(out.reason).toContain("let AI edits apply directly");
   });
 
   it("a human session parks whatever the document says", () => {

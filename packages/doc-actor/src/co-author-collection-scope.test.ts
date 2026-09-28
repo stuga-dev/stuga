@@ -84,7 +84,8 @@ describe("a co-author turn scoped to a collection", () => {
     const h = scopedHarness();
     const ws = await ask(h, "col_1");
 
-    const crossDoc = h.calls.filter((c) => c.path !== "/internal/agent-instructions");
+    // The turn's own reads of this document's instructions and setting are not cross-document calls.
+    const crossDoc = h.calls.filter((c) => c.path !== "/internal/agent-instructions" && c.path !== "/internal/review-mode");
     expect(crossDoc.map((c) => c.path)).toEqual([
       "/internal/editable-docs",
       "/internal/doc-markdown",

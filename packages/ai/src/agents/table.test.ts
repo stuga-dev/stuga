@@ -5,12 +5,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
 import { runTableAgentTurn, type TableToolRunner } from "./table.js";
-import { CFG, mockRounds, textRound, toolRound, streamOf } from "../test-helpers.js";
+import { CFG, mockRounds, sentBody, textRound, toolRound, streamOf } from "../test-helpers.js";
 
 const NOOP_RUNNER: TableToolRunner = {
   getSchema: async () => "{}",
   query: async () => "[]",
-  stageOp: async () => ({ staged: true as const, text: "ok: staged" }),
+  stageOp: async () => ({ staged: true as const, applied: false, text: "ok: staged" }),
 };
 
 const INPUT = {
@@ -49,10 +49,29 @@ describe("runTableAgentTurn", () => {
 
   it("stages a mutation through the runner as the model emits it", async () => {
     mockRounds([toolRound("insert_rows", { table: "Revenue", rows: [{ Name: "Q3" }] }), textRound("Proposed one row.")]);
-    const stageOp = vi.fn(async () => ({ staged: true as const, text: "ok: staged" }));
+    const stageOp = vi.fn(async () => ({ staged: true as const, applied: false, text: "ok: staged" }));
     const out = await runTableAgentTurn(CFG, INPUT, { ...NOOP_RUNNER, stageOp }, () => {});
     expect(stageOp).toHaveBeenCalledWith({ kind: "rows.insert", table: "Revenue", rows: [{ Name: "Q3" }] });
     expect(out.staged).toBe(1);
+    expect(out.applied).toBe(0);
+  });
+
+  it("counts a change the database applied at once apart from one staged for review", async () => {
+    mockRounds([toolRound("insert_rows", { table: "Revenue", rows: [{ Name: "Q3" }] }), textRound("Added one row.")]);
+    const stageOp = vi.fn(async () => ({ staged: true as const, applied: true, text: "ok: applied" }));
+    const out = await runTableAgentTurn(CFG, { ...INPUT, applyAtOnce: true }, { ...NOOP_RUNNER, stageOp }, () => {});
+    expect(out).toMatchObject({ staged: 0, applied: 1 });
+  });
+
+  it("tells the model whether its changes wait for review or apply at once", async () => {
+    const system = () => (sentBody<{ system?: Array<{ text?: string }> }>(0).system ?? []).map((b) => b.text ?? "").join("\n");
+    mockRounds([textRound("ok")]);
+    await runTableAgentTurn(CFG, INPUT, NOOP_RUNNER, () => {});
+    expect(system()).toContain("changes are NOT applied until accepted");
+    mockRounds([textRound("ok")]);
+    await runTableAgentTurn(CFG, { ...INPUT, applyAtOnce: true }, NOOP_RUNNER, () => {});
+    expect(system()).toContain("each call applies ONE change without review");
+    expect(system()).not.toContain("NOT applied until accepted");
   });
 
   it("passes the model choice through to the resolved model id", async () => {

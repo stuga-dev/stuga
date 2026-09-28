@@ -1,7 +1,8 @@
 /**
  * A database's AI co-author chat. The changes a turn stages go to the run
- * ledger and are decided in the banner above the grid, not here. Cited
- * documents show beside the reply and are never written into the data.
+ * ledger and are decided in the banner above the grid, not here, or applied at
+ * once on a database set that way. Cited documents show beside the reply and
+ * are never written into the data.
  */
 import { useState } from "react";
 import { Database } from "lucide-react";
@@ -13,10 +14,13 @@ import { useTableAi } from "./use-table-ai";
 export function TableAiPanel({
   docId,
   activeTable,
+  agentAuto,
 }: {
   docId: string;
   /** Display name of the table on screen (steers the model's defaults). */
   activeTable: string | null;
+  /** The database applies agent changes at once. */
+  agentAuto: boolean;
 }) {
   const ai = useTableAi(docId, activeTable);
   const [draft, setDraft] = useState("");
@@ -37,7 +41,10 @@ export function TableAiPanel({
         empty={
           <>
             Ask for changes to this database — “add a Status column and mark the done rows”, “insert the Q3
-            milestones”, “dedupe rows by Name”. Every change is proposed for your review before it lands.
+            milestones”, “dedupe rows by Name”.{" "}
+            {agentAuto
+              ? "AI edits to this database apply directly: each lands as it is made, recorded and revertible."
+              : "Every change is proposed for your review before it lands."}
           </>
         }
       />

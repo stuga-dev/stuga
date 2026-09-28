@@ -203,12 +203,12 @@ export const DatabaseRuns = {
 interface TableAiCallbacks {
   onToken: (text: string) => void;
   onStatus: (label: string) => void;
-  /** `notice` marks a turn that ended incomplete yet staged work; show it even when `staged` is 0. */
-  onDone: (staged: number, runId: string | null, citations: AiCitation[], notice: string | null) => void;
+  /** `notice` marks a turn that ended incomplete yet made changes; show it even when both counts are 0. */
+  onDone: (done: { staged: number; applied: number; runId: string | null; citations: AiCitation[]; notice: string | null }) => void;
   onError: (message: string) => void;
 }
 
-/** A table co-author turn over SSE. Staged changes arrive as run frames on the database socket; `onDone` only counts them. */
+/** A table co-author turn over SSE. Its changes arrive as run frames on the database socket; `onDone` only counts them. */
 export const TableAi = {
   stream: (
     databaseId: string,
@@ -237,12 +237,13 @@ export const TableAi = {
           if (ev === "token") cb.onToken(data.text as string);
           else if (ev === "status") cb.onStatus(data.label as string);
           else if (ev === "done")
-            cb.onDone(
-              data.staged as number,
-              (data.run_id as string | null) ?? null,
-              data.citations as AiCitation[],
-              (data.notice as string | undefined) ?? null,
-            );
+            cb.onDone({
+              staged: data.staged as number,
+              applied: (data.applied as number | undefined) ?? 0,
+              runId: (data.run_id as string | null) ?? null,
+              citations: data.citations as AiCitation[],
+              notice: (data.notice as string | undefined) ?? null,
+            });
           else if (ev === "error") cb.onError(data.message as string);
         },
         onError: cb.onError,

@@ -11,6 +11,18 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+### Changed
+
+- The setting is now called **Let AI edits apply directly** (was **Let agents apply changes at
+  once**), and its chip **AI edits apply directly**: it covers the co-author as well as connected
+  agents. What agents are told about it uses the same name, so they can point a person to it.
+
+### Fixed
+
+- On a document or database set to let AI edits apply directly, the co-author's and the table
+  assistant's edits apply directly too, where they still waited for review change by change. The
+  co-author's edits to another document set that way apply directly as well.
+
 ## [0.1.4] - 2026-09-28
 
 - Attach any file to a document, or to a database row in a Files column.

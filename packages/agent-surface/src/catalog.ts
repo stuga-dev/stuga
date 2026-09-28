@@ -214,7 +214,7 @@ const workspaceIds = z
 const PROPOSED =
   "Changes are PROPOSED, never applied blindly: by default the tool returns `Proposed` and your change waits for " +
   "the user to accept it — that is SUCCESS, never retry it. They are notified. The owner may instead have set the " +
-  "item to apply agent changes at once, and then the result says `Applied`.";
+  "item to let AI edits apply directly, and then the result says `Applied`.";
 
 const workspacesTool: ToolDefinition = {
   title: "Workspaces",

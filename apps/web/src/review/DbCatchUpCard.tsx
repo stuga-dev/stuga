@@ -35,7 +35,7 @@ export function DbCatchUpCard({ onViewActivity }: { onViewActivity: () => void }
           <CatchUpBanner
             key={run.id}
             title={n > 0 ? `${run.agent} made ${n} change${n === 1 ? "" : "s"} to this database` : `${run.agent} changed this database`}
-            description="Already applied by this database’s auto-apply setting."
+            description="Applied directly, as this database is set to."
             view={<Button label="View activity" variant="secondary" size="sm" onClick={onViewActivity} />}
             revert={
               !run.reverted && (

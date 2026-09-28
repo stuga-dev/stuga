@@ -56,13 +56,13 @@ export const DOC_STATE_FLAGS: readonly DocStateFlag[] = [
   },
   {
     isOn: (s) => s.agentAuto,
-    label: "Agents apply at once",
+    label: "AI edits apply directly",
     icon: Sparkles,
-    mark: "Agents apply changes here at once — no review before they land",
+    mark: "AI edits apply here directly — no review before they land",
     badge: "warning",
     chip: "yellow",
     tooltip: (_noun) =>
-      `Agent changes apply without review, but remain recorded and revertible. Change it from the ⋯ menu.`,
+      `AI edits land without waiting for review, and stay recorded and revertible. Change it from the ⋯ menu.`,
   },
 ];
 
@@ -134,16 +134,16 @@ export function useDocStateMenu(): (doc: DocSummary, onChanged: (next: DocSummar
             ),
         },
         {
-          label: agentAuto ? "Make agent changes wait for review" : "Let agents apply changes at once",
+          label: agentAuto ? "Make AI edits wait for review" : "Let AI edits apply directly",
           icon: agentAuto ? <ShieldCheck size={15} /> : <Sparkles size={15} />,
           onClick: () =>
             void apply(
               { agent_mode: agentAuto ? "review" : "auto" },
-              agentAuto ? `make agent changes to this ${noun} wait for review` : `let agents change this ${noun} without review`,
+              agentAuto ? `make AI edits to this ${noun} wait for review` : `let AI edits to this ${noun} apply directly`,
               // Only the permissive direction is confirmed: it is the one that gives something away.
               agentAuto
                 ? undefined
-                : `Agent changes now apply at once, but remain recorded and revertible.`,
+                : `AI edits now apply directly, and stay recorded and revertible.`,
             ),
         },
       ];

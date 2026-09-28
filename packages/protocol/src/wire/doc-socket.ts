@@ -52,12 +52,15 @@ export interface AiResponseChunk {
 /**
  * Terminal frame of one co-author turn, sent exactly once per turn including on
  * error. A receipt: the edits are already in the document's run ledger (source
- * "panel", reviewer = the requesting human) and are reviewed there.
+ * "panel", reviewer = the requesting human), waiting for review there or, on a
+ * document set to apply agent changes at once, applied.
  */
 export interface AiEditsPayload {
-  /** Hunks staged on THIS document. 0 = a pure-answer turn. */
+  /** Hunks staged on THIS document for review. */
   staged: number;
-  /** The run they landed in, or null when nothing was staged. */
+  /** Hunks applied at once on THIS document. Both 0 = a pure-answer turn. */
+  applied: number;
+  /** The run they landed in, or null when there were none. */
   run_id: string | null;
   /** Proposals raised in other documents this turn. */
   cross_docs: AiCrossDocProposal[];
@@ -67,13 +70,15 @@ export interface AiEditsPayload {
   notice: string | null;
 }
 
-/** A pointer to proposals parked in another document's ledger. */
+/** A pointer to proposals in another document's ledger. */
 export interface AiCrossDocProposal {
   doc_id: string;
   /** Display title at read time. */
   title: string;
+  /** Changes waiting for review, or with `applied` the changes that landed. */
   staged: number;
-  mode: "proposed" | "error";
+  /** `applied`: that document applies agent changes at once. */
+  mode: "proposed" | "applied" | "error";
   message?: string;
 }
 

@@ -65,6 +65,37 @@ describe("the table co-author's query tool", () => {
   });
 });
 
+describe("the table co-author's writes", () => {
+  const OP = { kind: "rows.insert", table: "t1", rows: [{ Name: "a" }] };
+
+  function stage(doc: DocRow, answer: Record<string, unknown>) {
+    const fetch = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify(answer)));
+    const ctx = personCtx({
+      alias: "bob",
+      principals: ["user:bob"],
+      env: { databases: actorsAnswering(fetch), settings: fixed({ databaseOpsKeep: 500 }) },
+    });
+    return { fetch, out: tableToolRunner(ctx, doc, AI, null).runner.stageOp(OP) };
+  }
+
+  it("follows the database's setting, like any agent", async () => {
+    const { fetch, out } = stage({ ...DOC, agent_mode: "auto" }, { mode: "applied", run: { id: "run_1" }, minted: {} });
+    expect(await out).toEqual({ staged: true, applied: true, text: "ok: applied." });
+    expect(JSON.parse(fetch.mock.calls[0]![1].body as string)).toMatchObject({ source: "panel", review: "auto" });
+  });
+
+  it("waits for review on a database that is not set to apply at once", async () => {
+    const { fetch, out } = stage({ ...DOC, agent_mode: "review" }, { mode: "proposed", run: { id: "run_1" }, pending: 1, minted: {} });
+    expect(await out).toEqual({ staged: true, applied: false, text: "ok: staged for the user's review." });
+    expect(JSON.parse(fetch.mock.calls[0]![1].body as string)).toMatchObject({ review: "review" });
+  });
+
+  it("reports what the ledger did, not what was asked: a run holding undecided changes parks", async () => {
+    const { out } = stage({ ...DOC, agent_mode: "auto" }, { mode: "proposed", run: { id: "run_1" }, pending: 2, minted: {} });
+    expect(await out).toMatchObject({ staged: true, applied: false });
+  });
+});
+
 describe("the table co-author's collection search", () => {
   const ctx = () => ({ ...ctxWithActor(() => new Response("{}")), env: { embeddingDims: 2, searchLanguages: { current: () => [] } } }) as unknown as Ctx;
   const COLLECTION = { collection_id: "col1", workspace_id: "ws1", owner: "bob", name: "Specs", created_at: "", updated_at: "" };
@@ -94,6 +125,7 @@ describe("a table co-author turn", () => {
   const turnResult = {
     prose: "",
     staged: 0,
+    applied: 0,
     citations: [],
     usage: { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
     modelId: "",

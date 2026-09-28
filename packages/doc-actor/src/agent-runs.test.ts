@@ -1383,10 +1383,9 @@ describe("propose edge cases", () => {
 /**
  * The in-app AI co-author writes through this SAME ledger (source "panel"), so
  * its edits get the identical ghosts, per-hunk Accept/Reject and run bar an MCP
- * agent's do — and, since the ledger parks by default, the identical outcome.
- * What is still special-cased is that a panel run parks even when the resolved
- * policy says `auto`: the turn was staged in front of the person who asked for
- * it, and a rule written for a background connector must not decide it.
+ * agent's do, and the identical outcome: the document's setting decides for it
+ * as for any agent. Only the notification is its own, since its reviewer is
+ * watching the turn.
  */
 describe("panel runs (the in-app co-author)", () => {
   /** Propose as the co-author would, on behalf of `alice`. */
@@ -1394,22 +1393,48 @@ describe("panel runs (the in-app co-author)", () => {
     return propose(dobj, { source: "panel", agent: "AI co-author", agent_alias: "panel:alice", ...body });
   }
 
-  it("parks even when the resolved policy says `auto`", async () => {
+  it("applies at once when the document says `auto`, like any agent", async () => {
     const h = harness();
     const dobj = makeActor(h);
     await seed(dobj);
-    // A connector under the same `auto` rule commits outright…
-    const landed = await proposeAuto(dobj, { action: "str_replace", find: "Bravo paragraph.", replace: "Bravo committed." });
-    expect(landed.json.mode).toBe("auto_applied");
-
-    // …and the co-author, carrying the same word, still parks.
-    const res = await panel(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha proposed.", review: "auto" });
+    const res = await panel(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha applied.", review: "auto" });
     expect(res.status).toBe(200);
-    expect(res.json.mode).toBe("proposed");
+    expect(res.json).toMatchObject({ mode: "auto_applied", applied: 1 });
     expect(runOf(res.json).source).toBe("panel");
     expect(runOf(res.json).agent).toBe("AI co-author");
-    // Nothing landed.
-    expect(await readMarkdown(dobj)).toMatchObject({ markdown: expect.stringContaining("Alpha paragraph.") });
+    expect(runOf(res.json).hunks[0]!.status).toBe("auto_applied");
+    expect(await readMarkdown(dobj)).toMatchObject({ markdown: expect.stringContaining("Alpha applied.") });
+  });
+
+  it("parks on `auto` while its run still holds undecided hunks", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    // A turn from before the switch, still waiting…
+    await panel(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha proposed." });
+    // …so the next one was written against it and cannot land ahead of it.
+    const res = await panel(dobj, { action: "str_replace", find: "Bravo paragraph.", replace: "Bravo proposed.", review: "auto" });
+    expect(res.json).toMatchObject({ mode: "proposed", parked_behind_pending: true });
+    expect(await readMarkdown(dobj)).toMatchObject({ markdown: expect.stringContaining("Bravo paragraph.") });
+  });
+
+  it("writes a cited turn's footnote definitions when it applies at once", async () => {
+    // A cited edit stages only the body; on accept the definitions are rebuilt
+    // from the run's citations. Applying at once must do the same, or the
+    // document is left with a [^1] that points at nothing.
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const res = await panel(dobj, {
+      action: "cited_edits",
+      edits: [{ old_string: "Alpha paragraph.", new_string: "Alpha claim [^1]." }],
+      citations: [{ n: 1, doc_id: "src1", title: "Source One", heading_path: "Intro", content: "Cited excerpt." }],
+      review: "auto",
+    });
+    expect(res.json.mode).toBe("auto_applied");
+    const md = (await readMarkdown(dobj)).markdown as string;
+    expect(md).toContain("Alpha claim [^1].");
+    expect(md).toContain("[^1]: [Source One — Intro](/doc/src1)");
   });
 
   it("skips the notification only for the turn staged on the document in front of them", async () => {
@@ -1435,6 +1460,22 @@ describe("panel runs (the in-app co-author)", () => {
     });
     expect(res.mode).toBe("proposed");
     expect(h.queued.filter((m) => (m as { kind?: string }).kind === "notify")).toHaveLength(0);
+
+    // Nor when it applies at once.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applied = await proposeRunEdit((dobj as any).ledger, {
+      op: { action: "str_replace", find: "Bravo paragraph.", replace: "Bravo applied.", replaceAll: false },
+      source: "panel",
+      review: "auto",
+      notifyReviewer: false,
+      agent: "AI co-author",
+      agentAlias: "panel:bob",
+      reviewer: "bob",
+      workspaceId: "ws1",
+      docTitle: "",
+    });
+    expect(applied.mode).toBe("auto_applied");
+    expect(h.queued.filter((m) => (m as { kind?: string }).kind === "notify")).toHaveLength(0);
   });
 
   it("DOES notify for a cross-document proposal, which the reviewer cannot see", async () => {
@@ -1454,22 +1495,21 @@ describe("panel runs (the in-app co-author)", () => {
     ]);
   });
 
-  it("keeps its run separate from a connector's under the same `auto` rule", async () => {
-    // The panel exemption is per-RUN: an `auto` rule still lands the connector's
-    // work at once, and only the co-author's turn is held back for its human.
+  it("keeps its run separate from a connector's under the same `auto` setting", async () => {
+    // Each lands in its own run, so each can be reverted on its own.
     const h = harness();
     const dobj = makeActor(h);
     await seed(dobj);
     await connect(dobj, h, { docId: DOC, alias: "alice" });
-    const panelRun = await panel(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha proposed.", review: "auto" });
-    const mcpRun = await proposeAuto(dobj, { action: "str_replace", find: "Bravo paragraph.", replace: "Bravo proposed." });
+    const panelRun = await panel(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha applied.", review: "auto" });
+    const mcpRun = await proposeAuto(dobj, { action: "str_replace", find: "Bravo paragraph.", replace: "Bravo applied." });
+    expect(panelRun.json.mode).toBe("auto_applied");
     expect(mcpRun.json.mode).toBe("auto_applied");
+    expect(runOf(panelRun.json).id).not.toBe(runOf(mcpRun.json).id);
 
     const md = (await readMarkdown(dobj)).markdown as string;
-    expect(md).toContain("Bravo proposed."); // the connector's landed…
-    expect(md).toContain("Alpha paragraph."); // …the co-author's did not
-    const runs = await listRuns(dobj);
-    expect(runs.find((r) => r.id === runOf(panelRun.json).id)!.hunks[0]!.status).toBe("pending");
+    expect(md).toContain("Alpha applied.");
+    expect(md).toContain("Bravo applied.");
   });
 
   it("keeps its own run separate from a connector's, so Accept all is never ambiguous", async () => {

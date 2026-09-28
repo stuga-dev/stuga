@@ -425,6 +425,7 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
             table={activeTable}
             rowId={openRowId}
             readOnly={readOnly}
+            agentAuto={agentAuto}
             rowsKey={rowsKey}
             editsKey={editsKey}
             onRowSaved={() => setRowsKey((k) => k + 1)}

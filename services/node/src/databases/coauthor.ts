@@ -1,7 +1,8 @@
 /**
  * The tables' in-app co-author. It runs in the request layer, which owns usage
  * attribution and the model configuration, and stages its changes on the run
- * ledger under the panel identity, where they always park for the person.
+ * ledger under the panel identity, where the database's own setting decides, as
+ * for any agent, whether they wait for the person or apply at once.
  */
 import { type AiConfig, failureReason, type TableToolRunner, runTableAgentTurn } from "@stuga/ai";
 import { type DocRow, insertAiUsage, touchDoc } from "@stuga/db";
@@ -10,6 +11,7 @@ import type { DatabaseRunSummary } from "@stuga/protocol/databases/types";
 import { ALL_DOCUMENTS_SCOPE } from "@stuga/protocol/wire/doc-socket";
 import type { Ctx } from "../auth/context.js";
 import { scopeFolderIds } from "../authz/authz.js";
+import { agentReviewMode } from "../authz/review-mode.js";
 import { docInstructionStack } from "../documents/instructions.js";
 import { error, sse } from "../http/respond.js";
 import { passageCitations } from "../retrieval/passages.js";
@@ -30,6 +32,7 @@ export function tableToolRunner(
 ): { runner: TableToolRunner; runId: () => string | null } {
   const actor = panelActor(ctx);
   const docId = doc.doc_id;
+  const review = agentReviewMode(doc).mode;
   let runId: string | null = null;
   // Keeps the [n] numbers in result text in step with the loop's own citation counter.
   let citationOffset = 0;
@@ -61,6 +64,7 @@ export function tableToolRunner(
         {
           op,
           source: "panel",
+          review,
           agent: "AI co-author",
           reviewer: ctx.alias,
           workspace_id: ctx.workspaceId,
@@ -78,7 +82,9 @@ export function tableToolRunner(
       if (run) runId = run.id;
       const minted = (parsed.minted ?? {}) as Record<string, unknown>;
       const mintedNote = Object.keys(minted).length ? ` ${JSON.stringify(minted)}` : "";
-      return { staged: true, text: `ok: staged for the user's review.${mintedNote}` };
+      // The actor's word, not `review`: a run holding undecided ops parks even on `auto`.
+      const applied = parsed.mode === "applied";
+      return { staged: true, applied, text: `ok: ${applied ? "applied" : "staged for the user's review"}.${mintedNote}` };
     },
     // Offered only with a collection selected. Never throws: a refusal is text the model can act on.
     searchCollection: collectionId
@@ -156,6 +162,7 @@ export async function databaseCoauthor({ ctx, doc, docId, writeRefusal, body }: 
           model,
           history,
           collectionEnabled: collectionId !== null,
+          applyAtOnce: agentReviewMode(doc).mode === "auto",
           instructions,
           signal,
         },
@@ -193,20 +200,26 @@ export async function databaseCoauthor({ ctx, doc, docId, writeRefusal, body }: 
       }
       await touchDoc(ctx.sql, doc.doc_id).catch(() => {});
 
-      // A failed turn that staged ops still reports them: they are parked awaiting review.
-      if (result.stopReason === "error" && result.staged === 0) {
+      // A failed turn that staged ops still reports them: they are parked awaiting review, or applied.
+      if (result.stopReason === "error" && result.staged === 0 && result.applied === 0) {
         send("error", { message: failureReason(result.failure) ?? "the AI turn failed" });
         return;
       }
       send("done", {
         staged: result.staged,
+        applied: result.applied,
         run_id: runId(),
         citations: result.citations,
         notice:
           result.stopReason === "max_rounds"
             ? `Stopped after ${result.rounds} rounds of work. Ask me to continue if there's more to do.`
             : result.stopReason === "error"
-              ? ["The turn ended early, but the changes above are staged for review.", failureReason(result.failure)].filter(Boolean).join(" ")
+              ? [
+                  `The turn ended early, but the changes above ${result.staged > 0 ? "are staged for review" : "were applied"}.`,
+                  failureReason(result.failure),
+                ]
+                  .filter(Boolean)
+                  .join(" ")
               : undefined,
       });
     } catch (e) {

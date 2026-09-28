@@ -119,7 +119,7 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
 
   // An op parsed against undecided ops of its run may depend on them, so it cannot land ahead of them.
   const parkedBehindPending = listPendingRunOps(db.sql, run.run_id).some((o) => o.review !== "auto");
-  if (shouldCommit(review, source, parkedBehindPending)) {
+  if (shouldCommit(review, parkedBehindPending)) {
     const outcome = await autoApplyPending(db, getRun(db.sql, run.run_id)!, keep);
     const fresh = getRun(db.sql, run.run_id)!;
     db.publishRun(fresh, {

@@ -48,11 +48,11 @@ export function parseReviewMode(raw: unknown): ReviewMode {
 /**
  * Whether a proposal commits at once instead of parking for a person.
  *
- * Only `auto` commits. The in-app co-author (`panel`) always parks, because its
- * turn is staged in front of the person who asked for it. A run still holding
- * undecided items parks too: the new proposal was validated against a working
- * copy that includes them, so it cannot land ahead of them.
+ * Only `auto` commits, whoever the agent is: the in-app co-author follows the
+ * setting like any other. A run still holding undecided items parks: the new
+ * proposal was validated against a working copy that includes them, so it
+ * cannot land ahead of them.
  */
-export function shouldCommit(review: ReviewMode, source: string, parkedBehindPending: boolean): boolean {
-  return review === "auto" && source !== "panel" && !parkedBehindPending;
+export function shouldCommit(review: ReviewMode, parkedBehindPending: boolean): boolean {
+  return review === "auto" && !parkedBehindPending;
 }

@@ -102,9 +102,9 @@ export class Refusals {
 }
 
 /**
- * Record a co-author proposal staged on this document. It never passes the
- * node's routes, where every other agent edit is recorded; its cross-document
- * proposals do, so they are not recorded here.
+ * Record a co-author proposal on this document, parked or applied at once. It
+ * never passes the node's routes, where every other agent edit is recorded; its
+ * cross-document proposals do, so they are not recorded here.
  */
 export function recordPanelPropose(
   jobs: JobQueue<IndexMessage>,
@@ -112,8 +112,9 @@ export function recordPanelPropose(
   meta: SessionMeta,
   panelAlias: string,
   runId: string,
-  pending: number,
+  outcome: { mode: "proposed"; pending: number } | { mode: "auto_applied"; seq: number },
 ): void {
+  const { mode, ...counts } = outcome;
   send(
     jobs,
     {
@@ -128,8 +129,8 @@ export function recordPanelPropose(
       status: "ok",
       targetKind: "doc",
       targetId: docId,
-      // A panel run always parks for review.
-      detail: { run_id: runId, mode: "proposed", edit: "cited_edits", pending, review: "review" },
+      // The same detail the node records for any other agent's proposal.
+      detail: { run_id: runId, mode, edit: "cited_edits", ...counts, review: mode === "auto_applied" ? "auto" : "review" },
     },
     "panel propose audit",
     docId,
