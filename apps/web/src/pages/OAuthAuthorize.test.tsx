@@ -136,6 +136,16 @@ describe("OAuthAuthorize", () => {
     expect(button("Allow")!.disabled).toBe(false);
   });
 
+  it.each([
+    ["cursor://anysphere.cursor-mcp/oauth/callback", "cursor://anysphere.cursor-mcp"],
+    ["com.example.app:/oauth/callback", "com.example.app:"],
+  ])("says a native app's redirect %s returns to %s", async (redirect, shown) => {
+    node(reply(200, {}));
+    await open(`client_id=cid_1&redirect_uri=${encodeURIComponent(redirect)}&code_challenge=${REQUEST.codeChallenge}`);
+    expect(host.textContent).toContain(`return to ${shown}`);
+    expect(button("Deny")).toBeDefined();
+  });
+
   it("offers nothing to approve for a request whose redirect does not parse", async () => {
     await open(`client_id=cid_1&redirect_uri=not-a-url&code_challenge=${REQUEST.codeChallenge}`);
     expect(host.textContent).toContain("Incomplete request");

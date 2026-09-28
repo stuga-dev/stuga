@@ -72,10 +72,16 @@ export async function clientInfo(clientId: string): Promise<ClientInfo | null> {
   }
 }
 
-/** The host the answer goes back to; "" when the address does not parse. */
+/**
+ * Where the answer goes back to: the host of a web address, or a native app's own
+ * scheme in full (`cursor://anysphere.cursor-mcp`, `com.example.app:`), which names
+ * the app. "" when the address does not parse.
+ */
 function hostOf(uri: string): string {
   try {
-    return new URL(uri).host;
+    const url = new URL(uri);
+    if (url.protocol === "https:" || url.protocol === "http:") return url.host;
+    return url.host ? `${url.protocol}//${url.host}` : url.protocol;
   } catch {
     return "";
   }
@@ -187,7 +193,7 @@ export function OAuthAuthorize() {
               </VStack>
             )}
             <RadioList label="Access" value={access} onChange={(v) => setAccess(v === "read" ? "read" : "propose")}>
-              <RadioListItem value="propose" label="Read and suggest changes" description="Changes wait for review unless a document applies them at once." />
+              <RadioListItem value="propose" label="Read and suggest changes" description="Changes wait for review unless an item lets AI edits apply directly." />
               <RadioListItem value="read" label="Read only" />
             </RadioList>
             <Text type="supporting" color="secondary">

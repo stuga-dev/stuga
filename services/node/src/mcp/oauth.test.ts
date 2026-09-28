@@ -19,6 +19,9 @@ describe("isValidRedirectUri", () => {
     "http://localhost:43110/callback",
     "http://127.0.0.1:43110/callback",
     "http://[::1]:43110/callback",
+    // RFC 8252 §7.1: a native app's own scheme, with or without an authority.
+    "cursor://anysphere.cursor-mcp/oauth/callback",
+    "com.example.app:/oauth/callback",
   ])("accepts %s", (uri) => {
     expect(isValidRedirectUri(uri)).toBe(true);
   });
@@ -26,7 +29,15 @@ describe("isValidRedirectUri", () => {
   it.each([
     "http://client.example.test/callback",
     "javascript://localhost/callback",
+    "javascript://x%0Aalert(1)",
+    "JavaScript:alert(1)",
     "data://localhost/callback",
+    "data:text/html,<script>alert(1)</script>",
+    "vbscript:msgbox(1)",
+    "blob:https://stuga.test/0f3c",
+    "file:///etc/passwd",
+    "about:blank",
+    "wss://client.example.test/callback",
     "https://user:secret@client.example.test/callback",
     "https://client.example.test/callback#fragment",
     "not a URL",
@@ -84,6 +95,7 @@ describe("discovery", () => {
       revocation_endpoint: "https://stuga.example.test/oauth/revoke",
       grant_types_supported: ["authorization_code", "refresh_token"],
       code_challenge_methods_supported: ["S256"],
+      authorization_response_iss_parameter_supported: true,
     });
     expect(await wellKnownProtectedResource(env, asked()).json()).toMatchObject({
       resource: "https://stuga.example.test/mcp",

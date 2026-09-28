@@ -19,6 +19,9 @@ its first section, are its summary: the release notes show that and link here fo
 
 ### Fixed
 
+- Cursor and Gemini CLI can sign in to a node. The node accepts a desktop app's own return address,
+  such as Cursor's `cursor://`, and names itself in the sign-in answer, which Gemini CLI 0.61
+  requires.
 - On a document or database set to let AI edits apply directly, the co-author's and the table
   assistant's edits apply directly too, where they still waited for review change by change. The
   co-author's edits to another document set that way apply directly as well.

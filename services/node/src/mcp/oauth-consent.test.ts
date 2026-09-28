@@ -57,7 +57,7 @@ describe("POST /oauth/consent", () => {
   it("answers deny with the registered redirect carrying access_denied and the state", async () => {
     const res = await consent({ decision: "deny", client_id: "cid_1", redirect_uri: REGISTERED, state: "xyz" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ redirect: `${REGISTERED}?error=access_denied&state=xyz` });
+    expect(await res.json()).toEqual({ redirect: `${REGISTERED}?error=access_denied&state=xyz&iss=${encodeURIComponent("https://stuga.test")}` });
     expect(insertOauthCode).not.toHaveBeenCalled();
   });
 
@@ -76,7 +76,7 @@ describe("POST /oauth/consent", () => {
   it("lets a person who is only ever a guest deny", async () => {
     memberships(["ws3", "guest"]);
     const res = await consent({ decision: "deny", client_id: "cid_1", redirect_uri: REGISTERED });
-    expect(await res.json()).toEqual({ redirect: `${REGISTERED}?error=access_denied` });
+    expect(await res.json()).toEqual({ redirect: `${REGISTERED}?error=access_denied&iss=${encodeURIComponent("https://stuga.test")}` });
   });
 
   it("answers allow with a single-use code bound to the person, the workspaces they ticked and propose access", async () => {
@@ -86,6 +86,8 @@ describe("POST /oauth/consent", () => {
     const code = redirect.searchParams.get("code")!;
     expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(redirect.searchParams.get("state")).toBe("xyz");
+    // RFC 9207: the response names the issuer that answered.
+    expect(redirect.searchParams.get("iss")).toBe("https://stuga.test");
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(insertOauthCode).toHaveBeenCalledWith(
       expect.anything(),
@@ -100,6 +102,23 @@ describe("POST /oauth/consent", () => {
         codeChallenge: CHALLENGE,
       }),
     );
+  });
+
+  it("returns to a native app's own scheme, as Cursor registers", async () => {
+    const app = "cursor://anysphere.cursor-mcp/oauth/callback";
+    vi.mocked(getOauthClient).mockResolvedValue({
+      client_id: "cid_1",
+      client_secret_hash: null,
+      redirect_uris: [app, "http://localhost:8787/callback"],
+      client_name: "Cursor",
+      kind: "dcr",
+      metadata_fetched_at: null,
+    });
+    const res = await allow({ redirect_uri: app });
+    const redirect = new URL(((await res.json()) as { redirect: string }).redirect);
+    expect(`${redirect.protocol}//${redirect.host}${redirect.pathname}`).toBe(app);
+    expect(redirect.searchParams.get("code")).toBeTruthy();
+    expect(redirect.searchParams.get("iss")).toBe("https://stuga.test");
   });
 
   it("accepts a loopback redirect on another port than the one registered", async () => {

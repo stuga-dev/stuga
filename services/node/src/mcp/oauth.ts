@@ -103,6 +103,9 @@ export function wellKnownAuthorizationServer(env: NodeEnv, req: Request): Respon
     revocation_endpoint_auth_methods_supported: ["none"],
     scopes_supported: [OAUTH_SCOPE],
     client_id_metadata_document_supported: isPublicHttpsOrigin(base),
+    // RFC 9207: every authorization response names its issuer, so a client talking
+    // to several servers can tell which one answered. Gemini CLI requires it.
+    authorization_response_iss_parameter_supported: true,
   });
 }
 
@@ -130,14 +133,42 @@ export function unauthorizedChallenge(env: Pick<NodeEnv, "publicOrigin" | "extra
 
 // ---- Clients ------------------------------------------------------------------------
 
-/** Absolute HTTPS, or plain HTTP to loopback for a native client. */
+/**
+ * Schemes a browser handles itself. The consent screen navigates to the redirect,
+ * so one of these would run in the node's own origin or leave the browser for
+ * something that is not the client.
+ */
+const BROWSER_SCHEMES = new Set([
+  "about:",
+  "blob:",
+  "data:",
+  "file:",
+  "filesystem:",
+  "ftp:",
+  "javascript:",
+  "mailto:",
+  "sms:",
+  "tel:",
+  "vbscript:",
+  "view-source:",
+  "ws:",
+  "wss:",
+]);
+
+/**
+ * Absolute HTTPS; plain HTTP to loopback for a native client; or a native app's
+ * own scheme (RFC 8252 §7.1), such as Cursor's `cursor://anysphere.cursor-mcp/…`.
+ * PKCE is what makes an app scheme safe: another app that claims it gets a code
+ * it cannot redeem.
+ */
 export function isValidRedirectUri(value: string): boolean {
   if (value.length === 0 || value.length > MAX_REDIRECT_URI_CHARS) return false;
   try {
     const parsed = new URL(value);
     if (parsed.hash || parsed.username || parsed.password) return false;
     if (parsed.protocol === "https:") return true;
-    return parsed.protocol === "http:" && isLoopbackHost(parsed.hostname);
+    if (parsed.protocol === "http:") return isLoopbackHost(parsed.hostname);
+    return !BROWSER_SCHEMES.has(parsed.protocol);
   } catch {
     return false;
   }
@@ -429,9 +460,11 @@ export async function handleConsent(env: NodeEnv, req: Request): Promise<Respons
     throw e;
   }
   if (!redirectUriMatches(client.redirect_uris, redirectUri)) return error(400, "invalid client/redirect");
+  // `iss` (RFC 9207) is the issuer this origin's metadata names: the consent screen is served from it.
+  const iss = requestOrigin(env, req);
   const back = (params: Record<string, string>): Response => {
     const redirect = new URL(redirectUri);
-    for (const [key, value] of Object.entries({ ...params, ...(state ? { state } : {}) })) redirect.searchParams.set(key, value);
+    for (const [key, value] of Object.entries({ ...params, ...(state ? { state } : {}), iss })) redirect.searchParams.set(key, value);
     return sensitiveJson({ redirect: redirect.toString() }, 200);
   };
 
