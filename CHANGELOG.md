@@ -11,6 +11,14 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-28
+
+- Attach any file to a document, or to a database row in a Files column.
+- Start a workspace from a Notion export or an Obsidian vault.
+- Reranking with TypeSafe's Jev, reading the part of a passage that matches the question.
+- The co-author, Ask and the table assistant run on Pi, and Pi connects as your own AI.
+- Search in 22 languages.
+
 ### Added
 
 - Attach any file to a document: **Insert → File…**, the `/file` command, or paste or drop it. It
