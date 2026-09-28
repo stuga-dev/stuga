@@ -6,6 +6,7 @@ export const COLUMN_TYPES: ReadonlyArray<{ value: DatabaseColumnType; label: str
   { value: "checkbox", label: "Checkbox" },
   { value: "date", label: "Date" },
   { value: "single_select", label: "Single select" },
+  { value: "files", label: "Files" },
 ];
 
 export function columnTypeLabel(type: DatabaseColumnType): string {

@@ -235,5 +235,6 @@ function utf8Length(s: string): number {
 export const SQL_VALUE_CONVENTIONS =
   "Stored values: a date column is TEXT 'YYYY-MM-DD', so lexical order is chronological and date() works on it; a " +
   "checkbox is 0 or 1; a number may be integer or real; a single-select column holds exactly one of the values listed " +
-  "for it, matched exactly, so copy them as given rather than guessing the wording or the case; every row also has " +
-  "_id TEXT and _created_at / _updated_at in epoch milliseconds.";
+  "for it, matched exactly, so copy them as given rather than guessing the wording or the case; a files column holds " +
+  "one link per line, each ending in the file's URL-encoded name, so match a name with LIKE; every row also has _id " +
+  "TEXT and _created_at / _updated_at in epoch milliseconds.";

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { validateCellValue, validateSelectChoices } from "./cells.js";
-import { DATABASE_MAX_CELL_BYTES } from "./limits.js";
+import { fileLinks, validateCellValue, validateSelectChoices } from "./cells.js";
+import { DATABASE_MAX_CELL_BYTES, DATABASE_MAX_FILES_PER_CELL } from "./limits.js";
 
 describe("validateCellValue", () => {
   it("null always passes, for every type", () => {
-    for (const t of ["text", "number", "checkbox", "date", "single_select"] as const) {
+    for (const t of ["text", "number", "checkbox", "date", "single_select", "files"] as const) {
       expect(validateCellValue(t, null, null)).toEqual({ ok: true, value: null });
     }
   });
@@ -30,6 +30,19 @@ describe("validateCellValue", () => {
     expect(validateCellValue("checkbox", null, 1)).toEqual({ ok: true, value: 1 });
     expect(validateCellValue("checkbox", null, 2).ok).toBe(false);
     expect(validateCellValue("checkbox", null, "true").ok).toBe(false);
+  });
+
+  it("files: one link per line to a stored file with its name, blank lines and repeats dropped", () => {
+    const a = `/api/docs/db_1/media/${"a".repeat(64)}/Q3%20brief.pdf`;
+    const b = `/api/docs/db_1/media/${"b".repeat(64)}/photo.png`;
+    expect(validateCellValue("files", null, `${a}\n\n ${b} \n${a}`)).toEqual({ ok: true, value: `${a}\n${b}` });
+    expect(validateCellValue("files", null, "\n")).toEqual({ ok: true, value: null });
+    expect(fileLinks(`${a}\n${b}`).map((f) => [f.docId, f.name])).toEqual([["db_1", "Q3 brief.pdf"], ["db_1", "photo.png"]]);
+    for (const bad of ["Q3 brief.pdf", `/api/docs/db_1/media/${"a".repeat(64)}`, "https://example.com/a.pdf", `/api/docs/db_1/media/${"a".repeat(64)}/%E0`, 3]) {
+      expect(validateCellValue("files", null, bad).ok).toBe(false);
+    }
+    const many = Array.from({ length: DATABASE_MAX_FILES_PER_CELL + 1 }, (_, i) => `/api/docs/d/media/${i.toString(16).padStart(64, "0")}/f`).join("\n");
+    expect(validateCellValue("files", null, many).ok).toBe(false);
   });
 
   it("date: real ISO calendar dates only", () => {

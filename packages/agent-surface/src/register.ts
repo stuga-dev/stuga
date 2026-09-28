@@ -23,6 +23,7 @@ import {
   type Refusal,
   type RetrieveBody,
   type SearchBody,
+  type UploadSource,
   type ViewShape,
 } from "./backend.js";
 import {
@@ -228,9 +229,11 @@ interface MarkdownEditArgs extends Omit<ProposeInput, "action" | "citations"> {
 
 interface MediaArgs {
   doc_id: string;
-  action: "upload" | "upload_from_url";
+  action: "upload" | "upload_from_url" | "start_upload";
   data?: string;
   url?: string;
+  name?: string;
+  upload_id?: string;
   alt?: string;
   caption?: string;
 }
@@ -321,11 +324,27 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
     );
   }),
 
-  media_upload: (async ({ doc_id, action, data, url, alt, caption }: MediaArgs, b: AgentBackend) => {
-    if (action === "upload" && !data) return err("upload requires base64 image bytes in `data`");
-    if (action === "upload_from_url" && !url) return err("upload_from_url requires `url`");
-    const source = action === "upload" ? { kind: "data" as const, data: data! } : { kind: "url" as const, url: url! };
-    return answer(b.uploadImage(doc_id, source), (stored) => renderUpload(stored, alt, caption));
+  media_upload: (async ({ doc_id, action, data, url, name, upload_id, alt, caption }: MediaArgs, b: AgentBackend) => {
+    if (action === "start_upload") {
+      if (!name) return err("start_upload requires the file's `name`");
+      return answer(b.startUpload(doc_id, name), (upload) =>
+        json({
+          ...upload,
+          next:
+            `PUT the whole file's bytes to upload_url (for example: curl -T report.pdf '${upload.upload_url}'), then call ` +
+            `\`media_upload\` action:upload with upload_id: "${upload.upload_id}".`,
+        }),
+      );
+    }
+    let source: UploadSource;
+    if (action === "upload_from_url") {
+      if (!url) return err("upload_from_url requires `url`");
+      source = { kind: "url", url, ...(name ? { name } : {}) };
+    } else {
+      if (!data === !upload_id) return err("upload takes base64 bytes in `data` or the `upload_id` of a start_upload, not both");
+      source = upload_id ? { kind: "upload_id", upload_id } : { kind: "data", data: data!, ...(name ? { name } : {}) };
+    }
+    return answer(b.uploadMedia(doc_id, source), (stored) => renderUpload(stored, alt, caption));
   }),
 
   comments: (async ({ doc_id }: { doc_id: string }, b: AgentBackend) => answer(b.listComments(doc_id), json)),

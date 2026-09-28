@@ -7,7 +7,7 @@
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
 import { MCP_BUNDLE_FILENAME, MCP_SERVER_KEY } from "@stuga/protocol/domain/node-name";
 
-export type ClientTab = "claude" | "claude-desktop" | "claude-code" | "codex" | "antigravity" | "dsh" | "other";
+export type ClientTab = "claude" | "claude-desktop" | "claude-code" | "codex" | "antigravity" | "dsh" | "pi" | "other";
 
 export const TAB_LABEL: Record<ClientTab, string> = {
   claude: "Claude",
@@ -16,6 +16,7 @@ export const TAB_LABEL: Record<ClientTab, string> = {
   codex: "Codex",
   antigravity: "Antigravity",
   dsh: "DeepSeek Harness",
+  pi: "Pi",
   other: "Other clients",
 };
 
@@ -24,6 +25,13 @@ export const TOKEN_PLACEHOLDER = "vk_your_key_here";
 
 /** The web UI's DeepSeek Harness profile is `web`. */
 export const DSH_INSTALL_COMMAND = "dsh plugin --profile web add @stuga/dsh-plugin";
+export const DSH_REMOVE_COMMAND = "dsh plugin --profile web remove @stuga/dsh-plugin";
+
+/** Pi has no MCP of its own: pi-mcp-adapter makes the connection, and the Stuga package registers the node with it as `stuga`. */
+export const PI_INSTALL_COMMAND = "pi install npm:pi-mcp-adapter\npi install npm:@stuga/pi-package";
+
+/** The adapter stays: it may serve other servers. */
+export const PI_REMOVE_COMMAND = "pi remove npm:@stuga/pi-package";
 
 /** The `x-stuga-client` label a hand-configured Claude Desktop sends, the same one its extension sends. */
 const DESKTOP_CLIENT = "claude-desktop";
@@ -42,8 +50,8 @@ export interface InstallerCommands {
 /** A hosted connector dials from its own cloud over HTTPS, so it is offered only when the internet can reach the node that way. */
 export function clientTabs(setup: AgentSetup): [ClientTab, ...ClientTab[]] {
   return setup.reachable && setup.secure
-    ? ["claude", "claude-desktop", "claude-code", "codex", "antigravity", "dsh", "other"]
-    : ["claude-desktop", "claude-code", "codex", "antigravity", "dsh", "other"];
+    ? ["claude", "claude-desktop", "claude-code", "codex", "antigravity", "dsh", "pi", "other"]
+    : ["claude-desktop", "claude-code", "codex", "antigravity", "dsh", "pi", "other"];
 }
 
 interface ClientConfigs {
@@ -67,6 +75,10 @@ interface ClientConfigs {
   httpJson: string;
   /** DeepSeek Harness reads these at launch. */
   dshEnv: string;
+  /** Where the Stuga package points pi-mcp-adapter, set in the shell that starts Pi. */
+  piUrlEnv: string;
+  /** A key in place of Pi's browser sign-in. */
+  piKeyEnv: string;
   /**
    * Claude Desktop's stdio config, or null when the node names no server file
    * a client on the browser's machine can open: only on a loopback node do the
@@ -98,6 +110,8 @@ export function clientConfigs(setup: AgentSetup, token: string | null): ClientCo
       2,
     ),
     dshEnv: `STUGA_URL=${setup.url}\nSTUGA_API_KEY=${key}`,
+    piUrlEnv: `export STUGA_URL=${setup.url}`,
+    piKeyEnv: `export STUGA_API_KEY=${key}`,
     desktopJson:
       entry === null
         ? null

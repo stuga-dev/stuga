@@ -40,13 +40,14 @@ interface SlashState {
 
 export function SlashMenu({
   editor,
-  onPickImages,
+  onPickFiles,
 }: {
   editor: Editor;
-  /** Upload + insert image files through the shared progress-tracked uploader. */
-  onPickImages: (files: File[]) => void;
+  /** Upload and insert files through the shared progress-tracked uploader: images as images, anything else as links. */
+  onPickFiles: (files: File[]) => void;
 }) {
   const [active, setActive] = useState(0);
+  const imageRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   // The capture-phase key handler is bound once, so it reads the latest values through refs.
   const stateRef = useRef<SlashState | null>(null);
@@ -55,7 +56,8 @@ export function SlashMenu({
 
   const allItems: SlashItem[] = [
     ...ITEMS,
-    { id: "image", label: "Image", hint: "▣", terms: ["img", "photo", "picture", "upload"], run: () => fileRef.current?.click() },
+    { id: "image", label: "Image", hint: "▣", terms: ["img", "photo", "picture", "upload"], run: () => imageRef.current?.click() },
+    { id: "file", label: "File", hint: "⎘", terms: ["attachment", "attach", "pdf", "document", "upload"], run: () => fileRef.current?.click() },
   ];
 
   const [state, hide] = useEditorAnchor(editor, (): SlashState | null => {
@@ -126,10 +128,10 @@ export function SlashMenu({
     hide();
   }
 
-  function onPickImage(e: React.ChangeEvent<HTMLInputElement>) {
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (files.length) onPickImages(files);
+    if (files.length) onPickFiles(files);
   }
 
   // The menu is about 240px wide and up to 320px tall.
@@ -140,7 +142,8 @@ export function SlashMenu({
   // that `choose` clicks it, and a remounted input never delivers its file.
   return (
     <>
-      <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={onPickImage} />
+      <input ref={imageRef} type="file" accept="image/*" multiple hidden onChange={onPick} />
+      <input ref={fileRef} type="file" multiple hidden onChange={onPick} />
       {state && (
         <div className="slash-menu" style={{ top, left }} role="listbox" aria-label="Insert block">
           {filtered.length === 0 && (

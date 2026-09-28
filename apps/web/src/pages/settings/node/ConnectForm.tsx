@@ -138,7 +138,7 @@ export function ConnectForm({
         const res = await NodeApi.saveAi({
           embed: { provider: preset.provider, base_url: url, model: chosen, ...(key.trim() ? { api_key: key.trim() } : {}) },
         });
-        onConnected({ settings: res.settings, message: `Search by meaning is on with ${chosen}. Indexing your documents.` });
+        onConnected({ settings: res.settings, message: `Embeddings are on with ${chosen}. Indexing your documents.` });
       }
     } catch (e) {
       setError(saveFailure(preset.label, chosen, e));

@@ -21,6 +21,8 @@ filled in. Use it when it disagrees with an example here.
 - **Codex and Google Antigravity** dial the node's `/mcp` endpoint and work with any node the machine
   can reach. **Your own AI** gives one command per host that installs the Stuga Skill and adds the
   node; both hosts sign in through the browser, so no key is pasted.
+- **Pi** dials the node's `/mcp` endpoint through pi-mcp-adapter and works with any node the machine
+  can reach. It signs in through the browser, or takes a key ([Pi](#pi)).
 - **Claude on the web and on mobile** add custom connectors that Anthropic's cloud dials. Those need
   the node at a public HTTPS origin, set as `PUBLIC_ORIGIN`. **Your own AI** offers the **Claude** tab
   only when `PUBLIC_ORIGIN` is https and not a loopback, private or local-network address. Ways to
@@ -88,7 +90,7 @@ refuses API keys, so an agent reaches another node only by being connected to it
 
 ## Apps that sign in
 
-A client that supports OAuth signs in through the browser: Claude Code, Codex, Antigravity, Claude
+A client that supports OAuth signs in through the browser: Claude Code, Codex, Antigravity, Pi, Claude
 on the web, and the Claude Desktop extension or `stuga-mcp` without a key. You sign in to the node
 with your password or through its identity provider, and the consent page asks two things:
 
@@ -293,10 +295,12 @@ signs in like Claude Code. Any other client sends a key as `Authorization: Beare
 
 `stuga-mcp.js`, which the Claude Desktop extension and the Stuga plugin run, forwards to the node's
 `/mcp`: the tools, their wording, the instructions and every check are the node's own, whatever its
-version. It adds one thing only a process on your machine can do: `databases_add` action `import`
-also takes `file`, a CSV or JSONL path on that machine. The server stages the import with
-`start_import`, uploads the file and commits it, and hands the agent the table's Import dialog link
-when the file is larger than the node accepts.
+version. It adds one thing only a process on your machine can do: read a file there.
+`databases_add` action `import` takes `file`, a CSV or JSONL path on that machine; the server stages
+the import with `start_import`, uploads the file and commits it, and hands the agent the table's
+Import dialog link when the file is larger than the node accepts. `media_upload` action `upload`
+takes `file`, any path on that machine; the server stages it with `start_upload`, sends it, and
+stores it, named as the path names it unless the agent passes `name`.
 
 Each release publishes it to npm as `@stuga/mcp`, so any client that starts local servers runs it
 with `npx -y @stuga/mcp` and `STUGA_URL` set to the node's address.
@@ -354,6 +358,33 @@ name.
 
 dsh's MCP client has no browser sign-in, so the key is static and its owner reviews everything the
 harness proposes. Mint one key per person rather than sharing one.
+
+`dsh plugin --profile web remove @stuga/dsh-plugin` removes the plugin. It revokes nothing: revoke
+the key under **Connected agents**.
+
+## Pi
+
+[Pi](https://pi.dev) has no MCP client of its own, so it reaches the node through
+[pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter). The `@stuga/pi-package` package
+registers the node with the adapter as `stuga`, and adds playbook skills for research, edits and
+databases plus a system-prompt section on how calls are routed and reviewed. On the machine that runs
+Pi:
+
+```sh
+pi install npm:pi-mcp-adapter
+pi install npm:@stuga/pi-package
+export STUGA_URL=http://localhost:8787
+```
+
+Use your node's origin; **Your own AI** fills it in on the **Pi** tab. Set `STUGA_URL` in the shell
+that starts Pi, or put `{ "stuga": { "url": "…" } }` in `~/.pi/agent/settings.json`. Then start Pi
+and run `/mcp-auth stuga`: you sign in in the browser ([Apps that sign in](#apps-that-sign-in)), at
+any node address, and the connection is listed as **Pi**. To use a key instead, open **Use an agent
+key instead** on the tab, mint one, and set `STUGA_API_KEY` beside `STUGA_URL`; there is then no
+sign-in step. Pi's runs appear in the review inbox labelled `pi`.
+
+`pi remove npm:@stuga/pi-package` removes the package and leaves the adapter. It revokes nothing:
+revoke the connection or the key under **Connected agents**.
 
 ## API keys
 
@@ -568,7 +599,7 @@ the item's `agent_mode` decide what a call does.
 | `query` | One read-only `SELECT` (SQLite dialect) against one database, with `?` parameters. At most 8 KB of SQL, 1,000 rows, 1 MB per value and five seconds of work. `WITH RECURSIVE` is refused, because a recursive query that never ends cannot be stopped. |
 
 **Writes.** None is idempotent. *Destructive* ones may replace or remove what exists; *open-world*
-ones may make the node download an image from the web.
+ones may make the node download an image or file from the web.
 
 | Tool | Actions and use | Destructive | Open-world |
 |---|---|---|---|
@@ -576,7 +607,7 @@ ones may make the node download an image from the web.
 | `markdown_append` | Adds text at the end of a document, or of the section under `heading`, and touches nothing else. | no | yes |
 | `markdown_edit` | `write` · `str_replace` · `cited_edits`. `write` replaces the whole document, `str_replace` swaps `find` for `replace` (one occurrence, or all with `replace_all`), and `cited_edits` makes several exact edits at once with citations that become footnotes. | yes | yes |
 | `comments_add` | A comment on a document. Its people are notified. | no | no |
-| `media_upload` | `upload` · `upload_from_url`. Stores an image, from base64 of up to 3 MB or from a public URL the node downloads, and returns its path for Markdown. | no | yes |
+| `media_upload` | `upload` · `upload_from_url` · `start_upload`. Stores an image or any other file with a document, or a file with a database: from base64 of up to 3 MB with its `name`, from a public URL the node downloads, or, after `start_upload`, from the `upload_url` the caller sends it to itself, by `upload_id`. A document gets the Markdown that places it, an image shown and any other file a link that downloads; a database gets the link for a `files` cell. | no | yes |
 | `collections_edit` | `create` · `rename` · `delete` · `add_items` · `remove_items`. `add_items` skips ids the credential cannot read and says how many. | yes | no |
 | `databases_add` | `create_database` · `create_table` · `add_column` · `insert_rows` · `import` · `start_import` · `create_view` · `open_page`. `add_column` may set a column's `description`. `import` loads a whole CSV or JSONL file as one reviewable change, from its text in `content` or from an upload by `import_id`, so bulk data never passes through `insert_rows`. `start_import` returns an `upload_url` for a caller that can send the file itself, and the `import_id` to commit. `open_page` returns a row's page, a document read and edited like any other, and creates it the first time. | no | no |
 | `databases_change` | `update_rows` · `delete_rows` · `update_view`. | yes | no |
@@ -588,7 +619,10 @@ keep it as written, and once an edit lands, a newly mentioned person who can rea
 notified. The answer to a proposal names the instructions that apply beyond the workspace's.
 
 When a file is too large to carry, `import` hands the agent a link to the table's Import dialog to
-give the person. The stdio server also takes a local `file` ([above](#the-stdio-server)).
+give the person. A `files` column holds a row's attachments as links, one per line; an agent adds
+one by storing the file with `media_upload` on the database and writing the link into the cell
+through `databases_change`, a proposal like any other. The stdio server also takes a local `file`
+for `import` and `upload` ([above](#the-stdio-server)).
 
 ### Searching several workspaces
 
@@ -601,7 +635,7 @@ give the person. The stdio server also takes a local `file` ([above](#the-stdio-
 - Each result names its `workspace_id` and carries a `url` that opens the document.
 - `collection_id` narrows a search of exactly one workspace.
 - `unavailable: [{ workspace_id, reason }]` lists each workspace the call could not cover: one the
-  connection cannot use, or, for `retrieve`, one where search by meaning is off. The agent is told
+  connection cannot use, or, for `retrieve`, one where embeddings are off. The agent is told
   to say so and never to present the rest as complete. When the only workspace named fails, its
   reason is the tool's error.
 

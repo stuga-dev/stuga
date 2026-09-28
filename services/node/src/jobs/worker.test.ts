@@ -78,6 +78,7 @@ function fakeEnv(overrides: Partial<JobsEnv> = {}): JobsEnv {
       throw new Error("tests must not touch sql directly");
     }) as unknown as JobsEnv["sql"],
     snapshots: fakeBlobStore(),
+    media: fakeBlobStore(),
     jobs: { send: vi.fn(async () => {}) },
     docs: { get: vi.fn(() => ({ fetch: vi.fn(async () => new Response(null, { status: 200 })) })) },
     databases: { get: vi.fn(() => ({ fetch: vi.fn(async () => new Response(null, { status: 200 })) })) },
@@ -332,11 +333,12 @@ describe("runMaintenanceTick", () => {
   it("hard-deletes expired trash: pages trashed, snapshot sweeps queued, rows deleted, then every actor destroyed", async () => {
     const destroy = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
     const namespace = () => ({ get: vi.fn(() => ({ fetch: destroy })) });
-    const env = fakeEnv({ docs: namespace(), databases: namespace() } as unknown as Partial<JobsEnv>);
+    const media = fakeBlobStore(["media/ws1/d_table/aa", "media/ws1/d_table/bb", "media/ws1/cc", "media/ws1/d_prose/dd"]);
+    const env = fakeEnv({ docs: namespace(), databases: namespace(), media } as unknown as Partial<JobsEnv>);
     const db = fakeDb({
       findExpiredTrash: vi.fn(async () => [
-        { doc_id: "d_prose", doc_type: "prose" as const },
-        { doc_id: "d_table", doc_type: "database" as const },
+        { doc_id: "d_prose", doc_type: "prose" as const, workspace_id: "ws1" },
+        { doc_id: "d_table", doc_type: "database" as const, workspace_id: "ws1" },
       ]),
       trashPagesOf: vi.fn(async () => ["p_loose"]),
     });
@@ -348,6 +350,8 @@ describe("runMaintenanceTick", () => {
     const sweep = db.queueSnapshotSweep as ReturnType<typeof vi.fn>;
     expect(deleteDoc.mock.calls.map(([id]) => id)).toEqual(["d_prose", "d_table"]);
     expect(sweep.mock.calls.map(([id]) => id)).toEqual(["d_prose", "d_table"]);
+    // A database's own files go with it; the workspace's stay for the orphan sweep.
+    expect(media.deleted).toEqual(["media/ws1/d_table/aa", "media/ws1/d_table/bb"]);
     // Per document: pages before the row, the sweep before the row, the row before the actor.
     expect((db.trashPagesOf as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(deleteDoc.mock.invocationCallOrder[1]!);
     for (const n of [0, 1]) {
@@ -360,7 +364,7 @@ describe("runMaintenanceTick", () => {
     const destroy = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
     const env = fakeEnv({ docs: { get: vi.fn(() => ({ fetch: destroy })) } } as unknown as Partial<JobsEnv>);
     const db = fakeDb({
-      findExpiredTrash: vi.fn(async () => [{ doc_id: "d_prose", doc_type: "prose" as const }]),
+      findExpiredTrash: vi.fn(async () => [{ doc_id: "d_prose", doc_type: "prose" as const, workspace_id: "ws1" }]),
       queueSnapshotSweep: vi.fn(async () => Promise.reject(new Error("jobs insert failed"))),
     });
     await runMaintenanceTick(env, { db, log: silentLog });

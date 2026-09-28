@@ -29,6 +29,10 @@ const FILTER_OPS: Array<{ value: RowFilterOp; label: string }> = [
   { value: "not_empty", label: "is not empty" },
 ];
 
+/** A files cell is matched by the names of its files, or by having any; it has no order. */
+const FILES_OPS: ReadonlySet<RowFilterOp> = new Set(["contains", "not_contains", "empty", "not_empty"]);
+const opsFor = (col: ColumnSpec | undefined) => (col?.type === "files" ? FILTER_OPS.filter((o) => FILES_OPS.has(o.value)) : FILTER_OPS);
+
 interface ViewToolbarProps {
   columns: ColumnSpec[];
   shape: ViewShape;
@@ -147,11 +151,13 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
                 }}
               >
                 <option value="">None</option>
-                {columns.map((c) => (
-                  <option key={c.column_id} value={c.column_id}>
-                    {c.display}
-                  </option>
-                ))}
+                {columns
+                  .filter((c) => c.type !== "files" || c.column_id === shape.group_by)
+                  .map((c) => (
+                    <option key={c.column_id} value={c.column_id}>
+                      {c.display}
+                    </option>
+                  ))}
               </select>
             </label>
           </div>
@@ -317,7 +323,15 @@ function FilterEditor({
         const set = (patch: Partial<DraftLeaf>) => setLeaves((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
         return (
           <div key={i} className="db-filter__cond">
-            <select className="db-select" value={d.column_id} onChange={(e) => set({ column_id: e.target.value, value: "" })} aria-label="Column">
+            <select
+              className="db-select"
+              value={d.column_id}
+              onChange={(e) => {
+                const next = columns.find((c) => c.column_id === e.target.value);
+                set({ column_id: e.target.value, value: "", ...(next?.type === "files" && !FILES_OPS.has(d.op) ? { op: "contains" } : {}) });
+              }}
+              aria-label="Column"
+            >
               {columns.map((c) => (
                 <option key={c.column_id} value={c.column_id}>
                   {c.display}
@@ -325,7 +339,7 @@ function FilterEditor({
               ))}
             </select>
             <select className="db-select" value={d.op} onChange={(e) => set({ op: e.target.value as RowFilterOp })} aria-label="Condition">
-              {FILTER_OPS.map((o) => (
+              {opsFor(col).map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>
@@ -395,7 +409,9 @@ function FilterEditor({
   );
 }
 
-function SortEditor({ columns, sorts, onChange }: { columns: ColumnSpec[]; sorts: RowSort[]; onChange: (next: RowSort[]) => void }) {
+function SortEditor({ columns: all, sorts, onChange }: { columns: ColumnSpec[]; sorts: RowSort[]; onChange: (next: RowSort[]) => void }) {
+  // Files have no order; a sort saved on one before still shows, to be removed.
+  const columns = all.filter((c) => c.type !== "files" || sorts.some((s) => s.column_id === c.column_id));
   const unused = columns.filter((c) => !sorts.some((s) => s.column_id === c.column_id));
   return (
     <div className="db-filter">

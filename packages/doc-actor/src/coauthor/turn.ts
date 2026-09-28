@@ -7,7 +7,7 @@ import type { AiEditsPayload, AiRequest, AiResponseChunk, AiCitation } from "@st
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { decodeJson, encodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
-import { runAgentTurn, type AgentActivity, type AiConfig, type ToolRunner } from "@stuga/ai";
+import { failureReason, runAgentTurn, type AgentActivity, type AiConfig, type ToolRunner } from "@stuga/ai";
 import { applyStrEditsStrict } from "@stuga/crdt-ops";
 import type { InternalApi, JobQueue } from "@stuga/runtime";
 import { recordPanelPropose, type Refusals } from "../audit.js";
@@ -152,12 +152,14 @@ export class CoAuthor {
           safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { status: activityLabel(activity), done: false } satisfies AiResponseChunk)),
       );
 
+      if (result.failure) console.warn("co-author model call failed", { docId, ...result.failure });
+      const reason = failureReason(result.failure);
       // A partial turn (round cap, a later round failing) still proposes what its finished rounds staged.
       const incomplete =
         result.stopReason === "max_rounds"
           ? `Stopped after ${result.rounds} rounds of work. Ask me to continue if there's more to do.`
           : result.stopReason === "error"
-            ? `The turn ended early (${result.error ?? "unknown error"}).`
+            ? ["The turn ended early.", reason].filter(Boolean).join(" ")
             : null;
       const tokens = {
         model: result.modelId,
@@ -169,7 +171,7 @@ export class CoAuthor {
 
       if (result.stopReason === "error" && result.strEdits.length === 0 && result.docEdits.length === 0 && !result.prose.trim()) {
         recordUsage({ ...tokens, status: "error" });
-        return this.fail(ws, result.error ?? "The AI turn failed.");
+        return this.fail(ws, reason ?? "The AI turn failed.");
       }
 
       // Before staging, so the image destination in the diff is the one that lands.

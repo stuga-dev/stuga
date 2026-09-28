@@ -25,3 +25,9 @@ export const SAMPLE_AGENT_NAME = "Sample agent";
  * the web app waits for either, so the person hears why.
  */
 export const ARCHIVE_WORK_MAX_MS = 50 * 60_000;
+
+/**
+ * The largest file a workspace import takes, a zipped archive or export. Its own limit, not the
+ * node's upload limit: the import reads it once it knows the caller, three at a time at most.
+ */
+export const WORKSPACE_IMPORT_MAX_BYTES = 512 * 1024 * 1024;

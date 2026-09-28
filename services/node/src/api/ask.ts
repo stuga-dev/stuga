@@ -1,5 +1,5 @@
 /** Ask: saved research threads, and the streamed cross-document agentic answer. */
-import { type AskAgentActivity, runAskAgentTurn } from "@stuga/ai";
+import { type AskAgentActivity, failureReason, type ModelFailure, runAskAgentTurn } from "@stuga/ai";
 import type { AskStopReason } from "@stuga/protocol/api/ask";
 import {
   appendAskTurn,
@@ -47,12 +47,12 @@ function activityLabel(a: AskAgentActivity): string {
 }
 
 /** The caveat shown under an answer that was not a clean, fully grounded finish; null when there is none. */
-function turnNotice(stop: AskStopReason, degraded: boolean): string | null {
+function turnNotice(stop: AskStopReason, degraded: boolean, failure?: ModelFailure): string | null {
   if (stop === "max_rounds") return "I stopped after the maximum number of research steps — ask a follow-up to continue.";
   if (stop === "budget") return "The AI budget ran out part-way through the answer.";
   if (stop === "aborted") return "Stopped.";
-  if (stop === "error") return "Something failed part-way through; this answer may be incomplete.";
-  if (degraded) return "Search by meaning was unavailable, so this matched words only. Results may be less relevant.";
+  if (stop === "error") return failureReason(failure) ?? "Something failed part-way through; this answer may be incomplete.";
+  if (degraded) return "Embeddings were unavailable, so this matched words only. Results may be less relevant.";
   return null;
 }
 
@@ -175,6 +175,7 @@ export async function ask({ ctx, req }: WorkspaceCall): Promise<Response> {
         onReset: () => send("reset", {}),
       },
     );
+    if (result.failure) console.warn("ask model call failed", { workspaceId: ctx.workspaceId, ...result.failure });
 
     // One usage row for the turn; each search records its own embedding and rerank rows.
     await insertAiUsage(ctx.sql, {
@@ -211,7 +212,7 @@ export async function ask({ ctx, req }: WorkspaceCall): Promise<Response> {
       citations: result.citations,
       rounds: result.rounds,
       stop_reason: result.stopReason,
-      notice: turnNotice(result.stopReason, degraded()),
+      notice: turnNotice(result.stopReason, degraded(), result.failure),
     });
   });
 }

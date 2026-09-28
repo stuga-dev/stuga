@@ -127,8 +127,8 @@ describe("the /mcp contract", () => {
       },
       comments_add: { arguments: ["body", "doc_id", "workspace_id"], actions: null },
       media_upload: {
-        arguments: ["action", "alt", "caption", "data", "doc_id", "url", "workspace_id"],
-        actions: ["upload", "upload_from_url"],
+        arguments: ["action", "alt", "caption", "data", "doc_id", "name", "upload_id", "url", "workspace_id"],
+        actions: ["upload", "upload_from_url", "start_upload"],
       },
       collections_edit: {
         arguments: ["action", "collection_id", "doc_ids", "folder_ids", "name", "workspace_id"],

@@ -152,6 +152,22 @@ describe("createHttpServer", () => {
     expect(calls).toBe(1);
   });
 
+  it("hands a route that reads its own body the stream unread, past maxBodyBytes, and closes a connection whose body it left", async () => {
+    const { port } = await serve({
+      readsOwnBody: (method, path) => method === "POST" && path === "/upload",
+      handler: async (req) => {
+        if (new URL(req.url).searchParams.has("refuse")) return new Response("no", { status: 401 });
+        return new Response(String((await req.arrayBuffer()).byteLength));
+      },
+    });
+    const big = Buffer.alloc(1000, 120);
+    expect(await raw(port, { method: "POST", path: "/upload?x=1", body: big })).toMatchObject({ status: 200, text: "1000" });
+    expect((await raw(port, { method: "POST", path: "/other", body: big })).status).toBe(413);
+    const refused = await raw(port, { method: "POST", path: "/upload?refuse", body: big });
+    expect(refused.status).toBe(401);
+    expect(refused.headers.connection).toBe("close");
+  });
+
   it("streams response bodies as they are produced", async () => {
     const encoder = new TextEncoder();
     let sawFirst!: () => void;

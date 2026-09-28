@@ -3,8 +3,10 @@
 export const DATABASE_MAX_TABLES = 20;
 export const DATABASE_MAX_COLUMNS = 64;
 export const DATABASE_MAX_ROWS = 50_000;
-/** One text cell, in UTF-8 bytes. */
+/** One text or files cell, in UTF-8 bytes. */
 export const DATABASE_MAX_CELL_BYTES = 16_384;
+/** Files one cell holds. */
+export const DATABASE_MAX_FILES_PER_CELL = 100;
 /** Rows per insert/update/delete batch. */
 export const DATABASE_MAX_ROWS_PER_WRITE = 500;
 /** Grid page window for /rows/list. */

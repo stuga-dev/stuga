@@ -36,8 +36,8 @@ const servers = (json: string) => JSON.parse(json).mcpServers as Record<string, 
 describe("clientTabs", () => {
   it("offers the hosted connector only on a node the internet can reach", () => {
     expect(clientTabs(PUBLIC)[0]).toBe("claude");
-    expect(clientTabs(PUBLIC)).toEqual(["claude", "claude-desktop", "claude-code", "codex", "antigravity", "dsh", "other"]);
-    expect(clientTabs(LOCAL)).toEqual(["claude-desktop", "claude-code", "codex", "antigravity", "dsh", "other"]);
+    expect(clientTabs(PUBLIC)).toEqual(["claude", "claude-desktop", "claude-code", "codex", "antigravity", "dsh", "pi", "other"]);
+    expect(clientTabs(LOCAL)).toEqual(["claude-desktop", "claude-code", "codex", "antigravity", "dsh", "pi", "other"]);
   });
 });
 
@@ -66,6 +66,7 @@ describe("clientConfigs", () => {
     });
     expect(servers(c.httpJson).stuga!.url).toBe("http://localhost:8787/mcp");
     expect(c.dshEnv).toContain("STUGA_URL=http://localhost:8787\n");
+    expect(c.piUrlEnv).toBe("export STUGA_URL=http://localhost:8787");
     expect(servers(c.desktopJson!).stuga!.env.STUGA_URL).toBe("http://localhost:8787");
   });
 
@@ -98,7 +99,17 @@ describe("clientConfigs", () => {
     const c = clientConfigs(LOCAL, "vk_live_1");
     expect(servers(c.httpJson).stuga!.headers).toEqual({ Authorization: "Bearer vk_live_1" });
     expect(c.dshEnv).toBe("STUGA_URL=http://localhost:8787\nSTUGA_API_KEY=vk_live_1");
+    expect(c.piKeyEnv).toBe("export STUGA_API_KEY=vk_live_1");
+    expect(clientConfigs(LOCAL, null).piKeyEnv).toBe(`export STUGA_API_KEY=${TOKEN_PLACEHOLDER}`);
     expect(servers(c.desktopJson!).stuga!.env.STUGA_TOKEN).toBe("vk_live_1");
+  });
+
+  it("points Pi at the node's origin with no key in it, so the sign-in path carries none", () => {
+    for (const setup of [PUBLIC, LOCAL, LAN]) {
+      const c = clientConfigs(setup, "vk_live_1");
+      expect(c.piUrlEnv).toBe(`export STUGA_URL=${setup.url}`);
+      expect(c.piUrlEnv).not.toContain("vk_live_1");
+    }
   });
 
   it("gives Claude Desktop the node's interpreter and server file on a loopback node", () => {

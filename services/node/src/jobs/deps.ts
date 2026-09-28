@@ -6,7 +6,7 @@ import { type NotificationPayload, type SinkIo, deliver } from "./sinks.js";
 
 export type JobsEnv = Pick<
   NodeEnv,
-  "sql" | "snapshots" | "jobs" | "docs" | "databases" | "aiSettings" | "settings" | "publicOrigin" | "embeddingDims"
+  "sql" | "snapshots" | "media" | "jobs" | "docs" | "databases" | "aiSettings" | "settings" | "publicOrigin" | "embeddingDims"
 >;
 
 export interface JobDeps {

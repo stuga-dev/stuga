@@ -126,6 +126,15 @@ describe("retrieveAndRerank", () => {
     expect(out.rerankDegraded).toBe(true);
   });
 
+  it("logs why a rerank failed, with its protocol and model", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failure = { kind: "cut_off", protocol: "openai-completions", model: "kimi-k3", message: "the answer reached the token cap before the scores closed" };
+    mockRerank.mockResolvedValue({ chunks: chunks("a b"), usage: ZERO, degraded: true, modelId: "kimi-k3", failure });
+    await retrieveAndRerank(args());
+    expect(warn).toHaveBeenCalledWith("retrieve rerank failed, keeping fusion order", { workspaceId: "ws1", ...failure });
+    warn.mockRestore();
+  });
+
   it("attributes embedding and rerank tokens separately", async () => {
     mockRerank.mockResolvedValue({
       chunks: chunks("a b"),

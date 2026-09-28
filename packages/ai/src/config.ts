@@ -57,7 +57,7 @@ export interface AiConfig {
     enabled: boolean;
     /** e.g. https://api.typesafe.ai/v1, https://openrouter.ai/api/v1 */
     baseUrl: string;
-    /** e.g. jev-latest, or typesafe/jev-latest on OpenRouter */
+    /** e.g. jev-latest, or ~typesafe/jev-latest on OpenRouter */
     model: string;
     apiKey?: string;
   };

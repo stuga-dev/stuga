@@ -8,10 +8,29 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { Divider } from "@astryxdesign/core/Divider";
 import { DropdownMenu } from "@astryxdesign/core/DropdownMenu";
 import {
-  Bold, Italic, Underline, Strikethrough, Code, Link2,
-  List as ListIcon, ListOrdered, Quote, Minus, Image as ImageIcon, Check, MoreHorizontal,
-  Undo2, Redo2,
-  ArrowLeftToLine, ArrowRightToLine, ArrowUpToLine, ArrowDownToLine, Trash2, Rows3, TableCellsMerge,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  Code,
+  Link2,
+  List as ListIcon,
+  ListOrdered,
+  Quote,
+  Minus,
+  Image as ImageIcon,
+  Check,
+  MoreHorizontal,
+  Undo2,
+  Redo2,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+  ArrowUpToLine,
+  ArrowDownToLine,
+  Trash2,
+  Rows3,
+  TableCellsMerge,
+  Paperclip,
 } from "lucide-react";
 import { useEditorTick } from "../use-editor-tick";
 import { BlockTypeMenu } from "./BlockTypeMenu";
@@ -74,21 +93,23 @@ const sep = <Divider orientation="vertical" />;
 export function EditorToolbar({
   editor,
   onEditLink,
-  onPickImages,
+  onPickFiles,
 }: {
   editor: Editor;
   onEditLink: () => void;
-  onPickImages: (files: File[]) => void;
+  /** Upload and insert files through the shared progress-tracked uploader: images as images, anything else as links. */
+  onPickFiles: (files: File[]) => void;
 }) {
   useEditorTick(editor);
   const chain = () => editor.chain().focus();
+  const imageRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  function onPickImage(e: React.ChangeEvent<HTMLInputElement>) {
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     // Lets the same file be picked again.
     e.target.value = "";
-    if (files.length) onPickImages(files);
+    if (files.length) onPickFiles(files);
   }
 
   const inTable = editor.isActive("table");
@@ -118,7 +139,8 @@ export function EditorToolbar({
             menuWidth={180}
             presentation="adaptive"
             items={[
-              { label: "Image…", icon: <ImageIcon size={16} />, onClick: () => fileRef.current?.click() },
+              { label: "Image…", icon: <ImageIcon size={16} />, onClick: () => imageRef.current?.click() },
+              { label: "File…", icon: <Paperclip size={16} />, onClick: () => fileRef.current?.click() },
               { label: "Divider", icon: <Minus size={16} />, onClick: () => chain().setHorizontalRule().run() },
             ]}
           />
@@ -136,7 +158,8 @@ export function EditorToolbar({
 
           <Action onRun={() => chain().undo().run()} disabled={!editor.can().undo()} title="Undo (⌘Z)" icon={<Undo2 size={16} />} />
           <Action onRun={() => chain().redo().run()} disabled={!editor.can().redo()} title="Redo (⌘⇧Z)" icon={<Redo2 size={16} />} />
-          <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={onPickImage} />
+          <input ref={imageRef} type="file" accept="image/*" multiple hidden onChange={onPick} />
+          <input ref={fileRef} type="file" multiple hidden onChange={onPick} />
 
           {inTable && (
             <>

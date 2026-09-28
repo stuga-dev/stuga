@@ -67,11 +67,14 @@ import { docAgentInstructions, docAgentInstructionsOrNone, docInstructionLabelsO
 import {
   MediaValidationError,
   decodeBase64Image,
-  fetchRemoteImage,
+  fetchRemoteFile,
+  imageUploadLimits,
   mediaUrl,
+  sniffImageMime,
+  storeFile,
   storeImage,
-  validateImageBytes,
 } from "../media/media.js";
+import { createMediaUpload, takeMediaUpload } from "../media/uploads.js";
 
 /** Max page before the caller's own runs are picked out: a busy database's newest runs may all be someone else's. */
 const RUNS_PAGE = 50;
@@ -86,6 +89,15 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
     if (!doc) return NOT_FOUND;
     if (!canWriteDoc(ctx, doc)) return { error: "no write access to this database" };
     if (doc.locked) return { error: "this database is locked; the user must unlock it first" };
+    return doc;
+  };
+
+  /** A document or database the caller may add a file to, or the refusal: an upload is a write, gated as an edit is. */
+  const uploadTarget = async (docId: string): Promise<DocRow | { error: string }> => {
+    const doc = await getDoc(ctx.sql, docId);
+    if (!doc || doc.trashed || !canReadDoc(ctx, doc)) return { error: `document ${docId} not found` };
+    if (!canWriteDoc(ctx, doc)) return { error: `no write access to ${docId}` };
+    if (doc.locked) return { error: `${doc.doc_type === "database" ? "database" : "document"} ${docId} is locked; unlock it to add files` };
     return doc;
   };
 
@@ -187,25 +199,48 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
       return { ...answer, ...(await docInstructionLabelsOrNone(ctx, outcome.doc)) };
     },
 
-    async uploadImage(docId, source) {
-      // An upload is a document write: the same gates as an edit.
-      const doc = await getDoc(ctx.sql, docId);
-      if (!doc || doc.trashed || !canReadDoc(ctx, doc)) return { error: `document ${docId} not found` };
-      if (doc.doc_type !== "prose") return { error: databaseDocMessage(docId) };
-      if (!canWriteDoc(ctx, doc)) return { error: `no write access to ${docId}` };
-      if (doc.locked) return { error: `document ${docId} is locked; unlock it to add images` };
+    async uploadMedia(docId, source) {
+      const doc = await uploadTarget(docId);
+      if ("error" in doc) return doc;
+      const database = doc.doc_type === "database";
       try {
-        // The bytes name their own type; a model-declared mime is wrong too often to ask for one.
-        const { bytes, mime } =
-          source.kind === "data"
-            ? validateImageBytes(decodeBase64Image(source.data), MAX_INLINE_IMAGE_BYTES)
-            : await fetchRemoteImage(source.url);
-        const stored = await storeImage(ctx.env.media, ctx.workspaceId, bytes, mime);
-        return { url: mediaUrl(docId, stored.hash), hash: stored.hash, size: stored.size, mime: stored.mime };
+        let bytes: Uint8Array;
+        let name: string | undefined;
+        if (source.kind === "upload_id") {
+          const taken = await takeMediaUpload(ctx, doc, source.upload_id);
+          if ("error" in taken) return taken;
+          ({ bytes, name } = taken);
+        } else if (source.kind === "data") {
+          bytes = decodeBase64Image(source.data, "file");
+          if (bytes.byteLength > MAX_INLINE_IMAGE_BYTES) {
+            return { error: `too large to send inline (max ${Math.floor(MAX_INLINE_IMAGE_BYTES / (1024 * 1024))} MB): use action:start_upload or upload_from_url` };
+          }
+          name = source.name;
+        } else {
+          const fetched = await fetchRemoteFile(source.url, imageUploadLimits(ctx.env.settings.current().maxBodyBytes).bytes);
+          bytes = fetched.bytes;
+          name = source.name ?? fetched.name;
+        }
+        // The bytes name their own type; a model-declared mime is wrong too often to ask for one. A
+        // document shows an image; anything else, and whatever a database holds, is a file by its name.
+        const image = sniffImageMime(bytes);
+        if (image && !database) {
+          const stored = await storeImage(ctx.env.media, doc.workspace_id, bytes, image);
+          return { url: mediaUrl(docId, stored.hash), hash: stored.hash, size: stored.size, mime: stored.mime };
+        }
+        if (!name?.trim()) return { error: "name the file: pass `name`, such as report.pdf" };
+        const stored = await storeFile(ctx.env.media, doc.workspace_id, bytes, name, database ? docId : undefined);
+        return { url: mediaUrl(docId, stored.hash, stored.name), hash: stored.hash, size: stored.size, mime: stored.mime, name: stored.name, ...(database ? { database: true as const } : {}) };
       } catch (e) {
         if (e instanceof MediaValidationError) return { error: e.message };
         return { error: `upload failed: ${e instanceof Error ? e.message : String(e)}` };
       }
+    },
+
+    async startUpload(docId, name) {
+      const doc = await uploadTarget(docId);
+      if ("error" in doc) return doc;
+      return createMediaUpload(ctx, doc, name);
     },
 
     async listComments(docId) {

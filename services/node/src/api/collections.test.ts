@@ -27,7 +27,9 @@ const db = await import("@stuga/db");
 const { retrieveAndRerank } = await import("../retrieval/retrieve.js");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 const { READ_ONLY_MESSAGE } = await import("../authz/authz.js");
+import { MemoryBlobStore } from "@stuga/runtime/testing";
 import type { Ctx } from "../auth/context.js";
+import { DEFAULT_MAX_BODY_BYTES } from "../media/media.js";
 import { fixed, personCtx, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
 
 const mockList = vi.mocked(db.listCollections);
@@ -374,7 +376,7 @@ describe("the audit ledger", () => {
 });
 
 describe("POST /api/docs/:id/media", () => {
-  it("refuses a structured database, whose images nothing references or reclaims", async () => {
+  it("keeps a structured database's file, an image among them, under the database, by its name", async () => {
     mockGetDoc.mockResolvedValue({
       doc_id: "db1",
       workspace_id: "ws1",
@@ -382,9 +384,16 @@ describe("POST /api/docs/:id/media", () => {
       acl_principals: ["agent:a1"],
       acl_writers: ["agent:a1"],
       trashed: false,
+      locked: false,
     } as never);
-    const res = await send(agent(), "POST", "/api/docs/db1/media");
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toContain("structured database");
+    const media = new MemoryBlobStore();
+    const form = new FormData();
+    form.set("file", new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1])], { type: "image/png" }), "chart.png");
+    const ctx = agent({ env: { jobs, aiSettings: ai(false), media, settings: fixed({ maxBodyBytes: DEFAULT_MAX_BODY_BYTES }) } });
+    const res = await routeWorkspaceRequest(ctx, new Request("https://node.test/api/docs/db1/media", { method: "POST", body: form }));
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { url: string; hash: string; name: string };
+    expect(body.url).toBe(`/api/docs/db1/media/${body.hash}/chart.png`);
+    expect((await media.list()).objects.map((o) => o.key)).toEqual([`media/ws1/db1/${body.hash}`]);
   });
 });

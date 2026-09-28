@@ -34,4 +34,12 @@ describe("renderUpload", () => {
     });
     expect(note).toContain("uploading does not place the image by itself");
   });
+
+  it("links a file by its name, and tells a database's upload where its link goes", () => {
+    const file = { url: "/api/docs/d1/media/abc/a_b%5B1%5D.pdf", hash: "abc", size: 10, mime: "application/pdf", name: "a_b[1].pdf" };
+    expect(JSON.parse(renderUpload(file, undefined, undefined).split("\n")[0]!).markdown).toBe("[a\\_b\\[1\\].pdf](/api/docs/d1/media/abc/a_b%5B1%5D.pdf)");
+    const [json, note] = renderUpload({ ...file, database: true }, undefined, undefined).split("\n");
+    expect(JSON.parse(json!)).not.toHaveProperty("markdown");
+    expect(note).toContain("files column's cell");
+  });
 });

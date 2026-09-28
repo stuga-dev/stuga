@@ -120,6 +120,19 @@ describe("a table co-author turn", () => {
     expect(vi.mocked(runTableAgentTurn).mock.calls.at(-1)![1]).toMatchObject({ instructions: LEVELS });
   });
 
+  it("tells the person what failed in plain words, and logs the provider's own", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failure = { kind: "auth" as const, protocol: "anthropic-messages", model: "claude-opus-5-5", message: "401 invalid x-api-key for org-abc" };
+    vi.mocked(resolveDocInstructions).mockResolvedValue([]);
+    vi.mocked(runTableAgentTurn).mockResolvedValue({ ...turnResult, modelId: "claude-opus-5-5", stopReason: "error", error: failure.message, failure });
+    const text = await start(turnCtx());
+    expect(text).toContain("event: error");
+    expect(text).toContain("did not accept this node's key");
+    expect(text).not.toContain("org-abc");
+    expect(warn).toHaveBeenCalledWith("table assistant model call failed", expect.objectContaining({ docId: "db1", ...failure }));
+    warn.mockRestore();
+  });
+
   it("runs the turn without them when they cannot be read", async () => {
     vi.mocked(runTableAgentTurn).mockClear().mockResolvedValue(turnResult);
     vi.mocked(resolveDocInstructions).mockRejectedValue(new Error("db down"));

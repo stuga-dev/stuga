@@ -184,7 +184,7 @@ export function DatabaseGrid({
       const id = r.row_ids[0];
       if (!id) return win.refetch();
       win.appendRow(id);
-      const first = columns.find((c) => c.type !== "checkbox");
+      const first = columns.find((c) => c.type !== "checkbox" && c.type !== "files");
       if (first) setEditing({ rowId: id, columnId: first.column_id });
     } catch (e) {
       surfaceError(e, "Couldn't add a row.");
@@ -304,6 +304,7 @@ export function DatabaseGrid({
   const renderRow = (row: RowRecord) => (
     <GridRow
       key={row._id}
+      databaseId={docId}
       row={row}
       columns={visibleColumns}
       ghostCols={overlay.ghostCols}

@@ -98,6 +98,7 @@ export async function retrieveAndRerank(args: RetrieveArgs): Promise<RetrieveRes
   // from. `rankAbove: topN` keeps the judge running whenever there are more
   // candidates than will be shown, not only more than the widened request.
   const reranked = await rerankChunks(aiCfg, query, candidates, Math.min(topN * 2, CANDIDATE_LIMIT), { rankAbove: topN });
+  if (reranked.failure) console.warn("retrieve rerank failed, keeping fusion order", { workspaceId, ...reranked.failure });
   // The judge is chosen at call time: usage names the model that ran; null means no call happened.
   if (reranked.modelId && (reranked.usage.inputTokens || reranked.usage.outputTokens)) {
     await insertAiUsage(sql, {

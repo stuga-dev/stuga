@@ -3,7 +3,9 @@ import { Button } from "@astryxdesign/core/Button";
 import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { ChevronDown, ChevronRight, FileText, Maximize2 } from "lucide-react";
 import type { ColumnSpec, DbRunOpRowsInsert, RowInputValue, RowRecord, RowValue } from "@stuga/protocol/databases/types";
+import { fileLinks } from "@stuga/protocol/databases/cells";
 import { CellEditor } from "../CellEditor";
+import { FilesCell } from "../FilesCell";
 import { pageStateOf } from "../model/row-ref";
 import type { GhostColumn } from "./pending-overlay";
 
@@ -12,10 +14,12 @@ const GHOST_PREVIEW_MAX = 50;
 
 function display(col: ColumnSpec | undefined, v: RowValue | undefined): string {
   if (v === null || v === undefined) return "";
+  if (col?.type === "files") return fileLinks(v).map((f) => f.name).join(", ");
   return col?.type === "checkbox" ? (v === 1 ? "✓" : "—") : String(v);
 }
 
 export function GridRow({
+  databaseId,
   row,
   columns,
   ghostCols,
@@ -30,6 +34,7 @@ export function GridRow({
   onEdit,
   onCommit,
 }: {
+  databaseId: string;
   row: RowRecord;
   /** The visible columns, in order. */
   columns: ColumnSpec[];
@@ -80,7 +85,7 @@ export function GridRow({
             <td key={col.column_id} className="db-td db-td--proposed">
               <span
                 className="db-cell db-cell--proposed"
-                title={`Proposed by ${proposed!.agent} — currently: ${value === null ? "(empty)" : String(value)}`}
+                title={`Proposed by ${proposed!.agent} — currently: ${value === null ? "(empty)" : display(col, value)}`}
               >
                 {display(col, proposedValue)}
               </span>
@@ -98,6 +103,13 @@ export function GridRow({
                 isDisabled={readOnly || proposedDelete}
                 onChange={(v) => onCommit(col, v === true)}
               />
+            </td>
+          );
+        }
+        if (col.type === "files") {
+          return (
+            <td key={col.column_id} className="db-td">
+              <FilesCell databaseId={databaseId} label={col.display} value={value} readOnly={readOnly || proposedDelete} onChange={(v) => onCommit(col, v)} />
             </td>
           );
         }

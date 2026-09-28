@@ -47,7 +47,7 @@ export interface NodeAiSettings {
     /** The same for Ask, agents' retrieve and the assistants' document search. */
     retrieval_max_distance: number | null;
   };
-  /** A System One model that ranks passages; without one, chat does while it runs. */
+  /** A System One model that reranks passages; without one, chat does while it runs. */
   rerank: {
     enabled: boolean;
     running: boolean;

@@ -4,8 +4,8 @@ import type { NodeAiSettings, NodeAiSettingsInput } from "../../../api";
 /** What each part is called and is for, the same in Settings and at first run. */
 export const HALF_COPY = {
   chat: { title: "Built-in AI", about: "The co-author, Ask and the table assistant, for every member, on your API key." },
-  search: { title: "Search by meaning", about: "Finds text by meaning, not only exact words, for search, Ask and agents." },
-  rerank: { title: "Ranking", about: "Puts the most relevant passages first, for Ask and agents." },
+  search: { title: "Embeddings", about: "Search by meaning, not only exact words, for the search box, Ask and agents." },
+  rerank: { title: "Reranking", about: "Puts the most relevant passages first, for Ask and agents." },
 } as const;
 
 export const PROVIDERS = [

@@ -13,6 +13,8 @@ import type { ReviewMode } from "../domain/events.js";
  *   date TEXT "YYYY-MM-DD" (lexical order is chronological)
  *   single_select TEXT, checked against options.choices in code rather than a
  *   CHECK constraint, so editing choices never rebuilds the table
+ *   files TEXT, one link per line to a file stored with the database,
+ *   "/api/docs/<database>/media/<sha256>/<name>" (cells.ts, fileLinks)
  */
 export const DATABASE_COLUMN_TYPES = [
   "text",
@@ -20,6 +22,7 @@ export const DATABASE_COLUMN_TYPES = [
   "checkbox",
   "date",
   "single_select",
+  "files",
 ] as const;
 
 export type DatabaseColumnType = (typeof DATABASE_COLUMN_TYPES)[number];
@@ -70,7 +73,7 @@ export interface DatabaseSchema {
 
 // ---- Rows ----------------------------------------------------------------------
 
-/** A cell value as stored and read: checkbox is 0/1, date is "YYYY-MM-DD". */
+/** A cell value as stored and read: checkbox is 0/1, date is "YYYY-MM-DD", files one link per line. */
 export type RowValue = string | number | null;
 
 /** What callers may send for a cell before normalization. */
@@ -359,7 +362,8 @@ export type DatabaseImportErrorCode =
   | "invalid_number"
   | "invalid_checkbox"
   | "invalid_date"
-  | "invalid_choice";
+  | "invalid_choice"
+  | "invalid_files";
 
 /** One bad cell, located precisely enough to fix in place without re-reading the file. */
 export interface DatabaseImportError {

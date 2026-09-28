@@ -89,18 +89,22 @@ document the asker cannot open never reaches the model.
 
 `retrieveAndRerank` (`services/node/src/retrieval/retrieve.ts`) is the pipeline every surface uses:
 embed the question, fetch 24 candidates with `askDocs`, have a judge score every candidate in one
-request, and keep the best. The judge is the **Ranking** model when one is set up (TypeSafe's Jev,
+request, and keep the best. The judge is the **Reranking** model when one is set up (TypeSafe's Jev,
 answering one yes/no question per candidate), otherwise the chat model while chat is on (a 0–10 score
-per candidate); with neither, passages keep their fusion order. Two guards live here so no surface
-can skip them:
+per candidate, asked with reasoning off, or at the model's lowest level where it cannot be switched
+off); with neither, passages keep their fusion order. A judge reads each candidate's title, heading
+path and text, and of a passage longer than 1,200 characters the 1,200 that hold the most of the
+question's terms, the rarer ones counting for more (`packages/ai/src/retrieval/excerpt.ts`). Two
+guards live here so no surface can skip them:
 
 - **At most three passages per document come first.** Sections of one document cluster in embedding
   space, so an uncapped top eight is often eight sections of one document, which reads one source's
   account of itself as consensus. Further passages from the same document fill in only when there are
   not enough from others.
 - **Degradation is reported.** If the question cannot be embedded, retrieval runs keyword-only and
-  `degraded` is set, which Ask turns into a notice under the answer ("Search by meaning was
-  unavailable…"). If the rerank call fails, passages keep their fusion order.
+  `degraded` is set, which Ask turns into a notice under the answer ("Embeddings were
+  unavailable…"). If the rerank call fails or its answer cannot be used, passages keep their fusion
+  order and the node logs why.
 
 Tokens spent on the embedding and the rerank are recorded against the asker.
 
@@ -134,7 +138,9 @@ Grounding is enforced three ways:
    only what was used. The no-answer sentence is one constant, `DONT_KNOW`.
 
 The loop stops on a final answer, after six rounds, when the asker stops it, or on a provider error,
-and the reply says which. `POST /api/ask` answers `503` when AI chat is off on the node.
+and the reply says which. A provider that is out of credit, refuses the node's key, limits requests
+or cannot be reached is named as such; its own message goes only to the node's log. `POST /api/ask`
+answers `503` when AI chat is off on the node.
 
 ## Threads
 

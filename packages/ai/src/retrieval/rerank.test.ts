@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import type { AiConfig } from "../config.js";
 import { rerankChunks, type RerankCandidate } from "./rerank.js";
 import { resolveModel } from "../models.js";
-import { CFG, mockStreamFromText } from "../test-helpers.js";
+import { CFG, mockStreamFromText, openaiDelta, openaiSse, sentBody, streamOf } from "../test-helpers.js";
 
 function mockScores(json: string) {
   mockStreamFromText(json, { inputTokens: 50, outputTokens: 20 });
@@ -47,11 +47,38 @@ describe("rerankChunks with the chat model as judge", () => {
     expect(out.chunks.map((c) => c.doc_id)).toEqual(["d2", "d0"]);
   });
 
-  it("degrades to similarity order on unparseable output", async () => {
+  it("degrades to similarity order on unparseable output, and says why", async () => {
     mockScores("sorry, I cannot comply");
     const out = await rerankChunks(CFG, "q", cands(5), 3);
     expect(out.degraded).toBe(true);
     expect(out.chunks.map((c) => c.doc_id)).toEqual(["d0", "d1", "d2"]);
+    expect(out.failure).toMatchObject({ kind: "unparseable", protocol: "anthropic-messages", model: "sonnet" });
+  });
+
+  it("reads scores written one object per line, without the array", async () => {
+    mockScores('{"i":0,"score":1}\n{"i":1,"score":9}\n{"i":2,"score":4}\n{"i":3,"score":0}');
+    const out = await rerankChunks(CFG, "q", cands(4), 2);
+    expect(out.degraded).toBe(false);
+    expect(out.chunks.map((c) => c.doc_id)).toEqual(["d1", "d2"]);
+  });
+
+  it("reads the first list when a note after it mentions a snippet", async () => {
+    mockScores('[{"i":0,"score":2},{"i":1,"score":8},{"i":2,"score":5}]\nNote: snippet [0] is only related.');
+    const out = await rerankChunks(CFG, "q", cands(3), 2);
+    expect(out.chunks.map((c) => c.doc_id)).toEqual(["d1", "d2"]);
+  });
+
+  it("reads [i] score lines", async () => {
+    mockScores("[0] 2\n[1] 0\n[2] 7\n[3] 5");
+    const out = await rerankChunks(CFG, "q", cands(4), 2);
+    expect(out.chunks.map((c) => c.doc_id)).toEqual(["d2", "d3"]);
+  });
+
+  it("degrades when the answer names only the best passage", async () => {
+    mockScores("[2]");
+    const out = await rerankChunks(CFG, "q", cands(4), 2);
+    expect(out).toMatchObject({ degraded: true, failure: { kind: "unparseable" } });
+    expect(out.chunks.map((c) => c.doc_id)).toEqual(["d0", "d1"]);
   });
 
   // A 400 fails on the first attempt; a 5xx would wait out the client's retry backoff.
@@ -61,6 +88,7 @@ describe("rerankChunks with the chat model as judge", () => {
     expect(out.degraded).toBe(true);
     expect(out.chunks.map((c) => c.doc_id)).toEqual(["d0", "d1"]);
     expect(out.modelId).toBe(resolveModel(CFG, "auto"));
+    expect(out.failure).toMatchObject({ kind: "rejected", protocol: "anthropic-messages", model: "sonnet", message: expect.stringContaining("boom") });
   });
 
   // A failed judge degrades silently, so a misrouted call would be invisible without this.
@@ -86,6 +114,51 @@ describe("rerankChunks with the chat model as judge", () => {
     expect(spy).not.toHaveBeenCalled();
     expect(out).toMatchObject({ degraded: false, modelId: null });
     expect(out.chunks.map((c) => c.doc_id)).toEqual(["d0", "d1"]);
+  });
+});
+
+/** Reasoning spends the same output cap the scores need. */
+describe("rerankChunks with a reasoning model as judge", () => {
+  const judge = (baseUrl: string, provider: "anthropic" | "openai", id: string): AiConfig => ({
+    ...CFG,
+    chat: { ...CFG.chat, defaultModel: id, endpoints: [{ id: "judge", provider, baseUrl, apiKey: "k", models: [{ id, name: id }] }] },
+  });
+  const KIMI = judge("https://api.moonshot.ai/v1", "openai", "kimi-k3");
+  const refuseAll = () => vi.stubGlobal("fetch", vi.fn(async () => new Response("no", { status: 400 })));
+
+  it("asks Kimi K3, which cannot switch reasoning off, for its lowest level, with room to finish", async () => {
+    refuseAll();
+    await rerankChunks(KIMI, "q", cands(4), 2);
+    expect(sentBody()).toMatchObject({ model: "kimi-k3", reasoning_effort: "low", max_tokens: 8192 });
+  });
+
+  it("asks Claude Opus 5.5 for low effort instead of its default", async () => {
+    refuseAll();
+    await rerankChunks(judge("https://api.anthropic.com", "anthropic", "claude-opus-5-5"), "q", cands(4), 2);
+    const body = sentBody<{ max_tokens: number; messages: Array<{ role: string; output_config?: { effort: string } }> }>();
+    expect(body.max_tokens).toBe(8192);
+    expect(body.messages.at(-1)).toMatchObject({ role: "system", output_config: { effort: "low" } });
+  });
+
+  it("gives a model it knows nothing about the same room, and no reasoning controls", async () => {
+    refuseAll();
+    await rerankChunks(CFG, "q", cands(4), 2);
+    expect(sentBody()).toMatchObject({ max_tokens: 8192 });
+    expect(sentBody()).not.toHaveProperty("thinking");
+  });
+
+  it("degrades when the answer is cut off, rather than scoring what it never reached", async () => {
+    const round = openaiSse([
+      openaiDelta({ reasoning_content: "Passage 0 names the clause." }),
+      openaiDelta({ content: '[{"i":0,"score":9},{"i":1,"sc' }),
+      openaiDelta({}, "length"),
+      { choices: [], usage: { prompt_tokens: 900, completion_tokens: 8192 } },
+    ]);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(streamOf(round), { status: 200 })));
+    const out = await rerankChunks(KIMI, "q", cands(4), 2);
+    expect(out).toMatchObject({ degraded: true, modelId: "kimi-k3", usage: { inputTokens: 900, outputTokens: 8192 } });
+    expect(out.chunks.map((c) => c.doc_id)).toEqual(["d0", "d1"]);
+    expect(out.failure).toMatchObject({ kind: "cut_off", protocol: "openai-completions", model: "kimi-k3" });
   });
 });
 
@@ -118,11 +191,12 @@ describe("rerankChunks with a System One reranker", () => {
     expect(out.chunks.map((c) => c.doc_id)).toEqual(["d0", "d1"]);
   });
 
-  it("degrades to similarity order when the endpoint refuses", async () => {
+  it("degrades to similarity order when the endpoint refuses, and says why", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("bad key", { status: 401 })));
     const out = await rerankChunks(WITH_RERANKER, "q", cands(3), 2);
     expect(out.degraded).toBe(true);
     expect(out.chunks.map((c) => c.doc_id)).toEqual(["d0", "d1"]);
+    expect(out.failure).toMatchObject({ kind: "auth", protocol: "systemone", model: "jev-latest", message: expect.stringContaining("bad key") });
   });
 });
 

@@ -18,9 +18,11 @@ import { purgeUnfinishedImports, purgeWorkspace } from "../api/workspaces.js";
 import { type AccountCtx, workspaceContextFor } from "../auth/context.js";
 import type { NodeEnv } from "../env.js";
 import { DEFAULT_MAX_BODY_BYTES } from "../media/media.js";
+import { serveMedia } from "../media/serve.js";
 import { sessionConnection, withDatabase, type LockSql } from "../writer-lock.js";
 import { workspaceImportClient } from "./client.js";
 import { importArchive, importWorkspaceArchive, readArchive } from "./import.js";
+import { NOTION_EXPORT, notionId, zipOf } from "./testing/converted.js";
 import { IMAGE, LIMITS, build, sha256, PNG } from "./testing/fixture.js";
 
 const URL = process.env.TEST_DATABASE_URL;
@@ -151,6 +153,75 @@ describe.skipIf(!URL)("importing an archive into a new workspace", () => {
     expect(await purgeWorkspace(env, WS)).toEqual({ docs: 4 });
     expect(await sql`SELECT 1 FROM docs WHERE workspace_id = ${WS}`).toHaveLength(0);
     expect((await env.media.list({ prefix: `media/${WS}/` })).objects).toEqual([]);
+  });
+
+  it("imports a Notion export converted into an archive, its pages, rows and links landing as an archive's do", async () => {
+    await provisionWorkspace(sql as never, { workspaceId: "ws-notion", name: "Notion", owner: "u_liv" });
+    const account = { sql, surface: "web", alias: "u_liv", displayName: "Liv", isAgent: false, env } as unknown as AccountCtx;
+    const contents = await readArchive(zipOf(NOTION_EXPORT), { ...LIMITS, convert: true });
+    expect([contents.kind, contents.leftOut]).toEqual(["notion", []]);
+    const out = await importWorkspaceArchive(account, "ws-notion", contents);
+
+    const rows = await sql<DocRow[]>`SELECT * FROM docs WHERE workspace_id = 'ws-notion'`;
+    expect(rows.map((r) => [r.doc_type, r.title]).sort()).toEqual([
+      ["database", "Projects"],
+      ["prose", "Home"],
+      ["prose", "Launch"],
+      ["prose", "Notes"],
+    ]);
+    const home = out.ids.docs.get("Home/Home.md")!;
+    const notes = out.ids.docs.get("Home/Notes.md")!;
+    const launch = out.ids.docs.get("Home/Projects/pages/Launch.md")!;
+    const db = out.ids.databases.get("Home/Projects")!;
+    const table = db.tables.get("Projects")!;
+    expect(out.startDocId).toBe(home);
+
+    const homeBody = (await actor<{ markdown: string }>(docs, home, "markdown", "docId")).markdown;
+    expect(homeBody).toContain(`[Notes](/doc/${notes}) and [Projects](/doc/${db.docId})`);
+    expect(homeBody).toContain("> 💡 Keep it short.");
+    expect(homeBody).toContain(`![Untitled](/api/docs/${home}/media/${sha256(PNG)})`);
+    // The PDF went along, and its link downloads it under its name.
+    const pdf = sha256(new TextEncoder().encode("%PDF-1.7"));
+    expect(homeBody).toContain(`[Brief.pdf](/api/docs/${home}/media/${pdf}/Brief.pdf)`);
+    const served = await serveMedia(env, "ws-notion", pdf, { files: true, name: "Brief.pdf" });
+    expect([served.status, served.headers.get("content-disposition")]).toEqual([200, `attachment; filename="Brief.pdf"; filename*=UTF-8''Brief.pdf`]);
+    const notesBody = (await actor<{ markdown: string }>(docs, notes, "markdown", "docId")).markdown;
+    expect(notesBody).toContain(`[Launch](/doc/${launch}?row=${db.docId}.${table.tableId}.${table.rows.get(notionId(4))})`);
+    expect(notesBody).toContain(`[Docs](/doc/${db.docId}?table=${table.tableId}&row=${table.rows.get(notionId(5))})`);
+
+    const listed = await actor<{ rows: Array<Record<string, unknown>> }>(databases, db.docId, "rows/list", "dbId", { table_id: table.tableId });
+    const cell = (name: string) => table.columns.get(name)!;
+    expect(listed.rows.map((r) => [r[cell("Name")], r[cell("Status")], r[cell("Due")], r[cell("Done")], r[cell("Points")], r._doc_id])).toEqual([
+      ["Launch", "In progress", "2026-09-27", 0, 3, launch],
+      ["Docs", "Done", "2026-10-01", 1, 5, null],
+      ["Hiring", "In progress", null, 0, 8, null],
+    ]);
+    await purgeWorkspace(env, "ws-notion");
+  });
+
+  it("imports a Notion files property as a files column, whose files the database keeps and serves", async () => {
+    await provisionWorkspace(sql as never, { workspaceId: "ws-files", name: "Files", owner: "u_liv" });
+    const account = { sql, surface: "web", alias: "u_liv", displayName: "Liv", isAgent: false, env } as unknown as AccountCtx;
+    const pdf = new TextEncoder().encode("%PDF-1.7 patent");
+    const contents = await readArchive(
+      zipOf({
+        [`Patents ${notionId(2)}_all.csv`]: "Name,Attachment\r\nLight BIM,Patents/Light%20BIM/2021.pdf\r\nPlain,\r\n",
+        "Patents/Light BIM/2021.pdf": pdf,
+      }),
+      { ...LIMITS, convert: true },
+    );
+    const out = await importWorkspaceArchive(account, "ws-files", contents);
+    expect(out.counts.files).toBe(1);
+    const db = out.ids.databases.get("Patents")!;
+    const table = db.tables.get("Patents")!;
+    const listed = await actor<{ rows: Array<Record<string, unknown>> }>(databases, db.docId, "rows/list", "dbId", { table_id: table.tableId });
+    const hash = sha256(pdf);
+    expect(listed.rows.map((r) => r[table.columns.get("Attachment")!])).toEqual([`/api/docs/${db.docId}/media/${hash}/2021.pdf`, null]);
+    expect((await env.media.list({ prefix: "media/ws-files/" })).objects.map((o) => o.key)).toEqual([`media/ws-files/${db.docId}/${hash}`]);
+    const served = await serveMedia(env, "ws-files", hash, { files: true, docId: db.docId, name: "2021.pdf" });
+    expect([served.status, await served.text()]).toEqual([200, "%PDF-1.7 patent"]);
+    await purgeWorkspace(env, "ws-files");
+    expect((await env.media.list({ prefix: "media/ws-files/" })).objects).toEqual([]);
   });
 
   it("lists a workspace a stopped node was importing into nowhere, and deletes it when the node starts again", async () => {

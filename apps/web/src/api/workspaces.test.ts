@@ -43,41 +43,51 @@ describe("Workspaces.exportArchive", () => {
   });
 });
 
-describe("Workspaces.importArchive", () => {
-  it("sends the file as the body, with the name and access in the query, and answers the new workspace", async () => {
-    let sent: RequestInit | undefined;
+describe("importing a file", () => {
+  it("sends the file to be checked and held, then imports what the node holds by its id, or lets it go", async () => {
+    const sent: Array<[string, RequestInit | undefined]> = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string | URL, init?: RequestInit) => {
-        calls.push(String(url));
-        sent = init;
-        return Response.json({ workspace_id: "ws2", name: "Liv's team", start_doc_id: "d1" }, { status: 201 });
+        sent.push([String(url), init]);
+        if (init?.method === "DELETE") return new Response(null, { status: 204 });
+        return String(url).endsWith("/api/workspace-imports")
+          ? Response.json({ import_id: "wsi_1", expires_at: "2026-09-28T01:00:00Z", name: "Liv's team" }, { status: 201 })
+          : Response.json({ workspace_id: "ws2", name: "Liv's team", start_doc_id: "d1" }, { status: 201 });
       }),
     );
     const file = new File(["PK"], "Liv's team.stuga.zip", { type: "application/zip" });
-    const created = await Workspaces.importArchive(file, "Liv's team & co", "private");
-    expect(calls).toEqual(["/api/workspaces/import?name=Liv's%20team%20%26%20co&default_doc_access=private"]);
-    expect(sent?.method).toBe("POST");
-    expect(sent?.body).toBe(file);
-    expect(new Headers(sent?.headers).get("content-type")).toBe("application/zip");
+    const held = await Workspaces.checkImport(file);
+    expect(held).toMatchObject({ import_id: "wsi_1", name: "Liv's team" });
+    expect(sent[0]![0]).toBe("/api/workspace-imports");
+    expect(sent[0]![1]?.body).toBe(file);
+    expect(new Headers(sent[0]![1]?.headers).get("content-type")).toBe("application/zip");
+
+    const created = await Workspaces.importHeld("wsi_1", "Liv's team & co", "private");
+    expect(sent[1]![0]).toBe("/api/workspace-imports/wsi_1");
+    expect(JSON.parse(String(sent[1]![1]?.body))).toEqual({ name: "Liv's team & co", default_doc_access: "private" });
     expect(created).toMatchObject({ workspace_id: "ws2", start_doc_id: "d1" });
+
+    await Workspaces.discardImport("wsi_1");
+    expect(sent[2]).toEqual(["/api/workspace-imports/wsi_1", expect.objectContaining({ method: "DELETE" })]);
   });
 
-  it("waits as long as an export, since the node answers once the whole import is done", async () => {
+  it("waits as long as an export, since the node answers once the whole file is read or imported", async () => {
     const deadlines = vi.spyOn(AbortSignal, "timeout");
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ workspace_id: "ws2" }, { status: 201 })));
-    await Workspaces.importArchive(new File(["PK"], "a.stuga.zip"), "A", "private");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ workspace_id: "ws2", import_id: "wsi_1" }, { status: 201 })));
+    await Workspaces.checkImport(new File(["PK"], "a.stuga.zip"));
+    await Workspaces.importHeld("wsi_1", "A", "private");
     await Workspaces.exportArchive("ws1");
-    expect(deadlines.mock.calls.map(([ms]) => ms)).toEqual([60 * 60_000, 60 * 60_000]);
+    expect(deadlines.mock.calls.map(([ms]) => ms)).toEqual([60 * 60_000, 60 * 60_000, 60 * 60_000]);
     deadlines.mockRestore();
   });
 
-  it("has the workspace list read again when a proxy stops waiting, since the node goes on importing", async () => {
+  it("has the workspace list read again when a proxy stops waiting for an import, since the node goes on importing", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 504 })));
     const changed = vi.fn();
     const stop = onWorkspaceListChanged(changed);
     try {
-      await expect(Workspaces.importArchive(new File(["PK"], "a.stuga.zip"), "A", "private")).rejects.toMatchObject({ status: 504 });
+      await expect(Workspaces.importHeld("wsi_1", "A", "private")).rejects.toMatchObject({ status: 504 });
       expect(changed).toHaveBeenCalledTimes(1);
     } finally {
       stop();

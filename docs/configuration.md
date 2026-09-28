@@ -91,10 +91,10 @@ and node administrators also see **This node**.
 | Where | What |
 |---|---|
 | Preferences → **Your own AI** | Connecting your own agent, such as Claude Desktop, Claude Code or Codex, and the agents you have connected: apps that signed in, and keys ([agents.md](agents.md)). Each person connects their own. |
-| This node → **AI providers** | **Built-in AI** (chat), with its model providers and **Default model**; **Search by meaning** (semantic search), with its service, model and [match cutoffs](#match-cutoffs); and **Ranking**, a model that puts the most relevant passages first for Ask and agents (TypeSafe's Jev, directly or through OpenRouter; without it, Built-in AI ranks). Each is set up on its own and runs without the others. Setting one up turns it on, its switch turns it off and keeps it, and **Remove** forgets it. **Test** in an **Edit** checks that service. |
+| This node → **AI providers** | **Built-in AI** (chat), with its model providers and **Default model**; **Embeddings** (semantic search), with its service, model and [match cutoffs](#match-cutoffs); and **Reranking**, a model that puts the most relevant passages first for Ask and agents (TypeSafe's Jev, directly or through OpenRouter; without it, Built-in AI reranks). Each is set up on its own and runs without the others. Setting one up turns it on, its switch turns it off and keeps it, and **Remove** forgets it. **Test** in an **Edit** checks that service. |
 | This node → **Notifications** | Where notifications go: Slack, Microsoft Teams, Discord, a plain webhook or email, with **Send a test**. |
 | This node → **Access** | The node's address and accepted origins (read-only), the [identity provider](#identity-provider), administrators, the node's audit log, and account recovery links. |
-| This node → **Storage** | The largest upload, how long audit history, AI usage records and idle Ask threads are kept, and how many changes each database keeps in its Activity feed. |
+| This node → **Storage** | The largest upload, such as an image (a workspace import takes up to 512 MB whatever it is), how long audit history, AI usage records and idle Ask threads are kept, and how many changes each database keeps in its Activity feed. |
 | This node → **Search** | **Languages in your documents**: the [search languages](#search-languages), English always and each other off unless chosen. |
 | This node → **Backups** | The daily backup, on unless turned off, and its hour in the node's time zone, which first-run setup takes from the browser; **Back up now**; and the backups the node keeps ([Operations](operations.md#the-nodes-own-backups)). |
 | This node → **Branding** | The node's name and the colour that marks the selected item. |
@@ -109,7 +109,7 @@ URL entered in Settings are kept under `DATA_DIR/secrets`, not in the database.
 
 The semantic half of search drops a passage whose meaning is too far from the query. How far is a
 maximum cosine distance between the two embeddings: greater than 0 and at most 2, where lower is
-stricter. There are two, under **Match cutoffs** in the **Edit** of **Search by meaning** in
+stricter. There are two, under **Match cutoffs** in the **Edit** of **Embeddings** in
 **Settings → This node → AI providers**, and a change applies to the next query once saved. Nothing is re-indexed.
 
 | Setting | Default | Applies to |

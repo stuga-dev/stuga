@@ -156,6 +156,7 @@ const CALLS: Array<[tool: string, args: Record<string, unknown>, verdict: "reads
   ["comments_add", { doc_id: "d1", body: "Looks good" }, "refused"],
   ["media_upload", { action: "upload", doc_id: "d1", data: PNG }, "refused"],
   ["media_upload", { action: "upload_from_url", doc_id: "d1", url: "https://example.com/a.png" }, "refused"],
+  ["media_upload", { action: "start_upload", doc_id: "d1", name: "a.pdf" }, "refused"],
   ["collections_edit", { action: "create", name: "x" }, "refused"],
   ["collections_edit", { action: "rename", collection_id: "col_1", name: "x" }, "refused"],
   ["collections_edit", { action: "delete", collection_id: "col_1" }, "refused"],

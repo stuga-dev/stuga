@@ -449,7 +449,7 @@ describe("NodeSettingsPage", () => {
     expect(nodeApi.saveAi).toHaveBeenCalledWith({
       embed: { provider: "openai", base_url: "https://api.openai.com/v1", model: "text-embedding-3-small", api_key: "sk-embed" },
     });
-    expect(host.textContent).toContain("Search by meaning is on with text-embedding-3-small.");
+    expect(host.textContent).toContain("Embeddings are on with text-embedding-3-small.");
   });
 
   it("removes semantic search only after asking, forgetting its model and key", async () => {
@@ -463,9 +463,9 @@ describe("NodeSettingsPage", () => {
     expect(nodeApi.saveAi).toHaveBeenCalledWith({ embed: { provider: "", base_url: "", model: "", api_key: "" } });
   });
 
-  it("sets ranking up on TypeSafe's defaults, saying what ranks until then", async () => {
+  it("sets reranking up on TypeSafe's defaults, saying what reranks until then", async () => {
     await renderWith(AI);
-    expect(host.textContent).toContain("Not set up: built-in ai ranks passages.");
+    expect(host.textContent).toContain("Not set up: built-in ai reranks passages.");
     savedAs(AI);
     await clickNth("Set up", 1);
     await typeInto(inputs("API key")[0], "ts-key");
@@ -474,7 +474,7 @@ describe("NodeSettingsPage", () => {
     expect(nodeApi.saveAi).toHaveBeenCalledWith({ rerank: { base_url: "https://api.typesafe.ai/v1", model: "jev-latest", api_key: "ts-key" } });
   });
 
-  it("removes ranking only after asking, forgetting its key", async () => {
+  it("removes reranking only after asking, forgetting its key", async () => {
     await renderWith({
       ...AI,
       rerank: { enabled: true, running: true, base_url: "https://api.typesafe.ai/v1", model: "jev-latest", api_key_set: true, api_key_fingerprint: "ab12cd34", api_key_stale: false },

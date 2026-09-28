@@ -149,13 +149,33 @@ export interface ProvenanceBody {
   pending_runs: number;
 }
 
-export type ImageSource = { kind: "data"; data: string } | { kind: "url"; url: string };
+/** Bytes for `media_upload`: inline base64, a URL the node downloads, or a file staged by `startUpload`. */
+export type UploadSource =
+  | { kind: "data"; data: string; name?: string }
+  | { kind: "url"; url: string; name?: string }
+  | { kind: "upload_id"; upload_id: string };
 
-export interface StoredImage {
+export interface StoredMedia {
   url: string;
   hash: string;
   size: number;
   mime: string;
+  /** A file's name, which its url ends in; absent for an image a document shows. */
+  name?: string;
+  /** Stored with a database, for a files cell, rather than with a document. */
+  database?: true;
+}
+
+/** A staged upload the caller sends the file to itself, then stores by `upload_id`. */
+export interface MediaUpload {
+  upload_id: string;
+  /** PUT the whole file here; the signed URL is the credential and works once. */
+  upload_url: string;
+  /** The same target as a path, for a client that reaches the node at another origin. */
+  upload_path: string;
+  max_bytes: number;
+  /** ISO timestamp after which the upload is refused. */
+  expires_at: string;
 }
 
 export interface EventsQuery {
@@ -285,7 +305,9 @@ export interface AgentBackend {
   docRuns(docId: string): Answer<AgentRunSummary[]>;
   provenance(docId: string): Answer<ProvenanceBody>;
   propose(docId: string, input: ProposeInput): Answer<ProposeBody>;
-  uploadImage(docId: string, source: ImageSource): Answer<StoredImage>;
+  /** Store an image or file with a document, or a file with a database. */
+  uploadMedia(docId: string, source: UploadSource): Answer<StoredMedia>;
+  startUpload(docId: string, name: string): Answer<MediaUpload>;
   listComments(docId: string): Answer<Record<string, unknown>>;
   addComment(docId: string, body: string): Answer<Record<string, unknown>>;
   listFolders(): Answer<Record<string, unknown>>;

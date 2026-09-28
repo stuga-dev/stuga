@@ -55,6 +55,8 @@ export interface ImportClient {
   openRowPages(databaseId: string, tableId: string, pages: Array<{ rowId: string; title: string }>): Promise<string[]>;
   /** An image stored in the workspace, as uploaded into `docId`; its SHA-256. */
   uploadImage(docId: string, bytes: Uint8Array, mime: SafeImageMime): Promise<string>;
+  /** Any other file stored in the workspace, as uploaded into `docId` under `name`; its SHA-256. */
+  uploadFile(docId: string, bytes: Uint8Array, name: string): Promise<string>;
   /** The whole body of an empty document, as it stands, saved as a version before this returns. */
   seedBody(docId: string, markdown: string): Promise<void>;
   /** A title someone gave the document, which its first line no longer sets. */
@@ -190,6 +192,11 @@ export function workspaceImportClient(ctx: Ctx, opts: WriteOptions = {}): Import
     async uploadImage(docId, bytes, mime) {
       const form = new FormData();
       form.set("file", new Blob([bytes as Uint8Array<ArrayBuffer>], { type: mime }));
+      return (await call<{ hash: string }>("POST", `/api/docs/${enc(docId)}/media`, form)).hash;
+    },
+    async uploadFile(docId, bytes, name) {
+      const form = new FormData();
+      form.set("file", new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/octet-stream" }), name);
       return (await call<{ hash: string }>("POST", `/api/docs/${enc(docId)}/media`, form)).hash;
     },
     async seedBody(docId, markdown) {

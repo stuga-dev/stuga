@@ -13,18 +13,37 @@ its first section, are its summary: the release notes show that and link here fo
 
 ### Added
 
+- Attach any file to a document: **Insert → File…**, the `/file` command, or paste or drop it. It
+  shows as a link named for the file, which downloads it; exports and imports carry it.
+- A **Files** column type for databases: a cell holds a row's attachments, added with + or by
+  dropping files on it, each downloaded with a click. The database keeps its files and deletes them
+  with it. A Notion Files & media property imports as one.
+- `media_upload` stores any file, into a document or a database, and its new `start_upload` action
+  hands an agent that can send the file itself a URL to PUT it to. The stdio server's
+  `media_upload` takes a local `file`.
+- **Create a workspace → From a file** also takes a Notion export (Markdown & CSV) or a zipped
+  Obsidian vault or other folder of Markdown. Pages and notes become documents, databases keep their
+  rows with typed columns, and links, `[[wikilinks]]` and images lead where they did. PDFs and
+  other files a page links to come along; files nothing links to, or over the upload limit, are
+  listed first, and the import goes ahead once you confirm
+  ([docs/import.md](docs/import.md)). An import takes a file of up to 512 MB (was 50 MB), no longer
+  held to the node's upload limit, which stays 10 MB for images and files.
 - Twenty more search languages beside Korean and Arabic. **Chinese** adds jieba word segmentation
   and **Japanese** a Lindera dictionary; Czech, Danish, Dutch, Finnish, French, German, Greek,
   Hungarian, Italian, Norwegian, Polish, Portuguese, Romanian, Russian, Spanish, Swedish, Tamil and
   Turkish each add pg_search's stemmer, so a word is found in another of its forms, `chevaux` for
   `cheval`.
-- **Ranking** in **Settings → This node → AI providers**: TypeSafe's Jev, directly or through
-  OpenRouter, puts the most relevant passages first for Ask and agents. It ranks as well as a large
-  chat model at a fraction of the time and cost. Without it, Built-in AI ranks as before.
+- **Reranking** in **Settings → This node → AI providers**: TypeSafe's Jev, directly or through
+  OpenRouter, puts the most relevant passages first for Ask and agents. On the public MIRACL
+  benchmark in six languages it put a relevant passage first 77% of the time, within the margin of
+  Claude Opus 5.5 (81%) and Cohere Rerank 3.5 (78%), in about 0.1 s and at a hundredth of Opus's
+  cost. Without it, Built-in AI reranks as before.
 - The Mac menu-bar app says when Stuga has stopped, cannot reach its database or stops responding,
   and is still failing a minute later: once, in an alert with **Restart Stuga…** and **Show Logs**.
   Starting, however slowly, backing up and installing an update, from **Update now** or a downloaded
   `Stuga.pkg`, do not count.
+- **Pi** in **Settings → Your own AI**: install the adapter and `@stuga/pi-package`, then sign in
+  from Pi with `/mcp-auth stuga`, or use an agent key. Its runs are labelled `pi` in the review inbox.
 
 ### Changed
 
@@ -36,13 +55,31 @@ its first section, are its summary: the release notes show that and link here fo
   node → About** turns it off. `POST /auth/register` no longer takes `update_check`.
 - Search languages are now **Languages in your documents**, a searchable list at setup and in
   **Settings → This node → Search**, with English always on. Setup starts from English alone.
+- **Search by meaning** in **Settings → This node → AI providers** and at first run is now
+  **Embeddings**, the name AI services give it.
+- Reranking, and reranking with Built-in AI, read the part of a long passage that best matches the
+  question, up to 1,200 characters, where they read its first 1,200. A section's answer is often
+  past its opening: on BRIGHT's StackOverflow questions, whose passages run to 4,000 characters, Jev
+  put a right passage first for 48% of the questions whose candidates held one, instead of 31%.
 
 ### Fixed
 
 - A browser still signed in to a node that was since wiped or reinstalled opens its setup link
   with the setup code filled in, instead of on a page that asks for it.
 - With **Built-in AI** switched off, Ask's and agents' retrieval no longer sends passages to the chat
-  provider to rank them.
+  provider to rerank them.
+- Reranking with Built-in AI asks a reasoning model for no reasoning, or the least it offers, and
+  leaves room for what remains. Reasoning used to crowd out the answer and leave searches unranked.
+- Reranking with Built-in AI reads the scores a model writes one per line, as `[n] score` lines, or
+  with a note after the list, where it used to keep the search's own order. An answer cut off at the
+  token cap is still not used.
+- When the AI provider fails a request because the account is out of credit, the key is refused,
+  requests are limited or the provider is down, Ask, the co-author and the table assistant say so in
+  plain words. Ask said only that something failed; the other two showed the provider's own message,
+  which can name the account.
+- The node logs why a request from Ask, the co-author or the table assistant failed, and why a
+  rerank failed or could not be used: the protocol, the model, the kind of failure and the
+  provider's message. It logged none of these.
 
 ## [0.1.3] - 2026-09-26
 

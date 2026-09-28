@@ -43,7 +43,7 @@ describe("stuga-node", { timeout: 30_000 }, () => {
       const manifest = { format: "stuga-workspace", version: 1, generator: "test", exported_at: "2026-09-25T10:00:00Z", workspace: { name: "Empty", agent_instructions: "" }, items: [] };
       writeFileSync(join(dir, "stuga.json"), JSON.stringify(manifest));
       const passes = stugaNode(["archive", "check", dir]);
-      expect(passes.stdout).toBe(`${dir} passes: 0 items, 0 bodies, 0 rows, 0 images, 0 sample steps\n`);
+      expect(passes.stdout).toBe(`${dir} passes: 0 items, 0 bodies, 0 rows, 0 images, 0 files, 0 sample steps\n`);
       expect(passes.status).toBe(0);
       // A failing check, --json and a refused argument are archive/check.test.ts's, in process.
     } finally {

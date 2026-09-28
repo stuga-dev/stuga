@@ -13,14 +13,16 @@ import {
 } from "@stuga/db";
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
 import { ARCHIVE_WORK_MAX_MS, type DocAccessMode, isDocAccessMode } from "@stuga/protocol/domain/workspaces";
-import { ArchiveError } from "../archive/format.js";
+import { ARCHIVE_MAX_BYTES, ArchiveError } from "../archive/format.js";
 import { type ArchiveContents, type ImportResult, ImportStepError, importWorkspaceArchive, readArchive } from "../archive/import.js";
+import { dropHeldImport, heldImport, holdImport } from "../archive/held.js";
 import { SampleDownloadError, sampleCatalog, sampleStepReplay } from "../archive/samples.js";
 import { archiveWorkBegins, archiveWorkHeld } from "../archive/under-way.js";
 import { recordAudit } from "../audit/record.js";
 import type { AccountCtx } from "../auth/context.js";
 import { agentInstructionsError, destroyActorStorage } from "../documents/access.js";
 import type { NodeEnv } from "../env.js";
+import { readBodyUpTo } from "../http/body.js";
 import { error, json } from "../http/respond.js";
 import type { AccountCall, WorkspaceCall } from "../http/router.js";
 import { newId } from "../ids.js";
@@ -131,26 +133,95 @@ async function workspaceFromSample(ctx: AccountCtx, sample: unknown, name: strin
 }
 
 /**
- * A new workspace from a workspace archive, the zip as the body. The archive
- * is read and checked whole before the workspace exists. `name` defaults to
- * the archive's.
+ * A new workspace from a workspace archive, the zip as the body, or from a
+ * Notion export or a folder of Markdown, converted into one, at once; the web
+ * app checks a file first (checkWorkspaceImport) and imports what it holds
+ * (importHeldWorkspace). The archive is read and checked whole before the
+ * workspace exists. `name` defaults to the archive's.
  */
 export async function importWorkspace({ ctx, req, url }: AccountCall): Promise<Response> {
   const name = (url.searchParams.get("name") ?? "").trim().slice(0, 100);
   const access = url.searchParams.get("default_doc_access") ?? undefined;
   if (access !== undefined && !isDocAccessMode(access)) return error(400, DOC_ACCESS_MESSAGE);
   return asImport(ctx.alias, async () => {
-    const bytes = new Uint8Array(await req.arrayBuffer());
-    if (bytes.byteLength === 0) return error(400, "send the archive as the request body");
-    let contents: ArchiveContents;
-    try {
-      contents = await readArchive(bytes, { maxImageBytes: imageUploadLimits(ctx.env.settings.current().maxBodyBytes).bytes });
-    } catch (err) {
-      if (err instanceof ArchiveError) return error(400, `cannot import this archive: ${err.message}`);
-      throw err;
-    }
-    return workspaceFromArchive(ctx, contents, { name: name || contents.manifest.workspace.name, access });
+    const upload = await uploadedArchive(ctx, req);
+    if (upload instanceof Response) return upload;
+    return workspaceFromArchive(ctx, upload.contents, { name: name || upload.contents.manifest.workspace.name, access });
   });
+}
+
+/**
+ * Check a file for import and hold it until its importer says go: 201 with the `import_id` to
+ * import it by, the name the workspace would take, and what it would leave out. Nothing is made.
+ * Reads its own body, as the import route does.
+ */
+export async function checkWorkspaceImport({ ctx, req }: AccountCall): Promise<Response> {
+  return asImport(ctx.alias, async () => {
+    const upload = await uploadedArchive(ctx, req);
+    if (upload instanceof Response) return upload;
+    const { importId, expiresAt } = await holdImport(ctx.env, ctx.alias, upload.bytes);
+    return json(
+      {
+        import_id: importId,
+        expires_at: new Date(expiresAt).toISOString(),
+        name: upload.contents.manifest.workspace.name,
+        ...leftOutView(upload.contents.leftOut),
+      },
+      { status: 201 },
+    );
+  });
+}
+
+/** A new workspace from the file the caller held with checkWorkspaceImport, answered as the import route answers. */
+export async function importHeldWorkspace({ ctx, req, match }: AccountCall): Promise<Response> {
+  const importId = decodeURIComponent(match[1]!);
+  const body = (await req.json().catch(() => ({}))) as { name?: unknown; default_doc_access?: unknown };
+  const name = typeof body.name === "string" ? body.name.trim().slice(0, 100) : "";
+  const access = body.default_doc_access;
+  if (access !== undefined && !isDocAccessMode(access)) return error(400, DOC_ACCESS_MESSAGE);
+  return asImport(ctx.alias, async () => {
+    const bytes = await heldImport(ctx.env, ctx.alias, importId);
+    if (!bytes) return error(404, "this import has expired or was cancelled; choose the file again");
+    const contents = await archiveOf(ctx, bytes);
+    if (contents instanceof Response) return contents;
+    const res = await workspaceFromArchive(ctx, contents, { name: name || contents.manifest.workspace.name, access });
+    if (res.status === 201) await dropHeldImport(ctx.env, ctx.alias, importId);
+    return res;
+  });
+}
+
+/** Let go of a held file without importing it. */
+export async function discardHeldImport({ ctx, match }: AccountCall): Promise<Response> {
+  await dropHeldImport(ctx.env, ctx.alias, decodeURIComponent(match[1]!));
+  return new Response(null, { status: 204 });
+}
+
+/**
+ * The file a request's body holds, read up to ARCHIVE_MAX_BYTES once its caller holds an import
+ * slot, so the node's upload limit, which every body is read to before its caller is known, does
+ * not bound it; and the archive it is, or makes, checked whole. Else the answer that says why not.
+ */
+async function uploadedArchive(ctx: AccountCtx, req: Request): Promise<{ bytes: Uint8Array; contents: ArchiveContents } | Response> {
+  const bytes = await readBodyUpTo(req, ARCHIVE_MAX_BYTES);
+  if (!bytes) return error(413, `this file is larger than ${ARCHIVE_MAX_BYTES / (1024 * 1024)} MB, the most an import takes`);
+  if (bytes.byteLength === 0) return error(400, "send the archive as the request body");
+  const contents = await archiveOf(ctx, bytes);
+  return contents instanceof Response ? contents : { bytes, contents };
+}
+
+/** The archive `bytes` are, or make once converted, checked whole; else a 400 that says why not. */
+async function archiveOf(ctx: AccountCtx, bytes: Uint8Array): Promise<ArchiveContents | Response> {
+  try {
+    return await readArchive(bytes, { maxImageBytes: imageUploadLimits(ctx.env.settings.current().maxBodyBytes).bytes, convert: true });
+  } catch (err) {
+    if (err instanceof ArchiveError) return error(400, `cannot import this archive: ${err.message}`);
+    throw err;
+  }
+}
+
+/** How many files a converted export held that its archive does not carry, and the first of them. */
+function leftOutView(leftOut: readonly string[]): { left_out?: { count: number; files: string[] } } {
+  return leftOut.length ? { left_out: { count: leftOut.length, files: leftOut.slice(0, LEFT_OUT_LISTED) } } : {};
 }
 
 /**
@@ -212,16 +283,27 @@ async function workspaceFromArchive(
       targetKind: "workspace",
       targetId: workspace.workspace_id,
       targetLabel: workspace.name,
-      detail: { ...imported.counts, ...(input.sample ? { sample: input.sample } : {}) },
+      detail: {
+        ...imported.counts,
+        ...(input.sample ? { sample: input.sample } : {}),
+        ...(contents.kind !== "stuga" ? { from: contents.kind, left_out: contents.leftOut.length } : {}),
+      },
     },
   );
   // Read again: the import gave it the archive's agent instructions.
   const current = (await getWorkspace(ctx.sql, workspace.workspace_id)) ?? workspace;
   return json(
-    { ...workspaceView({ ...current, role: "owner" }), ...(imported.startDocId ? { start_doc_id: imported.startDocId } : {}) },
+    {
+      ...workspaceView({ ...current, role: "owner" }),
+      ...(imported.startDocId ? { start_doc_id: imported.startDocId } : {}),
+      ...leftOutView(contents.leftOut),
+    },
     { status: 201 },
   );
 }
+
+/** How many of the files a converted export leaves out an answer names; it counts them all. */
+const LEFT_OUT_LISTED = 200;
 
 export async function updateWorkspace({ ctx, req, match }: WorkspaceCall): Promise<Response> {
   const wsId = match[1]!;

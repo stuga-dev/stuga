@@ -2,10 +2,16 @@
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { WORKSPACE_IMPORT_MAX_BYTES } from "@stuga/protocol/domain/workspaces";
 import { chooseRadio, mountInto, pickFile, typeInto } from "../test/form-input";
 
 const samples = vi.hoisted(() => vi.fn());
-vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), Workspaces: { samples, cachedSamples: () => undefined } }));
+const importHeld = vi.hoisted(() => vi.fn());
+const discardImport = vi.hoisted(() => vi.fn());
+vi.mock("../api", async (orig) => ({
+  ...(await orig<typeof import("../api")>()),
+  Workspaces: { samples, cachedSamples: () => undefined, importHeld, discardImport },
+}));
 
 const { CreateWorkspaceDialog } = await import("./CreateWorkspaceDialog");
 const { ImportMayFinish } = await import("./StartWith");
@@ -17,14 +23,16 @@ let root: Root;
 /** Each element brought into view; jsdom has no scrollIntoView. */
 let scrolled: Element[];
 const onSubmit = vi.fn();
+const onOpen = vi.fn();
 const onClose = vi.fn();
+const CREATED = { workspace_id: "w_2", name: "Team notes" };
 
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("dialog button")].find((b) => b.textContent === label);
 const nameInput = () => document.querySelector<HTMLInputElement>('dialog input[type="text"], dialog input:not([type])')!;
 const dialog = () => document.querySelector("dialog")!;
 
 async function render(isOpen: boolean) {
-  await act(async () => root.render(<CreateWorkspaceDialog isOpen={isOpen} onSubmit={onSubmit} onClose={onClose} />));
+  await act(async () => root.render(<CreateWorkspaceDialog isOpen={isOpen} onSubmit={onSubmit} onOpen={onOpen} onClose={onClose} />));
 }
 
 const typeName = (value: string) => typeInto(nameInput(), value);
@@ -36,7 +44,10 @@ async function click(label: string) {
 }
 
 beforeEach(() => {
-  onSubmit.mockReset().mockResolvedValue(undefined);
+  onSubmit.mockReset().mockResolvedValue({ workspace: CREATED });
+  importHeld.mockReset().mockResolvedValue(CREATED);
+  discardImport.mockReset().mockResolvedValue(undefined);
+  onOpen.mockReset();
   samples.mockReset().mockResolvedValue({ samples: [LAWS] });
   onClose.mockReset();
   scrolled = [];
@@ -47,13 +58,40 @@ beforeEach(() => {
 });
 
 describe("CreateWorkspaceDialog", () => {
-  it("creates an empty workspace by default, and closes once it exists", async () => {
+  it("creates an empty workspace by default, and opens it once it exists", async () => {
     await render(true);
     expect(dialog().textContent).toContain("Start with");
     expect(button("Create workspace")!.disabled).toBe(true);
     await typeName("  Team notes ");
     await click("Create workspace");
     expect(onSubmit).toHaveBeenCalledWith("Team notes", "workspace_edit", { kind: "empty" });
+    expect(onOpen).toHaveBeenCalledWith(CREATED);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists what a file would leave out and imports it only on Import, or lets it go on Cancel", async () => {
+    const files = ["Notes/Brief.pdf", "Board.canvas", "Notes/Old/Scan.heic"];
+    const held = { import_id: "wsi_1", name: "Notion", expires_at: "2026-09-28T01:00:00Z", left_out: { count: 12, files } };
+    onSubmit.mockResolvedValue({ held });
+    await render(true);
+    await chooseRadio(dialog(), "From a file");
+    await pickFile(dialog(), ARCHIVE);
+    await typeName("Notes");
+    await click("Create workspace");
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(dialog().querySelector('.astryx-banner[data-status="warning"]')?.textContent).toContain("12 files won’t be imported");
+    for (const text of ["Brief.pdf", "Notes/Old", "Board.canvas", "and 9 more"]) expect(dialog().textContent).toContain(text);
+    expect(button("Create workspace")).toBeUndefined();
+
+    await click("Cancel");
+    expect(discardImport).toHaveBeenCalledWith("wsi_1");
+    expect(button("Create workspace")).toBeDefined();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await click("Create workspace");
+    await click("Import");
+    expect(importHeld).toHaveBeenCalledWith("wsi_1", "Notes", "workspace_edit");
+    expect(onOpen).toHaveBeenCalledWith(CREATED);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -61,12 +99,22 @@ describe("CreateWorkspaceDialog", () => {
     await render(true);
     await chooseRadio(dialog(), "From a file");
     expect(button("Create workspace")!.disabled).toBe(true);
-    expect(nameInput().placeholder).toBe("The archive’s name");
+    expect(nameInput().placeholder).toBe("Taken from the file");
     expect(nameInput().required).toBe(false);
     await pickFile(dialog(), ARCHIVE);
     expect(nameInput().value).toBe("");
     await click("Create workspace");
     expect(onSubmit).toHaveBeenCalledWith("", "workspace_edit", { kind: "file", file: ARCHIVE });
+  });
+
+  it("refuses a file larger than an import takes before sending it", async () => {
+    const huge = new File(["PK"], "Everything.zip", { type: "application/zip" });
+    Object.defineProperty(huge, "size", { value: WORKSPACE_IMPORT_MAX_BYTES + 1 });
+    await render(true);
+    await chooseRadio(dialog(), "From a file");
+    await pickFile(dialog(), huge);
+    expect(dialog().textContent).toContain("Everything.zip");
+    expect(button("Create workspace")!.disabled).toBe(true);
   });
 
   it("asks for the samples as it opens, not while closed, and creates from a chosen one, named after it", async () => {

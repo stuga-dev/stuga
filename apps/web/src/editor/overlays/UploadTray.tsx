@@ -2,9 +2,9 @@
 import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { ImageIcon, AlertTriangle, X } from "lucide-react";
-import type { ImageUploader } from "../use-image-upload";
+import type { Uploader } from "../use-upload";
 
-export function UploadTray({ uploader }: { uploader: ImageUploader }) {
+export function UploadTray({ uploader }: { uploader: Uploader }) {
   const { items, dismiss } = uploader;
   if (items.length === 0) return null;
 

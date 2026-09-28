@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGENT, HUMAN, doJson, initStarter, makeActor } from "../test/harness.js";
+import { AGENT, HUMAN, doFetch, doJson, initStarter, makeActor } from "../test/harness.js";
 
 type ListOut = { rows: Array<Record<string, unknown> & { _id: string }>; total: number };
 type SetTypeOut = { column: { type: string; options: { choices?: string[] } | null }; coerced: number };
@@ -99,6 +99,22 @@ describe("/columns/set-type coercion", () => {
     expect(out.coerced).toBe(1);
     expect(out.column.options).toEqual({ choices: ["a", "b"] });
     expect(await list()).toEqual(["a", null, null]);
+  });
+
+  it("→files keeps file links, once each, and nulls anything else; a files cell takes only links", async () => {
+    const a = `/api/docs/db_1/media/${"a".repeat(64)}/brief.pdf`;
+    const { actor, starter, column, list } = await withColumn("text", [a, `${a}\n${a}`, "brief.pdf", null]);
+    const out = await doJson<SetTypeOut>(actor, "/columns/set-type", {
+      table_id: starter.table_id,
+      column_id: column.column_id,
+      type: "files",
+      actor: HUMAN,
+    });
+    expect(out.coerced).toBe(2);
+    expect(await list()).toEqual([a, a, null, null]);
+    const refused = await doFetch(actor, "/rows/insert", { table_id: starter.table_id, rows: [{ Payload: "brief.pdf" }], actor: HUMAN });
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).toContain("not a file link");
   });
 
   it("agent set-type is revertible: exactly the coerced cells come back, type and options restored", async () => {

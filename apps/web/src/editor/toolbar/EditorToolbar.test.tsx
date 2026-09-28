@@ -33,7 +33,7 @@ let root: Root;
 
 async function mount(editor: Editor) {
   ({ host, root } = mountInto());
-  await act(async () => root.render(<EditorToolbar editor={editor} onEditLink={() => {}} onPickImages={() => {}} />));
+  await act(async () => root.render(<EditorToolbar editor={editor} onEditLink={() => {}} onPickFiles={() => {}} />));
 }
 
 async function clickButton(label: string) {

@@ -76,6 +76,8 @@ describe("mediaHashesIn", () => {
     expect(mediaHashesIn("```\n![x](/api/docs/d1/media/" + H + ")\n```")).toEqual([H]);
     expect(mediaHashesIn(`[link](/api/docs/d/media/${H})`)).toEqual([H]);
     expect(mediaHashesIn(`see https://app.test/api/docs/d/media/${H} please`)).toEqual([H]);
+    // A file's link names the file after the hash.
+    expect(mediaHashesIn(`[Q3 brief.pdf](/api/docs/d/media/${H}/Q3%20brief.pdf)`)).toEqual([H]);
   });
 
   it("ignores near-misses that are not real media paths", () => {

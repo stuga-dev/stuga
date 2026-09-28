@@ -19,6 +19,7 @@ import type { ColumnSpec, RowInputValue, RowRecord, RowValue, TableSchema } from
 import { absoluteTime } from "../lib/format";
 import { pageHref, pageStateOf, rowTitle } from "./model/row-ref";
 import { parseFieldInput } from "./model/field-input";
+import { FilesCell } from "./FilesCell";
 import { errorMessage } from "../lib/http/client";
 
 /** What a page button does; the one in flight labels its button. */
@@ -187,6 +188,8 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
                       isDisabled={readOnly}
                       onChange={(v) => commitField(col, v === true)}
                     />
+                  ) : col.type === "files" ? (
+                    <FilesCell databaseId={docId} label={col.display} value={value} readOnly={readOnly} wrap onChange={(v) => commitField(col, v)} />
                   ) : (
                     <FieldEditor
                       // Keyed on the applied value, so a save or a refetch re-seeds the draft.

@@ -95,6 +95,30 @@ describe("POST /api/ask", () => {
     expect(vi.mocked(runAskAgentTurn).mock.calls[0]![1]).toMatchObject({ workspaceInstructions: "" });
   });
 
+  it("tells the asker in plain words when the provider is out of credit, and logs the provider's own", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failure = { kind: "quota", protocol: "openai-responses", model: "gpt-6-sol", message: "OpenAI API error (429): You have no credits remaining. org-abc" };
+    vi.mocked(runAskAgentTurn).mockResolvedValue({
+      prose: "",
+      citations: [],
+      steps: [],
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
+      modelId: "gpt-6-sol",
+      rounds: 1,
+      stopReason: "error",
+      error: failure.message,
+      failure,
+    } as never);
+
+    const res = await ask({ question: "what launched?" });
+    const done = JSON.parse(/event: done\ndata: (.*)\n/.exec(res.text)![1]!) as Record<string, unknown>;
+    expect(Object.keys(done).sort()).toEqual(["citations", "notice", "rounds", "stop_reason"]);
+    expect(done).toMatchObject({ stop_reason: "error", notice: expect.stringContaining("out of credit") });
+    expect(res.text).not.toContain("org-abc");
+    expect(warn).toHaveBeenCalledWith("ask model call failed", { workspaceId: "ws1", ...failure });
+    warn.mockRestore();
+  });
+
   it("answers 404 for a collection the asker does not own, before streaming", async () => {
     vi.mocked(getCollection).mockResolvedValue({ collection_id: "col_1", workspace_id: "ws1", owner: "grace", name: "x", created_at: "", updated_at: "" });
     expect((await ask({ question: "what launched?", collection_id: "col_1" })).status).toBe(404);

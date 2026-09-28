@@ -44,6 +44,11 @@ interface Gates {
   workspaceAdmin?: string;
   /** Only a node administrator. */
   nodeAdmin?: boolean;
+  /**
+   * The handler reads the request body itself, once the caller has passed every gate, to a cap of
+   * its own; the listener reads none of it (readsOwnBody).
+   */
+  ownBody?: true;
 }
 
 export type AppRoute = Route &
@@ -82,6 +87,11 @@ export function isAppPath(method: string, pathname: string): boolean {
   if (isAppOwnedPage(method, pathname)) return false;
   if (pathname.startsWith("/.well-known/oauth-")) return true;
   return APP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
+}
+
+/** Whether the route a request reaches reads its own body: the listener then leaves the body to it. */
+export function readsOwnBody(method: string, pathname: string): boolean {
+  return isAppPath(method, pathname) && matchRoute(APP_ROUTES, method, pathname)?.route.ownBody === true;
 }
 
 /** One entry point for every ordinary request, wrapped once so no path is served without the security headers. */

@@ -62,8 +62,10 @@ another Stuga node ([Several nodes](network-access.md#several-nodes)).
   a mirror. The new workspace opens at the sample's **Start here** document. **Sample agent**'s
   changes, written in advance, wait for your review in **Review AI edits**, and its comment mentions
   you.
-- **From a file**: a `.stuga.zip` exported from Stuga ([Workspace archive](workspace-archive.md)).
-  With no name typed, the workspace keeps the one it had.
+- **From a file**: a `.stuga.zip` exported from Stuga ([Workspace archive](workspace-archive.md)),
+  a Notion export, or a zipped Obsidian vault or other folder of Markdown
+  ([Importing from Notion or Obsidian](import.md)). With no name typed, the workspace keeps the one
+  it had: a Notion export its Notion workspace's, a vault its folder's.
 
 **Check:** you reach the document list and can create a document.
 
@@ -76,8 +78,8 @@ AI comes in three ways, each optional and each set up on its own:
   acts with your access, and each member connects their own. See [5. Connect an agent](#5-connect-an-agent).
 - **Built-in AI** (chat): the co-author, Ask and the table assistant, for every member of the node,
   on the API key you enter (or a local Ollama).
-- **Search by meaning** (semantic search): finds text by meaning, not only exact words, for search,
-  Ask and agents.
+- **Embeddings** (semantic search): search by meaning, not only exact words, for the search box, Ask
+  and agents.
 
 Nothing is sent to any model until you set one up, and documents, collaboration and keyword search
 work without any of them, so you can skip this step.
@@ -89,13 +91,13 @@ the other two are in **Settings → This node → AI providers**, each set up th
 1. Choose **Set up**, then a **Service**, and enter its **API key** unless it is a local server. For a
    local Ollama, choose **Ollama (local)**. The address it fills in is the right one for your platform.
 2. Choose a **Model**. The list comes from the service, newest first, which also shows that the key
-   works. For search by meaning, choose one that returns the node's vector width, 1024 by default.
+   works. For **Embeddings**, choose one that returns the node's vector width, 1024 by default.
 3. Click **Connect**.
 
 That turns it on; there is no switch to turn on afterwards. Your own agent, such as Claude
-Desktop, needs no **Built-in AI**, since it brings the model; **Search by meaning** still helps it
+Desktop, needs no **Built-in AI**, since it brings the model; **Embeddings** still help it
 find text. A chat-only service such as
-Anthropic leaves search matching words until search by meaning is set up on another service.
+Anthropic leaves search matching words until **Embeddings** are set up on another service.
 
 Once either is set up, its switch turns it off and keeps it, and **Remove** forgets it. Offer more
 of a provider's models from its **Edit**.

@@ -152,11 +152,11 @@ export function openaiDelta(delta: unknown, finish: string | null = null): unkno
   return { choices: [{ delta, finish_reason: finish }] };
 }
 
-/** A complete chat-completions text reply with usage. */
-export function openaiTextRound(text: string, usage = DEFAULT_USAGE): string[] {
+/** A chat-completions text reply with usage; `finish` "length" is one cut off at the output cap. */
+export function openaiTextRound(text: string, usage = DEFAULT_USAGE, finish: "stop" | "length" = "stop"): string[] {
   return openaiSse([
     openaiDelta({ content: text }),
-    openaiDelta({}, "stop"),
+    openaiDelta({}, finish),
     { choices: [], usage: { prompt_tokens: usage.inputTokens, completion_tokens: usage.outputTokens } },
   ]);
 }

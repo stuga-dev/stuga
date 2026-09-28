@@ -441,7 +441,9 @@ describe("ConnectAgent — DeepSeek Harness tab", () => {
     clickTab("dsh");
     expect(text()).toContain("dsh plugin --profile web add @stuga/dsh-plugin");
     // The product's name in prose; `dsh` only where it is the command being run.
-    expect(text().replace("dsh plugin --profile web add @stuga/dsh-plugin", "")).not.toContain("dsh");
+    expect(
+      text().replace("dsh plugin --profile web add @stuga/dsh-plugin", "").replace("dsh plugin --profile web remove @stuga/dsh-plugin", ""),
+    ).not.toContain("dsh");
     expect(text()).toContain("STUGA_URL=");
     expect(text()).toContain("STUGA_API_KEY=vk_your_key_here");
   });
@@ -456,5 +458,68 @@ describe("ConnectAgent — DeepSeek Harness tab", () => {
     expect(keys.create).toHaveBeenCalledWith("DeepSeek Harness", {});
     expect(text()).toContain("STUGA_API_KEY=vk_live_dsh");
     expect(text()).not.toContain("vk_your_key_here");
+  });
+
+  it("removes the plugin, and says a local removal is not a revocation", () => {
+    clickTab("dsh");
+    const trigger = link(/^Uninstall from DeepSeek Harness$/)!;
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    act(() => {
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(text()).toContain("dsh plugin --profile web remove @stuga/dsh-plugin");
+    expect(text()).toContain("Local removal does not revoke access");
+    expect(link(/revoke the connection/)?.getAttribute("href")).toBe("#connected-agents");
+  });
+});
+
+describe("ConnectAgent — Pi tab", () => {
+  const INSTALL = "pi install npm:pi-mcp-adapterpi install npm:@stuga/pi-package";
+
+  it.each([
+    ["an https node", REACHABLE],
+    ["a loopback node", LOCAL],
+    ["a plain-http network node", LAN],
+  ])("installs the package and signs in through the browser on %s, with no key", async (_, setup) => {
+    await mount(setup);
+    clickTab("pi");
+    expect(text()).toContain(INSTALL);
+    expect(text()).toContain(`export STUGA_URL=${setup.url}`);
+    expect(text()).toContain("run /mcp-auth stuga, then approve in your browser");
+    expect(keys.create).not.toHaveBeenCalled();
+    // The key path waits behind its trigger, and no warning shows before a key exists.
+    const trigger = link(/^Use an agent key instead$/)!;
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(text()).not.toContain("Treat it like a password");
+  });
+
+  it("mints a key named for Pi and writes it into its export line", async () => {
+    keys.create.mockResolvedValue({ name: "Pi", token: "vk_live_pi" });
+    clickTab("pi");
+    act(() => {
+      link(/^Use an agent key instead$/)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(text()).toContain("export STUGA_API_KEY=vk_your_key_here");
+    expect(text()).not.toContain("Agent name");
+    await act(async () => {
+      button(/Create key/)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(keys.create).toHaveBeenCalledWith("Pi", {});
+    expect(text()).toContain("export STUGA_API_KEY=vk_live_pi");
+    expect(text()).not.toContain("vk_your_key_here");
+    expect(text()).toContain("Shown once. Treat it like a password.");
+  });
+
+  it("removes the package, and says a local removal is not a revocation", () => {
+    clickTab("pi");
+    const trigger = link(/^Uninstall from Pi$/)!;
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    act(() => {
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(text()).toContain("pi remove npm:@stuga/pi-package");
+    expect(text()).not.toContain("pi remove npm:pi-mcp-adapter");
+    expect(text()).toContain("Local removal does not revoke access");
+    expect(link(/revoke the connection/)?.getAttribute("href")).toBe("#connected-agents");
   });
 });

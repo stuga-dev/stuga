@@ -4,7 +4,15 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import type { OtherNode } from "../api";
 
-const workspaces = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), createFromSample: vi.fn(), importArchive: vi.fn(), samples: vi.fn(), cachedSamples: vi.fn() }));
+const workspaces = vi.hoisted(() => ({
+  list: vi.fn(),
+  create: vi.fn(),
+  createFromSample: vi.fn(),
+  checkImport: vi.fn(),
+  importHeld: vi.fn(),
+  samples: vi.fn(),
+  cachedSamples: vi.fn(),
+}));
 const otherNodes = vi.hoisted(() => ({ list: vi.fn(), add: vi.fn(), remove: vi.fn(), onChanged: vi.fn() }));
 
 vi.mock("../api", async (orig) => ({
@@ -268,13 +276,15 @@ describe("the switcher's menu", () => {
     const name = (value: string) => typeInto(open().querySelector<HTMLInputElement>("input:not([type]), input[type='text']"), value);
 
     it("imports a file under the name its archive carries, enters the new workspace and opens the document it starts with", async () => {
-      workspaces.importArchive.mockResolvedValue({ workspace_id: "ws3", start_doc_id: "d9" });
+      workspaces.checkImport.mockResolvedValue({ import_id: "wsi_1", name: "Team handbook", expires_at: "2026-09-28T01:00:00Z" });
+      workspaces.importHeld.mockResolvedValue({ workspace_id: "ws3", start_doc_id: "d9" });
       await act(async () => button("Create workspace")!.click());
       await chooseRadio(open(), "From a file");
       const file = new File(["PK"], "Team handbook.stuga.zip", { type: "application/zip" });
       await pickFile(open(), file);
       await act(async () => dialogButton("Create workspace").click());
-      expect(workspaces.importArchive).toHaveBeenCalledWith(file, "", "workspace_edit");
+      expect(workspaces.checkImport).toHaveBeenCalledWith(file);
+      expect(workspaces.importHeld).toHaveBeenCalledWith("wsi_1", "", "workspace_edit");
       expect(getActiveWorkspace()).toBe("ws3");
       expect(assign).toHaveBeenCalledWith("/doc/d9");
     });

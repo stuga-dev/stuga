@@ -12,6 +12,7 @@ const NODE = { name: "Studio", origin: "http://livs-air.local:8787" };
 const TOOLS: Tool[] = [
   { name: "search", description: "Find documents.", inputSchema: { type: "object", properties: { q: { type: "string" } } } },
   { name: "databases_add", description: "Add to databases.", inputSchema: { type: "object", properties: { action: { type: "string" } } } },
+  { name: "media_upload", description: "Upload.", inputSchema: { type: "object", properties: { action: { type: "string" } } } },
 ];
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
@@ -46,13 +47,15 @@ async function connect(deps: Partial<Parameters<typeof buildProxy>[0]> & { upstr
 }
 
 describe("the proxy", () => {
-  it("lists the node's tools, offering `file` on the import only", async () => {
+  it("lists the node's tools, offering `file` on the import and the upload only", async () => {
     const { client } = await connect({ upstream: upstreamOf(async () => node().client), instructions: "from the node" });
     const tools = (await client.listTools()).tools;
-    expect(tools.map((t) => t.name)).toEqual(["search", "databases_add"]);
+    expect(tools.map((t) => t.name)).toEqual(["search", "databases_add", "media_upload"]);
     expect(tools[0]!.inputSchema.properties).not.toHaveProperty("file");
     expect(tools[1]!.inputSchema.properties).toHaveProperty("file");
     expect(tools[1]!.description).toContain("action:import also takes `file`");
+    expect(tools[2]!.inputSchema.properties).toHaveProperty("file");
+    expect(tools[2]!.description).toContain("action:upload also takes `file`");
     expect(client.getInstructions()).toBe("from the node");
   });
 
@@ -81,6 +84,26 @@ describe("the proxy", () => {
       name: "databases_add",
       arguments: { workspace_id: "ws1", database_id: "db1", action: "import", import_id: "imp_1", on_error: "skip_bad_rows" },
     });
+  });
+
+  it("uploads a local file into a document: stages the upload, PUTs the bytes, and stores it by upload_id", async () => {
+    const up = node((_name, args) =>
+      args.action === "start_upload"
+        ? text(JSON.stringify({ upload_id: "upl_1", upload_path: "/api/docs/d1/media/uploads/upl_1?sig=s", max_bytes: 100 }))
+        : text('{"url":"/api/docs/d1/media/h/Q3%20brief.pdf","markdown":"[Q3 brief.pdf](…)"}'),
+    );
+    const fetch = vi.fn(async () => new Response(null, { status: 201 }));
+    const readFile = vi.fn(async () => new TextEncoder().encode("%PDF-1.7"));
+    const { call } = await connect({ upstream: upstreamOf(async () => up.client), fetch, readFile });
+    const res = await call("media_upload", { workspace_id: "ws1", doc_id: "d1", action: "upload", file: "/Users/liv/Q3 brief.pdf" });
+    expect(res.isError).toBe(false);
+    expect(up.calls[0]).toEqual({ name: "media_upload", arguments: { workspace_id: "ws1", doc_id: "d1", action: "start_upload", name: "Q3 brief.pdf" } });
+    expect(fetch).toHaveBeenCalledWith(new URL("http://127.0.0.1:8787/api/docs/d1/media/uploads/upl_1?sig=s"), expect.objectContaining({ method: "PUT" }));
+    expect(up.calls[1]).toEqual({ name: "media_upload", arguments: { workspace_id: "ws1", doc_id: "d1", action: "upload", upload_id: "upl_1" } });
+
+    const big = await connect({ upstream: upstreamOf(async () => node(() => text(JSON.stringify({ upload_id: "u", upload_path: "/u", max_bytes: 3 }))).client), readFile: async () => new Uint8Array(10) });
+    expect((await big.call("media_upload", { workspace_id: "ws1", doc_id: "d1", action: "upload", file: "/x.pdf" })).text).toContain("takes files up to 3");
+    expect((await big.call("media_upload", { workspace_id: "ws1", doc_id: "d1", action: "upload_from_url", file: "/x.pdf" })).text).toContain("`file` goes with action:upload");
   });
 
   it("hands a file it cannot upload to the person, and says why a path cannot be read", async () => {

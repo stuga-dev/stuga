@@ -36,6 +36,7 @@ import { docAgentInstructions, docAgentInstructionsOrNone, docInstructionStack, 
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
 import { queueSnapshotSweep } from "../jobs/snapshot-sweep.js";
+import { deleteDatabaseFiles } from "../media/media.js";
 import { docMediaHashes, reclaimDeletedDocImages } from "../media/media-scan.js";
 import { docSummary } from "./summaries.js";
 
@@ -173,6 +174,7 @@ export async function deleteDocument({ ctx, match }: WorkspaceCall): Promise<Res
   // The actor holds the content. Destroyed after the row delete, so a failed
   // delete never leaves a listed but empty document.
   await destroyActorStorage(ctx.env, docId, doc.doc_type);
+  if (doc.doc_type === "database") await deleteDatabaseFiles(ctx.env.media, doc.workspace_id, docId);
   // The only trace left of what was here.
   recordAudit(ctx, {
     action: "doc.delete",

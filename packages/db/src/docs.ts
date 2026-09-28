@@ -312,9 +312,9 @@ export async function findExpiredTrash(
   sql: Sql,
   olderThanDays: number,
   limit = 100,
-): Promise<Array<{ doc_id: string; doc_type: "prose" | "database" }>> {
-  return sql<Array<{ doc_id: string; doc_type: "prose" | "database" }>>`
-    SELECT doc_id, doc_type FROM docs
+): Promise<Array<{ doc_id: string; doc_type: "prose" | "database"; workspace_id: string }>> {
+  return sql<Array<{ doc_id: string; doc_type: "prose" | "database"; workspace_id: string }>>`
+    SELECT doc_id, doc_type, workspace_id FROM docs
     WHERE trashed = TRUE
       AND trashed_at < ${daysAgo(sql, olderThanDays)}
     ORDER BY trashed_at ASC

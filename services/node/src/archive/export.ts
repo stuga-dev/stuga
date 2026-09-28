@@ -26,7 +26,7 @@ import {
   type FolderRow,
 } from "@stuga/db";
 import { MEDIA_GET_PATH } from "@stuga/protocol/api/media";
-import { validateCellValue, validateSelectChoices } from "@stuga/protocol/databases/cells";
+import { fileLinks, validateCellValue, validateSelectChoices } from "@stuga/protocol/databases/cells";
 import { filterOpNeedsValue } from "@stuga/protocol/databases/filters";
 import {
   DATABASE_MAX_COLUMN_DESCRIPTION_CHARS,
@@ -44,7 +44,7 @@ import { canReadDoc } from "../authz/authz.js";
 import { callDatabaseActor, projectedSchema } from "../databases/gate.js";
 import { releaseActor } from "../documents/access.js";
 import { ZipWriter, type ZipSink } from "../lib/zip.js";
-import { decodeBase64Image, mediaKey, sniffImageMime } from "../media/media.js";
+import { decodeBase64Image, fileName, isKeySafeWorkspaceId, mediaKey, sniffImageMime } from "../media/media.js";
 import { VERSION } from "../version.js";
 import {
   ARCHIVE_FORMAT,
@@ -76,10 +76,12 @@ import {
   archiveTitle,
   bodyFile,
   derivedTitle,
+  filePath,
   formatTableRows,
   isRowKey,
   mediaPath,
   parseManifest,
+  rewritten,
   type ArchiveColumn,
   type ArchiveComment,
   type ArchiveDocSettings,
@@ -95,7 +97,6 @@ import {
 } from "./format.js";
 
 type Doc = ReturnType<typeof markdownToDoc>;
-type Mark = Doc["marks"][number];
 
 /** An export this node will not write, answered with `status` before anything is sent. */
 export class ExportRefused extends Error {
@@ -433,6 +434,8 @@ interface WriteState {
   targets: Map<string, LinkTarget>;
   /** A stored image's hash → its media path, or null when it cannot be exported. */
   media: Map<string, Promise<string | null>>;
+  /** A stored file's hash and name → its path, `media/<sha256>/<name>`, or null when it cannot be exported. */
+  files: Map<string, Promise<string | null>>;
   /** Media paths already written. */
   written: Set<string>;
   /** A comment author → the name the archive gives them. */
@@ -463,6 +466,7 @@ export async function writeWorkspaceExport(ctx: Ctx, plan: ExportPlan, sink: Zip
     rows: 0,
     targets: new Map(),
     media: new Map(),
+    files: new Map(),
     written: new Set(),
     authors: new Map(),
     origin: new URL(ctx.env.publicOrigin).origin,
@@ -588,13 +592,22 @@ async function writeRows(state: WriteState, db: PlannedDatabase, table: PlannedT
       table.rowKeys.set(id, key);
       if (typeof raw._doc_id === "string") table.pageLinks.set(id, raw._doc_id);
       const values: Record<string, RowValue> = Object.create(null);
-      for (const [columnId, column] of table.columns) values[column.name] = cellOf(column, raw[columnId]);
+      for (const [columnId, column] of table.columns) {
+        values[column.name] = column.type === "files" ? await filesOf(state, raw[columnId]) : cellOf(column, raw[columnId]);
+      }
       rows.push({ key, values });
     }
   }
   state.rows += rows.length;
   if (state.rows > ARCHIVE_MAX_ROWS) throw new ArchiveError(table.archive.file, `takes the archive past ${ARCHIVE_MAX_ROWS} rows`);
   await addText(state, table.archive.file, formatTableRows(table.archive, rows), ARCHIVE_MAX_TABLE_FILE_BYTES);
+}
+
+/** A files cell as the archive keeps it: each file copied in, by its path. A file the archive cannot hold is left out. */
+async function filesOf(state: WriteState, raw: unknown): Promise<RowValue> {
+  const paths = await Promise.all(fileLinks(typeof raw === "string" ? raw : null).map((file) => fileHref(state, file.link)));
+  const kept = [...new Set(paths.filter((p): p is string => p !== null))];
+  return kept.length === 0 ? null : kept.join("\n");
 }
 
 /**
@@ -746,42 +759,62 @@ async function docSettings(state: WriteState, doc: DocRow, title: string): Promi
  */
 async function rewriteBody(state: WriteState, from: string, doc: Doc): Promise<Doc> {
   const images = new Map<string, string | null>();
+  const files = new Map<string, string>();
   const sources: string[] = [];
+  const hrefs = new Set<string>();
   doc.descendants((node) => {
     if (node.type.name === "image") sources.push(String(node.attrs.src ?? ""));
+    for (const mark of node.marks) if (mark.type.name === "link") hrefs.add(String(mark.attrs.href ?? ""));
   });
   for (const src of sources) if (!images.has(src)) images.set(src, await imageHref(state, from, src));
-  return rewritten(doc, (href) => linkHref(state, from, href), (src) => images.get(src) ?? null);
+  for (const href of hrefs) {
+    const path = await fileHref(state, href);
+    if (path) files.set(href, archiveHref(from, { path }));
+  }
+  return rewritten(doc, (href) => files.get(href) ?? linkHref(state, from, href), (src) => images.get(src) ?? null);
 }
 
-/** `doc` with each link's destination and each image's source as `link` and `image` give them, null leaving it out, and mentions as plain `@name`. */
-function rewritten(doc: Doc, link: (href: string) => string | null, image: (src: string) => string | null): Doc {
-  const schema = doc.type.schema;
-  const marksOf = (marks: readonly Mark[]): Mark[] =>
-    marks.flatMap((mark) => {
-      if (mark.type.name !== "link") return [mark];
-      const href = link(String(mark.attrs.href ?? ""));
-      return href === null ? [] : [mark.type.create({ ...mark.attrs, href })];
-    });
-  const rewrite = (node: Doc): Doc | null => {
-    if (node.isText) return node.mark(marksOf(node.marks));
-    if (node.type.name === "mention") {
-      const label = String(node.attrs.label || node.attrs.alias || "");
-      return label ? schema.text(`@${label}`, marksOf(node.marks)) : null;
-    }
-    if (node.type.name === "image") {
-      const src = image(String(node.attrs.src ?? ""));
-      return src ? node.type.create({ ...node.attrs, src }, null, marksOf(node.marks)) : null;
-    }
-    const children: Doc[] = [];
-    node.forEach((child) => {
-      const out = rewrite(child);
-      if (out) children.push(out);
-    });
-    // A cell whose only image is left out still needs a paragraph.
-    return node.type.createAndFill(node.attrs, children, marksOf(node.marks)) ?? node.type.create(node.attrs, children, marksOf(node.marks));
-  };
-  return rewrite(doc)!;
+/**
+ * The archive path of the file a link leads to, when it is one stored on this node: copied into
+ * the archive as `media/<sha256>/<name>`, the name its link gives. Null for any other link, and
+ * for a file larger than an archive holds, which then keeps its link to this node.
+ */
+async function fileHref(state: WriteState, href: string): Promise<string | null> {
+  const url = nodeUrl(state, href);
+  const stored = url ? MEDIA_GET_PATH.exec(url.pathname) : null;
+  if (!stored) return null;
+  const hash = stored[1]!;
+  let name = "file";
+  try {
+    if (stored[2] !== undefined) name = fileName(decodeURIComponent(stored[2]));
+  } catch {
+    // A malformed name keeps the default.
+  }
+  const key = `${hash}/${name}`;
+  let pending = state.files.get(key);
+  if (!pending) {
+    pending = (async () => {
+      // A database's own file, under its id, before the workspace's.
+      const owner = url!.pathname.split("/")[3] ?? "";
+      const media = state.ctx.env.media;
+      const own = isKeySafeWorkspaceId(owner) ? mediaKey(state.ctx.workspaceId, hash, owner) : null;
+      const ownHead = own ? await media.head(own) : null;
+      const blobKey = ownHead ? own! : mediaKey(state.ctx.workspaceId, hash);
+      const head = ownHead ?? (await media.head(blobKey));
+      if (!head || head.size > ARCHIVE_MAX_MEDIA_BYTES) return null;
+      const object = await state.ctx.env.media.get(blobKey);
+      if (!object) return null;
+      const bytes = new Uint8Array(await object.arrayBuffer());
+      const path = filePath(createHash("sha256").update(bytes).digest("hex"), name);
+      if (!state.written.has(path)) {
+        state.written.add(path);
+        await state.zip.add(path, bytes, "stored");
+      }
+      return path;
+    })();
+    state.files.set(key, pending);
+  }
+  return pending;
 }
 
 /**

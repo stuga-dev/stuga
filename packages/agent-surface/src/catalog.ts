@@ -80,7 +80,7 @@ export const TOOL_SUMMARIES: Record<ToolName, string> = {
   markdown_append: "Propose adding text to the end of a document or a section.",
   markdown_edit: "Propose an edit to a document.",
   comments_add: "Add a comment to a document.",
-  media_upload: "Upload an image so a document can reference it.",
+  media_upload: "Upload an image or file into a document or a database.",
   collections_edit: "Create, rename, delete or fill the saved document sets.",
   databases_add: "Propose new databases, tables, columns, rows, imports, views and row pages.",
   databases_change: "Propose updating or deleting rows, and changing views.",
@@ -105,7 +105,7 @@ export const DATABASES_ADD_ACTIONS = [
 ] as const;
 export const DATABASES_CHANGE_ACTIONS = ["update_rows", "delete_rows", "update_view"] as const;
 /** Fetching a model-supplied URL stays on the node, behind its outbound vetting. */
-export const MEDIA_ACTIONS = ["upload", "upload_from_url"] as const;
+export const MEDIA_ACTIONS = ["upload", "upload_from_url", "start_upload"] as const;
 
 /** Each tool's actions; a tool that takes no `action` has none. */
 export const TOOL_ACTIONS: Record<ToolName, readonly string[]> = {
@@ -135,7 +135,7 @@ export interface ToolAnnotations {
   readOnlyHint: boolean;
   destructiveHint: boolean;
   idempotentHint: boolean;
-  /** The call may reach past Stuga: an image URL the node downloads. */
+  /** The call may reach past Stuga: an image or file URL the node downloads. */
   openWorldHint: boolean;
 }
 
@@ -158,7 +158,7 @@ export function isMutating(tool: ToolName): boolean {
   return !toolDefinition(tool).annotations.readOnlyHint;
 }
 
-/** An image arriving as base64 inside one tool call; larger images go through a URL the node downloads. */
+/** An image or file arriving as base64 inside one tool call; larger ones go through a URL the node downloads, or start_upload. */
 export const MAX_INLINE_IMAGE_BYTES = 3 * 1024 * 1024;
 const MAX_INLINE_IMAGE_CHARS = Math.ceil(MAX_INLINE_IMAGE_BYTES / 3) * 4 + 4;
 
@@ -356,22 +356,26 @@ const markdownEditTool: ToolDefinition = {
 };
 
 const mediaUploadTool: ToolDefinition = {
-  title: "Upload an image to a document",
+  title: "Upload an image or file",
   description:
-    "Upload an image so you can reference it from Markdown. action: upload | upload_from_url. upload takes base64 " +
-    `bytes in \`data\` (raw base64 or a whole data: URI; up to ${Math.floor(MAX_INLINE_IMAGE_BYTES / MB)} MB — larger ` +
-    "images must use upload_from_url). upload_from_url takes a public http(s) `url` and downloads it on the node. " +
-    "Returns a permanent path; insert it with `markdown_edit` or `markdown_append` as ![alt](path). Pass `caption` to " +
-    'get back ![alt](path "caption") — the Markdown title slot is what Stuga renders as a visible caption. PNG, JPEG, ' +
-    "GIF and WebP only (SVG is refused). You do NOT need this tool just to use an image you found on the web: writing " +
-    "![alt](https://…) — or a data: URI — in an edit downloads and hosts it automatically. Use this when you want the " +
-    "path BEFORE composing the edit.",
+    "Store an image or any other file with a document, or a file with a database. action: upload | " +
+    "upload_from_url | start_upload. upload takes base64 bytes in `data` (raw base64 or a whole data: URI; up to " +
+    `${Math.floor(MAX_INLINE_IMAGE_BYTES / MB)} MB) and the file's \`name\`, or the \`upload_id\` of a start_upload. ` +
+    "upload_from_url takes a public http(s) `url` and downloads it on the node. start_upload takes `name` and returns " +
+    "an upload_url: PUT the whole file there yourself (up to the node's upload limit, for example curl -T), then call " +
+    "upload with its upload_id. `doc_id` is a document or a database. For a document the result's `markdown` places " +
+    'it — ![alt](path) for a PNG, JPEG, GIF or WebP image (pass `caption` for ![alt](path "caption"), the visible ' +
+    "caption), [name](path) for any other file, which readers download — insert it with `markdown_edit` or " +
+    "`markdown_append`. For a database, put the returned `url` in a files column's cell. You do NOT need this tool " +
+    "for an image on the web: writing ![alt](https://…) — or a data: URI — in an edit downloads and hosts it.",
   inputSchema: {
     workspace_id: workspaceId,
     doc_id: z.string(),
     action: z.enum(MEDIA_ACTIONS),
     data: z.string().max(MAX_INLINE_IMAGE_CHARS).optional(),
     url: z.string().max(4096).optional(),
+    name: z.string().max(500).optional(),
+    upload_id: z.string().max(100).optional(),
     alt: z.string().max(500).optional(),
     caption: z.string().max(500).optional(),
   },
@@ -470,8 +474,9 @@ const retrieveTool: ToolDefinition = {
 };
 
 const COLUMN_TYPES =
-  "Column types: text, number, checkbox (0/1), date (YYYY-MM-DD), single_select. `table` accepts a table_id, a " +
-  "physical name, or a display name.";
+  "Column types: text, number, checkbox (0/1), date (YYYY-MM-DD), single_select, files (links to files stored with " +
+  "the database, one per line; `media_upload` with the database's id stores one and returns its link). `table` " +
+  "accepts a table_id, a physical name, or a display name.";
 
 const VIEW_SHAPE =
   "A view is a saved way of looking at a table that everyone sees, like a Notion view: optional `filter`, `sorts`, " +

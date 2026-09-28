@@ -1,8 +1,11 @@
 /** The maintenance tick: heal what indexing left behind, and purge what retention says may go. */
 import { AiError, chunkEmbedInput } from "@stuga/ai";
 import { TRASH_RETENTION_DAYS } from "@stuga/protocol/domain/limits";
+import { sweepHeldImports } from "../archive/held.js";
 import { sweepExpiredImports } from "../databases/imports/staging.js";
+import { sweepExpiredMediaUploads } from "../media/uploads.js";
 import { destroyActorStorage } from "../documents/access.js";
+import { deleteDatabaseFiles } from "../media/media.js";
 import { lookForUpdates } from "../updates/check.js";
 import { VERSION } from "../version.js";
 import { type JobDeps, type JobsEnv, isTerminal, jobDeps } from "./deps.js";
@@ -94,7 +97,7 @@ async function backfillWorkspaces(env: JobsEnv, d: JobDeps): Promise<void> {
  */
 async function purgeExpiredTrash(env: JobsEnv, d: JobDeps): Promise<void> {
   const expired = await d.db.findExpiredTrash(TRASH_RETENTION_DAYS);
-  for (const { doc_id: docId, doc_type: docType } of expired) {
+  for (const { doc_id: docId, doc_type: docType, workspace_id: workspaceId } of expired) {
     try {
       if (docType === "database") {
         // Before the row goes, or its foreign key releases the pages as ordinary documents.
@@ -107,6 +110,7 @@ async function purgeExpiredTrash(env: JobsEnv, d: JobDeps): Promise<void> {
       await d.db.queueSnapshotSweep(docId);
       await d.db.deleteDoc(docId);
       await destroyActorStorage(env, docId, docType);
+      if (docType === "database") await deleteDatabaseFiles(env.media, workspaceId, docId);
     } catch (err) {
       d.log.error("trash purge failed for doc", { docId, err: String(err) });
     }
@@ -115,8 +119,13 @@ async function purgeExpiredTrash(env: JobsEnv, d: JobDeps): Promise<void> {
 }
 
 async function sweepStagedImports(env: JobsEnv, d: JobDeps): Promise<void> {
-  const swept = await sweepExpiredImports(env, Date.now());
+  const now = Date.now();
+  const swept = await sweepExpiredImports(env, now);
   if (swept > 0) d.log.info("swept expired import stagings", { swept });
+  const held = await sweepHeldImports(env, now);
+  if (held > 0) d.log.info("swept expired held workspace imports", { swept: held });
+  const uploads = await sweepExpiredMediaUploads(env, now);
+  if (uploads > 0) d.log.info("swept expired staged uploads", { swept: uploads });
 }
 
 async function purgeRetention(env: JobsEnv, d: JobDeps): Promise<void> {

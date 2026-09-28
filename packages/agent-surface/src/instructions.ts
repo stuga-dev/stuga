@@ -85,7 +85,8 @@ export function buildInstructions({ node, workspaces, conventions = "", readOnly
     "downloads the image, stores it in the workspace, and rewrites the link to a permanent path, so documents never " +
     "hotlink. Use `media_upload` when you hold the bytes yourself (base64) or want the stored path before composing " +
     'the edit. The Markdown TITLE slot is the image\'s CAPTION — ![alt](path "Figure 1 — quarterly revenue") renders ' +
-    "the caption under the image for readers; alt stays the accessibility text.\n" +
+    "the caption under the image for readers; alt stays the accessibility text. `media_upload` stores any other FILE " +
+    "too (a PDF, a spreadsheet): a document links it as [name](path), and readers download it.\n" +
     "Two loops, pick by intent: to find WHICH document, use `search` (returns documents) then `markdown` " +
     "action:read. To answer a question FROM the content of many documents, use `retrieve` — it returns the relevant " +
     "passages with citations for YOU to answer from, which is far cheaper than reading whole documents. Both take " +
@@ -104,7 +105,9 @@ export function buildInstructions({ node, workspaces, conventions = "", readOnly
     "lands as one reviewable change; a refused import is retried with `import_id` instead of re-sending the data; " +
     "when the file is too big to carry, the result gives you a link to hand the user). A row can have a PAGE — a " +
     "prose document linked to it, where the row's body text lives: `databases` action:page finds it, and " +
-    "`databases_add` action:open_page opens or creates it; read and edit a page like any document.\n" +
+    "`databases_add` action:open_page opens or creates it; read and edit a page like any document. A files column " +
+    "holds a row's attachments as links, one per line: `media_upload` with the database's id stores a file and " +
+    "returns the link to write there.\n" +
     "REVIEW: by default every edit you make waits for a human, and it waits however long that takes — the user is " +
     "notified, and nothing about whether they happen to have the page open changes the outcome. Each document carries " +
     "its own setting: its owner may set THAT document to apply agent changes at once, and then your writes to it land " +

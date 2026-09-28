@@ -1,12 +1,11 @@
-/** Images: upload into a document, the read ticket a browser carries, and the read itself. */
+/** Images and files: upload into a document, the read ticket a browser carries, and the read itself. */
 import { extractToken } from "@stuga/auth";
-import { databaseDocMessage } from "../agents/edits.js";
 import { buildContext } from "../auth/context.js";
 import { canWriteDoc } from "../authz/authz.js";
 import { authorizedDoc, lockedError } from "../documents/access.js";
 import { error, json } from "../http/respond.js";
 import type { PublicCall, WorkspaceCall } from "../http/router.js";
-import { MediaValidationError, imageUploadLimits, mediaUrl, storeImage, validateImageUpload } from "../media/media.js";
+import { MediaValidationError, imageUploadLimits, isSafeImageMime, mediaUrl, storeFile, storeImage, validateImageUpload } from "../media/media.js";
 import {
   MEDIA_COOKIE,
   MEDIA_TICKET_TTL_SECONDS,
@@ -19,13 +18,15 @@ import {
 import { serveMedia } from "../media/serve.js";
 import type { NodeEnv } from "../env.js";
 
-/** A multipart image upload; answers `{ url, hash, size, mime }`. The listener has already bounded the body. */
-export async function uploadImage({ ctx, req, match }: WorkspaceCall): Promise<Response> {
+/**
+ * A multipart upload of an image or any other file; answers `{ url, hash, size, mime }`, and a
+ * file's `name`, its url ending in it. An image of a safe type must be what its type says; any
+ * other file is kept as sent, to be downloaded. The listener has already bounded the body.
+ */
+export async function uploadMedia({ ctx, req, match }: WorkspaceCall): Promise<Response> {
   const docId = match[1]!;
   const doc = await authorizedDoc(ctx, docId);
   if (!doc) return error(404, "not found");
-  // Prose only: nothing references or reclaims an image stored against a database.
-  if (doc.doc_type !== "prose") return error(400, databaseDocMessage(docId));
   if (!canWriteDoc(ctx, doc)) return error(403, "view-only access");
   const lk = lockedError(doc);
   if (lk) return lk;
@@ -35,15 +36,25 @@ export async function uploadImage({ ctx, req, match }: WorkspaceCall): Promise<R
     return error(400, "expected a 'file' field");
   }
   const blob = file as Blob;
+  const limit = imageUploadLimits(ctx.env.settings.current().maxBodyBytes);
+  // Keyed by the document's workspace, never ctx's, so the bytes land where the document lives; a
+  // database keeps what it holds as its own, an image in a cell as much as any other file.
+  const database = doc.doc_type === "database";
+  if (database || !isSafeImageMime(blob.type.toLowerCase())) {
+    if (blob.size === 0) return error(400, "file is empty");
+    if (blob.size > limit.bytes) return error(413, `file too large (max ${limit.label})`);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const stored = await storeFile(ctx.env.media, doc.workspace_id, bytes, (file as File).name ?? "", database ? docId : undefined);
+    return json({ url: mediaUrl(docId, stored.hash, stored.name), ...stored }, { status: 201 });
+  }
   let validated;
   try {
-    validated = await validateImageUpload(blob, imageUploadLimits(ctx.env.settings.current().maxBodyBytes).bytes);
+    validated = await validateImageUpload(blob, limit.bytes);
   } catch (err) {
     if (err instanceof MediaValidationError) return error(err.status, err.message);
     throw err;
   }
   const { bytes, mime } = validated;
-  // Keyed by the document's workspace, never ctx's, so the bytes land where the document lives.
   const stored = await storeImage(ctx.env.media, doc.workspace_id, bytes, mime);
   return json({ url: mediaUrl(docId, stored.hash), ...stored }, { status: 201 });
 }
@@ -75,7 +86,8 @@ export async function clearMediaTicket({ env, req }: PublicCall): Promise<Respon
 export async function readMedia({ env, req, match }: PublicCall): Promise<Response> {
   const workspaceId = await mediaReadWorkspace(req, env);
   if (!workspaceId) return error(401, "unauthorized");
-  return serveMedia(env, workspaceId, match[1]!);
+  const docId = decodeURIComponent(new URL(req.url).pathname.split("/")[3] ?? "");
+  return serveMedia(env, workspaceId, match[1]!, { files: true, docId, ...(match[2] === undefined ? {} : { name: match[2] }) });
 }
 
 /** The workspace this request may read media from, or null. */

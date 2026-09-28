@@ -1,9 +1,42 @@
-import { DATABASE_MAX_CELL_BYTES, DATABASE_MAX_DISPLAY_LENGTH, DATABASE_MAX_SELECT_CHOICES } from "./limits.js";
+import { DATABASE_MAX_CELL_BYTES, DATABASE_MAX_DISPLAY_LENGTH, DATABASE_MAX_FILES_PER_CELL, DATABASE_MAX_SELECT_CHOICES } from "./limits.js";
 import type { ColumnOptions, DatabaseColumnType, RowInputValue, RowValue } from "./types.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export type CellValidation = { ok: true; value: RowValue } | { ok: false; reason: string };
+
+/** One file a files cell holds: the database it is stored with, its hash, and the name it is saved under. */
+export interface FileLink {
+  link: string;
+  docId: string;
+  hash: string;
+  name: string;
+}
+
+/** `/api/docs/<database>/media/<sha256>/<URL-encoded name>`: the one shape a files cell holds. */
+const FILE_LINK = /^\/api\/docs\/([A-Za-z0-9_-]{1,64})\/media\/([0-9a-f]{64})\/([^/\s]+)$/;
+
+/** A files cell's link, or null for anything else. */
+export function parseFileLink(link: string): FileLink | null {
+  const m = FILE_LINK.exec(link);
+  if (!m) return null;
+  let name: string;
+  try {
+    name = decodeURIComponent(m[3]!);
+  } catch {
+    return null;
+  }
+  return name.trim() === "" ? null : { link, docId: m[1]!, hash: m[2]!, name };
+}
+
+/** The files a stored files cell holds, in order; anything that is not a file link is skipped. */
+export function fileLinks(value: RowValue | undefined): FileLink[] {
+  if (typeof value !== "string") return [];
+  return value.split("\n").flatMap((line) => parseFileLink(line.trim()) ?? []);
+}
+
+/** A files cell of `links`, or null for none. */
+export const filesCell = (links: readonly string[]): string | null => (links.length === 0 ? null : links.join("\n"));
 
 /**
  * Validate a cell against its column type and return the stored value
@@ -52,6 +85,19 @@ export function validateCellValue(
         return { ok: false, reason: `not one of the column's choices (${choices.join(", ")})` };
       }
       return { ok: true, value };
+    }
+    case "files": {
+      if (typeof value !== "string") return { ok: false, reason: "expected file links, one per line" };
+      const lines = value.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+      const bad = lines.find((l) => !parseFileLink(l));
+      if (bad !== undefined) return { ok: false, reason: `not a file link: ${bad.slice(0, 120)} (upload the file to this database first)` };
+      if (lines.length > DATABASE_MAX_FILES_PER_CELL) return { ok: false, reason: `too many files (max ${DATABASE_MAX_FILES_PER_CELL})` };
+      const kept = [...new Set(lines)];
+      const stored = filesCell(kept);
+      if (stored !== null && utf8Length(stored) > DATABASE_MAX_CELL_BYTES) {
+        return { ok: false, reason: `file links too long (max ${DATABASE_MAX_CELL_BYTES} bytes)` };
+      }
+      return { ok: true, value: stored };
     }
   }
 }

@@ -7,6 +7,7 @@ import { MAX_IMPORT_MARKDOWN_BYTES } from "@stuga/protocol/text/markdown-import"
 import { MAX_UPLOAD_BYTES_CEILING } from "../media/media.js";
 import {
   ARCHIVE_MAX_BODY_BYTES,
+  ARCHIVE_MAX_BYTES,
   ARCHIVE_MAX_MEDIA_BYTES,
   ARCHIVE_RESERVED_NAMES,
   ARCHIVE_VERSION,
@@ -723,7 +724,7 @@ describe("parseSamplesIndex", () => {
     const raw = index();
     raw.tag = "v2026.09.25.2";
     raw.samples[0].extra = true;
-    raw.samples.unshift({ ...index().samples[0], title: 5, archive_version: 2 }, { ...index().samples[0], title: 5, bytes: 50 * 1024 * 1024 + 1 });
+    raw.samples.unshift({ ...index().samples[0], title: 5, archive_version: 2 }, { ...index().samples[0], title: 5, bytes: ARCHIVE_MAX_BYTES + 1 });
     const parsed = parseSamplesIndex(raw);
     expect(parsed.tag).toBe("v2026.09.25.2");
     expect(parsed.samples).toEqual(index().samples);

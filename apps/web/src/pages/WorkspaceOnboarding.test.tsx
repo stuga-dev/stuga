@@ -9,7 +9,9 @@ import { chooseRadio, mountInto, pickFile, typeInto } from "../test/form-input";
 const services = vi.hoisted(() => ({
   create: vi.fn(),
   createFromSample: vi.fn(),
-  importArchive: vi.fn(),
+  checkImport: vi.fn(),
+  importHeld: vi.fn(),
+  discardImport: vi.fn(),
   samples: vi.fn(),
   samplesAgain: vi.fn(),
   list: vi.fn(),
@@ -22,7 +24,9 @@ vi.mock("../api", async (orig) => ({
   Workspaces: {
     create: services.create,
     createFromSample: services.createFromSample,
-    importArchive: services.importArchive,
+    checkImport: services.checkImport,
+    importHeld: services.importHeld,
+    discardImport: services.discardImport,
     samples: services.samples,
     samplesAgain: services.samplesAgain,
     cachedSamples: () => undefined,
@@ -106,7 +110,9 @@ beforeEach(() => {
     scrolled.push(this);
   };
   services.create.mockReset().mockResolvedValue({ workspace_id: "w_1" });
-  services.importArchive.mockReset().mockResolvedValue({ workspace_id: "w_2", start_doc_id: "d_start" });
+  services.checkImport.mockReset().mockResolvedValue({ import_id: "wsi_1", name: "Team handbook", expires_at: "2026-09-28T01:00:00Z" });
+  services.importHeld.mockReset().mockResolvedValue({ workspace_id: "w_2", start_doc_id: "d_start" });
+  services.discardImport.mockReset().mockResolvedValue(undefined);
   services.createFromSample.mockReset().mockResolvedValue({ workspace_id: "w_3", start_doc_id: "d_laws" });
   services.samples.mockReset().mockResolvedValue({ samples: [PRIVACY_LAWS] });
   services.samplesAgain.mockReset().mockResolvedValue({ samples: [PRIVACY_LAWS] });
@@ -133,7 +139,7 @@ describe("WorkspaceOnboarding", () => {
     expect(host.querySelector('[data-testid="destination"]')?.textContent).toBe("/");
   });
 
-  it("offers an administrator their own agent, built-in AI and search by meaning, none required", async () => {
+  it("offers an administrator their own agent, built-in AI and embeddings, none required", async () => {
     services.whoami.mockResolvedValue({ node_admin: true });
     services.ai.mockResolvedValue(NOTHING_SET_UP);
     await render();
@@ -141,7 +147,7 @@ describe("WorkspaceOnboarding", () => {
     await click("Create workspace");
 
     expect(host.textContent).toContain("Your workspace is ready");
-    for (const row of ["Your own AI", "Built-in AI", "Search by meaning"]) expect(host.textContent).toContain(row);
+    for (const row of ["Your own AI", "Built-in AI", "Embeddings"]) expect(host.textContent).toContain(row);
     expect(host.textContent).toContain("Just for you: each member connects their own.");
     expect(host.textContent).toContain("for every member, on your API key");
     expect(buttons("Set up")).toHaveLength(3);
@@ -188,11 +194,32 @@ describe("WorkspaceOnboarding", () => {
     expect(button("Create workspace")?.disabled).toBe(true);
     const file = new File(["PK"], "Team handbook.stuga.zip", { type: "application/zip" });
     await pickFile(host, file);
-    expect(host.querySelector("input")!.placeholder).toBe("The archive’s name");
+    expect(host.querySelector("input")!.placeholder).toBe("Taken from the file");
     await click("Create workspace");
 
-    expect(services.importArchive).toHaveBeenCalledWith(file, "", "workspace_edit");
+    expect(services.checkImport).toHaveBeenCalledWith(file);
+    expect(services.importHeld).toHaveBeenCalledWith("wsi_1", "", "workspace_edit");
     expect(services.create).not.toHaveBeenCalled();
+    expect(getActiveWorkspace()).toBe("w_2");
+    expect(host.querySelector('[data-testid="destination"]')?.textContent).toBe("/doc/d_start");
+  });
+
+  it("lists what a file would leave out and imports it only on Import", async () => {
+    services.checkImport.mockResolvedValue({ import_id: "wsi_2", name: "Notion", expires_at: "2026-09-28T01:00:00Z", left_out: { count: 1, files: ["Home/Brief.pdf"] } });
+    await render();
+    await chooseRadio(host, "From a file");
+    await pickFile(host, new File(["PK"], "Export.zip", { type: "application/zip" }));
+    await click("Create workspace");
+
+    expect(host.querySelector('.astryx-banner[data-status="warning"]')?.textContent).toContain("1 file won’t be imported");
+    expect(host.textContent).toContain("Brief.pdf");
+    expect(services.importHeld).not.toHaveBeenCalled();
+    expect(button("Create workspace")).toBeUndefined();
+    await click("Cancel");
+    expect(services.discardImport).toHaveBeenCalledWith("wsi_2");
+    await click("Create workspace");
+    await click("Import");
+    expect(services.importHeld).toHaveBeenCalledWith("wsi_2", "", "workspace_edit");
     expect(getActiveWorkspace()).toBe("w_2");
     expect(host.querySelector('[data-testid="destination"]')?.textContent).toBe("/doc/d_start");
   });
@@ -236,7 +263,7 @@ describe("WorkspaceOnboarding", () => {
   });
 
   it("says why an archive could not be imported and stays on the page", async () => {
-    services.importArchive.mockRejectedValue(new Error("cannot import this archive: stuga.json: is missing"));
+    services.checkImport.mockRejectedValue(new Error("cannot import this archive: stuga.json: is missing"));
     await render();
     await chooseRadio(host, "From a file");
     await pickFile(host, new File(["PK"], "Handbook.zip", { type: "application/zip" }));
@@ -250,7 +277,7 @@ describe("WorkspaceOnboarding", () => {
 
   it("opens the workspace an import it stopped waiting for makes, once the node lists it", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-    services.importArchive.mockRejectedValue(Object.assign(new Error("try again"), { status: 504 }));
+    services.importHeld.mockRejectedValue(Object.assign(new Error("try again"), { status: 504 }));
     await render();
     await chooseRadio(host, "From a file");
     await pickFile(host, new File(["PK"], "Handbook.zip", { type: "application/zip" }));
@@ -269,7 +296,7 @@ describe("WorkspaceOnboarding", () => {
     // Nothing asks for a second meanwhile, which the node would refuse, or copy once the first is done.
     expect(button("Create workspace")?.disabled).toBe(true);
     await act(async () => host.querySelector("input")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
-    expect(services.importArchive).toHaveBeenCalledTimes(1);
+    expect(services.importHeld).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain("The import may still finish");
 
     services.list.mockResolvedValue({ workspaces: [{ workspace_id: "w_9", name: "Handbook", role: "owner" }], active: "w_9" });
@@ -282,7 +309,7 @@ describe("WorkspaceOnboarding", () => {
 
   it("stops looking, and says the import did not finish, once the node would have stopped it", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
-    services.importArchive.mockRejectedValue(Object.assign(new Error("try again"), { status: 504 }));
+    services.importHeld.mockRejectedValue(Object.assign(new Error("try again"), { status: 504 }));
     await render();
     await chooseRadio(host, "From a file");
     await pickFile(host, new File(["PK"], "Handbook.zip", { type: "application/zip" }));
@@ -302,7 +329,7 @@ describe("WorkspaceOnboarding", () => {
     // A try after it starts over: the old failure does not stay up.
     expect(button("Create workspace")?.disabled).toBe(false);
     await click("Create workspace");
-    expect(services.importArchive).toHaveBeenCalledTimes(2);
+    expect(services.importHeld).toHaveBeenCalledTimes(2);
     expect(host.textContent).not.toContain("The import didn’t finish");
     expect(host.textContent).toContain("The import may still finish");
   });

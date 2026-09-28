@@ -20,6 +20,7 @@ import { ClaudeConnectorTab } from "./tabs/ClaudeConnectorTab";
 import { ClaudeDesktopTab } from "./tabs/ClaudeDesktopTab";
 import { InstallerTab } from "./tabs/InstallerTab";
 import { DshTab } from "./tabs/DshTab";
+import { PiTab } from "./tabs/PiTab";
 import { OtherClientsTab } from "./tabs/OtherClientsTab";
 
 interface AgentClientsProps {
@@ -112,6 +113,7 @@ function ClientTabs({
         />
       )}
       {active === "dsh" && <DshTab dshEnv={configs.dshEnv} mint={mint} />}
+      {active === "pi" && <PiTab piUrlEnv={configs.piUrlEnv} piKeyEnv={configs.piKeyEnv} mint={mint} />}
       {active === "other" && <OtherClientsTab httpJson={configs.httpJson} mint={mint} />}
     </>
   );

@@ -3,7 +3,7 @@
  * attribution and the model configuration, and stages its changes on the run
  * ledger under the panel identity, where they always park for the person.
  */
-import { type AiConfig, type TableToolRunner, runTableAgentTurn } from "@stuga/ai";
+import { type AiConfig, failureReason, type TableToolRunner, runTableAgentTurn } from "@stuga/ai";
 import { type DocRow, insertAiUsage, touchDoc } from "@stuga/db";
 import { selectOnlyViolation } from "@stuga/protocol/databases/sql-guard";
 import type { DatabaseRunSummary } from "@stuga/protocol/databases/types";
@@ -175,6 +175,7 @@ export async function databaseCoauthor({ ctx, doc, docId, writeRefusal, body }: 
           send("status", { label });
         },
       );
+      if (result.failure) console.warn("table assistant model call failed", { workspaceId: ctx.workspaceId, docId: doc.doc_id, ...result.failure });
       if (result.modelId) {
         await insertAiUsage(ctx.sql, {
           alias: ctx.alias,
@@ -194,7 +195,7 @@ export async function databaseCoauthor({ ctx, doc, docId, writeRefusal, body }: 
 
       // A failed turn that staged ops still reports them: they are parked awaiting review.
       if (result.stopReason === "error" && result.staged === 0) {
-        send("error", { message: result.error ?? "the AI turn failed" });
+        send("error", { message: failureReason(result.failure) ?? "the AI turn failed" });
         return;
       }
       send("done", {
@@ -205,7 +206,7 @@ export async function databaseCoauthor({ ctx, doc, docId, writeRefusal, body }: 
           result.stopReason === "max_rounds"
             ? `Stopped after ${result.rounds} rounds of work. Ask me to continue if there's more to do.`
             : result.stopReason === "error"
-              ? `The turn ended early (${result.error ?? "unknown error"}), but the changes above are staged for review.`
+              ? ["The turn ended early, but the changes above are staged for review.", failureReason(result.failure)].filter(Boolean).join(" ")
               : undefined,
       });
     } catch (e) {

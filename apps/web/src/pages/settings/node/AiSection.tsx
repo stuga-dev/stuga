@@ -2,8 +2,8 @@
  * Chat, semantic search and the ranker, each set up on its own: any runs without
  * the others, as semantic search does for an outside agent that brings its own
  * chat. Setting a part up turns it on. Its switch, shown once it is set up, turns
- * it off and keeps it; Remove forgets it. Shown as Built-in AI, Search by meaning
- * and Ranking.
+ * it off and keeps it; Remove forgets it. Shown as Built-in AI, Embeddings and
+ * Reranking.
  */
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
@@ -337,8 +337,8 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       setRerankDraft(null);
     });
 
-  /** What ranks passages while no ranker is set up. */
-  const rerankFallback = settings.chat.running ? "Built-in AI ranks passages." : "Passages keep their search order.";
+  /** What reranks passages while no reranker is set up. */
+  const rerankFallback = settings.chat.running ? "Built-in AI reranks passages." : "Passages keep their search order.";
   const rerankLabel = (baseUrl: string) => RERANK_PRESETS.find((p) => p.value === rerankPresetFor(baseUrl) && p.value !== "custom")?.label ?? baseUrl;
 
   // ---- the page ----
@@ -710,7 +710,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       />
       <AlertDialog
         isOpen={confirm?.kind === "remove-search"}
-        title="Remove search by meaning?"
+        title="Remove embeddings?"
         description="Search goes back to matching words, and its index is deleted."
         onOpenChange={(open) => !open && setConfirm(null)}
         actionLabel="Remove"
@@ -721,7 +721,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       />
       <AlertDialog
         isOpen={confirm?.kind === "remove-rerank"}
-        title="Remove ranking?"
+        title="Remove reranking?"
         description={`Its key is deleted. ${rerankFallback}`}
         onOpenChange={(open) => !open && setConfirm(null)}
         actionLabel="Remove"

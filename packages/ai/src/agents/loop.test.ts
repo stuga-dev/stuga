@@ -43,6 +43,7 @@ describe("runAgentLoop", () => {
     const r = await runAgentLoop(spec());
     expect(r).toMatchObject({ stopReason: "complete", rounds: 1, prose: "All set." });
     expect(r.error).toBeUndefined();
+    expect(r.failure).toBeUndefined();
   });
 
   it("resolves 'error' with nothing when the first round fails, so the caller can fail the turn", async () => {
@@ -52,6 +53,18 @@ describe("runAgentLoop", () => {
     expect(r.stopReason).toBe("error");
     expect(r.error).toContain("endpoint down");
     expect(r.prose).toBe("");
+  });
+
+  it("says what failed: the kind, the protocol, the model and the provider's words", async () => {
+    const body = '{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}';
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(body, { status: 400 }))));
+    const r = await runAgentLoop(spec());
+    expect(r.failure).toEqual({ kind: "quota", protocol: "anthropic-messages", model: "sonnet", message: expect.stringContaining("credit balance is too low") });
+  });
+
+  it("says so when no endpoint could be resolved", async () => {
+    const r = await runAgentLoop(spec({ cfg: { ...CFG, chat: { ...CFG.chat, endpoints: [] } } }));
+    expect(r).toMatchObject({ stopReason: "error", failure: { kind: "error", protocol: null, model: "sonnet" } });
   });
 
   it("breaks between rounds so one round's prose can't run into the next", async () => {

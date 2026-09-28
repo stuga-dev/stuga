@@ -183,6 +183,8 @@ stuga-node media-scan --empty-trash=30 --reclaim   # destroy what has been in th
   `media/<workspace>/`.
 - `--empty-trash` alone reports. With `--reclaim` it destroys, and that cannot be undone. The
   default retention is 30 days.
+- A database's files, under `media/<workspace>/<database>/`, are not scanned: they stay while the
+  database does, so a row brought back from its Activity keeps its files, and go when it is deleted.
 
 ## Change the embedding width
 
@@ -207,7 +209,7 @@ UPDATE doc_chunks SET embed_hash = NULL, embed_attempts = 0;
 
 Set `AI_EMBED_DIMS` to the new width, start the node, and choose the new embedding model in
 Settings. The last statement matters: a chunk that failed too often under the old model is otherwise
-never embedded again. The node re-embeds in the background, and search finds by meaning only what it
+never embedded again. The node re-embeds in the background, and semantic search finds only what it
 has re-embedded so far.
 
 ## Learning of a new version

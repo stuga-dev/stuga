@@ -25,10 +25,12 @@ import {
   archiveIndex,
   archiveTitle,
   bodyMarkdown,
+  cellFilePaths,
   derivedTitle,
   isArchiveHref,
   mediaPath,
   parseManifest,
+  parseFilePath,
   parseMediaPath,
   parseTableRows,
   plainText,
@@ -36,6 +38,7 @@ import {
   type ArchiveFilterNode,
   type ArchiveIndex,
   type ArchiveManifest,
+  type ArchiveTable,
 } from "./format.js";
 
 export const ARCHIVE_USAGE = "stuga-node archive check <directory> [--json]";
@@ -63,7 +66,7 @@ export interface CheckIssue {
 export interface ArchiveCheck {
   manifest: ArchiveManifest | null;
   issues: CheckIssue[];
-  counts: { items: number; bodies: number; rows: number; images: number; steps: number };
+  counts: { items: number; bodies: number; rows: number; images: number; files: number; steps: number };
 }
 
 /**
@@ -109,6 +112,8 @@ function importedHref(from: string, href: string, index: ArchiveIndex, image: bo
   if (!resolved.ok) return `/doc/${ID}`;
   const { path, table, view, row } = resolved.target;
   if (image) return `/api/docs/${ID}/media/${parseMediaPath(path)?.sha256 ?? ID}`;
+  const file = parseFilePath(path);
+  if (file) return `/api/docs/${ID}/media/${file.sha256}/${encodeURIComponent(file.name)}`;
   if (index.bodies.get(path)?.kind === "page") return `/doc/${ID}?row=${ID}.tbl_${ID}.row_${ID}`;
   if (index.folders.has(path)) return `/?folder=${path.split("/").map(() => `f_${ID}`).join("/")}`;
   if (table === undefined && view === undefined && row === undefined) return `/doc/${ID}`;
@@ -252,7 +257,7 @@ export function lineDiff(before: string, after: string, max = 40): string {
 export async function checkArchive(files: ArchiveFiles): Promise<ArchiveCheck> {
   const issues: CheckIssue[] = [];
   const problem = (at: string, message: string, diff?: string): void => void issues.push(diff === undefined ? { at, message } : { at, message, diff });
-  const counts = { items: 0, bodies: 0, rows: 0, images: 0, steps: 0 };
+  const counts = { items: 0, bodies: 0, rows: 0, images: 0, files: 0, steps: 0 };
 
   for (const [path, why] of files.others) problem(path, why);
   if (files.sizes.size > ARCHIVE_MAX_ENTRIES) problem("archive", `holds ${files.sizes.size} files (max ${ARCHIVE_MAX_ENTRIES})`);
@@ -301,7 +306,9 @@ export async function checkArchive(files: ArchiveFiles): Promise<ArchiveCheck> {
   counts.items = manifest.items.length;
   counts.steps = manifest.sample?.steps.length ?? 0;
 
-  const rows = await checkRows(index, readText, problem);
+  // A file, by path, and the first body or rows file that links to it.
+  const linked = new Map<string, string>();
+  const rows = await checkRows(index, readText, problem, linked);
   for (const keys of rows.values()) counts.rows += keys.size;
   if (counts.rows > ARCHIVE_MAX_ROWS) problem("archive", `holds ${counts.rows} rows (max ${ARCHIVE_MAX_ROWS})`);
 
@@ -339,6 +346,8 @@ export async function checkArchive(files: ArchiveFiles): Promise<ArchiveCheck> {
     for (const href of found.links) {
       const why = linkProblem(body.path, href, index, rows);
       if (why) problem(body.path, why);
+      const resolved = !why && isArchiveHref(href) ? resolveArchiveHref(body.path, href) : null;
+      if (resolved?.ok && parseFilePath(resolved.target.path)) linked.set(resolved.target.path, linked.get(resolved.target.path) ?? body.path);
     }
     for (const src of found.images) {
       const image = imageTarget(body.path, src);
@@ -347,12 +356,24 @@ export async function checkArchive(files: ArchiveFiles): Promise<ArchiveCheck> {
     }
   }
 
-  // Images: named for their bytes, of the type they say, each shown somewhere.
+  // Images and files: named for their bytes, images of the type they say, each shown or linked somewhere.
   for (const [path, size] of files.sizes) {
     if (!path.startsWith(`${MEDIA_DIR}/`)) continue;
+    const file = parseFilePath(path);
+    if (file) {
+      counts.files += 1;
+      if (!linked.has(path)) problem(path, "is not linked from any body or files cell");
+      if (size > DEFAULT_MAX_UPLOAD_BYTES) {
+        problem(path, `is ${size} bytes (max ${DEFAULT_MAX_UPLOAD_BYTES}, the upload limit a node starts with)`);
+        continue;
+      }
+      const hash = createHash("sha256").update(await files.read(path)).digest("hex");
+      if (hash !== file.sha256) problem(path, `is named for other bytes; these are ${MEDIA_DIR}/${hash}/${file.name}`);
+      continue;
+    }
     const media = parseMediaPath(path);
     if (!media) {
-      problem(path, `is not named ${MEDIA_DIR}/<sha256>.<png|jpg|gif|webp>`);
+      problem(path, `is not named ${MEDIA_DIR}/<sha256>.<png|jpg|gif|webp> or ${MEDIA_DIR}/<sha256>/<name>`);
       continue;
     }
     counts.images += 1;
@@ -369,6 +390,7 @@ export async function checkArchive(files: ArchiveFiles): Promise<ArchiveCheck> {
     else if (hash !== media.sha256 || mime !== media.mime) problem(path, `is named for other bytes; these are ${mediaPath(hash, mime)}`);
   }
   for (const [path, body] of shown) if (!files.sizes.has(path)) problem(body, `shows ${path}, which is missing`);
+  for (const [path, body] of linked) if (!files.sizes.has(path)) problem(body, `links to ${path}, which is missing`);
 
   // Nothing else: an import reads only what the manifest names.
   const named = new Set<string>([MANIFEST_NAME, ...index.bodies.keys(), ...index.tables.keys()]);
@@ -389,18 +411,24 @@ interface Imported {
   written: Set<string>;
 }
 
-/** Every table's row keys, by its rows file; a file that does not read is left out. */
+/** Every table's row keys, by its rows file; a file that does not read is left out. The files its cells hold join `linked`. */
 async function checkRows(
   index: ArchiveIndex,
   readText: (path: string, max: number) => Promise<string | null>,
   problem: Problem,
+  linked: Map<string, string>,
 ): Promise<Map<string, Set<string>>> {
   const rows = new Map<string, Set<string>>();
+  const filesColumns = (table: ArchiveTable) => table.columns.filter((c) => c.type === "files").map((c) => c.name);
   for (const [file, { table }] of index.tables) {
     const text = await readText(file, ARCHIVE_MAX_TABLE_FILE_BYTES);
     if (text === null) continue;
     try {
-      rows.set(file, new Set(parseTableRows(text, table).map((r) => r.key)));
+      const parsed = parseTableRows(text, table);
+      rows.set(file, new Set(parsed.map((r) => r.key)));
+      for (const name of filesColumns(table)) {
+        for (const row of parsed) for (const path of cellFilePaths(row.values[name])) linked.set(path, linked.get(path) ?? file);
+      }
     } catch (err) {
       if (!(err instanceof ArchiveError)) throw err;
       problem(err.at, err.reason);
@@ -430,7 +458,7 @@ function linkProblem(from: string, href: string, index: ArchiveIndex, rows: Map<
   if (!resolved.ok) return `link "${href}" ${resolved.reason}`;
   const { path, table, view, row } = resolved.target;
   const fragment = table !== undefined || view !== undefined || row !== undefined;
-  if (index.bodies.has(path) || index.folders.has(path)) return fragment ? `link "${href}": only a database link takes table, view or row` : null;
+  if (index.bodies.has(path) || index.folders.has(path) || parseFilePath(path)) return fragment ? `link "${href}": only a database link takes table, view or row` : null;
   const db = index.databases.get(path);
   if (!db) return `link "${href}" leads to "${path}", which is not in the archive`;
   if (!fragment) return null;
@@ -581,7 +609,7 @@ export async function runArchiveCommand(argv: string[], write: (text: string) =>
       if (issue.diff) write(`${issue.diff.replace(/^/gm, "    ")}\n`);
     }
     const n = (count: number, one: string, many = `${one}s`) => `${count.toLocaleString("en")} ${count === 1 ? one : many}`;
-    const summary = [n(counts.items, "item"), n(counts.bodies, "body", "bodies"), n(counts.rows, "row"), n(counts.images, "image"), n(counts.steps, "sample step")].join(", ");
+    const summary = [n(counts.items, "item"), n(counts.bodies, "body", "bodies"), n(counts.rows, "row"), n(counts.images, "image"), n(counts.files, "file"), n(counts.steps, "sample step")].join(", ");
     write(issues.length ? `${n(issues.length, "problem")} in ${dir} (${summary})\n` : `${dir} passes: ${summary}\n`);
   }
   return issues.length ? 2 : 0;

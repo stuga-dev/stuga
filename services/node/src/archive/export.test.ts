@@ -45,6 +45,8 @@ import type { ArchiveDatabase, ArchiveDoc, ArchiveManifest } from "./format.js";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 const PNG_HASH = createHash("sha256").update(PNG).digest("hex");
+const PDF = new TextEncoder().encode("%PDF-1.7");
+const PDF_HASH = createHash("sha256").update(PDF).digest("hex");
 const MISSING_HASH = "0".repeat(64);
 
 function doc(doc_id: string, patch: Partial<DocRow> = {}): DocRow {
@@ -254,8 +256,15 @@ function ctxOf(): Ctx {
         }),
       },
       media: {
-        head: async (key: string) => (key === `media/ws1/${PNG_HASH}` ? { key, size: PNG.length } : null),
-        get: async (key: string) => (key === `media/ws1/${PNG_HASH}` ? { arrayBuffer: async () => PNG.slice().buffer } : null),
+        // The PDF is the workspace's and, a copy of it, the database's own.
+        head: async (key: string) =>
+          key === `media/ws1/${PNG_HASH}` ? { key, size: PNG.length } : key === `media/ws1/${PDF_HASH}` || key === `media/ws1/db1/${PDF_HASH}` ? { key, size: PDF.length } : null,
+        get: async (key: string) =>
+          key === `media/ws1/${PNG_HASH}`
+            ? { arrayBuffer: async () => PNG.slice().buffer }
+            : key === `media/ws1/${PDF_HASH}` || key === `media/ws1/db1/${PDF_HASH}`
+              ? { arrayBuffer: async () => PDF.slice().buffer }
+              : null,
       },
     },
   });
@@ -370,6 +379,32 @@ describe("workspace export", () => {
     const { archive, text } = await exportArchive();
     expect(await archive.read(`media/${PNG_HASH}.png`)).toEqual(PNG);
     expect(await text("Plans/Plan.md")).toContain(`![Dot](../media/${PNG_HASH}.png)`);
+  });
+
+  it("copies each linked file once, under the name its link gives, and leaves a link to one it cannot copy pointing at this node", async () => {
+    const gone = "f".repeat(64);
+    bodies.set(
+      "d-start",
+      `# Start here\n\nRead [the brief](/api/docs/d-start/media/${PDF_HASH}/Q3%20brief.pdf), [again](https://node.test/api/docs/d1-plan/media/${PDF_HASH}/Q3%20brief.pdf) and [the lost one](/api/docs/d-start/media/${gone}/Old.pdf).`,
+    );
+    const { archive, text } = await exportArchive();
+    expect(await archive.read(`media/${PDF_HASH}/Q3 brief.pdf`)).toEqual(PDF);
+    expect(await text("Welcome.md")).toContain(
+      `Read [the brief](media/${PDF_HASH}/Q3%20brief.pdf), [again](media/${PDF_HASH}/Q3%20brief.pdf) and [the lost one](https://node.test/api/docs/d-start/media/${gone}/Old.pdf).`,
+    );
+  });
+
+  it("copies the files a files cell holds and writes the cell as their paths, leaving out one it cannot copy", async () => {
+    schema.tables[0]!.columns.push({ column_id: "c6", name: "files", display: "Files", type: "files", position: 5, options: null });
+    const gone = "f".repeat(64);
+    rows[0]!.c6 = `/api/docs/db1/media/${PDF_HASH}/Q3%20brief.pdf\n/api/docs/db1/media/${gone}/Old.pdf`;
+    const { archive, text, manifest } = await exportArchive();
+    const [table] = item<ArchiveDatabase>(manifest, "Plans/Tasks").tables;
+    expect(table!.columns.at(-1)).toEqual({ name: "Files", type: "files" });
+    expect(await archive.read(`media/${PDF_HASH}/Q3 brief.pdf`)).toEqual(PDF);
+    const [first, second] = (await text(table!.file)).split("\n").map((line) => (line ? JSON.parse(line) : null));
+    expect(first.Files).toEqual([`media/${PDF_HASH}/Q3 brief.pdf`]);
+    expect(second.Files).toBeUndefined();
   });
 
   it("writes a table's rows, columns and views by name, de-duplicated", async () => {

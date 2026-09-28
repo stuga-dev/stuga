@@ -8,13 +8,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DropdownMenu, type DropdownMenuOption } from "@astryxdesign/core/DropdownMenu";
 import { PanelsTopLeft, Plus, Check, Server, ServerPlus, Settings2 } from "lucide-react";
-import { OtherNodes, Workspaces, onWorkspaceListChanged, type OtherNode, type WorkspaceInfo } from "../api";
+import { OtherNodes, Workspaces, onWorkspaceListChanged, type CreatedWorkspace, type OtherNode, type WorkspaceInfo } from "../api";
 import { getActiveWorkspace, setActiveWorkspace } from "../lib/session/workspace-pointer";
 import { nodeLabel } from "./Brand";
 import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { OtherNodesDialog } from "./OtherNodesDialog";
-import { createWorkspaceFrom, landingPath, type StartChoice } from "./StartWith";
-import type { DocAccessMode } from "@stuga/protocol/domain/workspaces";
+import { createWorkspaceFrom, landingPath } from "./StartWith";
 
 /**
  * Paths that carry no tenant's ids, so a switch stays on them; any other path
@@ -84,8 +83,7 @@ export function WorkspaceSwitcher() {
   }
 
   // A failure is the dialog's to show; a new workspace opens with a reload, like a switch.
-  async function createWorkspace(name: string, defaultDocAccess: DocAccessMode, start: StartChoice) {
-    const ws = await createWorkspaceFrom(start, name, defaultDocAccess);
+  function openWorkspace(ws: CreatedWorkspace) {
     setActiveWorkspace(ws.workspace_id);
     window.location.assign(landingPath(ws));
   }
@@ -149,7 +147,8 @@ export function WorkspaceSwitcher() {
       />
       <CreateWorkspaceDialog
         isOpen={showCreate}
-        onSubmit={createWorkspace}
+        onSubmit={(name, access, start) => createWorkspaceFrom(start, name, access)}
+        onOpen={openWorkspace}
         onClose={() => setShowCreate(false)}
       />
       <OtherNodesDialog isOpen={showNodes} nodes={otherNodes} onClose={() => setShowNodes(false)} />

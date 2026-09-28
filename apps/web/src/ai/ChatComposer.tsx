@@ -3,7 +3,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { Square } from "lucide-react";
-import { imageFilesFrom } from "../editor/use-image-upload";
+import { imageFilesFrom } from "../editor/use-upload";
 import { useAiChat } from "../state/model-options";
 import { AiSetupNotice } from "./AiSetupNotice";
 

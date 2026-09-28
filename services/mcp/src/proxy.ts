@@ -1,8 +1,8 @@
 /**
  * The stdio server a desktop client launches: a proxy to the node's /mcp, so the
  * tools, their wording and every gate are the node's own, whatever its version.
- * It adds the one thing only a process on the person's machine can do: an import
- * from a file on that machine.
+ * It adds the one thing only a process on the person's machine can do: read a file
+ * on that machine, for an import or an upload.
  */
 import { readFile as fsReadFile } from "node:fs/promises";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -36,6 +36,19 @@ const FILE_NOTE =
   " This server runs on the user's machine: action:import also takes `file`, a CSV/JSONL path there, and uploads it " +
   "whole — prefer it to `content` for a file on that machine.";
 
+const UPLOAD_FILE_PARAM = {
+  type: "string",
+  maxLength: 4096,
+  description:
+    "With action:upload — a path on the USER'S machine, where this server runs; it uploads the file for you, named " +
+    "as the path names it unless you pass `name`. A path in your own sandbox is not visible here: send its bytes in " +
+    "`data` instead.",
+};
+
+const UPLOAD_FILE_NOTE =
+  " This server runs on the user's machine: action:upload also takes `file`, a path there, and uploads it whole — " +
+  "prefer it to `data` for a file on that machine.";
+
 export interface ProxyDeps {
   config: ResolvedConfig;
   node: NodeIdentity;
@@ -67,18 +80,28 @@ export function formatForFile(path: string, explicit: unknown): DatabaseImportFo
   return { error: `cannot tell the format of "${path}" — pass format: ${DATABASE_IMPORT_FORMATS.join(" | ")}` };
 }
 
-/** The node's tools, with `file` offered on the import that can use it. */
+/** The tools that read a local `file`: what each says about it. */
+const LOCAL_FILES: Record<string, { param: typeof FILE_PARAM; note: string }> = {
+  databases_add: { param: FILE_PARAM, note: FILE_NOTE },
+  media_upload: { param: UPLOAD_FILE_PARAM, note: UPLOAD_FILE_NOTE },
+};
+
+/** The node's tools, with `file` offered on the import and the upload that can use it. */
 export function withLocalFiles(tools: Tool[]): Tool[] {
-  return tools.map((tool) =>
-    tool.name === "databases_add"
+  return tools.map((tool) => {
+    const local = Object.hasOwn(LOCAL_FILES, tool.name) ? LOCAL_FILES[tool.name]! : null;
+    return local
       ? {
           ...tool,
-          description: `${tool.description ?? ""}${FILE_NOTE}`,
-          inputSchema: { ...tool.inputSchema, properties: { ...tool.inputSchema.properties, file: FILE_PARAM } },
+          description: `${tool.description ?? ""}${local.note}`,
+          inputSchema: { ...tool.inputSchema, properties: { ...tool.inputSchema.properties, file: local.param } },
         }
-      : tool,
-  );
+      : tool;
+  });
 }
+
+/** A path's last segment: the name a file is uploaded under. */
+const baseName = (path: string): string => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 
 const failure = (text: string): CallToolResult => ({ content: [{ type: "text", text: `error: ${text}` }], isError: true });
 
@@ -162,10 +185,59 @@ export function buildProxy({
     const answered = await once(async (client) =>
       name === "databases_add" && typeof args.file === "string"
         ? importFile(client, args)
-        : ((await client.callTool({ name, arguments: args })) as CallToolResult),
+        : name === "media_upload" && typeof args.file === "string"
+          ? uploadFile(client, args)
+          : ((await client.callTool({ name, arguments: args })) as CallToolResult),
     );
     return typeof answered === "string" ? failure(answered) : answered;
   });
+
+  /** The bytes at `path` on this machine, or why they cannot be read, in words for the model. */
+  async function local(path: string, instead: string): Promise<Uint8Array | CallToolResult> {
+    try {
+      const bytes = await readFile(path);
+      return bytes.byteLength === 0 ? failure(`${path} is empty`) : bytes;
+    } catch (e) {
+      return failure(
+        `could not read ${path}: ${(e as Error).message}. This server runs on the user's machine and reads only its disk, ` +
+          `so a path in your own sandbox is not visible here — ${instead} instead.`,
+      );
+    }
+  }
+
+  /** PUT `bytes` to a staged path, which is the whole credential; this process reaches the node at its own URL, not the public one. */
+  async function put(path: string, bytes: Uint8Array): Promise<{ ok: boolean; status: number; text: () => Promise<string> }> {
+    return fetch(new URL(path, config.url), {
+      method: "PUT",
+      headers: { "content-type": "application/octet-stream" },
+      body: new Blob([bytes.slice().buffer as ArrayBuffer]),
+    }).catch((e: unknown) => ({ ok: false, status: 0, text: async () => String(e) }) as const);
+  }
+
+  /** Stage an upload on the node, send the file to the signed URL it hands back, and store it. */
+  async function uploadFile(client: UpstreamClient, args: Record<string, unknown>): Promise<CallToolResult> {
+    const { file, data: _data, upload_id: _uploadId, ...rest } = args;
+    const path = file as string;
+    if (rest.action !== "upload") return failure("`file` goes with action:upload");
+    if (_data !== undefined || _uploadId !== undefined) return failure("upload takes one of `file`, `data` or `upload_id`");
+    const bytes = await local(path, "send its bytes in `data`");
+    if (!(bytes instanceof Uint8Array)) return bytes;
+    const { action: _action, name, alt, caption, ...where } = rest;
+    const staged = (await client.callTool({
+      name: "media_upload",
+      arguments: { ...where, action: "start_upload", name: typeof name === "string" && name ? name : baseName(path) },
+    })) as CallToolResult;
+    if (staged.isError) return staged;
+    const ticket = JSON.parse(firstText(staged)) as { upload_id: string; upload_path: string; max_bytes: number };
+    if (bytes.byteLength > ticket.max_bytes) return failure(`${path} is ${bytes.byteLength} bytes; this node takes files up to ${ticket.max_bytes}.`);
+    const sent = await put(ticket.upload_path, bytes);
+    if (!sent.ok) return failure(`The upload was refused (${sent.status}): ${(await sent.text().catch(() => "")).slice(0, 300)}.`);
+    const options = Object.fromEntries(Object.entries({ alt, caption }).filter(([, v]) => v !== undefined));
+    return (await client.callTool({
+      name: "media_upload",
+      arguments: { workspace_id: where.workspace_id, doc_id: where.doc_id, action: "upload", upload_id: ticket.upload_id, ...options },
+    })) as CallToolResult;
+  }
 
   /** Stage the import on the node, upload the file to the signed URL it hands back, and commit it. */
   async function importFile(client: UpstreamClient, args: Record<string, unknown>): Promise<CallToolResult> {
@@ -175,16 +247,8 @@ export function buildProxy({
     if (_content !== undefined || rest.import_id !== undefined) return failure("import takes one of `file`, `content` or `import_id`");
     const format = formatForFile(path, rest.format);
     if (typeof format !== "string") return failure(format.error);
-    let bytes: Uint8Array;
-    try {
-      bytes = await readFile(path);
-    } catch (e) {
-      return failure(
-        `could not read ${path}: ${(e as Error).message}. This server runs on the user's machine and reads only its disk, ` +
-          "so a path in your own sandbox is not visible here — pass the file's text in `content` instead.",
-      );
-    }
-    if (bytes.byteLength === 0) return failure(`${path} is empty`);
+    const bytes = await local(path, "pass the file's text in `content`");
+    if (!(bytes instanceof Uint8Array)) return bytes;
 
     const { action: _action, column_map, on_error, max_bad_rows, date_order, dry_run, ...where } = rest;
     const staged = (await client.callTool({ name: "databases_add", arguments: { ...where, action: "start_import", format } })) as CallToolResult;
@@ -192,13 +256,8 @@ export function buildProxy({
     const ticket = JSON.parse(firstText(staged)) as { import_id: string; upload_path: string; max_bytes: number; import_page_url: string };
     const handOff = (why: string): CallToolResult => failure(renderHandOff(ticket.import_page_url, why));
     if (bytes.byteLength > ticket.max_bytes) return handOff(`That file is ${bytes.byteLength} bytes; this node accepts imports up to ${ticket.max_bytes}.`);
-    // The signed path is the whole credential, and this process reaches the node at its own URL, not the public one.
-    const put = await fetch(new URL(ticket.upload_path, config.url), {
-      method: "PUT",
-      headers: { "content-type": "application/octet-stream" },
-      body: new Blob([bytes.slice().buffer as ArrayBuffer]),
-    }).catch((e: unknown) => ({ ok: false, status: 0, text: async () => String(e) }) as const);
-    if (!put.ok) return handOff(`The upload was refused (${put.status}): ${(await put.text().catch(() => "")).slice(0, 300)}.`);
+    const sent = await put(ticket.upload_path, bytes);
+    if (!sent.ok) return handOff(`The upload was refused (${sent.status}): ${(await sent.text().catch(() => "")).slice(0, 300)}.`);
     const options = Object.fromEntries(Object.entries({ column_map, on_error, max_bad_rows, date_order, dry_run }).filter(([, v]) => v !== undefined));
     return (await client.callTool({
       name: "databases_add",

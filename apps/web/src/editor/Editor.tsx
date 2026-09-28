@@ -5,7 +5,7 @@ import type { StugaProvider } from "../sync/stuga-provider";
 import { useSharedEditor } from "./editor-context";
 import { stugaEditorExtensions } from "./extensions";
 import { FootnotePopover } from "./overlays/FootnotePopover";
-import { imageFilesFrom, useImageUpload } from "./use-image-upload";
+import { filesFrom, useUpload } from "./use-upload";
 import { useComments } from "../comments/comments-context";
 import { CommentComposer } from "../comments/CommentComposer";
 import { AiEditComposer } from "../ai/AiEditComposer";
@@ -43,14 +43,14 @@ export function Editor({ provider, alias, label, docId, readOnly, hasSynced, aut
     editorProps: {
       attributes: { class: "stuga-editor", "aria-label": "Document content" },
       handlePaste(_view, event) {
-        const files = imageFilesFrom(event.clipboardData);
+        const files = filesFrom(event.clipboardData);
         if (files.length === 0) return false;
         event.preventDefault();
         uploadRef.current(files);
         return true;
       },
       handleDrop(_view, event) {
-        const files = imageFilesFrom((event as DragEvent).dataTransfer);
+        const files = filesFrom((event as DragEvent).dataTransfer);
         if (files.length === 0) return false;
         event.preventDefault();
         uploadRef.current(files);
@@ -59,7 +59,7 @@ export function Editor({ provider, alias, label, docId, readOnly, hasSynced, aut
     },
   });
 
-  const uploader = useImageUpload(editor, docId);
+  const uploader = useUpload(editor, docId);
   uploadRef.current = uploader.upload;
 
   useEffect(() => {
@@ -79,7 +79,7 @@ export function Editor({ provider, alias, label, docId, readOnly, hasSynced, aut
           `editable`, and a refused local edit would silently vanish. */}
       {!readOnly && (
         <div className="editor-toolbar-bar">
-          <EditorToolbar editor={editor} onEditLink={requestLinkEdit} onPickImages={uploader.upload} />
+          <EditorToolbar editor={editor} onEditLink={requestLinkEdit} onPickFiles={uploader.upload} />
         </div>
       )}
       <div className="editor-shell">
@@ -90,7 +90,7 @@ export function Editor({ provider, alias, label, docId, readOnly, hasSynced, aut
         <ImageCaptionBubble editor={editor} />
         <LinkPopover editor={editor} editTick={linkEditTick} />
         <FootnotePopover editor={editor} />
-        <SlashMenu editor={editor} onPickImages={uploader.upload} />
+        <SlashMenu editor={editor} onPickFiles={uploader.upload} />
         <MentionMenu editor={editor} />
         <CommentComposer />
         <AiEditComposer />

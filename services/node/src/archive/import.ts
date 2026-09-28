@@ -14,12 +14,14 @@ import { createHash } from "node:crypto";
 import type { ImportedComment } from "@stuga/db";
 import { docToMarkdown, getStugaSchema, markdownToDoc } from "@stuga/crdt-ops";
 import type { SafeImageMime } from "@stuga/protocol/api/media";
+import { filesCell } from "@stuga/protocol/databases/cells";
 import { DATABASE_MAX_ROWS_PER_WRITE } from "@stuga/protocol/databases/limits";
 import type { RowFilterNode, RowValue, TableSchema } from "@stuga/protocol/databases/types";
 import { type AccountCtx, workspaceContextFor } from "../auth/context.js";
 import { openZip, ZipError, type ZipArchive, type ZipEntryInfo } from "../lib/zip.js";
 import { MediaValidationError, mediaUrl, validateImageBytes } from "../media/media.js";
 import { type ColumnInput, type DocState, type ImportClient, type ViewInput, workspaceImportClient } from "./client.js";
+import { convertExport, type ExportKind } from "./convert/index.js";
 import {
   ARCHIVE_MAX_BODY_BYTES,
   ARCHIVE_MAX_BYTES,
@@ -33,8 +35,10 @@ import {
   MANIFEST_NAME,
   ROW_FIELDS,
   archiveIndex,
+  cellFilePaths,
   isArchiveHref,
   parseManifest,
+  parseFilePath,
   parseMediaPath,
   parseTableRows,
   resolveArchiveHref,
@@ -62,18 +66,26 @@ export const IMPORT_PAGES_PER_WRITE = DATABASE_MAX_ROWS_PER_WRITE;
  * when the import writes it, so the zip's bytes must stay as they were until the import is done.
  */
 export interface ArchiveContents {
+  /** What the zip held: a Stuga archive, or another app's export converted into one. */
+  kind: "stuga" | ExportKind;
+  /** A converted export's files the archive does not carry, by path. */
+  leftOut: string[];
   manifest: ArchiveManifest;
   index: ArchiveIndex;
   /** By body path: whether the body holds an archive link or image, or a mention, which the import rewrites. */
   rewrites: Map<string, boolean>;
   /** The type of each image the bodies show, by path. */
   media: Map<string, SafeImageMime>;
+  /** The files the bodies link to, by path: `media/<sha256>/<name>`. */
+  files: ReadonlySet<string>;
   /** A body's Markdown, cleaned as an imported file is. */
   body(path: string): Promise<string>;
   /** A table's rows, by its rows file. */
   rows(file: string): Promise<ArchiveRow[]>;
   /** An image's bytes, by path. */
   image(path: string): Promise<Uint8Array>;
+  /** A linked file's bytes, by path. */
+  file(path: string): Promise<Uint8Array>;
 }
 
 function refuse(at: string, reason: string): never {
@@ -142,6 +154,14 @@ function imagePath(from: string, src: string, zip: ZipArchive): string {
   return path;
 }
 
+/** The file an archive link in the body at `from` leads to, or null for a link to anything else. */
+function filePathOf(from: string, href: string): string | null {
+  const resolved = resolveArchiveHref(from, href);
+  if (!resolved.ok) return null;
+  const { path, ...fragment } = resolved.target;
+  return Object.keys(fragment).length === 0 && parseFilePath(path) ? path : null;
+}
+
 function leavesOf(node: ArchiveFilterNode | null): Array<{ column: string; value?: unknown }> {
   if (!node) return [];
   if ("and" in node) return node.and.flatMap(leavesOf);
@@ -175,34 +195,48 @@ function archiveRoot(zip: ZipArchive): ZipArchive {
   return { files, read: (name, maxBytes) => zip.read(`${prefix}${name}`, maxBytes) };
 }
 
+export interface ReadLimits {
+  maxImageBytes: number;
+  /** Also read a Notion export or a folder of Markdown, converted into an archive; a person's own upload only. */
+  convert?: boolean;
+}
+
 /**
  * Read and check a zipped archive whole: the zip's caps, the manifest, every
  * file it names, every row, every link and image, and each image's bytes
  * against its name. Only the files the manifest names are read. Throws an
  * ArchiveError naming the file (and for the manifest, the field) at fault.
  */
-export async function readArchive(bytes: Uint8Array, limits: { maxImageBytes: number }): Promise<ArchiveContents> {
+export async function readArchive(bytes: Uint8Array, limits: ReadLimits): Promise<ArchiveContents> {
   try {
-    return await readZippedArchive(bytes, Math.min(limits.maxImageBytes, ARCHIVE_MAX_MEDIA_BYTES));
+    return await readZippedArchive(bytes, Math.min(limits.maxImageBytes, ARCHIVE_MAX_MEDIA_BYTES), limits.convert === true);
   } catch (err) {
     if (err instanceof ZipError) throw new ArchiveError(err.entry ?? "", err.reason);
     throw err;
   }
 }
 
-async function readZippedArchive(bytes: Uint8Array, maxImageBytes: number): Promise<ArchiveContents> {
+async function readZippedArchive(bytes: Uint8Array, maxImageBytes: number, convert: boolean): Promise<ArchiveContents> {
   if (bytes.byteLength > ARCHIVE_MAX_BYTES) refuse("", `the archive is larger than ${ARCHIVE_MAX_BYTES} bytes`);
-  const zip = archiveRoot(
-    openZip(bytes, {
-      maxEntries: ZIP_MAX_ENTRIES,
-      maxEntryBytes: Math.max(ARCHIVE_MAX_MANIFEST_BYTES, ARCHIVE_MAX_BODY_BYTES, ARCHIVE_MAX_TABLE_FILE_BYTES, ARCHIVE_MAX_MEDIA_BYTES),
-      // Held to ARCHIVE_MAX_UNPACKED_BYTES below, counting only the files the archive holds.
-      maxTotalBytes: Infinity,
-      // No cap on how tightly a file packs: an export deflates a repetitive body or rows file far past
-      // any ratio, and the caps bound what an archive unpacks to.
-      maxRatio: Infinity,
-    }),
-  );
+  const opened = openZip(bytes, {
+    maxEntries: ZIP_MAX_ENTRIES,
+    // Each file is held to its own cap as it is read: the manifest, a body, a rows file, an image.
+    // One nothing reads, such as a video in an export, which an import leaves out, may be any size.
+    maxEntryBytes: Infinity,
+    // Held to ARCHIVE_MAX_UNPACKED_BYTES below, counting only the files the archive holds.
+    maxTotalBytes: Infinity,
+    // No cap on how tightly a file packs: an export deflates a repetitive body or rows file far past
+    // any ratio, and the caps bound what an archive unpacks to.
+    maxRatio: Infinity,
+  });
+  let zip = archiveRoot(opened);
+  let kind: ArchiveContents["kind"] = "stuga";
+  let leftOut: string[] = [];
+  if (!zip.files.has(MANIFEST_NAME) && convert) {
+    const converted = await convertExport(opened, { maxImageBytes });
+    if (!converted) refuse("", "this is not a Stuga archive, a Notion export or a folder of Markdown files");
+    ({ zip, kind, leftOut } = converted);
+  }
   // Counted as an export counts them, and as the format's caps do: files, not folders or a Mac's forks.
   if (zip.files.size > ARCHIVE_MAX_ENTRIES) refuse("", `the archive holds ${zip.files.size} files, more than ${ARCHIVE_MAX_ENTRIES}`);
   let unpacked = 0;
@@ -230,9 +264,20 @@ async function readZippedArchive(bytes: Uint8Array, maxImageBytes: number): Prom
 
   // Only the keys stay: the rows are parsed again, a table at a time, as they are written.
   const rowKeys = new Map<string, Set<string>>();
+  const linked = new Set<string>();
   let rowCount = 0;
   for (const [file, { table }] of index.tables) {
-    const keys = new Set((await rowsOf(file)).map((r) => r.key));
+    const rows = await rowsOf(file);
+    const keys = new Set(rows.map((r) => r.key));
+    for (const column of table.columns) {
+      if (column.type !== "files") continue;
+      for (const row of rows) {
+        for (const path of cellFilePaths(row.values[column.name])) {
+          if (!zip.files.has(path)) refuse(file, `row "${row.key}" holds ${path}, which is missing`);
+          linked.add(path);
+        }
+      }
+    }
     rowCount += keys.size;
     if (rowCount > ARCHIVE_MAX_ROWS) refuse(file, `takes the archive past ${ARCHIVE_MAX_ROWS} rows`);
     for (const page of table.pages) if (!keys.has(page.row)) refuse(page.file, `is the page of row "${page.row}", which ${file} does not hold`);
@@ -254,7 +299,13 @@ async function readZippedArchive(bytes: Uint8Array, maxImageBytes: number): Prom
     let rewrite = found.mentions;
     for (const href of found.links) {
       if (!isArchiveHref(href)) continue;
-      linkTarget(path, href, index, rowKeys);
+      const file = filePathOf(path, href);
+      if (file) {
+        if (!zip.files.has(file)) refuse(path, `links to ${file}, which is missing`);
+        linked.add(file);
+      } else {
+        linkTarget(path, href, index, rowKeys);
+      }
       rewrite = true;
     }
     for (const src of found.images) {
@@ -281,7 +332,26 @@ async function readZippedArchive(bytes: Uint8Array, maxImageBytes: number): Prom
     if (createHash("sha256").update(image.bytes).digest("hex") !== named.sha256) refuse(path, "is named for other bytes than it holds");
     media.set(path, image.mime);
   }
-  return { manifest, index, rewrites, media, body: bodyOf, rows: rowsOf, image: (path) => zip.read(path, maxImageBytes) };
+  for (const path of linked) {
+    const size = zip.files.get(path)!.size;
+    if (size > maxImageBytes) refuse(path, `is ${size} bytes; this node takes files up to ${maxImageBytes}`);
+    if (createHash("sha256").update(await zip.read(path, maxImageBytes)).digest("hex") !== parseFilePath(path)!.sha256) {
+      refuse(path, "is named for other bytes than it holds");
+    }
+  }
+  return {
+    kind,
+    leftOut,
+    manifest,
+    index,
+    rewrites,
+    media,
+    files: linked,
+    body: bodyOf,
+    rows: rowsOf,
+    image: (path) => zip.read(path, maxImageBytes),
+    file: (path) => zip.read(path, maxImageBytes),
+  };
 }
 
 // ---- Writing ---------------------------------------------------------------------------------
@@ -316,7 +386,7 @@ export interface ImportOptions {
 export interface ImportResult {
   ids: ImportedIds;
   startDocId: string | null;
-  counts: { folders: number; docs: number; databases: number; pages: number; rows: number; images: number; comments: number };
+  counts: { folders: number; docs: number; databases: number; pages: number; rows: number; images: number; files: number; comments: number };
 }
 
 /** An import that stopped at `step`, which names the item it was writing. */
@@ -438,7 +508,7 @@ function nodeHref(target: ArchiveTarget, index: ArchiveIndex, ids: ImportedIds):
 export async function importArchive(client: ImportClient, contents: ArchiveContents, opts: ImportOptions = {}): Promise<ImportResult> {
   const { manifest, index } = contents;
   const ids: ImportedIds = { folders: new Map(), docs: new Map(), databases: new Map() };
-  const counts: ImportResult["counts"] = { folders: 0, docs: 0, databases: 0, pages: 0, rows: 0, images: 0, comments: 0 };
+  const counts: ImportResult["counts"] = { folders: 0, docs: 0, databases: 0, pages: 0, rows: 0, images: 0, files: 0, comments: 0 };
   const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
     try {
       opts.signal?.throwIfAborted();
@@ -463,6 +533,21 @@ export async function importArchive(client: ImportClient, contents: ArchiveConte
 
   for (const db of databases) {
     await step(db.path, async () => {
+      // A database keeps its own files: each is uploaded into it once, whichever cells hold it.
+      const stored = new Map<string, Promise<string>>();
+      const fileLink = (docId: string, path: string): Promise<string> => {
+        let link = stored.get(path);
+        if (!link) {
+          const { name } = parseFilePath(path)!;
+          link = contents.file(path).then(async (bytes) => {
+            const hash = await client.uploadFile(docId, bytes, name);
+            counts.files++;
+            return mediaUrl(docId, hash, name);
+          });
+          stored.set(path, link);
+        }
+        return link;
+      };
       const [first] = db.tables;
       const created = await client.createDatabase({
         title: db.title,
@@ -479,7 +564,7 @@ export async function importArchive(client: ImportClient, contents: ArchiveConte
         const schema = i === 0 ? created.table : await client.createTable(created.docId, { display: table.name, columns: table.columns.map(columnInput) });
         const imported: ImportedTable = { tableId: schema.table_id, columns: columnIds(schema, table.columns), views: new Map(), rows: new Map() };
         tables.set(table.name, imported);
-        await importRows(client, created.docId, table, await contents.rows(table.file), imported);
+        await importRows(client, created.docId, table, await contents.rows(table.file), imported, fileLink);
         counts.rows += imported.rows.size;
         for (const view of table.views) imported.views.set(view.name, await client.createView(created.docId, imported.tableId, viewInput(view, imported)));
       }
@@ -527,6 +612,13 @@ export async function importArchive(client: ImportClient, contents: ArchiveConte
           uploaded.set(media.target.path, await client.uploadImage(docId, bytes, contents.media.get(media.target.path)!));
           counts.images++;
         }
+        // Each file too, into the first document that links to it.
+        for (const href of destinations(markdownToDoc(markdown, getStugaSchema())).links) {
+          const file = isArchiveHref(href) ? filePathOf(path, href) : null;
+          if (!file || uploaded.has(file)) continue;
+          uploaded.set(file, await client.uploadFile(docId, await contents.file(file), parseFilePath(file)!.name));
+          counts.files++;
+        }
         const target = (href: string): ArchiveTarget | null => {
           if (!isArchiveHref(href)) return null;
           const resolved = resolveArchiveHref(path, href);
@@ -536,6 +628,8 @@ export async function importArchive(client: ImportClient, contents: ArchiveConte
           markdown,
           (href) => {
             const to = target(href);
+            const file = to && parseFilePath(to.path);
+            if (file) return mediaUrl(docId, uploaded.get(to.path)!, file.name);
             return to ? nodeHref(to, index, ids) : href;
           },
           (src) => {
@@ -587,15 +681,29 @@ export async function importArchive(client: ImportClient, contents: ArchiveConte
   return { ids, startDocId: manifest.start ? ids.docs.get(manifest.start)! : null, counts };
 }
 
-/** A table's rows, IMPORT_ROWS_PER_WRITE at a time, keyed by the new column ids; each row's new id lands in `imported.rows`. */
-async function importRows(client: ImportClient, databaseId: string, table: ArchiveTable, rows: ArchiveRow[], imported: ImportedTable): Promise<void> {
+/**
+ * A table's rows, IMPORT_ROWS_PER_WRITE at a time, keyed by the new column ids; each row's new id
+ * lands in `imported.rows`. A files cell's paths become the links `fileLink` stores them under.
+ */
+async function importRows(
+  client: ImportClient,
+  databaseId: string,
+  table: ArchiveTable,
+  rows: ArchiveRow[],
+  imported: ImportedTable,
+  fileLink: (databaseId: string, path: string) => Promise<string>,
+): Promise<void> {
+  const files = new Set(table.columns.filter((c) => c.type === "files").map((c) => c.name));
   for (let at = 0; at < rows.length; at += IMPORT_ROWS_PER_WRITE) {
     const chunk = rows.slice(at, at + IMPORT_ROWS_PER_WRITE);
-    const cells = chunk.map((row) => {
+    const cells: Array<Record<string, RowValue>> = [];
+    for (const row of chunk) {
       const out: Record<string, RowValue> = {};
-      for (const [name, value] of Object.entries(row.values)) out[imported.columns.get(name)!] = value;
-      return out;
-    });
+      for (const [name, value] of Object.entries(row.values)) {
+        out[imported.columns.get(name)!] = files.has(name) ? filesCell(await Promise.all(cellFilePaths(value).map((path) => fileLink(databaseId, path)))) : value;
+      }
+      cells.push(out);
+    }
     const rowIds = await client.insertRows(databaseId, { table_id: imported.tableId, display: table.name }, cells);
     if (rowIds.length !== chunk.length) throw new Error(`${table.file}: ${chunk.length} rows sent, ${rowIds.length} ids back`);
     chunk.forEach((row, i) => imported.rows.set(row.key, rowIds[i]!));

@@ -107,7 +107,7 @@ Then [docs/getting-started.md](docs/getting-started.md) walks through the first 
 
 Agents reach Stuga over MCP: the node serves `/mcp`, and `stuga-mcp` is a local stdio server that
 forwards to it for desktop clients. **Settings → Your own AI** in the app gives the setup for Claude
-Code, Claude Desktop, Codex, Antigravity and DeepSeek Harness, the Claude app's connector on a node
+Code, Claude Desktop, Codex, Antigravity, DeepSeek Harness and Pi, the Claude app's connector on a node
 with a public HTTPS address, and the URL and key any other MCP client needs. Most clients sign in
 through the browser, where you choose the workspaces the app may use and whether it may only read.
 A client holds one connection, called **Stuga**, that reaches every workspace you allowed, and each
@@ -133,6 +133,7 @@ Stuga is pre-1.0. Only the most recent release gets fixes ([SECURITY.md](SECURIT
 - [docs/rag-cross-doc-qa.md](docs/rag-cross-doc-qa.md): how Ask finds, reads and cites passages.
 - [docs/collections.md](docs/collections.md): scoping search and Ask to a named set of documents.
 - [docs/workspace-archive.md](docs/workspace-archive.md): the workspace archive, what export and import carry, and the samples index.
+- [docs/import.md](docs/import.md): importing from Notion, Obsidian or a folder of Markdown.
 - [packaging/contract.md](packaging/contract.md): what every packaging of Stuga provides.
 
 ## Contributing

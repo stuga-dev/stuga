@@ -33,7 +33,7 @@ import { ConfigError, parseConfig } from "../config/env.js";
 import { createAiSettingsStore } from "../config/settings/ai.js";
 import { createNodeSettingsStore, issuerHost } from "../config/settings/node.js";
 import type { NodeEnv } from "../env.js";
-import { createApp, createRequestHandler } from "../http/dispatch.js";
+import { createApp, createRequestHandler, readsOwnBody } from "../http/dispatch.js";
 import { createRateLimiters } from "../http/rate-limit.js";
 import { withSecurityHeaders } from "../http/security-headers.js";
 import { createIdentityRouter, identityDb } from "../identity/index.js";
@@ -114,6 +114,7 @@ async function boot(): Promise<void> {
     bind: cfg.bind,
     port: cfg.port,
     maxBodyBytes: () => bodyLimit(),
+    readsOwnBody,
     ...(tls ? { tls } : {}),
   });
   const bound = await server.listen();

@@ -1,6 +1,7 @@
 /**
  * The /mcp `media_upload` tool: an upload is a document write with the same gates,
- * the type comes from the bytes, and inline base64 has its own smaller cap.
+ * the type comes from the bytes, inline base64 has its own smaller cap, and a larger
+ * file is staged and sent to a signed URL.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -19,9 +20,12 @@ const { getDoc } = await import("@stuga/db");
 const { workspaceContextFor } = await import("../auth/context.js");
 const { callerFor, resolvingTo, inWorkspace, callToolAs } = await import("./testing/call.js");
 import { MAX_INLINE_IMAGE_BYTES } from "@stuga/agent-surface/catalog";
+import { MemoryBlobStore } from "@stuga/runtime/testing";
 import type { Ctx } from "../auth/context.js";
+import type { NodeEnv } from "../env.js";
 import { agentCtx, fixed, recordingJobs } from "../testing/ctx.js";
 import { DEFAULT_MAX_BODY_BYTES } from "../media/media.js";
+import { handleMediaUpload } from "../media/uploads.js";
 
 // Remote fetches vet the addresses a host resolves to, so a stubbed fetch needs a stubbed resolver.
 vi.mock("node:dns/promises", () => ({
@@ -45,11 +49,15 @@ function pngBase64(size: number): string {
 }
 
 let puts: string[] = [];
+let snapshots = new MemoryBlobStore();
 
-function connectorCtx(): Ctx {
+function connectorCtx(alias?: string): Ctx {
   return agentCtx({
+    ...(alias ? { alias } : {}),
     principals: ["agent:agent-1"],
     env: {
+      snapshots: snapshots,
+      internalSecret: "s".repeat(32),
       settings: fixed({ maxBodyBytes: DEFAULT_MAX_BODY_BYTES, nodeLabel: "Studio" }),
       jobs: recordingJobs(),
       aiSettings: fixed({ enabled: false }),
@@ -87,6 +95,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
   puts = [];
+  snapshots = new MemoryBlobStore();
   mockGetDoc.mockResolvedValue(doc());
 });
 
@@ -136,11 +145,35 @@ describe("media upload", () => {
     expect(puts).toHaveLength(1);
   });
 
-  it("refuses an SVG however it is labelled", async () => {
-    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data: btoa("<svg/>") });
-    expect(r.isError).toBe(true);
-    expect(r.text).toMatch(/SVG is not accepted/);
-    expect(puts).toEqual([]);
+  it("keeps any other file, an SVG among them, as a file people download, linked by the name it is given", async () => {
+    const unnamed = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data: btoa("<svg/>") });
+    expect(unnamed.text).toBe("error: name the file: pass `name`, such as report.pdf");
+    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data: btoa("<svg/>"), name: "logo.svg" });
+    expect(r.isError).toBe(false);
+    const json = JSON.parse(r.text.split("\n[note]")[0]!);
+    expect(json).toMatchObject({ mime: "image/svg+xml", name: "logo.svg", markdown: `[logo.svg](/api/docs/d1/media/${json.hash}/logo.svg)` });
+    expect(puts).toEqual([`media/ws1/${json.hash}`]);
+    expect(r.text).toMatch(/does not place the file/);
+  });
+
+  it("stages a larger file: a signed PUT takes it once, and upload stores it by upload_id for whoever started it", async () => {
+    const ctx = connectorCtx();
+    const staged = await callTool(ctx, "media_upload", { doc_id: "d1", action: "start_upload", name: "Q3 brief.pdf" });
+    const ticket = JSON.parse(staged.text) as { upload_id: string; upload_path: string; max_bytes: number };
+    expect(ticket.max_bytes).toBe(10 * 1024 * 1024);
+    const url = new URL(ticket.upload_path, "http://node");
+    const put = (sig: string | null) =>
+      handleMediaUpload(ctx.env as NodeEnv, new Request(url, { method: "PUT", body: "%PDF-1.7" }), "d1", ticket.upload_id, sig);
+    expect((await put("0".repeat(64))).status).toBe(403);
+    expect((await put(url.searchParams.get("sig"))).status).toBe(201);
+    expect((await put(url.searchParams.get("sig"))).status).toBe(409);
+    const other = await callTool(connectorCtx("agent-2"), "media_upload", { doc_id: "d1", action: "upload", upload_id: ticket.upload_id });
+    expect(other.text).toBe("error: this upload was started by another credential");
+    const r = await callTool(ctx, "media_upload", { doc_id: "d1", action: "upload", upload_id: ticket.upload_id });
+    const json = JSON.parse(r.text.split("\n[note]")[0]!);
+    expect(json).toMatchObject({ mime: "application/pdf", name: "Q3 brief.pdf", markdown: `[Q3 brief.pdf](/api/docs/d1/media/${json.hash}/Q3%20brief.pdf)` });
+    // Taken: the staging is gone.
+    expect((await callTool(ctx, "media_upload", { doc_id: "d1", action: "upload", upload_id: ticket.upload_id })).isError).toBe(true);
   });
 
   it("stores an inline payload at the base64 budget, a request body past the MCP SDK's own default", async () => {
@@ -169,6 +202,14 @@ describe("media upload", () => {
     });
     expect(r.isError).toBe(false);
     expect(JSON.parse(r.text.split("\n[note]")[0]!).mime).toBe("image/png");
+  });
+
+  it("downloads any other file from a URL, named for its last segment unless given a name", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("%PDF-1.7", { status: 200 }));
+    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload_from_url", url: "https://cdn.example.com/files/Q3%20brief.pdf?v=2" });
+    expect(JSON.parse(r.text.split("\n[note]")[0]!)).toMatchObject({ mime: "application/pdf", name: "Q3 brief.pdf" });
+    const named = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload_from_url", url: "https://cdn.example.com/dl?id=7", name: "Minutes.pdf" });
+    expect(JSON.parse(named.text.split("\n[note]")[0]!).name).toBe("Minutes.pdf");
   });
 
   it("refuses a URL pointed at the instance-metadata address", async () => {
@@ -212,10 +253,13 @@ describe("an upload is a document write", () => {
     expect(r.text).toMatch(/not found/);
   });
 
-  it("redirects a database doc to the databases tools", async () => {
+  it("stores a database's file under its id, image or not, and says the link goes in a files cell", async () => {
     mockGetDoc.mockResolvedValue(doc({ doc_type: "database" }));
-    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data: PNG_B64 });
-    expect(r.isError).toBe(true);
-    expect(r.text).toMatch(/structured database/);
+    const r = await callTool(connectorCtx(), "media_upload", { doc_id: "d1", action: "upload", data: PNG_B64, name: "chart.png" });
+    expect(r.isError).toBe(false);
+    const json = JSON.parse(r.text.split("\n[note]")[0]!);
+    expect(json).toEqual({ url: `/api/docs/d1/media/${json.hash}/chart.png`, hash: json.hash, size: PNG.length, mime: "image/png", name: "chart.png" });
+    expect(puts).toEqual([`media/ws1/d1/${json.hash}`]);
+    expect(r.text).toMatch(/files column's cell/);
   });
 });

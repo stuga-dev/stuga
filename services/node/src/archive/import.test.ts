@@ -40,6 +40,7 @@ function fakeClient(overrides: Partial<ImportClient> = {}): { client: ImportClie
     createView: async (...args) => (calls.push(["createView", ...args]), next("view")),
     openRowPages: async (id, table, pages) => (calls.push(["openRowPages", id, table, pages]), pages.map(() => next("page"))),
     uploadImage: async (docId, bytes, mime) => (calls.push(["uploadImage", docId, mime]), sha256(bytes)),
+    uploadFile: async (docId, bytes, name) => (calls.push(["uploadFile", docId, name]), sha256(bytes)),
     seedBody: async (...args) => void calls.push(["seedBody", ...args]),
     setTitle: async (...args) => void calls.push(["setTitle", ...args]),
     importComments: async (...args) => void calls.push(["importComments", ...args]),
@@ -79,7 +80,7 @@ describe("importing an archive", () => {
       "setDocState",
     ]);
     expect(out.startDocId).toBe("doc1");
-    expect(out.counts).toEqual({ folders: 1, docs: 2, databases: 1, pages: 1, rows: 2, images: 1, comments: 3 });
+    expect(out.counts).toEqual({ folders: 1, docs: 2, databases: 1, pages: 1, rows: 2, images: 1, files: 0, comments: 3 });
     expect(out.ids.docs).toEqual(new Map([["Start here.md", "doc1"], ["Laws/GDPR.md", "doc2"], ["Obligations/pages/gdpr-breach.md", "page1"]]));
   });
 
@@ -210,6 +211,83 @@ describe("importing an archive", () => {
     // Nothing to rewrite: the body goes as the file holds it.
     expect(bodies.get("page1")).toBe("# GDPR breach\n\nNotify within 72 hours.");
     expect(callsOf(calls, "uploadImage")).toEqual([["doc2", "image/png"]]);
+  });
+
+  it("uploads each linked file once, into the first document that links to it, and points every link at it under its name", async () => {
+    const pdf = text("%PDF-1.7");
+    const file = `media/${sha256(pdf)}/Q3 brief.pdf`;
+    const href = `media/${sha256(pdf)}/Q3%20brief.pdf`;
+    const { client, calls } = fakeClient();
+    const contents = await readArchive(
+      build((_m, f) => {
+        f["Laws/GDPR.md"] = `# GDPR\n\nSee [the brief](../${href}).\n\n![Chart](../${IMAGE})\n`;
+        f["Obligations/pages/gdpr-breach.md"] = `# GDPR breach\n\nAs [briefed](../../${href}).\n`;
+        f[file] = pdf;
+      }),
+      LIMITS,
+    );
+    expect([...contents.files]).toEqual([file]);
+    const out = await importArchive(client, contents);
+    const bodies = new Map(callsOf(calls, "seedBody") as Array<[string, string]>);
+    expect(callsOf(calls, "uploadFile")).toEqual([["doc2", "Q3 brief.pdf"]]);
+    expect(bodies.get("doc2")).toContain(`[the brief](/api/docs/doc2/media/${sha256(pdf)}/Q3%20brief.pdf)`);
+    expect(bodies.get("page1")).toContain(`[briefed](/api/docs/page1/media/${sha256(pdf)}/Q3%20brief.pdf)`);
+    expect(out.counts.files).toBe(1);
+  });
+
+  it("uploads the files a files cell holds into its database, once each, and writes the cell as their links", async () => {
+    const pdf = text("%PDF-1.7");
+    const file = `media/${sha256(pdf)}/Q3 brief.pdf`;
+    const { client, calls } = fakeClient();
+    const contents = await readArchive(
+      build((m, f) => {
+        m.items.find((i: Json) => i.kind === "database").tables[1].columns.push({ name: "Files", type: "files" });
+        f["Obligations/Sources.jsonl"] = `{"_id":"a","URL":"x","Files":["${file}"]}\n{"_id":"b","Files":["${file}","${IMAGE}"]}\n`;
+        f[file] = pdf;
+      }),
+      LIMITS,
+    ).catch((e: Error) => e);
+    // An image's path is no file's: a files cell names files as media/<sha256>/<name>.
+    expect(String(contents)).toContain(`"${IMAGE}" is not a file's path`);
+
+    const ok = await readArchive(
+      build((m, f) => {
+        m.items.find((i: Json) => i.kind === "database").tables[1].columns.push({ name: "Files", type: "files" });
+        f["Obligations/Sources.jsonl"] = `{"_id":"a","URL":"x","Files":["${file}"]}\n{"_id":"b","Files":["${file}"]}\n`;
+        f[file] = pdf;
+      }),
+      LIMITS,
+    );
+    expect([...ok.files]).toEqual([file]);
+    const out = await importArchive(client, ok);
+    expect(callsOf(calls, "uploadFile")).toEqual([["db1", "Q3 brief.pdf"]]);
+    const [, , rows] = callsOf(calls, "insertRows").at(-1) as [string, unknown, Array<Record<string, unknown>>];
+    const link = `/api/docs/db1/media/${sha256(pdf)}/Q3%20brief.pdf`;
+    expect(rows.map((r) => Object.values(r).at(-1))).toEqual([link, link]);
+    expect(out.counts.files).toBe(1);
+  });
+
+  it("refuses a files cell whose file is missing", async () => {
+    const pdf = text("%PDF-1.7");
+    const archive = build((m, f) => {
+      m.items.find((i: Json) => i.kind === "database").tables[1].columns.push({ name: "Files", type: "files" });
+      f["Obligations/Sources.jsonl"] = `{"_id":"a","Files":["media/${sha256(pdf)}/b.pdf"]}\n`;
+    });
+    await expect(readArchive(archive, LIMITS)).rejects.toThrow(`row "a" holds media/${sha256(pdf)}/b.pdf, which is missing`);
+  });
+
+  it("refuses a linked file that is missing, named for other bytes, or past the node's upload limit", async () => {
+    const pdf = text("%PDF-1.7");
+    const linking = (path: string, bytes?: Uint8Array) =>
+      build((_m, f) => {
+        f["Laws/GDPR.md"] = `# GDPR\n\n[Brief](../${path})\n`;
+        if (bytes) f[path] = bytes;
+      });
+    await expect(readArchive(linking(`media/${sha256(pdf)}/b.pdf`), LIMITS)).rejects.toThrow("links to media/");
+    await expect(readArchive(linking(`media/${sha256(text("other"))}/b.pdf`, pdf), LIMITS)).rejects.toThrow("is named for other bytes than it holds");
+    // Past the fixture's 16-byte image, which the same limit holds.
+    const big = text(`%PDF-1.7 ${"x".repeat(40)}`);
+    await expect(readArchive(linking(`media/${sha256(big)}/b.pdf`, big), { maxImageBytes: 20 })).rejects.toThrow("this node takes files up to 20");
   });
 
   it("links a folder by its whole path of ids, as the library's URL holds it", async () => {

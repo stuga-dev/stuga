@@ -4,7 +4,7 @@
  * A node administrator on a node with no AI set up is then shown the three
  * optional ways AI comes in, each set up in place: their own agent, which
  * brings its own model and needs no key here, the built-in AI on an API key,
- * and search by meaning.
+ * and embeddings.
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
@@ -24,7 +24,7 @@ import { Selector } from "@astryxdesign/core/Selector";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Banner } from "@astryxdesign/core/Banner";
 import { ArrowRight, LogOut, PanelsTopLeft, Plug, Search, Sparkles } from "lucide-react";
-import { Me, NodeSettings, Workspaces, type CreatedWorkspace, type NodeAiSettings } from "../api";
+import { Me, NodeSettings, Workspaces, type CreatedWorkspace, type HeldImport, type NodeAiSettings } from "../api";
 import { AgentClients } from "../agents/ConnectAgent";
 import { ConnectForm, type Connected } from "./settings/node/ConnectForm";
 import { HALF_COPY, endpointLabel, presetsFor } from "./settings/node/ai-form";
@@ -34,6 +34,8 @@ import { ARCHIVE_WORK_MAX_MS, DEFAULT_DOC_ACCESS, type DocAccessMode } from "@st
 import { WORKSPACE_ACCESS_OPTIONS, WORKSPACE_ACCESS_HELP } from "../shell/workspace-access";
 import {
   ARCHIVE_NAME_PLACEHOLDER,
+  LeftOutList,
+  importHeldFile,
   ImportMayFinish,
   StartWith,
   createWorkspaceFrom,
@@ -84,6 +86,8 @@ export function WorkspaceOnboarding() {
    */
   const [importing, setImporting] = useState<number | null>(null);
   const importingRef = useBannerInView(importing);
+  /** A workspace whose import left files out, shown here before it opens. */
+  const [held, setHeld] = useState<HeldImport | null>(null);
 
   // An imported or sample workspace opens at the document it starts with; else wherever the person was headed.
   const enter = (to: string | null) => {
@@ -101,13 +105,14 @@ export function WorkspaceOnboarding() {
     else enter(to);
   }
 
-  async function createWorkspace() {
-    if (busy || !ready || importing !== null) return;
+  /** Run `work` busy, showing what goes wrong here; an import it stops waiting for is looked for. */
+  async function attempt(work: () => Promise<void>) {
+    if (busy || importing !== null) return;
     setBusy(true);
     setError(null);
     const asked = Date.now();
     try {
-      await opened(await createWorkspaceFrom(start, name.trim(), access));
+      await work();
     } catch (err) {
       if (err instanceof ImportMayFinish) setImporting(asked);
       else setError(errorMessage(err, "Couldn't create the workspace."));
@@ -115,6 +120,23 @@ export function WorkspaceOnboarding() {
       setBusy(false);
     }
   }
+
+  const createWorkspace = () =>
+    ready &&
+    attempt(async () => {
+      const made = await createWorkspaceFrom(start, name.trim(), access);
+      if ("held" in made) setHeld(made.held);
+      else await opened(made.workspace);
+    });
+
+  const importHeld = () => held && attempt(async () => opened(await importHeldFile(held, name.trim(), access)));
+
+  /** Back to the form; the node lets the file go. */
+  const letGo = () => {
+    if (held) void Workspaces.discardImport(held.import_id).catch(() => {});
+    setHeld(null);
+    setError(null);
+  };
 
   // Nothing else here lists workspaces, so the page looks for the one the import makes, until none can come.
   useEffect(() => {
@@ -177,42 +199,55 @@ export function WorkspaceOnboarding() {
                 <Heading level={1}>Create your workspace</Heading>
                 <Text color="secondary">A place for your documents. Start on your own and invite others when you’re ready.</Text>
               </VStack>
-              {importing !== null && (
-                <Banner ref={importingRef} status="info" title="The import may still finish" description="This page opens the workspace when it does." />
+              {held?.left_out ? (
+                <>
+                  {error && <Banner ref={errorRef} status="error" title="Workspace creation failed" description={error} />}
+                  <LeftOutList leftOut={held.left_out} />
+                  <HStack gap={2} justify="end">
+                    <Button label="Cancel" variant="ghost" onClick={letGo} isDisabled={busy} />
+                    <Button label="Import" variant="primary" icon={<ArrowRight size={16} />} onClick={importHeld} isDisabled={busy || importing !== null} isLoading={busy} />
+                  </HStack>
+                </>
+              ) : (
+                <>
+                {importing !== null && (
+                  <Banner ref={importingRef} status="info" title="The import may still finish" description="This page opens the workspace when it does." />
+                )}
+                {error && <Banner ref={errorRef} status="error" title="Workspace creation failed" description={error} />}
+                <VStack gap={4}>
+                  <TextInput
+                    label="Workspace name"
+                    placeholder={nameOptional ? ARCHIVE_NAME_PLACEHOLDER : "For example, My projects"}
+                    value={name}
+                    onChange={setName}
+                    onEnter={createWorkspace}
+                    isRequired={!nameOptional}
+                    hasAutoFocus
+                    isDisabled={busy}
+                  />
+                  {/* This choice is stamped on new items; it does not change existing sharing. */}
+                  <Selector
+                    label="Who can use new documents?"
+                    description={WORKSPACE_ACCESS_HELP}
+                    value={access}
+                    onChange={(v) => setAccess(v as DocAccessMode)}
+                    options={WORKSPACE_ACCESS_OPTIONS}
+                    isDisabled={busy}
+                  />
+                  <StartWith value={start} onChange={setStart} samples={samples} isDisabled={busy} />
+                </VStack>
+                <HStack justify="end">
+                  <Button
+                    label="Create workspace"
+                    variant="primary"
+                    icon={<PanelsTopLeft size={16} />}
+                    onClick={createWorkspace}
+                    isDisabled={busy || !ready || importing !== null}
+                    isLoading={busy}
+                  />
+                </HStack>
+                </>
               )}
-              {error && <Banner ref={errorRef} status="error" title="Workspace creation failed" description={error} />}
-              <VStack gap={4}>
-                <TextInput
-                  label="Workspace name"
-                  placeholder={nameOptional ? ARCHIVE_NAME_PLACEHOLDER : "For example, My projects"}
-                  value={name}
-                  onChange={setName}
-                  onEnter={createWorkspace}
-                  isRequired={!nameOptional}
-                  hasAutoFocus
-                  isDisabled={busy}
-                />
-                {/* This choice is stamped on new items; it does not change existing sharing. */}
-                <Selector
-                  label="Who can use new documents?"
-                  description={WORKSPACE_ACCESS_HELP}
-                  value={access}
-                  onChange={(v) => setAccess(v as DocAccessMode)}
-                  options={WORKSPACE_ACCESS_OPTIONS}
-                  isDisabled={busy}
-                />
-                <StartWith value={start} onChange={setStart} samples={samples} isDisabled={busy} />
-              </VStack>
-              <HStack justify="end">
-                <Button
-                  label="Create workspace"
-                  variant="primary"
-                  icon={<PanelsTopLeft size={16} />}
-                  onClick={createWorkspace}
-                  isDisabled={busy || !ready || importing !== null}
-                  isLoading={busy}
-                />
-              </HStack>
             </VStack>
           )}
         </LayoutContent>

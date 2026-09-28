@@ -129,17 +129,17 @@ export function validateImageBytes(bytes: Uint8Array, maxBytes = DEFAULT_MAX_UPL
 }
 
 /** Decode a base64 payload, tolerating a `data:` URI prefix and whitespace. */
-export function decodeBase64Image(data: string): Uint8Array {
+export function decodeBase64Image(data: string, what: "image" | "file" = "image"): Uint8Array {
   const stripped = data.replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
-  if (!stripped) throw new MediaValidationError(400, "image data is empty");
+  if (!stripped) throw new MediaValidationError(400, `${what} data is empty`);
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(stripped)) {
-    throw new MediaValidationError(400, "image data is not valid base64");
+    throw new MediaValidationError(400, `${what} data is not valid base64`);
   }
   let binary: string;
   try {
     binary = atob(stripped);
   } catch {
-    throw new MediaValidationError(400, "image data is not valid base64");
+    throw new MediaValidationError(400, `${what} data is not valid base64`);
   }
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
@@ -154,10 +154,10 @@ async function vetRemoteUrl(raw: string): Promise<URL> {
 }
 
 /** Read a response body with a hard byte ceiling, streamed: a remote's content-length may lie. */
-async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> {
+async function readCapped(res: Response, maxBytes: number, what: string): Promise<Uint8Array> {
   const declared = Number(res.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) {
-    throw new MediaValidationError(413, `image too large (max ${megabytes(maxBytes)} MB)`);
+    throw new MediaValidationError(413, `${what} too large (max ${megabytes(maxBytes)} MB)`);
   }
   if (!res.body) throw new MediaValidationError(400, "the URL returned an empty response");
   const reader = res.body.getReader();
@@ -169,7 +169,7 @@ async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> 
     total += value.byteLength;
     if (total > maxBytes) {
       await reader.cancel().catch(() => {});
-      throw new MediaValidationError(413, `image too large (max ${megabytes(maxBytes)} MB)`);
+      throw new MediaValidationError(413, `${what} too large (max ${megabytes(maxBytes)} MB)`);
     }
     chunks.push(value);
   }
@@ -182,41 +182,131 @@ async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> 
   return out;
 }
 
-/** Fetch a remote image and validate it like an upload. Redirects are followed by hand so every hop is re-vetted. */
+/** Fetch a remote image and validate it like an upload. */
 export async function fetchRemoteImage(
   raw: string,
   maxBytes = DEFAULT_MAX_UPLOAD_BYTES,
 ): Promise<{ bytes: Uint8Array; mime: SafeImageMime }> {
+  const { bytes } = await fetchRemote(raw, maxBytes, "image");
+  return validateImageBytes(bytes, maxBytes);
+}
+
+/** Fetch any remote file, named for the last segment of the URL it came from. */
+export async function fetchRemoteFile(raw: string, maxBytes = DEFAULT_MAX_UPLOAD_BYTES): Promise<{ bytes: Uint8Array; name: string }> {
+  const { bytes, url } = await fetchRemote(raw, maxBytes, "file");
+  if (bytes.byteLength === 0) throw new MediaValidationError(400, "the URL returned an empty file");
+  let name = url.pathname.slice(url.pathname.lastIndexOf("/") + 1);
+  try {
+    name = decodeURIComponent(name);
+  } catch {
+    // Kept as the URL spells it.
+  }
+  return { bytes, name: fileName(name) };
+}
+
+/** Fetch a remote URL's body, up to `maxBytes`. Redirects are followed by hand so every hop is re-vetted. */
+async function fetchRemote(raw: string, maxBytes: number, what: "image" | "file"): Promise<{ bytes: Uint8Array; url: URL }> {
   let url = await vetRemoteUrl(raw);
   // The per-hop timeout bounds one stalled host; the deadline bounds a chain of them.
   const deadline = Date.now() + REMOTE_FETCH_DEADLINE_MS;
   for (let hop = 0; ; hop += 1) {
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new MediaValidationError(504, "timed out fetching the image");
+    if (remaining <= 0) throw new MediaValidationError(504, `timed out fetching the ${what}`);
     const res = await fetch(url.toString(), {
       redirect: "manual",
-      headers: { accept: "image/*" },
+      headers: { accept: what === "image" ? "image/*" : "*/*" },
       signal: AbortSignal.timeout(Math.min(REMOTE_FETCH_TIMEOUT_MS, remaining)),
     }).catch((e) => {
       if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) {
-        throw new MediaValidationError(504, "timed out fetching the image");
+        throw new MediaValidationError(504, `timed out fetching the ${what}`);
       }
-      throw new MediaValidationError(400, `could not fetch the image: ${e instanceof Error ? e.message : String(e)}`);
+      throw new MediaValidationError(400, `could not fetch the ${what}: ${e instanceof Error ? e.message : String(e)}`);
     });
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location");
       if (!location) throw new MediaValidationError(400, `the URL redirected with no location (${res.status})`);
-      if (hop >= MAX_REMOTE_REDIRECTS) throw new MediaValidationError(400, "too many redirects fetching the image");
+      if (hop >= MAX_REMOTE_REDIRECTS) throw new MediaValidationError(400, `too many redirects fetching the ${what}`);
       url = await vetRemoteUrl(new URL(location, url).toString());
       continue;
     }
     if (!res.ok) throw new MediaValidationError(400, `the URL returned HTTP ${res.status}`);
-    return validateImageBytes(await readCapped(res, maxBytes), maxBytes);
+    return { bytes: await readCapped(res, maxBytes, what), url };
   }
 }
 
-/** The in-document path for a stored image, relative so a document works from any origin. */
-export const mediaUrl = (docId: string, hash: string): string => `/api/docs/${docId}/media/${hash}`;
+/**
+ * The in-document path for a stored image, relative so a document works from any origin; for a
+ * file, with the name it is saved under.
+ */
+export const mediaUrl = (docId: string, hash: string, name?: string): string =>
+  `/api/docs/${docId}/media/${hash}${name === undefined ? "" : `/${encodeURIComponent(name)}`}`;
+
+/** The longest name a file keeps. */
+const MAX_FILE_NAME_CHARS = 200;
+
+/**
+ * A file's name as the media store keeps it, from whatever a browser, an export or a link said:
+ * the last segment of a path, one line, no control or direction characters, at most 200
+ * characters, and `file` for none.
+ */
+export function fileName(raw: string): string {
+  const base = raw.slice(Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("\\")) + 1);
+  const line = base
+    .replace(/\p{Bidi_Control}/gu, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const name = [...line].slice(0, MAX_FILE_NAME_CHARS).join("").trim();
+  return name && name !== "." && name !== ".." ? name : "file";
+}
+
+/** The type a file is served with, by its extension; what no entry names is plain bytes. */
+const FILE_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  txt: "text/plain",
+  csv: "text/csv",
+  md: "text/markdown",
+  json: "application/json",
+  zip: "application/zip",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  key: "application/vnd.apple.keynote",
+  pages: "application/vnd.apple.pages",
+  numbers: "application/vnd.apple.numbers",
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  wav: "audio/wav",
+  mp4: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+  heic: "image/heic",
+  svg: "image/svg+xml",
+};
+
+export const fileType = (name: string): string => FILE_TYPES[name.slice(name.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream";
+
+/**
+ * Store any file under this workspace's prefix, as storeImage stores an image. Only an image of a
+ * safe type is ever shown; anything else is served as a download (serveMedia).
+ */
+export async function storeFile(
+  store: BlobStore,
+  workspaceId: string,
+  bytes: Uint8Array,
+  name: string,
+  /** A database's own file, kept under its id (mediaKey). */
+  databaseId?: string,
+): Promise<{ hash: string; size: number; mime: string; name: string }> {
+  const kept = fileName(name);
+  const sniffed = sniffImageMime(bytes);
+  const stored = await storeBlob(store, workspaceId, bytes, sniffed ?? fileType(kept), databaseId);
+  return { ...stored, name: kept };
+}
 
 /**
  * A workspace id safe to put in a blob key, where `/` or `..` would address
@@ -225,9 +315,32 @@ export const mediaUrl = (docId: string, hash: string): string => `/api/docs/${do
  */
 export const isKeySafeWorkspaceId = (value: string): boolean => /^[A-Za-z0-9_-]{1,64}$/.test(value);
 
-/** Blob key for a workspace's copy of an image. */
-export function mediaKey(workspaceId: string, hash: string): string {
-  return `media/${workspaceId}/${hash}`;
+/**
+ * Blob key for a workspace's copy of an image or file. A database's own files sit under its id,
+ * `media/<workspace>/<database>/<hash>`: they stay as long as the database, so a row brought back
+ * from its Activity has its files, and go with it. The media sweep, which reclaims only
+ * `media/<workspace>/<hash>`, leaves them be.
+ */
+export function mediaKey(workspaceId: string, hash: string, databaseId?: string): string {
+  return databaseId === undefined ? `media/${workspaceId}/${hash}` : `media/${workspaceId}/${databaseId}/${hash}`;
+}
+
+/** Delete every file a database holds: its whole prefix. Best-effort; returns how many went. */
+export async function deleteDatabaseFiles(store: BlobStore, workspaceId: string, databaseId: string): Promise<number> {
+  if (!isKeySafeWorkspaceId(workspaceId) || !isKeySafeWorkspaceId(databaseId)) return 0;
+  let deleted = 0;
+  try {
+    let cursor: string | undefined;
+    do {
+      const page = await store.list({ prefix: `media/${workspaceId}/${databaseId}/`, ...(cursor ? { cursor } : {}) });
+      if (page.objects.length > 0) await store.delete(page.objects.map((o) => o.key));
+      deleted += page.objects.length;
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+  } catch {
+    // What is left is found again when the workspace goes.
+  }
+  return deleted;
 }
 
 /** Content-hash the bytes and store them under this workspace's prefix if absent. */
@@ -237,13 +350,17 @@ export async function storeImage(
   bytes: Uint8Array,
   mime: SafeImageMime,
 ): Promise<{ hash: string; size: number; mime: SafeImageMime }> {
-  if (!isKeySafeWorkspaceId(workspaceId)) {
+  return storeBlob(store, workspaceId, bytes, mime);
+}
+
+async function storeBlob<M extends string>(store: BlobStore, workspaceId: string, bytes: Uint8Array, mime: M, databaseId?: string): Promise<{ hash: string; size: number; mime: M }> {
+  if (!isKeySafeWorkspaceId(workspaceId) || (databaseId !== undefined && !isKeySafeWorkspaceId(databaseId))) {
     throw new MediaValidationError(400, "cannot store an image outside a workspace");
   }
   // Narrows away SharedArrayBuffer, which no caller produces.
   const digest = await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>);
   const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  const key = mediaKey(workspaceId, hash);
+  const key = mediaKey(workspaceId, hash, databaseId);
   if (!(await store.head(key))) {
     await store.put(key, bytes, { httpMetadata: { contentType: mime } });
   }

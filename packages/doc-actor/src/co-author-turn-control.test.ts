@@ -198,6 +198,42 @@ describe("AI_CANCEL", () => {
   });
 });
 
+describe("a turn the provider failed", () => {
+  const failure = { kind: "quota", protocol: "openai-responses", model: "test-model", message: "OpenAI API error (429): You have no credits remaining. org-abc" };
+
+  it("tells the panel why in plain words, and logs the provider's own", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockAgentTurn.mockResolvedValue({ ...emptyTurn(), prose: "", stopReason: "error", error: failure.message, failure });
+    const h = aiHarness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const ws = await connect(dobj, h, { docId: DOC, alias: "alice", workspaceId: WS_ID });
+
+    await askAi(dobj, ws);
+
+    const end = ending(ws);
+    expect(end.done).toMatchObject({ done: true, error: expect.stringContaining("out of credit") });
+    expect(end.edits.map((e) => e.error)).toEqual([expect.stringContaining("out of credit")]);
+    expect(JSON.stringify(end)).not.toContain("org-abc");
+    expect(warn).toHaveBeenCalledWith("co-author model call failed", { docId: DOC, ...failure });
+    warn.mockRestore();
+  });
+
+  it("still proposes what earlier rounds staged, with the reason in the notice", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockAgentTurn.mockResolvedValue({ ...emptyTurn(), stopReason: "error", strEdits: [{ old_string: "Alpha.", new_string: "Beta." }], failure });
+    const h = aiHarness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const ws = await connect(dobj, h, { docId: DOC, alias: "alice", workspaceId: WS_ID });
+
+    await askAi(dobj, ws);
+
+    expect(ending(ws).edits[0]).toMatchObject({ staged: 1, error: null, notice: expect.stringMatching(/^The turn ended early\. The AI provider says the account is out of credit\./) });
+    warn.mockRestore();
+  });
+});
+
 describe("what the loop is handed", () => {
   it("clamps the prompt and the transcript, and drops a malformed transcript item", async () => {
     mockAgentTurn.mockResolvedValue(emptyTurn());

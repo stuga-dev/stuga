@@ -12,6 +12,7 @@ import { findFuzzyMatch } from "@stuga/protocol/text/fuzzy-match";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type, type ImageContent, type TSchema } from "@earendil-works/pi-ai";
 import type { AiConfig } from "../config.js";
+import type { ModelFailure } from "../failure.js";
 import { acceptsImages, resolveModel } from "../models.js";
 import { imageMime, type TokenUsage } from "../types.js";
 import { filterCited, runAgentLoop, textTool } from "./loop.js";
@@ -89,6 +90,8 @@ export interface AgentResult {
   /** Anything but "complete" is incomplete, but the edits above must still be proposed. */
   stopReason: AskStopReason;
   error?: string;
+  /** With "error": what failed. */
+  failure?: ModelFailure;
 }
 
 const DEFAULT_MAX_ROUNDS = 8;
@@ -401,7 +404,7 @@ export async function runAgentTurn(
     onRoundStart: () => onStatus?.({ kind: "thinking" }),
   });
 
-  const { prose, usage, rounds, stopReason, error } = result;
+  const { prose, usage, rounds, stopReason, error, failure } = result;
   const editText = (edits: AiStrEdit[]) => edits.map((e) => e.new_string).join("\n");
 
   // A citation counts when the prose or any edit (here or in another document) references it.
@@ -422,7 +425,7 @@ export async function runAgentTurn(
     });
   }
 
-  return { prose, strEdits, docEdits, citations: usedCitations, usage, modelId, rounds, stopReason, error };
+  return { prose, strEdits, docEdits, citations: usedCitations, usage, modelId, rounds, stopReason, error, failure };
 }
 
 // First-person lead-ins that precede an announced edit ("I'll remove…", "I have removed…").

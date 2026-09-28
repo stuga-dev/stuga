@@ -168,20 +168,20 @@ give the node an https address as [Network access](network-access.md#https) desc
 | The log says `ai off`, or a request answers `AI chat is disabled on this node` | Chat is not set up, or its switch is off. Connect a provider under **Built-in AI** in **Settings → This node → AI providers**, or switch **Built-in AI** on there. |
 | **Connect** says the service didn't accept the key | The key is wrong, revoked or for another service. Paste it again. For a service that is not listed, choose **Something else…** and check its **Base URL**. |
 | The log says `a chat provider is saved but offers no model` | Chat stays off until the provider offers a model. Open its **Edit** and choose **Models offered**. |
-| An agent's `retrieve` answers `AI chat is disabled on this node for retrieval (embeddings are off)` | **Search by meaning** is not set up, or its switch is off. Keyword search with `search` still works. |
+| An agent's `retrieve` answers `AI chat is disabled on this node for retrieval (embeddings are off)` | **Embeddings** are not set up, or their switch is off. Keyword search with `search` still works. |
 | **Connect** or **Test** cannot reach Ollama on Docker Desktop | Use **Ollama (local)**, which fills in `http://host.docker.internal:11434`, and check that Ollama is running on the host. |
 | **Connect** or **Test** cannot reach Ollama on Docker on Linux | Ollama listens on `127.0.0.1` by default, which the container cannot reach. Make it listen on an address the container can reach, such as `OLLAMA_HOST=0.0.0.0:11434`, and keep that port closed to the network in the host's firewall. |
-| Anthropic is not listed under **Search by meaning** | Anthropic serves no embeddings. Use another service there, or leave search matching words. |
+| Anthropic is not listed under **Embeddings** | Anthropic serves no embeddings. Use another service there, or leave search matching words. |
 | A new embedding model cannot be saved because of its width | The width is fixed when the database is created: [Change the embedding width](operations.md#change-the-embedding-width). |
 
 ## Search
 
 | What you see | What it is |
 |---|---|
-| Search finds exact words but nothing by meaning | **Search by meaning** is off, or the node has not embedded the documents yet. It does so in the background. |
+| Search finds exact words but nothing by meaning | **Embeddings** are off, or the node has not embedded the documents yet. It does so in the background. |
 | It found things by meaning, and stopped | The embedding service is failing, so search falls back to keywords. The log says `degrading to keyword-only`. |
-| Search by meaning misses paraphrases: a document is found by its exact words but not by a rewording | The match cutoff is too strict for this embedding model. Some models, such as `text-embedding-3-small`, place related text further apart. Raise **Search cutoff** (or **Retrieval cutoff** for Ask and agents' `retrieve`) under **Match cutoffs** in the **Edit** of **Search by meaning** in **Settings → This node → AI providers**, a step at a time, and save: [Match cutoffs](configuration.md#match-cutoffs). |
-| Search by meaning returns unrelated documents | The match cutoff is too loose for this embedding model. Lower it the same way. |
+| Semantic search misses paraphrases: a document is found by its exact words but not by a rewording | The match cutoff is too strict for this embedding model. Some models, such as `text-embedding-3-small`, place related text further apart. Raise **Search cutoff** (or **Retrieval cutoff** for Ask and agents' `retrieve`) under **Match cutoffs** in the **Edit** of **Embeddings** in **Settings → This node → AI providers**, a step at a time, and save: [Match cutoffs](configuration.md#match-cutoffs). |
+| Semantic search returns unrelated documents | The match cutoff is too loose for this embedding model. Lower it the same way. |
 | A word is missed in another of its forms (Korean with a particle attached, French `chevaux` for `cheval`), or a Chinese word is missed beside its neighbour | Add the language under **Languages in your documents** in **Settings → This node → Search**: [Search languages](configuration.md#search-languages). |
 
 ## Uploads and disk

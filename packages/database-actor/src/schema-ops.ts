@@ -4,6 +4,7 @@
  * re-checks each one. User columns have no declared type, so SQLite never
  * rewrites a bound value and typeof() is authoritative.
  */
+import { validateCellValue } from "@stuga/protocol/databases/cells";
 import { filterGroupParts, isFilterGroup, makeFilterGroup } from "@stuga/protocol/databases/filters";
 import { isSafeIdentifier, sanitizeIdentifier, uniquifyIdentifier } from "@stuga/protocol/databases/identifiers";
 import {
@@ -613,7 +614,17 @@ function nonConformingWhere(colName: string, type: DatabaseColumnType, choices: 
       const placeholders = list.map(() => "?").join(", ");
       return { where: `${c} IS NOT NULL AND NOT (typeof(${c}) = 'text' AND ${c} IN (${placeholders || "NULL"}))`, params: list };
     }
+    case "files":
+      // Every stored value is a candidate; which of them are file links is decided in JS (filesCellAs).
+      return { where: `${c} IS NOT NULL`, params: [] };
   }
+}
+
+/** A cell as a files column keeps it: its links, once each, or null when it holds none. Undefined when it already is one. */
+function filesCellAs(value: RowValue): RowValue | undefined {
+  const v = validateCellValue("files", null, value);
+  const kept = v.ok ? v.value : null;
+  return kept === value ? undefined : kept;
 }
 
 /** The cells a set-type would change: exactly what its inverse must remember. */
@@ -625,10 +636,11 @@ export function captureNonConforming(
   choices: string[] | null,
 ): Array<{ _id: string; value: RowValue }> {
   const { where, params } = nonConformingWhere(colName, type, choices);
-  return sql
+  const cells = sql
     .exec(`SELECT _id, ${ident(colName)} AS value FROM ${ident(physTable)} WHERE ${where} ORDER BY _id`, ...params)
     .toArray()
     .map((r) => ({ _id: String(r._id), value: r.value as RowValue }));
+  return type === "files" ? cells.filter((cell) => filesCellAs(cell.value) !== undefined) : cells;
 }
 
 /**
@@ -637,6 +649,7 @@ export function captureNonConforming(
  *   → checkbox: 'true'/'false' text becomes 1/0, the rest NULL
  *   → text: everything non-text is CAST AS TEXT
  *   → date / single_select: non-conforming values become NULL
+ *   → files: file links are kept, once each; any other value becomes NULL
  * Stock SQLite cannot say "the whole text is numeric", so for → number the
  * castable `_id`s are decided in JS from the captured cells and bound.
  */
@@ -681,6 +694,9 @@ export function coerceNonConforming(
     case "date":
     case "single_select":
       sql.exec(`UPDATE ${t} SET ${c} = NULL, _updated_at = ? WHERE ${where}`, now, ...params);
+      break;
+    case "files":
+      for (const cell of cells) sql.exec(`UPDATE ${t} SET ${c} = ?, _updated_at = ? WHERE _id = ?`, filesCellAs(cell.value) ?? null, now, cell._id);
       break;
   }
   return cells.length;

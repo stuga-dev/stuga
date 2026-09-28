@@ -41,6 +41,11 @@ interface HttpServerOptions {
   port: number;
   /** Largest request body read before answering 413, read per request. */
   maxBodyBytes: () => number;
+  /**
+   * Requests whose handler reads the body itself, as a stream, once it knows the caller; the
+   * listener reads none of it. By method and path, without the query.
+   */
+  readsOwnBody?: (method: string, path: string) => boolean;
   tls?: TlsOptions;
   onError?: (error: unknown) => void;
 }
@@ -125,7 +130,22 @@ export function clientAddress(req: Request, trustProxyHeaders: boolean): string 
   return req.headers.get(PEER_ADDRESS_HEADER)?.trim() || "unknown";
 }
 
-function toRequest(publicOrigin: string, req: IncomingMessage, body: Buffer | null): Request {
+/**
+ * The request body as a stream its handler pulls from. Unread, it stays in the socket: cancelling
+ * reads no further and leaves the connection to be closed once the response is written.
+ */
+function bodyStream(req: IncomingMessage): ReadableStream<Uint8Array> {
+  const chunks = req[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { value, done } = await chunks.next();
+      if (done) controller.close();
+      else controller.enqueue(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+    },
+  });
+}
+
+function toRequest(publicOrigin: string, req: IncomingMessage, body: Buffer | ReadableStream<Uint8Array> | null): Request {
   const method = (req.method ?? "GET").toUpperCase();
   const headers = toHeaders(req);
   // Deleted first: a socket with no remoteAddress would otherwise keep the client's own value.
@@ -134,8 +154,9 @@ function toRequest(publicOrigin: string, req: IncomingMessage, body: Buffer | nu
   const peer = req.socket.remoteAddress;
   if (peer) headers.set(PEER_ADDRESS_HEADER, peer);
   if (req.headers.host) headers.set(REQUEST_HOST_HEADER, req.headers.host);
-  const init: RequestInit = { method, headers };
-  if (body && body.length > 0 && !BODYLESS_METHODS.has(method)) init.body = body as Uint8Array<ArrayBuffer>;
+  const init: RequestInit & { duplex?: "half" } = { method, headers };
+  if (body instanceof ReadableStream) Object.assign(init, { body, duplex: "half" });
+  else if (body && body.length > 0 && !BODYLESS_METHODS.has(method)) init.body = body as Uint8Array<ArrayBuffer>;
   return new Request(requestUrl(publicOrigin, req), init);
 }
 
@@ -215,7 +236,7 @@ class CertificateCache {
 }
 
 export function createHttpServer(options: HttpServerOptions): HttpServer {
-  const { handler, upgrade, publicOrigin, maxBodyBytes } = options;
+  const { handler, upgrade, publicOrigin, maxBodyBytes, readsOwnBody = () => false } = options;
   const bind = options.bind ?? "127.0.0.1";
   const onError = options.onError ?? ((e: unknown) => console.error("[http] request failed", e));
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: MAX_WS_PAYLOAD_BYTES });
@@ -223,9 +244,10 @@ export function createHttpServer(options: HttpServerOptions): HttpServer {
 
   const onRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const method = (req.method ?? "GET").toUpperCase();
+    const ownBody = !BODYLESS_METHODS.has(method) && readsOwnBody(method, (req.url ?? "/").split("?")[0]!);
     let response: Response;
     try {
-      const body = BODYLESS_METHODS.has(method) ? null : await readBody(req, maxBodyBytes());
+      const body = BODYLESS_METHODS.has(method) ? null : ownBody ? bodyStream(req) : await readBody(req, maxBodyBytes());
       if (body === null) req.resume();
       response = await handler(toRequest(publicOrigin, req, body));
       if (isUpgradeResponse(response)) response = textResponse(500, "upgrade response on a plain request");
@@ -238,6 +260,8 @@ export function createHttpServer(options: HttpServerOptions): HttpServer {
         response = textResponse(500, "internal error");
       }
     }
+    // A body its handler left unread, as when it refused the caller, stays unread: the connection closes after the answer.
+    if (ownBody && !req.readableEnded) res.shouldKeepAlive = false;
     try {
       await writeResponse(res, response, method === "HEAD");
     } catch {

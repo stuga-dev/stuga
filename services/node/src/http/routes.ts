@@ -47,7 +47,7 @@ import { syncGroup } from "../api/groups.js";
 import { createInvite, listInvites, redeemInvite, revokeInvite } from "../api/invites.js";
 import { listKeys, mintKey, revokeKey, rotateKey, updateKey } from "../api/keys.js";
 import { listConnections, revokeConnection, updateConnection } from "../api/connections.js";
-import { clearMediaTicket, mintMediaTicketRoute, readMedia, uploadImage } from "../api/media.js";
+import { clearMediaTicket, mintMediaTicketRoute, readMedia, uploadMedia } from "../api/media.js";
 import { changeMemberRole, inviteMember, listMemberCandidates, listMembers, removeMember } from "../api/members.js";
 import { listModels } from "../api/models.js";
 import {
@@ -86,7 +86,17 @@ import {
   recoverDocument,
   restoreVersion,
 } from "../api/versions.js";
-import { createWorkspace, deleteWorkspace, importWorkspace, listWorkspaceSamples, listWorkspaces, updateWorkspace } from "../api/workspaces.js";
+import {
+  checkWorkspaceImport,
+  createWorkspace,
+  deleteWorkspace,
+  discardHeldImport,
+  importHeldWorkspace,
+  importWorkspace,
+  listWorkspaceSamples,
+  listWorkspaces,
+  updateWorkspace,
+} from "../api/workspaces.js";
 import { mintSocketTicket } from "../api/ws.js";
 import { exportWorkspaceRoute } from "../archive/export-route.js";
 import { getAgentBundle } from "../agents/bundle/route.js";
@@ -95,6 +105,7 @@ import { getAgentSetup } from "../agents/setup.js";
 import { exportAudit, listAudit, listAuditFacets, listNodeAudit } from "../audit/routes.js";
 import { databaseCoauthor } from "../databases/coauthor.js";
 import { handleDatabaseImportUpload } from "../databases/imports/staging.js";
+import { handleMediaUpload } from "../media/uploads.js";
 import {
   ackDatabaseRun,
   addColumn,
@@ -224,12 +235,22 @@ export const APP_ROUTES: readonly AppRoute[] = [
     auth: "none",
     handler: ({ env, req, url, match }) => handleDatabaseImportUpload(env, req, match[1]!, match[2]!, url.searchParams.get("sig")),
   },
+  // And so is the one a staged media upload hands out.
+  {
+    method: "PUT",
+    path: re(`${DOC}/media/uploads/([^/]+)`),
+    auth: "none",
+    handler: ({ env, req, url, match }) => handleMediaUpload(env, req, match[1]!, match[2]!, url.searchParams.get("sig")),
+  },
 
   // Before any membership exists: workspace discovery and creation, and redemptions.
   { method: "GET", path: "/api/workspaces", ...ACCOUNT, handler: listWorkspaces },
   { method: "POST", path: "/api/workspaces", ...ACCOUNT, handler: createWorkspace },
   // The archive is the body, bounded by the node's upload limit like any other.
-  { method: "POST", path: "/api/workspaces/import", ...ACCOUNT, handler: importWorkspace },
+  { method: "POST", path: "/api/workspaces/import", ...ACCOUNT, ownBody: true, handler: importWorkspace },
+  { method: "POST", path: "/api/workspace-imports", ...ACCOUNT, ownBody: true, handler: checkWorkspaceImport },
+  { method: "POST", path: /^\/api\/workspace-imports\/([^/]+)$/, ...ACCOUNT, handler: importHeldWorkspace },
+  { method: "DELETE", path: /^\/api\/workspace-imports\/([^/]+)$/, ...ACCOUNT, handler: discardHeldImport },
   { method: "GET", path: "/api/workspace-samples", ...ACCOUNT, handler: listWorkspaceSamples },
   { method: "POST", path: "/api/invites/redeem", ...ACCOUNT, handler: redeemInvite },
   { method: "POST", path: "/api/share-links/redeem", ...ACCOUNT, handler: redeemShareLink },
@@ -367,7 +388,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("DELETE", re(`${DOC}/versions/(\\d+)`), deleteDocVersion),
   api("POST", re(`${DOC}/restore`), restoreVersion),
   api("POST", re(`${DOC}/recover`), recoverDocument),
-  api("POST", re(`${DOC}/media`), uploadImage),
+  api("POST", re(`${DOC}/media`), uploadMedia),
   api("GET", re(`${DOC}/comments`), listDocComments),
   api("POST", re(`${DOC}/comments`), addDocComment),
   api("PATCH", re(`${DOC}/comments/(\\d+)`), resolveDocComment),

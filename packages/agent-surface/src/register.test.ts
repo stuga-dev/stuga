@@ -35,7 +35,8 @@ const METHODS = [
   "docRuns",
   "provenance",
   "propose",
-  "uploadImage",
+  "uploadMedia",
+  "startUpload",
   "listComments",
   "addComment",
   "listFolders",
@@ -224,6 +225,9 @@ describe("registerAgentTools", () => {
     expect((await call("markdown_edit", { ...W, doc_id: "d1", action: "str_replace" })).isError).toBe(true);
     expect((await call("markdown_edit", { ...W, doc_id: "d1", action: "cited_edits" })).isError).toBe(true);
     expect((await call("media_upload", { ...W, doc_id: "d1", action: "upload_from_url" })).text).toContain("`url`");
+    expect((await call("media_upload", { ...W, doc_id: "d1", action: "upload" })).text).toContain("`data` or the `upload_id`");
+    expect((await call("media_upload", { ...W, doc_id: "d1", action: "upload", data: "eA==", upload_id: "upl_1" })).isError).toBe(true);
+    expect((await call("media_upload", { ...W, doc_id: "d1", action: "start_upload" })).text).toBe("error: start_upload requires the file's `name`");
     expect((await call("comments_add", { ...W, doc_id: "d1", body: "  " })).text).toBe("error: comments_add requires `body`");
     expect((await call("events", { ...W, types: ["doc.exploded"] })).text).toBe("error: unknown event type doc.exploded");
     expect((await call("databases", { ...W, action: "schema" })).text).toBe("error: schema requires `database_id`");
@@ -236,6 +240,20 @@ describe("registerAgentTools", () => {
       "error: remove_items requires `doc_ids` or `folder_ids`",
     );
     expect((await call("search", { workspace_ids: ["ws1"], q: "   " })).text).toBe("error: search requires `q`");
+  });
+
+  it("stores a file by its name, stages a larger one to PUT, and finishes it by upload_id", async () => {
+    const uploadMedia = vi.fn(async () => ({ url: "/api/docs/d1/media/h/brief.pdf", hash: "h", size: 3, mime: "application/pdf", name: "brief.pdf" }));
+    const startUpload = vi.fn(async () => ({ upload_id: "upl_1", upload_url: "https://stuga.test/up", upload_path: "/up", max_bytes: 10, expires_at: "2026-09-28T10:00:00Z" }));
+    const { call } = await single({ uploadMedia, startUpload });
+    const stored = await call("media_upload", { ...W, doc_id: "d1", action: "upload", data: "eA==", name: "brief.pdf" });
+    expect(uploadMedia).toHaveBeenLastCalledWith("d1", { kind: "data", data: "eA==", name: "brief.pdf" });
+    expect(JSON.parse(stored.text.split("\n")[0]!).markdown).toBe("[brief.pdf](/api/docs/d1/media/h/brief.pdf)");
+    const staged = await call("media_upload", { ...W, doc_id: "d1", action: "start_upload", name: "big.pdf" });
+    expect(startUpload).toHaveBeenCalledWith("d1", "big.pdf");
+    expect(JSON.parse(staged.text).next).toContain('`media_upload` action:upload with upload_id: "upl_1"');
+    await call("media_upload", { ...W, doc_id: "d1", action: "upload", upload_id: "upl_1" });
+    expect(uploadMedia).toHaveBeenLastCalledWith("d1", { kind: "upload_id", upload_id: "upl_1" });
   });
 
   it("routes each collections action to its backend call", async () => {

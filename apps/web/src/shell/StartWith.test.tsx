@@ -6,15 +6,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const workspaces = vi.hoisted(() => ({
   create: vi.fn(),
   createFromSample: vi.fn(),
-  importArchive: vi.fn(),
+  checkImport: vi.fn(),
+  importHeld: vi.fn(),
   samples: vi.fn(),
   samplesAgain: vi.fn(),
   cachedSamples: vi.fn(),
 }));
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), Workspaces: workspaces }));
 
-const { SAMPLES_RECHECK_MS, StartWith, createWorkspaceFrom, landingPath, useNewWorkspace, useWorkspaceSamples } = await import("./StartWith");
+const { SAMPLES_RECHECK_MS, StartWith, createWorkspaceFrom, importHeldFile, landingPath, useNewWorkspace, useWorkspaceSamples } = await import("./StartWith");
 import { chooseRadio, mountInto, pickFile, typeInto } from "../test/form-input";
+import type { Creation } from "./StartWith";
 
 const ARCHIVE = new File(["PK"], "Team handbook.stuga.zip", { type: "application/zip" });
 const PYTHON = { id: "python-specs", title: "Python specs", description: "Specs and a release plan.", name: "Python specs (sample)", langs: ["en"] };
@@ -46,7 +48,8 @@ const typeName = (value: string) => typeInto(host.querySelector<HTMLInputElement
 beforeEach(() => {
   workspaces.create.mockReset();
   workspaces.createFromSample.mockReset();
-  workspaces.importArchive.mockReset();
+  workspaces.checkImport.mockReset().mockResolvedValue({ import_id: "wsi_1", name: "Team handbook", expires_at: "2026-09-28T01:00:00Z" });
+  workspaces.importHeld.mockReset();
   workspaces.samples.mockReset().mockResolvedValue({ samples: [] });
   workspaces.samplesAgain.mockReset().mockResolvedValue({ samples: [] });
   workspaces.cachedSamples.mockReset().mockReturnValue(undefined);
@@ -217,21 +220,38 @@ describe("Start with", () => {
 });
 
 describe("creating from a start", () => {
-  it("creates an empty workspace, or imports the file, and opens the document an archive starts with", async () => {
+  const opened = async (made: Promise<Creation>) => {
+    const out = await made;
+    if (!("workspace" in out)) throw new Error("held, not made");
+    return landingPath(out.workspace);
+  };
+
+  it("creates an empty workspace, or checks the file and imports it at once when it leaves nothing out, opening the document it starts with", async () => {
     workspaces.create.mockResolvedValue({ workspace_id: "w_1" });
-    workspaces.importArchive.mockResolvedValue({ workspace_id: "w_2", start_doc_id: "d 1" });
-    expect(landingPath(await createWorkspaceFrom({ kind: "empty" }, "Notes", "private"))).toBe("/");
+    workspaces.importHeld.mockResolvedValue({ workspace_id: "w_2", start_doc_id: "d 1" });
+    expect(await opened(createWorkspaceFrom({ kind: "empty" }, "Notes", "private"))).toBe("/");
     expect(workspaces.create).toHaveBeenCalledWith("Notes", "private");
-    expect(landingPath(await createWorkspaceFrom({ kind: "file", file: ARCHIVE }, "Handbook", "workspace_edit"))).toBe("/doc/d%201");
-    expect(workspaces.importArchive).toHaveBeenCalledWith(ARCHIVE, "Handbook", "workspace_edit");
-    // With no name, the node takes the archive's.
+    expect(await opened(createWorkspaceFrom({ kind: "file", file: ARCHIVE }, "Handbook", "workspace_edit"))).toBe("/doc/d%201");
+    expect(workspaces.checkImport).toHaveBeenCalledWith(ARCHIVE);
+    expect(workspaces.importHeld).toHaveBeenCalledWith("wsi_1", "Handbook", "workspace_edit");
+    // With no name, the node takes the file's.
     await createWorkspaceFrom({ kind: "file", file: ARCHIVE }, "", "private");
-    expect(workspaces.importArchive).toHaveBeenLastCalledWith(ARCHIVE, "", "private");
+    expect(workspaces.importHeld).toHaveBeenLastCalledWith("wsi_1", "", "private");
+  });
+
+  it("holds a file that would leave files out, importing it only when asked", async () => {
+    const held = { import_id: "wsi_2", name: "Notion", expires_at: "2026-09-28T01:00:00Z", left_out: { count: 1, files: ["Home/Brief.pdf"] } };
+    workspaces.checkImport.mockResolvedValue(held);
+    expect(await createWorkspaceFrom({ kind: "file", file: ARCHIVE }, "", "private")).toEqual({ held });
+    expect(workspaces.importHeld).not.toHaveBeenCalled();
+    workspaces.importHeld.mockResolvedValue({ workspace_id: "w_4" });
+    expect(await importHeldFile(held, "Notes", "private")).toEqual({ workspace_id: "w_4" });
+    expect(workspaces.importHeld).toHaveBeenCalledWith("wsi_2", "Notes", "private");
   });
 
   it("creates from a sample, which the node downloads, and opens the document it starts with", async () => {
     workspaces.createFromSample.mockResolvedValue({ workspace_id: "w_3", start_doc_id: "d_laws" });
-    expect(landingPath(await createWorkspaceFrom({ kind: "sample", sample: LAWS }, "Laws", "private"))).toBe("/doc/d_laws");
+    expect(await opened(createWorkspaceFrom({ kind: "sample", sample: LAWS }, "Laws", "private"))).toBe("/doc/d_laws");
     expect(workspaces.createFromSample).toHaveBeenCalledWith("privacy-laws", "Laws", "private");
     expect(workspaces.create).not.toHaveBeenCalled();
   });
@@ -245,16 +265,19 @@ describe("creating from a start", () => {
     );
   });
 
-  it("says a file is past the node's upload limit, which answers without a message of its own", async () => {
-    workspaces.importArchive.mockRejectedValue(Object.assign(new Error("That’s too large to send."), { status: 413 }));
-    await expect(createWorkspaceFrom({ kind: "file", file: ARCHIVE }, "Handbook", "private")).rejects.toThrow("This file is larger than this node accepts.");
-    workspaces.importArchive.mockRejectedValue(Object.assign(new Error("cannot import this archive: stuga.json: is missing"), { status: 400 }));
+  it("says a file is past what the import takes in the node's words, and past a proxy's limit, which answers without any", async () => {
+    const tooLarge = "this file is larger than 512 MB, the most an import takes";
+    workspaces.checkImport.mockRejectedValue(Object.assign(new Error(tooLarge), { status: 413, code: tooLarge }));
+    await expect(createWorkspaceFrom({ kind: "file", file: ARCHIVE }, "Handbook", "private")).rejects.toThrow(tooLarge);
+    workspaces.checkImport.mockRejectedValue(Object.assign(new Error("That’s too large to send."), { status: 413 }));
+    await expect(createWorkspaceFrom({ kind: "file", file: ARCHIVE }, "Handbook", "private")).rejects.toThrow("This file is larger than a proxy in front of this node accepts.");
+    workspaces.checkImport.mockRejectedValue(Object.assign(new Error("cannot import this archive: stuga.json: is missing"), { status: 400 }));
     await expect(createWorkspaceFrom({ kind: "file", file: ARCHIVE }, "Handbook", "private")).rejects.toThrow("cannot import this archive");
   });
 
   it("says an import it stopped waiting for may still land, rather than invite a second", async () => {
     for (const failure of [{ code: "timeout" }, { status: 504 }]) {
-      workspaces.importArchive.mockRejectedValue(Object.assign(new Error("try again"), failure));
+      workspaces.importHeld.mockRejectedValue(Object.assign(new Error("try again"), failure));
       await expect(createWorkspaceFrom({ kind: "file", file: ARCHIVE }, "Handbook", "private")).rejects.toThrow(
         "The import may still finish. Check your workspaces before trying again.",
       );

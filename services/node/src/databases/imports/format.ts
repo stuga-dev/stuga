@@ -436,6 +436,11 @@ export function coerceCell(
       const ci = choices?.filter((c) => fold(c) === key) ?? [];
       return ci.length === 1 ? ci[0]! : { invalid: raw };
     }
+    case "files": {
+      // A link names its file URL-encoded, so whitespace or a comma only ever separates two.
+      const links = typeof raw === "string" ? raw.split(/[\s,]+/) : Array.isArray(raw) && raw.every((l) => typeof l === "string") ? raw : null;
+      return links ? links.filter((l) => l !== "").join("\n") : { invalid: raw };
+    }
   }
 }
 
@@ -451,6 +456,8 @@ function codeFor(type: DatabaseColumnType): DatabaseImportErrorCode {
       return "invalid_date";
     case "single_select":
       return "invalid_choice";
+    case "files":
+      return "invalid_files";
   }
 }
 
@@ -618,5 +625,7 @@ function reasonFor(type: DatabaseColumnType, choices: string[] | undefined): { r
       return { reason: "not a date", hint: "2026-01-04, 1/4/26 and 4 Jan 2026 all work" };
     case "single_select":
       return { reason: "not one of the column's choices", hint: `choices: ${(choices ?? []).join(", ")}` };
+    case "files":
+      return { reason: "not file links", hint: "links to files uploaded to this database, /api/docs/<database>/media/<hash>/<name>, one per line" };
   }
 }

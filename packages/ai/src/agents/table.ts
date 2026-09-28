@@ -11,6 +11,7 @@ import type { AiCitation, AiHistoryItem } from "@stuga/protocol/wire/doc-socket"
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type, type Static, type TSchema } from "@earendil-works/pi-ai";
 import type { AiConfig } from "../config.js";
+import type { ModelFailure } from "../failure.js";
 import { resolveModel } from "../models.js";
 import type { TokenUsage } from "../types.js";
 import { filterCited, runAgentLoop, textTool } from "./loop.js";
@@ -60,6 +61,8 @@ export interface TableAgentResult {
   /** Anything but "complete" is incomplete; staged ops are already in the ledger and must still be reported. */
   stopReason: AskStopReason;
   error?: string;
+  /** With "error": what failed. */
+  failure?: ModelFailure;
 }
 
 const DEFAULT_MAX_ROUNDS = 10;
@@ -77,7 +80,8 @@ Proposing changes (each call stages ONE change for the user to Accept or Reject 
 - insert_rows(table, rows): rows are objects of column name → value. Returns the new rows' _ids — use them to reference these rows in later calls even before they are accepted.
 - update_rows(table, updates): updates are [{_id, values}].
 - delete_rows(table, row_ids).
-- add_column(table, name, type, choices?): types are text, number, checkbox (true/false), date ("YYYY-MM-DD"), single_select (requires choices).
+- add_column(table, name, type, choices?): types are text, number, checkbox (true/false), date ("YYYY-MM-DD"), single_select (requires choices), files (attachments the user uploads).
+A files cell holds links to files stored with the database, one per line. You cannot upload a file: keep the links a cell holds, and never write one you did not read from this database.
 - create_table(name): a new empty table (add columns next).
 Making a change means CALLING a tool — describing it in prose stages nothing and the user sees nothing to accept.
 Guidance: read before you write (query for _ids, get_schema for column names and types); batch related rows into ONE insert_rows/update_rows call rather than many; make the smallest set of changes that satisfies the request; briefly say what you proposed and why. A tool error means that one change was refused — fix the input and retry that change, or explain why it cannot be done.`;
@@ -223,5 +227,6 @@ export async function runTableAgentTurn(
     rounds: result.rounds,
     stopReason: result.stopReason,
     error: result.error,
+    failure: result.failure,
   };
 }

@@ -11,6 +11,7 @@ import type { AiCitation, AiHistoryItem } from "@stuga/protocol/wire/doc-socket"
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import type { AiConfig } from "../config.js";
+import type { ModelFailure } from "../failure.js";
 import { resolveModel } from "../models.js";
 import type { TokenUsage } from "../types.js";
 import { filterCited, runAgentLoop, textTool } from "./loop.js";
@@ -95,6 +96,8 @@ export interface AskAgentResult {
   stopReason: AskStopReason;
   /** The error or budget message. */
   error?: string;
+  /** With "error": what failed. */
+  failure?: ModelFailure;
 }
 
 /** Read-only turns converge faster than editing ones, and the request stays open for the whole turn. */
@@ -297,5 +300,6 @@ export async function runAskAgentTurn(
     rounds: result.rounds,
     stopReason: result.stopReason,
     error: result.error,
+    failure: result.failure,
   };
 }

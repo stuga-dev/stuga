@@ -1,19 +1,21 @@
 # Workspace archive
 
 A workspace archive holds one workspace as plain files: Markdown for documents and row pages, JSON
-Lines for database rows, images, and a manifest, `stuga.json`, that ties them together. Zipped, it
+Lines for database rows, images and other files, and a manifest, `stuga.json`, that ties them
+together. Zipped, it
 is `<name>.stuga.zip`.
 
 This page is format version 1. `services/node/src/archive/format.ts` is its code.
 
 An archive carries folders, documents, databases (tables, columns, rows, views and row pages),
-images, comments, agent instructions, and each document's review mode, lock and search setting. It
+images, the files documents link to, comments, agent instructions, and each document's review mode, lock and search setting. It
 does not carry version history, the review and Activity history, sharing, members, collections,
 favorites, or when rows were created and updated.
 
 A workspace owner or admin exports one with **Settings → This workspace → General → Export
 workspace**. **Create a workspace** with **Start with → From a file** imports one into a new
-workspace.
+workspace, and converts a Notion export or a folder of Markdown into one first
+([Importing from Notion or Obsidian](import.md)).
 
 ## Layout
 
@@ -25,6 +27,7 @@ Obligations/                    a database's folder
   Obligations.jsonl             a table's rows
   pages/gdpr-breach.md          a row's page
 media/<sha256>.png              an image, named for its bytes
+media/<sha256>/Brief.pdf        a file a body links to, named for its bytes and its name
 ```
 
 Text files are UTF-8, with `\n` line ends and no byte order mark. A folder needs no entry of its
@@ -95,7 +98,7 @@ characters, one line, with no space at either end.
 - `name` is unique in the database, ignoring case. `file` is a `.jsonl` file directly in the
   database's folder.
 - `columns`: at most 64, each `{name, type, choices?, description?}`. `type` is `text`, `number`,
-  `checkbox`, `date` or `single_select`. A name is unique in the table ignoring case, and is not
+  `checkbox`, `date`, `single_select` or `files`. A name is unique in the table ignoring case, and is not
   `_id`, `_created_at`, `_updated_at` or `_doc_id`. Only a `single_select` column has `choices`: 1
   to 50 distinct strings. A `description` is 1 to 500 characters, with no space or line break at
   either end.
@@ -143,6 +146,7 @@ digit, unique in the file. A table holds at most 50,000 rows.
 | `checkbox` | `true` or `false`. |
 | `date` | `"YYYY-MM-DD"`, a real day. |
 | `single_select` | One of the column's choices. |
+| `files` | A list of files' paths in the archive, `["media/3f…a9/Brief.pdf"]`: at most 100, each once, and short enough that their links on a node fit 16,384 bytes. |
 | any | `null` |
 
 ## Links and images
@@ -159,6 +163,12 @@ table.
 An image is a file in `media/`, named for the SHA-256 of its bytes, with `png`, `jpg`, `gif` or
 `webp` to match its type: `![Chart](../media/3f…a9.png)`. Each image is shown by at least one
 body.
+
+Any other file, a PDF or a video, is `media/<sha256>/<name>`: a folder named for the SHA-256 of its
+bytes, holding the file under the name it is saved as. A body links to it,
+`[Brief](../media/3f…a9/Brief.pdf)`, and an import stores it and points the link at it, where it
+downloads. A `files` cell holds it by the same path from the archive's root. Each such file is
+linked from at least one body or `files` cell.
 
 A link or image outside the archive is a full URL, and a bare `#fragment` is kept as it is. Every
 other destination leads to something in the archive. A link that leads nowhere in Stuga, such as
@@ -219,19 +229,20 @@ A sample holds at most 200 steps.
 
 | What | Cap |
 |---|---|
-| The zipped archive | 50 MiB, and within the node's upload limit when uploaded to it |
-| All files, unpacked | 256 MiB |
+| The zipped archive | 512 MiB |
+| All files, unpacked | 1 GiB |
 | Files | 20,000 |
 | `stuga.json` | 16 MiB |
 | A body | 4 MiB of Markdown, and its closing newline |
 | A rows file | 64 MiB |
-| An image | 50 MiB, and within the node's upload limit |
+| An image, or another file | 50 MiB, and within the node's upload limit |
 | Items | 10,000 |
 | Row pages | 10,000 |
 | Rows, across every table | 500,000 |
 
-A node's upload limit is 10 MB unless an administrator raises it, up to 50 MB, in **Settings → This
-node → Storage**.
+A node's upload limit, which holds images, is 10 MB unless an administrator raises it, up to 50 MB, in
+**Settings → This node → Storage**. It does not hold the archive: an import reads that once it knows
+who sent it.
 
 ## Compatibility
 
@@ -272,7 +283,7 @@ and listed once. `file` is `<id>.stuga.zip`, `sha256` and `bytes` are the file's
 `archive_version` is the format version it is written in.
 
 Stuga reads the first 100 samples it can import, and leaves out, unread, one written in a newer
-`archive_version` or larger than 50 MiB. It also leaves out, and logs, one whose other fields break
+`archive_version` or larger than 512 MiB. It also leaves out, and logs, one whose other fields break
 these rules, such as a longer description than it takes; only an index whose `format`, `version`,
 `tag` or `samples` it cannot read gives no samples.
 

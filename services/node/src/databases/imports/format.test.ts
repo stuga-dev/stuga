@@ -148,6 +148,9 @@ describe("coerceCell", () => {
     expect(coerceCell("text", 12, undefined)).toBe("12");
     expect(coerceCell("text", "   ", undefined)).toBeNull();
     expect(coerceCell("number", "", undefined)).toBeNull();
+    expect(coerceCell("files", "/a/1.pdf, /a/2.pdf\n", undefined)).toBe("/a/1.pdf\n/a/2.pdf");
+    expect(coerceCell("files", ["/a/1.pdf", "/a/2.pdf"], undefined)).toBe("/a/1.pdf\n/a/2.pdf");
+    expect(coerceCell("files", 3, undefined)).toEqual({ invalid: 3 });
   });
 });
 

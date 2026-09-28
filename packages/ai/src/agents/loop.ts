@@ -10,8 +10,9 @@ import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-age
 import { clampThinkingLevel, type Api, type AssistantMessage, type ImageContent, type Model, type Static, type StopReason, type TSchema } from "@earendil-works/pi-ai";
 import type { AskStopReason } from "@stuga/protocol/api/ask";
 import type { AiHistoryItem } from "@stuga/protocol/wire/doc-socket";
-import { streamChat } from "../chat.js";
+import { outputCap, streamChat } from "../chat.js";
 import type { AiConfig } from "../config.js";
+import { requestFailure, type ModelFailure } from "../failure.js";
 import { chatTarget } from "../models.js";
 import { addUsage, usageOf, ZERO_USAGE, type TokenUsage } from "../types.js";
 
@@ -76,6 +77,8 @@ export interface AgentLoopResult {
   stopReason: AskStopReason;
   /** Failure message for "error"/"budget"; undefined otherwise. */
   error?: string;
+  /** With "error": what failed, for the node's log and the notice the person gets. */
+  failure?: ModelFailure;
 }
 
 /**
@@ -144,10 +147,11 @@ export async function runAgentLoop(spec: AgentLoopSpec): Promise<AgentLoopResult
   try {
     target = chatTarget(spec.cfg, spec.modelId);
   } catch (e) {
-    return { prose, usage, rounds, stopReason: "error", error: e instanceof Error ? e.message : String(e) };
+    const message = e instanceof Error ? e.message : String(e);
+    return { prose, usage, rounds, stopReason: "error", error: message, failure: requestFailure(null, spec.modelId, message) };
   }
   const { model, apiKey } = target;
-  const maxTokens = model.maxTokens > 0 ? Math.min(spec.maxTokens, model.maxTokens) : spec.maxTokens;
+  const maxTokens = outputCap(model, spec.maxTokens);
 
   const agent = new Agent({
     initialState: {
@@ -250,7 +254,8 @@ export async function runAgentLoop(spec: AgentLoopSpec): Promise<AgentLoopResult
       error = last.errorMessage ?? "the model request failed";
     } else stopReason = "complete";
   }
-  return { prose, usage, rounds, stopReason, error };
+  const failure = stopReason === "error" ? requestFailure(model.api, spec.modelId, error ?? "the model request failed", { key: apiKey }) : undefined;
+  return { prose, usage, rounds, stopReason, error, failure };
 }
 
 /** A text-only assistant turn attributed to this model, so Pi replays it as the model's own. */

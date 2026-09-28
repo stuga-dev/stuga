@@ -17,7 +17,9 @@ import {
   DATABASE_IMPORT_MAX_BYTES,
   DATABASE_MAX_COLUMN_DESCRIPTION_CHARS,
   DATABASE_MAX_COLUMNS,
+  DATABASE_MAX_CELL_BYTES,
   DATABASE_MAX_DISPLAY_LENGTH,
+  DATABASE_MAX_FILES_PER_CELL,
   DATABASE_MAX_ROWS,
   DATABASE_MAX_SORTS,
   DATABASE_MAX_TABLES,
@@ -34,6 +36,7 @@ import {
 } from "@stuga/protocol/databases/types";
 import { MAX_AGENT_INSTRUCTIONS_CHARS } from "@stuga/protocol/domain/limits";
 import { UNSAFE_TEXT, hasVisibleText } from "@stuga/protocol/domain/node-name";
+import { WORKSPACE_IMPORT_MAX_BYTES } from "@stuga/protocol/domain/workspaces";
 import { MAX_IMPORT_MARKDOWN_BYTES } from "@stuga/protocol/text/markdown-import";
 
 export const ARCHIVE_FORMAT = "stuga-workspace";
@@ -46,10 +49,13 @@ export const MEDIA_DIR = "media";
 
 // ---- Caps ---------------------------------------------------------------------------------
 
-/** The largest zipped archive: the largest upload a node can be set to take. */
-export const ARCHIVE_MAX_BYTES = 50 * 1024 * 1024;
-/** Every file unpacked, together. */
-export const ARCHIVE_MAX_UNPACKED_BYTES = 256 * 1024 * 1024;
+/**
+ * The largest zipped archive. An import holds it in memory, and a node runs three at once, so
+ * this bounds what imports take of a node's memory.
+ */
+export const ARCHIVE_MAX_BYTES = WORKSPACE_IMPORT_MAX_BYTES;
+/** Every file unpacked, together; read a file at a time, never all at once. */
+export const ARCHIVE_MAX_UNPACKED_BYTES = 1024 * 1024 * 1024;
 export const ARCHIVE_MAX_ENTRIES = 20_000;
 export const ARCHIVE_MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 /** A body file: Markdown up to Stuga's own cap on an imported or proposed body, and its closing newline. */
@@ -257,7 +263,8 @@ export interface ArchiveManifest {
 
 /**
  * One row as read from a rows file: its key and its cells by column name, as stored (a checkbox is
- * 0/1). `values` has no prototype, so a column named `__proto__` or `constructor` is a cell like any other.
+ * 0/1; a files cell its files' archive paths, one per line). `values` has no prototype, so a column
+ * named `__proto__` or `constructor` is a cell like any other.
  */
 export interface ArchiveRow {
   key: string;
@@ -561,15 +568,40 @@ function parseColumn(raw: unknown, at: string, seen: Set<string>): ArchiveColumn
   return column;
 }
 
-/** A cell as the archive spells it: a checkbox is true or false, everything else as validateCellValue takes it. */
+/** Room for the id a database gets on import, in the link a files cell holds there. */
+const DOC_ID_ROOM = 16;
+
+/**
+ * A cell as the archive spells it: a checkbox is true or false, a files cell a list of the files'
+ * paths, `media/<sha256>/<name>`, and everything else as validateCellValue takes it.
+ */
 export function archiveCellValue(column: ArchiveColumn, value: unknown): { ok: true; value: RowValue } | { ok: false; reason: string } {
   if (value === null) return { ok: true, value: null };
+  if (column.type === "files") return archiveFilesValue(value);
   if (column.type === "checkbox" && typeof value !== "boolean") return { ok: false, reason: "expected true or false" };
   if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
     return { ok: false, reason: "expected a string, a number, true, false or null" };
   }
   return validateCellValue(column.type, column.choices ? { choices: column.choices } : null, value);
 }
+
+function archiveFilesValue(value: unknown): { ok: true; value: RowValue } | { ok: false; reason: string } {
+  if (!Array.isArray(value)) return { ok: false, reason: "expected a list of file paths" };
+  const paths = [...new Set(value)];
+  if (paths.length > DATABASE_MAX_FILES_PER_CELL) return { ok: false, reason: `holds more than ${DATABASE_MAX_FILES_PER_CELL} files` };
+  let bytes = 0;
+  for (const path of paths) {
+    const file = typeof path === "string" ? parseFilePath(path) : null;
+    if (!file) return { ok: false, reason: `${JSON.stringify(path)} is not a file's path, media/<sha256>/<name>` };
+    // The link it becomes on a node: /api/docs/<id>/media/<hash>/<name>.
+    bytes += utf8Bytes(`/api/docs/${"x".repeat(DOC_ID_ROOM)}/media/${file.sha256}/${encodeURIComponent(file.name)}\n`);
+  }
+  if (bytes > DATABASE_MAX_CELL_BYTES) return { ok: false, reason: `its files' links would take more than ${DATABASE_MAX_CELL_BYTES} bytes` };
+  return { ok: true, value: paths.length === 0 ? null : paths.join("\n") };
+}
+
+/** The archive paths a files cell holds, as ArchiveRow keeps them. */
+export const cellFilePaths = (value: RowValue | undefined): string[] => (typeof value === "string" && value !== "" ? value.split("\n") : []);
 
 const FILTER_OPS: readonly string[] = ROW_FILTER_OPS;
 
@@ -956,6 +988,36 @@ export function plainText(doc: BodyDoc): string {
   return parts.join("").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/** `doc` with each link's destination and each image's source as `link` and `image` give them, null leaving it out, and mentions as plain `@name`. */
+export function rewritten(doc: BodyDoc, link: (href: string) => string | null, image: (src: string) => string | null): BodyDoc {
+  const schema = doc.type.schema;
+  const marksOf = (marks: readonly BodyDoc["marks"][number][]): BodyDoc["marks"][number][] =>
+    marks.flatMap((mark) => {
+      if (mark.type.name !== "link") return [mark];
+      const href = link(String(mark.attrs.href ?? ""));
+      return href === null ? [] : [mark.type.create({ ...mark.attrs, href })];
+    });
+  const rewrite = (node: BodyDoc): BodyDoc | null => {
+    if (node.isText) return node.mark(marksOf(node.marks));
+    if (node.type.name === "mention") {
+      const label = String(node.attrs.label || node.attrs.alias || "");
+      return label ? schema.text(`@${label}`, marksOf(node.marks)) : null;
+    }
+    if (node.type.name === "image") {
+      const src = image(String(node.attrs.src ?? ""));
+      return src ? node.type.create({ ...node.attrs, src }, null, marksOf(node.marks)) : null;
+    }
+    const children: BodyDoc[] = [];
+    node.forEach((child) => {
+      const out = rewrite(child);
+      if (out) children.push(out);
+    });
+    // A cell whose only image is left out still needs a paragraph.
+    return node.type.createAndFill(node.attrs, children, marksOf(node.marks)) ?? node.type.create(node.attrs, children, marksOf(node.marks));
+  };
+  return rewrite(doc)!;
+}
+
 /**
  * The title a flush derives from a body: its first non-empty line, as the document actor's
  * deriveTitle reads it. An export writes a heading title so, and `archive check` holds it to this.
@@ -1014,7 +1076,7 @@ export function formatTableRows(table: ArchiveTable, rows: readonly ArchiveRow[]
       for (const column of table.columns) {
         const value = Object.hasOwn(row.values, column.name) ? row.values[column.name] : undefined;
         if (value === null || value === undefined) continue;
-        line[column.name] = column.type === "checkbox" ? value === 1 : value;
+        line[column.name] = column.type === "checkbox" ? value === 1 : column.type === "files" ? cellFilePaths(value) : value;
       }
       return `${JSON.stringify(line)}\n`;
     })
@@ -1118,6 +1180,22 @@ const MEDIA_PATH = /^media\/([0-9a-f]{64})\.(png|jpg|gif|webp)$/;
 export function mediaPath(sha256: string, mime: SafeImageMime): string {
   const ext = Object.keys(MEDIA_EXTENSIONS).find((e) => MEDIA_EXTENSIONS[e] === mime)!;
   return `${MEDIA_DIR}/${sha256}.${ext}`;
+}
+
+const FILE_PATH = /^media\/([0-9a-f]{64})\/([^/]+)$/;
+
+/**
+ * The archive path of a file a body links to: `media/<sha256 of its bytes>/<the name it is saved
+ * under>`, the name made one every system can create.
+ */
+export function filePath(sha256: string, name: string): string {
+  return `${MEDIA_DIR}/${sha256}/${archiveName(name, new Set())}`;
+}
+
+/** The hash and name a file's path names, or null when it is no file's path. */
+export function parseFilePath(path: string): { sha256: string; name: string } | null {
+  const m = FILE_PATH.exec(path);
+  return m ? { sha256: m[1]!, name: m[2]! } : null;
 }
 
 /** The hash and type a media path names, or null when it is no media path. */

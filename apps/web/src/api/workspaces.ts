@@ -51,6 +51,21 @@ export interface CreatedWorkspace extends WorkspaceInfo {
   start_doc_id?: string;
 }
 
+/** The files a Notion export or folder of Markdown holds that Stuga does not: how many, and the first by path. */
+export interface LeftOut {
+  count: number;
+  files: string[];
+}
+
+/** A file checked for import, which the node holds until its importer says go or an hour passes. */
+export interface HeldImport {
+  import_id: string;
+  expires_at: string;
+  /** The name the workspace takes when none is typed. */
+  name: string;
+  left_out?: LeftOut;
+}
+
 /** A published sample workspace a new one can start from. */
 export interface WorkspaceSample {
   id: string;
@@ -136,14 +151,25 @@ export const Workspaces = {
         timeoutMs: ARCHIVE_TIMEOUT_MS,
       }),
     ),
-  /** A new workspace holding a workspace archive's contents; the caller becomes the owner. */
-  importArchive: (file: File, name: string, defaultDocAccess: DocAccessMode) =>
+  /** Check a file for import and have the node hold it: what it would leave out, and the id to import it by. Makes nothing. */
+  checkImport: (file: File) =>
+    api<HeldImport>("/api/workspace-imports", {
+      method: "POST",
+      headers: { "content-type": "application/zip" },
+      body: file,
+      timeoutMs: ARCHIVE_TIMEOUT_MS,
+    }),
+  /** A new workspace from a file the node holds after its check; the caller becomes the owner. */
+  importHeld: (importId: string, name: string, defaultDocAccess: DocAccessMode) =>
     invalidating(
-      api<CreatedWorkspace>(
-        `/api/workspaces/import?name=${encodeURIComponent(name)}&default_doc_access=${encodeURIComponent(defaultDocAccess)}`,
-        { method: "POST", headers: { "content-type": "application/zip" }, body: file, timeoutMs: ARCHIVE_TIMEOUT_MS },
-      ),
+      api<CreatedWorkspace>(`/api/workspace-imports/${encodeURIComponent(importId)}`, {
+        method: "POST",
+        body: JSON.stringify({ name, default_doc_access: defaultDocAccess }),
+        timeoutMs: ARCHIVE_TIMEOUT_MS,
+      }),
     ),
+  /** Let go of a held file without importing it. */
+  discardImport: (importId: string) => api<void>(`/api/workspace-imports/${encodeURIComponent(importId)}`, { method: "DELETE" }),
   update: (
     workspaceId: string,
     patch: { name?: string; default_doc_access?: DocAccessMode; agent_instructions?: string },

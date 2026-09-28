@@ -130,7 +130,7 @@ describe("checkArchive", () => {
   it("passes an archive that holds what it says, and counts it", async () => {
     const result = await checkArchive(memoryFiles(archive()));
     expect(result.issues).toEqual([]);
-    expect(result.counts).toEqual({ items: 4, bodies: 3, rows: 2, images: 1, steps: 3 });
+    expect(result.counts).toEqual({ items: 4, bodies: 3, rows: 2, images: 1, files: 0, steps: 3 });
   });
 
   it("stops at a manifest that is missing, not JSON, or refused", async () => {
@@ -253,6 +253,39 @@ describe("checkArchive", () => {
     expect(await problems((files) => (files[IMAGE] = big))).toEqual([`${IMAGE}: is ${big.length} bytes (max 10485760, the upload limit a node starts with)`]);
   });
 
+  it("holds each file to its name and to a body that links to it, and counts it", async () => {
+    const pdf = new TextEncoder().encode("%PDF-1.7");
+    const file = `media/${sha256(pdf)}/Q3 brief.pdf`;
+    const linking = (files: Record<string, string | Uint8Array>) =>
+      (files["Laws/个人信息保护法.md"] = `${files["Laws/个人信息保护法.md"]}\n[The brief](../media/${sha256(pdf)}/Q3%20brief.pdf)\n`);
+    const passing = archive();
+    linking(passing);
+    passing[file] = pdf;
+    const result = await checkArchive(memoryFiles(passing));
+    expect(result.issues).toEqual([]);
+    expect(result.counts.files).toBe(1);
+
+    expect(await problems((files) => (files[file] = pdf))).toEqual([`${file}: is not linked from any body or files cell`]);
+    expect(await problems((files) => linking(files))).toEqual([`Laws/个人信息保护法.md: links to ${file}, which is missing`]);
+    expect(
+      await problems((files) => {
+        linking(files);
+        files[file] = new Uint8Array([1, 2, 3]);
+      }),
+    ).toEqual([`${file}: is named for other bytes; these are media/${sha256(new Uint8Array([1, 2, 3]))}/Q3 brief.pdf`]);
+  });
+
+  it("counts a file a files cell holds as linked, and finds one that is missing", async () => {
+    const pdf = new TextEncoder().encode("%PDF-1.7");
+    const file = `media/${sha256(pdf)}/Q3 brief.pdf`;
+    const holding = (files: Record<string, string | Uint8Array>, m: Json) => {
+      m.items.find((i: Json) => i.kind === "database").tables[1].columns = [{ name: "Files", type: "files" }];
+      files["Obligations/Sources.jsonl"] = `{"_id":"a","Files":["${file}"]}\n`;
+    };
+    expect(await withManifest((files, m) => (holding(files, m), (files[file] = pdf)))).toEqual([]);
+    expect(await withManifest(holding)).toEqual([`Obligations/Sources.jsonl: links to ${file}, which is missing`]);
+  });
+
   it("holds each image to its name and to a body that shows it", async () => {
     const gif = `media/${sha256(GIF)}.gif`;
     expect(await problems((files) => (files[gif] = GIF))).toEqual([`${gif}: is not shown by any body`]);
@@ -260,7 +293,7 @@ describe("checkArchive", () => {
       `media/${sha256(GIF)}.png: is named for other bytes; these are ${gif}`,
     );
     expect(await problems((files) => (files[IMAGE] = GIF))).toContain(`${IMAGE}: is named for other bytes; these are ${gif}`);
-    expect(await problems((files) => (files["media/logo.png"] = PNG))).toContain("media/logo.png: is not named media/<sha256>.<png|jpg|gif|webp>");
+    expect(await problems((files) => (files["media/logo.png"] = PNG))).toContain("media/logo.png: is not named media/<sha256>.<png|jpg|gif|webp> or media/<sha256>/<name>");
     expect(await problems((files) => (files[IMAGE] = new Uint8Array([1, 2, 3])))).toContain(`${IMAGE}: is not a PNG, JPEG, GIF or WebP image`);
   });
 
@@ -457,7 +490,7 @@ describe("the archive check command", () => {
     const root = await unzipped(archive());
     const { code, out } = await run(["check", root]);
     expect(code).toBe(0);
-    expect(out).toBe(`${root} passes: 4 items, 3 bodies, 2 rows, 1 image, 3 sample steps\n`);
+    expect(out).toBe(`${root} passes: 4 items, 3 bodies, 2 rows, 1 image, 0 files, 3 sample steps\n`);
   });
 
   it("prints a name's control and direction characters escaped", async () => {
@@ -482,7 +515,7 @@ describe("the archive check command", () => {
       "    -- Notify within 72 hours.",
       "    +* Notify within 72 hours.",
       "notes.txt: is not part of the archive: stuga.json names no such file",
-      `2 problems in ${root} (4 items, 3 bodies, 2 rows, 1 image, 3 sample steps)`,
+      `2 problems in ${root} (4 items, 3 bodies, 2 rows, 1 image, 0 files, 3 sample steps)`,
       "",
     ]);
     const json = await run(["check", root, "--json"]);

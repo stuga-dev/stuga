@@ -86,7 +86,7 @@ const FRONTMATTER_KEYS = new Set([
  * whose every non-blank line looks like YAML counts, because a leading `---` is
  * also a valid thematic break.
  */
-function stripFrontmatter(text: string): { body: string; title: string | null } {
+export function stripFrontmatter(text: string): { body: string; title: string | null } {
   const lines = text.split("\n");
   if (lines.length === 0 || !FENCE.test(lines[0] ?? "")) return { body: text, title: null };
 
