@@ -7,18 +7,43 @@
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
 import { MCP_BUNDLE_FILENAME, MCP_SERVER_KEY } from "@stuga/protocol/domain/node-name";
 
-export type ClientTab = "claude" | "claude-desktop" | "claude-code" | "codex" | "antigravity" | "dsh" | "pi" | "other";
+export type ClientTab =
+  | "claude"
+  | "claude-desktop"
+  | "lmstudio"
+  | "cursor"
+  | "vscode"
+  | "antigravity"
+  | "kiro"
+  | "claude-code"
+  | "codex"
+  | "goose"
+  | "pi"
+  | "dsh"
+  | "other";
 
 export const TAB_LABEL: Record<ClientTab, string> = {
   claude: "Claude",
   "claude-desktop": "Claude Desktop",
+  lmstudio: "LM Studio",
+  cursor: "Cursor",
+  vscode: "VS Code",
+  antigravity: "Antigravity",
+  kiro: "Kiro",
   "claude-code": "Claude Code",
   codex: "Codex",
-  antigravity: "Antigravity",
-  dsh: "DeepSeek Harness",
+  goose: "Goose",
   pi: "Pi",
+  dsh: "DeepSeek Harness",
   other: "Other clients",
 };
+
+/** How the picker groups the clients, in the order it lists them; "Other clients" comes last, on its own. */
+export const CLIENT_GROUPS: ReadonlyArray<{ title: string; clients: readonly ClientTab[] }> = [
+  { title: "Chat apps", clients: ["claude", "claude-desktop", "lmstudio"] },
+  { title: "Editors", clients: ["cursor", "vscode", "antigravity", "kiro"] },
+  { title: "Coding agents", clients: ["claude-code", "codex", "goose", "pi", "dsh"] },
+];
 
 /** A config carries this until a key is minted. */
 export const TOKEN_PLACEHOLDER = "vk_your_key_here";
@@ -47,11 +72,53 @@ export interface InstallerCommands {
   uninstall: string;
 }
 
-/** A hosted connector dials from its own cloud over HTTPS, so it is offered only when the internet can reach the node that way. */
+/** The hosts whose setup is one link that opens the app with the node filled in. */
+export const LINK_CLIENTS = ["cursor", "vscode", "kiro", "goose", "lmstudio"] as const;
+export type LinkClient = (typeof LINK_CLIENTS)[number];
+
+/**
+ * A host's install link, and the same link carrying a key. Goose's link can only
+ * ask for a header's value, never carry one, so it has no key form.
+ */
+export interface InstallLink {
+  signIn: string;
+  withKey: string | null;
+}
+
+/**
+ * Every client in picker order. A hosted connector dials from its own cloud over
+ * HTTPS, so it is offered only when the internet can reach the node that way.
+ */
 export function clientTabs(setup: AgentSetup): [ClientTab, ...ClientTab[]] {
-  return setup.reachable && setup.secure
-    ? ["claude", "claude-desktop", "claude-code", "codex", "antigravity", "dsh", "pi", "other"]
-    : ["claude-desktop", "claude-code", "codex", "antigravity", "dsh", "pi", "other"];
+  const hosted = setup.reachable && setup.secure;
+  const listed = CLIENT_GROUPS.flatMap((g) => g.clients).filter((t) => t !== "claude" || hosted);
+  const [first, ...rest] = listed;
+  return first === undefined ? ["other"] : [first, ...rest, "other"];
+}
+
+/** Base64 of an ASCII string: the node's origin and a `vk_` key are both ASCII. */
+const base64 = (text: string): string => btoa(text);
+
+/** Each link host's own format, from its documentation (Goose's from its deeplink generator). */
+function installLinks(mcpUrl: string, name: string, key: string): Record<LinkClient, InstallLink> {
+  const q = encodeURIComponent;
+  const headers = { Authorization: `Bearer ${key}` };
+  const cursor = (config: object) =>
+    `cursor://anysphere.cursor-deeplink/mcp/install?name=${q(name)}&config=${q(base64(JSON.stringify(config)))}`;
+  const vscode = (config: object) => `vscode:mcp/install?${q(JSON.stringify({ name, type: "http", ...config }))}`;
+  const kiro = (config: object) =>
+    `https://kiro.dev/launch/mcp/add?name=${q(name)}&config=${q(JSON.stringify({ ...config, disabled: false, autoApprove: [] }))}`;
+  const lmstudio = (config: object) => `lmstudio://add_mcp?name=${q(name)}&config=${q(base64(JSON.stringify(config)))}`;
+  return {
+    cursor: { signIn: cursor({ url: mcpUrl }), withKey: cursor({ url: mcpUrl, headers }) },
+    vscode: { signIn: vscode({ url: mcpUrl }), withKey: vscode({ url: mcpUrl, headers }) },
+    kiro: { signIn: kiro({ url: mcpUrl }), withKey: kiro({ url: mcpUrl, headers }) },
+    lmstudio: { signIn: lmstudio({ url: mcpUrl }), withKey: lmstudio({ url: mcpUrl, headers }) },
+    goose: {
+      signIn: `goose://extension?url=${q(mcpUrl)}&type=streamable_http&id=${q(name)}&name=Stuga&description=${q("Documents and databases in Stuga")}`,
+      withKey: null,
+    },
+  };
 }
 
 interface ClientConfigs {
@@ -71,6 +138,8 @@ interface ClientConfigs {
   cliNeedsKey: boolean;
   /** The one-command setup and the two removals, per host that has an installer. */
   installers: Record<InstallerClient, InstallerCommands>;
+  /** The install link per host that has one; `withKey` carries the minted key, or the placeholder before one is. */
+  links: Record<LinkClient, InstallLink>;
   /** A streamable-HTTP MCP client's config. */
   httpJson: string;
   /** DeepSeek Harness reads these at launch. */
@@ -104,6 +173,7 @@ export function clientConfigs(setup: AgentSetup, token: string | null): ClientCo
     cliCommand: setup.secure ? cliAdd : `${cliAdd} --header "Authorization: Bearer ${key}"`,
     cliNeedsKey: !setup.secure,
     installers: { codex: installer("codex"), antigravity: installer("antigravity") },
+    links: installLinks(setup.mcp_url, serverKey, key),
     httpJson: JSON.stringify(
       { mcpServers: { [serverKey]: { type: "http", url: setup.mcp_url, headers: { Authorization: `Bearer ${key}` } } } },
       null,

@@ -7,7 +7,7 @@ is set to let AI edits apply directly. This page covers connecting clients, cred
 and what the ledger shows.
 
 **Settings → Your own AI** in Stuga has the setup for the node you are running, with its address already
-filled in. Use it when it disagrees with an example here.
+filled in: pick the app under **App**. Use it when it disagrees with an example here.
 
 ## Which clients can reach a node
 
@@ -23,8 +23,11 @@ filled in. Use it when it disagrees with an example here.
   node; both hosts sign in through the browser, so no key is pasted.
 - **Pi** dials the node's `/mcp` endpoint through pi-mcp-adapter and works with any node the machine
   can reach. It signs in through the browser, or takes a key ([Pi](#pi)).
+- **Cursor, VS Code, Kiro, Goose and LM Studio** dial the node's `/mcp` endpoint and work with any node
+  the machine can reach. **Your own AI** gives each a link that adds the node
+  ([Apps that install from a link](#apps-that-install-from-a-link)).
 - **Claude on the web and on mobile** add custom connectors that Anthropic's cloud dials. Those need
-  the node at a public HTTPS origin, set as `PUBLIC_ORIGIN`. **Your own AI** offers the **Claude** tab
+  the node at a public HTTPS origin, set as `PUBLIC_ORIGIN`. **Your own AI** offers **Claude**
   only when `PUBLIC_ORIGIN` is https and not a loopback, private or local-network address. Ways to
   give a node a public HTTPS origin are in [network-access.md](network-access.md#https).
 
@@ -90,9 +93,10 @@ refuses API keys, so an agent reaches another node only by being connected to it
 
 ## Apps that sign in
 
-A client that supports OAuth signs in through the browser: Claude Code, Codex, Antigravity, Pi, Claude
-on the web, and the Claude Desktop extension or `stuga-mcp` without a key. You sign in to the node
-with your password or through its identity provider, and the consent page asks two things:
+A client that supports OAuth signs in through the browser: Claude Code, Codex, Antigravity, Cursor,
+VS Code, Kiro, Goose, LM Studio, Pi, Claude on the web, and the Claude Desktop extension or
+`stuga-mcp` without a key. You sign in to the node with your password or through its identity
+provider, and the consent page asks two things:
 
 - **Workspaces.** Every workspace you belong to other than as a guest is ticked. **Also workspaces I
   join later** covers every workspace you belong to, now and later. An agent never acts in a
@@ -147,7 +151,7 @@ claude mcp add -s user --transport http stuga http://nas.local:8787/mcp \
   --header "Authorization: Bearer vk_..."
 ```
 
-Name the agent on the **Claude Code** tab and the command comes back with its key in place. The key
+Name the agent under **Claude Code** and the command comes back with its key in place. The key
 is stored in Claude Code's own configuration file in plain text, and is revoked in **Your own AI**
 like any other. Giving the node [an https address](network-access.md#https) brings the browser
 sign-in back.
@@ -181,7 +185,7 @@ connection appears under **Connected agents**.
 
 ## Codex and Google Antigravity
 
-Both hosts set up from one command, shown on their tab in **Your own AI**:
+Both hosts set up from one command, shown under their name in **Your own AI**:
 
 ```sh
 curl -fsSL 'http://localhost:8787/api/agent-install/codex' | sh
@@ -218,7 +222,7 @@ Streamable HTTP server. Either way the entry needs only the URL.
 
 ### Uninstall
 
-Open **Uninstall from Codex** or **Uninstall from Antigravity** on the tab, which shows two commands.
+Open **Uninstall from Codex** or **Uninstall from Antigravity**, which shows two commands.
 The first disconnects this node and keeps the Skill, for a computer that reaches more than one Stuga
 node; the second removes the Skill too, for the last node on that computer.
 
@@ -285,11 +289,20 @@ pnpm --filter @stuga/mcp build   # writes services/mcp/dist/stuga-mcp.js
 
 `which node` prints the interpreter path.
 
+## Apps that install from a link
+
+Cursor, VS Code, Kiro, Goose and LM Studio add a server from a link. **Your own AI** builds one per app
+with the node's `/mcp` endpoint in it: **Add to Cursor** opens Cursor with the server, named `stuga`,
+ready to install, and the app signs in through the browser when it first connects. To use a key
+instead, open **Use an agent key instead**, mint one, and follow **Add to … with this key**; Goose's link
+cannot carry a key. Removing the server in the app revokes nothing: revoke the connection or the key
+under **Connected agents**.
+
 ## Other MCP clients
 
 Any client that speaks Streamable HTTP can use `<PUBLIC_ORIGIN>/mcp`. A client that supports OAuth
 signs in like Claude Code. Any other client sends a key as `Authorization: Bearer vk_...`, and the
-**Other clients** tab in **Your own AI** builds that config.
+**Other clients** in **Your own AI** builds that config.
 
 ## The stdio server
 
@@ -376,11 +389,11 @@ pi install npm:@stuga/pi-package
 export STUGA_URL=http://localhost:8787
 ```
 
-Use your node's origin; **Your own AI** fills it in on the **Pi** tab. Set `STUGA_URL` in the shell
+Use your node's origin; **Your own AI** fills it in under **Pi**. Set `STUGA_URL` in the shell
 that starts Pi, or put `{ "stuga": { "url": "…" } }` in `~/.pi/agent/settings.json`. Then start Pi
 and run `/mcp-auth stuga`: you sign in in the browser ([Apps that sign in](#apps-that-sign-in)), at
 any node address, and the connection is listed as **Pi**. To use a key instead, open **Use an agent
-key instead** on the tab, mint one, and set `STUGA_API_KEY` beside `STUGA_URL`; there is then no
+key instead** under **Pi**, mint one, and set `STUGA_API_KEY` beside `STUGA_URL`; there is then no
 sign-in step. Pi's runs appear in the review inbox labelled `pi`.
 
 `pi remove npm:@stuga/pi-package` removes the package and leaves the adapter. It revokes nothing:

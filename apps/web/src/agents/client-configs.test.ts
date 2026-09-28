@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
-import { clientConfigs, clientTabs, TOKEN_PLACEHOLDER } from "./client-configs";
+import { CLIENT_GROUPS, TAB_LABEL, clientConfigs, clientTabs, TOKEN_PLACEHOLDER } from "./client-configs";
 
 const PUBLIC: AgentSetup = {
   url: "https://stuga.example.com",
@@ -36,8 +36,64 @@ const servers = (json: string) => JSON.parse(json).mcpServers as Record<string, 
 describe("clientTabs", () => {
   it("offers the hosted connector only on a node the internet can reach", () => {
     expect(clientTabs(PUBLIC)[0]).toBe("claude");
-    expect(clientTabs(PUBLIC)).toEqual(["claude", "claude-desktop", "claude-code", "codex", "antigravity", "dsh", "pi", "other"]);
-    expect(clientTabs(LOCAL)).toEqual(["claude-desktop", "claude-code", "codex", "antigravity", "dsh", "pi", "other"]);
+    expect(clientTabs(PUBLIC)).toEqual([
+      "claude",
+      "claude-desktop",
+      "lmstudio",
+      "cursor",
+      "vscode",
+      "antigravity",
+      "kiro",
+      "claude-code",
+      "codex",
+      "goose",
+      "pi",
+      "dsh",
+      "other",
+    ]);
+    expect(clientTabs(LOCAL)).not.toContain("claude");
+    expect(clientTabs(LOCAL)[0]).toBe("claude-desktop");
+    expect(clientTabs(LOCAL).at(-1)).toBe("other");
+  });
+
+  it("lists every client in exactly one group, with Other clients last on its own", () => {
+    const grouped = CLIENT_GROUPS.flatMap((g) => g.clients);
+    expect(new Set(grouped).size).toBe(grouped.length);
+    expect([...grouped, "other"].sort()).toEqual(Object.keys(TAB_LABEL).sort());
+  });
+});
+
+describe("install links", () => {
+  const decode64 = (link: string) => JSON.parse(atob(new URL(link).searchParams.get("config")!));
+
+  it("open each app with this node's endpoint and no key", () => {
+    const { links } = clientConfigs(LAN, "vk_live");
+    const endpoint = "http://192.168.1.50:8787/mcp";
+    expect(links.cursor.signIn.startsWith("cursor://anysphere.cursor-deeplink/mcp/install?name=stuga&config=")).toBe(true);
+    expect(decode64(links.cursor.signIn)).toEqual({ url: endpoint });
+    expect(links.lmstudio.signIn.startsWith("lmstudio://add_mcp?name=stuga&config=")).toBe(true);
+    expect(decode64(links.lmstudio.signIn)).toEqual({ url: endpoint });
+    expect(JSON.parse(decodeURIComponent(links.vscode.signIn.slice("vscode:mcp/install?".length)))).toEqual({
+      name: "stuga",
+      type: "http",
+      url: endpoint,
+    });
+    expect(JSON.parse(new URL(links.kiro.signIn).searchParams.get("config")!)).toEqual({ url: endpoint, disabled: false, autoApprove: [] });
+    const goose = new URL(links.goose.signIn);
+    expect(goose.protocol).toBe("goose:");
+    expect(goose.searchParams.get("url")).toBe(endpoint);
+    expect(goose.searchParams.get("type")).toBe("streamable_http");
+    for (const link of Object.values(links)) expect(link.signIn).not.toContain("vk_live");
+  });
+
+  it("carry a minted key only in the key form, and Goose has none", () => {
+    const { links } = clientConfigs(PUBLIC, "vk_live");
+    const bearer = { Authorization: "Bearer vk_live" };
+    expect(decode64(links.cursor.withKey!).headers).toEqual(bearer);
+    expect(decode64(links.lmstudio.withKey!).headers).toEqual(bearer);
+    expect(JSON.parse(decodeURIComponent(links.vscode.withKey!.slice("vscode:mcp/install?".length))).headers).toEqual(bearer);
+    expect(JSON.parse(new URL(links.kiro.withKey!).searchParams.get("config")!).headers).toEqual(bearer);
+    expect(links.goose.withKey).toBeNull();
   });
 });
 

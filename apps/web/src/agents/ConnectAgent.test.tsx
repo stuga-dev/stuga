@@ -20,6 +20,7 @@ vi.mock("../api", async (orig) => ({
 vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const { ConnectAgent } = await import("./ConnectAgent");
+const { TAB_LABEL } = await import("./client-configs");
 
 const URL_ = "https://stuga.team.example.com/mcp";
 const PAGE_MCP = `${location.origin}/mcp`;
@@ -73,13 +74,30 @@ let container: HTMLDivElement;
 let root: Root;
 
 const text = () => document.body.textContent ?? "";
-/** Astryx tabs are buttons carrying `data-tab-value`. */
-function clickTab(value: string): void {
-  const el = document.querySelector(`[data-tab-value="${value}"]`);
-  expect(el, `no tab for ${value}`).toBeTruthy();
-  act(() => {
-    el!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
+/** The client picker's trigger: the control its "App" label points at. */
+function pickerTrigger(): HTMLElement | undefined {
+  const label = [...document.querySelectorAll<HTMLLabelElement>("label")].find((l) => l.textContent?.trim() === "App");
+  return (label && document.getElementById(label.htmlFor)) || undefined;
+}
+
+/** Opens the picker and answers the clients it offers, by label; closes it again. */
+function offered(): string[] {
+  const trigger = pickerTrigger();
+  if (!trigger) return [];
+  act(() => trigger.click());
+  const labels = [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((o) => o.textContent?.trim() ?? "");
+  act(() => trigger.click());
+  return labels;
+}
+
+/** Picks a client in the picker. */
+function clickTab(value: keyof typeof TAB_LABEL): void {
+  const trigger = pickerTrigger();
+  expect(trigger, "no client picker").toBeTruthy();
+  act(() => trigger!.click());
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.trim() === TAB_LABEL[value]);
+  expect(option, `no option for ${value}`).toBeTruthy();
+  act(() => option!.click());
 }
 
 /** Astryx TextInput keeps its value in React state; drive it through the DOM. */
@@ -113,6 +131,8 @@ async function mount(setup: AgentSetup | null, props: Partial<Parameters<typeof 
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  // The picker remembers the last client in this browser; each test starts fresh.
+  localStorage.clear();
   toasts.shown = [];
   objectUrls.created = [];
   objectUrls.revoked = [];
@@ -156,7 +176,7 @@ describe("ConnectAgent", () => {
   it.each([
     ["codex", "Codex"],
     ["antigravity", "Antigravity"],
-  ])("gives %s one setup command and never a key", (tab, host) => {
+  ] as const)("gives %s one setup command and never a key", (tab, host) => {
     clickTab(tab);
     expect(text()).toContain(`curl -fsSL 'https://stuga.team.example.com/api/agent-install/${tab}' | sh`);
     expect(text()).toContain(
@@ -173,7 +193,7 @@ describe("ConnectAgent", () => {
   it.each([
     ["codex", "Codex"],
     ["antigravity", "Antigravity"],
-  ])("keeps complete %s uninstall guidance collapsed until requested", (tab, host) => {
+  ] as const)("keeps complete %s uninstall guidance collapsed until requested", (tab, host) => {
     clickTab(tab);
     // The guide stays mounted while collapsed, so the code blocks do not rebuild when it opens.
     const trigger = link(new RegExp(`^Uninstall from ${host}$`))!;
@@ -283,7 +303,7 @@ describe("ConnectAgent", () => {
     expect(text()).toContain("Bearer vk_your_key_here");
   });
   it("leads with the connector when this node can be dialled from outside", () => {
-    expect(document.querySelector('[data-tab-value="claude-desktop"]')).toBeTruthy();
+    expect(offered()).toContain("Claude Desktop");
     expect(text()).toContain("Add custom connector");
     expect(text()).toContain(URL_);
   });
@@ -307,13 +327,13 @@ describe("ConnectAgent", () => {
 
   it("does not offer a connector this node cannot answer", async () => {
     await mount(LOCAL);
-    expect(document.querySelector('[data-tab-value="claude"]')).toBeNull();
+    expect(offered()).not.toContain("Claude");
     expect(text()).not.toContain("Add custom connector");
   });
 
   it("keeps the connector where a node can actually be dialled", async () => {
     await mount(REACHABLE);
-    expect(document.querySelector('[data-tab-value="claude"]')).toBeTruthy();
+    expect(offered()).toContain("Claude");
     clickTab("claude");
     expect(text()).toContain("Add custom connector");
   });
@@ -427,7 +447,7 @@ describe("ConnectAgent", () => {
     await mount(null);
     expect(text()).toContain("Couldn’t load connection options");
     expect(text()).not.toContain(PAGE_MCP);
-    expect(document.querySelector("[data-tab-value]")).toBeNull();
+    expect(pickerTrigger()).toBeUndefined();
     agents.setup.mockResolvedValue(REACHABLE);
     await act(async () => {
       button(/Retry/)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -521,5 +541,71 @@ describe("ConnectAgent — Pi tab", () => {
     expect(text()).not.toContain("pi remove npm:pi-mcp-adapter");
     expect(text()).toContain("Local removal does not revoke access");
     expect(link(/revoke the connection/)?.getAttribute("href")).toBe("#connected-agents");
+  });
+});
+
+describe("ConnectAgent — the client picker", () => {
+  it("groups the clients, with Other clients last", () => {
+    const trigger = pickerTrigger()!;
+    act(() => trigger.click());
+    expect(text()).toContain("Chat apps");
+    expect(text()).toContain("Editors");
+    expect(text()).toContain("Coding agents");
+    act(() => trigger.click());
+    expect(offered().at(-1)).toBe("Other clients");
+  });
+
+  it("opens where this browser last left it", async () => {
+    clickTab("cursor");
+    await mount(REACHABLE);
+    expect(link(/^Add to Cursor$/)).toBeTruthy();
+  });
+
+  it("falls back to the first client when the remembered one is not offered here", async () => {
+    clickTab("claude");
+    await mount(LOCAL);
+    expect(text()).toContain("Settings → Developer");
+  });
+});
+
+describe("ConnectAgent — link tabs", () => {
+  const href = (re: RegExp) => link(re)?.getAttribute("href") ?? "";
+
+  it.each([
+    ["cursor", "Cursor", "cursor://anysphere.cursor-deeplink/mcp/install?"],
+    ["vscode", "VS Code", "vscode:mcp/install?"],
+    ["kiro", "Kiro", "https://kiro.dev/launch/mcp/add?"],
+    ["goose", "Goose", "goose://extension?"],
+    ["lmstudio", "LM Studio", "lmstudio://add_mcp?"],
+  ] as const)("opens %s with this node and no key, and says how to remove it", (tab, host, prefix) => {
+    clickTab(tab);
+    expect(href(new RegExp(`^Add to ${host}$`)).startsWith(prefix)).toBe(true);
+    expect(href(new RegExp(`^Add to ${host}$`))).not.toContain("vk_");
+    expect(keys.create).not.toHaveBeenCalled();
+    act(() => {
+      link(new RegExp(`^Uninstall from ${host}$`))!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(text()).toContain("Local removal does not revoke access");
+  });
+
+  it("offers the key form only once a key exists, named for the app", async () => {
+    keys.create.mockResolvedValue({ name: "Cursor", token: "vk_live_cursor" });
+    clickTab("cursor");
+    act(() => {
+      link(/^Use an agent key instead$/)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(link(/with this key$/)).toBeUndefined();
+    await act(async () => {
+      button(/Create key/)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(keys.create).toHaveBeenCalledWith("Cursor", {});
+    const config = JSON.parse(atob(new URL(href(/^Add to Cursor with this key$/)).searchParams.get("config")!));
+    expect(config.headers).toEqual({ Authorization: "Bearer vk_live_cursor" });
+    expect(href(/^Add to Cursor$/)).not.toContain("vk_");
+  });
+
+  it("gives Goose no key form: its link cannot carry one", () => {
+    clickTab("goose");
+    expect(link(/^Use an agent key instead$/)).toBeUndefined();
   });
 });

@@ -11,6 +11,12 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+### Added
+
+- **Cursor, VS Code, Kiro, Goose and LM Studio** in **Settings → Your own AI**: one link opens the app
+  with the node filled in, and the app signs in. Apps are now picked from one searchable list, grouped
+  into chat apps, editors and coding agents, and the page remembers the last one.
+
 ### Changed
 
 - The setting is now called **Let AI edits apply directly** (was **Let agents apply changes at
