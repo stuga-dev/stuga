@@ -454,7 +454,8 @@ describe.skipIf(!URL)("the BM25 keyword leg with search languages ko and ar", ()
   });
 });
 
-describe.skipIf(!URL)("the BM25 keyword leg with every search language", () => {
+// Seeding and searching under 22 BM25 indexes runs near 5 s on a CI Mac.
+describe.skipIf(!URL)("the BM25 keyword leg with every search language", { timeout: 30_000 }, () => {
   const WS3 = "ws-pgsearch-every-lang";
   const ALICE3 = ["user:alice", `org:${WS3}`];
   const EVERY = searchIndexShapes(SEARCH_LANGUAGES).map((i) => i.name);
