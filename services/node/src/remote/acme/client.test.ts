@@ -105,7 +105,8 @@ function fakeCa(opts: { badNonces?: number; authzPolls?: number; failAuthz?: boo
         case "/order":
           return answer(201, { status: state.order, authorizations: [`${CA}/authz/1`], finalize: `${CA}/finalize/1`, identifiers: payload!.identifiers }, { location: `${CA}/order/1` });
         case "/authz/1":
-          if (state.challenge === "processing" && --authzPolls <= 0) {
+          if (payload?.status === "deactivated") state.authz = "deactivated";
+          else if (state.challenge === "processing" && --authzPolls <= 0) {
             state.authz = opts.failAuthz ? "invalid" : "valid";
             state.challenge = state.authz;
             if (state.authz === "valid") state.order = "ready";
@@ -200,7 +201,9 @@ describe("the ACME client", () => {
     expect(value).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(d.calls).toEqual([`present ${value}`, `verify ${value}`, "cleanup"]);
     const paths = ca.posted.map((p) => p.url.slice(CA.length));
-    expect(paths).toEqual(["/acct", "/order", "/authz/1", "/chall/1", "/authz/1", "/authz/1", "/order/1", "/finalize/1", "/order/1", "/cert/1"]);
+    expect(paths).toEqual(["/acct", "/order", "/authz/1", "/chall/1", "/authz/1", "/authz/1", "/order/1", "/finalize/1", "/order/1", "/cert/1", "/authz/1"]);
+    // The authorization is given up once the certificate is in hand, so the next one needs a challenge.
+    expect(JSON.parse(Buffer.from(ca.posted.at(-1)!.payload, "base64url").toString())).toEqual({ status: "deactivated" });
     const order = ca.posted.find((p) => p.url.endsWith("/order"))!;
     expect(JSON.parse(Buffer.from(order.payload, "base64url").toString())).toEqual({ identifiers: [{ type: "dns", value: HOST }], profile: "classic" });
   });
@@ -262,6 +265,7 @@ describe("the ACME client", () => {
     expect(err.authorization).toBe(true);
     expect(err.is("incorrectResponse")).toBe(true);
     expect(d.calls.at(-1)).toBe("cleanup");
+    expect(ca.posted.at(-1)!.url).toBe(`${CA}/authz/1`);
   });
 
   it("carries the CA's problem type, status and Retry-After", async () => {

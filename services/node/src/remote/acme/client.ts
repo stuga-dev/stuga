@@ -254,10 +254,11 @@ export class AcmeClient {
     const orderUrl = created.headers.get("location");
     if (!orderUrl) throw new AcmeError("", created.status, "the CA created an order without saying where");
     let order = parseJson<AcmeOrder>(created);
+    const authorizations = order.authorizations;
 
     let presented = false;
     try {
-      for (const authzUrl of order.authorizations) {
+      for (const authzUrl of authorizations) {
         const { body: authz } = await this.#get<AcmeAuthorization>(authzUrl);
         if (authz.status === "valid") continue;
         const challenge = authz.challenges.find((c) => c.type === "dns-01");
@@ -289,6 +290,9 @@ export class AcmeClient {
     } finally {
       // However the order ends; the service's sweeper takes down whatever this misses.
       if (presented) await args.dns.cleanup().catch(() => {});
+      // A valid authorization lets the next order for the name skip the challenge for weeks, and so skip
+      // the service, which counts certificates by the challenges it publishes (RFC 8555 7.5.2).
+      for (const authzUrl of authorizations) await this.post(authzUrl, { status: "deactivated" }).catch(() => {});
     }
   }
 }
