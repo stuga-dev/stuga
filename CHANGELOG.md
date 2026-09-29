@@ -11,6 +11,20 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-29
+
+- Remote access: a node's own https address through a relay, where the packaging offers it.
+- Weekly backups, how many to keep, and disk use on Storage.
+- One link opens Cursor, VS Code, Kiro, Goose or LM Studio with the node filled in.
+- A smaller install: the node ships as one bundle.
+
+### Upgrade notes
+
+- A node now keeps the newest **3** backups unless told otherwise, and no longer reads `BACKUP_KEEP`
+  (it kept 7 by default). The first backup after the upgrade removes the older ones, except the
+  backup taken before the upgrade. To keep more, set the number in **Settings → This node →
+  Backups** before the next scheduled backup (3:00 UTC unless changed).
+
 ### Added
 
 - **Cursor, VS Code, Kiro, Goose and LM Studio** in **Settings → Your AI agents**: one link opens the app
@@ -26,9 +40,14 @@ its first section, are its summary: the release notes show that and link here fo
   unless changed). The newest backup taken before an upgrade is kept beyond that number.
 - **Disk** in **Settings → This node → Storage**: what the database, the files and the backups take,
   and what is left.
+- **Help and feedback** in the avatar menu, which opens the project's GitHub Discussions.
+- Every release asset carries build provenance: `gh attestation verify <file> --repo
+  stuga-dev/stuga` names the commit and the run that built it.
 
 ### Changed
 
+- The node runs as one bundle of its code and every package it uses: the app goes from about 248 MB
+  to 20 MB, on the Mac and in the Docker image, and the Mac package is about a quarter smaller again.
 - `BACKUP_KEEP` is gone: how many backups are kept is a node setting, which `stuga-node backup`
   reads from the database it backs up.
 - **Your own AI** is now **Your AI agents**, and **Embeddings** is **Semantic search**, in Settings
