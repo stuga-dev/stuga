@@ -62,20 +62,31 @@ function addDays(day: { year: number; month: number; day: number }, days: number
   return { year: at.getUTCFullYear(), month: at.getUTCMonth() + 1, day: at.getUTCDate() };
 }
 
-/** The most recent `hour`:00 in `timeZone` at or before `now`. */
-export function lastScheduled(now: Date, hour: number, timeZone: string): Date {
-  const today = wallClock(now, timeZone);
-  const atToday = instantOf(today.year, today.month, today.day, hour, timeZone);
-  if (atToday.getTime() <= now.getTime()) return atToday;
-  const yesterday = addDays(today, -1);
-  return instantOf(yesterday.year, yesterday.month, yesterday.day, hour, timeZone);
+/** The weekday of a calendar day, 0 (Sunday) to 6. */
+function weekdayOf(day: { year: number; month: number; day: number }): number {
+  return new Date(Date.UTC(day.year, day.month - 1, day.day)).getUTCDay();
 }
 
-/** The first `hour`:00 in `timeZone` after `now`. */
-export function nextScheduled(now: Date, hour: number, timeZone: string): Date {
+/**
+ * The scheduled instants around `now`, nearest first, walking `step` days at a time: `hour`:00 in
+ * `timeZone` on every day, or only on `weekday` (0 is Sunday). A week and a day covers either.
+ */
+function* scheduled(now: Date, hour: number, timeZone: string, weekday: number | null, step: 1 | -1): Generator<Date> {
   const today = wallClock(now, timeZone);
-  const atToday = instantOf(today.year, today.month, today.day, hour, timeZone);
-  if (atToday.getTime() > now.getTime()) return atToday;
-  const tomorrow = addDays(today, 1);
-  return instantOf(tomorrow.year, tomorrow.month, tomorrow.day, hour, timeZone);
+  for (let days = 0; days <= 7; days++) {
+    const day = addDays(today, days * step);
+    if (weekday === null || weekdayOf(day) === weekday) yield instantOf(day.year, day.month, day.day, hour, timeZone);
+  }
+}
+
+/** The most recent `hour`:00 in `timeZone` at or before `now`, on `weekday` when there is one. */
+export function lastScheduled(now: Date, hour: number, timeZone: string, weekday: number | null = null): Date {
+  for (const at of scheduled(now, hour, timeZone, weekday, -1)) if (at.getTime() <= now.getTime()) return at;
+  throw new Error(`no ${hour}:00 in the last eight days in ${timeZone}`);
+}
+
+/** The first `hour`:00 in `timeZone` after `now`, on `weekday` when there is one. */
+export function nextScheduled(now: Date, hour: number, timeZone: string, weekday: number | null = null): Date {
+  for (const at of scheduled(now, hour, timeZone, weekday, 1)) if (at.getTime() > now.getTime()) return at;
+  throw new Error(`no ${hour}:00 in the next eight days in ${timeZone}`);
 }

@@ -8,20 +8,33 @@ import { Switch } from "@astryxdesign/core/Switch";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 import { NodeSettings as NodeApi, type NodeBackups, type NodeOperationalSettings } from "../../../api";
-import { relativeTime, versionLabel } from "../../../lib/format";
+import { byteSize, relativeTime, versionLabel } from "../../../lib/format";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 
 const HOURS = Array.from({ length: 24 }, (_, h) => ({ value: String(h), label: `${String(h).padStart(2, "0")}:00` }));
 
+const REPEAT = [
+  { value: "day", label: "Every day" },
+  { value: "week", label: "Every week" },
+];
+
+/** 0 is Sunday, as the node counts them. */
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((label, day) => ({
+  value: String(day),
+  label,
+}));
+
+/** The weekday a backup that becomes weekly starts on. */
+const FIRST_WEEKDAY = 0;
+
+/** The counts offered, with whatever the node keeps now. */
+function keepOptions(keep: number) {
+  const counts = [...new Set([1, 2, 3, 5, 7, 10, 14, 30, keep])].sort((a, b) => a - b);
+  return counts.map((n) => ({ value: String(n), label: n === 1 ? "The newest backup" : `The newest ${n}` }));
+}
+
 /** How often the page asks whether a backup has finished. */
 const POLL_MS = 2000;
-
-/** "12 MB". */
-function size(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
 
 /** The time zone this browser is in, which setup gave the node. */
 function browserTimeZone(): string | null {
@@ -32,11 +45,13 @@ function browserTimeZone(): string | null {
   }
 }
 
-/** The daily backup, a backup now, and the backups the node keeps. */
+type Busy = "" | "switch" | "repeat" | "weekday" | "hour" | "zone" | "keep" | "now";
+
+/** The scheduled backup, a backup now, and the backups the node keeps. */
 export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings; onSaved: (s: NodeOperationalSettings) => void }) {
   const status = useSectionStatus();
   const [state, setState] = useState<NodeBackups | null>(null);
-  const [busy, setBusy] = useState<"" | "switch" | "hour" | "zone" | "now">("");
+  const [busy, setBusy] = useState<Busy>("");
   /** Waiting for a backup this page started: the node pauses for it, so a failed read means "not yet". */
   const [waiting, setWaiting] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -69,7 +84,7 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
     }, POLL_MS);
   }
 
-  async function act(key: "switch" | "hour" | "zone" | "now", fn: () => Promise<void>) {
+  async function act(key: Busy, fn: () => Promise<void>) {
     setBusy(key);
     status.clear();
     try {
@@ -81,7 +96,7 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
     }
   }
 
-  const save = (key: "switch" | "hour" | "zone", input: Parameters<typeof NodeApi.saveSettings>[0]) =>
+  const save = (key: Busy, input: Parameters<typeof NodeApi.saveSettings>[0]) =>
     act(key, async () => {
       onSaved(await NodeApi.saveSettings(input));
       await load();
@@ -96,7 +111,9 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
 
   const here = browserTimeZone();
   const zone = ops.time_zone;
+  const { auto, hour, weekday, keep } = ops.backups;
   const newest = state?.backups[0] ?? null;
+  const total = state?.backups.reduce((sum, b) => sum + b.bytes, 0) ?? 0;
 
   return (
     <VStack gap={5}>
@@ -106,23 +123,39 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
       )}
 
       <VStack gap={3}>
-        <Heading level={2}>Daily backup</Heading>
+        <Heading level={2}>Scheduled backup</Heading>
         <Text type="supporting" color="secondary">
           The node pauses for a moment while it backs up.
         </Text>
         <Switch
-          label="Back up every day"
-          value={ops.backups.auto}
+          label="Back up automatically"
+          value={auto}
           isDisabled={busy !== ""}
           isLoading={busy === "switch"}
           onChange={(v: boolean) => void save("switch", { backups: { auto: v } })}
         />
-        {ops.backups.auto && (
+        {auto && (
           <HStack gap={3} vAlign="end" wrap="wrap">
+            <Selector
+              label="Repeat"
+              value={weekday === null ? "day" : "week"}
+              options={REPEAT}
+              isDisabled={busy !== ""}
+              onChange={(v) => void save("repeat", { backups: { weekday: v === "day" ? null : FIRST_WEEKDAY } })}
+            />
+            {weekday !== null && (
+              <Selector
+                label="On"
+                value={String(weekday)}
+                options={WEEKDAYS}
+                isDisabled={busy !== ""}
+                onChange={(v) => void save("weekday", { backups: { weekday: Number(v) } })}
+              />
+            )}
             <Selector
               label="At"
               description={zone}
-              value={String(ops.backups.hour)}
+              value={String(hour)}
               options={HOURS}
               isDisabled={busy !== ""}
               onChange={(v) => void save("hour", { backups: { hour: Number(v) } })}
@@ -149,8 +182,16 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
       <VStack gap={3}>
         <Heading level={2}>Backups</Heading>
         <Text type="supporting" color="secondary">
-          {state ? `The newest ${state.keep}, in ${state.dir}.` : " "}
+          {state ? (state.backups.length > 0 ? `${byteSize(total)} in ${state.dir}.` : `In ${state.dir}.`) : " "}
         </Text>
+        <Selector
+          label="Keep"
+          description="Also the newest one taken before an upgrade."
+          value={String(keep)}
+          options={keepOptions(keep)}
+          isDisabled={busy !== ""}
+          onChange={(v) => void save("keep", { backups: { keep: Number(v) } })}
+        />
         <HStack gap={2}>
           <Button
             label={waiting ? "Backing up…" : "Back up now"}
@@ -178,7 +219,7 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
                 key={b.name}
                 label={versionLabel(b.created_at)}
                 description={[
-                  size(b.bytes),
+                  byteSize(b.bytes),
                   b.before_upgrade ? `before upgrading from ${b.stuga_version ?? "an earlier version"}` : null,
                   b === newest ? relativeTime(b.created_at) : null,
                 ]

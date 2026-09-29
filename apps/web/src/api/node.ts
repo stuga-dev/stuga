@@ -225,8 +225,11 @@ export interface NodeOperationalSettings {
   };
   /** Whether the node looks for a newer version once a day. */
   updates: { check: boolean };
-  /** The daily backup: whether it runs, and its hour (0–23) in `time_zone`. */
-  backups: { auto: boolean; hour: number };
+  /**
+   * The scheduled backup: whether it runs, its hour (0–23) in `time_zone`, its weekday (0 is Sunday;
+   * null is every day), and how many backups are kept.
+   */
+  backups: { auto: boolean; hour: number; weekday: number | null; keep: number };
   /** The node's time zone for scheduled work, an IANA name. */
   time_zone: string;
   /**
@@ -269,7 +272,7 @@ export interface NodeOperationalSettingsInput {
   notify?: { sink?: string; email_from?: string; webhook_url?: string; smtp_url?: string };
   branding?: { accent_color?: string };
   updates?: { check?: boolean };
-  backups?: { auto?: boolean; hour?: number };
+  backups?: { auto?: boolean; hour?: number; weekday?: number | null; keep?: number };
   /** An IANA name; null returns to UTC. */
   time_zone?: string | null;
   /** A change rebuilds the search indexes. */
@@ -278,25 +281,38 @@ export interface NodeOperationalSettingsInput {
   identity_provider?: { issuer: string; client_id: string; client_secret?: string; label?: string; scopes?: string } | null;
 }
 
-/** The node's backups and the daily schedule they follow. */
+/** The node's backups and the schedule they follow. */
 export interface NodeBackups {
   auto: boolean;
   hour: number;
+  /** 0 (Sunday) to 6 for a weekly backup; null is every day. */
+  weekday: number | null;
   time_zone: string;
-  /** When the next daily backup starts; null when they are off. */
+  /** When the next scheduled backup starts; null when they are off. */
   next_at: string | null;
   /** A backup is under way, or waiting to start. */
   running: boolean;
   /** Why a backup waits to start, such as a workspace being imported; null when none does. */
   waiting: string | null;
-  /** The last daily or requested backup that was tried, and why it failed. */
+  /** The last scheduled or requested backup that was tried, and why it failed. */
   attempted_at: string | null;
   error: string | null;
-  /** Where backups go, as the node sees the path, and how many are kept. */
+  /** Where backups go, as the node sees the path, and how many are kept beyond the newest one before an upgrade. */
   dir: string;
   keep: number;
   /** Newest first. */
   backups: Array<{ name: string; created_at: string; bytes: number; stuga_version: string | null; before_upgrade: boolean }>;
+}
+
+/** What the node takes on disk, in bytes. */
+export interface NodeStorage {
+  database_bytes: number;
+  /** The data directory: documents' and databases' own files, media and the node's keys. */
+  files_bytes: number;
+  /** Null when the node takes no backups of itself. */
+  backups_bytes: number | null;
+  /** Left on the disk that holds the data directory. */
+  free_bytes: number;
 }
 
 export interface NotifyProbe {
@@ -360,6 +376,8 @@ export const NodeSettings = {
   backups: () => api<NodeBackups>("/api/node/backups"),
   /** Start a backup now: the node pauses for it, then serves again. */
   backUpNow: () => api<{ started: true }>("/api/node/backups", { method: "POST" }),
+  /** Measures the data directory, so it can take a moment on a large node. */
+  storage: () => api<NodeStorage>("/api/node/storage"),
   /** Look for a newer version now; answers like `version`, whether or not the node looked. */
   checkVersion: () => api<NodeVersion>("/api/node/version/check", { method: "POST" }),
   /** Ask the machine to install `version`, the newest the node knows of; the node restarts on it. */

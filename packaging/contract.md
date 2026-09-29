@@ -68,7 +68,7 @@ The version appears in these places:
 | Command | |
 |---|---|
 | `serve` | Run the node. |
-| `backup [--json]` | Back up the database and the data directory into `BACKUP_DIR`, verified, pruned to `BACKUP_KEEP`. |
+| `backup [--json]` | Back up the database and the data directory into `BACKUP_DIR`, verified, pruned to the number the node's settings keep. |
 | `verify <backup> [--json]` | Check that a backup is whole and that this build can restore it. |
 | `restore <backup> [--yes] [--json]` | Replace the database and the data directory. The current ones are kept beside the restored ones. |
 | `list [--json]` | List backups, unfinished work, and what restores kept. |
@@ -119,7 +119,6 @@ edits lives in the database.
 | `WEB_DIST_DIR` | `<app>/apps/web/dist` | The web assets. |
 | `PG_BIN` | `PATH` | The directory of `pg_dump` and `pg_restore`, of the server's major. |
 | `BACKUP_DIR` | `backups` beside `DATA_DIR` | Where backups go. |
-| `BACKUP_KEEP` | `7` | How many backups of the database are kept, the node's own and `backup`'s. The minimum is 1. |
 
 ### Packaging hints
 
@@ -176,7 +175,7 @@ only one set, the node logs a warning and offers none.
   a 503, a browser a page that says why. A boot can back up, migrate and build search indexes first,
   so a supervisor should wait for progress rather than use a short timeout. A running node also
   answers 503 (`maintenance`) for the moment it pauses to back itself up.
-- **Backups the node takes.** A node backs itself up daily, and before it upgrades a database
+- **Backups the node takes.** A node backs itself up on a schedule, daily unless changed, and before it upgrades a database
   another version served, into `BACKUP_DIR` with the pruning `backup` does. A packaging that mounts
   the data directory must mount `BACKUP_DIR` too, or those backups are lost with the container, and
   must give the node `PG_BIN`. The packaging's own upgrade needs no backup step of its own.

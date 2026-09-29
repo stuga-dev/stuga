@@ -24,8 +24,8 @@ let maintenance: LockSql;
 let app: LockSql;
 let writer: WriterLock;
 
-describe("when the daily backup is due", () => {
-  const schedule: BackupSchedule = { auto: true, hour: 3, timeZone: "UTC" };
+describe("when the scheduled backup is due", () => {
+  const schedule: BackupSchedule = { auto: true, hour: 3, weekday: null, timeZone: "UTC" };
   const now = new Date("2026-09-23T10:00:00Z");
 
   it("is due once its hour has passed since the last try", () => {
@@ -36,6 +36,13 @@ describe("when the daily backup is due", () => {
   it("waits for the first hour after the node first booted, not at once", () => {
     expect(backupDue(now, schedule, { attemptedAt: null, firstBootAt: new Date("2026-09-23T09:00:00Z") })).toBe(false);
     expect(backupDue(now, schedule, { attemptedAt: null, firstBootAt: new Date("2026-09-22T09:00:00Z") })).toBe(true);
+  });
+
+  it("once a week, is due only once its weekday's hour has passed", () => {
+    // 2026-09-23 is a Wednesday; the last Sunday 03:00 was 2026-09-20.
+    const weekly = { ...schedule, weekday: 0 };
+    expect(backupDue(now, weekly, { attemptedAt: new Date("2026-09-20T03:00:05Z"), firstBootAt: new Date(0) })).toBe(false);
+    expect(backupDue(now, weekly, { attemptedAt: new Date("2026-09-19T03:00:00Z"), firstBootAt: new Date(0) })).toBe(true);
   });
 
   it("is never due when turned off", () => {
@@ -60,7 +67,6 @@ describe.skipIf(!URL)("the backups a running node takes of itself", { timeout: 6
       DATABASE_URL: dbUrl,
       DATA_DIR: join(root, "node"),
       BACKUP_DIR: join(root, "backups"),
-      BACKUP_KEEP: "5",
       ...(process.env.PG_BIN ? { PG_BIN: process.env.PG_BIN } : {}),
     });
     return createNodeBackups({
@@ -124,7 +130,7 @@ describe.skipIf(!URL)("the backups a running node takes of itself", { timeout: 6
     busy = null;
     beginsAsItPauses = null;
     held = false;
-    current = { auto: true, hour: 3, timeZone: "UTC" };
+    current = { auto: true, hour: 3, weekday: null, timeZone: "UTC" };
     // A node that has run for two days and never tried a daily backup.
     await app`UPDATE node_state SET first_boot_at = now() - interval '2 days', backup_attempted_at = NULL, backup_error = NULL`;
   });

@@ -85,6 +85,8 @@ describe.skipIf(!URL)("node_settings", () => {
     updateCheck: null,
     backupAuto: null,
     backupHour: null,
+    backupWeekday: null,
+    backupKeep: null,
     timeZone: null,
     identityProvider: null,
     updatedBy: "admin-1",
@@ -153,12 +155,26 @@ describe.skipIf(!URL)("node_settings", () => {
     expect(await getNodeSettings(sql)).toMatchObject({ update_check: true });
   });
 
-  it("stores the daily backup's switch and hour and the node's time zone, and refuses an hour past 23", async () => {
+  it("stores the backup schedule, how many are kept and the node's time zone, and refuses values out of range", async () => {
     await saveNodeSettings(sql, base);
-    expect(await getNodeSettings(sql)).toMatchObject({ backup_auto: null, backup_hour: null, time_zone: null });
-    await saveNodeSettings(sql, { ...base, backupAuto: false, backupHour: 22, timeZone: "Asia/Shanghai" });
-    expect(await getNodeSettings(sql)).toMatchObject({ backup_auto: false, backup_hour: 22, time_zone: "Asia/Shanghai" });
+    expect(await getNodeSettings(sql)).toMatchObject({
+      backup_auto: null,
+      backup_hour: null,
+      backup_weekday: null,
+      backup_keep: null,
+      time_zone: null,
+    });
+    await saveNodeSettings(sql, { ...base, backupAuto: false, backupHour: 22, backupWeekday: 0, backupKeep: 3, timeZone: "Asia/Shanghai" });
+    expect(await getNodeSettings(sql)).toMatchObject({
+      backup_auto: false,
+      backup_hour: 22,
+      backup_weekday: 0,
+      backup_keep: 3,
+      time_zone: "Asia/Shanghai",
+    });
     await expect(saveNodeSettings(sql, { ...base, backupHour: 24 })).rejects.toThrow(/backup_hour/);
+    await expect(saveNodeSettings(sql, { ...base, backupWeekday: 7 })).rejects.toThrow(/backup_weekday/);
+    await expect(saveNodeSettings(sql, { ...base, backupKeep: 0 })).rejects.toThrow(/backup_keep/);
   });
 
   it("stores the identity provider's columns together and clears them together", async () => {

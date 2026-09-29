@@ -21,6 +21,7 @@ const nodeApi = vi.hoisted(() => ({
   checkVersion: vi.fn(),
   backups: vi.fn(),
   backUpNow: vi.fn(),
+  storage: vi.fn(),
   installVersion: vi.fn(),
   getRemoteAccess: vi.fn(),
 }));
@@ -79,6 +80,7 @@ const AI: NodeAiSettings = {
 const BACKUPS: NodeBackups = {
   auto: true,
   hour: 3,
+  weekday: null,
   time_zone: "UTC",
   next_at: "2026-09-24T03:00:00Z",
   running: false,
@@ -116,7 +118,7 @@ const OPS: NodeOperationalSettings = {
   },
   branding: { accent_color: null },
   updates: { check: true },
-  backups: { auto: true, hour: 3 },
+  backups: { auto: true, hour: 3, weekday: null, keep: 7 },
   time_zone: "UTC",
   search: { languages: [], choices: ["ko", "ar"], rebuilding: false, error: null },
   identity_provider: {
@@ -313,6 +315,7 @@ beforeEach(() => {
   nodeApi.admins.mockResolvedValue({ admins: [] });
   nodeApi.version.mockResolvedValue(SOURCE);
   nodeApi.backups.mockResolvedValue(BACKUPS);
+  nodeApi.storage.mockResolvedValue({ database_bytes: 300 * 1024 ** 2, files_bytes: 2 * 1024 ** 3, backups_bytes: 23 * 1024 ** 2, free_bytes: 120 * 1024 ** 3 });
   nodeApi.getRemoteAccess.mockResolvedValue({ available: false });
 });
 
@@ -822,24 +825,56 @@ describe("NodeSettingsPage", () => {
     expect(nodeApi.checkVersion).toHaveBeenCalledTimes(2);
   });
 
-  it("lists the node's backups, one taken before an upgrade marked so, and where they are kept", async () => {
+  it("lists the node's backups, one taken before an upgrade marked so, how much they take and where", async () => {
     await mount("backups");
-    expect(host.textContent).toContain("The newest 7, in /backups.");
+    expect(host.textContent).toContain("23 MB in /backups.");
     expect(host.textContent).toContain("12 MB");
     expect(host.textContent).toContain("before upgrading from 1.8.0");
     expect(host.textContent).toContain("Next: ");
   });
 
-  it("turns the daily backup off, and moves its hour", async () => {
-    nodeApi.saveSettings.mockResolvedValue({ ...OPS, backups: { auto: false, hour: 3 } });
+  it("turns the scheduled backup off, and moves its hour", async () => {
+    nodeApi.saveSettings.mockResolvedValue({ ...OPS, backups: { ...OPS.backups, auto: false } });
     await mount("backups");
-    await flip("Back up every day");
+    await flip("Back up automatically");
     expect(nodeApi.saveSettings).toHaveBeenLastCalledWith({ backups: { auto: false } });
 
-    nodeApi.saveSettings.mockResolvedValue({ ...OPS, backups: { auto: true, hour: 22 } });
-    await flip("Back up every day");
+    nodeApi.saveSettings.mockResolvedValue({ ...OPS, backups: { ...OPS.backups, hour: 22 } });
+    await flip("Back up automatically");
     await choose("At", "22:00");
     expect(nodeApi.saveSettings).toHaveBeenLastCalledWith({ backups: { hour: 22 } });
+  });
+
+  it("makes the backup weekly on a chosen day, and back to daily", async () => {
+    await mount("backups");
+    expect(host.textContent).not.toContain("Sunday");
+    nodeApi.saveSettings.mockResolvedValue({ ...OPS, backups: { ...OPS.backups, weekday: 0 } });
+    await choose("Repeat", "Every week");
+    expect(nodeApi.saveSettings).toHaveBeenLastCalledWith({ backups: { weekday: 0 } });
+
+    nodeApi.saveSettings.mockResolvedValue({ ...OPS, backups: { ...OPS.backups, weekday: 5 } });
+    await choose("On", "Friday");
+    expect(nodeApi.saveSettings).toHaveBeenLastCalledWith({ backups: { weekday: 5 } });
+
+    nodeApi.saveSettings.mockResolvedValue(OPS);
+    await choose("Repeat", "Every day");
+    expect(nodeApi.saveSettings).toHaveBeenLastCalledWith({ backups: { weekday: null } });
+  });
+
+  it("sets how many backups are kept", async () => {
+    nodeApi.saveSettings.mockResolvedValue({ ...OPS, backups: { ...OPS.backups, keep: 14 } });
+    await mount("backups");
+    await choose("Keep", "The newest 14");
+    expect(nodeApi.saveSettings).toHaveBeenLastCalledWith({ backups: { keep: 14 } });
+  });
+
+  it("shows what the node takes on disk", async () => {
+    await mount("storage");
+    expect(nodeApi.storage).toHaveBeenCalled();
+    expect(host.textContent).toContain("Database300 MB");
+    expect(host.textContent).toContain("Files2.0 GB");
+    expect(host.textContent).toContain("Backups23 MB");
+    expect(host.textContent).toContain("Free120 GB");
   });
 
   it("warns when the last backup failed", async () => {

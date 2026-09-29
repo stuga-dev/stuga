@@ -72,6 +72,7 @@ import {
 } from "../api/node/settings.js";
 import { checkNodeVersion, getNodeVersion, installNodeVersion } from "../api/node/version.js";
 import { getNodeBackups, startNodeBackup } from "../api/node/backups.js";
+import { getNodeStorage } from "../api/node/storage.js";
 import { disableRemoteAccessRoute, enableRemoteAccessRoute, getRemoteAccessRoute } from "../api/node/remote-access.js";
 import { listNotificationsRoute, markNotificationsReadRoute, unreadNotifications } from "../api/notifications.js";
 import { addOtherNode, listOtherNodes, removeOtherNode } from "../api/other-nodes.js";
@@ -339,6 +340,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("GET", "/api/node/backups", getNodeBackups, NODE),
   api("POST", "/api/node/backups", startNodeBackup, NODE),
   api("*", "/api/node/backups", methodNotAllowed, NODE),
+  api("GET", "/api/node/storage", getNodeStorage, NODE),
+  api("*", "/api/node/storage", methodNotAllowed, NODE),
   api("GET", "/api/node/remote-access", getRemoteAccessRoute, REMOTE_ACCESS),
   api("*", "/api/node/remote-access", methodNotAllowed, REMOTE_ACCESS),
   api("POST", "/api/node/remote-access/enable", enableRemoteAccessRoute, REMOTE_ACCESS),

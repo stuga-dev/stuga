@@ -16,6 +16,7 @@ import { removeSecretFile, writeSecretFile } from "../../config/secrets.js";
 import {
   DEFAULT_IDP_SCOPES,
   IDP_CLIENT_SECRET_FILE,
+  MAX_BACKUP_KEEP,
   SMTP_URL_FILE,
   WEBHOOK_URL_FILE,
   type ResolvedNodeSettings,
@@ -197,9 +198,11 @@ interface SettingsCandidate {
   brandAccentColor: string | null;
   /** Null takes the default, which looks for a newer version. */
   updateCheck: boolean | null;
-  /** Null takes the defaults: daily, at 3. */
+  /** Null takes the defaults: on, every day, at 3, keeping 7. */
   backupAuto: boolean | null;
   backupHour: number | null;
+  backupWeekday: number | null;
+  backupKeep: number | null;
   /** Null is UTC. */
   timeZone: string | null;
   /** undefined keeps what is on file, null deletes it, a data: URL replaces it. */
@@ -370,7 +373,7 @@ async function parseSettingsCandidate(
     updateCheck = updates.check;
   }
 
-  // ---- backups. The daily one, and its hour in the node's time zone.
+  // ---- backups. The scheduled one, its hour in the node's time zone, its weekday, and how many are kept.
   let backupAuto = row?.backup_auto ?? null;
   if (sent.backups && backups.auto !== undefined) {
     if (typeof backups.auto !== "boolean") return { error: "backups.auto must be true or false", status: 400 };
@@ -382,6 +385,21 @@ async function parseSettingsCandidate(
       return { error: "backups.hour must be a whole hour from 0 to 23", status: 400 };
     }
     backupHour = backups.hour as number;
+  }
+  let backupWeekday = row?.backup_weekday ?? null;
+  if (sent.backups && backups.weekday !== undefined) {
+    const w = backups.weekday;
+    if (w !== null && (!Number.isInteger(w) || (w as number) < 0 || (w as number) > 6)) {
+      return { error: "backups.weekday must be null (every day) or a weekday from 0 (Sunday) to 6", status: 400 };
+    }
+    backupWeekday = w as number | null;
+  }
+  let backupKeep = row?.backup_keep ?? null;
+  if (sent.backups && backups.keep !== undefined) {
+    if (!Number.isInteger(backups.keep) || (backups.keep as number) < 1 || (backups.keep as number) > MAX_BACKUP_KEEP) {
+      return { error: `backups.keep must be a whole number from 1 to ${MAX_BACKUP_KEEP}`, status: 400 };
+    }
+    backupKeep = backups.keep as number;
   }
   let timeZone = row?.time_zone ?? null;
   if (sent.timeZone) {
@@ -428,6 +446,8 @@ async function parseSettingsCandidate(
     updateCheck,
     backupAuto,
     backupHour,
+    backupWeekday,
+    backupKeep,
     timeZone,
     identityProvider,
     idpClientSecret,
@@ -470,7 +490,7 @@ async function nodeSettingsResponse(ctx: Ctx): Promise<Response> {
     // What the last look found is part of the node's version: GET /api/node/version.
     updates: { check: saved.updateCheck },
     // The backups themselves, and whether one is running: GET /api/node/backups.
-    backups: { auto: saved.backups.auto, hour: saved.backups.hour },
+    backups: saved.backups,
     time_zone: saved.timeZone,
     // The languages chosen; while `rebuilding`, and after a rebuild that gave up (`error`), search uses those both sets share.
     search: {
@@ -570,6 +590,8 @@ async function saveNodeSettings(ctx: Ctx, req: Request): Promise<Response> {
     updateCheck: parsed.updateCheck,
     backupAuto: parsed.backupAuto,
     backupHour: parsed.backupHour,
+    backupWeekday: parsed.backupWeekday,
+    backupKeep: parsed.backupKeep,
     timeZone: parsed.timeZone,
     identityProvider: parsed.identityProvider ? { ...parsed.identityProvider, clientSecretLabel: idpSecretLabel } : null,
     updatedBy: ctx.alias,

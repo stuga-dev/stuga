@@ -1,4 +1,4 @@
-/** `/api/node/backups`: the node's backups, the daily schedule they follow, and a backup now. */
+/** `/api/node/backups`: the node's backups, the schedule they follow, and a backup now. */
 import { getNodeState } from "@stuga/db";
 import { nodeAuditCtx, recordAudit } from "../../audit/record.js";
 import { error, json } from "../../http/respond.js";
@@ -9,10 +9,10 @@ export async function getNodeBackups({ ctx }: WorkspaceCall): Promise<Response> 
   if (!backups) return error(503, "this node does not take backups of itself");
   const state = await getNodeState(ctx.sql);
   const schedule = backups.schedule();
-  const { dir, keep } = backups.where();
   return json({
     auto: schedule.auto,
     hour: schedule.hour,
+    weekday: schedule.weekday,
     time_zone: schedule.timeZone,
     next_at: backups.nextAt()?.toISOString() ?? null,
     running: backups.running(),
@@ -20,15 +20,15 @@ export async function getNodeBackups({ ctx }: WorkspaceCall): Promise<Response> 
     // The last scheduled or requested backup that was tried, and why it failed.
     attempted_at: state?.backup_attempted_at ?? null,
     error: state?.backup_error ?? null,
-    dir,
-    keep,
+    dir: backups.dir(),
+    keep: ctx.env.settings.current().backups.keep,
     backups: (await backups.list()).map((b) => ({
       name: b.name,
       created_at: b.createdAt,
       bytes: b.bytes,
       stuga_version: b.stugaVersion,
-      // Taken by a newer version before it upgraded this data.
-      before_upgrade: b.runtimeVersion !== b.stugaVersion,
+      // Taken by a newer version before it upgraded this data; kept beyond `keep` while it is the newest such.
+      before_upgrade: b.beforeUpgrade,
     })),
   });
 }

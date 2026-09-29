@@ -190,7 +190,7 @@ give the node an https address as [Network access](network-access.md#https) desc
 |---|---|
 | `image too large (max N MB)` | The upload limit. A node administrator sets it in **Settings → This node → Storage**, up to 50 MB. |
 | `markdown too large (max N KB)` | The separate limit on a Markdown import. |
-| The disk keeps growing after documents are deleted | Images stay until you reclaim them: [Reclaim media](operations.md#reclaim-media). Old backups (`BACKUP_KEEP`) and the copies a restore keeps also take space; `list` shows them. |
+| The disk keeps growing after documents are deleted | Images stay until you reclaim them: [Reclaim media](operations.md#reclaim-media). Old backups (how many are kept is under **Settings → This node → Backups**) and the copies a restore keeps also take space; **Settings → This node → Storage** shows what each takes, and `list` shows the backups. |
 
 ## Documents
 

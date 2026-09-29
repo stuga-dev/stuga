@@ -71,7 +71,6 @@ These variables belong to the stack, not to the node:
 | `STUGA_VOLUME_NAME` | `stuga_pgdata` | The Postgres volume. |
 | `COMPOSE_PROJECT_NAME` | `stuga` | The Compose project. Give a second stack on the same host its own project, volume and port. |
 | `BACKUP_DIR` | `./backups` | Where backups go, the node's own and `./stuga`'s. |
-| `BACKUP_KEEP` | `7` | How many backups are kept, the node's own and `./stuga backup`'s. |
 
 To add to the stack, for example another volume, put the change in `compose.override.yml` and set
 `COMPOSE_FILE=compose.yml:compose.override.yml` in `.env`, so that `./stuga` uses the same files

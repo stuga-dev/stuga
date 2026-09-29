@@ -3,6 +3,14 @@ import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
 /** Thousands-separated integer. */
 export const fmtInt = (n: number): string => n.toLocaleString();
 
+/** "12 MB", "1.4 GB", "120 GB": a tenth only below ten. */
+export function byteSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  if (bytes < 1024 ** 3) return `${Math.round(bytes / 1024 ** 2)} MB`;
+  const [n, unit] = bytes < 1024 ** 4 ? [bytes / 1024 ** 3, "GB"] : [bytes / 1024 ** 4, "TB"];
+  return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${unit}`;
+}
+
 /** "just now", "5m ago", "Yesterday", "Jun 24", "Jun 24, 2025"; an unparseable value comes back as given. */
 export function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();

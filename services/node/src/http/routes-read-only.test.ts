@@ -170,6 +170,8 @@ const PINNED = [
   "GET /api/node/backups: agents refused",
   "POST /api/node/backups: refused",
   "* /api/node/backups: GET agents refused, POST refused",
+  "GET /api/node/storage: agents refused",
+  "* /api/node/storage: GET agents refused, POST refused",
   "GET /api/node/remote-access: agents refused",
   "* /api/node/remote-access: GET agents refused, POST refused",
   "POST /api/node/remote-access/enable: refused",

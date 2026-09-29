@@ -46,6 +46,11 @@ export interface Manifest {
   files: { [DUMP_NAME]: FileEntry; [ARCHIVE_NAME]: FileEntry };
 }
 
+/** Taken by another build than the one that last served this data, before it upgraded it: what a downgrade restores. */
+export function takenBeforeUpgrade(m: Pick<Manifest, "stuga_version" | "runtime_version">): boolean {
+  return m.stuga_version !== null && m.stuga_version !== m.runtime_version;
+}
+
 const isInt = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 const isStr = (v: unknown): v is string => typeof v === "string";
 const isFile = (v: unknown): v is FileEntry =>

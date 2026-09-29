@@ -292,6 +292,12 @@ export async function getNodeState(sql: Sql): Promise<NodeStateRow | null> {
   return rows[0] ?? null;
 }
 
+/** The bytes the node's database takes on Postgres's disk: tables, indexes and TOAST. */
+export async function databaseBytes(sql: Sql): Promise<number> {
+  const [row] = await sql<{ bytes: string }[]>`SELECT pg_database_size(current_database())::text AS bytes`;
+  return Number(row!.bytes);
+}
+
 /** Record one scheduled backup: when it was tried, and why it failed, or null when it did not. */
 export async function recordBackupAttempt(sql: Sql, result: { at: Date; error: string | null }): Promise<void> {
   await sql`UPDATE node_state SET backup_attempted_at = ${result.at}, backup_error = ${result.error} WHERE id = TRUE`;

@@ -25,7 +25,6 @@ definition on [macOS](install/macos.md#where-things-live), or the build flags an
 | `WEB_DIST_DIR` | `apps/web/dist` in the app tree | The built web app. |
 | `PG_BIN` | the `PATH` | The directory with `pg_dump` and `pg_restore` for the server's Postgres major, used by backups and restores. |
 | `BACKUP_DIR` | `backups` beside `DATA_DIR` | Where backups go. |
-| `BACKUP_KEEP` | `7` | How many backups of the database are kept, the node's own and `backup`'s. At least 1. |
 
 ### Network
 
@@ -99,7 +98,7 @@ and node administrators also see **This node**.
 | This node → **Remote access** | Where the packaging offers it: the node's public https address, turned on with a code and off again, with where it stands and the connector's command ([Remote access](remote-access.md)). |
 | This node → **Storage** | The largest upload, such as an image (a workspace import takes up to 512 MB whatever it is), how long audit history, AI usage records and idle Ask threads are kept, and how many changes each database keeps in its Activity feed. |
 | This node → **Search** | **Languages in your documents**: the [search languages](#search-languages), English always and each other off unless chosen. |
-| This node → **Backups** | The daily backup, on unless turned off, and its hour in the node's time zone, which first-run setup takes from the browser; **Back up now**; and the backups the node keeps ([Operations](operations.md#the-nodes-own-backups)). |
+| This node → **Backups** | The scheduled backup, on unless turned off: every day or once a week, at an hour in the node's time zone, which first-run setup takes from the browser; how many backups are kept; **Back up now**; and the backups the node keeps ([Operations](operations.md#the-nodes-own-backups)). |
 | This node → **Branding** | The node's name and the colour that marks the selected item. |
 | This node → **About** | The address, listen address, data directory, database, the node's [name](#the-nodes-name-and-id) as agents know it, node ID, and the version with the day it was released. Under **Updates**: a newer version when the node knows of one, with **Update now** on a Mac, and **Check for new versions** ([Operations](operations.md#learning-of-a-new-version)). |
 | This workspace → **General**, **Members**, **Agents** | The workspace, its members and invite links, and the workspace's instructions for agents and its webhooks. Folders, documents and databases keep their own instructions in their ⋯ menu ([agents.md](agents.md#instructions-for-agents)). |

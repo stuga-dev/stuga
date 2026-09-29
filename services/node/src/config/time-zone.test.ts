@@ -44,3 +44,20 @@ describe("the daily hour", () => {
     expect([at("2026-03-08T06:00:00Z").getTime(), at("2026-03-08T07:00:00Z").getTime()]).toContain(skipped);
   });
 });
+
+describe("the weekly hour", () => {
+  // 2026-09-23 is a Wednesday (3); 2026-09-27 a Sunday (0).
+  it("is the most recent one on its weekday at or before now, and the next one after", () => {
+    expect(lastScheduled(at("2026-09-23T05:00:00Z"), 3, "UTC", 3)).toEqual(at("2026-09-23T03:00:00Z"));
+    expect(lastScheduled(at("2026-09-23T02:59:00Z"), 3, "UTC", 3)).toEqual(at("2026-09-16T03:00:00Z"));
+    expect(lastScheduled(at("2026-09-23T05:00:00Z"), 3, "UTC", 0)).toEqual(at("2026-09-20T03:00:00Z"));
+    expect(nextScheduled(at("2026-09-23T03:00:00Z"), 3, "UTC", 3)).toEqual(at("2026-09-30T03:00:00Z"));
+    expect(nextScheduled(at("2026-09-23T05:00:00Z"), 3, "UTC", 0)).toEqual(at("2026-09-27T03:00:00Z"));
+  });
+
+  it("takes the weekday on the node's own clock", () => {
+    // Sunday 03:00 in Shanghai is Saturday 19:00 UTC.
+    expect(nextScheduled(at("2026-09-23T12:00:00Z"), 3, "Asia/Shanghai", 0)).toEqual(at("2026-09-26T19:00:00Z"));
+    expect(lastScheduled(at("2026-09-26T19:30:00Z"), 3, "Asia/Shanghai", 0)).toEqual(at("2026-09-26T19:00:00Z"));
+  });
+});

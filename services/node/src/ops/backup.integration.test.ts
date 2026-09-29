@@ -9,7 +9,7 @@
 import { spawnSync } from "node:child_process";
 import { chmod, mkdtemp, mkdir, readdir, readFile, rename, rm, stat, truncate, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createDoc,
@@ -21,6 +21,7 @@ import {
   searchIndexShapes,
 } from "@stuga/db";
 import { ConfigError } from "../config/env.js";
+import { DEFAULT_BACKUP_KEEP } from "../config/settings/node.js";
 import { PARTIAL_OWNER, runBackup } from "./backup.js";
 import { parseBackupEnv, type BackupEnv } from "./env.js";
 import { runList } from "./list.js";
@@ -58,7 +59,6 @@ function envFor(overrides: Record<string, string> = {}): BackupEnv {
     DATABASE_URL: dbUrl,
     DATA_DIR: join(root, "node"),
     BACKUP_DIR: join(root, "backups"),
-    BACKUP_KEEP: "5",
     ...(process.env.PG_BIN ? { PG_BIN: process.env.PG_BIN } : {}),
     ...overrides,
   });
@@ -83,6 +83,12 @@ async function ourDatabases(): Promise<string[]> {
     await maintenance<{ datname: string }[]>`
       SELECT datname FROM pg_database WHERE datname = ${DB} OR datname LIKE ${BESIDE_DB} ORDER BY datname`
   ).map((r) => r.datname);
+}
+
+/** How many backups the node's settings keep; null is the default. */
+async function keepBackups(keep: number | null): Promise<void> {
+  await app`INSERT INTO node_settings (id, backup_keep) VALUES (TRUE, ${keep})
+            ON CONFLICT (id) DO UPDATE SET backup_keep = EXCLUDED.backup_keep`;
 }
 
 /** Everything a refusal must leave alone, in one comparable value. */
@@ -188,6 +194,7 @@ describe.skipIf(!URL)("stuga-node backup, verify and restore", { timeout: 60_000
   });
 
   beforeEach(async () => {
+    await app`DELETE FROM node_settings`;
     if (root) await rm(root, { recursive: true, force: true });
     root = await mkdtemp(join(tmpdir(), "stuga-backup-"));
     temporary.push(root);
@@ -258,15 +265,10 @@ describe.skipIf(!URL)("stuga-node backup, verify and restore", { timeout: 60_000
       expect(await snapshot()).toEqual(before);
     });
 
-    it("refuses a BACKUP_KEEP that would delete the backup it just took", () => {
-      for (const keep of ["0", "-1", "five", "2.5"]) {
-        expect(() => envFor({ BACKUP_KEEP: keep }), keep).toThrow(ConfigError);
-      }
-    });
-
-    it("keeps the newest BACKUP_KEEP complete backups of its own database, and leaves everything else alone", async () => {
+    it("keeps the newest complete backups of its own database the node's settings name, and leaves everything else alone", async () => {
       const backups = join(root, "backups");
-      const env = envFor({ BACKUP_KEEP: "2" });
+      const env = envFor();
+      await keepBackups(2);
       const at = (s: string) => () => new Date(s);
       // Only this database's partial is abandoned; another database's partial, an
       // ownerless one, another database's backup and a foreign directory stay.
@@ -297,6 +299,34 @@ describe.skipIf(!URL)("stuga-node backup, verify and restore", { timeout: 60_000
         "2026-01-03T000000Z",
         "not-a-backup",
       ]);
+    });
+
+    it("keeps the newest backup taken before an upgrade beyond that number, and only the newest", async () => {
+      const env = envFor();
+      await keepBackups(1);
+      const at = (s: string) => () => new Date(s);
+      // Data a 1.0.0 node served last, backed up by this build: what a downgrade goes back to.
+      await app`INSERT INTO node_state (id, node_id, app_version) VALUES (TRUE, 'abcdefghijklmnop', '1.0.0')`;
+      try {
+        const olderUpgrade = await runBackup(env, { now: at("2026-01-01T00:00:00Z") });
+        const upgrade = await runBackup(env, { now: at("2026-01-02T00:00:00Z") });
+        expect(upgrade.pruned).toEqual([basename(olderUpgrade.path)]);
+        await app`UPDATE node_state SET app_version = ${env.version}`;
+        await runBackup(env, { now: at("2026-01-03T00:00:00Z") });
+        const latest = await runBackup(env, { now: at("2026-01-04T00:00:00Z") });
+        expect(latest.pruned).toEqual(["2026-01-03T000000Z"]);
+        expect((await readdir(join(root, "backups"))).sort()).toEqual(["2026-01-02T000000Z", "2026-01-04T000000Z"]);
+      } finally {
+        await app`DELETE FROM node_state`;
+      }
+    });
+
+    it("keeps the default number when the settings name none", async () => {
+      const env = envFor();
+      await keepBackups(null);
+      const at = (d: number) => () => new Date(Date.UTC(2026, 0, d));
+      for (let d = 1; d <= DEFAULT_BACKUP_KEEP; d++) expect((await runBackup(env, { now: at(d) })).pruned).toEqual([]);
+      expect((await runBackup(env, { now: at(DEFAULT_BACKUP_KEEP + 1) })).pruned).toEqual(["2026-01-01T000000Z"]);
     });
 
     it("fails, keeps nothing and changes nothing when pg_dump fails", async () => {

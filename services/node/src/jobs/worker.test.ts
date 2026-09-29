@@ -112,7 +112,7 @@ function nodeSettings(overrides: Partial<ReturnType<JobsEnv["settings"]["current
     notify: { sink: "none" },
     branding: { accentColor: null },
     updateCheck: true,
-    backups: { auto: true, hour: 3 },
+    backups: { auto: true, hour: 3, weekday: null, keep: 7 },
     timeZone: "UTC",
     identityProvider: null,
     ...overrides,

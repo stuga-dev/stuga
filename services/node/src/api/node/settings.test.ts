@@ -95,7 +95,7 @@ function ctx(nodeName: string | null = null, search = searchLanguages()): Ctx {
           notify: { sink: "none" },
           branding: { accentColor: null },
           updateCheck: true,
-          backups: { auto: true, hour: 3 },
+          backups: { auto: true, hour: 3, weekday: null, keep: 7 },
           timeZone: "UTC",
           identityProvider: null,
         }),
@@ -160,19 +160,32 @@ describe("PUT /api/node/settings", () => {
     expect(save).toHaveBeenCalledTimes(2);
   });
 
-  it("turns the daily backup off and on, moves its hour, and names the time zone it is in", async () => {
+  it("turns the scheduled backup off and on, moves its hour and weekday, sets how many are kept, and names the time zone", async () => {
     save.mockClear();
     expect((await put(ctx(), { backups: { auto: false, hour: 22 } }))?.status).toBe(200);
-    expect(save.mock.calls[0]?.[1]).toMatchObject({ backupAuto: false, backupHour: 22 });
+    expect(save.mock.calls[0]?.[1]).toMatchObject({ backupAuto: false, backupHour: 22, backupWeekday: null, backupKeep: null });
     expect((await put(ctx(), { time_zone: "Asia/Shanghai" }))?.status).toBe(200);
     expect(save.mock.calls[1]?.[1]).toMatchObject({ timeZone: "Asia/Shanghai" });
     expect((await put(ctx(), { time_zone: null }))?.status).toBe(200);
     expect(save.mock.calls[2]?.[1]).toMatchObject({ timeZone: null });
+    expect((await put(ctx(), { backups: { weekday: 0, keep: 4 } }))?.status).toBe(200);
+    expect(save.mock.calls[3]?.[1]).toMatchObject({ backupWeekday: 0, backupKeep: 4 });
+    expect((await put(ctx(), { backups: { weekday: null } }))?.status).toBe(200);
+    expect(save.mock.calls[4]?.[1]).toMatchObject({ backupWeekday: null });
 
-    for (const bad of [{ backups: { auto: "yes" } }, { backups: { hour: 24 } }, { backups: { hour: 2.5 } }, { time_zone: "Mars/Olympus" }]) {
+    for (const bad of [
+      { backups: { auto: "yes" } },
+      { backups: { hour: 24 } },
+      { backups: { hour: 2.5 } },
+      { backups: { weekday: 7 } },
+      { backups: { weekday: "monday" } },
+      { backups: { keep: 0 } },
+      { backups: { keep: 101 } },
+      { time_zone: "Mars/Olympus" },
+    ]) {
       expect((await put(ctx(), bad))?.status).toBe(400);
     }
-    expect(save).toHaveBeenCalledTimes(3);
+    expect(save).toHaveBeenCalledTimes(5);
   });
 
   it("leaves the look for newer versions as it was when another group is saved", async () => {

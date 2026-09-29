@@ -10,13 +10,14 @@
  *   3. write both halves into `<name>.partial`, owner-only (the archive holds keys and secrets);
  *   4. read both back end to end;
  *   5. confirm this session still holds the ops lock;
- *   6. write the manifest, rename into place, prune to BACKUP_KEEP.
+ *   6. write the manifest, rename into place, prune to the number the node's settings keep.
  *
  * Any failure before the rename removes the partial directory; the data was only read.
  */
 import { chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { embeddingColumnDims, getSearchLanguages, readSchemaVersion } from "@stuga/db";
+import { DEFAULT_BACKUP_KEEP } from "../config/settings/node.js";
 import type { BackupEnv } from "./env.js";
 import {
   databaseName,
@@ -33,6 +34,7 @@ import {
   MANIFEST_FORMAT,
   readManifest,
   syncDirectory,
+  takenBeforeUpgrade,
   writeManifest,
   type Manifest,
 } from "./manifest.js";
@@ -89,6 +91,8 @@ async function describeDatabase(sql: LockSql): Promise<{
   embeddingDims: number | null;
   searchLanguages: string[];
   databaseBytes: number;
+  /** How many backups the node's settings keep. */
+  keep: number;
 }> {
   const [facts] = await sql<
     { has_state: boolean; has_chunks: boolean; has_settings: boolean; version_num: string; bytes: string }[]
@@ -103,6 +107,10 @@ async function describeDatabase(sql: LockSql): Promise<{
     : null;
   const dbSql = sql as unknown as Parameters<typeof embeddingColumnDims>[0];
   const schemaVersion = await readSchemaVersion(dbSql);
+  const keep = facts!.has_settings
+    ? ((await sql<{ backup_keep: number | null }[]>`SELECT backup_keep FROM node_settings WHERE id = TRUE`)[0]?.backup_keep ??
+      DEFAULT_BACKUP_KEEP)
+    : DEFAULT_BACKUP_KEEP;
   const extensions: Record<string, string> = {};
   for (const e of await sql<{ extname: string; extversion: string }[]>`
     SELECT extname, extversion FROM pg_extension ORDER BY extname`) {
@@ -116,6 +124,7 @@ async function describeDatabase(sql: LockSql): Promise<{
     embeddingDims: facts!.has_chunks ? await embeddingColumnDims(dbSql) : null,
     searchLanguages: (facts!.has_settings ? await getSearchLanguages(dbSql) : null) ?? [],
     databaseBytes: Number(facts!.bytes),
+    keep,
   };
 }
 
@@ -228,7 +237,7 @@ export async function runBackup(env: BackupEnv, deps: BackupDeps = {}): Promise<
     await rm(join(final, PARTIAL_OWNER), { force: true }).catch(() => {});
 
     // Retention never fails a backup that is already whole.
-    const pruned = await prune(env, database, name).catch((err: unknown) => {
+    const pruned = await prune(env, database, name, db.keep).catch((err: unknown) => {
       console.warn(`[backup] retention skipped: ${messageOf(err)}`);
       return [] as string[];
     });
@@ -244,13 +253,15 @@ export async function runBackup(env: BackupEnv, deps: BackupDeps = {}): Promise<
 }
 
 /**
- * Keep the newest BACKUP_KEEP complete backups of `database`. Under its ops
- * lock, a `.partial` directory of the same database is abandoned and goes too.
- * Only directories whose manifest or owner file names this database are removed.
+ * Keep the newest `keep` complete backups of `database`, and beyond them the
+ * newest one taken before an upgrade, which is what a downgrade restores. Under
+ * its ops lock, a `.partial` directory of the same database is abandoned and
+ * goes too. Only directories whose manifest or owner file names this database
+ * are removed.
  */
-async function prune(env: BackupEnv, database: string, justMade: string): Promise<string[]> {
+async function prune(env: BackupEnv, database: string, justMade: string, keep: number): Promise<string[]> {
   const entries = await readdir(env.backupDir, { withFileTypes: true });
-  const complete: { name: string; createdAt: number }[] = [];
+  const complete: { name: string; createdAt: number; beforeUpgrade: boolean }[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const path = join(env.backupDir, entry.name);
@@ -261,12 +272,15 @@ async function prune(env: BackupEnv, database: string, justMade: string): Promis
       continue;
     }
     const manifest = await readManifest(path).catch(() => null);
-    if (manifest?.database === database) complete.push({ name: entry.name, createdAt: Date.parse(manifest.created_at) });
+    if (manifest?.database === database) {
+      complete.push({ name: entry.name, createdAt: Date.parse(manifest.created_at), beforeUpgrade: takenBeforeUpgrade(manifest) });
+    }
   }
   complete.sort((a, b) => b.createdAt - a.createdAt || (a.name < b.name ? 1 : -1));
+  const lastUpgrade = complete.find((b) => b.beforeUpgrade);
   const removed: string[] = [];
-  for (const old of complete.slice(env.keep)) {
-    if (old.name === justMade) continue;
+  for (const old of complete.slice(keep)) {
+    if (old.name === justMade || old === lastUpgrade) continue;
     await rm(join(env.backupDir, old.name), { recursive: true, force: true });
     removed.push(old.name);
   }

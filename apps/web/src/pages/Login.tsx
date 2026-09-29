@@ -65,7 +65,7 @@ const INVITE_NOTICE = "You’re invited. Create an account or sign in to join.";
 
 const CLAIMED_NOTICE = "This server is already set up. Sign in or request an invite.";
 
-/** This browser's time zone, which setup gives the node for the daily backup's hour. */
+/** This browser's time zone, which setup gives the node for the scheduled backup's hour. */
 function browserTimeZone(): string | undefined {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;

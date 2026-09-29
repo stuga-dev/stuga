@@ -29,7 +29,6 @@ function envAt(version: string): BackupEnv {
       DATABASE_URL: dbUrl,
       DATA_DIR: join(root, "node"),
       BACKUP_DIR: join(root, "backups"),
-      BACKUP_KEEP: "5",
       ...(process.env.PG_BIN ? { PG_BIN: process.env.PG_BIN } : {}),
     }),
     version,

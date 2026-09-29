@@ -60,7 +60,8 @@ Stuga's developer signed it, and installs it. Opening a newer `Stuga.pkg` yourse
 Either way the new version backs up the data before it changes anything.
 
 The node backs itself up every day at 03:00, into `/Library/Application Support/Stuga/data/backups`,
-keeping the newest seven ([Operations](../operations.md#the-nodes-own-backups)). Time Machine, when
+keeping the newest seven; **Settings → This node → Backups** changes both
+([Operations](../operations.md#the-nodes-own-backups)). Time Machine, when
 it is on, keeps copies of those; the live database is excluded from Time Machine on purpose.
 
 ### Where things live

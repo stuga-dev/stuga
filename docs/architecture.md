@@ -12,7 +12,7 @@ snapshots, media, each actor's own SQLite file, keys and secrets live on disk un
 │ actors       one per document: the live Yjs document, its run ledger    │
 │              one per database: SQLite tables, their run ledger          │
 │ jobs         indexing · notifications · events · webhooks · audit       │
-│ maintenance  embedding repair · retention · trash purge · daily backup  │
+│ maintenance  embedding repair · retention · trash purge · backup        │
 └─────────────────────────────────────────────────────────────────────────┘
    Postgres 18, pgvector, pg_search           DATA_DIR
    metadata · ACLs · search · audit · jobs    snapshots · media · actor SQLite
@@ -297,7 +297,7 @@ is at least once, so every handler tolerates a repeat. The message kinds
 | `webhook_deliver` | Posts one signed event to one webhook. |
 
 The maintenance tick embeds chunks left without a vector, re-embeds every workspace after the
-embedding model changes, takes the daily backup when it is due, purges expired trash, import
+embedding model changes, takes the scheduled backup when it is due, purges expired trash, import
 stagings and unfinished sign-ins through the identity provider, and applies retention to revoked
 keys, notifications, sessions, OAuth clients, expired OAuth tokens, closed inbox runs, the event
 feed, and the ledgers whose retention the Settings page controls (audit, AI usage, Ask threads).

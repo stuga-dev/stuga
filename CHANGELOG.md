@@ -21,9 +21,16 @@ its first section, are its summary: the release notes show that and link here fo
   the encrypted connection on without reading it. The node creates its key and certificate itself
   and serves the address on a second listener, so the LAN address and everyone's sessions stay as
   they are. What the node sends the service is in [docs/remote-access.md](docs/remote-access.md).
+- **Weekly backups, and how many to keep**, in **Settings → This node → Backups**: the scheduled
+  backup runs every day or once a week on a chosen day, and the page sets how many are kept (7
+  unless changed). The newest backup taken before an upgrade is kept beyond that number.
+- **Disk** in **Settings → This node → Storage**: what the database, the files and the backups take,
+  and what is left.
 
 ### Changed
 
+- `BACKUP_KEEP` is gone: how many backups are kept is a node setting, which `stuga-node backup`
+  reads from the database it backs up.
 - **Your own AI** is now **Your AI agents**, and **Embeddings** is **Semantic search**, in Settings
   and at first run.
 - `retrieve` with semantic search off now answers `Semantic search is off on this node`; it said

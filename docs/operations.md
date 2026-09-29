@@ -34,7 +34,8 @@ and `./stuga backup` stops and restarts the node around it.
 4. reads both back in full;
 5. writes `MANIFEST.json`, with versions, sizes and SHA-256 checksums, and renames the directory
    into place;
-6. removes the oldest backups of the same database beyond `BACKUP_KEEP`, and any unfinished one.
+6. removes the oldest backups of the same database beyond the number the node keeps, and any
+   unfinished one. The newest backup taken before an upgrade stays beyond that number.
 
 A backup is a directory in `BACKUP_DIR`, named for the moment it was taken in UTC, such as
 `2026-09-16T101500Z`. Docker also copies `compose.yml` into it.
@@ -46,8 +47,10 @@ somewhere else as well.
 
 ### The node's own backups
 
-A running node backs itself up once a day, at 03:00 in its time zone unless an administrator picks
-another hour under **Settings → This node → Backups**. The time zone is the one the browser was in at
+A running node backs itself up every day at 03:00 in its time zone, unless an administrator makes it
+weekly, on a day they pick, or picks another hour under **Settings → This node → Backups**. The
+same page sets how many backups are kept, 7 unless changed; each is a whole copy of both halves,
+and **Storage** shows what they take together. The time zone is the one the browser was in at
 first-run setup, and **Backups** can change it. **Back up now** there takes one at once, and the page
 lists the backups the node keeps.
 
@@ -64,9 +67,9 @@ none is; one still waiting after three hours fails. While it waits, no new impor
 so it starts once the ones under way are done, and **Backups** says why it waits. An import or export
 stops after 50 minutes, and an export also stops when its download has read nothing for a minute.
 
-A daily backup that fails is shown on **Backups**, and every node administrator gets a notification,
+A scheduled backup that fails is shown on **Backups**, and every node administrator gets a notification,
 in the app and through the [notification sink](configuration.md#settings-in-the-app) when one is set.
-The next one is tried at the next day's hour.
+The next one is tried at the next scheduled hour.
 
 Before an upgrade changes anything, the new version backs up the data the previous one left: when it
 starts on a database another version served last, it takes a backup before it migrates. It takes
@@ -75,8 +78,8 @@ take another. If it cannot take the backup, for example for lack of disk space, 
 nothing. The backup's manifest names the version that served the data, and a restore goes back to
 that version.
 
-The node's backups go to `BACKUP_DIR` beside the operator commands' own, and `BACKUP_KEEP` (default
-7) counts them all.
+The node's backups go to `BACKUP_DIR` beside the operator commands' own, and the number kept counts
+them all. `backup` reads it from the database it backs up.
 
 ### verify
 

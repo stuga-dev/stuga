@@ -1,14 +1,14 @@
 /**
- * The backups a running node takes of itself: the daily one, at the hour the
- * Settings page names in the node's time zone, and one an administrator asks
- * for. The operator commands back up a stopped node; this backs up a running
+ * The backups a running node takes of itself: the scheduled one, every day or
+ * once a week at the hour the Settings page names in the node's time zone, and
+ * one an administrator asks for. The operator commands back up a stopped node; this backs up a running
  * one by making it quiet first (`quiesce`): new requests wait behind a
  * maintenance page, the ones already being answered finish, the job worker
  * stops and every actor closes its store. The node keeps its writer lock the
  * whole time, so nothing else can start writing, and the same `runBackup`
  * takes both halves as it would of a stopped node. Then everything resumes.
  *
- * A failed daily backup is recorded, and every node administrator hears of it
+ * A failed scheduled backup is recorded, and every node administrator hears of it
  * once; the next one is tried at the next scheduled hour. A backup never starts
  * while the node is doing work it waits for (`busy`), such as a workspace
  * import, which can run longer than the pause may: it is tried again at each
@@ -26,7 +26,7 @@ import { join } from "node:path";
 import { databaseName } from "../writer-lock.js";
 import { PARTIAL_SUFFIX, runBackup, type BackupResult } from "./backup.js";
 import type { BackupEnv } from "./env.js";
-import { ARCHIVE_NAME, DUMP_NAME, readManifest } from "./manifest.js";
+import { ARCHIVE_NAME, DUMP_NAME, readManifest, takenBeforeUpgrade } from "./manifest.js";
 import { messageOf } from "./outcome.js";
 
 export const BACKUP_FAILED_EVENT = "BACKUP_FAILED";
@@ -38,19 +38,21 @@ export interface BackupSchedule {
   auto: boolean;
   /** 0–23, in `timeZone`. */
   hour: number;
+  /** Once a week on this day, 0 (Sunday) to 6, in `timeZone`; null is every day. */
+  weekday: number | null;
   /** An IANA name. */
   timeZone: string;
 }
 
-/** Whether the daily backup is due: its hour has come since the last try, or since the node first booted. */
+/** Whether the scheduled backup is due: its hour has come since the last try, or since the node first booted. */
 export function backupDue(now: Date, schedule: BackupSchedule, state: { attemptedAt: Date | null; firstBootAt: Date }): boolean {
   if (!schedule.auto) return false;
-  const due = lastScheduled(now, schedule.hour, schedule.timeZone);
+  const due = lastScheduled(now, schedule.hour, schedule.timeZone, schedule.weekday);
   return due.getTime() > (state.attemptedAt ?? state.firstBootAt).getTime();
 }
 
 export interface NodeBackups {
-  /** Take the daily backup if it is due. The maintenance tick calls it, one tick at a time. */
+  /** Take the scheduled backup if it is due. The maintenance tick calls it, one tick at a time. */
   runIfDue(now?: Date): Promise<void>;
   /** Start a backup now, behind whatever maintenance is running; null once started, else why not. */
   startNow(): string | null;
@@ -58,14 +60,14 @@ export interface NodeBackups {
   running(): boolean;
   /** Why a backup waits to start; null when none does. */
   waiting(): string | null;
-  /** When the next daily backup starts; null when they are off. */
+  /** When the next scheduled backup starts; null when they are off. */
   nextAt(now?: Date): Date | null;
   /** The schedule in force. */
   schedule(): BackupSchedule;
   /** This database's whole backups in the backup directory, newest first. */
   list(): Promise<BackupSummary[]>;
-  /** Where backups go, and how many are kept. */
-  where(): { dir: string; keep: number };
+  /** Where backups go. */
+  dir(): string;
 }
 
 export interface BackupSummary {
@@ -76,6 +78,7 @@ export interface BackupSummary {
   stugaVersion: string | null;
   /** The version that took it; another than `stugaVersion` when it was taken before an upgrade. */
   runtimeVersion: string;
+  beforeUpgrade: boolean;
 }
 
 /** This database's whole backups in `env.backupDir`, newest first. */
@@ -93,6 +96,7 @@ export async function listBackups(env: BackupEnv): Promise<BackupSummary[]> {
       bytes: m.files[DUMP_NAME].bytes + m.files[ARCHIVE_NAME].bytes,
       stugaVersion: m.stuga_version,
       runtimeVersion: m.runtime_version,
+      beforeUpgrade: takenBeforeUpgrade(m),
     });
   }
   return found.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
@@ -111,7 +115,7 @@ export interface NodeBackupsDeps {
   hold: (waiting: boolean) => void;
   /** Runs work one at a time with the maintenance tick. */
   exclusive: <T>(work: () => Promise<T>) => Promise<T>;
-  /** Tell the node's administrators a daily backup failed. */
+  /** Tell the node's administrators a scheduled backup failed. */
   notifyFailure: (message: string, at: Date) => Promise<void>;
   log?: Pick<Console, "info" | "error">;
 }
@@ -130,9 +134,9 @@ export function createNodeBackups(d: NodeBackupsDeps): NodeBackups {
   let underWay = false;
   /** Asked for, and waiting for the maintenance tick to finish. */
   let queued = false;
-  /** Why the daily backup waits, once said. */
+  /** Why the scheduled backup waits, once said. */
   let waiting: string | null = null;
-  /** When the daily backup began to wait. */
+  /** When the scheduled backup began to wait. */
   let waitingSince: Date | null = null;
   /** Why the backup asked for waits, and since when; the maintenance tick tries it again. */
   let asked: { why: string; since: Date } | null = null;
@@ -198,21 +202,21 @@ export function createNodeBackups(d: NodeBackupsDeps): NodeBackups {
         return;
       }
       try {
-        await takeOne("daily");
+        await takeOne("scheduled");
         waiting = waitingSince = null;
         await recordBackupAttempt(d.sql, { at: now, error: null });
       } catch (err) {
         if (err instanceof BackupWaits) {
           waitingSince ??= now;
           if (now.getTime() - waitingSince.getTime() < BACKUP_WAIT_MAX_MS) {
-            if (waiting !== err.message) log.info(`[node] the daily backup waits: ${err.message}`);
+            if (waiting !== err.message) log.info(`[node] the scheduled backup waits: ${err.message}`);
             waiting = err.message;
             return;
           }
         }
         waiting = waitingSince = null;
         const message = err instanceof BackupWaits ? stillWaiting(err.message) : messageOf(err);
-        log.error(`[node] the daily backup failed: ${message}`);
+        log.error(`[node] the scheduled backup failed: ${message}`);
         await recordBackupAttempt(d.sql, { at: now, error: message });
         await d.notifyFailure(message, now).catch((e: unknown) => log.error("[node] could not tell the administrators", e));
       } finally {
@@ -234,18 +238,18 @@ export function createNodeBackups(d: NodeBackupsDeps): NodeBackups {
     waiting: () => asked?.why ?? waiting,
     nextAt(now = new Date()) {
       const schedule = d.schedule();
-      return schedule.auto ? nextScheduled(now, schedule.hour, schedule.timeZone) : null;
+      return schedule.auto ? nextScheduled(now, schedule.hour, schedule.timeZone, schedule.weekday) : null;
     },
     schedule: () => d.schedule(),
     list: () => listBackups(d.env),
-    where: () => ({ dir: d.env.backupDir, keep: d.env.keep }),
+    dir: () => d.env.backupDir,
   };
 }
 
 /** One notification per administrator per failed day, in the app and through the sink. */
 export async function notifyBackupFailed(env: JobsEnv, message: string, at: Date): Promise<void> {
   const db = jobDeps(env, {}).db;
-  const title = "The daily backup failed";
+  const title = "The scheduled backup failed";
   const url = `${env.publicOrigin}${BACKUPS_PATH}`;
   const day = at.toISOString().slice(0, 10);
   for (const admin of await db.listNodeAdmins()) {

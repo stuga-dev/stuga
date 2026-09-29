@@ -408,6 +408,8 @@ TABLE node_settings
   audit_retention_days integer
   backup_auto boolean
   backup_hour smallint
+  backup_keep smallint
+  backup_weekday smallint
   brand_accent_color text
   database_ops_keep integer
   email_from text
@@ -428,6 +430,8 @@ TABLE node_settings
   updated_at timestamp with time zone NOT NULL DEFAULT now()
   updated_by text
   CONSTRAINT node_settings_backup_hour_check CHECK (((backup_hour IS NULL) OR ((backup_hour >= 0) AND (backup_hour <= 23))))
+  CONSTRAINT node_settings_backup_keep_check CHECK (((backup_keep IS NULL) OR ((backup_keep >= 1) AND (backup_keep <= 100))))
+  CONSTRAINT node_settings_backup_weekday_check CHECK (((backup_weekday IS NULL) OR ((backup_weekday >= 0) AND (backup_weekday <= 6))))
   CONSTRAINT node_settings_brand_accent_color_check CHECK (((brand_accent_color IS NULL) OR (brand_accent_color ~ '^#[0-9a-fA-F]{6}$'::text)))
   CONSTRAINT node_settings_check CHECK (((idp_issuer IS NULL) = (idp_client_id IS NULL)))
   CONSTRAINT node_settings_id_check CHECK (id)

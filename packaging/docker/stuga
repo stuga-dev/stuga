@@ -44,8 +44,6 @@ DATA_NAME="node"
 BACKUP_DIR="${BACKUP_DIR:-$(env_value BACKUP_DIR)}"
 BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
 case "$BACKUP_DIR" in /*) ;; *) BACKUP_DIR="$ROOT/$BACKUP_DIR" ;; esac
-KEEP="${BACKUP_KEEP:-$(env_value BACKUP_KEEP)}"
-KEEP="${KEEP:-7}"
 
 # How long a starting node may show no progress, and how long it may take in all.
 READY_QUIET_SECONDS="${STUGA_READY_QUIET_SECONDS:-600}"
@@ -139,7 +137,7 @@ node_cli() {
   mkdir -p "$BACKUP_DIR" "$DATA_PARENT"
   pinned run --rm -T --no-deps \
     -v "$DATA_PARENT:/parent" -v "$BACKUP_DIR:/backups" \
-    -e DATA_DIR="/parent/$DATA_NAME" -e BACKUP_DIR=/backups -e BACKUP_KEEP="$KEEP" \
+    -e DATA_DIR="/parent/$DATA_NAME" -e BACKUP_DIR=/backups \
     --entrypoint node node bin/stuga-node.js "$@"
 }
 
@@ -680,7 +678,7 @@ Stuga operator commands.
   $SELF media-scan --empty-trash=30 --reclaim
                              destroy what has sat in trash/ 30+ days. NOT reversible
 
-Backups live in $BACKUP_DIR (BACKUP_DIR), keeping the last $KEEP (BACKUP_KEEP).
+Backups live in $BACKUP_DIR (BACKUP_DIR). How many are kept: Settings → This node → Backups.
 USAGE
     exit 2 ;;
 esac

@@ -60,6 +60,8 @@ interface NodeStoredSettings {
   updateCheck?: boolean | null;
   backupAuto?: boolean | null;
   backupHour?: number | null;
+  backupWeekday?: number | null;
+  backupKeep?: number | null;
   timeZone?: string | null;
   idpIssuer?: string | null;
   idpClientId?: string | null;
@@ -105,15 +107,24 @@ export interface ResolvedNodeSettings {
   branding: NodeBranding;
   /** Whether the node looks for a newer version once a day. On unless an administrator turned it off. */
   updateCheck: boolean;
-  /** The daily backup: on unless an administrator turned it off, at 3:00 unless they chose another hour. */
-  backups: { auto: boolean; hour: number };
+  /**
+   * The scheduled backup: on unless an administrator turned it off, every day at 3:00 unless they
+   * chose another hour or a weekday (0 is Sunday), keeping the newest 7 unless they chose a number.
+   */
+  backups: { auto: boolean; hour: number; weekday: number | null; keep: number };
   /** The node's time zone for scheduled work, an IANA name; UTC until setup or an administrator names one. */
   timeZone: string;
   identityProvider: IdentityProviderSettings | null;
 }
 
-/** The hour the daily backup starts when nobody chose one: the small hours, when nobody is working. */
+/** The hour the scheduled backup starts when nobody chose one: the small hours, when nobody is working. */
 export const DEFAULT_BACKUP_HOUR = 3;
+
+/** How many backups are kept when nobody chose a number: a week of daily ones. */
+export const DEFAULT_BACKUP_KEEP = 7;
+
+/** The most backups an administrator may keep: each is a whole copy, on the node's own disk. */
+export const MAX_BACKUP_KEEP = 100;
 
 export type NodeSettingsStore = SettingsStore<ResolvedNodeSettings, NodeSecretState>;
 
@@ -136,7 +147,12 @@ export function resolveNodeSettings(stored: NodeStoredSettings | null, publicOri
     notify,
     branding: { accentColor: st.brandAccentColor ?? null },
     updateCheck: st.updateCheck ?? true,
-    backups: { auto: st.backupAuto ?? true, hour: st.backupHour ?? DEFAULT_BACKUP_HOUR },
+    backups: {
+      auto: st.backupAuto ?? true,
+      hour: st.backupHour ?? DEFAULT_BACKUP_HOUR,
+      weekday: st.backupWeekday ?? null,
+      keep: st.backupKeep ?? DEFAULT_BACKUP_KEEP,
+    },
     timeZone: knownTimeZone(st.timeZone) ?? "UTC",
     identityProvider:
       st.idpIssuer && st.idpClientId
@@ -249,6 +265,8 @@ export function createNodeSettingsStore(deps: { sql: Sql; dataDir: string; publi
         updateCheck: row?.update_check ?? null,
         backupAuto: row?.backup_auto ?? null,
         backupHour: row?.backup_hour ?? null,
+        backupWeekday: row?.backup_weekday ?? null,
+        backupKeep: row?.backup_keep ?? null,
         timeZone: row?.time_zone ?? null,
         idpIssuer: row?.idp_issuer ?? null,
         idpClientId: row?.idp_client_id ?? null,

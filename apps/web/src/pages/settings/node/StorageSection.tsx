@@ -1,19 +1,39 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Button } from "@astryxdesign/core/Button";
 import { Divider } from "@astryxdesign/core/Divider";
 import { NumberInput } from "@astryxdesign/core/NumberInput";
-import { NodeSettings as NodeApi, type NodeOperationalSettings, type NodeOperationalSettingsInput } from "../../../api";
+import {
+  NodeSettings as NodeApi,
+  type NodeOperationalSettings,
+  type NodeOperationalSettingsInput,
+  type NodeStorage,
+} from "../../../api";
+import { byteSize } from "../../../lib/format";
 import { toOpsForm, type OpsForm } from "./ops-form";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 
-/** Upload size and retention, each card with its own save. */
+/** What the node takes on disk, then upload size and retention, each card with its own save. */
 export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings; onSaved: (ops: NodeOperationalSettings) => void }) {
   const status = useSectionStatus();
   const [opsForm, setOpsForm] = useState<OpsForm>(() => toOpsForm(ops));
   const [opsBusy, setOpsBusy] = useState<"" | "limits" | "maintenance">("");
+  const [disk, setDisk] = useState<NodeStorage | null>(null);
+
+  // Measured each time the section is shown.
+  useEffect(() => {
+    let live = true;
+    NodeApi.storage()
+      .then((d) => live && setDisk(d))
+      .catch((e: unknown) => live && status.fail(e));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function runOpsSave(group: "limits" | "maintenance") {
     setOpsBusy(group);
@@ -44,6 +64,24 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
   return (
     <>
       <SectionStatusBanners status={status} />
+      <VStack gap={3}>
+        <Heading level={2}>Disk</Heading>
+        {disk ? (
+          <MetadataList columns="single" label={{ position: "start" }}>
+            <MetadataListItem label="Database">{byteSize(disk.database_bytes)}</MetadataListItem>
+            <MetadataListItem label="Files">{byteSize(disk.files_bytes)}</MetadataListItem>
+            {disk.backups_bytes !== null && <MetadataListItem label="Backups">{byteSize(disk.backups_bytes)}</MetadataListItem>}
+            <MetadataListItem label="Free">{byteSize(disk.free_bytes)}</MetadataListItem>
+          </MetadataList>
+        ) : (
+          <Text type="supporting" color="secondary">
+            Measuring…
+          </Text>
+        )}
+      </VStack>
+
+      <Divider />
+
       <VStack gap={3}>
         <Heading level={2}>Uploads</Heading>
         <Text type="supporting" color="secondary">The largest file anyone may attach.</Text>
