@@ -94,10 +94,11 @@ reach `/ready`. On a Mac, check out the tag, follow [docs/install/macos.md](docs
 and reach `/ready`. The workflow does not test the instructions themselves.
 
 Each commit the `plugin` job pushes is a new version of the listing in Anthropic's plugin
-directory, which follows stuga-plugin's `main`. The directory scans it and, because it runs a pinned
-npx package, holds it for review: open the plugin at
-[claude.ai/directory/manage](https://claude.ai/directory/manage) and select **Publish** on the new
-version, and an Anthropic reviewer publishes it. Until then the listing serves the previous version.
+directory, which follows stuga-plugin's `main`: it learns of the commit from the push webhook, or
+within about 6 hours. The directory scans it and, because it runs a pinned npx package, holds it for
+an Anthropic reviewer. The listing has auto-publish on, so a version the reviewer approves goes live
+by itself; until then the listing serves the previous version.
+[claude.ai/directory/manage](https://claude.ai/directory/manage) shows where each version stands.
 
 npm accepts trusted publishing only for a package that already exists, so the first release's `npm`
 job fails. Publish that version by hand from the tag (`STUGA_VERSION=<version> pnpm --filter
