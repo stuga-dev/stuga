@@ -138,6 +138,11 @@ Stuga is pre-1.0. Only the most recent release gets fixes ([SECURITY.md](SECURIT
 - [docs/import.md](docs/import.md): importing from Notion, Obsidian or a folder of Markdown.
 - [packaging/contract.md](packaging/contract.md): what every packaging of Stuga provides.
 
+## Questions and feedback
+
+Ask a question or share an idea in [Discussions](https://github.com/stuga-dev/stuga/discussions);
+report a bug as an [issue](https://github.com/stuga-dev/stuga/issues/new?template=bug.md).
+
 ## Contributing
 
 Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers running Stuga from

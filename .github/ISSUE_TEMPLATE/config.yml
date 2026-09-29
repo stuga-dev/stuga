@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Question or idea
+    url: https://github.com/stuga-dev/stuga/discussions
+    about: Ask, suggest or share in Discussions.
   - name: Security vulnerability
     url: https://github.com/stuga-dev/stuga/security/advisories/new
     about: Report privately. Never in a public issue — see SECURITY.md.

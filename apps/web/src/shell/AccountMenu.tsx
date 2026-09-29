@@ -1,4 +1,4 @@
-/** The avatar menu: who is signed in, their profile, and Sign out. */
+/** The avatar menu: who is signed in, their profile, where to get help, and Sign out. */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Popover } from "@astryxdesign/core/Popover";
@@ -9,10 +9,13 @@ import { Divider } from "@astryxdesign/core/Divider";
 import { Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/VStack";
-import { LogOut, UserRound } from "lucide-react";
+import { LifeBuoy, LogOut, UserRound } from "lucide-react";
 import { Me } from "../api";
 import { getDisplayName } from "../lib/http/client";
 import { logout } from "../lib/session/tokens";
+
+// A plain link: the node sends nothing to us, so help starts from the person.
+const DISCUSSIONS_URL = "https://github.com/stuga-dev/stuga/discussions";
 
 interface AccountIdentity {
   name: string | null;
@@ -93,6 +96,16 @@ export function AccountMenu() {
               label="Profile"
               startContent={<UserRound size={16} />}
               onClick={() => go("/settings/profile")}
+            />
+          </List>
+          <Divider />
+          <List>
+            <Item
+              as="li"
+              label="Help and feedback"
+              startContent={<LifeBuoy size={16} />}
+              href={DISCUSSIONS_URL}
+              target="_blank"
             />
           </List>
           <Divider />
