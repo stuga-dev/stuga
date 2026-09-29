@@ -44,6 +44,11 @@ node_darwin_arm64_url() {
   printf 'https://nodejs.org/dist/v%s/node-v%s-darwin-arm64.tar.gz' "$NODE_VERSION" "$NODE_VERSION"
 }
 
+# go_url <os-arch>, such as darwin-arm64
+go_url() {
+  printf 'https://go.dev/dl/go%s.%s.tar.gz' "$GO_VERSION" "$1"
+}
+
 # cached_postgres_tree: prints the path of an assembled Postgres tree for the current pins,
 # assembling it on first use. Keyed by the input checksums, so a re-pinned asset rebuilds.
 cached_postgres_tree() {
