@@ -66,6 +66,7 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
       <SectionStatusBanners status={status} />
       <VStack gap={3}>
         <Heading level={2}>Disk</Heading>
+        <Text type="supporting" color="secondary">What this node takes, and what is left on its disk.</Text>
         {disk ? (
           <MetadataList columns="single" label={{ position: "start" }}>
             <MetadataListItem label="Database">{byteSize(disk.database_bytes)}</MetadataListItem>

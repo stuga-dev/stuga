@@ -88,7 +88,7 @@ const BACKUPS: NodeBackups = {
   attempted_at: "2026-09-23T03:00:00Z",
   error: null,
   dir: "/backups",
-  keep: 7,
+  keep: 3,
   backups: [
     { name: "2026-09-23T030001Z", created_at: "2026-09-23T03:00:01Z", bytes: 12 * 1024 * 1024, stuga_version: "1.9.0", before_upgrade: false },
     { name: "2026-09-22T101500Z", created_at: "2026-09-22T10:15:00Z", bytes: 11 * 1024 * 1024, stuga_version: "1.8.0", before_upgrade: true },
@@ -118,7 +118,7 @@ const OPS: NodeOperationalSettings = {
   },
   branding: { accent_color: null },
   updates: { check: true },
-  backups: { auto: true, hour: 3, weekday: null, keep: 7 },
+  backups: { auto: true, hour: 3, weekday: null, keep: 3 },
   time_zone: "UTC",
   search: { languages: [], choices: ["ko", "ar"], rebuilding: false, error: null },
   identity_provider: {
@@ -827,20 +827,20 @@ describe("NodeSettingsPage", () => {
 
   it("lists the node's backups, one taken before an upgrade marked so, how much they take and where", async () => {
     await mount("backups");
-    expect(host.textContent).toContain("23 MB in /backups.");
+    expect(host.textContent).toContain("23 MB in /backups");
     expect(host.textContent).toContain("12 MB");
-    expect(host.textContent).toContain("before upgrading from 1.8.0");
+    expect(host.textContent).toContain("Before upgrading from 1.8.0");
     expect(host.textContent).toContain("Next: ");
   });
 
   it("turns the scheduled backup off, and moves its hour", async () => {
     nodeApi.saveSettings.mockResolvedValue({ ...OPS, backups: { ...OPS.backups, auto: false } });
     await mount("backups");
-    await flip("Back up automatically");
+    await flip("Scheduled backup");
     expect(nodeApi.saveSettings).toHaveBeenLastCalledWith({ backups: { auto: false } });
 
     nodeApi.saveSettings.mockResolvedValue({ ...OPS, backups: { ...OPS.backups, hour: 22 } });
-    await flip("Back up automatically");
+    await flip("Scheduled backup");
     await choose("At", "22:00");
     expect(nodeApi.saveSettings).toHaveBeenLastCalledWith({ backups: { hour: 22 } });
   });
@@ -859,6 +859,12 @@ describe("NodeSettingsPage", () => {
     nodeApi.saveSettings.mockResolvedValue(OPS);
     await choose("Repeat", "Every day");
     expect(nodeApi.saveSettings).toHaveBeenLastCalledWith({ backups: { weekday: null } });
+  });
+
+  it("says the backup from before an upgrade stays when it is past the number kept", async () => {
+    nodeApi.settings.mockResolvedValue({ ...OPS, backups: { ...OPS.backups, keep: 1 } });
+    await mount("backups");
+    expect(host.textContent).toContain("Before upgrading from 1.8.0 · kept until the next upgrade");
   });
 
   it("sets how many backups are kept", async () => {

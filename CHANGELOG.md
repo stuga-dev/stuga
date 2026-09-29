@@ -22,7 +22,7 @@ its first section, are its summary: the release notes show that and link here fo
   and serves the address on a second listener, so the LAN address and everyone's sessions stay as
   they are. What the node sends the service is in [docs/remote-access.md](docs/remote-access.md).
 - **Weekly backups, and how many to keep**, in **Settings → This node → Backups**: the scheduled
-  backup runs every day or once a week on a chosen day, and the page sets how many are kept (7
+  backup runs every day or once a week on a chosen day, and the page sets how many are kept (3
   unless changed). The newest backup taken before an upgrade is kept beyond that number.
 - **Disk** in **Settings → This node → Storage**: what the database, the files and the backups take,
   and what is left.

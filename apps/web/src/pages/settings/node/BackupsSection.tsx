@@ -24,6 +24,9 @@ const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
   label,
 }));
 
+/** One width for every field on the page, so they line up whichever are shown. */
+const FIELD_WIDTH = 160;
+
 /** The weekday a backup that becomes weekly starts on. */
 const FIRST_WEEKDAY = 0;
 
@@ -113,6 +116,8 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
   const zone = ops.time_zone;
   const { auto, hour, weekday, keep } = ops.backups;
   const newest = state?.backups[0] ?? null;
+  /** Kept beyond `keep`, as the node's retention keeps it: what a downgrade restores. */
+  const lastUpgrade = state?.backups.find((b) => b.before_upgrade) ?? null;
   const total = state?.backups.reduce((sum, b) => sum + b.bytes, 0) ?? 0;
 
   return (
@@ -123,21 +128,27 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
       )}
 
       <VStack gap={3}>
-        <Heading level={2}>Scheduled backup</Heading>
-        <Text type="supporting" color="secondary">
-          The node pauses for a moment while it backs up.
-        </Text>
-        <Switch
-          label="Back up automatically"
-          value={auto}
-          isDisabled={busy !== ""}
-          isLoading={busy === "switch"}
-          onChange={(v: boolean) => void save("switch", { backups: { auto: v } })}
-        />
+        <HStack hAlign="between" vAlign="center" gap={3}>
+          <VStack gap={0}>
+            <Heading level={2}>Scheduled backup</Heading>
+            <Text type="supporting" color="secondary">
+              The node pauses for a moment while it backs up.
+            </Text>
+          </VStack>
+          <Switch
+            label="Scheduled backup"
+            isLabelHidden
+            value={auto}
+            isDisabled={busy !== ""}
+            isLoading={busy === "switch"}
+            onChange={(v: boolean) => void save("switch", { backups: { auto: v } })}
+          />
+        </HStack>
         {auto && (
           <HStack gap={3} vAlign="end" wrap="wrap">
             <Selector
               label="Repeat"
+              width={FIELD_WIDTH}
               value={weekday === null ? "day" : "week"}
               options={REPEAT}
               isDisabled={busy !== ""}
@@ -146,6 +157,7 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
             {weekday !== null && (
               <Selector
                 label="On"
+                width={FIELD_WIDTH}
                 value={String(weekday)}
                 options={WEEKDAYS}
                 isDisabled={busy !== ""}
@@ -154,12 +166,19 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
             )}
             <Selector
               label="At"
-              description={zone}
+              width={FIELD_WIDTH}
               value={String(hour)}
               options={HOURS}
               isDisabled={busy !== ""}
               onChange={(v) => void save("hour", { backups: { hour: Number(v) } })}
             />
+          </HStack>
+        )}
+        {auto && (
+          <HStack gap={2} vAlign="center" wrap="wrap">
+            <Text type="supporting" color="secondary">
+              {state?.next_at ? `Next: ${versionLabel(state.next_at)} · ${zone}` : zone}
+            </Text>
             {here && here !== zone && (
               <Button
                 label={`Use ${here}`}
@@ -172,27 +191,16 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
             )}
           </HStack>
         )}
-        {state?.next_at && (
-          <Text type="supporting" color="secondary">
-            Next: {versionLabel(state.next_at)}
-          </Text>
-        )}
       </VStack>
 
       <VStack gap={3}>
-        <Heading level={2}>Backups</Heading>
-        <Text type="supporting" color="secondary">
-          {state ? (state.backups.length > 0 ? `${byteSize(total)} in ${state.dir}.` : `In ${state.dir}.`) : " "}
-        </Text>
-        <Selector
-          label="Keep"
-          description="Also the newest one taken before an upgrade."
-          value={String(keep)}
-          options={keepOptions(keep)}
-          isDisabled={busy !== ""}
-          onChange={(v) => void save("keep", { backups: { keep: Number(v) } })}
-        />
-        <HStack gap={2}>
+        <HStack hAlign="between" vAlign="center" gap={3}>
+          <VStack gap={0}>
+            <Heading level={2}>Backups</Heading>
+            <Text type="supporting" color="secondary">
+              {state ? (state.backups.length > 0 ? `${byteSize(total)} in ${state.dir}` : state.dir) : " "}
+            </Text>
+          </VStack>
           <Button
             label={waiting ? "Backing up…" : "Back up now"}
             variant="secondary"
@@ -202,6 +210,14 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
             onClick={() => void backUpNow()}
           />
         </HStack>
+        <Selector
+          label="Keep"
+          width={FIELD_WIDTH}
+          value={String(keep)}
+          options={keepOptions(keep)}
+          isDisabled={busy !== ""}
+          onChange={(v) => void save("keep", { backups: { keep: Number(v) } })}
+        />
         {state?.waiting && (
           <Text type="supporting" color="secondary">
             Waiting to back up: {state.waiting}.
@@ -214,19 +230,27 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
         )}
         {state && state.backups.length > 0 && (
           <List hasDividers density="compact">
-            {state.backups.map((b) => (
-              <ListItem
-                key={b.name}
-                label={versionLabel(b.created_at)}
-                description={[
-                  byteSize(b.bytes),
-                  b.before_upgrade ? `before upgrading from ${b.stuga_version ?? "an earlier version"}` : null,
-                  b === newest ? relativeTime(b.created_at) : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              />
-            ))}
+            {state.backups.map((b) => {
+              const note = [
+                b === newest ? relativeTime(b.created_at) : null,
+                b.before_upgrade ? `Before upgrading from ${b.stuga_version ?? "an earlier version"}` : null,
+                b === lastUpgrade && state.backups.indexOf(b) >= keep ? "kept until the next upgrade" : null,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              return (
+                <ListItem
+                  key={b.name}
+                  label={versionLabel(b.created_at)}
+                  description={note || undefined}
+                  endContent={
+                    <Text type="supporting" color="secondary">
+                      {byteSize(b.bytes)}
+                    </Text>
+                  }
+                />
+              );
+            })}
           </List>
         )}
       </VStack>

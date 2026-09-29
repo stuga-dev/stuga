@@ -198,7 +198,7 @@ interface SettingsCandidate {
   brandAccentColor: string | null;
   /** Null takes the default, which looks for a newer version. */
   updateCheck: boolean | null;
-  /** Null takes the defaults: on, every day, at 3, keeping 7. */
+  /** Null takes the defaults: on, every day, at 3, keeping 3. */
   backupAuto: boolean | null;
   backupHour: number | null;
   backupWeekday: number | null;

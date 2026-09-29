@@ -95,7 +95,7 @@ function ctx(nodeName: string | null = null, search = searchLanguages()): Ctx {
           notify: { sink: "none" },
           branding: { accentColor: null },
           updateCheck: true,
-          backups: { auto: true, hour: 3, weekday: null, keep: 7 },
+          backups: { auto: true, hour: 3, weekday: null, keep: 3 },
           timeZone: "UTC",
           identityProvider: null,
         }),

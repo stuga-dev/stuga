@@ -109,7 +109,7 @@ export interface ResolvedNodeSettings {
   updateCheck: boolean;
   /**
    * The scheduled backup: on unless an administrator turned it off, every day at 3:00 unless they
-   * chose another hour or a weekday (0 is Sunday), keeping the newest 7 unless they chose a number.
+   * chose another hour or a weekday (0 is Sunday), keeping the newest 3 unless they chose a number.
    */
   backups: { auto: boolean; hour: number; weekday: number | null; keep: number };
   /** The node's time zone for scheduled work, an IANA name; UTC until setup or an administrator names one. */
@@ -120,8 +120,11 @@ export interface ResolvedNodeSettings {
 /** The hour the scheduled backup starts when nobody chose one: the small hours, when nobody is working. */
 export const DEFAULT_BACKUP_HOUR = 3;
 
-/** How many backups are kept when nobody chose a number: a week of daily ones. */
-export const DEFAULT_BACKUP_KEEP = 7;
+/**
+ * How many backups are kept when nobody chose a number: three days of daily ones, each a whole copy
+ * on the node's own disk. Older history belongs off the machine, in Time Machine on a Mac.
+ */
+export const DEFAULT_BACKUP_KEEP = 3;
 
 /** The most backups an administrator may keep: each is a whole copy, on the node's own disk. */
 export const MAX_BACKUP_KEEP = 100;

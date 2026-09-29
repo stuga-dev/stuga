@@ -49,7 +49,7 @@ somewhere else as well.
 
 A running node backs itself up every day at 03:00 in its time zone, unless an administrator makes it
 weekly, on a day they pick, or picks another hour under **Settings → This node → Backups**. The
-same page sets how many backups are kept, 7 unless changed; each is a whole copy of both halves,
+same page sets how many backups are kept, 3 unless changed; each is a whole copy of both halves,
 and **Storage** shows what they take together. The time zone is the one the browser was in at
 first-run setup, and **Backups** can change it. **Back up now** there takes one at once, and the page
 lists the backups the node keeps.

@@ -613,7 +613,7 @@ CREATE TABLE node_settings (
     -- Whether the node looks for a newer version once a day; NULL looks.
     update_check              BOOLEAN,
     -- The scheduled backup: whether it runs (NULL runs), the hour it starts in time_zone (NULL is 3),
-    -- the weekday of a weekly one (0 is Sunday; NULL backs up every day), and how many are kept (NULL is 7).
+    -- the weekday of a weekly one (0 is Sunday; NULL backs up every day), and how many are kept (NULL is 3).
     backup_auto               BOOLEAN,
     backup_hour               SMALLINT CHECK (backup_hour IS NULL OR backup_hour BETWEEN 0 AND 23),
     backup_weekday            SMALLINT CHECK (backup_weekday IS NULL OR backup_weekday BETWEEN 0 AND 6),
