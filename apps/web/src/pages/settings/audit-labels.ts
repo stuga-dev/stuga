@@ -45,6 +45,7 @@ export const ACTION_LABEL: Record<string, string> = {
   "node.identity.link": "Identity provider linked",
   "node.identity.unlink": "Identity provider unlinked",
   "node.password_reset.mint": "Password reset link created",
+  "node.remote_access.connector_retry": "Remote access connector retried",
   "node.remote_access.disable": "Remote access turned off",
   "node.remote_access.enable": "Remote access turned on",
   "node.settings.notify_test": "Notification test sent",

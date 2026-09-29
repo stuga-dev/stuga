@@ -132,7 +132,9 @@ const { createServingGate } = await import("../http/serving-gate.js");
 const { startFakeRemoteService } = await import("./testing/fake-service.js");
 const { writeCertificate } = await import("./certificates.js");
 import { makeTestCert } from "../testing/cert.js";
+import type { ConnectorHints } from "../config/env.js";
 import type { FakeRemoteService } from "./testing/fake-service.js";
+import type { ProbeResult } from "./probe.js";
 import type { RemoteAccess, RemoteTiming } from "./service.js";
 
 const sql = { begin: async (fn: (tx: unknown) => Promise<unknown>) => fn(sql) };
@@ -143,17 +145,26 @@ let remoteDir: string;
 let dataDir: string;
 const services: RemoteAccess[] = [];
 
-/** The address always answers the self-check: nothing here goes through a relay. */
-function service(opts: { publicOrigin?: string; timing?: Partial<RemoteTiming> } = {}): RemoteAccess {
+/** The address always answers the self-check, unless told otherwise: nothing here goes through a relay. */
+function service(
+  opts: {
+    publicOrigin?: string;
+    timing?: Partial<RemoteTiming>;
+    connector?: ConnectorHints;
+    probe?: () => Promise<ProbeResult>;
+    now?: () => number;
+  } = {},
+): RemoteAccess {
   const s = createRemoteAccess({
     sql: sql as never,
     env: { publicOrigin: opts.publicOrigin ?? "http://livs-air.local:8787" },
-    config: { service: fake.url, dir: remoteDir, dataDir },
+    config: { service: fake.url, dir: remoteDir, dataDir, connector: opts.connector },
     gate: createServingGate(),
     readsOwnBody: () => false,
     maxBodyBytes: () => 1 << 20,
-    probe: async () => ({ ok: true }),
+    probe: opts.probe ?? (async () => ({ ok: true })),
     ...(opts.timing ? { timing: opts.timing } : {}),
+    ...(opts.now ? { now: opts.now } : {}),
     onError: () => {},
   });
   services.push(s);
@@ -174,10 +185,11 @@ async function until(what: string, fn: () => boolean, timeoutMs = 5_000): Promis
 }
 
 /** Bound and on, with a day's certificate for its address on disk: what the service loop needs. */
-async function bound(): Promise<RemoteAccess> {
-  const s = service();
+async function bound(opts: Parameters<typeof service>[0] & { certFor?: { notBefore: Date; notAfter: Date } } = {}): Promise<RemoteAccess> {
+  const { certFor, ...rest } = opts;
+  const s = service(rest);
   await s.enable({ code: fake.mintCode("enroll"), acceptCaTerms: true, by: "liv" });
-  const cert = makeTestCert({ dnsNames: [memory.row().hostname as string] });
+  const cert = makeTestCert({ dnsNames: [memory.row().hostname as string], ...certFor });
   await writeCertificate(dataDir, cert.privateKey, cert.cert);
   return s;
 }
@@ -477,5 +489,191 @@ describe("the service loop", () => {
     await restarted.start();
     await until("the error cleared", () => lastError() === null);
     expect(fake.requests.at(-1)).toMatchObject({ path: "/v1/checkin", status: 200 });
+  });
+});
+
+describe("where the packaging runs the connector", () => {
+  let hints: ConnectorHints;
+  /** This node's clock and the fake service's, moved together. */
+  let shift = 0;
+  const clock = () => Date.now() + shift;
+  const CONNECTOR_SHA = "c".repeat(64);
+
+  beforeEach(async () => {
+    shift = 0;
+    await fake.close();
+    fake = await startFakeRemoteService({ acmeDirectory: "https://ca.stuga.test/dir", zone: "mystuga.com", now: clock });
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(work, "requests"), { recursive: true });
+    mkdirSync(join(work, "status"), { recursive: true });
+    hints = { request: join(work, "requests", "remote"), status: join(work, "status", "remote.json") };
+  });
+
+  const request = () => (existsSync(hints.request) ? readFileSync(hints.request, "utf8").trim() : null);
+  const on = () => `on ${memory.row().connector_config_sha256 as string}`;
+
+  /** The helper's answer to the request as it stands; `ago` puts it that long before now. */
+  function helper(state: string, over: { message?: string; ago?: number } = {}) {
+    const line = request() ?? "off";
+    writeFileSync(
+      hints.status,
+      JSON.stringify({
+        state,
+        message: over.message ?? "",
+        at: new Date(clock() - (over.ago ?? 0)).toISOString(),
+        connector_sha: CONNECTOR_SHA,
+        config_sha: line.startsWith("on ") ? line.slice(3) : null,
+      }),
+    );
+  }
+
+  function managed(opts: { probe?: () => Promise<ProbeResult>; timing?: Partial<RemoteTiming>; certFor?: { notBefore: Date; notAfter: Date } } = {}) {
+    return bound({
+      connector: hints,
+      now: clock,
+      ...(opts.probe ? { probe: opts.probe } : {}),
+      ...(opts.certFor ? { certFor: opts.certFor } : {}),
+      timing: { serviceTickMs: 100, connectorPollMs: 20, probeDelayMs: 10, ...opts.timing },
+    });
+  }
+
+  it("asks for off until there is a credential in the connector's files, and for on then, without waiting for a tick", async () => {
+    const s = await managed({ timing: { serviceTickMs: 60_000 } });
+    expect(request()).toBe("off");
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    expect(request()).toBe(on());
+    expect(existsSync(join(remoteDir, "relay-1.jwt"))).toBe(true);
+    expect(readFileSync(join(remoteDir, "relay-1.toml"), "utf8")).toContain('log.level = "warn"');
+    const status = await s.status();
+    expect(status).toMatchObject({ state: "starting", connector: { managed: true, status: null, config_path: null } });
+  });
+
+  it("holds the first self-check until the connector runs these settings, then makes it within seconds", async () => {
+    let probes = 0;
+    const s = await managed({
+      probe: async () => {
+        probes += 1;
+        return { ok: true };
+      },
+    });
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    helper("installing", { message: "Downloading the connector." });
+    await sleep(400);
+    expect(probes).toBe(0);
+    expect(lastError()).toBeNull();
+    expect(await s.status()).toMatchObject({ state: "starting", connector: { status: { state: "installing" } } });
+
+    // Running an older config is not running this one.
+    writeFileSync(hints.status, JSON.stringify({ state: "running", message: "", at: new Date(clock()).toISOString(), config_sha: "d".repeat(64) }));
+    await sleep(200);
+    expect(probes).toBe(0);
+
+    helper("running");
+    const started = Date.now();
+    await until("the self-check", () => probes === 1);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    await until("on", () => memory.row().probe_ok_at !== null);
+    expect(await s.status()).toMatchObject({ state: "on", connector: { managed: true, status: { state: "running" }, reachable: true } });
+  });
+
+  it("asks for off once turning off has removed the connector's files", async () => {
+    const s = await managed();
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    await s.disable("liv");
+    expect(request()).toBe("off");
+    expect(existsSync(join(remoteDir, "relay-1.jwt"))).toBe(false);
+    expect(existsSync(join(remoteDir, "relay-1.toml"))).toBe(false);
+  });
+
+  it("asks once at every start, whatever it asked before", async () => {
+    const s = await managed({ timing: { serviceTickMs: 60_000 } });
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    const line = request();
+    await s.stop();
+    rmSync(hints.request);
+    const restarted = service({ connector: hints, now: clock, timing: { serviceTickMs: 60_000 } });
+    await restarted.start();
+    // The credential in the connector's files is still good: on again straight away, not after a check-in.
+    expect(request()).toBe(line);
+  });
+
+  it("takes the tunnel down when the certificate stops serving the address, and brings it back with a new one", async () => {
+    const t = Date.now();
+    const s = await managed({
+      timing: { certTickMs: 60_000 },
+      certFor: { notBefore: new Date(t - 60_000), notAfter: new Date(t + 60 * 60_000) },
+    });
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    await until("the credential in the row", () => memory.row().credential_expires_at !== null);
+    helper("running");
+
+    shift = 2 * 60 * 60_000;
+    await until("off", () => request() === "off");
+    await until("the credential gone", () => memory.row().credential_expires_at === null);
+    expect(existsSync(join(remoteDir, "relay-1.jwt"))).toBe(false);
+    // The rest stays for when it comes back.
+    expect(existsSync(join(remoteDir, "relay-1.toml"))).toBe(true);
+    helper("stopped");
+    const expired = await s.status();
+    expect(expired).toMatchObject({ state: "degraded", last_error: { code: "certificate_expired" } });
+
+    // A new certificate: a credential first, then on.
+    const heard = fake.issuedCredentials.length;
+    const renewed = makeTestCert({
+      dnsNames: [memory.row().hostname as string],
+      notBefore: new Date(clock() - 60_000),
+      notAfter: new Date(clock() + 24 * 60 * 60_000),
+    });
+    await writeCertificate(dataDir, renewed.privateKey, renewed.cert);
+    s.kick();
+    await until("on again", () => request()?.startsWith("on ") ?? false);
+    expect(fake.issuedCredentials.length).toBe(heard + 1);
+    expect(readFileSync(join(remoteDir, "relay-1.jwt"), "utf8")).toBe(`${fake.issuedCredentials.at(-1)!.credential}\n`);
+  });
+
+  it("shows a refusal until an administrator retries, and never asks again by itself", async () => {
+    const s = await managed();
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    const line = request();
+    helper("refused", { message: "The connector's signature isn't Stuga's." });
+    expect(await s.status()).toMatchObject({
+      state: "error",
+      last_error: { code: "connector_refused", message: "The connector's signature isn't Stuga's." },
+      connector: { status: { state: "refused" } },
+    });
+    // Kept out of the row: it goes when the status does.
+    expect(lastError()).toBeNull();
+
+    rmSync(hints.request);
+    await sleep(400);
+    expect(request()).toBeNull();
+
+    // An answer from before the retry is no answer to it.
+    helper("refused", { message: "The connector's signature isn't Stuga's.", ago: 2_000 });
+    const retried = await s.retryConnector("liv");
+    expect(request()).toBe(line);
+    expect(retried).toMatchObject({ state: "starting", last_error: null });
+  });
+
+  it("shows a failure the packaging retries, with when the node asks again", async () => {
+    const s = await managed();
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    helper("failed", { message: "Couldn't download the connector." });
+    const status = await s.status();
+    expect(status).toMatchObject({ state: "degraded", last_error: { code: "connector_failed", message: "Couldn't download the connector." } });
+    if (!status.available) throw new Error("unavailable");
+    expect(Date.parse(status.last_error!.retry_at!)).toBeGreaterThan(clock());
+  });
+
+  it("refuses a retry where the packaging does not run the connector", async () => {
+    const s = service();
+    expect(await refusal(s.retryConnector("liv"))).toMatchObject({ status: 409, code: "unavailable" });
   });
 });

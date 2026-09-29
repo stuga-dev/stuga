@@ -391,4 +391,6 @@ export const NodeSettings = {
     api<RemoteAccessStatus>("/api/node/remote-access/enable", { method: "POST", body: JSON.stringify(input) }),
   /** Turn it off, keeping the address. */
   disableRemoteAccess: () => api<RemoteAccessStatus>("/api/node/remote-access/disable", { method: "POST" }),
+  /** Ask the packaging again for the connector it refused; answers like the GET. */
+  retryRemoteConnector: () => api<RemoteAccessStatus>("/api/node/remote-access/connector/retry", { method: "POST" }),
 };

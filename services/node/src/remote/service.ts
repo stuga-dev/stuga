@@ -28,7 +28,8 @@ import {
   type NodeRemoteAccessRow,
   type StoredRemoteError,
 } from "@stuga/db";
-import type { RemoteAccessStatus } from "@stuga/protocol/api/remote-access";
+import type { ConnectorStatus, RemoteAccessStatus } from "@stuga/protocol/api/remote-access";
+import type { ConnectorHints } from "../config/env.js";
 import type { NodeEnv, RemoteAccessView } from "../env.js";
 import { applyRemoteHeaders, withRemoteHeaders, withSecurityHeaders } from "../http/security-headers.js";
 import type { ServingGate } from "../http/serving-gate.js";
@@ -46,6 +47,7 @@ import {
   writeCertificate,
   type LoadedCert,
 } from "./certificates.js";
+import { createConnectorControl, type ConnectorLine } from "./connector.js";
 import {
   clampNextCheckin,
   clampRefreshAt,
@@ -60,7 +62,7 @@ import {
 } from "./credential.js";
 import { systemChallengeResolver, waitForTxt, type ChallengeResolver } from "./dns-check.js";
 import { ensureRemoteDir, RemoteDirError, SOCKET_NAME } from "./files.js";
-import { removeConnectorFiles, writeConnectorFiles, writeTokenFiles } from "./frpc-config.js";
+import { removeConnectorFiles, removeTokenFiles, writeConnectorFiles, writeTokenFiles } from "./frpc-config.js";
 import {
   generateP256,
   pendingBindingKey,
@@ -84,6 +86,8 @@ export interface RemoteTiming {
   probeRefreshSpacingMs: number;
   issuanceTimeoutMs: number;
   enableTimeoutMs: number;
+  /** How often the connector's status is read while it is asked on and not yet running. */
+  connectorPollMs: number;
 }
 
 const DEFAULT_TIMING: RemoteTiming = {
@@ -95,13 +99,17 @@ const DEFAULT_TIMING: RemoteTiming = {
   probeRefreshSpacingMs: DEFAULT_PROBE_REFRESH_SPACING_MS,
   issuanceTimeoutMs: 10 * 60_000,
   enableTimeoutMs: 25_000,
+  connectorPollMs: 5_000,
 };
 
 export interface RemoteAccessDeps {
   sql: Sql;
   env: Pick<NodeEnv, "publicOrigin">;
-  /** The packaging's hints, and the data directory the keys and the certificate live under. */
-  config: { service: string; dir: string; dataDir: string };
+  /**
+   * The packaging's hints, and the data directory the keys and the certificate live under.
+   * `connector` is there where the packaging runs the connector.
+   */
+  config: { service: string; dir: string; dataDir: string; connector?: ConnectorHints | undefined };
   /** The LAN's gate: the remote listener serves and pauses with it. */
   gate: ServingGate;
   readsOwnBody: (method: string, path: string) => boolean;
@@ -128,6 +136,8 @@ export interface RemoteAccess {
   status(): Promise<RemoteAccessStatus>;
   enable(input: { code?: string; acceptCaTerms: true; by: string }): Promise<EnableResult>;
   disable(by: string): Promise<RemoteAccessStatus>;
+  /** Ask the packaging again for the connector it refused; refused where the packaging does not run it. */
+  retryConnector(by: string): Promise<RemoteAccessStatus>;
   /** Check in and look at the certificate now, rather than when next due. */
   kick(): void;
 }
@@ -197,11 +207,19 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   const client = createServiceClient({ now });
   const locked = createLock();
   const directories = new Map<string, { directory: AcmeDirectory; at: number }>();
+  const connector = config.connector ? createConnectorControl({ hints: config.connector, now, onError }) : null;
 
   let row: NodeRemoteAccessRow | null = null;
   /** The certificate the listener serves: the last good one, even while the file is being replaced. */
   let cert: LoadedCert | null = null;
   let credential: HeldCredential | null = null;
+  /** The credential is in the connector's token files. */
+  let jwtOnDisk = false;
+  /** Whether the shared directory was usable when last checked. */
+  let dirUsable = false;
+  /** The settings the packaging's connector was last seen running, by their sha-256; null when not running. */
+  let connectorRunningFor: string | null = null;
+  let connectorWatched = false;
   let listener: RemoteListener | null = null;
   let listenerHost: string | null = null;
   let listenerSerial: string | null = null;
@@ -303,8 +321,22 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
 
   // ---- the listener ----------------------------------------------------------
 
-  /** Open while on with a certificate that serves the hostname, closed otherwise. Under the lock. */
+  /**
+   * The listener, the credential and the connector in line with the state: without a certificate
+   * that serves the hostname there is no listener, no credential and no tunnel. Under the lock.
+   */
   async function syncListener(dirOk: boolean): Promise<void> {
+    dirUsable = dirOk;
+    const r = row;
+    if (r?.enabled && !certUsable(cert, r.hostname, now()) && (credential || jwtOnDisk || r.credential_expires_at)) {
+      await dropCredential(r);
+    }
+    await syncSocket(dirOk);
+    await syncConnector();
+  }
+
+  /** Open while on with a certificate that serves the hostname, closed otherwise. Under the lock. */
+  async function syncSocket(dirOk: boolean): Promise<void> {
     const r = row;
     const want = r !== null && r.enabled && dirOk && certUsable(cert, r.hostname, now());
     if (!want) {
@@ -351,6 +383,75 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     listenerHost = null;
     listenerSerial = null;
     if (open) await open.close();
+  }
+
+  /**
+   * The connector asked off, then the credential gone from its files, the row and memory: a new one
+   * comes once a certificate serves the hostname again, and only then is the connector asked on.
+   * Under the lock.
+   */
+  async function dropCredential(r: NodeRemoteAccessRow): Promise<void> {
+    jwtOnDisk = false;
+    await syncConnector();
+    await removeTokenFiles(config.dir, r.relays.map((relay) => relay.name)).catch(() => {});
+    credential = null;
+    await recordRemoteCredential(sql, { issuedAt: null, expiresAt: null, refreshAt: null });
+    await refreshRow();
+  }
+
+  // ---- the connector, where the packaging runs it ------------------------------
+
+  /** On with the current settings once there is a certificate, a credential in its files and settings to run; off otherwise. */
+  function connectorLine(): ConnectorLine {
+    const r = row;
+    const current = held();
+    const sha = r?.connector_config_sha256 ?? null;
+    const on =
+      r !== null &&
+      r.enabled &&
+      dirUsable &&
+      r.relays.length > 0 &&
+      sha !== null &&
+      certUsable(cert, r.hostname, now()) &&
+      current !== null &&
+      current.exp > now() &&
+      jwtOnDisk;
+    return on ? `on ${sha}` : "off";
+  }
+
+  /** Ask for the connector the state allows, at once when that changed. Under the lock. */
+  async function syncConnector(opts: { force?: boolean } = {}): Promise<void> {
+    if (!connector) return;
+    await connector.want(connectorLine(), opts);
+    watchConnector();
+  }
+
+  /** Take in the connector's status, read by `read`: once it runs the current settings, the self-check follows. */
+  async function observeConnector(read: () => Promise<ConnectorStatus | null>): Promise<void> {
+    if (!connector) return;
+    await read();
+    const sha = row?.connector_config_sha256 ?? null;
+    const running = connector.running(sha);
+    // Started, or restarted on new settings: the self-check within seconds.
+    if (running && connectorRunningFor !== sha) {
+      probeDueAt = now();
+      serviceLoop?.kick();
+    }
+    connectorRunningFor = running ? sha : null;
+    watchConnector();
+  }
+
+  /** Whether the packaging's connector was last seen running the current settings. */
+  const connectorRunsCurrent = (): boolean => connectorRunningFor !== null && connectorRunningFor === row?.connector_config_sha256;
+
+  /** While asked on and not yet running, the status is read every few seconds rather than every tick. */
+  function watchConnector(): void {
+    if (!connector || connectorWatched || stopped || connectorRunsCurrent() || !connector.line()?.startsWith("on ")) return;
+    connectorWatched = true;
+    later(timing.connectorPollMs, () => {
+      connectorWatched = false;
+      observeConnector(connector.read).catch(onError);
+    });
   }
 
   /** Check the directory, then bring the listener in line; under the lock. */
@@ -422,6 +523,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
         hostname: answer.node.hostname,
         relays: answer.relays,
         previous: before.relays,
+        logLevel: connector ? "warn" : "info",
       });
       if (sha256 !== row!.connector_config_sha256) await recordRemoteConnectorConfig(sql, { sha256, changedAt: at });
       const names = (relays: readonly { name: string }[]) => relays.map((relay) => relay.name).join(",");
@@ -461,7 +563,10 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
           const claims = credentialClaims(issued.credential);
           const firstCredential = credential === null;
           credential = { jwt: issued.credential, iat: claims?.iat ?? issued.issued_at, exp: claims?.exp ?? issued.expires_at };
-          if (await checkDir()) await writeTokenFiles(config.dir, row.relays, issued.credential);
+          if (await checkDir()) {
+            await writeTokenFiles(config.dir, row.relays, issued.credential);
+            jwtOnDisk = true;
+          }
           await recordRemoteCredential(sql, {
             issuedAt: new Date(local(issued.issued_at)),
             expiresAt: new Date(local(issued.expires_at)),
@@ -472,6 +577,8 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
           if (reason === "probe") lastProbeRefreshAt = lastRefreshAt;
           refreshWanted = false;
           if (firstCredential) scheduleProbe(timing.probeDelayMs);
+          // The connector may run now: asked here, not at the next tick.
+          await syncConnector();
         });
         return;
       } catch (e) {
@@ -494,6 +601,8 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     if (!r?.enabled || !listener || !cert || !r.hostname) return;
     const current = held();
     if (!current || current.exp <= now()) return;
+    // The packaging's connector not yet running these settings: nothing to check, and no failure.
+    if (connector && !connectorRunsCurrent()) return;
     if (probeDueAt !== null && now() < probeDueAt) return;
     probeDueAt = now() + timing.probeEveryMs;
     const result = await probe(r.hostname, cert.spkiSha256);
@@ -516,6 +625,17 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
 
   async function serviceTick(): Promise<void> {
     if (stopped) return;
+    await serviceWork();
+    if (!connector || stopped) return;
+    // Settings a check-in just changed are asked for now; then, while the packaging has not done what
+    // was asked, again after 1, 5, 15 and 60 minutes.
+    await locked(async () => {
+      await syncConnector();
+      await observeConnector(connector.reconcile);
+    });
+  }
+
+  async function serviceWork(): Promise<void> {
     const gen = generation;
     const r = await refreshRow();
     if (!r.enabled || !r.remote_id || !r.api_url) {
@@ -805,13 +925,25 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       // One a stopped node left behind; the listener removes its own.
       await removeSocketFile(join(config.dir, SOCKET_NAME), { refuseOther: false }).catch(() => {});
       await removeConnectorFiles(config.dir, r.relays.map((relay) => relay.name));
+      jwtOnDisk = false;
       await refreshRow();
+      await syncConnector();
+    });
+    return status();
+  }
+
+  async function retryConnector(_by: string): Promise<RemoteAccessStatus> {
+    if (!connector) throw new RemoteAccessRefusal(409, "unavailable", "The connector isn't run by this node's packaging.");
+    await locked(async () => {
+      await refreshRow();
+      await syncConnector({ force: true });
     });
     return status();
   }
 
   async function status(): Promise<RemoteAccessStatus> {
-    return remoteStatus(await refreshRow(), { dir: config.dir, now: new Date(now()) });
+    const r = await refreshRow();
+    return remoteStatus(r, { dir: config.dir, now: new Date(now()), connector: connector ? await connector.report() : undefined });
   }
 
   const view: RemoteAccessView = {
@@ -832,6 +964,10 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       stopped = false;
       // A check-in first thing, while on.
       checkinWanted = true;
+      // Asked once at every start, whatever was asked before: the packaging compares it with what runs.
+      connector?.reset();
+      connectorRunningFor = null;
+      connectorWatched = false;
       // Whatever is wrong here is the loops' to report and retry: never a reason for the node not to start.
       try {
         const r = await refreshRow();
@@ -839,7 +975,9 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
         const disk = await readCertificate(config.dataDir);
         cert = disk.kind === "ok" ? disk.cert : null;
         credential = await readHeldCredential(config.dir, r.relays);
+        jwtOnDisk = credential !== null;
         if (r.enabled) await locked(settleListener);
+        await locked(() => syncConnector());
       } catch (e) {
         onError(e);
       }
@@ -865,6 +1003,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     status,
     enable,
     disable,
+    retryConnector,
     kick() {
       checkinWanted = true;
       certLoop?.kick();

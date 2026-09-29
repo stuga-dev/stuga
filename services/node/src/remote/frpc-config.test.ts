@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { removeConnectorFiles, renderFrpcToml, tomlString, writeConnectorFiles, writeTokenFiles } from "./frpc-config.js";
+import { removeConnectorFiles, removeTokenFiles, renderFrpcToml, tomlString, writeConnectorFiles, writeTokenFiles } from "./frpc-config.js";
 import type { RelayEntry } from "./service-client.js";
 
 const RELAY: RelayEntry = {
@@ -56,6 +56,17 @@ describe("the connector's config", () => {
     expect(renderFrpcToml({ relay: RELAY, id: "k7f3q2", hostname: "k7f3q2.mystuga.com", dir: "/Users/liv/.stuga-remote" })).toBe(GOLDEN);
   });
 
+  it("logs warnings only where the packaging runs the connector, and the hash says so", async () => {
+    const args = { relay: RELAY, id: "k7f3q2", hostname: "k7f3q2.mystuga.com", dir: "/Users/liv/.stuga-remote" };
+    expect(renderFrpcToml({ ...args, logLevel: "warn" })).toBe(GOLDEN.replace('log.level = "info"', 'log.level = "warn"'));
+    const dir = tempDir();
+    const common = { dir, id: "k7f3q2", hostname: "k7f3q2.mystuga.com", relays: [RELAY], previous: [] };
+    const info = await writeConnectorFiles(common);
+    const warn = await writeConnectorFiles({ ...common, logLevel: "warn" });
+    expect(warn.sha256).not.toBe(info.sha256);
+    expect(readFileSync(join(dir, "relay-1.toml"), "utf8")).toContain('log.level = "warn"');
+  });
+
   it("escapes quotes, backslashes and control characters in every string, and keeps other characters as they are", () => {
     expect(tomlString('a"b\\c')).toBe('"a\\"b\\\\c"');
     expect(tomlString("line\nbreak\ttab\u0001\u007f")).toBe('"line\\nbreak\\ttab\\u0001\\u007F"');
@@ -106,6 +117,13 @@ describe("the connector's files", () => {
     expect(readdirSync(dir)).toEqual(["notes.txt"]);
     expect(readFileSync(outside, "utf8")).toBe("keep");
     rmSync(outside);
+  });
+
+  it("removes the credential alone, from every relay", async () => {
+    const dir = tempDir();
+    for (const name of ["relay-1.jwt", "relay-1.toml", "relay-1.ca.pem", "relay-2.jwt"]) writeFileSync(join(dir, name), "x");
+    await removeTokenFiles(dir, ["relay-1", "relay-2", "../relay-3"]);
+    expect(readdirSync(dir).sort()).toEqual(["relay-1.ca.pem", "relay-1.toml"]);
   });
 
   it("replaces the credential whole: a reader never sees part of one", async () => {

@@ -315,7 +315,7 @@ async function boot(): Promise<void> {
     remote = createRemoteAccess({
       sql,
       env,
-      config: { service: remoteHints.service, dir: remoteHints.dir, dataDir: cfg.dataDir },
+      config: { service: remoteHints.service, dir: remoteHints.dir, dataDir: cfg.dataDir, connector: remoteHints.connector },
       gate,
       readsOwnBody,
       maxBodyBytes: () => bodyLimit(),

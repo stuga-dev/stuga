@@ -6,6 +6,7 @@
  */
 import type { NodeRemoteAccessRow, StoredRemoteError } from "@stuga/db";
 import type { RemoteAccessState, RemoteAccessStatus, RemoteError, RemoteErrorCode } from "@stuga/protocol/api/remote-access";
+import type { ConnectorReport } from "./connector.js";
 import { configFile } from "./frpc-config.js";
 import type { ServiceError } from "./service-client.js";
 
@@ -19,20 +20,51 @@ const ERROR_STATE = new Set<string>([
   "acme_action_required",
   "remote_dir_unusable",
   "socket_path_too_long",
+  "connector_refused",
 ]);
 
+/**
+ * The error the page shows. One an administrator must act on comes first; then what the state
+ * itself says, never kept, so it goes when the state does: a refused connector, an expired
+ * certificate, a failed connector; then the error kept. `connector` is there where the packaging
+ * runs the connector.
+ */
+export function shownError(row: NodeRemoteAccessRow, now: Date, connector?: ConnectorReport): RemoteError | null {
+  const kept = row.last_error as RemoteError | null;
+  if (!row.enabled) return kept;
+  if (kept && (ERROR_STATE.has(kept.code) || kept.code === "denied" || kept.code === "retired")) return kept;
+  // A status from before the node last changed what it asks for answers something else.
+  const status = connector && !connector.stale ? connector.status : null;
+  if (status?.state === "refused") {
+    return { code: "connector_refused", message: status.message || "The connector was refused.", at: status.at };
+  }
+  if (row.cert_not_after !== null && row.cert_not_after.getTime() <= now.getTime()) {
+    return { code: "certificate_expired", message: "The certificate expired.", at: row.cert_not_after.toISOString() };
+  }
+  if (status?.state === "failed") {
+    return {
+      code: "connector_failed",
+      message: status.message || "The connector failed.",
+      at: status.at,
+      ...(connector?.retryAt ? { retry_at: connector.retryAt.toISOString() } : {}),
+    };
+  }
+  return kept;
+}
+
 /** The first row of the table that holds. */
-export function remoteState(row: NodeRemoteAccessRow, now: Date): RemoteAccessState {
+export function remoteState(row: NodeRemoteAccessRow, now: Date, connector?: ConnectorReport): RemoteAccessState {
   if (!row.enabled) return "off";
-  const code = row.last_error?.code;
+  const error = shownError(row, now, connector);
+  const code = error?.code;
   if (code && ERROR_STATE.has(code)) return "error";
   if (code === "denied" || code === "retired") return "denied";
   const t = now.getTime();
   const certValid = row.cert_not_after !== null && row.cert_not_after.getTime() > t;
   const credentialValid = row.credential_expires_at !== null && row.credential_expires_at.getTime() > t;
   const probed = row.probe_at !== null && row.probe_ok_at !== null && row.probe_ok_at.getTime() >= row.probe_at.getTime();
-  if (certValid && credentialValid && probed && !row.last_error) return "on";
-  if (row.last_error) return "degraded";
+  if (certValid && credentialValid && probed && !error) return "on";
+  if (error) return "degraded";
   return "starting";
 }
 
@@ -187,22 +219,29 @@ export function serviceFailure(
   }
 }
 
-/** The body of `GET /api/node/remote-access`, and of the enable and disable answers. */
-export function remoteStatus(row: NodeRemoteAccessRow, opts: { dir: string; now: Date }): RemoteAccessStatus {
+/**
+ * The body of `GET /api/node/remote-access`, and of the enable and disable answers. `connector` is
+ * there where the packaging runs the connector.
+ */
+export function remoteStatus(row: NodeRemoteAccessRow, opts: { dir: string; now: Date; connector?: ConnectorReport }): RemoteAccessStatus {
   const iso = (d: Date | null) => (d ? d.toISOString() : null);
   const firstRelay = row.relays[0];
   const reachable = row.probe_at !== null && row.probe_ok_at !== null && row.probe_ok_at.getTime() >= row.probe_at.getTime();
+  const managed = opts.connector !== undefined;
+  const reported = opts.connector?.status ?? null;
   return {
     available: true,
     enabled: row.enabled,
-    state: remoteState(row, opts.now),
+    state: remoteState(row, opts.now, opts.connector),
     address: row.hostname ? `https://${row.hostname}` : null,
     certificate: row.cert_not_after ? { expires_at: row.cert_not_after.toISOString(), renew_at: iso(row.cert_renew_at) } : null,
     credential: row.credential_expires_at ? { expires_at: row.credential_expires_at.toISOString() } : null,
     connector:
-      firstRelay || row.probe_at
+      firstRelay || row.probe_at || reported
         ? {
-            config_path: firstRelay ? configFile(opts.dir, firstRelay.name) : null,
+            managed,
+            status: reported,
+            config_path: firstRelay && !managed ? configFile(opts.dir, firstRelay.name) : null,
             config_changed_at: iso(row.connector_config_changed_at),
             reachable,
             checked_at: iso(row.probe_at),
@@ -211,6 +250,6 @@ export function remoteStatus(row: NodeRemoteAccessRow, opts: { dir: string; now:
     ca_terms: row.ca_terms_accepted_at
       ? { accepted_by: row.ca_terms_accepted_by, accepted_at: row.ca_terms_accepted_at.toISOString(), url: row.ca_terms_url }
       : null,
-    last_error: row.last_error as RemoteError | null,
+    last_error: shownError(row, opts.now, opts.connector),
   };
 }
