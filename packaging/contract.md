@@ -8,7 +8,8 @@ directory.
 ## Pins
 
 `packaging/versions.env` lists every pinned input: Node, pnpm, the Postgres major, pgvector,
-pg_search, Postgres.app, the Debian line and the PGDG key. Downloads are pinned by sha256.
+pg_search, Postgres.app, the Debian line and the PGDG key, and for the remote-access connector the
+frp commit, Go and go-licenses. Downloads are pinned by sha256.
 `INITDB_ARGS` is the one cluster spec for both platforms.
 `packaging/check-pins.sh` fails when `.nvmrc`, the root `package.json` (`packageManager`,
 `@types/node`) or a Dockerfile `ARG` default disagrees with it. It also fails when the Postgres
