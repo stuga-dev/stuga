@@ -47,7 +47,8 @@ TypeScript throughout: ESM with `verbatimModuleSyntax`, and workspace imports by
 (`@stuga/db`, `@stuga/protocol/wire/opcodes`). Libraries ship their TypeScript source and emit
 nothing, so `typecheck` is their build. The node runs its source through tsx. Only the web app
 (`apps/web/dist`) and the stdio MCP server (`services/mcp/dist/stuga-mcp.js`) have a build step,
-and `pnpm build` runs both.
+and `pnpm build` runs both. A release also bundles the node (`services/node/build.mjs`, which
+`packaging/shared/build-app.sh` runs), and `bin/stuga-node.js` runs that bundle when it is there.
 
 ## Running from source
 

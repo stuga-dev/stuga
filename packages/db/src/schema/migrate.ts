@@ -47,7 +47,11 @@ export const SCHEMA_VERSION: number = checkedIds().at(-1) ?? 0;
 /** Any fixed value, the same for every node. */
 const MIGRATION_LOCK = 487_230_199_577;
 
-const MIGRATIONS_DIR = fileURLToPath(new URL("../../migrations/", import.meta.url));
+// The node's bundle (services/node/build.mjs) carries the migrations beside itself and defines this.
+declare const __STUGA_MIGRATIONS_URL__: string | undefined;
+const MIGRATIONS_DIR = fileURLToPath(
+  new URL(typeof __STUGA_MIGRATIONS_URL__ === "string" ? __STUGA_MIGRATIONS_URL__ : "../../migrations/", import.meta.url),
+);
 
 // Interpolated into DDL text.
 function assertEmbeddingDims(embeddingDims: number): void {

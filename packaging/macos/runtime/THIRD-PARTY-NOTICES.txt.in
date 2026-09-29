@@ -24,8 +24,11 @@ postgres/
 node/
   Node.js @NODE_VERSION@, MIT, with the licenses of the components it bundles in node/LICENSE.
 
-app/services/node/node_modules/
-  The node's npm dependencies, each with its license in its own directory.
+app/services/node/dist/stuga-node.mjs
+  The node's npm dependencies, bundled; their licenses in app/services/node/dist/third-party-licenses.txt.
+
+app/services/node/node_modules/@stuga/mcp/dist/stuga-mcp.js, app/apps/web/dist/
+  The npm packages these bundle; their licenses in third-party-licenses.txt beside each.
 
 ================================================================================
 (A) PostgreSQL License: PostgreSQL, Postgres.app and pgvector

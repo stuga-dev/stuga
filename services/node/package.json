@@ -32,6 +32,7 @@
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.2",
     "jose": "^6.2.12",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"

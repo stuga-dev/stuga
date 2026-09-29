@@ -46,8 +46,8 @@ package may depend on:
 
 Neither actor package depends on `@stuga/db`: an actor reaches Postgres only by calling back into
 the node ([Internal calls](#internal-calls)). Libraries ship their TypeScript source and have no
-build step. The node runs its source through tsx, and only the web app and the stdio MCP bundle are
-built.
+build step. A checkout runs the node's source through tsx; a release bundles it
+(`services/node/build.mjs`), like the web app and the stdio MCP server.
 
 ## The node
 

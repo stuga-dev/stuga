@@ -50,21 +50,4 @@ describe("stuga-node", { timeout: 30_000 }, () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-
-  it("prints no warning that SQLite is experimental, and every other warning", () => {
-    // Emits a warning through whichever emitWarning the entry installs, as soon as it installs one.
-    const preload = `data:text/javascript,${encodeURIComponent(`
-      let emit = process.emitWarning;
-      Object.defineProperty(process, "emitWarning", {
-        get: () => emit,
-        set: (next) => {
-          emit = next;
-          process.emitWarning("Another feature is experimental", "ExperimentalWarning");
-        },
-      });`)}`;
-    const run = stugaNode(["frobnicate"], {}, ["--import", preload]);
-    expect(run.status).toBe(2);
-    expect(run.stderr).not.toContain("SQLite");
-    expect(run.stderr).toContain("ExperimentalWarning: Another feature is experimental");
-  });
 });

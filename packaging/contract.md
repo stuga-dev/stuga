@@ -23,20 +23,19 @@ major the node accepts differs.
 <out>/RELEASED                    only when CHANGELOG.md dates that version
 <out>/LICENSE, <out>/NOTICE       Stuga's license and copyright notice
 <out>/TRADEMARKS.md               the terms for the name and logo, which NOTICE points to
-<out>/tsconfig.base.json
 <out>/apps/web/dist/              the built web app, with third-party-licenses.txt for the npm packages it bundles
 <out>/integrations/skills/, LICENSE  the Stuga skill the agent installers hand out, and its MIT license
 <out>/services/node/bin/stuga-node.js
-<out>/services/node/src/          the node's TypeScript, run through tsx
-<out>/services/node/tsconfig.json the compiler options bin/stuga-node.js hands to tsx
-<out>/services/node/node_modules/ production dependencies; @stuga/* packages carry src/ (db also migrations/), @stuga/mcp only dist/:
-                                  stuga-mcp.js, LICENSE and third-party-licenses.txt, which the desktop extension carries
+<out>/services/node/dist/         stuga-node.mjs, the node and every npm package it runs in one ES module, with its
+                                  source map, third-party-licenses.txt, the migration SQL and icon.png
+<out>/services/node/node_modules/@stuga/mcp/  package.json and dist/: stuga-mcp.js, LICENSE and
+                                  third-party-licenses.txt, which agent setup names and the desktop extension carries
 ```
 
-The tree holds no tests, dev dependencies or local `.env` files. tsx ships a native esbuild binary,
-so build the tree on the OS and architecture it will run on. The node finds `apps/web/dist`,
-`integrations/skills` and `VERSION` three directories above `services/node/src`, and does not start
-without the skill. It reads the migration SQL from the tree at runtime.
+The tree holds no TypeScript, tests or native code, so one build runs on any OS and architecture
+the pinned Node runs on. The node finds `apps/web/dist`, `integrations/skills` and `VERSION` three
+directories above `services/node/dist`, and does not start without the skill. It reads the migration
+SQL from the tree at runtime.
 
 Run the tree with the pinned Node:
 
