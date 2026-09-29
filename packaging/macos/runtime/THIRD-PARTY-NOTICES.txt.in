@@ -30,6 +30,12 @@ app/services/node/dist/stuga-node.mjs
 app/services/node/node_modules/@stuga/mcp/dist/stuga-mcp.js, app/apps/web/dist/
   The npm packages these bundle; their licenses in third-party-licenses.txt beside each.
 
+../../connector/<sha256>/
+  Not part of this runtime: the remote-access connector (frpc, frp built with Go), which the
+  helper downloads as stuga-connector-darwin-arm64.zip when an administrator turns remote access
+  on. frp's license is in LICENSE there, and the Go standard library and each Go module frpc links,
+  with their licenses and where to get the source of the MPL-2.0 ones, in THIRD-PARTY-NOTICES.txt.
+
 ================================================================================
 (A) PostgreSQL License: PostgreSQL, Postgres.app and pgvector
 ================================================================================
