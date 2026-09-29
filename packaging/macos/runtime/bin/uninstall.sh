@@ -16,8 +16,9 @@ main() {
   esac
   [ "$(id -u)" -eq 0 ] || { echo "error: run this as root (sudo)" >&2; exit 2; }
 
-  # The connector first, then the node: it holds connections a Postgres shutdown would otherwise cut.
-  for label in dev.stuga.remote dev.stuga.node dev.stuga.postgres dev.stuga.helper; do
+  # The helper first, so nothing starts the connector again; the node before Postgres, whose
+  # shutdown would otherwise cut the node's connections.
+  for label in dev.stuga.helper dev.stuga.remote dev.stuga.node dev.stuga.postgres; do
     launchctl bootout "system/$label" 2> /dev/null || true
     rm -f "/Library/LaunchDaemons/$label.plist"
   done
