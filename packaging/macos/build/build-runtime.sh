@@ -2,7 +2,7 @@
 # Build a Mac runtime: <out>/runtime/<version>/{postgres,node,app,bin,conf}.
 #
 #   packaging/macos/build/build-runtime.sh --out <dir> --version <v>
-#       [--postgres-tree <dir>] [--app-link <checkout>]
+#       [--postgres-tree <dir>] [--app-link <checkout>] [--connector-sha256 <hex>]
 #
 #   postgres   an assembled Postgres tree (cached in $STUGA_MACOS_CACHE), or a copy of
 #              --postgres-tree, pruned and checked
@@ -10,7 +10,8 @@
 #   app        packaging/shared/build-app.sh --version <v>, or with --app-link a symlink to a
 #              built checkout (no VERSION file: the node reports a source build)
 #   bin        the launchd wrappers, init-cluster.sh, rotate-log.mjs and the upgrade helper
-#   conf       the Postgres configuration templates and versions.env
+#   conf       the Postgres configuration templates and versions.env, and with --connector-sha256
+#              connector.sha256: the one stuga-connector-darwin-arm64.zip the helper installs
 #   THIRD-PARTY-NOTICES.txt   the licenses of everything the runtime redistributes
 #
 # An existing runtime of the same version is replaced; nothing may be running from it.
@@ -25,19 +26,24 @@ macos="$(cd "$here/.." && pwd)"
 
 usage() { sed -n '4,5p' "$0" | sed 's/^# \{0,3\}//' >&2; exit 2; }
 
-out="" version="" postgres_tree="" app_link=""
+out="" version="" postgres_tree="" app_link="" connector_sha256=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) out="${2:-}"; shift 2 ;;
     --version) version="${2:-}"; shift 2 ;;
     --postgres-tree) postgres_tree="${2:-}"; shift 2 ;;
     --app-link) app_link="${2:-}"; shift 2 ;;
+    --connector-sha256) connector_sha256="${2:-}"; shift 2 ;;
     *) usage ;;
   esac
 done
 if [ -z "$out" ] || [ -z "$version" ]; then usage; fi
 if ! printf '%s' "$version" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z.+-]*$'; then
   echo "error: --version takes a version such as 1.2.3, got \"$version\"" >&2
+  exit 2
+fi
+if [ -n "$connector_sha256" ] && ! printf '%s' "$connector_sha256" | grep -Eq '^[0-9a-f]{64}$'; then
+  echo "error: --connector-sha256 takes a lowercase sha256, got \"$connector_sha256\"" >&2
   exit 2
 fi
 [ "$(uname -m)" = arm64 ] || { echo "error: the Mac runtime is built for Apple silicon only" >&2; exit 1; }
@@ -86,6 +92,7 @@ cp "$macos/runtime/bin/postgres-wrapper.sh" "$macos/runtime/bin/node-wrapper.sh"
   "$macos/runtime/bin/uninstall.sh" "$staging/bin/"
 cp "$macos/runtime/conf/postgresql.conf" "$macos/runtime/conf/pg_hba.conf" \
   "$macos/runtime/conf/pg_ident.conf" "$macos/../versions.env" "$staging/conf/"
+[ -z "$connector_sha256" ] || printf '%s\n' "$connector_sha256" > "$staging/conf/connector.sha256"
 sed -e "s/@PG_MAJOR@/$PG_MAJOR/g" -e "s/@POSTGRES_APP_VERSION@/$POSTGRES_APP_VERSION/g" \
   -e "s/@PG_SEARCH_VERSION@/$PG_SEARCH_VERSION/g" -e "s/@NODE_VERSION@/$NODE_VERSION/g" \
   "$macos/runtime/THIRD-PARTY-NOTICES.txt.in" > "$staging/THIRD-PARTY-NOTICES.txt"

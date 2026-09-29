@@ -6,9 +6,11 @@
 #   packaging/macos/pkg/build-pkg.sh --version 1.2.3 --out <dir> \
 #     --app-identity "Developer ID Application: <Name> (<TEAM>)" \
 #     --installer-identity "Developer ID Installer: <Name> (<TEAM>)" \
-#     [--notary-profile <keychain profile>] [--postgres-tree <dir>]
+#     [--notary-profile <keychain profile> --connector-sha256 <hex>] [--postgres-tree <dir>]
 #
 # Without identities the package is signed ad hoc and unsigned: fine to inspect, not to ship.
+# --connector-sha256 names the stuga-connector-darwin-arm64.zip of the same release
+# (packaging/macos/connector/build.sh), which the helper downloads; a notarized package needs it.
 # A notary profile is stored once with `xcrun notarytool store-credentials <profile>`, in a
 # terminal of your own, so the credential never passes through this script.
 set -euo pipefail
@@ -19,7 +21,7 @@ repo="$(cd "$macos/../.." && pwd)"
 
 usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
-version="" out="" app_identity="" installer_identity="" notary="" postgres_tree=""
+version="" out="" app_identity="" installer_identity="" notary="" postgres_tree="" connector_sha256=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) version="${2:-}"; shift 2 ;;
@@ -28,6 +30,7 @@ while [ $# -gt 0 ]; do
     --installer-identity) installer_identity="${2:-}"; shift 2 ;;
     --notary-profile) notary="${2:-}"; shift 2 ;;
     --postgres-tree) postgres_tree="${2:-}"; shift 2 ;;
+    --connector-sha256) connector_sha256="${2:-}"; shift 2 ;;
     -h | --help) usage ;;
     *) echo "error: unknown option $1" >&2; usage ;;
   esac
@@ -36,6 +39,10 @@ if [ -z "$version" ] || [ -z "$out" ]; then usage; fi
 printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "error: --version takes a release such as 1.2.3" >&2; exit 2; }
 if [ -n "$notary" ] && { [ -z "$app_identity" ] || [ -z "$installer_identity" ]; }; then
   echo "error: notarizing needs both Developer ID identities" >&2
+  exit 2
+fi
+if [ -n "$notary" ] && [ -z "$connector_sha256" ]; then
+  echo "error: a notarized package needs --connector-sha256" >&2
   exit 2
 fi
 [ "$(uname -m)" = arm64 ] || { echo "error: build on Apple silicon" >&2; exit 1; }
@@ -53,6 +60,7 @@ runtime="$stuga_root/runtime/$version"
 say "runtime $version"
 runtime_args=(--out "$stuga_root" --version "$version")
 [ -z "$postgres_tree" ] || runtime_args+=(--postgres-tree "$postgres_tree")
+[ -z "$connector_sha256" ] || runtime_args+=(--connector-sha256 "$connector_sha256")
 "$macos/build/build-runtime.sh" "${runtime_args[@]}"
 mkdir -p "$runtime/share/launchd/lib" "$runtime/share/launchd/templates"
 cp "$macos/build/render-launchd.sh" "$runtime/share/launchd/"
