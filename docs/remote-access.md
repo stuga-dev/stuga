@@ -162,8 +162,10 @@ connection. A different certificate is shown as a problem in Settings.
 
 The certificate comes from Let's Encrypt over ACME, with the DNS-01 challenge: the node asks the
 service to publish the challenge's TXT record, checks the zone's authoritative name servers until
-all of them show it, and deletes it when the order ends. The node makes a new P-256 key for each
-certificate and never sends a private key anywhere; its ACME account carries no email address.
+all of them show it, and deletes it when the order ends. Where the network blocks DNS queries to
+those servers, or answers them itself as some routers do, the node waits 20 seconds instead. The
+node makes a new P-256 key for each certificate and never sends a private key anywhere; its ACME
+account carries no email address.
 
 Turning remote access on accepts the Let's Encrypt Subscriber Agreement, and the node records who
 accepted it and when. Every certificate is published in the public Certificate
