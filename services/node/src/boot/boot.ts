@@ -57,6 +57,7 @@ import { createNodeBackups, notifyBackupFailed } from "../ops/node-backups.js";
 import { archiveWorkUnderWay, holdArchiveWork } from "../archive/under-way.js";
 import { createExclusive } from "../platform/exclusive.js";
 import { createSearchLanguages } from "../search/languages.js";
+import { notifyRemoteAccess } from "../remote/notify.js";
 import { createRemoteAccess, type RemoteAccess } from "../remote/service.js";
 
 const MAINTENANCE_INTERVAL_MS = 2 * 60_000;
@@ -317,6 +318,7 @@ async function boot(): Promise<void> {
       env,
       config: { service: remoteHints.service, dir: remoteHints.dir, dataDir: cfg.dataDir, connector: remoteHints.connector },
       gate,
+      notify: (notice) => notifyRemoteAccess(env, notice),
       readsOwnBody,
       maxBodyBytes: () => bodyLimit(),
     });

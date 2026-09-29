@@ -36,6 +36,11 @@ const memory = vi.hoisted(() => {
     cert_reissue_before: null,
     cert_failures: 0,
     cert_retry_at: null,
+    cert_account_url: null,
+    cert_ari_next_at: null,
+    cert_ari_window_start: null,
+    cert_ari_window_end: null,
+    cert_alerted_serial: null,
     checkin_at: null,
     checkin_next_at: null,
     credential_ttl: null,
@@ -113,9 +118,18 @@ vi.mock("@stuga/db", async (importOriginal) => {
         cert_not_before: c.notBefore,
         cert_not_after: c.notAfter,
         cert_renew_at: c.renewAt,
+        cert_reissue_before: c.reissueBefore,
+        cert_account_url: c.accountUrl,
         cert_failures: 0,
         cert_retry_at: null,
+        cert_ari_next_at: null,
+        cert_ari_window_start: null,
+        cert_ari_window_end: null,
       }),
+    recordRemoteCertAri: async (_sql: unknown, a: Parameters<Db["recordRemoteCertAri"]>[1]) =>
+      memory.set({ cert_ari_window_start: a.windowStart, cert_ari_window_end: a.windowEnd, cert_renew_at: a.renewAt, cert_ari_next_at: a.nextAt }),
+    setRemoteCertAriNext: async (_sql: unknown, nextAt: Date) => memory.set({ cert_ari_next_at: nextAt }),
+    setRemoteCertAlerted: async (_sql: unknown, serial: string | null) => memory.set({ cert_alerted_serial: serial }),
     recordRemoteCertFailure: async (_sql: unknown, f: { failures: number; retryAt: Date | null }) =>
       memory.set({ cert_failures: f.failures, cert_retry_at: f.retryAt }),
     recordRemoteCredential: async (_sql: unknown, c: Parameters<Db["recordRemoteCredential"]>[1]) =>
@@ -140,9 +154,13 @@ vi.mock("@stuga/db", async (importOriginal) => {
 const { createRemoteAccess, RemoteAccessRefusal } = await import("./service.js");
 const { createServingGate } = await import("../http/serving-gate.js");
 const { startFakeRemoteService } = await import("./testing/fake-service.js");
-const { writeCertificate } = await import("./certificates.js");
+const { readCertificate, writeCertificate } = await import("./certificates.js");
 import { makeTestCert } from "../testing/cert.js";
 import type { ConnectorHints } from "../config/env.js";
+import { ariCertId } from "./acme/der.js";
+import type { ChallengeResolver } from "./dns-check.js";
+import type { RemoteNotice } from "./notify.js";
+import { FAKE_CA, FAKE_CA_DIRECTORY, fakeCa, type FakeCa } from "./testing/fake-ca.js";
 import type { FakeRemoteService } from "./testing/fake-service.js";
 import type { ProbeResult } from "./probe.js";
 import type { RemoteAccess, RemoteTiming } from "./service.js";
@@ -163,6 +181,8 @@ function service(
     connector?: ConnectorHints;
     probe?: () => Promise<ProbeResult>;
     now?: () => number;
+    ca?: FakeCa;
+    notify?: (n: RemoteNotice) => Promise<void>;
   } = {},
 ): RemoteAccess {
   const s = createRemoteAccess({
@@ -175,6 +195,8 @@ function service(
     probe: opts.probe ?? (async () => ({ ok: true })),
     ...(opts.timing ? { timing: opts.timing } : {}),
     ...(opts.now ? { now: opts.now } : {}),
+    ...(opts.ca ? { acmeTransport: opts.ca.transport, challengeResolver: fakeZone() } : {}),
+    ...(opts.notify ? { notify: opts.notify } : {}),
     onError: () => {},
   });
   services.push(s);
@@ -204,9 +226,17 @@ async function bound(opts: Parameters<typeof service>[0] & { certFor?: { notBefo
   return s;
 }
 
+/** The zone's servers, as the fake service's records. */
+function fakeZone(): ChallengeResolver {
+  return {
+    servers: async () => ["192.0.2.53"],
+    txt: async (_server, fqdn) => ({ authoritative: true, records: fake.txtRecords.has(fqdn) ? [[fake.txtRecords.get(fqdn)!]] : [] }),
+  };
+}
+
 beforeEach(async () => {
   memory.reset();
-  fake = await startFakeRemoteService({ acmeDirectory: "https://ca.stuga.test/dir", zone: "mystuga.com" });
+  fake = await startFakeRemoteService({ acmeDirectory: FAKE_CA_DIRECTORY, zone: "mystuga.com" });
   work = mkdtempSync(join(tmpdir(), "stuga-remote-svc-"));
   remoteDir = join(work, "remote");
   dataDir = join(work, "data");
@@ -830,5 +860,241 @@ describe("where the packaging runs the connector", () => {
   it("refuses a retry where the packaging does not run the connector", async () => {
     const s = service();
     expect(await refusal(s.retryConnector("liv"))).toMatchObject({ status: 409, code: "unavailable" });
+  });
+});
+
+describe("the certificate loop", () => {
+  const HOUR = 3_600_000;
+  const row = () => memory.row() as unknown as import("@stuga/db").NodeRemoteAccessRow;
+  const timing = { certTickMs: 30 };
+  const leafId = async () => {
+    const disk = await readCertificate(dataDir);
+    if (disk.kind !== "ok") throw new Error(`no certificate: ${disk.kind}`);
+    return ariCertId(disk.cert.leaf.raw)!;
+  };
+
+  async function on(ca: FakeCa, notify?: (n: RemoteNotice) => Promise<void>): Promise<RemoteAccess> {
+    const s = service({ ca, timing, ...(notify ? { notify } : {}) });
+    await s.enable({ code: fake.mintCode("enroll"), acceptCaTerms: true, by: "liv" });
+    await s.start();
+    await until("a certificate", () => row().cert_serial !== null, 10_000);
+    return s;
+  }
+
+  it("asks the CA when to renew, renews in its window, and names the certificate it replaces", async () => {
+    const ca = fakeCa();
+    const s = await on(ca);
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    const first = await leafId();
+    expect(ca.ariRequests).toEqual([first]);
+    const r = row();
+    expect(r).toMatchObject({ cert_directory: FAKE_CA_DIRECTORY, cert_account_url: `${FAKE_CA}/acct/1`, cert_failures: 0 });
+    const life = r.cert_not_after!.getTime() - r.cert_not_before!.getTime();
+    // The CA's own dates, to the millisecond; the certificate's are to the second.
+    expect(Math.abs(r.cert_ari_window_start!.getTime() - (r.cert_not_before!.getTime() + life * 0.6))).toBeLessThan(1_000);
+    expect(r.cert_renew_at!.getTime()).toBeGreaterThanOrEqual(r.cert_ari_window_start!.getTime());
+    expect(r.cert_renew_at!.getTime()).toBeLessThan(r.cert_ari_window_end!.getTime());
+    // Asked again when Retry-After says, not at every tick.
+    expect(Math.abs(r.cert_ari_next_at!.getTime() - (Date.now() + 6 * HOUR))).toBeLessThan(60_000);
+    await sleep(150);
+    expect(ca.ariRequests).toHaveLength(1);
+
+    // A window already over, as for a revoked certificate: renewed at once, naming the one it replaces.
+    ca.setAri(first, { window: { start: new Date(Date.now() - 2 * HOUR), end: new Date(Date.now() - HOUR) }, retryAfter: "21600" });
+    memory.set({ cert_ari_next_at: null });
+    s.kick();
+    await until("the renewal", () => row().cert_serial !== r.cert_serial);
+    expect(ca.orders.at(-1)).toMatchObject({ replaces: first });
+    expect(row()).toMatchObject({ cert_failures: 0, last_error: null });
+
+    // Refused with it: ordered again without, and no failure counted.
+    const second = await leafId();
+    const serial = row().cert_serial;
+    await until("the second window", () => row().cert_ari_window_start !== null);
+    ca.refuseReplaces("alreadyReplaced");
+    ca.setAri(second, { window: { start: new Date(Date.now() - 2 * HOUR), end: new Date(Date.now() - HOUR) }, retryAfter: "3600" });
+    memory.set({ cert_ari_next_at: null });
+    s.kick();
+    await until("the next renewal", () => row().cert_serial !== serial);
+    expect(ca.orders.slice(-2)).toEqual([
+      { identifiers: [{ type: "dns", value: row().hostname }], replaces: second },
+      { identifiers: [{ type: "dns", value: row().hostname }] },
+    ]);
+    expect(row()).toMatchObject({ cert_failures: 0, cert_retry_at: null, last_error: null });
+  });
+
+  it("keeps two thirds of the life when the CA can't say, and asks again in six hours", async () => {
+    const ca = fakeCa();
+    ca.setAri("*", { status: 500, body: '{"type":"urn:ietf:params:acme:error:serverInternal","detail":"busy"}' });
+    await on(ca);
+    await until("the next time to ask", () => row().cert_ari_next_at !== null);
+    const r = row();
+    expect(r.cert_ari_window_start).toBeNull();
+    const life = r.cert_not_after!.getTime() - r.cert_not_before!.getTime();
+    const renewAfter = r.cert_renew_at!.getTime() - r.cert_not_before!.getTime();
+    expect(renewAfter).toBeGreaterThanOrEqual((life * 2) / 3 - life / 20);
+    expect(renewAfter).toBeLessThanOrEqual((life * 2) / 3);
+    expect(Math.abs(r.cert_ari_next_at!.getTime() - (Date.now() + 6 * HOUR))).toBeLessThan(60_000);
+    await sleep(150);
+    expect(ca.ariRequests).toHaveLength(1);
+  });
+
+  it("takes a window past the certificate's expiry as no answer", async () => {
+    const ca = fakeCa();
+    ca.setAri("*", { window: { start: new Date(Date.now() + 2 * 24 * HOUR), end: new Date(Date.now() + 3 * 24 * HOUR) }, retryAfter: "3600" });
+    await on(ca);
+    await until("the next time to ask", () => row().cert_ari_next_at !== null);
+    const r = row();
+    expect(r.cert_ari_window_start).toBeNull();
+    expect(r.cert_renew_at!.getTime()).toBeLessThan(r.cert_not_after!.getTime());
+    expect(Math.abs(r.cert_ari_next_at!.getTime() - (Date.now() + 6 * HOUR))).toBeLessThan(60_000);
+  });
+
+  it("does not ask a CA that offers no renewal information, nor fetch its directory again for it", async () => {
+    const ca = fakeCa({ renewalInfo: false });
+    let directoryFetches = 0;
+    const counted: FakeCa = {
+      ...ca,
+      transport: {
+        request: (url, init) => {
+          if (url === FAKE_CA_DIRECTORY) directoryFetches += 1;
+          return ca.transport.request(url, init);
+        },
+      },
+    };
+    await on(counted);
+    await sleep(200);
+    expect(ca.ariRequests).toEqual([]);
+    expect(directoryFetches).toBe(1);
+    expect(row()).toMatchObject({ cert_ari_next_at: null, cert_ari_window_start: null });
+  });
+
+  it("does not ask about a certificate from another directory", async () => {
+    const ca = fakeCa();
+    const s = await on(ca);
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    memory.set({ cert_directory: "https://other-ca.stuga.test/dir", cert_ari_next_at: null });
+    s.kick();
+    await sleep(150);
+    expect(ca.ariRequests).toHaveLength(1);
+  });
+
+  it("warns every administrator once, denied or not, never while off, and says when a new certificate is in use", async () => {
+    const told: RemoteNotice[] = [];
+    const ca = fakeCa();
+    const s = await on(ca, async (n) => void told.push(n));
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    await until("a credential", () => fake.issuedCredentials.length === 1);
+    const serial = row().cert_serial!;
+    const orders = ca.orders.length;
+
+    memory.set({ cert_failures: 3, last_error: { code: "denied", message: "Remote access is off for this address.", at: new Date().toISOString() } });
+    await until("the warning", () => told.length === 1);
+    await sleep(150);
+    expect(told.map((n) => `${n.event}:${n.key}`)).toEqual([`REMOTE_CERT_RENEWAL_FAILED:${serial}`]);
+    expect(row().cert_alerted_serial).toBe(serial);
+    expect(ca.orders).toHaveLength(orders);
+
+    // Off: nothing, however the certificate stands.
+    await s.disable("liv");
+    memory.set({ cert_not_after: new Date(Date.now() - 1), binding_failing_since: new Date(Date.now() - 25 * HOUR) });
+    s.kick();
+    await sleep(150);
+    expect(told).toHaveLength(1);
+    const back = row().cert_not_after;
+    expect(back).not.toBeNull();
+
+    // On again: the key the service refused for a day, and then a new certificate after the warning.
+    memory.set({ enabled: true, last_error: null, cert_failures: 0, cert_not_after: new Date(Date.now() + 20 * HOUR) });
+    s.kick();
+    await until("the binding warning", () => told.some((n) => n.event === "REMOTE_BINDING_REJECTED"));
+    memory.set({ binding_failing_since: null, cert_renew_at: new Date(Date.now() - 1), cert_ari_next_at: new Date(Date.now() + HOUR) });
+    s.kick();
+    await until("the new certificate", () => row().cert_serial !== serial);
+    await until("the announcement", () => told.some((n) => n.event === "REMOTE_CERT_RECOVERED"));
+    expect(told.map((n) => n.event)).toEqual(["REMOTE_CERT_RENEWAL_FAILED", "REMOTE_BINDING_REJECTED", "REMOTE_CERT_RECOVERED"]);
+    expect(told.at(-1)!.key).toBe(serial);
+    expect(row().cert_alerted_serial).toBeNull();
+  });
+
+  /** Under a tenth of its life left, by the row: the certificate on disk stays as it is. */
+  const runningShort = () => ({ cert_not_before: new Date(Date.now() - 19 * HOUR), cert_not_after: new Date(Date.now() + HOUR) });
+  const keys = (told: RemoteNotice[]) => told.map((n) => `${n.event}:${n.key}`);
+
+  it("says renewing waits for someone at once, and orders nothing", async () => {
+    const told: RemoteNotice[] = [];
+    const ca = fakeCa();
+    await on(ca, async (n) => void told.push(n));
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    const serial = row().cert_serial!;
+    const orders = ca.orders.length;
+    memory.set({ cert_failures: 0, cert_renew_at: new Date(Date.now() - 1), last_error: { code: "acme_action_required", message: "Accept the CA's new terms.", at: new Date().toISOString() } });
+    await until("the warning", () => told.length === 1);
+    await sleep(150);
+    expect(keys(told)).toEqual([`REMOTE_CERT_RENEWAL_FAILED:${serial}`]);
+    expect(row().cert_alerted_serial).toBe(serial);
+    expect(ca.orders).toHaveLength(orders);
+  });
+
+  it("says the certificate runs short once renewing it has failed", async () => {
+    const told: RemoteNotice[] = [];
+    await on(fakeCa(), async (n) => void told.push(n));
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    const serial = row().cert_serial!;
+    memory.set({ ...runningShort(), cert_failures: 1, cert_retry_at: new Date(Date.now() + HOUR) });
+    await until("the warning", () => told.length === 1);
+    await sleep(150);
+    expect(keys(told)).toEqual([`REMOTE_CERT_EXPIRING:${serial}`]);
+    expect(row().cert_alerted_serial).toBe(serial);
+  });
+
+  it("says the certificate runs short while waiting on a newer Stuga", async () => {
+    const told: RemoteNotice[] = [];
+    const s = await on(fakeCa(), async (n) => void told.push(n));
+    await until("a credential", () => fake.issuedCredentials.length === 1);
+    fake.setMinProtocol(2);
+    s.kick();
+    await until("upgrade_required", () => lastError()?.code === "upgrade_required");
+    const serial = row().cert_serial!;
+    memory.set(runningShort());
+    await until("the warning", () => told.length === 1);
+    expect(keys(told)).toEqual([`REMOTE_CERT_EXPIRING:${serial}`]);
+  });
+
+  it("renews a certificate that ran out while off without a word", async () => {
+    const told: RemoteNotice[] = [];
+    const ca = fakeCa();
+    const s = await on(ca, async (n) => void told.push(n));
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    const serial = row().cert_serial!;
+    await s.disable("liv");
+    memory.set({ cert_not_after: new Date(Date.now() - HOUR), cert_renew_at: new Date(Date.now() - 2 * HOUR) });
+    await s.enable({ acceptCaTerms: true, by: "liv" });
+    await until("the new certificate", () => row().cert_serial !== serial);
+    await sleep(150);
+    expect(told).toEqual([]);
+    expect(row().cert_alerted_serial).toBeNull();
+  });
+
+  it("says a certificate found on disk replaces the one warned about, until that is told", async () => {
+    const told: RemoteNotice[] = [];
+    let failing = true;
+    await on(fakeCa(), async (n) => {
+      if (n.event === "REMOTE_CERT_RECOVERED" && failing) {
+        failing = false;
+        throw new Error("the notifications table is busy");
+      }
+      told.push(n);
+    });
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    const serial = row().cert_serial!;
+    memory.set({ cert_alerted_serial: serial });
+    const replacement = makeTestCert({ dnsNames: [row().hostname!] });
+    await writeCertificate(dataDir, replacement.privateKey, replacement.cert);
+    await until("the announcement", () => told.length === 1);
+    expect(failing).toBe(false);
+    expect(row().cert_serial).toBe(replacement.serial);
+    expect(keys(told)).toEqual([`REMOTE_CERT_RECOVERED:${serial}`]);
+    await until("the mark cleared", () => row().cert_alerted_serial === null);
   });
 });

@@ -14,6 +14,7 @@ import {
   getRemoteAccess,
   recordRemoteAccount,
   recordRemoteCert,
+  recordRemoteCertAri,
   recordRemoteCertFailure,
   recordRemoteCheckin,
   recordRemoteConnectorConfig,
@@ -22,6 +23,8 @@ import {
   recordRemoteProbe,
   saveRemoteBinding,
   setRemoteBindingFailing,
+  setRemoteCertAlerted,
+  setRemoteCertAriNext,
   setRemoteCheckinNext,
   setRemoteEnabled,
   setRemoteError,
@@ -35,9 +38,13 @@ import { applyRemoteHeaders, withRemoteHeaders, withSecurityHeaders } from "../h
 import type { ServingGate } from "../http/serving-gate.js";
 import { startInterval } from "../platform/interval.js";
 import { createRemoteListener, removeSocketFile, type RemoteListener } from "../platform/remote-listener.js";
-import type { AcmeDirectory } from "./acme/client.js";
+import { fetchRenewalInfo, type RenewalInfo } from "./acme/client.js";
+import { ariCertId } from "./acme/der.js";
 import { fetchTransport, type AcmeTransport } from "./acme/transport.js";
 import {
+  ARI_RETRY_MS,
+  ariRenewAt,
+  cachedDirectory,
   certFailure,
   certRenewAt,
   certUsable,
@@ -45,6 +52,8 @@ import {
   obtainCertificate,
   readCertificate,
   writeCertificate,
+  type CertOnDisk,
+  type DirectoryCache,
   type LoadedCert,
 } from "./certificates.js";
 import { createConnectorControl, type ConnectorLine } from "./connector.js";
@@ -72,6 +81,7 @@ import {
   UnreadableKey,
   type BindingKey,
 } from "./keys.js";
+import { bindingNotice, certNotices, recoveredNotice, type RemoteNotice } from "./notify.js";
 import { probeThroughRelay, type ProbeResult } from "./probe.js";
 import { createServiceClient, ServiceError, type CheckinAnswer, type EnrollAnswer } from "./service-client.js";
 import { clearedBy, deniedCheckinDelay, remoteError, remoteStatus, serviceFailure, type ErrorKind } from "./state.js";
@@ -112,6 +122,8 @@ export interface RemoteAccessDeps {
   config: { service: string; dir: string; dataDir: string; connector?: ConnectorHints | undefined };
   /** The LAN's gate: the remote listener serves and pauses with it. */
   gate: ServingGate;
+  /** Tells the node's administrators, in the app and through the sink. None in tests that don't ask. */
+  notify?: (notice: RemoteNotice) => Promise<void>;
   readsOwnBody: (method: string, path: string) => boolean;
   maxBodyBytes: () => number;
   /** Epoch milliseconds. Tests. */
@@ -206,8 +218,11 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   const probe = deps.probe ?? probeThroughRelay;
   const client = createServiceClient({ now });
   const locked = createLock();
-  const directories = new Map<string, { directory: AcmeDirectory; at: number }>();
+  const directories: DirectoryCache = new Map();
   const connector = config.connector ? createConnectorControl({ hints: config.connector, now, onError }) : null;
+  const notify = deps.notify ?? (async () => {});
+  /** What this process has told the administrators: a tick does not write it again. */
+  const told = new Set<string>();
 
   let row: NodeRemoteAccessRow | null = null;
   /** The certificate the listener serves: the last good one, even while the file is being replaced. */
@@ -686,7 +701,18 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   async function certTick(): Promise<void> {
     if (stopped) return;
     const r = await refreshRow();
-    if (!r.enabled || !r.hostname || !r.api_url || !r.remote_id || upgradeRequired) return;
+    if (!r.enabled || !r.hostname) return;
+    // Denied, waiting on an administrator or on a newer Stuga: told all the same. Never while off.
+    await tellAdmins(r);
+    await renew(r);
+    // What the attempt changed: a renewal that failed, or a new certificate after a warning.
+    if (stopped) return;
+    const after = await refreshRow();
+    if (after.enabled) await tellAdmins(after);
+  }
+
+  async function renew(r: NodeRemoteAccessRow): Promise<void> {
+    if (!r.hostname || !r.api_url || !r.remote_id || upgradeRequired) return;
     // Nothing to ask for before the first check-in names a CA.
     if (!r.acme_directory) return;
     const code = r.last_error?.code;
@@ -703,6 +729,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
           notAfter: found.notAfter,
           renewAt: certRenewAt(found.notBefore, found.notAfter, rand),
           reissueBefore: null,
+          accountUrl: r.cert_serial === null ? null : r.cert_account_url,
         });
         await refreshRow();
       }
@@ -712,12 +739,13 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
           await settleListener();
         });
       }
+      await pollRenewalInfo(row!, found);
     }
     const evidence = issuanceEvidence(disk, row!, now());
     if (!evidence) return;
     if (r.cert_retry_at && now() < r.cert_retry_at.getTime()) return;
     try {
-      await issue(r);
+      await issue(r, evidence === "due" || evidence === "reissue_requested" ? replacing(row!, disk) : null);
     } catch (e) {
       if (e instanceof Stopped) return;
       await refreshRow();
@@ -734,7 +762,82 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     }
   }
 
-  async function issue(r: NodeRemoteAccessRow): Promise<void> {
+  /**
+   * Warn the administrators of what the row shows: renewals that keep failing, a certificate that
+   * runs short or has run out, a key the service no longer takes. Each once; the certificate warned
+   * about is kept until a new one in use after it has been announced.
+   */
+  async function tellAdmins(r: NodeRemoteAccessRow): Promise<void> {
+    const at = now();
+    const alerted = r.cert_alerted_serial;
+    if (alerted && r.cert_serial && alerted !== r.cert_serial && r.cert_not_after && at < r.cert_not_after.getTime()) {
+      if (await tell(recoveredNotice(alerted, r.hostname!, r.cert_not_after))) {
+        await setRemoteCertAlerted(sql, null);
+        r = await refreshRow();
+      }
+    }
+    let marked = r.cert_alerted_serial === r.cert_serial;
+    for (const notice of certNotices(r, at)) {
+      if (!(await tell(notice)) || marked) continue;
+      await setRemoteCertAlerted(sql, r.cert_serial);
+      await refreshRow();
+      marked = true;
+    }
+    const binding = bindingNotice(r, at);
+    if (binding) await tell(binding);
+  }
+
+  /** True once told, now or before in this process; a failure to tell is reported and tried next tick. */
+  async function tell(notice: RemoteNotice): Promise<boolean> {
+    const id = `${notice.event}:${notice.key}`;
+    if (told.has(id)) return true;
+    try {
+      await notify(notice);
+    } catch (e) {
+      onError(e);
+      return false;
+    }
+    told.add(id);
+    return true;
+  }
+
+  /**
+   * Ask the CA when to renew the certificate in use (RFC 9773), once its last answer says to: a time
+   * drawn from its window becomes the renewal time. Only for a certificate from the directory in use.
+   * When the CA cannot say, or names a window past the certificate's expiry, the renewal time stays
+   * and it is asked again in six hours; a CA that offers no renewal information is not asked until
+   * its directory is fetched again.
+   */
+  async function pollRenewalInfo(r: NodeRemoteAccessRow, held: LoadedCert): Promise<void> {
+    if (held.serial !== r.cert_serial || !r.cert_directory || r.cert_directory !== r.acme_directory) return;
+    if (r.cert_ari_next_at && now() < r.cert_ari_next_at.getTime()) return;
+    let info: RenewalInfo | null = null;
+    try {
+      const directory = await cachedDirectory(directories, transport, r.cert_directory, now());
+      if (!directory.renewalInfo) return;
+      const certId = ariCertId(held.leaf.raw);
+      if (certId) info = await fetchRenewalInfo(transport, directory.renewalInfo, certId, now());
+    } catch {
+      // Unreachable, or an answer that is no window: the renewal time it had.
+    }
+    const at = now();
+    const renewAt = info
+      ? ariRenewAt(info, { start: r.cert_ari_window_start, end: r.cert_ari_window_end, renewAt: r.cert_renew_at }, held.notAfter, at, rand)
+      : null;
+    if (!info || !renewAt) await setRemoteCertAriNext(sql, new Date(at + ARI_RETRY_MS));
+    else await recordRemoteCertAri(sql, { windowStart: info.start, windowEnd: info.end, renewAt, nextAt: new Date(at + info.retryAfterMs) });
+    await refreshRow();
+  }
+
+  /** What a renewal names as the certificate it replaces: the one in use, from the directory in use. */
+  function replacing(r: NodeRemoteAccessRow, disk: CertOnDisk): { certId: string; accountUrl: string } | null {
+    if (disk.kind !== "ok" || disk.cert.serial !== r.cert_serial || !r.cert_account_url) return null;
+    if (!r.cert_directory || r.cert_directory !== r.acme_directory) return null;
+    const certId = ariCertId(disk.cert.leaf.raw);
+    return certId ? { certId, accountUrl: r.cert_account_url } : null;
+  }
+
+  async function issue(r: NodeRemoteAccessRow, replaces: { certId: string; accountUrl: string } | null): Promise<void> {
     const key = await bindingKey(r);
     if (!key) return;
     const directoryUrl = r.acme_directory!;
@@ -751,7 +854,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     );
     issuing = off;
     const sleep = (ms: number) => delay(ms, undefined, { signal });
-    let obtained: { key: KeyObject; chainPem: string };
+    let obtained: { key: KeyObject; chainPem: string; accountUrl: string };
     try {
       obtained = await obtainCertificate({
         transport: { request: (url, init) => transport.request(url, { ...init, signal }) },
@@ -774,6 +877,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
         onAccount: async (a) => {
           await recordRemoteAccount(sql, { directory: a.directory, url: a.url, termsUrl: a.termsUrl });
         },
+        replaces,
         directories,
         clock: { now, sleep },
         newKey: generateP256,
@@ -796,6 +900,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       notAfter: next.notAfter,
       renewAt: certRenewAt(next.notBefore, next.notAfter, rand),
       reissueBefore: r.acme_reissue_before,
+      accountUrl: obtained.accountUrl,
     });
     await refreshRow();
     await succeeded("issuance");

@@ -33,6 +33,11 @@ const DEFAULTS: NodeRemoteAccessRow = {
   cert_reissue_before: null,
   cert_failures: 0,
   cert_retry_at: null,
+  cert_account_url: null,
+  cert_ari_next_at: null,
+  cert_ari_window_start: null,
+  cert_ari_window_end: null,
+  cert_alerted_serial: null,
   checkin_at: null,
   checkin_next_at: null,
   credential_ttl: null,
@@ -159,9 +164,14 @@ export interface RemoteCert {
   renewAt: Date;
   /** The reissue request in hand when it was issued, which it answers; null when there was none, or unknown. */
   reissueBefore: Date | null;
+  /** The ACME account that ordered it; null when unknown. */
+  accountUrl: string | null;
 }
 
-/** A certificate now in use, which ends any run of failures to get one. */
+/**
+ * A certificate now in use, which ends any run of failures to get one. The CA's renewal window
+ * belonged to the one before: it is asked for this one at once.
+ */
 export async function recordRemoteCert(sql: Queryable, c: RemoteCert): Promise<void> {
   await update(sql, {
     cert_serial: c.serial,
@@ -170,9 +180,36 @@ export async function recordRemoteCert(sql: Queryable, c: RemoteCert): Promise<v
     cert_not_after: c.notAfter,
     cert_renew_at: c.renewAt,
     cert_reissue_before: c.reissueBefore,
+    cert_account_url: c.accountUrl,
     cert_failures: 0,
     cert_retry_at: null,
+    cert_ari_next_at: null,
+    cert_ari_window_start: null,
+    cert_ari_window_end: null,
   });
+}
+
+/** The CA's renewal window, the time chosen in it, and when to ask again. The failure count stays. */
+export async function recordRemoteCertAri(
+  sql: Queryable,
+  a: { windowStart: Date; windowEnd: Date; renewAt: Date; nextAt: Date },
+): Promise<void> {
+  await update(sql, {
+    cert_ari_window_start: a.windowStart,
+    cert_ari_window_end: a.windowEnd,
+    cert_renew_at: a.renewAt,
+    cert_ari_next_at: a.nextAt,
+  });
+}
+
+/** When to ask the CA for the renewal window next, after it could not be had. */
+export async function setRemoteCertAriNext(sql: Queryable, nextAt: Date): Promise<void> {
+  await update(sql, { cert_ari_next_at: nextAt });
+}
+
+/** The certificate the administrators were warned about, or null once that is over. */
+export async function setRemoteCertAlerted(sql: Queryable, serial: string | null): Promise<void> {
+  await update(sql, { cert_alerted_serial: serial });
 }
 
 export async function recordRemoteCertFailure(sql: Queryable, f: { failures: number; retryAt: Date | null }): Promise<void> {

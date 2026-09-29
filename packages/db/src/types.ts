@@ -640,6 +640,11 @@ export interface NodeRemoteAccessRow {
   cert_reissue_before: Date | null;
   cert_failures: number;
   cert_retry_at: Date | null;
+  cert_account_url: string | null;
+  cert_ari_next_at: Date | null;
+  cert_ari_window_start: Date | null;
+  cert_ari_window_end: Date | null;
+  cert_alerted_serial: string | null;
   checkin_at: Date | null;
   checkin_next_at: Date | null;
   credential_ttl: number | null;

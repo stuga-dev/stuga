@@ -112,6 +112,31 @@ export function certRenewAt(notBefore: Date, notAfter: Date, rand: () => number)
   return new Date(notBefore.getTime() + (lifetime * 2) / 3 - rand() * (lifetime / 20));
 }
 
+/** After the CA's renewal information could not be had, or the CA offers none (RFC 9773 4.3.3). */
+export const ARI_RETRY_MS = 6 * 60 * MINUTE;
+
+/**
+ * When to renew in the CA's window (RFC 9773 4.2): a time drawn evenly from it, kept while the
+ * window stays the same; now, once the window has ended. Null for a window that runs past the
+ * certificate's expiry, which no CA means: taken as no answer.
+ */
+export function ariRenewAt(
+  window: { start: Date; end: Date },
+  held: { start: Date | null; end: Date | null; renewAt: Date | null },
+  notAfter: Date,
+  now: number,
+  rand: () => number,
+): Date | null {
+  const start = window.start.getTime();
+  const end = window.end.getTime();
+  if (end > notAfter.getTime()) return null;
+  if (end <= now) return new Date(now);
+  const same = held.start?.getTime() === start && held.end?.getTime() === end;
+  const kept = held.renewAt?.getTime();
+  if (same && kept !== undefined && kept >= start && kept < end) return held.renewAt!;
+  return new Date(start + rand() * (end - start));
+}
+
 export type IssuanceEvidence = "missing" | "unreadable" | "key_mismatch" | "names" | "due" | "reissue_requested";
 
 /**
@@ -180,6 +205,17 @@ export function certFailure(err: unknown, ctx: { now: Date; failures: number; ra
 
 const DIRECTORY_CACHE_MS = DAY;
 
+export type DirectoryCache = Map<string, { directory: AcmeDirectory; at: number }>;
+
+/** The directory at `url`, fetched at most once a day. */
+export async function cachedDirectory(cache: DirectoryCache, transport: AcmeTransport, url: string, now: number): Promise<AcmeDirectory> {
+  const cached = cache.get(url);
+  if (cached && now - cached.at < DIRECTORY_CACHE_MS) return cached.directory;
+  const directory = await fetchDirectory(transport, url);
+  cache.set(url, { directory, at: now });
+  return directory;
+}
+
 /**
  * The directory's `meta.termsOfService`, which the Settings page links to: kept only when it is an
  * https URL, since the directory is whatever the service names. Null otherwise.
@@ -204,20 +240,16 @@ export interface ObtainDeps {
   dns: { present(value: string): Promise<void>; verify(value: string): Promise<void>; cleanup(): Promise<void> };
   /** A new account was made: its URL and the terms it agreed to. */
   onAccount(account: { directory: string; url: string; termsUrl: string | null }): Promise<void>;
-  directories: Map<string, { directory: AcmeDirectory; at: number }>;
+  /** The certificate this one renews, named to the CA only from the account that ordered it. */
+  replaces?: { certId: string; accountUrl: string } | null;
+  directories: DirectoryCache;
   clock: AcmeClock;
   newKey(): KeyObject;
 }
 
 /** A new key and a certificate for it: the account for this directory (made when missing), then an order. */
-export async function obtainCertificate(d: ObtainDeps): Promise<{ key: KeyObject; chainPem: string }> {
-  const cached = d.directories.get(d.directoryUrl);
-  let directory: AcmeDirectory;
-  if (cached && d.clock.now() - cached.at < DIRECTORY_CACHE_MS) directory = cached.directory;
-  else {
-    directory = await fetchDirectory(d.transport, d.directoryUrl);
-    d.directories.set(d.directoryUrl, { directory, at: d.clock.now() });
-  }
+export async function obtainCertificate(d: ObtainDeps): Promise<{ key: KeyObject; chainPem: string; accountUrl: string }> {
+  const directory = await cachedDirectory(d.directories, d.transport, d.directoryUrl, d.clock.now());
   const accountKey = await loadOrCreateAcmeAccountKey(d.dataDir, d.directoryUrl);
   const client = new AcmeClient({
     transport: d.transport,
@@ -230,7 +262,10 @@ export async function obtainCertificate(d: ObtainDeps): Promise<{ key: KeyObject
     const url = await client.ensureAccount();
     await d.onAccount({ directory: d.directoryUrl, url, termsUrl: caTermsUrl(directory.meta?.termsOfService) });
   }
+  const accountUrl = client.accountUrl!;
+  // Only to a CA that offers renewal information (RFC 9773 5).
+  const replaces = d.replaces && directory.renewalInfo && d.replaces.accountUrl === accountUrl ? d.replaces.certId : null;
   const key = d.newKey();
-  const chainPem = await client.issue({ hostname: d.hostname, key, profile: d.profile, dns: d.dns });
-  return { key, chainPem };
+  const chainPem = await client.issue({ hostname: d.hostname, key, profile: d.profile, replaces, dns: d.dns });
+  return { key, chainPem, accountUrl };
 }

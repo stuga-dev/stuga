@@ -2,7 +2,7 @@
  * An ACME client (RFC 8555) for one certificate with one DNS name, dns-01 only, on node:crypto
  * alone. Requests are JWS signed ES256 by the account key (r||s signatures); every answer's
  * Replay-Nonce is kept for the next request, and a badNonce is signed again with the nonce the
- * refusal carried, never resent as it was.
+ * refusal carried, never resent as it was. The CA's renewal information (RFC 9773) is a plain GET.
  */
 import { createHash, createPublicKey, sign, type KeyObject } from "node:crypto";
 import { csrDer, pemBlocks } from "./der.js";
@@ -36,6 +36,8 @@ export interface AcmeDirectory {
   newNonce: string;
   newAccount: string;
   newOrder: string;
+  /** RFC 9773: absent when the CA offers no renewal information. */
+  renewalInfo?: string;
   meta?: { termsOfService?: string; profiles?: Record<string, unknown> };
 }
 
@@ -122,7 +124,40 @@ export async function fetchDirectory(transport: AcmeTransport, url: string): Pro
   for (const name of ["newNonce", "newAccount", "newOrder"] as const) {
     if (typeof dir[name] !== "string") throw new AcmeError("", res.status, `the directory has no ${name}`);
   }
+  if (typeof dir.renewalInfo !== "string") delete dir.renewalInfo;
   return dir as AcmeDirectory;
+}
+
+/** The CA's suggested renewal window for one certificate (RFC 9773 4.2), and when to ask again. */
+export interface RenewalInfo {
+  start: Date;
+  end: Date;
+  explanationUrl: string | null;
+  /** Retry-After, held between an hour and a day; six hours when missing. */
+  retryAfterMs: number;
+}
+
+const HOUR_MS = 3_600_000;
+const RENEWAL_INFO_RETRY_MS = { min: HOUR_MS, max: 24 * HOUR_MS, missing: 6 * HOUR_MS };
+
+/** A plain GET of `<renewalInfo>/<certId>`; an error, or a window that ends before it starts, throws. */
+export async function fetchRenewalInfo(transport: AcmeTransport, renewalInfoUrl: string, certId: string, now = Date.now()): Promise<RenewalInfo> {
+  const res = await transport.request(`${renewalInfoUrl}/${certId}`, { method: "GET", headers: { accept: "application/json" } });
+  if (res.status !== 200) throw problemOf(res, now);
+  const body = parseJson<{ suggestedWindow?: { start?: unknown; end?: unknown }; explanationURL?: unknown }>(res);
+  const at = (v: unknown) => (typeof v === "string" ? Date.parse(v) : Number.NaN);
+  const start = at(body?.suggestedWindow?.start);
+  const end = at(body?.suggestedWindow?.end);
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) throw new AcmeError("", res.status, "the CA's renewal window is not one");
+  const retryAfter = retryAfterSeconds(res.headers, now);
+  const retryAfterMs =
+    retryAfter === undefined ? RENEWAL_INFO_RETRY_MS.missing : Math.min(Math.max(retryAfter * 1000, RENEWAL_INFO_RETRY_MS.min), RENEWAL_INFO_RETRY_MS.max);
+  return {
+    start: new Date(start),
+    end: new Date(end),
+    explanationUrl: typeof body.explanationURL === "string" ? body.explanationURL : null,
+    retryAfterMs,
+  };
 }
 
 export interface AcmeClientOptions {
@@ -239,18 +274,29 @@ export class AcmeClient {
 
   /**
    * One certificate for `hostname` on `key`: order, prove control through `dns`, finalize, download.
-   * The TXT record `dns.present` put up is taken down however the order ends. Returns
-   * the chain, leaf first.
+   * The TXT record `dns.present` put up is taken down however the order ends. `replaces` names
+   * the certificate this one renews (RFC 9773 5); an order the CA refuses with it is placed again
+   * without, unless the refusal is for the nonce or a rate limit. Returns the chain, leaf first.
    */
   async issue(args: {
     hostname: string;
     key: KeyObject;
     profile?: string | null;
+    replaces?: string | null;
     dns: { present(value: string): Promise<void>; verify(value: string): Promise<void>; cleanup(): Promise<void> };
   }): Promise<string> {
     const payload: Record<string, unknown> = { identifiers: [{ type: "dns", value: args.hostname }] };
     if (args.profile && this.directory.meta?.profiles && args.profile in this.directory.meta.profiles) payload.profile = args.profile;
-    const created = await this.post(this.directory.newOrder, payload);
+    if (args.replaces) payload.replaces = args.replaces;
+    let created: AcmeResponse;
+    try {
+      created = await this.post(this.directory.newOrder, payload);
+    } catch (e) {
+      // Already replaced, another account's, not the CA's to know: a renewal all the same.
+      if (!payload.replaces || !(e instanceof AcmeError) || e.is("badNonce") || e.is("rateLimited")) throw e;
+      delete payload.replaces;
+      created = await this.post(this.directory.newOrder, payload);
+    }
     const orderUrl = created.headers.get("location");
     if (!orderUrl) throw new AcmeError("", created.status, "the CA created an order without saying where");
     let order = parseJson<AcmeOrder>(created);
