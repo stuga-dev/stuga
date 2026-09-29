@@ -362,6 +362,11 @@ TABLE node_remote_access
   ca_terms_accepted_at timestamp with time zone
   ca_terms_accepted_by text
   ca_terms_url text
+  cert_account_url text
+  cert_alerted_serial text
+  cert_ari_next_at timestamp with time zone
+  cert_ari_window_end timestamp with time zone
+  cert_ari_window_start timestamp with time zone
   cert_directory text
   cert_failures integer NOT NULL DEFAULT 0
   cert_not_after timestamp with time zone
