@@ -30,7 +30,8 @@ jobs:
       - name: shellcheck
         run: |
           find packaging scripts -type f -name '*.sh' -print0 | sort -z \
-            | xargs -0 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 -x -P SCRIPTDIR packaging/docker/stuga
+            | xargs -0 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 -x -P SCRIPTDIR packaging/docker/stuga \
+              packaging/macos/pkg/scripts/preinstall packaging/macos/pkg/scripts/postinstall
 
   db-integration:
     runs-on: ubuntu-latest
