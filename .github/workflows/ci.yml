@@ -84,9 +84,20 @@ jobs:
       - run: bash packaging/macos/test/ci.sh
         env:
           STUGA_MACOS_CACHE: ${{ runner.temp }}/stuga-macos-cache
+      # The connector, unsigned: frp's pinned commit builds with the pinned Go, and the notices match it.
+      - name: Build the connector
+        env:
+          STUGA_MACOS_CACHE: ${{ runner.temp }}/stuga-macos-cache
+        run: bash packaging/macos/connector/build.sh --out "$RUNNER_TEMP/connector"
+      # A runtime naming that connector, as a release's does.
       - name: Build a runtime
         env:
           STUGA_MACOS_CACHE: ${{ runner.temp }}/stuga-macos-cache
-        run: bash packaging/macos/build/build-runtime.sh --out "$RUNNER_TEMP/stuga-macos" --version 0.0.0-ci
+        run: |
+          set -euo pipefail
+          sha="$(shasum -a 256 "$RUNNER_TEMP/connector/stuga-connector-darwin-arm64.zip" | cut -d' ' -f1)"
+          bash packaging/macos/build/build-runtime.sh --out "$RUNNER_TEMP/stuga-macos" --version 0.0.0-ci \
+            --connector-sha256 "$sha"
+          [ "$(cat "$RUNNER_TEMP/stuga-macos/runtime/0.0.0-ci/conf/connector.sha256")" = "$sha" ]
       - run: bash packaging/macos/test/smoke.sh "$RUNNER_TEMP/stuga-macos/runtime/0.0.0-ci"
       - run: bash packaging/macos/test/restore-drill.sh "$RUNNER_TEMP/stuga-macos/runtime/0.0.0-ci"

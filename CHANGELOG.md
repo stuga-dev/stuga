@@ -11,6 +11,25 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+### Added
+
+- **Remote access from the Mac package**: **Settings → This node → Remote access** turns it on with
+  no terminal. The package's helper downloads the connector when an administrator turns remote
+  access on, checks it against the version this release names and its signature, and runs it as its
+  own account, `_stugaremote`, under the LaunchDaemon `dev.stuga.remote`. The connector is frp's
+  `frpc`, built by Stuga from frp's source at a fixed version, signed and notarized, and attested
+  like every release asset ([docs/remote-access.md](docs/remote-access.md#the-connector)).
+- The node renews its remote certificate when the CA suggests, through its renewal information
+  (RFC 9773), and names the certificate it replaces.
+- Node administrators are told when the remote certificate can't be renewed, is running short or
+  has expired, and when a new one is in use; also when the service has refused the node's key for a
+  day.
+
+### Changed
+
+- A remote certificate that has expired, or no longer names the address, takes the tunnel down
+  until a new one is in place.
+
 ## [0.1.5] - 2026-09-29
 
 - Remote access: a node's own https address through a relay, where the packaging offers it.

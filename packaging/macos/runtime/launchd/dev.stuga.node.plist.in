@@ -2,7 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   The Stuga node. Rendered by packaging/macos/build/render-launchd.sh; every @-delimited placeholder is
-  filled, and agent mode drops UserName, GroupName and the upgrade helper's two paths.
+  filled, and agent mode drops UserName, GroupName and the helper's four paths: the upgrade's
+  two and the connector's two, so a local trial runs the connector by hand.
 
   - node-wrapper.sh waits for Postgres, then execs the node, so launchd's SIGTERM starts its
     graceful shutdown; ExitTimeOut is the backstop behind the node's own 25 s limit.
@@ -55,6 +56,14 @@
     <string>@ROOT@/requests</string>
     <key>STUGA_UPGRADE_STATUS</key>
     <string>@ROOT@/status/upgrade.json</string>
+    <key>STUGA_REMOTE_SERVICE</key>
+    <string>https://api.stuga.dev</string>
+    <key>STUGA_REMOTE_DIR</key>
+    <string>@ROOT@/remote</string>
+    <key>STUGA_CONNECTOR_REQUEST</key>
+    <string>@ROOT@/requests/remote</string>
+    <key>STUGA_CONNECTOR_STATUS</key>
+    <string>@ROOT@/status/remote.json</string>
   </dict>
 
   <key>UserName</key>

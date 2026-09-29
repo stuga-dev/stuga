@@ -17,7 +17,7 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Globe } from "lucide-react";
-import type { RemoteAccessStatus, RemoteError, RemoteErrorCode } from "@stuga/protocol/api/remote-access";
+import type { ConnectorStatus, RemoteAccessStatus, RemoteError, RemoteErrorCode } from "@stuga/protocol/api/remote-access";
 import { NodeSettings as NodeApi } from "../../../api";
 import { copyText } from "../../../lib/clipboard";
 import { shortDate, timeOfDay, versionLabel } from "../../../lib/format";
@@ -49,7 +49,27 @@ const DEGRADED: Partial<Record<RemoteErrorCode, string>> = {
   acme_error: "Getting a certificate failed.",
   connector_unreachable: "The address doesn’t reach this node. Check that the connector is running.",
   wrong_certificate: "The address answered with a certificate that isn’t this node’s.",
+  certificate_expired: "The certificate expired. The node is getting a new one.",
+  connector_failed: "The connector couldn’t start.",
 };
+
+/** Where the packaging runs the connector, nobody is asked to check on it. */
+const MANAGED_UNREACHABLE = "The connector is starting or can’t reach the relay.";
+
+/** The connector's status line, where the packaging runs it: a reason where it has one. */
+function connectorLabel(status: ConnectorStatus | null): string {
+  if (!status) return "Starting…";
+  switch (status.state) {
+    case "installing":
+      return "Installing…";
+    case "running":
+      return "Running";
+    case "stopped":
+      return "Stopped";
+    default:
+      return status.message || (status.state === "unavailable" ? "Not included in this installation" : "Couldn’t start");
+  }
+}
 
 /** A time today by the clock, another day with its date. */
 function when(iso: string): string {
@@ -62,6 +82,7 @@ const isFuture = (iso: string | null | undefined, now: number) => !!iso && Date.
 function progress(status: Status, now: number): string {
   if (!isFuture(status.certificate?.expires_at, now)) return "Getting a certificate…";
   if (!isFuture(status.credential?.expires_at, now)) return "Connecting to the relay…";
+  if (status.connector?.managed && status.connector.status?.state === "installing") return "Installing the connector…";
   return "Checking the address…";
 }
 
@@ -114,7 +135,7 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
   const [otherCode, setOtherCode] = useState(false);
   /** A refused turn-on that carried a code, shown under the code field. */
   const [codeError, setCodeError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"" | "on" | "off">("");
+  const [busy, setBusy] = useState<"" | "on" | "off" | "retry">("");
   const [confirmOff, setConfirmOff] = useState(false);
 
   const now = Date.now();
@@ -148,6 +169,18 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
     section.clear();
     try {
       onStatus(await NodeApi.disableRemoteAccess());
+    } catch (e) {
+      section.fail(e);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function retryConnector() {
+    setBusy("retry");
+    section.clear();
+    try {
+      onStatus(await NodeApi.retryRemoteConnector());
     } catch (e) {
       section.fail(e);
     } finally {
@@ -246,13 +279,39 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
   } else if (status.state === "error" && error) {
     body = (
       <>
-        <Banner status="error" title={errorSentence(error)} />
-        {error.code === "binding_rejected" ? turnOnForm(true, turnOffButton) : turnOffRow}
+        <Banner
+          status="error"
+          title={errorSentence(error)}
+          description={error.code === "connector_refused" && error.message ? error.message : undefined}
+        />
+        {error.code === "binding_rejected" ? (
+          turnOnForm(true, turnOffButton)
+        ) : error.code === "connector_refused" ? (
+          <HStack gap={2}>
+            <Button
+              label="Retry"
+              variant="primary"
+              size="sm"
+              isDisabled={busy !== ""}
+              isLoading={busy === "retry"}
+              onClick={() => void retryConnector()}
+            />
+            {turnOffButton}
+          </HStack>
+        ) : (
+          turnOffRow
+        )}
       </>
     );
   } else {
     // starting, on, degraded: the address and how to keep it reachable.
     const running = status.state !== "starting";
+    const managed = status.connector?.managed ?? false;
+    const reported = status.connector?.status ?? null;
+    // While starting, a reason to wait that progress() doesn't already give.
+    const connectorLine = managed && (running || (reported !== null && reported.state !== "installing"));
+    const expiredAt = status.certificate && !isFuture(status.certificate.expires_at, now) ? status.certificate.expires_at : null;
+    const title = error?.code === "connector_unreachable" && managed ? MANAGED_UNREACHABLE : error ? (DEGRADED[error.code] ?? error.message) : "";
     body = (
       <>
         {status.address && <AddressRow address={status.address} canCopy={running} />}
@@ -262,19 +321,31 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
             <Text color="secondary">{progress(status, now)}</Text>
           </HStack>
         )}
-        {running && status.certificate?.renew_at && (
+        {expiredAt ? (
           <Text type="supporting" color="secondary">
-            Certificate renews {shortDate(status.certificate.renew_at)}.
+            Certificate expired {shortDate(expiredAt)}.
+          </Text>
+        ) : (
+          running &&
+          status.certificate?.renew_at && (
+            <Text type="supporting" color="secondary">
+              Certificate renews {shortDate(status.certificate.renew_at)}.
+            </Text>
+          )
+        )}
+        {connectorLine && (
+          <Text type="supporting" color="secondary">
+            Connector: {connectorLabel(reported)}
           </Text>
         )}
         {status.state === "degraded" && error && (
           <Banner
             status={error.code === "wrong_certificate" ? "error" : "warning"}
-            title={DEGRADED[error.code] ?? error.message}
+            title={title}
             description={error.retry_at ? `Next try ${when(error.retry_at)}.` : undefined}
           />
         )}
-        {status.connector?.config_path && (
+        {!managed && status.connector?.config_path && (
           <ConnectorHint configPath={status.connector.config_path} changedAt={status.connector.config_changed_at} />
         )}
         {turnOffRow}
@@ -314,6 +385,9 @@ function errorSentence(error: RemoteError): string {
       return "Update Stuga to use remote access.";
     case "acme_action_required":
       return `The certificate authority needs attention: ${error.message}`;
+    case "connector_refused":
+      // The packaging's reason goes beneath.
+      return "The connector didn’t pass its checks, so it isn’t running.";
     default:
       // The shared directory or the socket: the node's message names the path and what is wrong with it.
       return error.message;

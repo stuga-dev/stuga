@@ -8,7 +8,8 @@ directory.
 ## Pins
 
 `packaging/versions.env` lists every pinned input: Node, pnpm, the Postgres major, pgvector,
-pg_search, Postgres.app, the Debian line and the PGDG key. Downloads are pinned by sha256.
+pg_search, Postgres.app, the Debian line and the PGDG key, and for the remote-access connector the
+frp commit, Go and go-licenses. Downloads are pinned by sha256.
 `INITDB_ARGS` is the one cluster spec for both platforms.
 `packaging/check-pins.sh` fails when `.nvmrc`, the root `package.json` (`packageManager`,
 `@types/node`) or a Dockerfile `ARG` default disagrees with it. It also fails when the Postgres
@@ -131,7 +132,8 @@ These are optional. The app has a neutral default for each.
 | `STUGA_STDIO_ENTRY` | unset: the bundled `stuga-mcp.js` | `""`: no local path an agent outside the container can open | unset |
 | `AI_OLLAMA_DEFAULT_URL` | `http://127.0.0.1:11434` | `http://host.docker.internal:11434` (compose maps the host) | unset |
 | `STUGA_UPGRADE_REQUESTS`, `STUGA_UPGRADE_STATUS` | unset: the node offers no install | unset | the package's helper: `<root>/requests` and `<root>/status/upgrade.json` |
-| `STUGA_REMOTE_SERVICE`, `STUGA_REMOTE_DIR` | unset: the node offers no remote access | unset | unset |
+| `STUGA_REMOTE_SERVICE`, `STUGA_REMOTE_DIR` | unset: the node offers no remote access | unset | `https://api.stuga.dev` and `<root>/remote` |
+| `STUGA_CONNECTOR_REQUEST`, `STUGA_CONNECTOR_STATUS` | unset: the administrator runs the connector | unset | the package's helper: `<root>/requests/remote` and `<root>/status/remote.json`; unset in the local trial |
 
 `STUGA_RESTART_HINT` is a full sentence, shown after a change that needs a restart.
 `STUGA_UPGRADE_HINT` is a full sentence too, shown to a node administrator beside a newer version.
@@ -153,6 +155,20 @@ node writes the connector's settings and credential there and listens on `https.
 connector, or leaves it to the administrator
 ([Running the connector yourself](../docs/remote-access.md#running-the-connector-yourself)). With
 only one set, the node logs a warning and offers none.
+`STUGA_CONNECTOR_REQUEST` and `STUGA_CONNECTOR_STATUS` say that the packaging runs the connector
+([The connector](../docs/remote-access.md#the-connector)). The node writes one line to the request
+file, `on <sha-256 of the connector's settings>` or `off`, whole and renamed in, and reads
+`{state, message, at, connector_sha, config_sha}` back from the status file, where `state` is
+`installing`, `running`, `stopped`, `refused` (not retried until an administrator asks),
+`failed` (retried) or `unavailable` (no connector for this runtime). The line is a desired state:
+the packaging keeps the file, compares it with what runs whenever it wakes, and restarts the
+connector only when the settings or the connector changed. The node writes it at every start, when
+it changes, and again, backing off, while the status disagrees. The packaging writes a fresh status,
+with `at` in ISO 8601, after every pass over the request, even one that changes nothing: the node
+takes a status stamped before it last changed the line, to the second, as no answer, and asks again
+for `on` after an `installing` status silent for 15 minutes. Both paths are absolute; with only
+one set, the node logs a warning and takes it that the packaging does not run the connector. They
+count only beside `STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR`.
 
 ## Postgres
 

@@ -1,7 +1,8 @@
 /**
  * `/api/node/remote-access`: the node's remote address (docs/remote-access.md), shown, turned on
- * with a code from the remote-access service, and turned off. Where the packaging offers no remote
- * access the GET says so and the rest refuse.
+ * with a code from the remote-access service, and turned off; and the connector the packaging
+ * refused, asked for again. Where the packaging offers no remote access the GET says so and the
+ * rest refuse.
  */
 import type { RemoteAccessEnableError } from "@stuga/protocol/api/remote-access";
 import { nodeAuditCtx, recordAudit } from "../../audit/record.js";
@@ -59,6 +60,25 @@ export async function disableRemoteAccessRoute({ ctx }: WorkspaceCall): Promise<
   const status = await remote.disable(ctx.alias);
   recordAudit(nodeAuditCtx(ctx), {
     action: "node.remote_access.disable",
+    targetKind: "node",
+    targetId: ctx.env.publicOrigin,
+    detail: { id: remote.view.current().id },
+  });
+  return json(status);
+}
+
+export async function retryRemoteConnectorRoute({ ctx }: WorkspaceCall): Promise<Response> {
+  const remote = ctx.env.remoteAccess;
+  if (!remote) return unavailable();
+  let status;
+  try {
+    status = await remote.retryConnector(ctx.alias);
+  } catch (e) {
+    if (!(e instanceof RemoteAccessRefusal)) throw e;
+    return refuse(e.status, { error: e.message, ...(e.code ? { code: e.code as RemoteAccessEnableError["code"] } : {}) });
+  }
+  recordAudit(nodeAuditCtx(ctx), {
+    action: "node.remote_access.connector_retry",
     targetKind: "node",
     targetId: ctx.env.publicOrigin,
     detail: { id: remote.view.current().id },

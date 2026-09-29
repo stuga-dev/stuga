@@ -672,6 +672,14 @@ CREATE TABLE node_remote_access (
     cert_reissue_before         TIMESTAMPTZ,
     cert_failures               INTEGER     NOT NULL DEFAULT 0,
     cert_retry_at               TIMESTAMPTZ,
+    -- The account that ordered it: a renewal names it as replaced only from the same account.
+    cert_account_url            TEXT,
+    -- The CA's renewal window for it (RFC 9773), and when to ask again.
+    cert_ari_next_at            TIMESTAMPTZ,
+    cert_ari_window_start       TIMESTAMPTZ,
+    cert_ari_window_end         TIMESTAMPTZ,
+    -- The certificate the administrators were last warned about; cleared once a new one is in use.
+    cert_alerted_serial         TEXT,
     checkin_at                  TIMESTAMPTZ,
     checkin_next_at             TIMESTAMPTZ,
     credential_ttl              INTEGER,

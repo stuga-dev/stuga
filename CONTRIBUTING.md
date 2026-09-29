@@ -166,8 +166,9 @@ Scope a turbo-driven command to one package with a filter: `pnpm --filter @stuga
     ```
 
 - **Packaging checks:** `bash packaging/check-pins.sh`, and `node --test "packaging/**/*.test.mjs"`
-  for the image's health check, the Mac log rotation, the launchd plists (macOS only) and the
-  developer tools lookup. CI also runs shellcheck over every script in `packaging/` and `scripts/`.
+  for the image's health check, the Mac log rotation, the launchd plists, the helper and the
+  connector's wrapper (these three macOS only) and the developer tools lookup. CI also runs
+  shellcheck over every script in `packaging/` and `scripts/`.
 
 CI (`.github/workflows/ci.yml`) runs all of these on every pull request and every push to `main`,
 on Linux and on macOS.

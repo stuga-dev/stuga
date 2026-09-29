@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# Render the Postgres and node launchd plists, and in daemon mode the upgrade helper's, from
-# packaging/macos/runtime/launchd/*.plist.in.
+# Render the Postgres and node launchd plists, and in daemon mode the upgrade helper's and the
+# remote access connector's, from packaging/macos/runtime/launchd/*.plist.in.
 #
 #   packaging/macos/build/render-launchd.sh --mode daemon|agent --out <dir> --public-origin <url>
 #       [--root <dir>] [--logs <dir>] [--bind <addr>] [--port <n>] [--extra-origins <origins>] [--keep-env]
 #
-#   daemon   dev.stuga.{postgres,node}, run as _stuga from boot; install into /Library/LaunchDaemons.
+#   daemon   dev.stuga.{postgres,node}, run as _stuga from boot, dev.stuga.helper as root and
+#            dev.stuga.remote as _stugaremote; install into /Library/LaunchDaemons.
 #            Root /Library/Application Support/Stuga, logs /Library/Logs/Stuga.
 #   agent    dev.stuga.local.{postgres,node}, run as the logged-in user: the local trial.
 #            Root ~/Library/Application Support/Stuga Local, logs ~/Library/Logs/Stuga Local.
 #
 # --public-origin is the address people open: the node's whole CORS allow-set with
 # --extra-origins, and the issuer of every session token. --bind defaults to 127.0.0.1,
-# --port to 8787. Writes <out>/<label>.plist for both jobs and lints them. With --keep-env, the
+# --port to 8787. Writes <out>/<label>.plist for each job and lints them. With --keep-env, the
 # environment variables of a plist already there that this script does not set are carried over;
 # the ones it sets are rendered anew, and each of those whose value changes is named on stderr.
 set -euo pipefail
@@ -118,9 +119,12 @@ render() { # render <template> <label>
   if [ "$mode" = agent ]; then
     plutil -remove UserName "$target.tmp" > /dev/null
     plutil -remove GroupName "$target.tmp" > /dev/null
-    # No helper runs beside a local trial, so the node offers no install.
-    plutil -remove EnvironmentVariables.STUGA_UPGRADE_REQUESTS "$target.tmp" > /dev/null 2>&1 || true
-    plutil -remove EnvironmentVariables.STUGA_UPGRADE_STATUS "$target.tmp" > /dev/null 2>&1 || true
+    # No helper runs beside a local trial, so the node offers no install, and the connector is
+    # run by hand.
+    local key
+    for key in STUGA_UPGRADE_REQUESTS STUGA_UPGRADE_STATUS STUGA_CONNECTOR_REQUEST STUGA_CONNECTOR_STATUS; do
+      plutil -remove "EnvironmentVariables.$key" "$target.tmp" > /dev/null 2>&1 || true
+    done
   fi
   if [ "$keep_env" = yes ] && [ -f "$target" ]; then
     carry_env "$target" "$target.tmp"
@@ -132,5 +136,8 @@ render() { # render <template> <label>
 
 render dev.stuga.postgres.plist.in "$label_prefix.postgres"
 render dev.stuga.node.plist.in "$label_prefix.node"
-# Only a daemon install has a helper: it runs as root, and installs a newer package on request.
-if [ "$mode" = daemon ]; then render dev.stuga.helper.plist.in "$label_prefix.helper"; fi
+# Only a daemon install has a helper, as root, and the connector job it starts and stops.
+if [ "$mode" = daemon ]; then
+  render dev.stuga.helper.plist.in "$label_prefix.helper"
+  render dev.stuga.remote.plist.in "$label_prefix.remote"
+fi

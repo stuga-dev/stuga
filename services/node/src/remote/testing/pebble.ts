@@ -65,3 +65,13 @@ export async function clearTxt(pebble: PebbleEnv, host: string): Promise<void> {
   const res = await fetch(`${pebble.challtestsrv}/clear-txt`, { method: "POST", body: JSON.stringify({ host: `${host}.` }) });
   if (!res.ok) throw new Error(`challtestsrv clear-txt: ${res.status}`);
 }
+
+/** Have Pebble answer `ariResponse`, as sent, for `certificatePem`'s renewal information from now on. */
+export async function setRenewalInfo(pebble: PebbleEnv, certificatePem: string, ariResponse: unknown): Promise<void> {
+  const res = await httpsTransport({ ca: pebble.ca }).request(`${pebble.management}/set-renewal-info/`, {
+    method: "POST",
+    body: JSON.stringify({ Certificate: certificatePem, ARIResponse: JSON.stringify(ariResponse) }),
+    headers: { "content-type": "application/json" },
+  });
+  if (res.status !== 200) throw new Error(`pebble set-renewal-info: ${res.status} ${Buffer.from(res.body).toString("utf8")}`);
+}

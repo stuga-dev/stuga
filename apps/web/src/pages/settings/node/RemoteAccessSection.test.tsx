@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import type { RemoteAccessStatus, RemoteError } from "@stuga/protocol/api/remote-access";
+import type { ConnectorStatus, RemoteAccessStatus, RemoteError } from "@stuga/protocol/api/remote-access";
 import { shortDate } from "../../../lib/format";
 import { mountInto, typeInto } from "../../../test/form-input";
 
@@ -9,6 +9,7 @@ const nodeApi = vi.hoisted(() => ({
   getRemoteAccess: vi.fn(),
   enableRemoteAccess: vi.fn(),
   disableRemoteAccess: vi.fn(),
+  retryRemoteConnector: vi.fn(),
 }));
 
 vi.mock("../../../api", async (orig) => ({
@@ -45,7 +46,7 @@ const ON: Available = {
   address: ADDRESS,
   certificate: { expires_at: at(80 * DAY), renew_at: at(50 * DAY) },
   credential: { expires_at: at(DAY) },
-  connector: { config_path: CONFIG, config_changed_at: at(-2 * DAY), reachable: true, checked_at: at(-60_000) },
+  connector: { managed: false, status: null, config_path: CONFIG, config_changed_at: at(-2 * DAY), reachable: true, checked_at: at(-60_000) },
   ca_terms: { accepted_by: "liv", accepted_at: at(-2 * DAY), url: "https://letsencrypt.org/documents/LE-SA-v1.8.pdf" },
 };
 
@@ -53,6 +54,18 @@ const ON: Available = {
 const OFF_BOUND: Available = { ...ON, enabled: false, state: "off" };
 
 const STARTING: Available = { ...ON, state: "starting", certificate: null, credential: null, connector: null };
+
+const SHA = "3f".repeat(32);
+const helper = (state: ConnectorStatus["state"], message = ""): ConnectorStatus => ({
+  state,
+  message,
+  at: at(-30_000),
+  connector_sha: "c".repeat(64),
+  config_sha: SHA,
+});
+
+/** On, where the packaging runs the connector. */
+const MANAGED: Available = { ...ON, connector: { ...ON.connector!, managed: true, config_path: null, status: helper("running") } };
 
 const problem = (code: RemoteError["code"], message: string, extra: Partial<RemoteError> = {}): RemoteError => ({
   code,
@@ -259,5 +272,122 @@ describe("RemoteAccessSection", () => {
 
     await mount({ ...ON, connector: { ...ON.connector!, config_changed_at: changedAt } });
     expect(text()).not.toContain("Its settings changed");
+  });
+
+  describe("where the packaging runs the connector", () => {
+    it("shows how the connector stands, and no command or restart to do by hand", async () => {
+      // Settings that changed since this browser saw them would be pointed out where someone runs the connector.
+      localStorage.setItem("stuga:remote-access:connector-seen", at(-3 * DAY));
+      await mount(MANAGED);
+      expect(text()).toContain(ADDRESS);
+      expect(text()).toContain("Connector: Running");
+      expect(text()).not.toContain("frpc");
+      expect(text()).not.toContain("Run the connector");
+      expect(text()).not.toContain("Restart it");
+
+      await mount({ ...MANAGED, connector: { ...MANAGED.connector!, status: helper("stopped") } });
+      expect(text()).toContain("Connector: Stopped");
+    });
+
+    it("says it is installing the connector while a starting node waits on it", async () => {
+      await mount({
+        ...STARTING,
+        certificate: ON.certificate,
+        credential: ON.credential,
+        connector: { ...MANAGED.connector!, reachable: false, status: helper("installing") },
+      });
+      expect(text()).toContain("Installing the connector…");
+      expect(text()).not.toContain("frpc");
+    });
+
+    it("gives the connector's state while starting, unless it is installing", async () => {
+      const starting = (connectorStatus: ConnectorStatus | null): Available => ({
+        ...STARTING,
+        certificate: ON.certificate,
+        credential: ON.credential,
+        connector: { ...MANAGED.connector!, reachable: false, status: connectorStatus },
+      });
+      await mount(starting(helper("unavailable")));
+      expect(text()).toContain("Checking the address…");
+      expect(text()).toContain("Connector: Not included in this installation");
+
+      await mount(starting(helper("stopped")));
+      expect(text()).toContain("Connector: Stopped");
+
+      await mount(starting(helper("refused", "The connector's signature isn't Stuga's.")));
+      expect(text()).toContain("Connector: The connector's signature isn't Stuga's.");
+
+      await mount(starting(helper("installing")));
+      expect(text()).toContain("Installing the connector…");
+      expect(text()).not.toContain("Connector: ");
+
+      await mount(starting(null));
+      expect(text()).not.toContain("Connector: ");
+    });
+
+    it("says so when the installation has no connector, with nothing to retry", async () => {
+      const message = "This installation doesn't include the connector.";
+      await mount({
+        ...MANAGED,
+        state: "error",
+        connector: { ...MANAGED.connector!, status: helper("unavailable", message) },
+        last_error: problem("connector_unavailable", message),
+      });
+      expect(text()).toContain(message);
+      expect(buttons("Retry")).toHaveLength(0);
+      expect(buttons("Turn off")).toHaveLength(1);
+    });
+
+    it("doesn't ask whether the connector is running when the packaging runs it", async () => {
+      await mount({ ...MANAGED, state: "degraded", last_error: problem("connector_unreachable", "couldn't reach it") });
+      expect(text()).toContain("The connector is starting or can’t reach the relay.");
+      expect(text()).not.toContain("Check that the connector is running");
+    });
+
+    it("gives the packaging's reason for a failure, and when the node asks again", async () => {
+      await mount({
+        ...MANAGED,
+        state: "degraded",
+        connector: { ...MANAGED.connector!, status: helper("failed", "Couldn't download the connector.") },
+        last_error: problem("connector_failed", "Couldn't download the connector.", { retry_at: at(5 * 60_000) }),
+      });
+      expect(text()).toContain("The connector couldn’t start.");
+      // The reason once, on the connector's line.
+      expect(text()).toContain("Connector: Couldn't download the connector.");
+      expect(text().split("Couldn't download the connector.")).toHaveLength(2);
+      expect(text()).toContain("Next try ");
+    });
+
+    it("retries a refused connector when asked, and turns off beside it", async () => {
+      const refused: Available = {
+        ...MANAGED,
+        state: "error",
+        connector: { ...MANAGED.connector!, status: helper("refused", "The connector's signature isn't Stuga's.") },
+        last_error: problem("connector_refused", "The connector's signature isn't Stuga's."),
+      };
+      nodeApi.retryRemoteConnector.mockResolvedValue({ ...MANAGED, state: "starting", connector: { ...MANAGED.connector!, status: helper("installing") } });
+      await mount(refused);
+      expect(text()).toContain("The connector didn’t pass its checks, so it isn’t running.");
+      expect(text()).toContain("The connector's signature isn't Stuga's.");
+      expect(buttons("Turn off")).toHaveLength(1);
+      await click(buttons("Retry")[0]);
+      await settle();
+      expect(nodeApi.retryRemoteConnector).toHaveBeenCalledTimes(1);
+      expect(text()).not.toContain("didn’t pass its checks");
+      expect(buttons("Retry")).toHaveLength(0);
+    });
+  });
+
+  it("says when the certificate expired, in place of when it renews", async () => {
+    const expiredAt = at(-2 * DAY);
+    await mount({
+      ...ON,
+      state: "degraded",
+      certificate: { expires_at: expiredAt, renew_at: at(-10 * DAY) },
+      last_error: problem("certificate_expired", "The certificate expired.", { at: expiredAt }),
+    });
+    expect(text()).toContain(`Certificate expired ${shortDate(expiredAt)}.`);
+    expect(text()).not.toContain("Certificate renews");
+    expect(text()).toContain("The certificate expired. The node is getting a new one.");
   });
 });

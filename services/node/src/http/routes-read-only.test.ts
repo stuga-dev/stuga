@@ -178,6 +178,8 @@ const PINNED = [
   "* /api/node/remote-access/enable: GET agents refused, POST refused",
   "POST /api/node/remote-access/disable: refused",
   "* /api/node/remote-access/disable: GET agents refused, POST refused",
+  "POST /api/node/remote-access/connector/retry: refused",
+  "* /api/node/remote-access/connector/retry: GET agents refused, POST refused",
   "* /api/node/**: GET agents refused, POST refused",
   "PATCH /api/workspaces/:id: refused",
   "DELETE /api/workspaces/:id: refused",

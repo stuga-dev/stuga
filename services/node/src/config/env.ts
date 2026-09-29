@@ -28,6 +28,13 @@ interface NodeBootConfig extends NodeConfig {
 export interface RemoteHints {
   service: string;
   dir: string;
+  /** Where the packaging runs the connector: the request the node writes and the status it reads back. */
+  connector?: ConnectorHints;
+}
+
+export interface ConnectorHints {
+  request: string;
+  status: string;
 }
 
 export class ConfigError extends Error {
@@ -219,7 +226,31 @@ function remoteHints(env: Env): RemoteHints | undefined {
   }
   // An env file does not expand ~, and a relative path would depend on where the node was started.
   if (!isAbsolute(dir)) throw new ConfigError(`STUGA_REMOTE_DIR must be an absolute path, got "${dir}"`);
-  return { service: remoteServiceOrigin(service), dir: normalize(dir).replace(/(.)\/+$/, "$1") };
+  const hints: RemoteHints = { service: remoteServiceOrigin(service), dir: normalize(dir).replace(/(.)\/+$/, "$1") };
+  const connector = connectorHints(env);
+  if (connector) hints.connector = connector;
+  return hints;
+}
+
+/** The same rule for the connector's pair, which means something only beside the remote hints. */
+function connectorHints(env: Env): ConnectorHints | undefined {
+  const request = str(env, "STUGA_CONNECTOR_REQUEST");
+  const status = str(env, "STUGA_CONNECTOR_STATUS");
+  if (!request && !status) return undefined;
+  if (!request || !status) {
+    console.warn(
+      `[node] ${request ? "STUGA_CONNECTOR_REQUEST" : "STUGA_CONNECTOR_STATUS"} is set without ` +
+        `${request ? "STUGA_CONNECTOR_STATUS" : "STUGA_CONNECTOR_REQUEST"}; the packaging is taken not to run the connector`,
+    );
+    return undefined;
+  }
+  for (const [name, path] of [
+    ["STUGA_CONNECTOR_REQUEST", request],
+    ["STUGA_CONNECTOR_STATUS", status],
+  ] as const) {
+    if (!isAbsolute(path)) throw new ConfigError(`${name} must be an absolute path, got "${path}"`);
+  }
+  return { request: normalize(request), status: normalize(status) };
 }
 
 /**

@@ -7,17 +7,24 @@ import type { NodeRemoteAccessRow } from "@stuga/db";
 import { makeTestCert } from "../testing/cert.js";
 import { AcmeError } from "./acme/client.js";
 import {
+  ariRenewAt,
+  cachedDirectory,
   caTermsUrl,
   certFailure,
   certRenewAt,
   certUsable,
   issuanceEvidence,
+  obtainCertificate,
   parseCertificateFile,
   readCertificate,
   writeCertificate,
   type CertOnDisk,
+  type DirectoryCache,
+  type ObtainDeps,
 } from "./certificates.js";
 import { DnsNotVisible } from "./dns-check.js";
+import { generateP256 } from "./keys.js";
+import { FAKE_CA, FAKE_CA_DIRECTORY, fakeCa, type FakeCa } from "./testing/fake-ca.js";
 
 const HOST = "k7f3q2.mystuga.com";
 const DAY = 24 * 60 * 60_000;
@@ -206,5 +213,98 @@ describe("a failure to get a certificate", () => {
     const f = certFailure(new DnsNotVisible("not seen"), ctx(2));
     expect(f.lastError.code).toBe("dns_not_visible");
     expect(inMs(f.retryAt)).toBe(5 * MIN);
+  });
+});
+
+describe("when to renew in the CA's window", () => {
+  const window = { start: new Date(T0 + 50 * DAY), end: new Date(T0 + 52 * DAY) };
+  const none = { start: null, end: null, renewAt: null };
+  const notAfter = new Date(T0 + 90 * DAY);
+  const at = (...args: Parameters<typeof ariRenewAt>) => ariRenewAt(...args)!.getTime();
+
+  it("draws a time evenly from the window", () => {
+    expect(at(window, none, notAfter, T0, () => 0)).toBe(T0 + 50 * DAY);
+    expect(at(window, none, notAfter, T0, () => 0.5)).toBe(T0 + 51 * DAY);
+    for (let i = 0; i < 100; i++) {
+      const drawn = at(window, none, notAfter, T0, Math.random);
+      expect(drawn).toBeGreaterThanOrEqual(T0 + 50 * DAY);
+      expect(drawn).toBeLessThan(T0 + 52 * DAY);
+    }
+  });
+
+  it("keeps the time it drew while the window stays the same, and draws again when it moves", () => {
+    const held = { ...window, renewAt: new Date(T0 + 51.5 * DAY) };
+    expect(ariRenewAt(window, held, notAfter, T0, () => 0)).toEqual(held.renewAt);
+    const moved = { start: new Date(T0 + 10 * DAY), end: new Date(T0 + 11 * DAY) };
+    expect(at(moved, held, notAfter, T0, () => 0)).toBe(T0 + 10 * DAY);
+    // The 2/3 time a new certificate starts with is not one drawn from this window.
+    expect(at(window, { ...window, renewAt: new Date(T0 + 60 * DAY) }, notAfter, T0, () => 0)).toBe(T0 + 50 * DAY);
+  });
+
+  it("is now once the window has ended, as after a revocation", () => {
+    const past = { start: new Date(T0 - 2 * DAY), end: new Date(T0 - DAY) };
+    expect(at(past, none, notAfter, T0, () => 0.5)).toBe(T0);
+  });
+
+  it("is none for a window that runs past the certificate's expiry", () => {
+    const late = { start: new Date(T0 + 89 * DAY), end: new Date(T0 + 91 * DAY) };
+    expect(ariRenewAt(late, none, notAfter, T0, () => 0)).toBeNull();
+    expect(ariRenewAt({ start: new Date(T0 + 95 * DAY), end: new Date(T0 + 96 * DAY) }, none, notAfter, T0, () => 0)).toBeNull();
+    expect(at({ start: new Date(T0 + 89 * DAY), end: notAfter }, none, notAfter, T0, () => 0)).toBe(T0 + 89 * DAY);
+  });
+});
+
+describe("the CA directory", () => {
+  it("is fetched once a day", async () => {
+    let fetches = 0;
+    const ca = fakeCa();
+    const transport = { request: (url: string, init: Parameters<FakeCa["transport"]["request"]>[1]) => (fetches++, ca.transport.request(url, init)) };
+    const cache: DirectoryCache = new Map();
+    await cachedDirectory(cache, transport, FAKE_CA_DIRECTORY, T0);
+    await cachedDirectory(cache, transport, FAKE_CA_DIRECTORY, T0 + DAY - 1);
+    expect(fetches).toBe(1);
+    expect((await cachedDirectory(cache, transport, FAKE_CA_DIRECTORY, T0 + DAY)).renewalInfo).toBe(`${FAKE_CA}/ari`);
+    expect(fetches).toBe(2);
+  });
+});
+
+describe("getting a certificate", () => {
+  function deps(ca: FakeCa, over: Partial<ObtainDeps> = {}): ObtainDeps {
+    const dataDir = mkdtempSync(join(tmpdir(), "stuga-obtain-"));
+    dirs.push(dataDir);
+    return {
+      transport: ca.transport,
+      dataDir,
+      directoryUrl: FAKE_CA_DIRECTORY,
+      account: { directory: null, url: null },
+      hostname: HOST,
+      profile: null,
+      dns: { present: async () => {}, verify: async () => {}, cleanup: async () => {} },
+      onAccount: async () => {},
+      directories: new Map(),
+      clock: { now: Date.now, sleep: async () => {} },
+      newKey: generateP256,
+      ...over,
+    };
+  }
+  const replaces = { certId: "aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE", accountUrl: `${FAKE_CA}/acct/1` };
+
+  it("names the certificate it replaces from the account that ordered it, and says which account it used", async () => {
+    const ca = fakeCa();
+    const first = deps(ca);
+    expect((await obtainCertificate(first)).accountUrl).toBe(`${FAKE_CA}/acct/1`);
+    const again = { ...first, account: { directory: FAKE_CA_DIRECTORY, url: `${FAKE_CA}/acct/1` }, replaces };
+    await obtainCertificate(again);
+    expect(ca.orders.at(-1)).toMatchObject({ replaces: replaces.certId });
+    await obtainCertificate({ ...again, replaces: { ...replaces, accountUrl: `${FAKE_CA}/acct/2` } });
+    expect(ca.orders.at(-1)).not.toHaveProperty("replaces");
+  });
+
+  it("names none to a CA that offers no renewal information", async () => {
+    const ca = fakeCa({ renewalInfo: false });
+    const first = deps(ca);
+    await obtainCertificate(first);
+    await obtainCertificate({ ...first, account: { directory: FAKE_CA_DIRECTORY, url: `${FAKE_CA}/acct/1` }, replaces });
+    expect(ca.orders.at(-1)).not.toHaveProperty("replaces");
   });
 });

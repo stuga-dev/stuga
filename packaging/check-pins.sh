@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Fail when a pin outside packaging/versions.env disagrees with it: .nvmrc, the root package.json's
 # packageManager, @types/node (package.json and its pnpm-workspace.yaml override), every Dockerfile
-# ARG default named in versions.env, and the Postgres major the node's preflight accepts.
+# ARG default named in versions.env, and the Postgres major the node's preflight accepts. The
+# connector's pins have no copy elsewhere; they are checked for shape.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,14 +15,22 @@ mismatch() { echo "pin mismatch: $1" >&2; failures=$((failures + 1)); }
 
 required=(NODE_VERSION NODE_DARWIN_ARM64_SHA256 PNPM_VERSION PG_MAJOR PGVECTOR_VERSION PG_SEARCH_VERSION
   PG_SEARCH_DEB_AMD64_SHA256 PG_SEARCH_DEB_ARM64_SHA256 PG_SEARCH_POSTGRESAPP_PKG_SHA256 POSTGRES_APP_VERSION
-  POSTGRES_APP_DMG_SHA256 DEBIAN_SUITE PGDG_KEY_SHA256 INITDB_ARGS)
+  POSTGRES_APP_DMG_SHA256 DEBIAN_SUITE PGDG_KEY_SHA256 INITDB_ARGS FRP_VERSION FRP_COMMIT GO_VERSION
+  GO_DARWIN_ARM64_SHA256 GO_LINUX_AMD64_SHA256 GO_LICENSES_VERSION)
 for key in "${required[@]}"; do
   [ -n "${!key:-}" ] || mismatch "versions.env does not set $key"
 done
 for key in NODE_DARWIN_ARM64_SHA256 PG_SEARCH_DEB_AMD64_SHA256 PG_SEARCH_DEB_ARM64_SHA256 \
-  PG_SEARCH_POSTGRESAPP_PKG_SHA256 POSTGRES_APP_DMG_SHA256 PGDG_KEY_SHA256; do
+  PG_SEARCH_POSTGRESAPP_PKG_SHA256 POSTGRES_APP_DMG_SHA256 PGDG_KEY_SHA256 GO_DARWIN_ARM64_SHA256 \
+  GO_LINUX_AMD64_SHA256; do
   printf '%s' "${!key:-}" | grep -Eq '^[0-9a-f]{64}$' || mismatch "$key is not a sha256"
 done
+printf '%s' "${FRP_COMMIT:-}" | grep -Eq '^[0-9a-f]{40}$' || mismatch "FRP_COMMIT is not a full commit hash"
+for key in FRP_VERSION GO_VERSION; do
+  printf '%s' "${!key:-}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || mismatch "$key is not a release such as 1.2.3"
+done
+printf '%s' "${GO_LICENSES_VERSION:-}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+  || mismatch "GO_LICENSES_VERSION is not a module version such as v1.2.3"
 
 node_major="${NODE_VERSION%%.*}"
 
