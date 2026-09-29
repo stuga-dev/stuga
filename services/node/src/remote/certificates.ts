@@ -117,16 +117,19 @@ export const ARI_RETRY_MS = 6 * 60 * MINUTE;
 
 /**
  * When to renew in the CA's window (RFC 9773 4.2): a time drawn evenly from it, kept while the
- * window stays the same; now, once the window has ended.
+ * window stays the same; now, once the window has ended. Null for a window that runs past the
+ * certificate's expiry, which no CA means: taken as no answer.
  */
 export function ariRenewAt(
   window: { start: Date; end: Date },
   held: { start: Date | null; end: Date | null; renewAt: Date | null },
+  notAfter: Date,
   now: number,
   rand: () => number,
-): Date {
+): Date | null {
   const start = window.start.getTime();
   const end = window.end.getTime();
+  if (end > notAfter.getTime()) return null;
   if (end <= now) return new Date(now);
   const same = held.start?.getTime() === start && held.end?.getTime() === end;
   const kept = held.renewAt?.getTime();

@@ -586,6 +586,17 @@ describe("the certificate loop", () => {
     expect(ca.ariRequests).toHaveLength(1);
   });
 
+  it("takes a window past the certificate's expiry as no answer", async () => {
+    const ca = fakeCa();
+    ca.setAri("*", { window: { start: new Date(Date.now() + 2 * 24 * HOUR), end: new Date(Date.now() + 3 * 24 * HOUR) }, retryAfter: "3600" });
+    await on(ca);
+    await until("the next time to ask", () => row().cert_ari_next_at !== null);
+    const r = row();
+    expect(r.cert_ari_window_start).toBeNull();
+    expect(r.cert_renew_at!.getTime()).toBeLessThan(r.cert_not_after!.getTime());
+    expect(Math.abs(r.cert_ari_next_at!.getTime() - (Date.now() + 6 * HOUR))).toBeLessThan(60_000);
+  });
+
   it("does not ask a CA that offers no renewal information, nor fetch its directory again for it", async () => {
     const ca = fakeCa({ renewalInfo: false });
     let directoryFetches = 0;

@@ -659,8 +659,9 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   /**
    * Ask the CA when to renew the certificate in use (RFC 9773), once its last answer says to: a time
    * drawn from its window becomes the renewal time. Only for a certificate from the directory in use.
-   * When the CA cannot say, the renewal time stays and it is asked again in six hours; a CA that
-   * offers no renewal information is not asked until its directory is fetched again.
+   * When the CA cannot say, or names a window past the certificate's expiry, the renewal time stays
+   * and it is asked again in six hours; a CA that offers no renewal information is not asked until
+   * its directory is fetched again.
    */
   async function pollRenewalInfo(r: NodeRemoteAccessRow, held: LoadedCert): Promise<void> {
     if (held.serial !== r.cert_serial || !r.cert_directory || r.cert_directory !== r.acme_directory) return;
@@ -675,15 +676,11 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       // Unreachable, or an answer that is no window: the renewal time it had.
     }
     const at = now();
-    if (!info) await setRemoteCertAriNext(sql, new Date(at + ARI_RETRY_MS));
-    else {
-      await recordRemoteCertAri(sql, {
-        windowStart: info.start,
-        windowEnd: info.end,
-        renewAt: ariRenewAt(info, { start: r.cert_ari_window_start, end: r.cert_ari_window_end, renewAt: r.cert_renew_at }, at, rand),
-        nextAt: new Date(at + info.retryAfterMs),
-      });
-    }
+    const renewAt = info
+      ? ariRenewAt(info, { start: r.cert_ari_window_start, end: r.cert_ari_window_end, renewAt: r.cert_renew_at }, held.notAfter, at, rand)
+      : null;
+    if (!info || !renewAt) await setRemoteCertAriNext(sql, new Date(at + ARI_RETRY_MS));
+    else await recordRemoteCertAri(sql, { windowStart: info.start, windowEnd: info.end, renewAt, nextAt: new Date(at + info.retryAfterMs) });
     await refreshRow();
   }
 
