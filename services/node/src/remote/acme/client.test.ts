@@ -297,7 +297,8 @@ describe("a certificate's identifier for renewal information", () => {
     openssl("x509", "-req", "-in", "leaf.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-set_serial", "0x87654321", "-days", "1",
       "-extfile", "ext.cnf", "-extensions", "leaf", "-out", "leaf.pem");
     const text = openssl("x509", "-in", "leaf.pem", "-noout", "-text");
-    const keyId = /keyid:([0-9A-F:]+)/.exec(text)![1]!.replace(/:/g, "");
+    // LibreSSL prints "keyid:AB:CD…" under the heading, OpenSSL 3 the bare "AB:CD…".
+    const keyId = /Authority Key Identifier:\s*\n\s*(?:keyid:)?([0-9A-F:]+)/.exec(text)![1]!.replace(/:/g, "");
     expect(ariCertId(derOf(readFileSync(at("leaf.pem"), "utf8")))).toBe(
       `${Buffer.from(keyId, "hex").toString("base64url")}.${Buffer.from("0087654321", "hex").toString("base64url")}`,
     );
