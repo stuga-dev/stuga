@@ -574,7 +574,15 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     if (!r.enabled || !r.hostname) return;
     // Denied, waiting on an administrator or on a newer Stuga: told all the same. Never while off.
     await tellAdmins(r);
-    if (!r.api_url || !r.remote_id || upgradeRequired) return;
+    await renew(r);
+    // What the attempt changed: a renewal that failed, or a new certificate after a warning.
+    if (stopped) return;
+    const after = await refreshRow();
+    if (after.enabled) await tellAdmins(after);
+  }
+
+  async function renew(r: NodeRemoteAccessRow): Promise<void> {
+    if (!r.hostname || !r.api_url || !r.remote_id || upgradeRequired) return;
     // Nothing to ask for before the first check-in names a CA.
     if (!r.acme_directory) return;
     const code = r.last_error?.code;
@@ -627,10 +635,17 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   /**
    * Warn the administrators of what the row shows: renewals that keep failing, a certificate that
    * runs short or has run out, a key the service no longer takes. Each once; the certificate warned
-   * about is kept, so a new one after it is announced too.
+   * about is kept until a new one in use after it has been announced.
    */
   async function tellAdmins(r: NodeRemoteAccessRow): Promise<void> {
     const at = now();
+    const alerted = r.cert_alerted_serial;
+    if (alerted && r.cert_serial && alerted !== r.cert_serial && r.cert_not_after && at < r.cert_not_after.getTime()) {
+      if (await tell(recoveredNotice(alerted, r.hostname!, r.cert_not_after))) {
+        await setRemoteCertAlerted(sql, null);
+        r = await refreshRow();
+      }
+    }
     let marked = r.cert_alerted_serial === r.cert_serial;
     for (const notice of certNotices(r, at)) {
       if (!(await tell(notice)) || marked) continue;
@@ -748,7 +763,6 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     const written = await readCertificate(config.dataDir);
     if (written.kind !== "ok") throw new Error("the certificate the CA issued does not match its key");
     const next = written.cert;
-    const previous = row!.cert_serial;
     await recordRemoteCert(sql, {
       serial: next.serial,
       directory: directoryUrl,
@@ -759,12 +773,6 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       accountUrl: obtained.accountUrl,
     });
     await refreshRow();
-    const alerted = row!.cert_alerted_serial;
-    if (alerted) {
-      if (alerted === previous) await tell(recoveredNotice(alerted, hostname, next.notAfter));
-      await setRemoteCertAlerted(sql, null);
-      await refreshRow();
-    }
     await succeeded("issuance");
     await locked(async () => {
       cert = next;

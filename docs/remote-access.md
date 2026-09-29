@@ -175,16 +175,17 @@ The node renews a certificate when the CA suggests, through its renewal informat
 ([RFC 9773](https://www.rfc-editor.org/rfc/rfc9773)): at a time drawn from the CA's window, asked
 again as often as the CA says (between an hour and a day), and at once when the window has passed,
 as after a revocation. The order names the certificate it replaces; a CA that refuses that gets the
-order again without it. Where the CA gives no window, the node renews at about two thirds of the
-lifetime. It reissues a certificate only on its own evidence: the file is missing or unreadable, the
+order again without it. Where the CA gives no window, or one that runs past the certificate's expiry,
+the node renews at about two thirds of the lifetime. It reissues a certificate only on its own evidence: the file is missing or unreadable, the
 key does not match, the certificate names another address, renewal is due, or the service asks every
 certificate issued before a date to be replaced. The service refusing a certificate is not such
 evidence.
 
 Every node administrator is notified, in the app and through the
 [notification sink](configuration.md#settings-in-the-app) when one is set: when renewing fails three
-times in a row or waits for someone, when less than a tenth of the certificate's life is left, when
-it has expired, and when a new one is in use after any of these; also when the service has refused
+times in a row or waits for someone; when less than a tenth of the certificate's life is left, or it
+has expired, and renewing it has failed or can't be tried (a node back from a long sleep renews
+first); and when a new one is in use after any of these; also when the service has refused
 the node's key for a day, or the key is missing or can't be read. Each is sent once, and only while
 remote access is on.
 

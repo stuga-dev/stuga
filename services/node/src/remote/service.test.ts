@@ -663,4 +663,85 @@ describe("the certificate loop", () => {
     expect(told.at(-1)!.key).toBe(serial);
     expect(row().cert_alerted_serial).toBeNull();
   });
+
+  /** Under a tenth of its life left, by the row: the certificate on disk stays as it is. */
+  const runningShort = () => ({ cert_not_before: new Date(Date.now() - 19 * HOUR), cert_not_after: new Date(Date.now() + HOUR) });
+  const keys = (told: RemoteNotice[]) => told.map((n) => `${n.event}:${n.key}`);
+
+  it("says renewing waits for someone at once, and orders nothing", async () => {
+    const told: RemoteNotice[] = [];
+    const ca = fakeCa();
+    await on(ca, async (n) => void told.push(n));
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    const serial = row().cert_serial!;
+    const orders = ca.orders.length;
+    memory.set({ cert_failures: 0, cert_renew_at: new Date(Date.now() - 1), last_error: { code: "acme_action_required", message: "Accept the CA's new terms.", at: new Date().toISOString() } });
+    await until("the warning", () => told.length === 1);
+    await sleep(150);
+    expect(keys(told)).toEqual([`REMOTE_CERT_RENEWAL_FAILED:${serial}`]);
+    expect(row().cert_alerted_serial).toBe(serial);
+    expect(ca.orders).toHaveLength(orders);
+  });
+
+  it("says the certificate runs short once renewing it has failed", async () => {
+    const told: RemoteNotice[] = [];
+    await on(fakeCa(), async (n) => void told.push(n));
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    const serial = row().cert_serial!;
+    memory.set({ ...runningShort(), cert_failures: 1, cert_retry_at: new Date(Date.now() + HOUR) });
+    await until("the warning", () => told.length === 1);
+    await sleep(150);
+    expect(keys(told)).toEqual([`REMOTE_CERT_EXPIRING:${serial}`]);
+    expect(row().cert_alerted_serial).toBe(serial);
+  });
+
+  it("says the certificate runs short while waiting on a newer Stuga", async () => {
+    const told: RemoteNotice[] = [];
+    const s = await on(fakeCa(), async (n) => void told.push(n));
+    await until("a credential", () => fake.issuedCredentials.length === 1);
+    fake.setMinProtocol(2);
+    s.kick();
+    await until("upgrade_required", () => lastError()?.code === "upgrade_required");
+    const serial = row().cert_serial!;
+    memory.set(runningShort());
+    await until("the warning", () => told.length === 1);
+    expect(keys(told)).toEqual([`REMOTE_CERT_EXPIRING:${serial}`]);
+  });
+
+  it("renews a certificate that ran out while off without a word", async () => {
+    const told: RemoteNotice[] = [];
+    const ca = fakeCa();
+    const s = await on(ca, async (n) => void told.push(n));
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    const serial = row().cert_serial!;
+    await s.disable("liv");
+    memory.set({ cert_not_after: new Date(Date.now() - HOUR), cert_renew_at: new Date(Date.now() - 2 * HOUR) });
+    await s.enable({ acceptCaTerms: true, by: "liv" });
+    await until("the new certificate", () => row().cert_serial !== serial);
+    await sleep(150);
+    expect(told).toEqual([]);
+    expect(row().cert_alerted_serial).toBeNull();
+  });
+
+  it("says a certificate found on disk replaces the one warned about, until that is told", async () => {
+    const told: RemoteNotice[] = [];
+    let failing = true;
+    await on(fakeCa(), async (n) => {
+      if (n.event === "REMOTE_CERT_RECOVERED" && failing) {
+        failing = false;
+        throw new Error("the notifications table is busy");
+      }
+      told.push(n);
+    });
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    const serial = row().cert_serial!;
+    memory.set({ cert_alerted_serial: serial });
+    const replacement = makeTestCert({ dnsNames: [row().hostname!] });
+    await writeCertificate(dataDir, replacement.privateKey, replacement.cert);
+    await until("the announcement", () => told.length === 1);
+    expect(failing).toBe(false);
+    expect(row().cert_serial).toBe(replacement.serial);
+    expect(keys(told)).toEqual([`REMOTE_CERT_RECOVERED:${serial}`]);
+    await until("the mark cleared", () => row().cert_alerted_serial === null);
+  });
 });

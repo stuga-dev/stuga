@@ -31,15 +31,26 @@ describe("the certificate warnings", () => {
   });
 
   it("say it expires soon under a tenth of its life, however long that life is", () => {
-    expect(events(certNotices(row(), T0 + 81 * DAY - 1))).toEqual([]);
-    expect(events(certNotices(row(), T0 + 81 * DAY + 1))).toEqual(["REMOTE_CERT_EXPIRING:87654321"]);
-    const shortLived = row({ cert_not_after: new Date(T0 + 6 * DAY) });
+    const failed = row({ cert_failures: 1 });
+    expect(events(certNotices(failed, T0 + 81 * DAY - 1))).toEqual([]);
+    expect(events(certNotices(failed, T0 + 81 * DAY + 1))).toEqual(["REMOTE_CERT_EXPIRING:87654321"]);
+    const shortLived = row({ cert_failures: 1, cert_not_after: new Date(T0 + 6 * DAY) });
     expect(events(certNotices(shortLived, T0 + 5 * DAY))).toEqual([]);
     expect(events(certNotices(shortLived, T0 + 5.5 * DAY))).toEqual(["REMOTE_CERT_EXPIRING:87654321"]);
   });
 
+  it("say it runs short or has run out only once renewing it failed or can't be tried", () => {
+    // Back from a long sleep, or turned on again: renewed before anyone hears of it.
+    expect(certNotices(row(), T0 + 85 * DAY)).toEqual([]);
+    expect(certNotices(row(), T0 + 91 * DAY)).toEqual([]);
+    for (const code of ["denied", "retired", "upgrade_required", "binding_rejected"]) {
+      expect(events(certNotices(row({ last_error: { code, message: "m", at: "" } }), T0 + 85 * DAY))).toEqual(["REMOTE_CERT_EXPIRING:87654321"]);
+    }
+    expect(certNotices(row({ last_error: { code: "dns_not_visible", message: "m", at: "" } }), T0 + 85 * DAY)).toEqual([]);
+  });
+
   it("say it expired, and no longer that it expires soon", () => {
-    const [notice, ...rest] = certNotices(row(), T0 + 90 * DAY);
+    const [notice, ...rest] = certNotices(row({ cert_failures: 1 }), T0 + 90 * DAY);
     expect(rest).toEqual([]);
     expect(notice).toMatchObject({ event: "REMOTE_CERT_EXPIRED", key: "87654321", title: "Remote access's certificate expired" });
     expect(notice!.body).toBe(`https://${HOST} can't be reached until there is a new one.`);

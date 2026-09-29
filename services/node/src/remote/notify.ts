@@ -33,6 +33,9 @@ export const RENEWAL_FAILURES_TOLD = 3;
 /** Errors that wait for someone, not for the next try. */
 const RENEWAL_STOPPED = new Set(["acme_action_required", "issuance_budget"]);
 
+/** Errors under which the node does not try to renew at all. */
+const RENEWAL_BLOCKED = new Set([...RENEWAL_STOPPED, "denied", "retired", "upgrade_required", "binding_rejected"]);
+
 const when = (d: Date): string => `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 
 function certNotice(kind: CertNoticeKind, serial: string, hostname: string, notAfter: Date, detail?: string): RemoteNotice {
@@ -49,7 +52,9 @@ function certNotice(kind: CertNoticeKind, serial: string, hostname: string, notA
 
 /**
  * The warnings the certificate the row describes calls for now: that renewing it keeps failing,
- * and that it runs short or has run out. The caller checks remote access is on.
+ * and that it runs short or has run out. Short or out only once renewing it has failed or can't be
+ * tried: after a long sleep, or turned on again, the node renews before anyone hears of it. The
+ * caller checks remote access is on.
  */
 export function certNotices(row: NodeRemoteAccessRow, now: number): RemoteNotice[] {
   const { cert_serial: serial, hostname, cert_not_before: notBefore, cert_not_after: notAfter } = row;
@@ -59,6 +64,7 @@ export function certNotices(row: NodeRemoteAccessRow, now: number): RemoteNotice
   if (row.cert_failures >= RENEWAL_FAILURES_TOLD || (code && RENEWAL_STOPPED.has(code))) {
     out.push(certNotice("renewal_failed", serial, hostname, notAfter, row.last_error?.message));
   }
+  if (row.cert_failures === 0 && !(code && RENEWAL_BLOCKED.has(code))) return out;
   const left = notAfter.getTime() - now;
   if (left <= 0) out.push(certNotice("expired", serial, hostname, notAfter));
   // A tenth of whatever life the CA gives it: a day of a ten-day certificate, nine of a 90-day one.
