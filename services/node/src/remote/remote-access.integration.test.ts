@@ -34,6 +34,7 @@ import { createHttpServer } from "../platform/http-server.js";
 import { serveStatic } from "../platform/static.js";
 import { dialRemote, remoteRequest } from "../testing/remote.js";
 import { sessionConnection, withDatabase, type LockSql } from "../writer-lock.js";
+import { ariCertId, pemBlocks } from "./acme/der.js";
 import { httpsTransport, type AcmeTransport } from "./acme/transport.js";
 import { certificatePath } from "./certificates.js";
 import { fixedChallengeResolver } from "./dns-check.js";
@@ -42,7 +43,7 @@ import { judgeHandshake, type ProbeResult } from "./probe.js";
 import { createRemoteAccess, type RemoteAccess } from "./service.js";
 import { createServiceClient } from "./service-client.js";
 import { startFakeRemoteService, type FakeRemoteService } from "./testing/fake-service.js";
-import { pebbleEnv, pebbleRoot, waitForPebble, type PebbleEnv } from "./testing/pebble.js";
+import { pebbleEnv, pebbleRoot, setRenewalInfo, waitForPebble, type PebbleEnv } from "./testing/pebble.js";
 
 const URL_ = process.env.TEST_DATABASE_URL;
 const DB = `stuga_remote_${process.pid}`;
@@ -95,14 +96,31 @@ describe.skipIf(!URL_ || !pebble)("remote access, against Pebble and the fake se
   const orderPayloads = () =>
     posts
       .filter((p) => p.url.endsWith("/order-plz"))
-      .map((p) => JSON.parse(Buffer.from((JSON.parse(p.body) as { payload: string }).payload, "base64url").toString()) as unknown);
+      .map((p) => JSON.parse(Buffer.from((JSON.parse(p.body) as { payload: string }).payload, "base64url").toString()) as { replaces?: string });
   let lan: { close(): Promise<void> };
   let lanPort = 0;
 
+  /**
+   * Pebble's renewal window for a 180-second certificate is its whole life, so its directory names
+   * no renewal information until flow 15, and the others renew at two thirds.
+   */
+  let ari = false;
+  /** Refuse the next order that names a certificate it replaces, as a CA may; `refusedAt` is its index in `orderPayloads()`. */
+  let refuseReplaces = false;
+  let refusedAt: number | null = null;
   const transport: AcmeTransport = {
-    request(url, init) {
+    async request(url, init) {
       if (init.method === "POST") posts.push({ url, body: init.body ?? "" });
-      return httpsTransport({ ca: pebble!.ca }).request(url, init);
+      if (refuseReplaces && url.endsWith("/order-plz") && orderPayloads().at(-1)?.replaces) {
+        refuseReplaces = false;
+        refusedAt = orders() - 1;
+        const problem = { type: "urn:ietf:params:acme:error:alreadyReplaced", detail: "already replaced" };
+        return { status: 409, headers: new Headers({ "content-type": "application/problem+json" }), body: new Uint8Array(Buffer.from(JSON.stringify(problem))) };
+      }
+      const res = await httpsTransport({ ca: pebble!.ca }).request(url, init);
+      if (ari || init.method !== "GET" || !url.endsWith("/dir") || res.status !== 200) return res;
+      const { renewalInfo: _, ...directory } = JSON.parse(Buffer.from(res.body).toString("utf8")) as Record<string, unknown>;
+      return { ...res, body: new Uint8Array(Buffer.from(JSON.stringify(directory))) };
     },
   };
 
@@ -643,6 +661,58 @@ describe.skipIf(!URL_ || !pebble)("remote access, against Pebble and the fake se
     await remote.start();
     await waitOn();
   }, 60_000);
+
+  it("15. renews in the CA's renewal window, at once when the window is over, naming the certificate it replaces", async () => {
+    ari = true;
+    // A new process, whose directory names the renewal information.
+    await remote.stop();
+    remote = newService();
+    await remote.start();
+    await waitOn();
+    const r = await until("the renewal window", async () => {
+      const x = await row();
+      return x.cert_ari_window_start ? x : null;
+    }, 30_000);
+    expect(r.cert_ari_window_start!.getTime()).toBeGreaterThanOrEqual(r.cert_not_before!.getTime() - 1_000);
+    expect(r.cert_ari_window_end!.getTime()).toBeLessThanOrEqual(r.cert_not_after!.getTime() + 1_000);
+    expect(r.cert_renew_at!.getTime()).toBeGreaterThanOrEqual(r.cert_ari_window_start!.getTime());
+    expect(r.cert_renew_at!.getTime()).toBeLessThanOrEqual(r.cert_ari_window_end!.getTime());
+    // Pebble's Retry-After is six hours.
+    expect(Math.abs(r.cert_ari_next_at!.getTime() - Date.now() - 6 * 3_600_000)).toBeLessThan(60_000);
+
+    const leafNow = () => {
+      const pem = pemBlocks(readFileSync(certificatePath(dataDir), "utf8"), "CERTIFICATE")[0]!;
+      return { pem, certId: ariCertId(new X509Certificate(pem).raw)! };
+    };
+    const over = () => ({
+      suggestedWindow: { start: new Date(Date.now() - 2 * 3_600_000).toISOString(), end: new Date(Date.now() - 3_600_000).toISOString() },
+    });
+
+    // Over, as for a revoked certificate: renewed at once.
+    const first = leafNow();
+    const before = (await row()).cert_serial;
+    await setRenewalInfo(pebble!, first.pem, over());
+    await sql`UPDATE node_remote_access SET cert_ari_next_at = NULL`;
+    remote.kick();
+    await until("the renewal", async () => (await row()).cert_serial !== before, 30_000);
+    expect(orderPayloads().filter((p) => p.replaces === first.certId).length).toBeGreaterThanOrEqual(1);
+    expect(await row()).toMatchObject({ cert_failures: 0, cert_account_url: expect.stringMatching(/^https:/) });
+    await waitOn();
+
+    // Refused with it: ordered again without, and no failure counted.
+    const second = leafNow();
+    const serial = (await row()).cert_serial;
+    refuseReplaces = true;
+    await setRenewalInfo(pebble!, second.pem, over());
+    await sql`UPDATE node_remote_access SET cert_ari_next_at = NULL`;
+    remote.kick();
+    await until("the next renewal", async () => (await row()).cert_serial !== serial, 30_000);
+    expect(refusedAt).not.toBeNull();
+    expect(orderPayloads()[refusedAt!]!.replaces).toBeDefined();
+    expect(orderPayloads()[refusedAt! + 1]).not.toHaveProperty("replaces");
+    expect(await row()).toMatchObject({ cert_failures: 0, cert_retry_at: null });
+    await waitOn();
+  }, 120_000);
 
   /** One request on a connection kept open for the next: the status, once the whole answer is in. */
   function rawGet(socket: tls.TLSSocket, path: string): Promise<number> {
