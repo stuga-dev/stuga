@@ -80,6 +80,13 @@ ensure_account() {
   if dscl . -read "/Groups/$name" > /dev/null 2>&1 && dscl . -read "/Users/$name" > /dev/null 2>&1; then return; fi
   id="$(free_id "$name")"
   if ! dscl . -read "/Groups/$name" > /dev/null 2>&1; then
+    # A user left without its group, by an uninstall cut short: the group gets its old id back when free.
+    local was
+    was="$(dscl . -read "/Users/$name" PrimaryGroupID 2>/dev/null | awk '{print $2}')"
+    case "$was" in
+      '' | *[!0-9]*) ;;
+      *) dscl . -list /Groups PrimaryGroupID | awk '{print $2}' | grep -qx "$was" || id="$was" ;;
+    esac
     dscl . -create "/Groups/$name"
     dscl . -create "/Groups/$name" PrimaryGroupID "$id"
     dscl . -create "/Groups/$name" RealName "$real"
