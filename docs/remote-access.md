@@ -27,11 +27,13 @@ remote access service gave them, accepts the Let's Encrypt Subscriber Agreement,
 4. gets a short-lived relay credential, and writes the connector's files;
 5. listens for the relay on a unix socket, and checks that its address reaches it.
 
-The page says what it is waiting on until the address works. Where no helper runs the connector, it
-shows the command that starts it ([Running the connector yourself](#running-the-connector-yourself)).
+The page says what it is waiting on until the address works. The Mac package downloads and starts
+the connector by itself ([The connector](#the-connector)); elsewhere the page shows the command that
+starts it ([Running the connector yourself](#running-the-connector-yourself)).
 
 **Turn off** closes the remote listener at once, deletes the connector's credential, settings and
-relay certificate, and stops calling the service. The node keeps its address, its keys and its
+relay certificate, asks the packaging to stop the connector where it runs it, and stops calling the
+service. The node keeps its address, its keys and its
 certificate, so turning it on again needs no code. The service is not told; the relay drops the
 connector within a few minutes, once it stops presenting a credential.
 
@@ -110,12 +112,39 @@ visitor address each connection names. Give the directory a group that only the 
 connector's users are in: on macOS a user's default group, `staff`, holds every local user. On
 Linux, also set the directory's setgid bit (`chmod g+s`) so the files in it take that group.
 
+The Mac package creates it as `/Library/Application Support/Stuga/remote`, owned by `_stuga`, the
+node's account, with the group `_stugaremote`, `0750`. `_stugaremote` is the connector's own account
+and the only member of its group: it reads the connector's files and reaches the socket, and nothing
+of the node's data. New files in the directory take its group.
+
 ## The connector
 
 The connector is the upstream frp client, `frpc`, unchanged. The node writes its settings; the
 connector keeps a connection open to the relay and hands each visitor's connection to the node's
 socket, still encrypted. It never holds the node's private keys and cannot read what it passes on:
 all it has is the short-lived relay credential.
+
+Where the packaging runs the connector, the node never starts it. It writes what it wants to
+`STUGA_CONNECTOR_REQUEST`, one line, `on <sha-256 of the connector's settings>` or `off`, and reads
+what the packaging did from `STUGA_CONNECTOR_STATUS`. It asks for `on` once it has a certificate that
+serves its address and a credential in the connector's files, and for `off` when turned off or when
+the certificate stops serving the address. It asks again at every start, and after 1, 5, 15 and
+then every 60 minutes while the packaging reports something else. A connector the packaging refused
+waits for an administrator to choose **Retry** in Settings.
+
+On a Mac:
+
+- The connector is built from frp's source at a fixed commit, signed and notarized as
+  `dev.stuga.remote`, and published with each Stuga release. The package does not carry it: its
+  helper downloads it when an administrator first turns remote access on, and again after each Stuga
+  update, and installs it only when its sha-256 matches the one the package carries and its
+  signature is Stuga's.
+- It runs as its own account, `_stugaremote`, under the LaunchDaemon `dev.stuga.remote`, and no other
+  account but root can run it. Before starting it, the job copies each settings file and refuses to
+  start on anything but the lines the node writes.
+- It restarts only when its settings or the connector itself change. A new credential does not
+  restart it, so remote connections stay open.
+- It logs warnings only.
 
 Its settings name one https proxy for the node's own hostname onto the socket, and nothing else: no
 `exec` source, no included files, no admin interface, no `user` or metadata. The node rewrites them
@@ -156,7 +185,9 @@ callback registered too; **Settings → This node → Access** lists it
 
 Every 10 minutes, and soon after its first credential and each new certificate, the node opens its
 own address through the relay and compares the certificate it gets with its own. It sends no request over that
-connection. A different certificate is shown as a problem in Settings.
+connection. A different certificate is shown as a problem in Settings. Where the packaging runs the
+connector, the first check waits until the packaging reports it running the current settings, and
+follows within seconds.
 
 ## Certificates
 
@@ -176,6 +207,10 @@ evidence: the file is missing or unreadable, the key does not match, the certifi
 address, renewal is due, or the service asks every certificate issued before a date to be replaced.
 The service refusing a certificate is not such evidence.
 
+A certificate that has expired, or no longer names the address, takes the tunnel down: the node
+closes the remote listener, asks for the connector `off` and deletes the relay credential. Once a new
+certificate is in place it gets a new credential, and only then asks for the connector again.
+
 ## Turning off, restoring and backups
 
 - **Turning off** keeps the address ([above](#turning-it-on)).
@@ -190,16 +225,22 @@ The service refusing a certificate is not such evidence.
 ## Configuration
 
 The packaging sets both, or neither ([packaging/contract.md](../packaging/contract.md#packaging-hints)).
-With only one set, the node logs a warning and offers no remote access.
+With only one set, the node logs a warning and offers no remote access. The connector's pair, too,
+is both or neither, and counts only beside the first two; with one of them, the node logs a warning
+and takes it that nobody but the administrator runs the connector.
 
 | Variable | Default | |
 |---|---|---|
 | `STUGA_REMOTE_SERVICE` | unset: no remote access | The remote access service, an https origin (http only on loopback, for tests), used for the first enrollment only. Afterwards the node calls the address the service names. |
 | `STUGA_REMOTE_DIR` | unset: no remote access | The directory the node shares with the connector, as an absolute path. |
+| `STUGA_CONNECTOR_REQUEST` | unset: the administrator runs the connector | The file the node writes `on <sha-256>` or `off` to, as an absolute path, replaced whole. |
+| `STUGA_CONNECTOR_STATUS` | unset: the administrator runs the connector | The JSON file the packaging reports in, as an absolute path: `state` (`installing`, `running`, `stopped`, `refused`, `failed` or `unavailable`), `message`, `at`, and `connector_sha` and `config_sha`, the sha-256 of the connector and of the settings it runs. |
 
 ## Running the connector yourself
 
-Where no helper runs the connector, run it as the node's user, with frp 0.71.0:
+For now only the Mac package offers remote access. For development, and in the Mac's local trial
+([Build from a checkout](install/macos.md#build-from-a-checkout)), run the connector as the node's
+user, with frp 0.71.0:
 
 ```sh
 frpc -c <STUGA_REMOTE_DIR>/<relay>.toml
@@ -215,8 +256,15 @@ For node administrators; agents are refused. Times are ISO 8601.
 
 | Route | |
 |---|---|
-| `GET /api/node/remote-access` | `{ "available": false }` where the packaging offers none. Otherwise `available`, `enabled`, `state` (`off`, `starting`, `on`, `degraded`, `denied` or `error`), `address`, `certificate` (`expires_at`, `renew_at`), `credential` (`expires_at`), `connector` (`config_path`, `config_changed_at`, `reachable`, `checked_at`), `ca_terms` (`accepted_by`, `accepted_at`, `url`) and `last_error` (`code`, `message`, `at`, and `retry_at`, `service_code` and `reason` when they apply). |
+| `GET /api/node/remote-access` | `{ "available": false }` where the packaging offers none. Otherwise `available`, `enabled`, `state` (`off`, `starting`, `on`, `degraded`, `denied` or `error`), `address`, `certificate` (`expires_at`, `renew_at`), `credential` (`expires_at`), `connector` (`managed`, `status`, `config_path`, `config_changed_at`, `reachable`, `checked_at`), `ca_terms` (`accepted_by`, `accepted_at`, `url`) and `last_error` (`code`, `message`, `at`, and `retry_at`, `service_code` and `reason` when they apply). Where the packaging runs the connector, `managed` is true, `status` is what it last reported, and `config_path` is null. |
 | `POST /api/node/remote-access/enable` | `{ "code"?, "accept_ca_terms": true }`. A node with no address needs a code; with one, a code restores or replaces it. Waits up to 25 seconds for the service, then answers like the `GET`, usually `starting`. A refusal is `{ "error", "code" }`. |
 | `POST /api/node/remote-access/disable` | Turns it off and answers like the `GET`. |
+| `POST /api/node/remote-access/connector/retry` | Where the packaging runs the connector, asks for it again after a refusal, and answers like the `GET`. Refused with `409` elsewhere. |
 
-Both changes are in the node's audit log, without the code.
+Three errors are worked out from the state rather than kept, so they go when their cause does:
+`certificate_expired` (degraded), `connector_failed` (degraded, with the packaging's reason and
+`retry_at`, when the node asks again) and `connector_refused` (an error, with the packaging's reason,
+until **Retry**). An error that needs an administrator comes first, then these in that order, then the
+one kept.
+
+Each of these actions is in the node's audit log, without the code.
