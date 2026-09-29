@@ -173,6 +173,31 @@ describe("the platform hints packaging may set", () => {
     }
   });
 
+  it("takes the connector's pair beside the remote hints, both or neither, as absolute paths", () => {
+    const remote = { STUGA_REMOTE_SERVICE: "https://api.stuga.dev", STUGA_REMOTE_DIR: "/Library/Application Support/Stuga/remote" };
+    const pair = {
+      STUGA_CONNECTOR_REQUEST: "/Library/Application Support/Stuga/requests/remote",
+      STUGA_CONNECTOR_STATUS: "/Library/Application Support/Stuga/status/remote.json",
+    };
+    expect(cfg({ ...remote, ...pair }).remote?.connector).toEqual({
+      request: "/Library/Application Support/Stuga/requests/remote",
+      status: "/Library/Application Support/Stuga/status/remote.json",
+    });
+    expect(cfg(remote).remote?.connector).toBeUndefined();
+    // Without the remote hints the pair means nothing.
+    expect(cfg(pair).remote).toBeUndefined();
+    expect(() => cfg({ ...remote, ...pair, STUGA_CONNECTOR_STATUS: "status/remote.json" })).toThrow(/STUGA_CONNECTOR_STATUS must be an absolute path/);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(cfg({ ...remote, STUGA_CONNECTOR_REQUEST: pair.STUGA_CONNECTOR_REQUEST }).remote).toMatchObject({ dir: remote.STUGA_REMOTE_DIR });
+      expect(cfg({ ...remote, STUGA_CONNECTOR_REQUEST: pair.STUGA_CONNECTOR_REQUEST }).remote?.connector).toBeUndefined();
+      expect(warn.mock.calls[0]![0]).toContain("STUGA_CONNECTOR_STATUS");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("needs an absolute STUGA_REMOTE_DIR, since an env file does not expand ~", () => {
     const service = { STUGA_REMOTE_SERVICE: "https://api.stuga.dev" };
     for (const bad of ["~/.stuga-remote", ".stuga-remote", "remote/dir"]) {

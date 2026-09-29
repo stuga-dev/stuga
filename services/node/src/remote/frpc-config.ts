@@ -35,8 +35,14 @@ export const tokenFile = (dir: string, relay: string): string => join(dir, `${re
 export const caFile = (dir: string, relay: string): string => join(dir, `${relay}.ca.pem`);
 export const configFile = (dir: string, relay: string): string => join(dir, `${relay}.toml`);
 
+/**
+ * How much the connector logs: `warn` where the packaging runs it and keeps its log, where every
+ * visitor's connection at `info` would be a line.
+ */
+export type FrpcLogLevel = "info" | "warn";
+
 /** The connector's config for one relay: one https proxy for this node's hostname, onto the socket. */
-export function renderFrpcToml(args: { relay: RelayEntry; id: string; hostname: string; dir: string }): string {
+export function renderFrpcToml(args: { relay: RelayEntry; id: string; hostname: string; dir: string; logLevel?: FrpcLogLevel | undefined }): string {
   const { relay, id, hostname, dir } = args;
   const s = tomlString;
   return [
@@ -56,7 +62,7 @@ export function renderFrpcToml(args: { relay: RelayEntry; id: string; hostname: 
     "transport.heartbeatTimeout = 90",
     "transport.poolCount = 2",
     `log.to = "console"`,
-    `log.level = "info"`,
+    `log.level = ${s(args.logLevel ?? "info")}`,
     "",
     "[[proxies]]",
     `name = ${s(id)}`,
@@ -90,11 +96,12 @@ export async function writeConnectorFiles(args: {
   relays: readonly RelayEntry[];
   /** The relays listed before, whose files go when they are no longer listed. */
   previous: readonly { name: string }[];
+  logLevel?: FrpcLogLevel | undefined;
 }): Promise<{ sha256: string }> {
   const hash = createHash("sha256");
   for (const relay of [...args.relays].sort((a, b) => a.name.localeCompare(b.name))) {
     const files: Array<[string, string]> = [
-      [configFile(args.dir, relay.name), renderFrpcToml({ relay, id: args.id, hostname: args.hostname, dir: args.dir })],
+      [configFile(args.dir, relay.name), renderFrpcToml({ relay, id: args.id, hostname: args.hostname, dir: args.dir, logLevel: args.logLevel })],
       [caFile(args.dir, relay.name), relay.ca_pem],
     ];
     for (const [path, content] of files) {
@@ -113,6 +120,11 @@ export async function writeConnectorFiles(args: {
 /** Put the credential where each relay's connector reads it, as one line, replaced whole. */
 export async function writeTokenFiles(dir: string, relays: readonly { name: string }[], credential: string): Promise<void> {
   for (const relay of relays) await writeFileDurable(tokenFile(dir, relay.name), `${credential}\n`, FILE_MODE);
+}
+
+/** The credential, from every relay's files: the connector then has nothing to log in with. */
+export async function removeTokenFiles(dir: string, names: readonly string[]): Promise<void> {
+  for (const name of names.filter((n) => /^[a-z0-9-]{1,32}$/.test(n))) await removeFile(tokenFile(dir, name));
 }
 
 /** Every file the node wrote for these relays: config, CA and credential. */

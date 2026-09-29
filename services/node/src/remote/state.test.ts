@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { NodeRemoteAccessRow, StoredRemoteError } from "@stuga/db";
 import { ServiceError } from "./service-client.js";
-import { bindingBackoff, clearedBy, generalBackoff, remoteState, remoteStatus, serviceFailure } from "./state.js";
+import type { ConnectorStatus } from "@stuga/protocol/api/remote-access";
+import type { ConnectorReport } from "./connector.js";
+import { bindingBackoff, clearedBy, generalBackoff, remoteState, remoteStatus, serviceFailure, shownError } from "./state.js";
 
 const NOW = new Date("2026-10-02T12:00:00.000Z");
 const MIN = 60_000;
@@ -71,7 +73,7 @@ describe("the state the Settings page shows", () => {
     ["degraded: any other error", { last_error: err("service_unreachable") }, "degraded"],
     ["degraded: a failed self-check", { last_error: err("connector_unreachable"), probe_ok_at: earlier(MIN) }, "degraded"],
     ["starting: no certificate yet", { cert_not_after: null }, "starting"],
-    ["starting: the certificate ran out", { cert_not_after: earlier(1) }, "starting"],
+    ["degraded: the certificate ran out", { cert_not_after: earlier(1) }, "degraded"],
     ["starting: no credential yet", { credential_expires_at: null }, "starting"],
     ["starting: no self-check yet", { probe_at: null, probe_ok_at: null }, "starting"],
     ["starting: the last self-check failed and said nothing", { probe_ok_at: earlier(MIN) }, "starting"],
@@ -91,6 +93,8 @@ describe("the status body", () => {
       certificate: { expires_at: row().cert_not_after!.toISOString(), renew_at: row().cert_renew_at!.toISOString() },
       credential: { expires_at: row().credential_expires_at!.toISOString() },
       connector: {
+        managed: false,
+        status: null,
         config_path: "/Users/liv/.stuga-remote/relay-1.toml",
         config_changed_at: row().connector_config_changed_at!.toISOString(),
         reachable: true,
@@ -123,8 +127,126 @@ describe("the status body", () => {
     });
   });
 
+  it("hands the packaging's status over, and no command to run, where it runs the connector", () => {
+    const status = remoteStatus(row(), { dir: "/d", now: NOW, connector: report("running") });
+    expect(status).toMatchObject({ state: "on", last_error: null });
+    if (!status.available) throw new Error("unavailable");
+    expect(status.connector).toMatchObject({ managed: true, status: report("running").status, config_path: null, reachable: true });
+
+    // Reported before the node has any settings of its own for it.
+    const before = row({ relays: [], probe_at: null, probe_ok_at: null });
+    expect(remoteStatus(before, { dir: "/d", now: NOW, connector: report("stopped") })).toMatchObject({
+      connector: { managed: true, status: { state: "stopped" }, config_path: null },
+    });
+    expect(remoteStatus(before, { dir: "/d", now: NOW, connector: report(null) })).toMatchObject({ connector: null });
+  });
+
+  it("shows the error the state says rather than the one kept", () => {
+    expect(remoteStatus(row({ last_error: err("connector_unreachable") }), { dir: "/d", now: NOW, connector: report("refused") })).toMatchObject({
+      state: "error",
+      last_error: { code: "connector_refused" },
+    });
+  });
+
   it("keeps the address while off", () => {
     expect(remoteStatus(row({ enabled: false }), { dir: "/d", now: NOW })).toMatchObject({ state: "off", address: "https://k7f3q2.mystuga.com" });
+  });
+});
+
+const SHA = "a".repeat(64);
+const report = (state: ConnectorStatus["state"] | null, over: Partial<ConnectorReport> = {}): ConnectorReport => ({
+  status: state ? { state, message: `helper: ${state}`, at: earlier(MIN).toISOString(), connector_sha: SHA, config_sha: SHA } : null,
+  stale: false,
+  retryAt: null,
+  behindSince: null,
+  ...over,
+});
+
+describe("what the state itself says, never kept", () => {
+  it("says an expired certificate is degraded, from when it expired, and nothing once a new one is here", () => {
+    expect(shownError(row({ cert_not_after: earlier(MIN) }), NOW)).toEqual({
+      code: "certificate_expired",
+      message: "The certificate expired.",
+      at: earlier(MIN).toISOString(),
+    });
+    expect(shownError(row(), NOW)).toBeNull();
+    expect(remoteState(row({ cert_not_after: earlier(MIN) }), NOW)).toBe("degraded");
+  });
+
+  it("says a refused connector is an error, with the packaging's reason", () => {
+    const r = row();
+    expect(shownError(r, NOW, report("refused"))).toEqual({ code: "connector_refused", message: "helper: refused", at: earlier(MIN).toISOString() });
+    expect(remoteState(r, NOW, report("refused"))).toBe("error");
+  });
+
+  it("says a failed connector is degraded, with the packaging's reason and when the node asks again", () => {
+    const retryAt = later(5 * MIN);
+    expect(shownError(row(), NOW, report("failed", { retryAt }))).toEqual({
+      code: "connector_failed",
+      message: "helper: failed",
+      at: earlier(MIN).toISOString(),
+      retry_at: retryAt.toISOString(),
+    });
+    expect(remoteState(row(), NOW, report("failed", { retryAt }))).toBe("degraded");
+  });
+
+  it("says an installation without the connector is an error, with no retry", () => {
+    expect(shownError(row(), NOW, report("unavailable"))).toEqual({
+      code: "connector_unavailable",
+      message: "helper: unavailable",
+      at: earlier(MIN).toISOString(),
+    });
+    expect(remoteState(row(), NOW, report("unavailable"))).toBe("error");
+    expect(remoteState(row(), NOW, report("unavailable", { stale: true }))).toBe("on");
+  });
+
+  it("says a connector not running what it was asked to, after asking again, is degraded", () => {
+    const retryAt = later(4 * MIN);
+    const since = earlier(2 * MIN);
+    for (const state of [null, "stopped", "installing"] as const) {
+      expect(shownError(row(), NOW, report(state, { retryAt, behindSince: since }))).toEqual({
+        code: "connector_failed",
+        message: "The connector isn't running.",
+        at: since.toISOString(),
+        retry_at: retryAt.toISOString(),
+      });
+    }
+    expect(remoteState(row(), NOW, report("stopped", { stale: true, retryAt, behindSince: since }))).toBe("degraded");
+    // The packaging's own reason says more.
+    expect(shownError(row(), NOW, report("failed", { retryAt, behindSince: since }))?.message).toBe("helper: failed");
+  });
+
+  it("gives the reason renewal is stuck, and when it tries again, over the expiry itself", () => {
+    const retryAt = later(30 * MIN);
+    const stuck = { ...err("acme_rate_limited"), retry_at: retryAt.toISOString() };
+    const r = row({ cert_not_after: earlier(MIN), last_error: stuck });
+    expect(shownError(r, NOW, report("stopped"))).toEqual(stuck);
+    expect(remoteState(r, NOW, report("stopped"))).toBe("degraded");
+    // A kept error of another kind says less than the expiry.
+    expect(shownError(row({ cert_not_after: earlier(MIN), last_error: err("service_unreachable") }), NOW)?.code).toBe("certificate_expired");
+  });
+
+  it("takes no answer to an earlier request as one to this", () => {
+    expect(shownError(row(), NOW, report("refused", { stale: true }))).toBeNull();
+    expect(shownError(row(), NOW, report("failed", { stale: true }))).toBeNull();
+    expect(remoteState(row(), NOW, report("refused", { stale: true }))).toBe("on");
+  });
+
+  it("puts an error kept for an administrator first, then refused, missing, expired, failed, then the one kept", () => {
+    const expired = { cert_not_after: earlier(MIN) };
+    const kept = (code: string, over: Partial<NodeRemoteAccessRow> = {}) => row({ last_error: err(code), ...over });
+    expect(shownError(kept("acme_action_required", expired), NOW, report("refused"))?.code).toBe("acme_action_required");
+    expect(shownError(kept("denied", expired), NOW, report("refused"))?.code).toBe("denied");
+    expect(shownError(kept("connector_unreachable", expired), NOW, report("refused"))?.code).toBe("connector_refused");
+    expect(shownError(kept("connector_unreachable", expired), NOW, report("unavailable"))?.code).toBe("connector_unavailable");
+    expect(shownError(kept("connector_unreachable", expired), NOW, report("failed"))?.code).toBe("certificate_expired");
+    expect(shownError(kept("connector_unreachable"), NOW, report("failed"))?.code).toBe("connector_failed");
+    expect(shownError(kept("connector_unreachable"), NOW, report("running"))?.code).toBe("connector_unreachable");
+    expect(shownError(kept("service_unreachable"), NOW, report("installing"))?.code).toBe("service_unreachable");
+  });
+
+  it("says nothing of it while off", () => {
+    expect(shownError(row({ enabled: false, cert_not_after: earlier(MIN) }), NOW, report("refused"))).toBeNull();
   });
 });
 

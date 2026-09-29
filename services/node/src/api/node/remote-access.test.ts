@@ -42,6 +42,7 @@ function remoteAccess(over: Partial<RemoteAccess> = {}): RemoteAccess {
     status: vi.fn(async () => ON),
     enable: vi.fn(async () => ({ status: ON, via: "enroll" as const })),
     disable: vi.fn(async () => ({ ...ON, enabled: false, state: "off" as const })),
+    retryConnector: vi.fn(async () => ON),
     ...over,
   };
 }
@@ -62,7 +63,7 @@ describe("where the packaging offers no remote access", () => {
   it("says so, and refuses the rest", async () => {
     const ctx = node();
     expect(await (await call(ctx, "GET", "/api/node/remote-access")).json()).toEqual({ available: false });
-    for (const path of ["/api/node/remote-access/enable", "/api/node/remote-access/disable"]) {
+    for (const path of ["/api/node/remote-access/enable", "/api/node/remote-access/disable", "/api/node/remote-access/connector/retry"]) {
       const res = await call(ctx, "POST", path, { accept_ca_terms: true, code: "7K2M-9QXD-4TZB-H8PN" });
       expect(res.status, path).toBe(409);
       expect(await res.json(), path).toEqual({ error: "Remote access isn't set up in this node's packaging.", code: "unavailable" });
@@ -156,5 +157,40 @@ describe("POST /api/node/remote-access/disable", () => {
       targetId: "https://stuga.test",
       detail: { id: "k7f3q2" },
     });
+  });
+});
+
+describe("POST /api/node/remote-access/connector/retry", () => {
+  it("asks the packaging again, as the person asking, and records it", async () => {
+    audit.mockClear();
+    const remote = remoteAccess();
+    const res = await call(node(remote), "POST", "/api/node/remote-access/connector/retry");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(ON);
+    expect(remote.retryConnector).toHaveBeenCalledWith("admin-1");
+    expect(audit.mock.calls[0]![1]).toEqual({
+      action: "node.remote_access.connector_retry",
+      targetKind: "node",
+      targetId: "https://stuga.test",
+      detail: { id: "k7f3q2" },
+    });
+  });
+
+  it("answers a packaging that does not run the connector with its refusal", async () => {
+    const remote = remoteAccess({
+      retryConnector: vi.fn(async () => {
+        throw new RemoteAccessRefusal(409, "unavailable", "The connector isn't run by this node's packaging.");
+      }),
+    });
+    const res = await call(node(remote), "POST", "/api/node/remote-access/connector/retry");
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "The connector isn't run by this node's packaging.", code: "unavailable" });
+  });
+
+  it("is not for agents, and takes only POST", async () => {
+    const remote = remoteAccess();
+    expect((await call(node(remote, true), "POST", "/api/node/remote-access/connector/retry")).status).toBe(403);
+    expect((await call(node(remote), "GET", "/api/node/remote-access/connector/retry")).status).toBe(405);
+    expect(remote.retryConnector).not.toHaveBeenCalled();
   });
 });

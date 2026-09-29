@@ -24,7 +24,30 @@ export type RemoteErrorCode =
   /** The self-check reached a certificate that is not this node's. */
   | "wrong_certificate"
   | "remote_dir_unusable"
-  | "socket_path_too_long";
+  | "socket_path_too_long"
+  /** Worked out from the state rather than kept: the certificate ran out and no new one is here yet. */
+  | "certificate_expired"
+  /**
+   * Worked out from the connector's status: it failed for a reason that passes, or has not started
+   * since it was asked, and is asked again at `retry_at`.
+   */
+  | "connector_failed"
+  /** Worked out from the connector's status: the packaging refused to run it, until an administrator retries. */
+  | "connector_refused"
+  /** Worked out from the connector's status: this installation has no connector. */
+  | "connector_unavailable";
+
+/** What the packaging that runs the connector last reported (docs/remote-access.md). */
+export type ConnectorState = "installing" | "running" | "stopped" | "refused" | "failed" | "unavailable";
+
+export interface ConnectorStatus {
+  state: ConnectorState;
+  message: string;
+  at: string;
+  /** The sha-256 of the connector it runs, and of the settings it was started with. */
+  connector_sha: string | null;
+  config_sha: string | null;
+}
 
 export interface RemoteError {
   code: RemoteErrorCode;
@@ -47,6 +70,10 @@ export type RemoteAccessStatus =
       certificate: { expires_at: string; renew_at: string | null } | null;
       credential: { expires_at: string } | null;
       connector: {
+        /** The packaging runs the connector; nobody runs it by hand. */
+        managed: boolean;
+        /** Where `managed`, what the packaging last reported; null before it has. */
+        status: ConnectorStatus | null;
         /** The first relay's connector config, for running the connector by hand; null where a helper runs it. */
         config_path: string | null;
         config_changed_at: string | null;

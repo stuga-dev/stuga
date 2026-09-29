@@ -80,6 +80,7 @@ Packagings set these to fit their platform. Each has a neutral default.
 | `STUGA_UPGRADE_REQUESTS`, `STUGA_UPGRADE_STATUS` | none | Where an upgrade helper beside the node takes a request and reports how it went. With both set, **About** offers **Update now**. The Mac package sets them. |
 | `STUGA_REMOTE_SERVICE` | none | The remote access service, an https origin, for the node's first enrollment ([Remote access](remote-access.md#configuration)). |
 | `STUGA_REMOTE_DIR` | none | The directory, an absolute path, the node shares with the remote access connector: its settings, its credential and the node's socket. Only with both set does **This node** list **Remote access**; one alone is logged and ignored. |
+| `STUGA_CONNECTOR_REQUEST`, `STUGA_CONNECTOR_STATUS` | none | Where the packaging that runs the connector takes the node's request, `on <sha-256>` or `off`, and reports what it did ([Remote access](remote-access.md#the-connector)). Both absolute paths, both or neither, and only beside the two above. The Mac package sets them. |
 | `AI_OLLAMA_DEFAULT_URL` | `http://127.0.0.1:11434` | The address the **Ollama (local)** choice fills in. |
 
 How each packaging sets them is in [packaging/contract.md](../packaging/contract.md).

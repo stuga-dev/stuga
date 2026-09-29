@@ -73,7 +73,12 @@ import {
 import { checkNodeVersion, getNodeVersion, installNodeVersion } from "../api/node/version.js";
 import { getNodeBackups, startNodeBackup } from "../api/node/backups.js";
 import { getNodeStorage } from "../api/node/storage.js";
-import { disableRemoteAccessRoute, enableRemoteAccessRoute, getRemoteAccessRoute } from "../api/node/remote-access.js";
+import {
+  disableRemoteAccessRoute,
+  enableRemoteAccessRoute,
+  getRemoteAccessRoute,
+  retryRemoteConnectorRoute,
+} from "../api/node/remote-access.js";
 import { listNotificationsRoute, markNotificationsReadRoute, unreadNotifications } from "../api/notifications.js";
 import { addOtherNode, listOtherNodes, removeOtherNode } from "../api/other-nodes.js";
 import { ackDocRun, decideDocRun, getDocRun, listDocRuns, proposeEdit, revertDocRun } from "../api/runs.js";
@@ -348,6 +353,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("*", "/api/node/remote-access/enable", methodNotAllowed, REMOTE_ACCESS),
   api("POST", "/api/node/remote-access/disable", disableRemoteAccessRoute, REMOTE_ACCESS),
   api("*", "/api/node/remote-access/disable", methodNotAllowed, REMOTE_ACCESS),
+  api("POST", "/api/node/remote-access/connector/retry", retryRemoteConnectorRoute, REMOTE_ACCESS),
+  api("*", "/api/node/remote-access/connector/retry", methodNotAllowed, REMOTE_ACCESS),
   api("*", /^\/api\/node\//, async ({ req, url }) => error(404, `no route for ${req.method} ${url.pathname}`), NODE),
 
   // Workspaces: tenant management, human-only.
