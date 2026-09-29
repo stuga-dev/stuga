@@ -14,9 +14,10 @@ Stuga's setup page with the node's setup code filled in, and the Stuga mark appe
 Continue with [Getting started](../getting-started.md).
 
 Stuga then runs as two system services, its Postgres and its node, under the hidden account
-`_stuga`. They start when the Mac starts, before anyone logs in, so a Mac mini with no screen serves
-your team after a power cut. With FileVault on, a Mac waits for someone to unlock its disk after a
-power cut before anything starts; `sudo fdesetup authrestart` restarts it without that, once.
+`_stuga`; while remote access is on, a third runs its connector under `_stugaremote`. They start
+when the Mac starts, before anyone logs in, so a Mac mini with no screen serves your team after a
+power cut. With FileVault on, a Mac waits for someone to unlock its disk after a power cut before
+anything starts; `sudo fdesetup authrestart` restarts it without that, once.
 
 The package is signed by Stuga's developer and notarized by Apple, and nothing is compiled on your
 Mac: it carries its own Postgres (Postgres.app's build with pgvector, plus ParadeDB's pg_search) and
@@ -52,6 +53,18 @@ the node, so it is safe on the network from its first start. Plain http on a net
 encrypted; [Network access](../network-access.md) explains what each way of reaching the node
 protects.
 
+### Remote access
+
+**Settings → This node → Remote access** needs no terminal ([Remote access](../remote-access.md)).
+When an administrator turns it on, the Mac downloads the connector built for this version of Stuga
+from its release, installs it only if it matches the checksum the package carries and Stuga's
+developer signed it, and runs it as `_stugaremote`, an account that cannot reach Stuga's data. Each
+update brings a new connector, installed the same way. Turning remote access off stops it.
+
+The connector is frp's client, `frpc`, which some endpoint security products flag as a tunnelling
+tool. It is signed by the same developer as Stuga, with its own identifier, `dev.stuga.remote`: allow
+or block it by that identifier. Blocking the developer's Team ID blocks Stuga's node too.
+
 ### Updates and backups
 
 **Settings → This node → About** names a newer version once the node knows of one, and **Update
@@ -72,8 +85,10 @@ Machine on purpose.
 | `/Applications/Stuga.app` | The menu-bar app. |
 | `/Library/Application Support/Stuga/runtime/<version>/` | The runtime: Postgres, Node.js, Stuga, and the scripts launchd runs. `THIRD-PARTY-NOTICES.txt` there lists the licenses of what it redistributes. `current` points at the one in use; the one before it is kept. |
 | `/Library/Application Support/Stuga/data/` | The Postgres cluster (`pgdata`), the node's data directory (`node`, `DATA_DIR`) and the backups (`backups`), owned by `_stuga`. |
-| `/Library/LaunchDaemons/dev.stuga.{postgres,node,helper}.plist` | The services' definitions. `helper` installs a newer package when the node asks. |
-| `/Library/Logs/Stuga/` | The node's log, one file per weekday, and the services' own. |
+| `/Library/Application Support/Stuga/remote/` | What the node shares with the connector (`STUGA_REMOTE_DIR`): its settings, its credential and the node's socket. |
+| `/Library/Application Support/Stuga/connector/` | The connector, one directory per build; `current` points at the one in use, and the one before it is kept. Only `_stugaremote` can run it. |
+| `/Library/LaunchDaemons/dev.stuga.{postgres,node,helper,remote}.plist` | The services' definitions. `helper` installs a newer package, and starts and stops the connector, when the node asks. `remote` runs the connector, and is off until remote access is turned on. |
+| `/Library/Logs/Stuga/` | The node's log, one file per weekday, and the services' own; the connector's are in `remote/`. |
 
 To set another environment variable from [Configuration](../configuration.md), add it to
 `/Library/LaunchDaemons/dev.stuga.node.plist` and reload the node:
@@ -122,7 +137,8 @@ sudo "/Library/Application Support/Stuga/current/bin/uninstall.sh"              
 sudo "/Library/Application Support/Stuga/current/bin/uninstall.sh" --delete-data   # and deletes it
 ```
 
-Kept data is used again by the next install.
+Either way the connector goes too. Kept data is used again by the next install; `--delete-data` also
+removes the `_stuga` and `_stugaremote` accounts.
 
 ## Build from a checkout
 
