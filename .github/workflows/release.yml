@@ -190,10 +190,44 @@ jobs:
         working-directory: smoke
         run: docker compose -p stuga-smoke down -v || true
 
+  # The remote-access connector: frpc built from frp's pinned commit with the pinned Go, signed as
+  # dev.stuga.remote and notarized, in a zip with its license notices. The package carries the zip's
+  # sha256, and a Mac node's helper downloads the zip from this release and checks it against that.
+  connector:
+    needs: [verify, changelog]
+    runs-on: macos-15
+    environment: release
+    outputs:
+      sha256: ${{ steps.build.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/mac-signing
+        with:
+          certs: ${{ secrets.MACOS_CERTS_P12 }}
+          certs-password: ${{ secrets.MACOS_CERTS_PASSWORD }}
+          notary-key: ${{ secrets.NOTARY_KEY }}
+          notary-key-id: ${{ secrets.NOTARY_KEY_ID }}
+          notary-issuer: ${{ secrets.NOTARY_ISSUER }}
+      - id: build
+        name: Build, sign and notarize the connector
+        run: |
+          set -euo pipefail
+          bash packaging/macos/connector/build.sh --out "$RUNNER_TEMP/connector" \
+            --identity "$APP_IDENTITY" --notary-profile stuga-notary
+          echo "sha256=$(shasum -a 256 "$RUNNER_TEMP/connector/stuga-connector-darwin-arm64.zip" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      # The zip is the release asset; frpc, the same file as in it, is attested so the unpacked binary verifies too.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: connector
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/connector/stuga-connector-darwin-arm64.zip
+            ${{ runner.temp }}/connector/frpc
+
   # The Mac package: the runtime, Stuga.app and the scripts that install them, every binary signed with
   # Stuga's Developer ID, the package notarized and stapled, and the runtime it carries booted.
   macos-pkg:
-    needs: [verify, changelog]
+    needs: [verify, changelog, connector]
     runs-on: macos-15
     # Signing and notarization secrets live in this environment, which only v* tags may use.
     environment: release
@@ -210,63 +244,46 @@ jobs:
         with:
           path: ${{ runner.temp }}/stuga-macos-cache
           key: stuga-macos-${{ hashFiles('packaging/versions.env', 'packaging/macos/build/**') }}
-
-      # One p12 holding both Developer ID identities, in a keychain that lives as long as the job. Their
-      # names come from the p12, and their team must be the one the upgrade helper trusts.
-      - name: Import the signing identities
-        env:
-          CERTS: ${{ secrets.MACOS_CERTS_P12 }}
-          CERTS_PASSWORD: ${{ secrets.MACOS_CERTS_PASSWORD }}
-        run: |
-          set -euo pipefail
-          keychain="$RUNNER_TEMP/signing.keychain-db"
-          kpass="$(openssl rand -hex 16)"
-          security create-keychain -p "$kpass" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$kpass" "$keychain"
-          printf '%s' "$CERTS" | base64 --decode > "$RUNNER_TEMP/certs.p12"
-          security import "$RUNNER_TEMP/certs.p12" -k "$keychain" -P "$CERTS_PASSWORD" \
-            -T /usr/bin/codesign -T /usr/bin/productbuild -T /usr/bin/pkgbuild
-          rm -f "$RUNNER_TEMP/certs.p12"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$kpass" "$keychain" > /dev/null
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
-          app="$(security find-identity -v "$keychain" | sed -n 's/.*"\(Developer ID Application: .*\)"$/\1/p' | head -1)"
-          installer="$(security find-identity -v "$keychain" | sed -n 's/.*"\(Developer ID Installer: .*\)"$/\1/p' | head -1)"
-          team="$(sed -n 's/.*STUGA_TEAM_ID:-\([A-Z0-9]*\)}.*/\1/p' packaging/macos/runtime/bin/helper.sh)"
-          for id in "$app" "$installer"; do
-            case "$id" in
-              *" ($team)") ;;
-              *) echo "::error::the p12 needs a Developer ID Application and a Developer ID Installer identity of team $team" >&2; exit 1 ;;
-            esac
-          done
-          { echo "APP_IDENTITY=$app"; echo "INSTALLER_IDENTITY=$installer"; } >> "$GITHUB_ENV"
-
-      - name: Store the notary credential
-        env:
-          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
-          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
-          xcrun notarytool store-credentials stuga-notary --key "$RUNNER_TEMP/notary.p8" \
-            --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER"
-          rm -f "$RUNNER_TEMP/notary.p8"
+      # Both Developer ID identities, of the team the upgrade helper trusts, and the notary credential.
+      - uses: ./.github/actions/mac-signing
+        with:
+          certs: ${{ secrets.MACOS_CERTS_P12 }}
+          certs-password: ${{ secrets.MACOS_CERTS_PASSWORD }}
+          notary-key: ${{ secrets.NOTARY_KEY }}
+          notary-key-id: ${{ secrets.NOTARY_KEY_ID }}
+          notary-issuer: ${{ secrets.NOTARY_ISSUER }}
 
       - name: Build, sign and notarize the package
         env:
           STUGA_MACOS_CACHE: ${{ runner.temp }}/stuga-macos-cache
+          CONNECTOR_SHA256: ${{ needs.connector.outputs.sha256 }}
         run: |
           bash packaging/macos/pkg/build-pkg.sh --version "${GITHUB_REF_NAME#v}" --out "$RUNNER_TEMP/pkg" \
-            --app-identity "$APP_IDENTITY" --installer-identity "$INSTALLER_IDENTITY" --notary-profile stuga-notary
+            --app-identity "$APP_IDENTITY" --installer-identity "$INSTALLER_IDENTITY" --notary-profile stuga-notary \
+            --connector-sha256 "$CONNECTOR_SHA256"
 
-      # The runtime as the package carries it, signed: library validation on, Node with only allow-jit.
+      - uses: actions/download-artifact@v8
+        with:
+          name: connector
+          path: ${{ runner.temp }}/connector
+
+      # The runtime as the package carries it, signed: library validation on, Node with only allow-jit. Its
+      # helper will accept only the connector this run built.
       - name: Boot the runtime the package carries
+        env:
+          CONNECTOR_SHA256: ${{ needs.connector.outputs.sha256 }}
         run: |
           set -euo pipefail
           V="${GITHUB_REF_NAME#v}"
           pkgutil --expand-full "$RUNNER_TEMP/pkg/Stuga-$V.pkg" "$RUNNER_TEMP/expanded"
-          bash packaging/macos/test/smoke.sh "$RUNNER_TEMP/expanded/stuga-node.pkg/Payload/Library/Application Support/Stuga/runtime/$V"
+          runtime="$RUNNER_TEMP/expanded/stuga-node.pkg/Payload/Library/Application Support/Stuga/runtime/$V"
+          built="$(shasum -a 256 "$RUNNER_TEMP/connector/stuga-connector-darwin-arm64.zip" | cut -d' ' -f1)"
+          carried="$(cat "$runtime/conf/connector.sha256")"
+          if [ "$carried" != "$CONNECTOR_SHA256" ] || [ "$carried" != "$built" ]; then
+            echo "::error::the package names connector $carried, the connector job built $CONNECTOR_SHA256 ($built)"
+            exit 1
+          fi
+          bash packaging/macos/test/smoke.sh "$runtime"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -301,7 +318,7 @@ jobs:
           done
 
   release:
-    needs: [docker-smoke, macos-pkg, promote]
+    needs: [docker-smoke, connector, macos-pkg, promote]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -317,12 +334,23 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: release-notes
+      - uses: actions/download-artifact@v8
+        with:
+          name: connector
+      # Every Mac package of this release names this zip; a helper refuses any other.
+      - name: The connector is the one the package names
+        env:
+          CONNECTOR_SHA256: ${{ needs.connector.outputs.sha256 }}
+        run: echo "$CONNECTOR_SHA256  stuga-connector-darwin-arm64.zip" | sha256sum --check --strict
       # Signed build provenance for every asset: `gh attestation verify <file> --repo stuga-dev/stuga`
-      # names the commit and the run that built it. Stuga.pkg is a copy of Stuga-<version>.pkg.
+      # names the commit and the run that built it. Stuga.pkg is a copy of Stuga-<version>.pkg, and frpc
+      # is the binary in the connector's zip, attested on its own so the unpacked file verifies too.
       - uses: actions/attest@v4
         with:
           subject-path: |
             Stuga-*.pkg
+            stuga-connector-darwin-arm64.zip
+            frpc
             stuga
             install.sh
             compose.yml
@@ -344,7 +372,8 @@ jobs:
           V="${GITHUB_REF_NAME#v}"
           # A name without the version, so releases/latest/download/Stuga.pkg is always the newest.
           cp "Stuga-$V.pkg" Stuga.pkg
-          ASSETS=(compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg" Stuga.pkg)
+          ASSETS=(compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg" Stuga.pkg
+            stuga-connector-darwin-arm64.zip)
           # Assets go up to a draft, which stays editable, and publishing comes last: a published release
           # is immutable (repository setting). A re-run finishes the draft a failed run left behind.
           if draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>"$RUNNER_TEMP/view.err"); then

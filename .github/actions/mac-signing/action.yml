@@ -1,0 +1,68 @@
+name: Mac signing
+description: >
+  Imports both Developer ID identities into a keychain that lives as long as the job, sets
+  APP_IDENTITY and INSTALLER_IDENTITY, and stores the notary credential as the profile stuga-notary.
+
+# One p12 holding both identities. Their names come from the p12, and their team must be the one the
+# upgrade helper trusts.
+inputs:
+  certs:
+    description: The p12, base64 (MACOS_CERTS_P12)
+    required: true
+  certs-password:
+    description: MACOS_CERTS_PASSWORD
+    required: true
+  notary-key:
+    description: The App Store Connect API key's .p8, base64 (NOTARY_KEY)
+    required: true
+  notary-key-id:
+    description: NOTARY_KEY_ID
+    required: true
+  notary-issuer:
+    description: NOTARY_ISSUER
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Import the signing identities
+      shell: bash
+      env:
+        CERTS: ${{ inputs.certs }}
+        CERTS_PASSWORD: ${{ inputs.certs-password }}
+      run: |
+        set -euo pipefail
+        keychain="$RUNNER_TEMP/signing.keychain-db"
+        kpass="$(openssl rand -hex 16)"
+        security create-keychain -p "$kpass" "$keychain"
+        security set-keychain-settings -lut 21600 "$keychain"
+        security unlock-keychain -p "$kpass" "$keychain"
+        printf '%s' "$CERTS" | base64 --decode > "$RUNNER_TEMP/certs.p12"
+        security import "$RUNNER_TEMP/certs.p12" -k "$keychain" -P "$CERTS_PASSWORD" \
+          -T /usr/bin/codesign -T /usr/bin/productbuild -T /usr/bin/pkgbuild
+        rm -f "$RUNNER_TEMP/certs.p12"
+        security set-key-partition-list -S apple-tool:,apple: -s -k "$kpass" "$keychain" > /dev/null
+        security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+        app="$(security find-identity -v "$keychain" | sed -n 's/.*"\(Developer ID Application: .*\)"$/\1/p' | head -1)"
+        installer="$(security find-identity -v "$keychain" | sed -n 's/.*"\(Developer ID Installer: .*\)"$/\1/p' | head -1)"
+        team="$(sed -n 's/.*STUGA_TEAM_ID:-\([A-Z0-9]*\)}.*/\1/p' packaging/macos/runtime/bin/helper.sh)"
+        for id in "$app" "$installer"; do
+          case "$id" in
+            *" ($team)") ;;
+            *) echo "::error::the p12 needs a Developer ID Application and a Developer ID Installer identity of team $team" >&2; exit 1 ;;
+          esac
+        done
+        { echo "APP_IDENTITY=$app"; echo "INSTALLER_IDENTITY=$installer"; } >> "$GITHUB_ENV"
+
+    - name: Store the notary credential
+      shell: bash
+      env:
+        NOTARY_KEY: ${{ inputs.notary-key }}
+        NOTARY_KEY_ID: ${{ inputs.notary-key-id }}
+        NOTARY_ISSUER: ${{ inputs.notary-issuer }}
+      run: |
+        set -euo pipefail
+        printf '%s' "$NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+        xcrun notarytool store-credentials stuga-notary --key "$RUNNER_TEMP/notary.p8" \
+          --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER"
+        rm -f "$RUNNER_TEMP/notary.p8"

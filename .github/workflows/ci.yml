@@ -90,3 +90,8 @@ jobs:
         run: bash packaging/macos/build/build-runtime.sh --out "$RUNNER_TEMP/stuga-macos" --version 0.0.0-ci
       - run: bash packaging/macos/test/smoke.sh "$RUNNER_TEMP/stuga-macos/runtime/0.0.0-ci"
       - run: bash packaging/macos/test/restore-drill.sh "$RUNNER_TEMP/stuga-macos/runtime/0.0.0-ci"
+      # The connector, unsigned: frp's pinned commit builds with the pinned Go, and the notices match it.
+      - name: Build the connector
+        env:
+          STUGA_MACOS_CACHE: ${{ runner.temp }}/stuga-macos-cache
+        run: bash packaging/macos/connector/build.sh --out "$RUNNER_TEMP/connector"
