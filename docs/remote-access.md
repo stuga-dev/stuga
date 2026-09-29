@@ -130,7 +130,13 @@ what the packaging did from `STUGA_CONNECTOR_STATUS`. It asks for `on` once it h
 serves its address and a credential in the connector's files, and for `off` when turned off or when
 the certificate stops serving the address. It asks again at every start, and after 1, 5, 15 and
 then every 60 minutes while the packaging reports something else. A connector the packaging refused
-waits for an administrator to choose **Retry** in Settings.
+waits for an administrator to choose **Retry** in Settings, and one this installation doesn't include
+is not asked for again until the node restarts.
+
+The packaging writes a fresh status, with `at`, after every pass over the request, even one that
+changes nothing: the node takes a status stamped before it last changed the line, to the second, as
+no answer yet. An `installing` status not refreshed within 15 minutes counts as abandoned, and the
+node asks again.
 
 On a Mac:
 
@@ -234,7 +240,7 @@ and takes it that nobody but the administrator runs the connector.
 | `STUGA_REMOTE_SERVICE` | unset: no remote access | The remote access service, an https origin (http only on loopback, for tests), used for the first enrollment only. Afterwards the node calls the address the service names. |
 | `STUGA_REMOTE_DIR` | unset: no remote access | The directory the node shares with the connector, as an absolute path. |
 | `STUGA_CONNECTOR_REQUEST` | unset: the administrator runs the connector | The file the node writes `on <sha-256>` or `off` to, as an absolute path, replaced whole. |
-| `STUGA_CONNECTOR_STATUS` | unset: the administrator runs the connector | The JSON file the packaging reports in, as an absolute path: `state` (`installing`, `running`, `stopped`, `refused`, `failed` or `unavailable`), `message`, `at`, and `connector_sha` and `config_sha`, the sha-256 of the connector and of the settings it runs. |
+| `STUGA_CONNECTOR_STATUS` | unset: the administrator runs the connector | The JSON file the packaging reports in, as an absolute path: `state` (`installing`, `running`, `stopped`, `refused`, `failed` or `unavailable`), `message`, `at` (ISO 8601, written afresh after every pass over the request), and `connector_sha` and `config_sha`, the sha-256 of the connector and of the settings it runs. A status stamped before the node last changed its request is no answer to it; `installing` not refreshed within 15 minutes is abandoned. |
 
 ## Running the connector yourself
 
@@ -261,10 +267,13 @@ For node administrators; agents are refused. Times are ISO 8601.
 | `POST /api/node/remote-access/disable` | Turns it off and answers like the `GET`. |
 | `POST /api/node/remote-access/connector/retry` | Where the packaging runs the connector, asks for it again after a refusal, and answers like the `GET`. Refused with `409` elsewhere. |
 
-Three errors are worked out from the state rather than kept, so they go when their cause does:
-`certificate_expired` (degraded), `connector_failed` (degraded, with the packaging's reason and
-`retry_at`, when the node asks again) and `connector_refused` (an error, with the packaging's reason,
-until **Retry**). An error that needs an administrator comes first, then these in that order, then the
-one kept.
+Four errors are worked out from the state rather than kept, so they go when their cause does:
+`connector_refused` (an error, with the packaging's reason, until **Retry**), `connector_unavailable`
+(an error: this installation has no connector), `certificate_expired` (degraded) and
+`connector_failed` (degraded, with the packaging's reason, or because the connector still isn't
+running what the node asked for after it asked again, and `retry_at`, when the node asks again). An
+error that needs an administrator comes first, then these in that order, then the one kept; while
+the certificate is expired, a kept certificate error says why renewal is stuck and comes before
+`certificate_expired`.
 
 Each of these actions is in the node's audit log, without the code.

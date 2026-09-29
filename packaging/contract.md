@@ -162,7 +162,10 @@ file, `on <sha-256 of the connector's settings>` or `off`, whole and renamed in,
 `failed` (retried) or `unavailable` (no connector for this runtime). The line is a desired state:
 the packaging keeps the file, compares it with what runs whenever it wakes, and restarts the
 connector only when the settings or the connector changed. The node writes it at every start, when
-it changes, and again, backing off, while the status disagrees. Both paths are absolute; with only
+it changes, and again, backing off, while the status disagrees. The packaging writes a fresh status,
+with `at` in ISO 8601, after every pass over the request, even one that changes nothing: the node
+takes a status stamped before it last changed the line, to the second, as no answer, and asks again
+for `on` after an `installing` status silent for 15 minutes. Both paths are absolute; with only
 one set, the node logs a warning and takes it that the packaging does not run the connector. They
 count only beside `STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR`.
 
