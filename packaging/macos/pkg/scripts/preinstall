@@ -17,7 +17,7 @@ unmark_unless_finished() {
 trap unmark_unless_finished EXIT
 
 main() {
-  local root="${STUGA_ROOT:-/Library/Application Support/Stuga}" label i
+  local root="${STUGA_ROOT:-/Library/Application Support/Stuga}" label
   # A first install has nothing running to mark.
   if [ -d "$root" ]; then
     install -d -m 0755 "$root/status"
@@ -28,7 +28,7 @@ main() {
     launchctl print "system/$label" > /dev/null 2>&1 || continue
     launchctl bootout "system/$label" || true
     # The node closes its documents first, and Postgres waits for it: up to a minute each.
-    for i in $(seq 1 120); do
+    for _ in $(seq 1 120); do
       launchctl print "system/$label" > /dev/null 2>&1 || break
       sleep 1
     done

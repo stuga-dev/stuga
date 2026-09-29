@@ -126,13 +126,13 @@ prune_runtimes() {
 
 # For whoever is at the Mac: the menu-bar app, and the setup page while nobody has claimed the node.
 greet() {
-  local root="$1" origin="$2" port="$3" user uid code i
+  local root="$1" origin="$2" port="$3" user uid code
   user="$(stat -f %Su /dev/console 2> /dev/null || true)"
   uid="$(stat -f %u /dev/console 2> /dev/null || true)"
   [ -n "$uid" ] && [ "$user" != root ] || return 0
   launchctl asuser "$uid" sudo -u "$user" open -a /Applications/Stuga.app > /dev/null 2>&1 || true
   # A first start creates the database and its search indexes before it serves.
-  for i in $(seq 1 120); do
+  for _ in $(seq 1 120); do
     curl -fsS --max-time 2 -o /dev/null "http://127.0.0.1:$port/ready" 2> /dev/null && break
     sleep 1
   done
