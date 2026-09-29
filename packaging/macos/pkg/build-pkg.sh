@@ -128,7 +128,10 @@ chmod 0755 "$work/scripts/preinstall" "$work/scripts/postinstall"
 # Stuga.app stays where the package puts it, even if a copy exists elsewhere.
 pkgbuild --analyze --root "$payload" "$work/components.plist" > /dev/null
 plutil -replace 0.BundleIsRelocatable -bool false "$work/components.plist"
+# --compression latest picks a better codec for the macOS 13 floor distribution.xml already sets:
+# about a quarter smaller than the default.
 pkgbuild --root "$payload" --component-plist "$work/components.plist" --scripts "$work/scripts" \
+  --compression latest --min-os-version 13.0 \
   --identifier dev.stuga.node --version "$version" --install-location / "$work/stuga-node.pkg" > /dev/null
 sed "s/@VERSION@/$version/g" "$here/distribution.xml.in" > "$work/distribution.xml"
 mkdir -p "$work/resources"
