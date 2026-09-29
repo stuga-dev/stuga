@@ -263,6 +263,8 @@ remote_on() {
     return 0
   fi
 
+  # The download may have taken minutes: a request that changed meanwhile is the next round's.
+  [ "$(remote_request)" = "on $config" ] || return 0
   if ! stop_job; then
     remote_status failed "the connector did not stop for its restart" "$connector" "$config"
     return 0

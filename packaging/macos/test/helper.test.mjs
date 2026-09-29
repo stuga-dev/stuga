@@ -485,6 +485,8 @@ test("a request that changes during a run is taken in another round", { skip }, 
   assertStatus(h.status(), "stopped", null, null);
   assert.ok(!h.loaded());
   assert.equal(h.enabled(), "disabled");
+  assert.equal(bootstraps(h), 0, "an off that came during the download is never started");
+  assert.ok(!h.calls().includes("launchctl enable system/dev.stuga.remote"));
 });
 
 test("upgrade: a pending off goes before the download", { skip }, () => {
