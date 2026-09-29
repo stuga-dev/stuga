@@ -300,6 +300,44 @@ describe("RemoteAccessSection", () => {
       expect(text()).not.toContain("frpc");
     });
 
+    it("gives the connector's state while starting, unless it is installing", async () => {
+      const starting = (connectorStatus: ConnectorStatus | null): Available => ({
+        ...STARTING,
+        certificate: ON.certificate,
+        credential: ON.credential,
+        connector: { ...MANAGED.connector!, reachable: false, status: connectorStatus },
+      });
+      await mount(starting(helper("unavailable")));
+      expect(text()).toContain("Checking the address…");
+      expect(text()).toContain("Connector: Not included in this installation");
+
+      await mount(starting(helper("stopped")));
+      expect(text()).toContain("Connector: Stopped");
+
+      await mount(starting(helper("refused", "The connector's signature isn't Stuga's.")));
+      expect(text()).toContain("Connector: The connector's signature isn't Stuga's.");
+
+      await mount(starting(helper("installing")));
+      expect(text()).toContain("Installing the connector…");
+      expect(text()).not.toContain("Connector: ");
+
+      await mount(starting(null));
+      expect(text()).not.toContain("Connector: ");
+    });
+
+    it("says so when the installation has no connector, with nothing to retry", async () => {
+      const message = "This installation doesn't include the connector.";
+      await mount({
+        ...MANAGED,
+        state: "error",
+        connector: { ...MANAGED.connector!, status: helper("unavailable", message) },
+        last_error: problem("connector_unavailable", message),
+      });
+      expect(text()).toContain(message);
+      expect(buttons("Retry")).toHaveLength(0);
+      expect(buttons("Turn off")).toHaveLength(1);
+    });
+
     it("doesn't ask whether the connector is running when the packaging runs it", async () => {
       await mount({ ...MANAGED, state: "degraded", last_error: problem("connector_unreachable", "couldn't reach it") });
       expect(text()).toContain("The connector is starting or can’t reach the relay.");

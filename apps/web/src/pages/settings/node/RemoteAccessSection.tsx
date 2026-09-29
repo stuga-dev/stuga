@@ -307,6 +307,9 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
     // starting, on, degraded: the address and how to keep it reachable.
     const running = status.state !== "starting";
     const managed = status.connector?.managed ?? false;
+    const reported = status.connector?.status ?? null;
+    // While starting, a reason to wait that progress() doesn't already give.
+    const connectorLine = managed && (running || (reported !== null && reported.state !== "installing"));
     const expiredAt = status.certificate && !isFuture(status.certificate.expires_at, now) ? status.certificate.expires_at : null;
     const title = error?.code === "connector_unreachable" && managed ? MANAGED_UNREACHABLE : error ? (DEGRADED[error.code] ?? error.message) : "";
     body = (
@@ -330,9 +333,9 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
             </Text>
           )
         )}
-        {managed && running && (
+        {connectorLine && (
           <Text type="supporting" color="secondary">
-            Connector: {connectorLabel(status.connector?.status ?? null)}
+            Connector: {connectorLabel(reported)}
           </Text>
         )}
         {status.state === "degraded" && error && (
