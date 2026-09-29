@@ -7,9 +7,10 @@
 #
 # frpc is built from frp's pinned commit with the pinned Go (packaging/versions.env), without the
 # web UI, and its build info is checked. go-licenses writes the notices, which must name every module
-# the binary links. With --identity frpc is signed as dev.stuga.remote with the hardened runtime;
-# with --notary-profile too, the zip is notarized (a bare binary cannot be stapled). Without either
-# it keeps the linker's ad hoc signature: fine for CI, not to ship.
+# the binary links; the modules' NOTICE files go in too. With --identity frpc is signed as
+# dev.stuga.remote with the hardened runtime; with --notary-profile too, it must meet the helper's
+# requirement, a Developer ID of the team helper.sh pins, and the zip is notarized (a bare binary
+# cannot be stapled). Without either it keeps the linker's ad hoc signature: fine for CI, not to ship.
 #
 # Builds on Apple silicon, or unsigned on linux/amd64 (a container, say).
 set -euo pipefail
@@ -20,6 +21,8 @@ macos="$(cd "$here/.." && pwd)"
 . "$macos/../versions.env"
 # shellcheck source=../build/lib/fetch.sh
 . "$macos/build/lib/fetch.sh"
+# shellcheck source=lib.sh
+. "$here/lib.sh"
 
 usage() { sed -n '5,6p' "$0" | sed 's/^# \{0,3\}//' >&2; exit 2; }
 
@@ -38,6 +41,8 @@ if [ -n "$notary" ] && [ -z "$identity" ]; then
   echo "error: notarizing needs --identity" >&2
   exit 2
 fi
+# Byte order for sort and the rest, whatever the caller's locale.
+export LC_ALL=C
 
 case "$(uname -s)/$(uname -m)" in
   Darwin/arm64) go_platform=darwin-arm64 go_sha="$GO_DARWIN_ARM64_SHA256" ;;
@@ -152,15 +157,14 @@ awk -F'\t' -v main="$main_module" -v frp="$FRP_VERSION" '
 
 # source_urls <path> <version>: where a module's source is, for licenses that require saying so.
 source_urls() {
-  local path="$1" version="$2" ref escaped
+  local path="$1" version="$2" ref
   ref="${version%+incompatible}"
   if printf '%s' "$ref" | grep -Eq -- '-[0-9]{14}-[0-9a-f]{12}$'; then ref="${ref##*-}"; fi
   # A repository's root module; one in a subdirectory tags its versions with a prefix.
   if printf '%s' "$path" | grep -Eq '^github\.com/[^/]+/[^/]+(/v[0-9]+)?$'; then
     printf '    Source: https://github.com/%s/tree/%s\n' "$(printf '%s' "$path" | cut -d/ -f2-3)" "$ref"
   fi
-  escaped="$(printf '%s' "$path" | sed 's/[A-Z]/!&/g' | tr '[:upper:]' '[:lower:]')"
-  printf '    Source: https://proxy.golang.org/%s/@v/%s.zip\n' "$escaped" "$version"
+  printf '    Source: https://proxy.golang.org/%s/@v/%s.zip\n' "$(case_escape "$path")" "$(case_escape "$version")"
 }
 
 notices="$stage/THIRD-PARTY-NOTICES.txt"
@@ -172,7 +176,7 @@ frpc is frp $FRP_VERSION, Apache-2.0, in LICENSE beside this file. Its source:
 https://github.com/fatedier/frp/tree/$FRP_COMMIT
 
 It was built with Go $GO_VERSION and links the Go standard library and the modules below, each
-under its own license. Their license texts follow the list.
+under its own license. Their license texts, and any NOTICE files, follow the list.
 
   Go standard library go$GO_VERSION: BSD-3-Clause
 HEAD
@@ -192,9 +196,17 @@ HEAD
     cat "$2"
   }
   section "Go standard library go$GO_VERSION" "$GOROOT/LICENSE"
+  # A NOTICE sits beside the license or at the module's root; each is printed once.
+  noticed=""
   while IFS="$tab" read -r module version source library names file; do
-    [ "$file" != "$src/LICENSE" ] || continue
-    section "$library $version: $names" "$file"
+    [ "$file" = "$src/LICENSE" ] || section "$library $version: $names" "$file"
+    root="$src"
+    [ "$module" = "$main_module" ] || root="$(module_dir "$source" "$version")"
+    while IFS= read -r notice; do
+      case "$noticed" in *"|$notice|"*) continue ;; esac
+      noticed="$noticed|$notice|"
+      section "$source $version: $(basename "$notice")" "$notice"
+    done < <(notice_files "$(dirname "$file")" "$root")
   done < "$work/libraries.tsv"
 } > "$notices"
 say "THIRD-PARTY-NOTICES.txt: the Go standard library and $(wc -l < "$work/deps.tsv" | tr -d ' ') modules"
@@ -210,10 +222,13 @@ if [ -n "$identity" ]; then
   signature="$(codesign -dv "$stage/frpc" 2>&1)"
   printf '%s\n' "$signature" | grep -qx 'Identifier=dev.stuga.remote' || fail "frpc is not signed as dev.stuga.remote"
   printf '%s\n' "$signature" | grep -q '^CodeDirectory .*flags=.*runtime' || fail "frpc has no hardened runtime"
-  team="$(printf '%s\n' "$signature" | sed -n 's/^TeamIdentifier=//p')"
   if [ -n "$notary" ]; then
-    # What the helper requires before it installs the download.
-    codesign --verify --strict -R "=anchor apple generic and certificate leaf[subject.OU] = \"$team\" and identifier \"dev.stuga.remote\" and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13]" "$stage/frpc" \
+    # What the helper requires before it installs the download, of the team it pins.
+    team="$(pinned_team "$macos/runtime/bin/helper.sh")"
+    [ -n "$team" ] || fail "runtime/bin/helper.sh pins no team"
+    signed_by="$(printf '%s\n' "$signature" | sed -n 's/^TeamIdentifier=//p')"
+    [ "$signed_by" = "$team" ] || fail "frpc is signed by team ${signed_by:-none}; the helper trusts only $team"
+    codesign --verify --strict -R "$(connector_requirement "$team")" "$stage/frpc" \
       || fail "frpc's signature is not a Developer ID of team $team"
   fi
 fi
@@ -223,7 +238,7 @@ fi
 
 say "$zip_name"
 (cd "$stage" && zip -X -q "$work/$zip_name" frpc LICENSE THIRD-PARTY-NOTICES.txt)
-[ "$(unzip -Z1 "$work/$zip_name" | sort | tr '\n' ' ')" = "LICENSE THIRD-PARTY-NOTICES.txt frpc " ] \
+[ "$(zip_members "$work/$zip_name")" = "LICENSE THIRD-PARTY-NOTICES.txt frpc " ] \
   || fail "$zip_name does not hold exactly frpc, LICENSE and THIRD-PARTY-NOTICES.txt"
 
 if [ -n "$notary" ]; then
