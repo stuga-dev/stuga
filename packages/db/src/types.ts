@@ -633,6 +633,7 @@ export interface NodeRemoteAccessRow {
   cert_not_before: Date | null;
   cert_not_after: Date | null;
   cert_renew_at: Date | null;
+  cert_reissue_before: Date | null;
   cert_failures: number;
   cert_retry_at: Date | null;
   checkin_at: Date | null;

@@ -572,6 +572,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
           notBefore: found.notBefore,
           notAfter: found.notAfter,
           renewAt: certRenewAt(found.notBefore, found.notAfter, rand),
+          reissueBefore: null,
         });
         await refreshRow();
       }
@@ -664,6 +665,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       notBefore: next.notBefore,
       notAfter: next.notAfter,
       renewAt: certRenewAt(next.notBefore, next.notAfter, rand),
+      reissueBefore: r.acme_reissue_before,
     });
     await refreshRow();
     await succeeded("issuance");

@@ -35,6 +35,7 @@ function row(over: Partial<NodeRemoteAccessRow> = {}): NodeRemoteAccessRow {
     hostname: HOST,
     cert_serial: null,
     cert_renew_at: null,
+    cert_reissue_before: null,
     acme_reissue_before: null,
     acme_directory: "https://ca.stuga.test/dir",
     cert_directory: "https://ca.stuga.test/dir",
@@ -111,6 +112,20 @@ describe("the evidence that a new certificate is needed", () => {
     expect(issuanceEvidence(disk, quiet, T0 + 2 * DAY)).toBeNull();
     const wrongCertificate = { ...quiet, last_error: { code: "wrong_certificate", message: "m", at: "" } };
     expect(issuanceEvidence(disk, wrongCertificate, T0 + 2 * DAY)).toBeNull();
+  });
+
+  it("reissues once per request, however far back the CA dates the new certificate", () => {
+    // Let's Encrypt backdates notBefore by an hour: the certificate issued in answer (notBefore T0)
+    // is still older than the request (T0 + 30 min).
+    const disk = onDisk();
+    const serial = disk.kind === "ok" ? disk.cert.serial : null;
+    const asked = new Date(T0 + 30 * MIN);
+    const answered = row({ cert_serial: serial, acme_reissue_before: asked, cert_reissue_before: asked });
+    expect(issuanceEvidence(disk, answered, T0 + 2 * DAY)).toBeNull();
+    // A later request asks again, once.
+    expect(issuanceEvidence(disk, { ...answered, acme_reissue_before: new Date(T0 + 40 * MIN) }, T0 + 2 * DAY)).toBe("reissue_requested");
+    // What the row says answers only the certificate it describes.
+    expect(issuanceEvidence(disk, { ...answered, cert_serial: "04f1" }, T0 + 2 * DAY)).toBe("reissue_requested");
   });
 
   it("serves the hostname only while valid and naming it alone", () => {

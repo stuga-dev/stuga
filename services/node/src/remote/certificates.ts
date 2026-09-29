@@ -128,7 +128,11 @@ export function issuanceEvidence(disk: CertOnDisk, row: NodeRemoteAccessRow, now
   const renewAt =
     row.cert_serial === cert.serial && row.cert_renew_at ? row.cert_renew_at.getTime() : cert.notBefore.getTime() + (lifetime * 2) / 3;
   if (now >= renewAt || now >= cert.notAfter.getTime()) return "due";
-  if (row.acme_reissue_before && row.acme_reissue_before.getTime() > cert.notBefore.getTime()) return "reissue_requested";
+  // Once per request. A CA may backdate notBefore (Let's Encrypt by an hour), so a certificate issued
+  // in answer can still look older than the request; the row says which request it answers.
+  const asked = row.acme_reissue_before?.getTime();
+  const answered = row.cert_serial === cert.serial ? row.cert_reissue_before?.getTime() : undefined;
+  if (asked && asked > cert.notBefore.getTime() && !(answered !== undefined && answered >= asked)) return "reissue_requested";
   return null;
 }
 

@@ -30,6 +30,7 @@ const DEFAULTS: NodeRemoteAccessRow = {
   cert_not_before: null,
   cert_not_after: null,
   cert_renew_at: null,
+  cert_reissue_before: null,
   cert_failures: 0,
   cert_retry_at: null,
   checkin_at: null,
@@ -156,6 +157,8 @@ export interface RemoteCert {
   notBefore: Date;
   notAfter: Date;
   renewAt: Date;
+  /** The reissue request in hand when it was issued, which it answers; null when there was none, or unknown. */
+  reissueBefore: Date | null;
 }
 
 /** A certificate now in use, which ends any run of failures to get one. */
@@ -166,6 +169,7 @@ export async function recordRemoteCert(sql: Queryable, c: RemoteCert): Promise<v
     cert_not_before: c.notBefore,
     cert_not_after: c.notAfter,
     cert_renew_at: c.renewAt,
+    cert_reissue_before: c.reissueBefore,
     cert_failures: 0,
     cert_retry_at: null,
   });

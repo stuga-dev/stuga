@@ -665,6 +665,8 @@ CREATE TABLE node_remote_access (
     cert_not_before             TIMESTAMPTZ,
     cert_not_after              TIMESTAMPTZ,
     cert_renew_at               TIMESTAMPTZ,
+    -- The acme_reissue_before in hand when it was issued, which it answers however the CA dates it.
+    cert_reissue_before         TIMESTAMPTZ,
     cert_failures               INTEGER     NOT NULL DEFAULT 0,
     cert_retry_at               TIMESTAMPTZ,
     checkin_at                  TIMESTAMPTZ,

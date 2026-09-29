@@ -33,6 +33,7 @@ const memory = vi.hoisted(() => {
     cert_not_before: null,
     cert_not_after: null,
     cert_renew_at: null,
+    cert_reissue_before: null,
     cert_failures: 0,
     cert_retry_at: null,
     checkin_at: null,

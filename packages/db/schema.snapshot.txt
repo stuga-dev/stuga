@@ -366,6 +366,7 @@ TABLE node_remote_access
   cert_failures integer NOT NULL DEFAULT 0
   cert_not_after timestamp with time zone
   cert_not_before timestamp with time zone
+  cert_reissue_before timestamp with time zone
   cert_renew_at timestamp with time zone
   cert_retry_at timestamp with time zone
   cert_serial text

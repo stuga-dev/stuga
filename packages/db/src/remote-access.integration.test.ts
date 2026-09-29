@@ -112,8 +112,15 @@ describe.skipIf(!URL)("node_remote_access", () => {
       [
         "recordRemoteCert",
         () =>
-          recordRemoteCert(sql, { serial: "04f1", directory: "https://ca.stuga.test/directory", notBefore: at(0), notAfter: at(180), renewAt: at(117) }),
-        ["cert_directory", "cert_failures", "cert_not_after", "cert_not_before", "cert_renew_at", "cert_retry_at", "cert_serial"],
+          recordRemoteCert(sql, {
+            serial: "04f1",
+            directory: "https://ca.stuga.test/directory",
+            notBefore: at(0),
+            notAfter: at(180),
+            renewAt: at(117),
+            reissueBefore: at(-60),
+          }),
+        ["cert_directory", "cert_failures", "cert_not_after", "cert_not_before", "cert_reissue_before", "cert_renew_at", "cert_retry_at", "cert_serial"],
       ],
       [
         "recordRemoteCredentialFailure",

@@ -404,12 +404,15 @@ describe.skipIf(!URL_ || !pebble)("remote access, against Pebble and the fake se
     expect(orders()).toBe(ordersBefore);
     await waitOn();
 
-    // reissue_before later than the certificate: one new certificate, from the new directory.
+    // reissue_before later than the certificate: one new certificate, from the new directory. An hour
+    // ahead, it is also later than the new one, as a certificate Let's Encrypt backdates by an hour is.
     const serial = (await row()).cert_serial;
     await sleep(1_100);
-    fake.setReissueBefore(Math.floor(Date.now() / 1000));
+    fake.setReissueBefore(Math.floor(Date.now() / 1000) + 3600);
     remote.kick();
     await until("the reissued certificate", async () => (await row()).cert_serial !== serial, 30_000);
+    await sleep(3_000);
+    remote.kick();
     await sleep(3_000);
     expect(orders()).toBe(ordersBefore + 1);
     expect(posts.some((p) => p.url.startsWith("https://localhost:14000/"))).toBe(true);

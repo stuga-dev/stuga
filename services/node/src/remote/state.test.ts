@@ -34,6 +34,7 @@ function row(over: Partial<NodeRemoteAccessRow> = {}): NodeRemoteAccessRow {
     cert_not_before: earlier(MIN),
     cert_not_after: later(89 * 24 * 60 * MIN),
     cert_renew_at: later(59 * 24 * 60 * MIN),
+    cert_reissue_before: null,
     cert_failures: 0,
     cert_retry_at: null,
     checkin_at: earlier(MIN),
