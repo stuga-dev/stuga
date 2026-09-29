@@ -303,6 +303,10 @@ jobs:
   release:
     needs: [docker-smoke, macos-pkg, promote]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -313,8 +317,19 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: release-notes
+      # Signed build provenance for every asset: `gh attestation verify <file> --repo stuga-dev/stuga`
+      # names the commit and the run that built it. Stuga.pkg is a copy of Stuga-<version>.pkg.
+      - uses: actions/attest@v4
+        with:
+          subject-path: |
+            Stuga-*.pkg
+            stuga
+            install.sh
+            compose.yml
+            env.example
+            releases.json
       # releases.json is what running nodes read at releases/latest/download/ to learn of this version.
-      - name: Create or update the release
+      - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -329,11 +344,26 @@ jobs:
           V="${GITHUB_REF_NAME#v}"
           # A name without the version, so releases/latest/download/Stuga.pkg is always the newest.
           cp "Stuga-$V.pkg" Stuga.pkg
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" --notes-file notes.md \
-            compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg" Stuga.pkg \
-          || gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg" Stuga.pkg --clobber
+          ASSETS=(compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg" Stuga.pkg)
+          # Assets go up to a draft, which stays editable, and publishing comes last: a published release
+          # is immutable (repository setting). A re-run finishes the draft a failed run left behind.
+          if draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>"$RUNNER_TEMP/view.err"); then
+            if [ "$draft" != true ]; then
+              echo "::error::$GITHUB_REF_NAME is already published; a published release never changes."
+              exit 1
+            fi
+          elif grep -q 'release not found' "$RUNNER_TEMP/view.err"; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft \
+              --title "$GITHUB_REF_NAME" --notes-file notes.md
+          else
+            cat "$RUNNER_TEMP/view.err" >&2
+            exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${ASSETS[@]}" --clobber
+          # Only the newest version is Latest, which releases/latest/download/ follows (as in `plugin`).
+          newest=$(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          if [ "$newest" = "$GITHUB_REF_NAME" ]; then latest=true; else latest=false; fi
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest="$latest"
 
   # The stdio server as the npm package @stuga/mcp, which the Claude plugin in integrations/ runs with
   # npx. Published by npm trusted publishing, so the package's provenance points back at this run.
