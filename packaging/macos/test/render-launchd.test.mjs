@@ -1,7 +1,7 @@
 // node --test packaging/macos/test/render-launchd.test.mjs (macOS: plutil)
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -89,4 +89,63 @@ test("the upgrade hint says how this packaging moves to a newer version", { skip
   renderAgent(out, "--public-origin", "http://127.0.0.1:8787");
   const hint = environment(join(out, "dev.stuga.local.node.plist")).STUGA_UPGRADE_HINT;
   assert.match(hint, /Take a backup, update the checkout, and run packaging\/macos\/local-trial\/build\.sh again/);
+});
+
+/** Renders the daemon plists into a scratch directory. */
+function renderDaemon(out) {
+  const run = spawnSync(
+    render,
+    ["--mode", "daemon", "--out", out, "--root", "/tmp/stuga root", "--logs", "/tmp/stuga logs", "--public-origin", "http://livs-air.local:8787"],
+    { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" },
+  );
+  assert.equal(run.status, 0, run.stderr);
+}
+
+const plist = (path) => JSON.parse(execFileSync("plutil", ["-convert", "json", "-o", "-", path], { encoding: "utf8" }));
+
+test("daemon mode renders the four jobs, the connector's as _stugaremote", { skip }, () => {
+  const out = scratch();
+  renderDaemon(out);
+  assert.deepEqual(readdirSync(out).sort(), ["dev.stuga.helper.plist", "dev.stuga.node.plist", "dev.stuga.postgres.plist", "dev.stuga.remote.plist"]);
+  const remote = plist(join(out, "dev.stuga.remote.plist"));
+  assert.equal(remote.Label, "dev.stuga.remote");
+  assert.equal(remote.UserName, "_stugaremote");
+  assert.equal(remote.GroupName, "_stugaremote");
+  assert.deepEqual(remote.ProgramArguments, ["/bin/bash", "/tmp/stuga root/current/bin/remote-wrapper.sh"]);
+  assert.deepEqual(remote.EnvironmentVariables, { STUGA_ROOT: "/tmp/stuga root", STUGA_LOG_DIR: "/tmp/stuga logs/remote" });
+  assert.deepEqual(remote.KeepAlive, { SuccessfulExit: false });
+  assert.equal(remote.ThrottleInterval, 10);
+  assert.equal(remote.ExitTimeOut, 5);
+  assert.equal(remote.WorkingDirectory, "/var/empty");
+  assert.equal(remote.AssociatedBundleIdentifiers, "dev.stuga.app");
+  assert.equal(remote.StandardOutPath, "/tmp/stuga logs/remote/remote-wrapper.log");
+  assert.equal(remote.StandardErrorPath, "/tmp/stuga logs/remote/remote-wrapper.log");
+  assert.equal(remote.AbandonProcessGroup, undefined);
+});
+
+test("daemon mode points the node at the helper for upgrades and the connector", { skip }, () => {
+  const out = scratch();
+  renderDaemon(out);
+  const node = plist(join(out, "dev.stuga.node.plist"));
+  assert.equal(node.UserName, "_stuga");
+  assert.equal(node.EnvironmentVariables.STUGA_REMOTE_SERVICE, "https://api.stuga.dev");
+  assert.equal(node.EnvironmentVariables.STUGA_REMOTE_DIR, "/tmp/stuga root/remote");
+  assert.equal(node.EnvironmentVariables.STUGA_CONNECTOR_REQUEST, "/tmp/stuga root/requests/remote");
+  assert.equal(node.EnvironmentVariables.STUGA_CONNECTOR_STATUS, "/tmp/stuga root/status/remote.json");
+  assert.equal(node.EnvironmentVariables.STUGA_UPGRADE_REQUESTS, "/tmp/stuga root/requests");
+  assert.equal(node.EnvironmentVariables.STUGA_UPGRADE_STATUS, "/tmp/stuga root/status/upgrade.json");
+  // The helper watches the directory both requests go into.
+  assert.deepEqual(plist(join(out, "dev.stuga.helper.plist")).WatchPaths, ["/tmp/stuga root/requests"]);
+});
+
+test("agent mode keeps remote access and drops the helper's paths: a local trial runs the connector by hand", { skip }, () => {
+  const out = scratch();
+  renderAgent(out, "--public-origin", "http://127.0.0.1:8787");
+  assert.deepEqual(readdirSync(out).sort(), ["dev.stuga.local.node.plist", "dev.stuga.local.postgres.plist"]);
+  const env = environment(join(out, "dev.stuga.local.node.plist"));
+  assert.equal(env.STUGA_REMOTE_DIR, "/tmp/stuga root/remote");
+  assert.equal(env.STUGA_REMOTE_SERVICE, "https://api.stuga.dev");
+  for (const key of ["STUGA_CONNECTOR_REQUEST", "STUGA_CONNECTOR_STATUS", "STUGA_UPGRADE_REQUESTS", "STUGA_UPGRADE_STATUS"]) {
+    assert.equal(env[key], undefined, key);
+  }
 });

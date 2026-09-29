@@ -9,7 +9,7 @@
 #   node       the pinned official Node for darwin-arm64, without npm, corepack or headers
 #   app        packaging/shared/build-app.sh --version <v>, or with --app-link a symlink to a
 #              built checkout (no VERSION file: the node reports a source build)
-#   bin        the launchd wrappers, init-cluster.sh, rotate-log.mjs and the upgrade helper
+#   bin        the launchd wrappers (the connector's too), init-cluster.sh, rotate-log.mjs and the helper
 #   conf       the Postgres configuration templates and versions.env
 #   THIRD-PARTY-NOTICES.txt   the licenses of everything the runtime redistributes
 #
@@ -82,7 +82,8 @@ else
 fi
 
 cp "$macos/runtime/bin/postgres-wrapper.sh" "$macos/runtime/bin/node-wrapper.sh" \
-  "$macos/runtime/bin/init-cluster.sh" "$macos/runtime/bin/rotate-log.mjs" "$macos/runtime/bin/helper.sh" \
+  "$macos/runtime/bin/remote-wrapper.sh" "$macos/runtime/bin/init-cluster.sh" \
+  "$macos/runtime/bin/rotate-log.mjs" "$macos/runtime/bin/helper.sh" \
   "$macos/runtime/bin/uninstall.sh" "$staging/bin/"
 cp "$macos/runtime/conf/postgresql.conf" "$macos/runtime/conf/pg_hba.conf" \
   "$macos/runtime/conf/pg_ident.conf" "$macos/../versions.env" "$staging/conf/"
