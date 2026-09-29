@@ -60,7 +60,7 @@ build step. A checkout runs the node's source through tsx; a release bundles it
 | `config/` | Environment parsing, secret files under `DATA_DIR/secrets`, and the stores for the values the Settings page edits. |
 | `env.ts` | `NodeEnv`: the configuration and services every handler, actor and job receives. |
 | `http/` | The route table, the matcher, the dispatcher, CORS, rate limits, security headers, and the serving gate that answers while the node starts or pauses. |
-| `platform/` | The HTTP and WebSocket listener, static files, the rate limiter, the in-process internal API, intervals. |
+| `platform/` | The HTTP and WebSocket listener, the remote listener and its PROXY protocol parser, static files, the rate limiter, the in-process internal API, intervals. |
 | `auth/`, `authz/` | Request contexts, principals and socket tickets; the authorization predicates, document ownership and review mode. |
 | `identity/` | Accounts and sessions: `/auth/*`, the JWKS, password resets, sign-in through an identity provider. |
 | `api/` | REST handlers, one file per resource. |
@@ -79,6 +79,7 @@ build step. A checkout runs the node's source through tsx; a release bundles it
 | `ops/` | Backup, verify, restore and list, and the backups a running node takes of itself. |
 | `net/` | Address classification and outbound URL vetting. |
 | `lib/` | The ZIP reader and writer. |
+| `remote/` | [Remote access](remote-access.md): enrollment, the ACME client, check-ins and the relay credential, the connector's files, the self-check, and the state the Settings page shows. |
 | `updates/` | The daily look for a newer version: the release list, the comparison, and the notice to administrators; and the request to the packaging's upgrade helper behind **Update now**. |
 | `writer-lock.ts` | The Postgres advisory locks that allow one node per database and keep a node and a backup or restore apart. |
 
@@ -104,7 +105,8 @@ layer:
 
 The app first applies the origin gate: a request whose `Origin` is not `PUBLIC_ORIGIN`, not listed
 in `EXTRA_ORIGINS`, and not the local address the request itself went to (an IP address or a local
-name, at `PUBLIC_ORIGIN`'s scheme) is refused before any credential is read. Clients that send no
+name, at `PUBLIC_ORIGIN`'s scheme) is refused before any credential is read. At the
+[remote address](remote-access.md) the only `Origin` that passes is that address. Clients that send no
 `Origin` pass. Then `APP_ROUTES` in `http/routes.ts` is matched in table order, by method and by
 exact path or anchored pattern, and the first match wins. Each route declares the credential it
 needs:
@@ -134,11 +136,13 @@ written to the audit ledger.
 
 Invariants the request layer holds:
 
-- The listener rebuilds every request URL on `PUBLIC_ORIGIN`, never on the `Host` header. Minted
-  links, the origin allow-set (with `EXTRA_ORIGINS`) and the media cookie's `Secure` flag all derive
-  from it. OAuth discovery is the one answer that follows `Host`, and only among `PUBLIC_ORIGIN` and
+- Each listener rebuilds every request URL on its own origin, never on the `Host` header: the
+  network's on `PUBLIC_ORIGIN`, the remote listener on the remote address. Links handed back to a
+  request, the origin allow-set (with `EXTRA_ORIGINS` on the network) and the media cookie's name
+  and `Secure` flag all derive from it; links the node sends by itself use `PUBLIC_ORIGIN`. On the
+  network, OAuth discovery is the one answer that follows `Host`, and only among `PUBLIC_ORIGIN` and
   `EXTRA_ORIGINS`: an agent that called the node at one of them is answered with that origin, and
-  any other `Host` gets `PUBLIC_ORIGIN`'s.
+  any other `Host` gets `PUBLIC_ORIGIN`'s. The remote listener answers `421` to any other `Host`.
 - The web app is served by the node, same-origin with the API, and derives its API and socket
   addresses from `location`. One build works at any address.
 - The listener caps request bodies at a size derived from the **Maximum upload size** setting and

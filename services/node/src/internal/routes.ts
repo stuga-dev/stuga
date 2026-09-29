@@ -306,6 +306,8 @@ async function handleInternalProposeDocEdit(req: Request, env: NodeEnv): Promise
     displayName: typeof body.agent === "string" && body.agent ? body.agent : "AI co-author",
     isAgent: true,
     onBehalfOf: alias,
+    // Nobody is handed a link from here.
+    servedOrigin: env.publicOrigin,
   };
   const out = await proposeDocEdit(ctx, {
     docId,

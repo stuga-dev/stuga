@@ -108,7 +108,7 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
   };
 
   return {
-    origin: ctx.env.publicOrigin,
+    origin: ctx.servedOrigin,
 
     async workspaceInstructions() {
       const ws = await getWorkspace(ctx.sql, ctx.workspaceId);
@@ -194,7 +194,7 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
         source: "connector",
       });
       if (outcome.kind === "error") return { error: outcome.message };
-      const answer = proposeBody(outcome, `${ctx.env.publicOrigin}/doc/${docId}`);
+      const answer = proposeBody(outcome, `${ctx.servedOrigin}/doc/${docId}`);
       if (outcome.kind === "noop") return answer;
       return { ...answer, ...(await docInstructionLabelsOrNone(ctx, outcome.doc)) };
     },
@@ -355,7 +355,7 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
       const opts = parseCommitOptions({ ...options });
       if ("error" in opts) return opts;
       if (source.kind === "import_id") return commitDatabaseImport(ctx, doc, source.import_id, opts, "connector");
-      const handOff = (why: string): ImportOutcome => ({ hand_off: { page_url: importPageUrl(ctx.env.publicOrigin, databaseId, tableId!), why } });
+      const handOff = (why: string): ImportOutcome => ({ hand_off: { page_url: importPageUrl(ctx.servedOrigin, databaseId, tableId!), why } });
       if (source.content.length > DATABASE_IMPORT_INLINE_MAX_CHARS) {
         return handOff(`That is ${source.content.length} characters, past the ${DATABASE_IMPORT_INLINE_MAX_CHARS} a tool call may carry.`);
       }

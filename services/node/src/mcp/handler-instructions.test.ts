@@ -85,6 +85,21 @@ describe("MCP initialize", () => {
     expect(b.indexOf("ROUTING:")).toBeLessThan(b.indexOf("This connection is to"));
   });
 
+  it("names an unnamed node by its remote id at the remote address, never by its host on the network", async () => {
+    const remote = { current: () => ({ enabled: true, id: "k7f3q2", hostname: "k7f3q2.stuga.test", origin: "https://k7f3q2.stuga.test" }) };
+    const env = { publicOrigin: "http://livs-air.local:8787", remote, settings: fixed({ nodeName: null, nodeLabel: "livs-air", maxBodyBytes: 1_000_000 }) };
+    const lan = connectorCtx({ env: { ...connectorCtx().env, ...env } });
+    const there = connectorCtx({ env: lan.env, servedOrigin: "https://k7f3q2.stuga.test" });
+    expect(await initializeInstructions(callerFor(lan))).toContain('the Stuga node "livs-air" at http://livs-air.local:8787');
+    const remoteInstructions = await initializeInstructions(callerFor(there));
+    expect(remoteInstructions).toContain('the Stuga node "k7f3q2" at https://k7f3q2.stuga.test');
+    expect(remoteInstructions).not.toContain("livs-air");
+    // A name the administrator gave goes everywhere.
+    const settings = fixed({ nodeName: "Studio", nodeLabel: "Studio", maxBodyBytes: 1_000_000 });
+    const named = connectorCtx({ env: { ...lan.env, settings }, servedOrigin: "https://k7f3q2.stuga.test" });
+    expect(await initializeInstructions(callerFor(named))).toContain('the Stuga node "Studio" at https://k7f3q2.stuga.test');
+  });
+
   it("lists every workspace the connection reaches, with its id, node and the person's role", async () => {
     mockListWorkspaces.mockResolvedValue([IO, SHARED] as never);
     const instructions = await initializeInstructions();

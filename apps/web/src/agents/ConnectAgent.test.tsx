@@ -32,6 +32,7 @@ const REACHABLE: AgentSetup = {
   mcp_url: URL_,
   node: { id: "mzxw6ytboi4dqnrq", name: "Team" },
   reachable: true,
+  remote: null,
   loopback: false,
   secure: true,
   bundle: { available: true },
@@ -336,6 +337,17 @@ describe("ConnectAgent", () => {
     expect(offered()).toContain("Claude");
     clickTab("claude");
     expect(text()).toContain("Add custom connector");
+  });
+
+  it("gives the connector the remote address while it is on, and apps on this network the node's own", async () => {
+    const remote = "https://k7f3q2.remote.example";
+    await mount({ ...LAN, remote: { url: remote, mcp_url: `${remote}/mcp` } });
+    expect(offered()).toContain("Claude");
+    clickTab("claude");
+    expect(text()).toContain(`${remote}/mcp`);
+    clickTab("other");
+    expect(text()).toContain('"url": "http://192.168.1.50:8787/mcp"');
+    expect(text()).not.toContain(remote);
   });
 
   it("gives Claude Desktop this node's own interpreter and entry point", async () => {

@@ -175,13 +175,13 @@ export async function createDatabaseImport(
       import_id: importId,
       table_id: table.table_id,
       format: meta.format,
-      upload_url: `${ctx.env.publicOrigin}${uploadPath}`,
+      upload_url: `${ctx.servedOrigin}${uploadPath}`,
       upload_path: uploadPath,
       upload_method: "PUT",
       max_bytes: Math.min(DATABASE_IMPORT_MAX_BYTES, ctx.env.settings.current().maxBodyBytes),
       expires_at: new Date(meta.expires_at).toISOString(),
       review,
-      import_page_url: importPageUrl(ctx.env.publicOrigin, doc.doc_id, table.table_id),
+      import_page_url: importPageUrl(ctx.servedOrigin, doc.doc_id, table.table_id),
     },
   };
 }

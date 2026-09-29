@@ -61,7 +61,7 @@ export async function createMediaUpload(ctx: Ctx, doc: DocRow, name: string): Pr
   const path = `/api/docs/${encodeURIComponent(doc.doc_id)}/media/uploads/${uploadId}?sig=${sign(ctx.env.internalSecret, doc.doc_id, uploadId)}`;
   return {
     upload_id: uploadId,
-    upload_url: `${ctx.env.publicOrigin}${path}`,
+    upload_url: `${ctx.servedOrigin}${path}`,
     upload_path: path,
     max_bytes: maxBytes(ctx.env),
     expires_at: new Date(uploadExpiry(uploadId)!).toISOString(),

@@ -14,7 +14,7 @@ import { isMutating, type ToolName } from "@stuga/agent-surface/catalog";
 import { buildInstructions } from "@stuga/agent-surface/instructions";
 import { registerAgentTools, type AgentSurface, type Reach, type ToolCall } from "@stuga/agent-surface/register";
 import type { AuditStatus } from "@stuga/protocol/domain/audit";
-import { MCP_SERVER_TITLE } from "@stuga/protocol/domain/node-name";
+import { hostLabel, MCP_SERVER_TITLE } from "@stuga/protocol/domain/node-name";
 import { getWorkspace, listWorkspacesForUser } from "@stuga/db";
 import { recordAudit } from "../audit/record.js";
 import { mcpPerson, workspaceContextFor, type McpCaller } from "../auth/context.js";
@@ -56,12 +56,24 @@ function auditTarget(args: Record<string, unknown>): { targetKind: string; targe
 }
 
 /**
+ * The node's name to this caller. At the remote address an unnamed node goes by its remote id, as
+ * /auth/config names it there, never by the LAN host its label falls back to: a hosted client's
+ * vendor reads what this says.
+ */
+function nodeName(caller: McpCaller): string {
+  const { env, servedOrigin } = caller.account;
+  const settings = env.settings.current();
+  if (servedOrigin === env.publicOrigin) return settings.nodeLabel;
+  return settings.nodeName ?? env.remote?.current().id ?? hostLabel(servedOrigin);
+}
+
+/**
  * Every workspace the credential reaches on this node: its person's memberships, narrowed to the ones it was
  * given, and for an agent never one where its person is only a guest (workspaceContextFor refuses those).
  */
 async function reachOf(caller: McpCaller): Promise<Reach> {
   const { env } = caller.account;
-  const node = { id: env.nodeId, name: env.settings.current().nodeLabel, origin: env.publicOrigin };
+  const node = { id: env.nodeId, name: nodeName(caller), origin: caller.account.servedOrigin };
   const rows = await listWorkspacesForUser(caller.account.sql, mcpPerson(caller));
   const allowed = caller.workspaces ? new Set(caller.workspaces) : null;
   return {
@@ -98,12 +110,12 @@ export function nodeSurface(caller: McpCaller): AgentSurface {
 }
 
 async function buildMcpServer(caller: McpCaller, surface: AgentSurface): Promise<McpServer> {
-  const { env, sql } = caller.account;
+  const { sql } = caller.account;
   const { workspaces } = await surface.reach();
   // One workspace's conventions travel with the connection; with several, each is read before writing there.
   const only = workspaces.length === 1 ? await getWorkspace(sql, workspaces[0]!.workspace_id).catch(() => null) : null;
   const instructions = buildInstructions({
-    node: { name: env.settings.current().nodeLabel, origin: env.publicOrigin },
+    node: { name: nodeName(caller), origin: caller.account.servedOrigin },
     workspaces,
     conventions: only?.agent_instructions ?? "",
     readOnly: caller.readOnly,

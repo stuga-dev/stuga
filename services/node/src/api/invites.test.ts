@@ -22,8 +22,9 @@ const mockRevoke = db.revokeWorkspaceInvite as unknown as ReturnType<typeof vi.f
 
 const send = vi.fn(async () => {});
 
-function ctx(): Ctx {
+function ctx(over: { servedOrigin?: string } = {}): Ctx {
   return personCtx({
+    ...over,
     alias: "u_owner",
     displayName: "Owner",
     surface: "web",
@@ -34,14 +35,14 @@ function ctx(): Ctx {
   });
 }
 
-async function create(body: unknown): Promise<Response> {
+async function create(body: unknown, servedOrigin?: string): Promise<Response> {
   const path = "/api/workspaces/ws1/invites";
   const req = new Request(`http://node.test:8787${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  return createInvite({ ctx: ctx(), req, url: new URL(req.url), match: [path, "ws1"] });
+  return createInvite({ ctx: ctx(servedOrigin ? { servedOrigin } : {}), req, url: new URL(req.url), match: [path, "ws1"] });
 }
 
 /** The audit messages sent so far, by action. */
@@ -56,6 +57,12 @@ beforeEach(() => {
 });
 
 describe("POST /api/workspaces/:id/invites", () => {
+  it("hands the link out on the origin it was asked at", async () => {
+    const res = await create({ role: "member" }, "https://k7f3q2.stuga.test");
+    const body = (await res.json()) as { token: string; join_url: string };
+    expect(body.join_url).toBe(`https://k7f3q2.stuga.test/join/${body.token}`);
+  });
+
   it("mints a one-person link that lapses, and records it by a reference that is not the token", async () => {
     const before = Date.now();
     const res = await create({ role: "member", max_uses: 1, expires_in_days: 7 });

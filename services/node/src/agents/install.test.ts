@@ -22,6 +22,7 @@ const call = (path: string): PublicCall =>
         throw new Error("the installer must not touch the database");
       },
     },
+    req: new Request(`${ORIGIN}${path}`),
     url: new URL(`${ORIGIN}${path}`),
     match: matchRoute(APP_ROUTES, "GET", new URL(`${ORIGIN}${path}`).pathname)!.match,
   }) as unknown as PublicCall;

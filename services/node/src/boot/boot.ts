@@ -57,6 +57,7 @@ import { createNodeBackups, notifyBackupFailed } from "../ops/node-backups.js";
 import { archiveWorkUnderWay, holdArchiveWork } from "../archive/under-way.js";
 import { createExclusive } from "../platform/exclusive.js";
 import { createSearchLanguages } from "../search/languages.js";
+import { createRemoteAccess, type RemoteAccess } from "../remote/service.js";
 
 const MAINTENANCE_INTERVAL_MS = 2 * 60_000;
 /** How long a backup of the running node waits for the requests already being answered. */
@@ -240,7 +241,7 @@ async function boot(): Promise<void> {
 
   const limiters = createRateLimiters();
 
-  const { tlsCertDir: _tlsCertDir, webDistDir, ...nodeConfig } = cfg;
+  const { tlsCertDir: _tlsCertDir, webDistDir, remote: remoteHints, ...nodeConfig } = cfg;
   const env: NodeEnv = {
     ...nodeConfig,
     docs,
@@ -297,6 +298,7 @@ async function boot(): Promise<void> {
       recordSignInAudit(jobs, alias, null, { action, targetKind: "node", targetId: cfg.publicOrigin, detail }),
     limiter: limiters.auth,
     trustProxyHeaders: cfg.trustProxyHeaders,
+    remoteId: () => env.remote?.current().id ?? null,
   });
 
   const spa = serveStatic(webDistDir);
@@ -305,6 +307,23 @@ async function boot(): Promise<void> {
 
   // ---- serving -------------------------------------------------------------
   gate.open({ handler, upgrade: (req) => app.upgrade(req) });
+
+  // The remote address serves through the same gate; its listener opens with the certificate on
+  // disk before anything goes out on the network.
+  let remote: RemoteAccess | null = null;
+  if (remoteHints) {
+    remote = createRemoteAccess({
+      sql,
+      env,
+      config: { service: remoteHints.service, dir: remoteHints.dir, dataDir: cfg.dataDir },
+      gate,
+      readsOwnBody,
+      maxBodyBytes: () => bodyLimit(),
+    });
+    env.remote = remote.view;
+    env.remoteAccess = remote;
+    await remote.start();
+  }
 
   // ---- background work -----------------------------------------------------
   const startWorker = () => startJobWorker<IndexMessage>(sql, (batch) => handleJobBatch(env, batch));
@@ -376,6 +395,7 @@ async function boot(): Promise<void> {
     shuttingDown = true;
     console.info(`[node] ${signal}: shutting down`);
     const result = await runShutdown([
+      { name: "remote access", run: () => remote?.stop() ?? Promise.resolve() },
       { name: "HTTP listener", run: () => server.close() },
       { name: "maintenance loop", run: () => maintenance.stop() },
       { name: "search index rebuild", run: () => searchLanguages.stop() },

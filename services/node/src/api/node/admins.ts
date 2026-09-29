@@ -90,5 +90,5 @@ export async function mintPasswordResetRoute({ ctx, req }: WorkspaceCall): Promi
     // Never the token.
     detail: { alias: account.alias, expires_at: expiresAt.toISOString() },
   });
-  return json({ url: resetUrl(ctx.env.publicOrigin, token), alias: account.alias, username: account.username, expires_at: expiresAt });
+  return json({ url: resetUrl(ctx.servedOrigin, token), alias: account.alias, username: account.username, expires_at: expiresAt });
 }

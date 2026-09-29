@@ -149,7 +149,7 @@ export function AccessSection({
           <Divider />
           <VStack gap={3}>
             <Heading level={2}>Network access</Heading>
-            {/* An origin here is a caller the node answers, never a second address it serves. */}
+            {/* An origin here is a caller the node answers; only the remote address is also one it serves. */}
             <Text type="supporting" color="secondary">
               Browsers may call this node only from these origins.
             </Text>
@@ -166,9 +166,12 @@ export function AccessSection({
                   "None"
                 )}
               </MetadataListItem>
+              {/* Answered only for pages served there, and never for the addresses above. */}
+              {ops.node.remote_origin && <MetadataListItem label="Remote address">{ops.node.remote_origin}</MetadataListItem>}
             </MetadataList>
             <Text type="supporting" color="secondary">
-              Set with PUBLIC_ORIGIN and EXTRA_ORIGINS. {ops.restart_hint}
+              Set with PUBLIC_ORIGIN and EXTRA_ORIGINS{ops.node.remote_origin ? "; the remote address under Remote access" : ""}.{" "}
+              {ops.restart_hint}
             </Text>
           </VStack>
         </>

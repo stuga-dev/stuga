@@ -84,7 +84,7 @@ export async function createInvite({ ctx, req, match }: WorkspaceCall): Promise<
       detail: { role, expires_at: expiresAt, max_uses: uses },
     },
   );
-  const joinUrl = `${ctx.env.publicOrigin}/join/${token}`;
+  const joinUrl = `${ctx.servedOrigin}/join/${token}`;
   // token_hash names the link for revoking, as the listing does.
   return json(
     { token, token_hash: tokenHash, join_url: joinUrl, role, expires_at: expiresAt, max_uses: uses },

@@ -3,11 +3,14 @@
  * per route. A header a handler already set is kept, so nothing here can widen
  * a policy it chose (the media route's `default-src 'none'; sandbox`).
  *
- * Deliberately not sent: HSTS (plain HTTP on a LAN address is supported, and
- * HSTS pins every port of a hostname); Cross-Origin-Resource-Policy (the media
- * route picks its own, and a blanket value would be an allow-set EXTRA_ORIGINS
- * cannot widen); Cross-Origin-Opener-Policy (it severs the window reference an
- * MCP client's OAuth popup relies on).
+ * HSTS goes out at the remote address only (withRemoteHeaders), which is always
+ * https. The LAN sends none: plain HTTP on a LAN address is supported, and HSTS
+ * pins every port of a hostname.
+ *
+ * Deliberately not sent: Cross-Origin-Resource-Policy (the media route picks its
+ * own, and a blanket value would be an allow-set EXTRA_ORIGINS cannot widen);
+ * Cross-Origin-Opener-Policy (it severs the window reference an MCP client's
+ * OAuth popup relies on).
  */
 import type { RequestHandler } from "../platform/http-server.js";
 import { CONSENT_PATH } from "../mcp/oauth.js";
@@ -50,4 +53,30 @@ export function applySecurityHeaders(request: Request, response: Response): Resp
 /** Wrap a handler so every answer it gives goes out with the headers above. */
 export function withSecurityHeaders(handler: RequestHandler): RequestHandler {
   return async (request) => applySecurityHeaders(request, await handler(request));
+}
+
+/** A year; no includeSubDomains and no preload, which would reach names this node does not answer for. */
+const REMOTE_HSTS = "max-age=31536000";
+
+/**
+ * The remote listener's wrapper, outside withSecurityHeaders: HSTS on every answer, the gate's
+ * pages and refused upgrades included. A completed WebSocket handshake has no headers to add to.
+ */
+export function withRemoteHeaders(handler: RequestHandler): RequestHandler {
+  return async (request) => {
+    const response = await handler(request);
+    if (!response.headers.has("strict-transport-security")) response.headers.set("strict-transport-security", REMOTE_HSTS);
+    return response;
+  };
+}
+
+/**
+ * For an answer the remote listener makes itself, before any handler (a 421, 413 or 408, or a
+ * request it could not parse): the defaults above and HSTS, as withRemoteHeaders(withSecurityHeaders()).
+ */
+export function applyRemoteHeaders(response: Response): Response {
+  for (const [name, value] of Object.entries({ ...DEFAULT_HEADERS, "strict-transport-security": REMOTE_HSTS })) {
+    if (!response.headers.has(name)) response.headers.set(name, value);
+  }
+  return response;
 }

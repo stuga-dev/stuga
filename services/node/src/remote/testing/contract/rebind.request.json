@@ -1,0 +1,18 @@
+{
+  "protected": {
+    "alg": "EdDSA",
+    "typ": "stuga-node+jwt",
+    "jwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "9S8wBRR1Tzs8N2jah2OoYwb9b8-xaVKD9d-oF1FAlww"
+    }
+  },
+  "payload": {
+    "pv": 1,
+    "aud": "https://api.stuga.dev/v1/rebind",
+    "iat": 1790900000,
+    "exp": 1790900060,
+    "code": "3NVQ-8RKW-6HXD-2PMB"
+  }
+}

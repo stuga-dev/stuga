@@ -1,0 +1,9 @@
+{
+  "status": 426,
+  "body": {
+    "error": "upgrade_required",
+    "message": "Update Stuga to use remote access.",
+    "min_protocol": 2,
+    "server_time": 1790900000
+  }
+}

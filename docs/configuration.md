@@ -67,7 +67,7 @@ letter or a digit. These are reserved: `admin`, `administrator`, `root`, `stuga`
 | Variable | Default | |
 |---|---|---|
 | `AI_EMBED_DIMS` | `1024` | The width of embedding vectors, fixed when the database is created. Pick it to match your embedding model, at most 2000. The node refuses to start when it differs from the database: [Change the embedding width](operations.md#change-the-embedding-width). |
-| `MEDIA_COOKIE_SAMESITE` | `lax` | `lax`, `strict` or `none`, for the cookie that authorizes images. |
+| `MEDIA_COOKIE_SAMESITE` | `lax` | `lax`, `strict` or `none`, for the cookie that authorizes images. `none` is for an app served from another origin than the node: it also lets that origin show the images, which otherwise answer only their own ([Headers](network-access.md#headers)). |
 
 ### Packaging hints
 
@@ -79,6 +79,8 @@ Packagings set these to fit their platform. Each has a neutral default.
 | `STUGA_UPGRADE_HINT` | `Upgrade on the machine that runs the node.` | The sentence **About** shows beside a newer version: how this packaging upgrades. |
 | `STUGA_STDIO_ENTRY` | the bundled `stuga-mcp.js` | The stdio MCP server **Your own AI** offers to local clients. Empty offers none. |
 | `STUGA_UPGRADE_REQUESTS`, `STUGA_UPGRADE_STATUS` | none | Where an upgrade helper beside the node takes a request and reports how it went. With both set, **About** offers **Update now**. The Mac package sets them. |
+| `STUGA_REMOTE_SERVICE` | none | The remote access service, an https origin, for the node's first enrollment ([Remote access](remote-access.md#configuration)). |
+| `STUGA_REMOTE_DIR` | none | The directory, an absolute path, the node shares with the remote access connector: its settings, its credential and the node's socket. Only with both set does **This node** list **Remote access**; one alone is logged and ignored. |
 | `AI_OLLAMA_DEFAULT_URL` | `http://127.0.0.1:11434` | The address the **Ollama (local)** choice fills in. |
 
 How each packaging sets them is in [packaging/contract.md](../packaging/contract.md).
@@ -93,7 +95,8 @@ and node administrators also see **This node**.
 | Preferences → **Your own AI** | Connecting your own agent, such as Claude Desktop, Claude Code or Codex, and the agents you have connected: apps that signed in, and keys ([agents.md](agents.md)). Each person connects their own. |
 | This node → **AI providers** | **Built-in AI** (chat), with its model providers and **Default model**; **Embeddings** (semantic search), with its service, model and [match cutoffs](#match-cutoffs); and **Reranking**, a model that puts the most relevant passages first for Ask and agents (TypeSafe's Jev, directly or through OpenRouter; without it, Built-in AI reranks). Each is set up on its own and runs without the others. Setting one up turns it on, its switch turns it off and keeps it, and **Remove** forgets it. **Test** in an **Edit** checks that service. |
 | This node → **Notifications** | Where notifications go: Slack, Microsoft Teams, Discord, a plain webhook or email, with **Send a test**. |
-| This node → **Access** | The node's address and accepted origins (read-only), the [identity provider](#identity-provider), administrators, the node's audit log, and account recovery links. |
+| This node → **Access** | The node's address and accepted origins, and its remote address once it has one (read-only), the [identity provider](#identity-provider), administrators, the node's audit log, and account recovery links. |
+| This node → **Remote access** | Where the packaging offers it: the node's public https address, turned on with a code and off again, with where it stands and the connector's command ([Remote access](remote-access.md)). |
 | This node → **Storage** | The largest upload, such as an image (a workspace import takes up to 512 MB whatever it is), how long audit history, AI usage records and idle Ask threads are kept, and how many changes each database keeps in its Activity feed. |
 | This node → **Search** | **Languages in your documents**: the [search languages](#search-languages), English always and each other off unless chosen. |
 | This node → **Backups** | The daily backup, on unless turned off, and its hour in the node's time zone, which first-run setup takes from the browser; **Back up now**; and the backups the node keeps ([Operations](operations.md#the-nodes-own-backups)). |
@@ -184,8 +187,9 @@ then offers **Continue with** the provider below the password form.
 | Button label | What follows **Continue with**. The issuer's host by default. |
 | Scopes | `openid profile email` by default. |
 
-At the provider, register `<origin>/auth/oidc/callback` as a redirect URI for `PUBLIC_ORIGIN` and
-for each origin in `EXTRA_ORIGINS`. The Access page lists them.
+At the provider, register `<origin>/auth/oidc/callback` as a redirect URI for `PUBLIC_ORIGIN`, for
+each origin in `EXTRA_ORIGINS`, and for the [remote address](remote-access.md) once the node has one.
+The Access page lists them.
 
 Saving checks the issuer only, so a wrong client ID or secret shows at the first sign-in, when the
 provider refuses it ([Troubleshooting](troubleshooting.md#accounts-and-sign-in)).

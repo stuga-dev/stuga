@@ -66,4 +66,12 @@ describe("GET /api/agent-bundle", () => {
     expect(text).toContain('"default": "https://stuga.test"');
     expect(text).not.toMatch(/vk_[0-9a-f]/);
   });
+
+  it("offers the address it was downloaded from: the remote one there, never routing a LAN download through it", async () => {
+    const text = async (ctx: Ctx) => new TextDecoder().decode(new Uint8Array(await (await handleAgentBundle(ctx, built())).arrayBuffer()));
+    const remote = await text(humanCtx({ servedOrigin: "https://k7f3q2.stuga.test" }));
+    expect(remote).toContain('"default": "https://k7f3q2.stuga.test"');
+    expect(remote).not.toContain("https://stuga.test");
+    expect(await text(humanCtx())).toContain('"default": "https://stuga.test"');
+  });
 });

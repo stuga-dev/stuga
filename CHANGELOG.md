@@ -16,12 +16,20 @@ its first section, are its summary: the release notes show that and link here fo
 - **Cursor, VS Code, Kiro, Goose and LM Studio** in **Settings → Your own AI**: one link opens the app
   with the node filled in, and the app signs in. Apps are now picked from one searchable list, grouped
   into chat apps, editors and coding agents, and the page remembers the last one.
+- **Remote access** in **Settings → Remote access**, for a node whose packaging names an account
+  service (`STUGA_REMOTE_SERVICE`): the node gets its own https address through a relay that passes
+  the encrypted connection on without reading it. The node creates its key and certificate itself
+  and serves the address on a second listener, so the LAN address and everyone's sessions stay as
+  they are. What the node sends the service is in [docs/remote-access.md](docs/remote-access.md).
 
 ### Changed
 
 - The setting is now called **Let AI edits apply directly** (was **Let agents apply changes at
   once**), and its chip **AI edits apply directly**: it covers the co-author as well as connected
   agents. What agents are told about it uses the same name, so they can point a person to it.
+- On https, the cookie that lets a browser show images is now `__Host-stuga_media`, and images answer
+  only their own origin (`Cross-Origin-Resource-Policy: same-origin`). An app served from another
+  origin than the node needs `MEDIA_COOKIE_SAMESITE=none`.
 
 ### Fixed
 

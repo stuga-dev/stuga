@@ -1,6 +1,8 @@
 /** The origin gate and the CORS headers, decided once per request by the dispatcher. */
+import type { NodeEnv } from "../env.js";
 import { isIpLiteral, isLocalName } from "../net/addresses.js";
 import { REQUEST_HOST_HEADER } from "../platform/http-server.js";
+import { arrivalOf, servedOrigin } from "./arrival.js";
 
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
@@ -9,20 +11,21 @@ const CORS_HEADERS: Record<string, string> = {
   "access-control-expose-headers": "x-stuga-user,x-stuga-name,x-request-id,x-stuga-workspace-required",
 };
 
-interface CorsEnv {
-  publicOrigin: string;
-  extraOrigins: readonly string[];
-}
+type CorsEnv = Pick<NodeEnv, "publicOrigin" | "extraOrigins"> & Partial<Pick<NodeEnv, "remote">>;
 
 /**
  * The request's Origin when it is the public origin or one the operator listed,
  * by exact match, or the address the request itself went to on a local network;
- * otherwise null. Null also means no Origin was sent, so callers tell a refusal
- * apart by reading the header themselves.
+ * otherwise null. At the remote address only the remote origin itself is allowed.
+ * The LAN never allows the remote origin, whatever EXTRA_ORIGINS says: a page there
+ * is a stranger's until it has signed in there. Null also means no Origin was sent,
+ * so callers tell a refusal apart by reading the header themselves.
  */
 export function allowedCorsOrigin(req: Request, env: CorsEnv): string | null {
   const requested = req.headers.get("origin");
   if (!requested) return null;
+  if (arrivalOf(req) === "remote") return requested === servedOrigin(req) ? requested : null;
+  if (requested === env.remote?.current().origin) return null;
   if (requested === env.publicOrigin || env.extraOrigins.includes(requested)) return requested;
   return sameAddressHere(requested, req, env) ? requested : null;
 }
@@ -66,16 +69,32 @@ export function withCors(res: Response, origin: string | null): Response {
 }
 
 // A refused browser sees a bare CORS failure, so the node says why, once per
-// origin. Capped because the origin is an untrusted header; JSON.stringify
-// escapes the newlines that would forge log lines.
+// origin and listener. Capped because the origin is an untrusted header;
+// JSON.stringify escapes the newlines that would forge log lines.
 const REPORTED_ORIGIN_CAP = 20;
 const reportedOrigins = new Set<string>();
 
-export function reportRefusedOrigin(requested: string, env: CorsEnv): void {
-  if (reportedOrigins.has(requested) || reportedOrigins.size > REPORTED_ORIGIN_CAP) return;
-  reportedOrigins.add(requested);
+export function reportRefusedOrigin(req: Request, requested: string, env: CorsEnv): void {
+  const remote = arrivalOf(req) === "remote";
+  const reported = `${remote ? "remote" : "local"} ${requested}`;
+  if (reportedOrigins.has(reported) || reportedOrigins.size > REPORTED_ORIGIN_CAP) return;
+  reportedOrigins.add(reported);
   if (reportedOrigins.size > REPORTED_ORIGIN_CAP) {
     console.warn("[node] too many distinct refused origins; further ones are not reported");
+    return;
+  }
+  if (remote) {
+    console.warn(
+      `[node] refused browser origin ${JSON.stringify(requested)} at the remote address; only ${servedOrigin(req)} ` +
+        "itself may call it there. See docs/remote-access.md.",
+    );
+    return;
+  }
+  if (requested === env.remote?.current().origin) {
+    console.warn(
+      `[node] refused browser origin ${JSON.stringify(requested)}, this node's remote address, on the local network: ` +
+        "a page there calls the node there. See docs/remote-access.md.",
+    );
     return;
   }
   console.warn(

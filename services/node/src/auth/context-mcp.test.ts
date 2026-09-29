@@ -155,3 +155,20 @@ describe("the other credentials on /mcp", () => {
     await expect(buildMcpCaller(bearer("session-jwt"), env)).rejects.toBeInstanceOf(Unauthorized);
   });
 });
+
+describe("the origin a context hands links out on", () => {
+  const REMOTE = "https://k7f3q2.stuga.test";
+  const at = (origin: string, token: string, path = "/api/docs") =>
+    new Request(`${origin}${path}`, { headers: { authorization: `Bearer ${token}` } });
+
+  it("is the one the request was served on, for every credential and context", async () => {
+    const access = mintConnectorToken("access");
+    vi.mocked(grantForAccessToken).mockImplementation(async (_sql, hash) => (hash === access.hash ? grantRow() : null));
+    for (const origin of [REMOTE, "http://livs-air.local:8787"]) {
+      expect((await buildContext(at(origin, "session-jwt"), env)).servedOrigin).toBe(origin);
+      expect((await buildAccountContext(at(origin, "session-jwt"), env)).servedOrigin).toBe(origin);
+      expect((await buildMcpCaller(at(origin, "session-jwt", "/mcp"), env)).account.servedOrigin).toBe(origin);
+      expect((await buildMcpCaller(at(origin, access.token, "/mcp"), env)).account.servedOrigin).toBe(origin);
+    }
+  });
+});

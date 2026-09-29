@@ -1,0 +1,29 @@
+{
+  "status": 200,
+  "body": {
+    "node": {
+      "id": "k7f3q2",
+      "hostname": "k7f3q2.mystuga.com"
+    },
+    "api": "https://api.stuga.dev",
+    "nonce": "Zb3pq9Xk2mT7vR4sN8wQ1cH6yL0dF5gJ3aE9uB2oK7i",
+    "nonce_expires_at": 1790900300,
+    "next_checkin_at": 1790921600,
+    "credential_ttl": 86400,
+    "credential_not_before": null,
+    "relays": [
+      {
+        "name": "relay-1",
+        "addr": "relay-1.mystuga.com",
+        "port": 7000,
+        "server_name": "relay-1.mystuga.com",
+        "ca_pem": "-----BEGIN CERTIFICATE-----\nMIIBfjCCASWgAwIBAgIQWjyeH3stSmyODxorPE1ebzAKBggqhkjOPQQDAjAeMRww\nGgYDVQQDDBNyZWxheS0xLm15c3R1Z2EuY29tMB4XDTI2MDkyOTAwNDcyMloXDTMx\nMDkyOTAwNDcyMlowHjEcMBoGA1UEAwwTcmVsYXktMS5teXN0dWdhLmNvbTBZMBMG\nByqGSM49AgEGCCqGSM49AwEHA0IABGbwUOnSDv6UbKbOQ4G/M79L5QpcTKrC09qq\nENvtoM9/NZ0j7+EMBaiyw/AoPZF2GY/pxD30TMyOp+ZbR2Vfl4+jRTBDMB4GA1Ud\nEQQXMBWCE3JlbGF5LTEubXlzdHVnYS5jb20wEwYDVR0lBAwwCgYIKwYBBQUHAwEw\nDAYDVR0TAQH/BAIwADAKBggqhkjOPQQDAgNHADBEAiAbALYFBWoxrS+pUWUDbiVq\ncr5KafM3inKzzdzObdDu/wIgY+lp/G55dX3Goqulv9juNVgYbWt71FwDxcuK5aWv\nBmg=\n-----END CERTIFICATE-----\n"
+      }
+    ],
+    "acme": {
+      "directory": "https://acme-v02.api.letsencrypt.org/directory",
+      "profile": null,
+      "reissue_before": null
+    }
+  }
+}

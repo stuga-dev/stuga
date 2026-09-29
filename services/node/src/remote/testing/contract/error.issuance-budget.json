@@ -1,0 +1,12 @@
+{
+  "status": 429,
+  "headers": {
+    "retry-after": "86400"
+  },
+  "body": {
+    "error": "issuance_budget",
+    "message": "Too many certificates were issued this week. Try again later.",
+    "retry_after": 86400,
+    "server_time": 1790900000
+  }
+}

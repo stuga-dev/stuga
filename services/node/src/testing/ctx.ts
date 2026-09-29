@@ -16,6 +16,7 @@ export interface CtxOverrides {
   alias?: string;
   displayName?: string;
   requestId?: string;
+  servedOrigin?: string;
   isAgent?: boolean;
   onBehalfOf?: string;
   scope?: { folders: string[] | null; readOnly: boolean; credentialId: string };
@@ -29,10 +30,11 @@ export interface CtxOverrides {
 
 /**
  * A member of ws1: `user:<alias>` and the workspace's org floor unless `principals` says otherwise, on a node
- * at PUBLIC_ORIGIN. `env` is added to that origin, not put in its place.
+ * at PUBLIC_ORIGIN, asking on the LAN. `env` is added to that origin and no EXTRA_ORIGINS, not put in their place.
  */
 export function personCtx(over: CtxOverrides = {}): Ctx {
   const { alias = "human-1", workspaceId = "ws1", env, ...rest } = over;
+  const publicOrigin = typeof env?.publicOrigin === "string" ? env.publicOrigin : PUBLIC_ORIGIN;
   return {
     sql: {},
     alias,
@@ -41,8 +43,9 @@ export function personCtx(over: CtxOverrides = {}): Ctx {
     principals: [`user:${alias}`, `org:${workspaceId}`],
     workspaceId,
     role: "member",
+    servedOrigin: publicOrigin,
     ...rest,
-    env: { publicOrigin: PUBLIC_ORIGIN, ...env },
+    env: { publicOrigin: PUBLIC_ORIGIN, extraOrigins: [], ...env },
   } as unknown as Ctx;
 }
 

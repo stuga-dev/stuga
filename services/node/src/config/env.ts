@@ -3,7 +3,7 @@
  * secret and packaging settings live here; everything the Settings page edits
  * lives in the database (see ./settings).
  */
-import { join, resolve } from "node:path";
+import { isAbsolute, join, normalize, resolve } from "node:path";
 import type { AiProvider } from "@stuga/ai";
 import type { AuthConfig } from "@stuga/auth";
 import { EMBEDDING_DIMS, MAX_EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
@@ -18,6 +18,16 @@ interface NodeBootConfig extends NodeConfig {
   /** Directory of `<host>/fullchain.pem` + `privkey.pem`; set, the node serves https. */
   tlsCertDir?: string;
   webDistDir: string;
+  /**
+   * The packaging's remote-access hints (docs/remote-access.md): where the service is, for the first
+   * enrollment only, and the directory the node shares with the connector. Absent, the feature is.
+   */
+  remote?: RemoteHints;
+}
+
+export interface RemoteHints {
+  service: string;
+  dir: string;
 }
 
 export class ConfigError extends Error {
@@ -182,6 +192,36 @@ function sameSite(env: Env): NodeConfig["mediaCookieSameSite"] {
   return v === "lax" ? "Lax" : v === "strict" ? "Strict" : "None";
 }
 
+/** An https origin, or http on loopback for a service a test runs. */
+function remoteServiceOrigin(raw: string): string {
+  const url = httpUrl("STUGA_REMOTE_SERVICE", raw);
+  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new ConfigError(`STUGA_REMOTE_SERVICE must be an https URL, got "${raw}"`);
+  }
+  if (url.username || url.password || url.pathname !== "/" || /[?#]/.test(raw)) {
+    throw new ConfigError(`STUGA_REMOTE_SERVICE must be an origin, without a path, a query or credentials, got "${raw}"`);
+  }
+  return url.origin;
+}
+
+/** Both hints or neither: one alone is a packaging mistake, said once, and the feature stays away. */
+function remoteHints(env: Env): RemoteHints | undefined {
+  const service = str(env, "STUGA_REMOTE_SERVICE");
+  const dir = str(env, "STUGA_REMOTE_DIR");
+  if (!service && !dir) return undefined;
+  if (!service || !dir) {
+    console.warn(
+      `[node] ${service ? "STUGA_REMOTE_SERVICE" : "STUGA_REMOTE_DIR"} is set without ` +
+        `${service ? "STUGA_REMOTE_DIR" : "STUGA_REMOTE_SERVICE"}; remote access needs both and stays off`,
+    );
+    return undefined;
+  }
+  // An env file does not expand ~, and a relative path would depend on where the node was started.
+  if (!isAbsolute(dir)) throw new ConfigError(`STUGA_REMOTE_DIR must be an absolute path, got "${dir}"`);
+  return { service: remoteServiceOrigin(service), dir: normalize(dir).replace(/(.)\/+$/, "$1") };
+}
+
 /**
  * Parse the environment. Pure apart from the internal secret, generated under
  * the data directory on first boot unless `internalSecret` is passed.
@@ -214,6 +254,8 @@ export function parseConfig(env: Env = process.env, opts: { internalSecret?: str
   const requests = str(env, "STUGA_UPGRADE_REQUESTS");
   const status = str(env, "STUGA_UPGRADE_STATUS");
   if (requests && status) cfg.upgradeHelper = { requests: resolve(requests), status: resolve(status) };
+  const remote = remoteHints(env);
+  if (remote) cfg.remote = remote;
   return cfg;
 }
 

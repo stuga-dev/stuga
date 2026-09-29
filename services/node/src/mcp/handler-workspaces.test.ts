@@ -37,6 +37,7 @@ function account(over: Partial<AccountCtx> = {}): AccountCtx {
     isAgent: true,
     onBehalfOf: "human-1",
     scope: { folders: null, readOnly: false, credentialId: "grt_1" },
+    servedOrigin: "https://stuga.test",
     env: {
       databases: { get: () => ({ fetch: vi.fn() }) },
       docs: { get: () => ({ fetch: vi.fn() }) },

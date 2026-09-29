@@ -24,6 +24,7 @@ import type { IdentityRouter } from "../identity/index.js";
 import { requestId } from "../ids.js";
 import { unauthorizedChallenge } from "../mcp/oauth.js";
 import type { RequestHandler } from "../platform/http-server.js";
+import { servedOrigin } from "./arrival.js";
 import { allowedCorsOrigin, reportRefusedOrigin, withCors } from "./cors.js";
 import { rateLimitRefusal } from "./rate-limit.js";
 import { error } from "./respond.js";
@@ -123,7 +124,7 @@ async function handle(req: Request, env: NodeEnv): Promise<Response> {
   const origin = allowedCorsOrigin(req, env);
   // Refused before auth or any route runs; non-browser clients send no Origin.
   if (requested && !origin) {
-    reportRefusedOrigin(requested, env);
+    reportRefusedOrigin(req, requested, env);
     return withCors(error(403, "origin not allowed"), null);
   }
   return withCors(await answer(req, env), origin);
@@ -337,7 +338,7 @@ async function upgradeDocumentSocket(req: Request, url: URL, match: readonly str
     // A document mismatch and a bad signature answer identically.
     if (!ticket || ticket.docId !== docId) return new Response("unauthorized", { status: 401 });
     try {
-      ctx = await buildSocketContext(env, ticket);
+      ctx = await buildSocketContext(env, ticket, servedOrigin(req));
     } catch (e) {
       return contextFailure(e, "ws", env, req);
     }

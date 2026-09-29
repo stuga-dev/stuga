@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  MEDIA_COOKIE,
   clearMediaCookieHeader,
   mediaCookieHeader,
+  mediaCookieName,
   mediaCorp,
   mintMediaTicket,
   readCookie,
+  readMediaCookie,
   verifyMediaTicket,
 } from "./media-auth.js";
 
@@ -70,18 +71,35 @@ describe("cookie transport", () => {
   const httpsReq = new Request("https://api.example.com/api/media/ticket");
   const httpReq = new Request("http://localhost:8787/api/media/ticket");
 
+  it("is __Host- on https, where the browser holds it to this very origin, and plain on http", () => {
+    expect(mediaCookieName(httpsReq)).toBe("__Host-stuga_media");
+    expect(mediaCookieName(httpReq)).toBe("stuga_media");
+    // What __Host- requires: Secure, Path=/, no Domain.
+    const header = mediaCookieHeader(httpsReq, { mediaCookieSameSite: "Lax" }, "tok", 7200);
+    expect(header).toMatch(/^__Host-stuga_media=tok; Path=\/;/);
+    expect(header).not.toMatch(/domain=/i);
+    expect(mediaCookieHeader(httpReq, { mediaCookieSameSite: "Lax" }, "tok", 7200)).toMatch(/^stuga_media=tok;/);
+  });
+
+  it("is read back under the name the request's scheme gives it, and no other", () => {
+    const both = "stuga_media=plain; __Host-stuga_media=hosted";
+    expect(readMediaCookie(new Request("https://api.example.com/", { headers: { cookie: both } }))).toBe("hosted");
+    expect(readMediaCookie(new Request("http://localhost:8787/", { headers: { cookie: both } }))).toBe("plain");
+    expect(readMediaCookie(new Request("https://api.example.com/", { headers: { cookie: "stuga_media=plain" } }))).toBeNull();
+  });
+
   it("is HttpOnly and Secure over https", () => {
     const header = mediaCookieHeader(httpsReq, { mediaCookieSameSite: "Lax" }, "tok", 7200);
-    expect(header).toContain(`${MEDIA_COOKIE}=tok`);
+    expect(header).toContain("__Host-stuga_media=tok");
     expect(header).toContain("HttpOnly");
     expect(header).toContain("Secure");
     expect(header).toContain("SameSite=Lax");
     expect(header).toContain("Max-Age=7200");
   });
 
-  it("keeps CORP same-site for a Lax or Strict cookie", () => {
-    expect(mediaCorp({ mediaCookieSameSite: "Lax" })).toBe("same-site");
-    expect(mediaCorp({ mediaCookieSameSite: "Strict" })).toBe("same-site");
+  it("keeps CORP same-origin for a Lax or Strict cookie", () => {
+    expect(mediaCorp({ mediaCookieSameSite: "Lax" })).toBe("same-origin");
+    expect(mediaCorp({ mediaCookieSameSite: "Strict" })).toBe("same-origin");
   });
 
   it("honours an operator's SameSite=None and loosens CORP to match", () => {
@@ -101,10 +119,10 @@ describe("cookie transport", () => {
 
   it("reads one cookie out of a crowded header", () => {
     const req = new Request("https://api.example.com/", {
-      headers: { cookie: `theme=dark; ${MEDIA_COOKIE}=abc.def; other=1` },
+      headers: { cookie: "theme=dark; __Host-stuga_media=abc.def; other=1" },
     });
-    expect(readCookie(req, MEDIA_COOKIE)).toBe("abc.def");
+    expect(readCookie(req, "__Host-stuga_media")).toBe("abc.def");
     expect(readCookie(req, "missing")).toBeNull();
-    expect(readCookie(new Request("https://api.example.com/"), MEDIA_COOKIE)).toBeNull();
+    expect(readCookie(new Request("https://api.example.com/"), "__Host-stuga_media")).toBeNull();
   });
 });

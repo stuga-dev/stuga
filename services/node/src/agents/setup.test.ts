@@ -62,11 +62,19 @@ describe("agentSetup", () => {
       mcp_url: "http://localhost:8787/mcp",
       node: { id: "ktbbpahhzxoldakw", name: "Liv’s Mac" },
       reachable: false,
+      remote: null,
       loopback: true,
       secure: true,
       bundle: { available: true },
       stdio: { command: "/usr/local/bin/node", entry: BUNDLE },
     });
+  });
+
+  it("gives the remote address beside PUBLIC_ORIGIN while remote access is on, describing PUBLIC_ORIGIN as before", () => {
+    const setup = agentSetup("http://livs-air.local:8787", NODE, { ...probe, remoteOrigin: "https://k7f3q2.stuga.test" });
+    expect(setup.remote).toEqual({ url: "https://k7f3q2.stuga.test", mcp_url: "https://k7f3q2.stuga.test/mcp" });
+    expect(setup).toMatchObject({ url: "http://livs-air.local:8787", mcp_url: "http://livs-air.local:8787/mcp", reachable: false, secure: false });
+    expect(agentSetup("http://livs-air.local:8787", NODE, { ...probe, remoteOrigin: null }).remote).toBeNull();
   });
 
   it("uses the entry packaging names instead", () => {

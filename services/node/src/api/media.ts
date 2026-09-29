@@ -7,12 +7,11 @@ import { error, json } from "../http/respond.js";
 import type { PublicCall, WorkspaceCall } from "../http/router.js";
 import { MediaValidationError, imageUploadLimits, isSafeImageMime, mediaUrl, storeFile, storeImage, validateImageUpload } from "../media/media.js";
 import {
-  MEDIA_COOKIE,
   MEDIA_TICKET_TTL_SECONDS,
   clearMediaCookieHeader,
   mediaCookieHeader,
   mintMediaTicket,
-  readCookie,
+  readMediaCookie,
   verifyMediaTicket,
 } from "../media/media-auth.js";
 import { serveMedia } from "../media/serve.js";
@@ -92,7 +91,7 @@ export async function readMedia({ env, req, match }: PublicCall): Promise<Respon
 
 /** The workspace this request may read media from, or null. */
 async function mediaReadWorkspace(req: Request, env: NodeEnv): Promise<string | null> {
-  const ticket = await verifyMediaTicket(env.internalSecret, readCookie(req, MEDIA_COOKIE));
+  const ticket = await verifyMediaTicket(env.internalSecret, readMediaCookie(req));
   if (ticket) return ticket.workspaceId;
   if (!extractToken(req)) return null;
   try {

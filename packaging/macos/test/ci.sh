@@ -47,5 +47,7 @@ unset PGDATABASE PGPASSWORD
 
 echo "==> integration suites"
 export TEST_DATABASE_URL="postgres:///stuga_test" PG_BIN="$tree/bin"
+# No Docker on the Mac runner for Pebble; the Linux job runs the remote-access suite.
+export SKIP_PEBBLE=1
 cd "$repo"
 bash scripts/test-integration.sh

@@ -29,6 +29,7 @@ import {
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
 import { AGENT_CLIENT_HEADER, AGENT_LABEL_MAX, AGENT_MODEL_HEADER } from "@stuga/protocol/api/headers";
 import type { NodeEnv } from "../env.js";
+import { servedOrigin } from "../http/arrival.js";
 import { resolvePrincipals } from "./principals.js";
 import type { WsTicket } from "./ws-ticket.js";
 
@@ -47,6 +48,12 @@ interface AccountBase {
   displayName: string;
   /** The `x-request-id` this request is answered with, so ledger rows name it. Absent on sockets and in jobs. */
   requestId?: string;
+  /**
+   * The origin the request was served on (http/arrival.ts), where links handed back to this caller
+   * point: PUBLIC_ORIGIN on the LAN, the remote origin at the remote address. What the node sends out
+   * on its own (notifications, audit targets) stays on PUBLIC_ORIGIN.
+   */
+  servedOrigin: string;
   env: NodeEnv;
 }
 
@@ -186,6 +193,7 @@ async function authenticateRequest(req: Request, env: NodeEnv, transport: Transp
         onBehalfOf: row.owner,
         client: agentLabel(req.headers.get(AGENT_CLIENT_HEADER)),
         model: agentLabel(req.headers.get(AGENT_MODEL_HEADER)),
+        servedOrigin: servedOrigin(req),
         env,
       },
       key: {
@@ -210,6 +218,7 @@ async function authenticateRequest(req: Request, env: NodeEnv, transport: Transp
       // Filled from the directory row by the caller, which also refuses a token whose account is gone.
       displayName: "",
       isAgent: false,
+      servedOrigin: servedOrigin(req),
       env,
     },
   };
@@ -292,8 +301,9 @@ export async function buildContext(req: Request, env: NodeEnv, transport: Transp
  * contributes identity and tenant only; reach is resolved from Postgres on every
  * upgrade. The equality check makes the signed tenant binding real, since
  * resolveHumanAuth falls back to another membership when asked for a foreign one.
+ * `origin` is the one the upgrade was served on.
  */
-export async function buildSocketContext(env: NodeEnv, ticket: WsTicket): Promise<Ctx> {
+export async function buildSocketContext(env: NodeEnv, ticket: WsTicket, origin: string = env.publicOrigin): Promise<Ctx> {
   const sql = env.sql;
   const auth = await resolveHumanAuth(sql, ticket.alias, userPrincipal(ticket.alias), ticket.workspaceId);
   const displayName = directoryName(auth.user);
@@ -308,6 +318,7 @@ export async function buildSocketContext(env: NodeEnv, ticket: WsTicket): Promis
     displayName,
     // Tickets are minted only for human sessions.
     isAgent: false,
+    servedOrigin: origin,
     env,
     principals: principalsFrom(ticket.alias, ticket.workspaceId, role, auth.groupIds),
     workspaceId: ticket.workspaceId,
@@ -358,6 +369,7 @@ export async function buildMcpCaller(req: Request, env: NodeEnv): Promise<McpCal
         scope: { folders: null, readOnly: grant.access === "read", credentialId: grant.grant_id },
         client: agentLabel(req.headers.get(AGENT_CLIENT_HEADER)),
         model: agentLabel(req.headers.get(AGENT_MODEL_HEADER)),
+        servedOrigin: servedOrigin(req),
         env,
       },
       workspaces: grant.workspace_scope,

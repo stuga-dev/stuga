@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { allowedCorsOrigin, withCors } from "./cors.js";
 import { json } from "./respond.js";
-import { REQUEST_HOST_HEADER } from "../platform/http-server.js";
+import { ARRIVAL_HEADER, REQUEST_HOST_HEADER } from "../platform/http-server.js";
+import type { RemoteAccessView } from "../env.js";
 
 describe("CORS", () => {
   const env = { publicOrigin: "https://public.example.test", extraOrigins: [] };
@@ -72,6 +73,42 @@ describe("CORS", () => {
     it("refuses without the Host the server stamped", () => {
       const req = new Request("http://livs-air.local:8787/api/docs", { headers: { origin: "http://192.168.1.50:8787" } });
       expect(allowedCorsOrigin(req, lan)).toBeNull();
+    });
+  });
+
+  describe("by the listener a request came in on", () => {
+    const REMOTE = "https://k7f3q2.stuga.test";
+    const view = (enabled: boolean): RemoteAccessView => ({
+      current: () => ({ enabled, id: "k7f3q2", hostname: "k7f3q2.stuga.test", origin: REMOTE }),
+    });
+    const lan = { publicOrigin: "http://livs-air.local:8787", extraOrigins: ["http://192.168.1.50:8787"] };
+    const remoteAsk = (origin: string, host = "k7f3q2.stuga.test") =>
+      allowedCorsOrigin(
+        new Request(`${REMOTE}/api/docs`, { headers: { origin, [ARRIVAL_HEADER]: "remote", [REQUEST_HOST_HEADER]: host } }),
+        { ...lan, remote: view(true) },
+      );
+    const lanAsk = (origin: string, e: Parameters<typeof allowedCorsOrigin>[1]) =>
+      allowedCorsOrigin(new Request("http://livs-air.local:8787/api/docs", { headers: { origin, [ARRIVAL_HEADER]: "local" } }), e);
+
+    it("at the remote address, allows the remote origin and nothing else, the LAN's origins included", () => {
+      expect(remoteAsk(REMOTE)).toBe(REMOTE);
+      expect(remoteAsk(lan.publicOrigin)).toBeNull();
+      expect(remoteAsk(lan.extraOrigins[0]!)).toBeNull();
+      expect(remoteAsk("https://evil.example")).toBeNull();
+      expect(remoteAsk(`${REMOTE}:8443`)).toBeNull();
+      expect(remoteAsk("http://k7f3q2.stuga.test")).toBeNull();
+      // No same-address allowance there: an IP literal or a local name is never the remote origin.
+      expect(remoteAsk("https://203.0.113.7", "203.0.113.7")).toBeNull();
+    });
+
+    it("on the LAN, never allows the remote origin: off, on, or listed in EXTRA_ORIGINS", () => {
+      expect(lanAsk(REMOTE, lan)).toBeNull();
+      expect(lanAsk(REMOTE, { ...lan, remote: view(false) })).toBeNull();
+      expect(lanAsk(REMOTE, { ...lan, remote: view(true) })).toBeNull();
+      expect(lanAsk(REMOTE, { ...lan, extraOrigins: [...lan.extraOrigins, REMOTE], remote: view(true) })).toBeNull();
+      // And answers its own origins exactly as before.
+      expect(lanAsk(lan.publicOrigin, { ...lan, remote: view(true) })).toBe(lan.publicOrigin);
+      expect(lanAsk(lan.extraOrigins[0]!, { ...lan, remote: view(true) })).toBe(lan.extraOrigins[0]);
     });
   });
 

@@ -34,8 +34,8 @@ const env = {
 
 const app = createApp(env);
 
-const PERSON = { sql: {}, alias: "u_ada", displayName: "Ada", isAgent: false, surface: "web", env };
-const AGENT = { sql: {}, alias: "agent-1", displayName: "Scout", isAgent: true, onBehalfOf: "u_ada", surface: "api-key", env };
+const PERSON = { sql: {}, alias: "u_ada", displayName: "Ada", isAgent: false, surface: "web", servedOrigin: ORIGIN, env };
+const AGENT = { sql: {}, alias: "agent-1", displayName: "Scout", isAgent: true, onBehalfOf: "u_ada", surface: "api-key", servedOrigin: ORIGIN, env };
 
 function call(method: string, path: string, body?: unknown): Promise<Response> {
   return app.handle(
@@ -71,6 +71,12 @@ describe("GET /api/me/nodes", () => {
       ],
     });
     expect(mockList).toHaveBeenCalledWith(PERSON.sql, "u_ada");
+  });
+
+  it("names this node by the address the caller is at", async () => {
+    buildAccountContext.mockResolvedValue({ ...PERSON, servedOrigin: "https://k7f3q2.stuga.test" });
+    const res = await call("GET", "/api/me/nodes");
+    expect(((await res.json()) as { current: unknown }).current).toEqual({ name: "Liv’s Mac", origin: "https://k7f3q2.stuga.test" });
   });
 });
 
@@ -115,6 +121,21 @@ describe("POST /api/me/nodes", () => {
       expect(res.status).toBe(400);
       expect(await res.json()).toMatchObject({ error: "own_node" });
     }
+    expect(mockAdd).not.toHaveBeenCalled();
+  });
+
+  it("refuses its remote address too, once bound", async () => {
+    const remote = { current: () => ({ enabled: false, id: "k7f3q2", hostname: "k7f3q2.stuga.test", origin: "https://k7f3q2.stuga.test" }) };
+    const bound = createApp({ ...env, remote } as unknown as NodeEnv);
+    buildAccountContext.mockResolvedValue({ ...PERSON, env: { ...env, remote } });
+    const res = await bound.handle(
+      new Request(`${ORIGIN}/api/me/nodes`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: "https://k7f3q2.stuga.test/doc/1" }),
+      }),
+    );
+    expect(await res.json()).toMatchObject({ error: "own_node" });
     expect(mockAdd).not.toHaveBeenCalled();
   });
 

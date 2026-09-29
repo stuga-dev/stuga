@@ -1,8 +1,9 @@
 # Network access
 
-A node answers at one address, its `PUBLIC_ORIGIN`. This page covers what each way of reaching a
-node protects, how to let other devices in, how to put HTTPS in front of it, and how people and
-agents use several nodes. The variables are listed in [Configuration](configuration.md#network).
+A node answers at its `PUBLIC_ORIGIN`, and, where remote access is on, at a public https address of
+its own as well ([Remote access](#remote-access)). This page covers what each way of reaching a node
+protects, how to let other devices in, how to put HTTPS in front of it, and how people and agents
+use several nodes. The variables are listed in [Configuration](configuration.md#network).
 
 A Docker node and Stuga.app on a Mac both start on your local network, unless they are set to serve
 their own machine only (`HOST_BIND=127.0.0.1`, `--local-only`). Only whoever has the node's setup
@@ -17,11 +18,13 @@ code can claim it ([Claiming the node](#claiming-the-node)). The commands for ea
 | On the same machine, at `http://localhost` or `http://127.0.0.1` | Never leaves the machine | Yes |
 | Plain http on a network address | No | No |
 | HTTPS: a reverse proxy, `TLS_CERT_DIR`, or Tailscale | Yes | Yes |
+| The remote address, through a relay | Yes, to the node itself | Yes |
 
 Plain http on a network sends passwords, session tokens and documents in cleartext. Anyone who can
 see the traffic can read them, including whoever runs the Wi-Fi or the router. The cookie that
-authorizes images is sent without `Secure` over plain http, because a browser does not keep a
-`Secure` cookie from an http address.
+authorizes images is `stuga_media` without `Secure` over plain http, because a browser does not keep
+a `Secure` cookie from an http address. Over https it is `__Host-stuga_media`, which the browser
+keeps to that one origin, so each of the node's https addresses holds its own.
 
 A browser gives an http network address fewer features than `localhost` or HTTPS: copy buttons do
 nothing, because the clipboard API needs a secure context. Select the text instead. Sign-in through
@@ -42,10 +45,13 @@ once the node is claimed.
 ## PUBLIC_ORIGIN and EXTRA_ORIGINS
 
 `PUBLIC_ORIGIN` is the address people type, such as `http://192.168.1.50:8787` or
-`https://stuga.example.com`. The node builds every request URL on it, never on the `Host` header.
-Invite links, share links, the agent setup in **Settings → Your own AI** and the issuer of every
-session token all use it. It is also the origin browsers may call the node from, and its host is what
-agents call the node until an administrator [names the node](configuration.md#the-nodes-name-and-id).
+`https://stuga.example.com`. The node builds the URL of every request on the network on it, never on
+the `Host` header. The links it hands back there, such as invite and share links, carry it; so do the
+links it sends by itself, in notifications for example, the agent setup in
+**Settings → Your own AI** and the issuer of every session token. At the
+[remote address](#remote-access), links handed back carry that address instead. `PUBLIC_ORIGIN` is
+also the origin browsers may call the node from, and its host is what agents call the node until an
+administrator [names the node](configuration.md#the-nodes-name-and-id).
 
 `EXTRA_ORIGINS` lists further exact origins that browsers may call from, such as
 `http://localhost:8787` on the node's own machine. Links still use `PUBLIC_ORIGIN`. Two things
@@ -88,9 +94,10 @@ An agent that signs in through OAuth finds the node from the `401` that `/mcp` a
 - **Discovery follows the address called.** The OAuth metadata, the consent page and every endpoint
   they name are on whichever of `PUBLIC_ORIGIN` and `EXTRA_ORIGINS` the agent called, so an agent that
   reaches the node by a name in `EXTRA_ORIGINS` signs in on that name. Any other address, such as an
-  IP address not listed, is answered with `PUBLIC_ORIGIN`'s.
+  IP address not listed, is answered with `PUBLIC_ORIGIN`'s. The remote address answers with its own,
+  and nothing else.
 - **Tokens belong to the node.** A token works at every one of those addresses, and the resource a
-  client names must be the node's `/mcp` on one of them.
+  client names must be the node's `/mcp` on one of them; at the remote address, its own `/mcp`.
 - **Client metadata documents need a public https origin.** An app can identify itself by an https
   URL whose document the node fetches, and is then shown as verified by that host. The node's
   metadata advertises this only when the origin called is https and not a loopback, private or
@@ -126,8 +133,8 @@ With nginx, use `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` o
 Set it only when the proxy is the only way to reach the node, because a client that reaches the
 node directly can write any address into those headers.
 
-The node never sends `Strict-Transport-Security`, because that header applies to every port of a
-hostname. Send it from the proxy if you want it.
+On its network address the node never sends `Strict-Transport-Security`, because that header
+applies to every port of a hostname. Send it from the proxy if you want it.
 
 ### The node's own TLS
 
@@ -158,6 +165,28 @@ WebSocket upgrade, which carries the ticket every document connection needs. The
 Every connection then arrives from the machine itself, so leave `TRUST_PROXY_HEADERS` off. Sign-in
 attempts from all devices count against one limit.
 
+### Remote access
+
+Where the packaging offers it, **Settings → This node → Remote access** gives the node a public https
+address of its own, `https://<id>.<zone>`, with a certificate the node gets and keeps. A relay forwards
+the encrypted connections to it without reading them. [Remote access](remote-access.md) has what the
+node sends and keeps.
+
+The node then has two listeners: the one on `BIND` and `PORT` for `PUBLIC_ORIGIN` and the network,
+and a unix socket the relay's connector reaches, for the remote address alone. At the remote address:
+
+- Browsers may call the node only from pages at the remote address. `PUBLIC_ORIGIN` and
+  `EXTRA_ORIGINS` never accept a page from it, and it never accepts theirs.
+- A visitor's IP address comes from the PROXY protocol header the relay adds, never from
+  `X-Forwarded-For` or `X-Real-IP`, whatever `TRUST_PROXY_HEADERS` says. Sign-in attempts there count
+  apart from the network's, an IPv6 address by its `/64`.
+- People sign in once more, because browsers keep sessions per origin. Sessions on the network are
+  unaffected, and turning remote access on or off signs nobody out.
+- Every answer carries `Strict-Transport-Security: max-age=31536000`.
+- The node cannot be claimed with its setup code.
+
+`PUBLIC_ORIGIN` stays the network's address and cannot be the remote address.
+
 ## Several nodes
 
 Nodes never talk to each other. Each has its own address, accounts and sign-in, and a session on one
@@ -178,4 +207,7 @@ on its own ([Agents](agents.md#one-connection-and-which-node-a-call-lands-on)).
 Every response carries `X-Frame-Options: DENY`, so nothing the node serves can be embedded in
 another page, as well as `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
 Responses also carry `Content-Security-Policy: frame-ancestors 'none'`, except images, which get
-`default-src 'none'; sandbox`.
+`default-src 'none'; sandbox`. Images also carry `Cross-Origin-Resource-Policy: same-origin`, so only
+pages on the address that served them can show them; with `MEDIA_COOKIE_SAMESITE=none`, for an app
+served from another origin, `cross-origin`. At the remote address every response also carries
+`Strict-Transport-Security: max-age=31536000`, without `includeSubDomains`.

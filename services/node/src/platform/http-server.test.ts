@@ -13,7 +13,10 @@ import {
   type ActorState,
   type HostedNamespace,
 } from "@stuga/runtime";
-import { clientAddress, createHttpServer, type HttpServer, PEER_ADDRESS_HEADER, REQUEST_HOST_HEADER } from "./http-server.js";
+import { makeTestCert } from "../testing/cert.js";
+import { dialRemote, remoteRequest } from "../testing/remote.js";
+import { ARRIVAL_HEADER, clientAddress, createHttpServer, type HttpServer, PEER_ADDRESS_HEADER, REQUEST_HOST_HEADER } from "./http-server.js";
+import { createRemoteListener } from "./remote-listener.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Wait until `check` holds, for at most `ms`: what it waits for arrives asynchronously, later on a slow machine. */
@@ -106,6 +109,18 @@ describe("clientAddress", () => {
     expect(clientAddress(request({ "x-real-ip": "203.0.113.9", [PEER_ADDRESS_HEADER]: "10.0.0.7" }), true)).toBe("203.0.113.9");
     expect(clientAddress(request({ "x-forwarded-for": " , ", [PEER_ADDRESS_HEADER]: "10.0.0.7" }), true)).toBe("10.0.0.7");
   });
+
+  it("at the remote address, is the PROXY source whatever the operator trusts: a visitor writes its own headers", () => {
+    const remote = request({
+      [ARRIVAL_HEADER]: "remote",
+      [PEER_ADDRESS_HEADER]: "198.51.100.23",
+      "x-forwarded-for": "10.0.0.8",
+      "x-real-ip": "10.0.0.9",
+    });
+    expect(clientAddress(remote, true)).toBe("198.51.100.23");
+    expect(clientAddress(remote, false)).toBe("198.51.100.23");
+    expect(clientAddress(request({ [ARRIVAL_HEADER]: "remote", "x-real-ip": "10.0.0.9" }), true)).toBe("unknown");
+  });
 });
 
 describe("createHttpServer", () => {
@@ -127,14 +142,52 @@ describe("createHttpServer", () => {
     expect(JSON.parse(res.text)).toEqual({ host: "192.168.1.50:8787" });
   });
 
-  it("rebuilds the URL on the public origin, never the Host header", async () => {
+  it("stamps the LAN as the listener a request came in on, and refuses to relay a claimed one", async () => {
     const { port } = await serve({
-      handler: async (req) =>
-        Response.json({ url: req.url, host: req.headers.get("host"), method: req.method, body: await req.text() }),
+      handler: async (req) => Response.json({ arrival: req.headers.get(ARRIVAL_HEADER) }),
     });
+    const res = await raw(port, { path: "/", headers: { [ARRIVAL_HEADER]: "remote" } });
+    expect(JSON.parse(res.text)).toEqual({ arrival: "local" });
+  });
+
+  const echoUrl = async (req: Request) =>
+    Response.json({ url: req.url, host: req.headers.get("host"), method: req.method, body: await req.text() });
+
+  it("rebuilds the URL on the public origin, never the Host header", async () => {
+    const { port } = await serve({ handler: echoUrl });
     const res = await raw(port, { method: "POST", path: "/api/docs?x=1&y=%20", headers: { host: "evil.example", "content-type": "text/plain" }, body: "hi" });
     expect(res.status).toBe(200);
     expect(JSON.parse(res.text)).toEqual({ url: `${PUBLIC}/api/docs?x=1&y=%20`, host: "evil.example", method: "POST", body: "hi" });
+  });
+
+  it("at the remote address too: the URL is the remote origin's, and a forged Host is refused outright", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stuga-http-remote-"));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const host = "k7f3q2.stuga.test";
+    const socketPath = join(dir, "https.sock");
+    const listener = createRemoteListener({
+      socketPath,
+      hostname: host,
+      handler: echoUrl,
+      upgrade: async () => new Response(null, { status: 404 }),
+      decorate: (response) => response,
+      maxBodyBytes: () => 64,
+      readsOwnBody: () => false,
+    });
+    listener.setCertificate(makeTestCert({ dnsNames: [host] }));
+    await listener.listen();
+    cleanups.push(() => listener.close());
+    const post = async (hostHeader: string) =>
+      remoteRequest(await dialRemote(socketPath, { servername: host }), {
+        method: "POST",
+        path: "/api/docs?x=1&y=%20",
+        headers: { host: hostHeader, "content-type": "text/plain" },
+        body: "hi",
+      });
+    const res = await post(`${host.toUpperCase()}:443`);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.text)).toEqual({ url: `https://${host}/api/docs?x=1&y=%20`, host: `${host.toUpperCase()}:443`, method: "POST", body: "hi" });
+    expect((await post("evil.example")).status).toBe(421);
   });
 
   it("answers 413 past maxBodyBytes, declared or streamed", async () => {

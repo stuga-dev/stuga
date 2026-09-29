@@ -32,6 +32,7 @@ import { parseSmtpUrl } from "../../jobs/smtp.js";
 import { MAX_UPLOAD_BYTES_CEILING } from "../../media/media.js";
 import { isLoopbackHost } from "../../net/addresses.js";
 import { knownTimeZone } from "../../config/time-zone.js";
+import { ownOrigins } from "../../http/arrival.js";
 
 interface NotifyProbe {
   ok: boolean;
@@ -489,7 +490,7 @@ async function nodeSettingsResponse(ctx: Ctx): Promise<Response> {
       client_secret_label: secrets.idpClientSecret.label,
       client_secret_stale: secrets.idpClientSecret.stale,
       // Every origin the SPA may be served from starts its own sign-ins, so each needs registering.
-      callback_urls: [ctx.env.publicOrigin, ...ctx.env.extraOrigins].map((o) => `${o}${CALLBACK_PATH}`),
+      callback_urls: ownOrigins(ctx.env).map((o) => `${o}${CALLBACK_PATH}`),
       // Linked accounts with no password: once the provider goes, each needs one to sign in again.
       accounts_without_password: await countAccountsWithoutPassword(ctx.sql),
     },
@@ -499,6 +500,8 @@ async function nodeSettingsResponse(ctx: Ctx): Promise<Response> {
       node_id: ctx.env.nodeId,
       public_origin: ctx.env.publicOrigin,
       extra_origins: ctx.env.extraOrigins,
+      // Once bound, on or off (docs/remote-access.md).
+      remote_origin: ctx.env.remote?.current().origin ?? null,
       bind: ctx.env.bind,
       port: ctx.env.port,
       data_dir: ctx.env.dataDir,

@@ -43,16 +43,19 @@ export function timeOfDay(iso: string): string {
   return Number.isFinite(d.getTime()) ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : iso;
 }
 
+/** "Aug 17", or "Aug 17, 2025" in another year, in the viewer's timezone. */
+export function shortDate(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return iso;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+}
+
 /** "Aug 17, 2:32 PM": how a version is named, since its seq is an internal counter with gaps. */
 export function versionLabel(iso: string): string {
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return iso;
-  const sameYear = d.getFullYear() === new Date().getFullYear();
-  const date = d.toLocaleDateString(
-    undefined,
-    sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" },
-  );
-  return `${date}, ${timeOfDay(iso)}`;
+  return `${shortDate(iso)}, ${timeOfDay(iso)}`;
 }
 
 /** "Oct 1, 2026" for a YYYY-MM-DD day, which has no timezone and must not slide into the one before. */

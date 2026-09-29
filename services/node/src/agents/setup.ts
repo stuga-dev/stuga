@@ -65,16 +65,20 @@ export interface AgentSetupProbe {
   /** STUGA_STDIO_ENTRY: a path for local stdio clients, "" for none, undefined to use the bundle. */
   stdioEntry?: string;
   bundlePath?: string | null;
+  /** The remote origin while remote access is on. */
+  remoteOrigin?: string | null;
 }
 
 export function agentSetup(publicOrigin: string, node: { id: string; name: string }, probe: AgentSetupProbe = {}): AgentSetup {
   const bundlePath = probe.bundlePath !== undefined ? probe.bundlePath : mcpBundlePath();
   const entry = probe.stdioEntry !== undefined ? probe.stdioEntry.trim() || null : bundlePath;
+  const remote = probe.remoteOrigin ?? null;
   return {
     url: publicOrigin,
     mcp_url: `${publicOrigin}/mcp`,
     node: { id: node.id, name: node.name },
     reachable: reachableFromInternet(publicOrigin),
+    remote: remote ? { url: remote, mcp_url: `${remote}/mcp` } : null,
     loopback: isLoopbackOrigin(publicOrigin),
     secure: isSecureOrigin(publicOrigin),
     bundle: { available: bundlePath !== null },
@@ -83,8 +87,13 @@ export function agentSetup(publicOrigin: string, node: { id: string; name: strin
   };
 }
 
-/** GET /api/agent-setup: any member or API key may read it, the same answer for both; it describes this node and carries no secret. */
+/**
+ * GET /api/agent-setup: any member or API key may read it, the same answer for both, wherever it is
+ * asked from; it describes this node and carries no secret.
+ */
 export async function getAgentSetup({ ctx }: WorkspaceCall): Promise<Response> {
   const node = { id: ctx.env.nodeId, name: ctx.env.settings.current().nodeLabel };
-  return json(agentSetup(ctx.env.publicOrigin, node, { stdioEntry: ctx.env.stdioEntry }));
+  const remote = ctx.env.remote?.current();
+  const remoteOrigin = remote?.enabled ? remote.origin : null;
+  return json(agentSetup(ctx.env.publicOrigin, node, { stdioEntry: ctx.env.stdioEntry, remoteOrigin }));
 }

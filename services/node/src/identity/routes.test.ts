@@ -13,7 +13,8 @@ import {
   type LocalKeys,
 } from "@stuga/auth";
 import { SEARCH_LANGUAGES } from "@stuga/protocol/domain/search-languages";
-import { PEER_ADDRESS_HEADER } from "../platform/http-server.js";
+import { ARRIVAL_HEADER, PEER_ADDRESS_HEADER } from "../platform/http-server.js";
+import { slidingWindowRateLimiter } from "../platform/rate-limit.js";
 import { createIdentityRouter, type IdentityDeps, type IdentityEvent, type TokenPair } from "./routes.js";
 import { memoryDb } from "./testing/memory-db.js";
 
@@ -602,14 +603,14 @@ describe("credential throttling", () => {
     it("ignores a forwarded header nobody vouched for", async () => {
       const { keys, router } = keyRecordingRouter(false);
       await router.handle(post("/auth/login", { username: "ada", password: "nope" }, spoofed));
-      expect(keys).toContain("auth:ip:10.0.0.7");
-      expect(keys).not.toContain("auth:ip:203.0.113.9");
+      expect(keys).toContain("auth:ip:local:10.0.0.7");
+      expect(keys).not.toContain("auth:ip:local:203.0.113.9");
     });
 
     it("believes it once the operator says something in front is setting it", async () => {
       const { keys, router } = keyRecordingRouter(true);
       await router.handle(post("/auth/login", { username: "ada", password: "nope" }, spoofed));
-      expect(keys).toContain("auth:ip:203.0.113.9");
+      expect(keys).toContain("auth:ip:local:203.0.113.9");
     });
 
     it("takes the address the proxy appended, not one the client wrote ahead of it", async () => {
@@ -617,14 +618,14 @@ describe("credential throttling", () => {
       await router.handle(
         post("/auth/login", { username: "ada", password: "nope" }, { "x-forwarded-for": "198.51.100.77, 203.0.113.9" }),
       );
-      expect(keys).toContain("auth:ip:203.0.113.9");
-      expect(keys).not.toContain("auth:ip:198.51.100.77");
+      expect(keys).toContain("auth:ip:local:203.0.113.9");
+      expect(keys).not.toContain("auth:ip:local:198.51.100.77");
     });
 
     it("still throttles when there is no address at all, rather than skipping", async () => {
       const { keys, router } = keyRecordingRouter(false);
       await router.handle(post("/auth/login", { username: "ada", password: "nope" }));
-      expect(keys).toContain("auth:ip:unknown");
+      expect(keys).toContain("auth:ip:local:unknown");
     });
   });
 
@@ -649,5 +650,82 @@ describe("credential throttling", () => {
     const normal = await r.handle(post("/auth/login", { username: "ada", password: "nope" }));
     expect(normal.status).toBe(401);
     expect(lookups).toBe(1);
+  });
+});
+
+describe("at the remote address", () => {
+  const REMOTE = "https://k7f3q2.stuga.test";
+  const remote = (path: string, init: RequestInit = {}, peer = "203.0.113.7") =>
+    new Request(REMOTE + path, {
+      ...init,
+      headers: { [ARRIVAL_HEADER]: "remote", [PEER_ADDRESS_HEADER]: peer, ...(init.headers as Record<string, string>) },
+    });
+  const remotePost = (path: string, body: unknown, peer?: string) =>
+    remote(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, peer);
+  const named = (name: string | null) =>
+    createIdentityRouter(baseDeps({ nodeName: () => name, nodeLabel: () => name ?? "livs-air", remoteId: () => "k7f3q2" }));
+
+  it("/auth/config names the remote origin, and an unnamed node by its remote id rather than its LAN host", async () => {
+    const config = async (r: ReturnType<typeof named>) => (await (await r.handle(remote("/auth/config"))).json()) as Record<string, unknown>;
+    expect(await config(named(null))).toMatchObject({ node_name: null, node_label: "k7f3q2", origin: REMOTE });
+    expect(await config(named("Studio"))).toMatchObject({ node_name: "Studio", node_label: "Studio", origin: REMOTE });
+    // On the LAN, as before.
+    expect(await (await named(null).handle(new Request(ORIGIN + "/auth/config"))).json()).toMatchObject({ node_label: "livs-air", origin: ORIGIN });
+  });
+
+  it("has no issuer document, whose issuer is PUBLIC_ORIGIN; the keys are still served", async () => {
+    const res = await router().handle(remote("/.well-known/openid-configuration"));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "not_found" });
+    expect((await router().handle(remote("/.well-known/jwks.json"))).status).toBe(200);
+    expect((await router().handle(new Request(ORIGIN + "/.well-known/openid-configuration"))).status).toBe(200);
+  });
+
+  it("never claims the node with its setup code", async () => {
+    const res = await router().handle(remotePost("/auth/register", { username: "ada", password: "correct horse", setup_code: TYPED_CODE }));
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("setup_not_remote");
+    expect(await mem.db.countAccounts()).toBe(0);
+  });
+
+  it("still lets an invite make an account once the node is claimed", async () => {
+    expect((await register()).status).toBe(201);
+    mem.invites.set(sha256Hex("an-invite"), { tokenHash: sha256Hex("an-invite"), usesLeft: 1 });
+    const res = await router().handle(remotePost("/auth/register", { username: "grace", password: "correct horse", invite: "an-invite" }));
+    expect(res.status).toBe(201);
+  });
+
+  it("keys the throttle on the listener too, the source by its PROXY address", async () => {
+    const keys: string[] = [];
+    const r = createIdentityRouter(
+      baseDeps({
+        limiter: {
+          limit: async ({ key }: { key: string }) => {
+            keys.push(key);
+            return { success: true };
+          },
+        },
+        trustProxyHeaders: true,
+      }),
+    );
+    await r.handle(remotePost("/auth/login", { username: "ada", password: "nope" }, "2001:db8:5:17::9"));
+    await r.handle(post("/auth/login", { username: "ada", password: "nope" }, { [PEER_ADDRESS_HEADER]: "10.0.0.7" }));
+    expect(keys).toEqual(["auth:ip:remote:2001:db8:5:17::/64", "auth:id:remote:ada", "auth:ip:local:10.0.0.7", "auth:id:local:ada"]);
+  });
+
+  it("cannot lock the LAN out of an account: the same username has a bucket per listener", async () => {
+    // The node's own budget: 20 attempts a minute per source and per account.
+    const limiter = slidingWindowRateLimiter({ limit: 20, windowSeconds: 60 });
+    const r = createIdentityRouter(baseDeps({ limiter }));
+    expect((await register("ada")).status).toBe(201);
+    for (let i = 0; i < 20; i++) {
+      expect((await r.handle(remotePost("/auth/login", { username: "ada", password: "wrong one" }))).status).toBe(401);
+    }
+    expect((await r.handle(remotePost("/auth/login", { username: "ada", password: "wrong one" }))).status).toBe(429);
+    // Another visitor at the remote address, and the owner on the LAN, both still get in.
+    expect((await r.handle(post("/auth/login", { username: "ada", password: "correct horse" }, { [PEER_ADDRESS_HEADER]: "10.0.0.7" }))).status).toBe(200);
+    mem.invites.set(sha256Hex("second"), { tokenHash: sha256Hex("second"), usesLeft: 1 });
+    expect((await register("grace", { invite: "second" })).status).toBe(201);
+    expect((await r.handle(remotePost("/auth/login", { username: "grace", password: "correct horse" }, "198.51.100.23"))).status).toBe(200);
   });
 });

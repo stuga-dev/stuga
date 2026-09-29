@@ -17,6 +17,7 @@
 import { ProviderError, createRelyingParty, newAlias, randomBase64url, sha256Hex, verifyPassword } from "@stuga/auth";
 import type { OidcTicketRow } from "@stuga/db";
 import { normalizeUsername, usernameSource } from "@stuga/protocol/domain/username";
+import { arrivalOf, servedOrigin } from "../http/arrival.js";
 import { MAX_NAME, MAX_PASSWORD, decoy } from "./passwords.js";
 import type { IdentityCore } from "./routes.js";
 import {
@@ -55,8 +56,12 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
   const rp = deps.relyingParty ?? createRelyingParty();
   const provider = () => deps.identityProvider?.() ?? null;
 
-  /** The origin the sign-in runs on: the caller's, when the node serves the app there, else the public one. */
+  /**
+   * The origin the sign-in runs on: the caller's, when the node serves the app there, else the public
+   * one. At the remote address, the remote origin: the only one it serves.
+   */
   function signInOrigin(req: Request): string {
+    if (arrivalOf(req) === "remote") return servedOrigin(req);
     const origin = req.headers.get("origin");
     if (origin && (origin === deps.publicOrigin || deps.extraOrigins?.includes(origin))) return origin;
     return deps.publicOrigin;

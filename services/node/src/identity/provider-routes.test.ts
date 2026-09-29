@@ -176,6 +176,25 @@ describe("starting a sign-in", () => {
     expect(new URL(((await stranger.json()) as { url: string }).url).searchParams.get("redirect_uri")).toBe(`${ORIGIN}/auth/oidc/callback`);
   });
 
+  it("at the remote address, comes back to the remote origin whatever Origin the page claims, on a __Host- cookie", async () => {
+    const REMOTE = "https://k7f3q2.stuga.test";
+    const start = async (origin: string) => {
+      const res = await router.handle(
+        new Request(`${REMOTE}/auth/oidc/start`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin, "x-stuga-arrival": "remote" },
+          body: "{}",
+        }),
+      );
+      return { url: new URL(((await res.json()) as { url: string }).url), cookie: res.headers.get("set-cookie") ?? "" };
+    };
+    for (const origin of [REMOTE, ORIGIN, LAN]) {
+      const { url, cookie } = await start(origin);
+      expect(url.searchParams.get("redirect_uri")).toBe(`${REMOTE}/auth/oidc/callback`);
+      expect(cookie).toMatch(/^__Host-stuga_signin=/);
+    }
+  });
+
   it("on an https origin, sets a __Host- cookie no other host can plant or shadow", async () => {
     router = createIdentityRouter(deps({ publicOrigin: "https://stuga.example" }));
     const browser = new Browser();

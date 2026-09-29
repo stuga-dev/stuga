@@ -260,6 +260,29 @@ describe("POST /oauth/token, authorization_code", () => {
     expect((await exchange({ resource: "https://stuga.test/mcp" })).status).toBe(200);
     expect((await exchange({ resource: "http://stuga.local:8787/mcp" })).status).toBe(200);
   });
+  it("at the remote address, takes the remote /mcp and none of the LAN's; the LAN never takes the remote one", async () => {
+    const REMOTE = "https://k7f3q2.stuga.test";
+    const remoteExchange = (resource: string) =>
+      handleToken(
+        env,
+        new Request(`${REMOTE}/oauth/token`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded", "x-stuga-arrival": "remote" },
+          body: new URLSearchParams({
+            grant_type: "authorization_code",
+            code: "c0de",
+            client_id: "cid_1",
+            redirect_uri: REGISTERED,
+            code_verifier: VERIFIER,
+            resource,
+          }).toString(),
+        }),
+      );
+    expect((await remoteExchange(`${REMOTE}/mcp`)).status).toBe(200);
+    expect(await (await remoteExchange("https://stuga.test/mcp")).json()).toEqual({ error: "invalid_target" });
+    expect(await (await remoteExchange("http://stuga.local:8787/mcp")).json()).toEqual({ error: "invalid_target" });
+    expect(await (await exchange({ resource: `${REMOTE}/mcp` })).json()).toEqual({ error: "invalid_target" });
+  });
 });
 
 describe("POST /oauth/token, refresh_token", () => {

@@ -21,6 +21,7 @@ function fakeEnv(): IngestEnv & { puts: string[] } {
   const puts: string[] = [];
   return {
     publicOrigin: "https://app.stuga.test",
+    extraOrigins: [],
     settings: settingsWithBody(DEFAULT_MAX_BODY_BYTES),
     media: {
       head: async (k: string) => (store.has(k) ? { key: k } : null),
@@ -186,6 +187,20 @@ describe("hosting external images in agent markdown", () => {
     const abs = `https://app.stuga.test/api/docs/other/media/${HASH}`;
     const r = await hostExternalImages(env, WS, "d1", `![a](${abs})`);
     expect(r.markdown).toBe(`![a](/api/docs/other/media/${HASH})`);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("collapses its absolute media URL at any of the node's addresses, the remote one included", async () => {
+    const fetchSpy = mockImageFetch();
+    const own = {
+      ...env,
+      extraOrigins: ["http://192.168.1.50:8787"],
+      remote: { current: () => ({ enabled: true, id: "k7f3q2", hostname: "k7f3q2.stuga.test", origin: "https://k7f3q2.stuga.test" }) },
+    } as unknown as IngestEnv;
+    for (const origin of ["http://192.168.1.50:8787", "https://k7f3q2.stuga.test"]) {
+      const r = await hostExternalImages(own, WS, "d1", `![a](${origin}/api/docs/other/media/${HASH})`);
+      expect(r.markdown).toBe(`![a](/api/docs/other/media/${HASH})`);
+    }
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

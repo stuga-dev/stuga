@@ -1,0 +1,8 @@
+{
+  "status": 401,
+  "body": {
+    "error": "stale_request",
+    "message": "The request's time is outside the allowed window.",
+    "server_time": 1790900000
+  }
+}

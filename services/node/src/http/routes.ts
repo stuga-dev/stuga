@@ -72,6 +72,7 @@ import {
 } from "../api/node/settings.js";
 import { checkNodeVersion, getNodeVersion, installNodeVersion } from "../api/node/version.js";
 import { getNodeBackups, startNodeBackup } from "../api/node/backups.js";
+import { disableRemoteAccessRoute, enableRemoteAccessRoute, getRemoteAccessRoute } from "../api/node/remote-access.js";
 import { listNotificationsRoute, markNotificationsReadRoute, unreadNotifications } from "../api/notifications.js";
 import { addOtherNode, listOtherNodes, removeOtherNode } from "../api/other-nodes.js";
 import { ackDocRun, decideDocRun, getDocRun, listDocRuns, proposeEdit, revertDocRun } from "../api/runs.js";
@@ -174,6 +175,7 @@ const WORKSPACE_EXPORT = { ...WORKSPACE_ADMIN, workspaceAdmin: "export the works
 const KEYS = { humanOnly: "agents cannot manage api keys", guestForbidden: "manage api keys" };
 const WEBHOOKS = { humanOnly: "agents cannot manage webhooks", workspaceAdmin: "manage webhooks" };
 const NODE = { nodeAdmin: true };
+const REMOTE_ACCESS = { ...NODE, humanOnly: "agents cannot manage remote access" };
 /** Sent as a POST for its body, and still only a read. */
 const READS = { readOnlyKeys: true } as const;
 /** A credential's Ask threads are its own and nobody else sees them, so a read-only key keeps its history. */
@@ -337,6 +339,12 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("GET", "/api/node/backups", getNodeBackups, NODE),
   api("POST", "/api/node/backups", startNodeBackup, NODE),
   api("*", "/api/node/backups", methodNotAllowed, NODE),
+  api("GET", "/api/node/remote-access", getRemoteAccessRoute, REMOTE_ACCESS),
+  api("*", "/api/node/remote-access", methodNotAllowed, REMOTE_ACCESS),
+  api("POST", "/api/node/remote-access/enable", enableRemoteAccessRoute, REMOTE_ACCESS),
+  api("*", "/api/node/remote-access/enable", methodNotAllowed, REMOTE_ACCESS),
+  api("POST", "/api/node/remote-access/disable", disableRemoteAccessRoute, REMOTE_ACCESS),
+  api("*", "/api/node/remote-access/disable", methodNotAllowed, REMOTE_ACCESS),
   api("*", /^\/api\/node\//, async ({ req, url }) => error(404, `no route for ${req.method} ${url.pathname}`), NODE),
 
   // Workspaces: tenant management, human-only.

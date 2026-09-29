@@ -7,6 +7,7 @@ const PUBLIC: AgentSetup = {
   mcp_url: "https://stuga.example.com/mcp",
   node: { id: "mzxw6ytboi4dqnrq", name: "Studio" },
   reachable: true,
+  remote: null,
   loopback: false,
   secure: true,
   bundle: { available: true },
@@ -29,6 +30,10 @@ const LAN: AgentSetup = {
   reachable: false,
   secure: false,
 };
+
+/** A LAN node with remote access on: its remote address is public https. */
+const REMOTE = "https://k7f3q2.remote.example";
+const LAN_WITH_REMOTE: AgentSetup = { ...LAN, remote: { url: REMOTE, mcp_url: `${REMOTE}/mcp` } };
 
 /** The one server entry a JSON config holds, under its key. */
 const servers = (json: string) => JSON.parse(json).mcpServers as Record<string, Record<string, unknown> & { env: Record<string, string> }>;
@@ -196,5 +201,44 @@ describe("clientConfigs", () => {
         }
       }
     }
+  });
+});
+
+describe("remote access", () => {
+  it("offers the hosted connector at the remote address, however the node's own address looks", () => {
+    for (const setup of [{ ...LOCAL, remote: LAN_WITH_REMOTE.remote }, LAN_WITH_REMOTE]) {
+      expect(clientTabs(setup)[0]).toBe("claude");
+      expect(clientConfigs(setup, null).hostedMcpUrl).toBe(`${REMOTE}/mcp`);
+    }
+    // A public node with remote access on is dialled at the remote address too, like any hosted client.
+    expect(clientConfigs({ ...PUBLIC, remote: LAN_WITH_REMOTE.remote }, null).hostedMcpUrl).toBe(`${REMOTE}/mcp`);
+    expect(clientConfigs(PUBLIC, null).hostedMcpUrl).toBe("https://stuga.example.com/mcp");
+  });
+
+  it("keeps a client on the network at the node's own address, so it never goes round by the relay", () => {
+    for (const page of [undefined, LAN.url, "http://localhost:3001"]) {
+      const c = clientConfigs(LAN_WITH_REMOTE, null, page);
+      expect(c.cliCommand).toContain("stuga http://192.168.1.50:8787/mcp --header");
+      expect(servers(c.httpJson).stuga!.url).toBe("http://192.168.1.50:8787/mcp");
+      expect(c.installers.codex.setup).toBe("curl -fsSL 'http://192.168.1.50:8787/api/agent-install/codex' | sh");
+      expect(c.piUrlEnv).toBe("export STUGA_URL=http://192.168.1.50:8787");
+    }
+  });
+
+  it("gives a client on a page opened at the remote address that address, and no path on the node's disk", () => {
+    const c = clientConfigs({ ...LAN_WITH_REMOTE, loopback: true }, "vk_live", REMOTE);
+    // https, so Claude Code signs in through the browser and carries no key.
+    expect(c.cliNeedsKey).toBe(false);
+    expect(c.cliCommand).toBe(`claude mcp add -s user --transport http stuga ${REMOTE}/mcp`);
+    expect(servers(c.httpJson).stuga!.url).toBe(`${REMOTE}/mcp`);
+    expect(c.installers.antigravity.setup).toBe(`curl -fsSL '${REMOTE}/api/agent-install/antigravity' | sh`);
+    expect(c.dshEnv).toBe(`STUGA_URL=${REMOTE}\nSTUGA_API_KEY=vk_live`);
+    expect(JSON.parse(atob(new URL(c.links.cursor.signIn).searchParams.get("config")!))).toEqual({ url: `${REMOTE}/mcp` });
+    expect(c.desktopJson).toBeNull();
+  });
+
+  it("does not take a page's origin for the remote address while remote access is off", () => {
+    const c = clientConfigs(LAN, null, REMOTE);
+    expect(servers(c.httpJson).stuga!.url).toBe("http://192.168.1.50:8787/mcp");
   });
 });

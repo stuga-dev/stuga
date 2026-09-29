@@ -22,6 +22,7 @@ const nodeApi = vi.hoisted(() => ({
   backups: vi.fn(),
   backUpNow: vi.fn(),
   installVersion: vi.fn(),
+  getRemoteAccess: vi.fn(),
 }));
 
 vi.mock("../../../api", async (orig) => ({
@@ -136,6 +137,7 @@ const OPS: NodeOperationalSettings = {
     node_id: "k3q7m2x9vbn4ha5z",
     public_origin: "http://localhost:8787",
     extra_origins: [],
+    remote_origin: null,
     bind: "127.0.0.1",
     port: 8787,
     data_dir: "/data",
@@ -311,6 +313,7 @@ beforeEach(() => {
   nodeApi.admins.mockResolvedValue({ admins: [] });
   nodeApi.version.mockResolvedValue(SOURCE);
   nodeApi.backups.mockResolvedValue(BACKUPS);
+  nodeApi.getRemoteAccess.mockResolvedValue({ available: false });
 });
 
 describe("NodeSettingsPage", () => {
@@ -571,6 +574,24 @@ describe("NodeSettingsPage", () => {
     expect(inputs("Name")[0]!.value).toBe("Acme");
     await go("access");
     expect(inputs("Add an administrator")[0]!.value).toBe("sam");
+  });
+
+  it("answers a link to Remote access on a node whose packaging offers none", async () => {
+    await mount("remote");
+    await settle();
+    expect(host.textContent).toContain("Remote access isn’t available on this node.");
+  });
+
+  it("lists the remote address beside the node's own, and its sign-in callback", async () => {
+    const remote = "https://k7f3q2.remote.example";
+    nodeApi.settings.mockResolvedValue({
+      ...OPS,
+      identity_provider: { ...OPS.identity_provider, callback_urls: [...OPS.identity_provider.callback_urls, `${remote}/auth/oidc/callback`] },
+      node: { ...OPS.node, remote_origin: remote },
+    });
+    await mount("access");
+    expect(host.textContent).toContain(`Remote address${remote}`);
+    expect(host.textContent).toContain(`${remote}/auth/oidc/callback`);
   });
 
   it("saves a new identity provider as typed, with its secret and default label and scopes", async () => {

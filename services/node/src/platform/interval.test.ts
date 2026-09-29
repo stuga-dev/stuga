@@ -51,3 +51,50 @@ describe("startInterval", () => {
     expect(done).toBe(true);
   });
 });
+
+describe("kick", () => {
+  it("runs a tick at once, without waiting for the interval", async () => {
+    let runs = 0;
+    const handle = startInterval(60_000, () => {
+      runs += 1;
+    });
+    handle.kick();
+    const deadline = Date.now() + 2000;
+    while (runs < 1 && Date.now() < deadline) await sleep(1);
+    await handle.stop();
+    expect(runs).toBe(1);
+  });
+
+  it("during a tick, runs one more once it ends, however often it is kicked", async () => {
+    let runs = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const handle = startInterval(60_000, async () => {
+      runs += 1;
+      if (runs === 1) await gate;
+    });
+    handle.kick();
+    while (runs < 1) await sleep(1);
+    handle.kick();
+    handle.kick();
+    handle.kick();
+    expect(runs).toBe(1);
+    release();
+    const deadline = Date.now() + 2000;
+    while (runs < 2 && Date.now() < deadline) await sleep(1);
+    await sleep(20);
+    await handle.stop();
+    expect(runs).toBe(2);
+  });
+
+  it("does nothing once stopped", async () => {
+    let runs = 0;
+    const handle = startInterval(60_000, () => {
+      runs += 1;
+    });
+    await handle.stop();
+    handle.kick();
+    await sleep(20);
+    expect(runs).toBe(0);
+  });
+});

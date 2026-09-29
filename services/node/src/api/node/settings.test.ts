@@ -610,8 +610,29 @@ describe("the identity provider section", () => {
     });
     // The sign-in method is no longer a read-only node fact: only the environment's are left.
     expect(Object.keys(body.node as object).sort()).toEqual(
-      ["bind", "data_dir", "database", "embedding_dims", "extra_origins", "node_id", "port", "public_origin"],
+      ["bind", "data_dir", "database", "embedding_dims", "extra_origins", "node_id", "port", "public_origin", "remote_origin"],
     );
+  });
+
+  it("adds the remote address and its callback once the node is bound, whether remote access is on or off", async () => {
+    storedRow.mockResolvedValue(row());
+    const c = ctx();
+    const remote = "https://k7f3q2.stuga.test";
+    (c.env as { remote?: unknown }).remote = { current: () => ({ enabled: false, id: "k7f3q2", hostname: "k7f3q2.stuga.test", origin: remote }) };
+    const body = (await (await routeWorkspaceRequest(c, new Request("http://node.test/api/node/settings")))!.json()) as {
+      identity_provider: { callback_urls: string[] };
+      node: { remote_origin: string | null };
+    };
+    expect(body.identity_provider.callback_urls).toEqual([
+      "http://node.test/auth/oidc/callback",
+      "http://nas.local:8787/auth/oidc/callback",
+      `${remote}/auth/oidc/callback`,
+    ]);
+    expect(body.node.remote_origin).toBe(remote);
+    const unbound = (await (await routeWorkspaceRequest(ctx(), new Request("http://node.test/api/node/settings")))!.json()) as {
+      node: { remote_origin: string | null };
+    };
+    expect(unbound.node.remote_origin).toBeNull();
   });
 
   it("clears the provider on a reset, and records it with the accounts unlinked", async () => {

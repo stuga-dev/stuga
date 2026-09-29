@@ -584,3 +584,71 @@ export interface NodeStateRow {
   /** Why it failed; null when it did not. */
   backup_error: string | null;
 }
+
+/** A relay as the last check-in listed it. */
+export interface StoredRemoteRelay {
+  name: string;
+  addr: string;
+  port: number;
+  server_name: string;
+  /** The relay's own self-signed certificate, one or two PEM blocks. */
+  ca_pem: string;
+}
+
+/** What went wrong last with remote access; cleared by the next success of the same kind. */
+export interface StoredRemoteError {
+  code: string;
+  message: string;
+  /** ISO 8601. */
+  at: string;
+  retry_at?: string;
+  /** The remote-access service's own error code, for `service_refused`. */
+  service_code?: string;
+  /** Why the service turned this address off, for `denied`. */
+  reason?: string;
+}
+
+/** Remote access (docs/remote-access.md). Every column is a default until the node is bound. */
+export interface NodeRemoteAccessRow {
+  enabled: boolean;
+  enabled_by: string | null;
+  enabled_at: Date | null;
+  remote_id: string | null;
+  hostname: string | null;
+  api_url: string | null;
+  binding_thumbprint: string | null;
+  bound_at: Date | null;
+  binding_failing_since: Date | null;
+  relays: StoredRemoteRelay[];
+  acme_directory: string | null;
+  acme_profile: string | null;
+  acme_reissue_before: Date | null;
+  acme_account_directory: string | null;
+  acme_account_url: string | null;
+  ca_terms_accepted_by: string | null;
+  ca_terms_accepted_at: Date | null;
+  ca_terms_url: string | null;
+  cert_serial: string | null;
+  cert_directory: string | null;
+  cert_not_before: Date | null;
+  cert_not_after: Date | null;
+  cert_renew_at: Date | null;
+  cert_failures: number;
+  cert_retry_at: Date | null;
+  checkin_at: Date | null;
+  checkin_next_at: Date | null;
+  credential_ttl: number | null;
+  credential_not_before: Date | null;
+  credential_issued_at: Date | null;
+  credential_expires_at: Date | null;
+  credential_refresh_at: Date | null;
+  credential_failures: number;
+  credential_retry_at: Date | null;
+  probe_at: Date | null;
+  probe_ok_at: Date | null;
+  probe_failures: number;
+  connector_config_sha256: string | null;
+  connector_config_changed_at: Date | null;
+  last_error: StoredRemoteError | null;
+  updated_at: Date | null;
+}

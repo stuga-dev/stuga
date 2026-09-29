@@ -1,6 +1,6 @@
 /** What a client needs to connect an agent to this node; only the node can answer it. */
 export interface AgentSetup {
-  /** The origin agents and browsers use for this node. */
+  /** The origin agents and browsers use for this node: PUBLIC_ORIGIN, wherever it was asked from. */
   url: string;
   /** The MCP endpoint on that origin. */
   mcp_url: string;
@@ -13,6 +13,8 @@ export interface AgentSetup {
   };
   /** Whether a service dialling from the internet could reach `url` (false for loopback, LAN, private). */
   reachable: boolean;
+  /** The node's remote address while it is on (docs/remote-access.md), which a hosted client can reach; null otherwise. */
+  remote: { url: string; mcp_url: string } | null;
   /** Whether `url` is a loopback address: the node and the browser share a machine. */
   loopback: boolean;
   /**

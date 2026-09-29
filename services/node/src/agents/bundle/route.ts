@@ -1,4 +1,7 @@
-/** GET /api/agent-bundle: the installable Claude Desktop extension, offering this node's address. */
+/**
+ * GET /api/agent-bundle: the installable Claude Desktop extension, offering this node's address as
+ * it was downloaded from: the LAN's on the LAN, so a local client never goes round through the relay.
+ */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { mcpBundlePath } from "../setup.js";
@@ -30,13 +33,13 @@ export async function handleAgentBundle(ctx: Ctx, src: BundleSource = {}): Promi
     return unavailable();
   }
   try {
-    assertBundleEnvValue("the node's address", ctx.env.publicOrigin);
+    assertBundleEnvValue("the node's address", ctx.servedOrigin);
     assertBundleEnvValue("STUGA_VERSION", VERSION);
   } catch (e) {
     if (e instanceof UnsafeBundleValue) return error(400, e.message);
     throw e;
   }
-  const mcpb = buildMcpb({ serverJs, license, thirdPartyLicenses, cfg: { url: ctx.env.publicOrigin, stugaVersion: VERSION } });
+  const mcpb = buildMcpb({ serverJs, license, thirdPartyLicenses, cfg: { url: ctx.servedOrigin, stugaVersion: VERSION } });
   return download(mcpb, bundleFilename, "application/octet-stream");
 }
 

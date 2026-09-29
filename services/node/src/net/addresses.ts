@@ -67,3 +67,41 @@ export function isNonPublicAddress(ip: string): boolean {
   if (h === "::" || h === "::1") return true;
   return /^fe[89ab]/.test(h) || /^f[cd]/.test(h);
 }
+
+/**
+ * What a per-source count is keyed on: an IPv6 address by its /64, which one subscriber holds whole
+ * and can walk through at will (`2001:db8:5:17::/64`); anything else as given.
+ */
+export function perSubnet(address: string): string {
+  const groups = ipv6Groups(bare(address));
+  if (!groups) return address;
+  return `${groups
+    .slice(0, 4)
+    .map((g) => g.toString(16))
+    .join(":")}::/64`;
+}
+
+/** The eight groups of an IPv6 address, a dotted-quad tail included, or null when it is not one. */
+function ipv6Groups(h: string): number[] | null {
+  if (!h.includes(":")) return null;
+  let text = h;
+  const tail = /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(text);
+  if (tail) {
+    const v4 = ipv4Octets(tail[1]!);
+    if (!v4) return null;
+    text = `${text.slice(0, tail.index)}${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`;
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const parse = (part: string): number[] | null => {
+    if (part === "") return [];
+    const out = part.split(":").map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : -1));
+    return out.some((g) => g < 0) ? null : out;
+  };
+  const head = parse(halves[0]!);
+  const rest = halves.length === 2 ? parse(halves[1]!) : [];
+  if (!head || !rest) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  const zeros = 8 - head.length - rest.length;
+  return zeros >= 1 ? [...head, ...Array.from({ length: zeros }, () => 0), ...rest] : null;
+}

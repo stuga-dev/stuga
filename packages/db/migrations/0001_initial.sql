@@ -633,6 +633,62 @@ CREATE TABLE node_settings (
     CHECK ((idp_issuer IS NULL) = (idp_client_id IS NULL))
 );
 
+-- Remote access: the binding to the remote-access service, and where the certificate, the relay
+-- credential and the connector stand. No secret lives here: the keys are files under DATA_DIR
+-- (docs/remote-access.md). Kept out of node_settings, whose row a settings reset deletes.
+CREATE TABLE node_remote_access (
+    id                          BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+    enabled                     BOOLEAN     NOT NULL DEFAULT FALSE,
+    enabled_by                  TEXT,
+    enabled_at                  TIMESTAMPTZ,
+    -- The binding, from the service's answer to enroll or rebind.
+    remote_id                   TEXT CHECK (remote_id ~ '^[0-9bcdfghjkmnpqrstvwxz]{6,12}$'),
+    hostname                    TEXT CHECK (hostname ~ '^[0-9bcdfghjkmnpqrstvwxz]{6,12}(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'),
+    api_url                     TEXT CHECK (api_url ~ '^(https://[a-z0-9.-]+(:[0-9]{1,5})?|http://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?)$'),
+    binding_thumbprint          TEXT CHECK (binding_thumbprint ~ '^[A-Za-z0-9_-]{43}$'),
+    bound_at                    TIMESTAMPTZ,
+    -- Set at the first 401 from the service and cleared by any success; 24 hours on, the admin is told.
+    binding_failing_since       TIMESTAMPTZ,
+    -- From the last check-in: [{name, addr, port, server_name, ca_pem}].
+    relays                      JSONB       NOT NULL DEFAULT '[]',
+    acme_directory              TEXT,
+    acme_profile                TEXT,
+    acme_reissue_before         TIMESTAMPTZ,
+    acme_account_directory      TEXT,
+    acme_account_url            TEXT,
+    -- Who accepted the certificate authority's subscriber agreement, and which version the account took.
+    ca_terms_accepted_by        TEXT,
+    ca_terms_accepted_at        TIMESTAMPTZ,
+    ca_terms_url                TEXT,
+    cert_serial                 TEXT,
+    cert_directory              TEXT,
+    cert_not_before             TIMESTAMPTZ,
+    cert_not_after              TIMESTAMPTZ,
+    cert_renew_at               TIMESTAMPTZ,
+    cert_failures               INTEGER     NOT NULL DEFAULT 0,
+    cert_retry_at               TIMESTAMPTZ,
+    checkin_at                  TIMESTAMPTZ,
+    checkin_next_at             TIMESTAMPTZ,
+    credential_ttl              INTEGER,
+    credential_not_before       TIMESTAMPTZ,
+    credential_issued_at        TIMESTAMPTZ,
+    credential_expires_at       TIMESTAMPTZ,
+    credential_refresh_at       TIMESTAMPTZ,
+    credential_failures         INTEGER     NOT NULL DEFAULT 0,
+    credential_retry_at         TIMESTAMPTZ,
+    probe_at                    TIMESTAMPTZ,
+    probe_ok_at                 TIMESTAMPTZ,
+    probe_failures              INTEGER     NOT NULL DEFAULT 0,
+    -- sha-256 over the connector's files (toml and CA), and when that last changed.
+    connector_config_sha256     TEXT,
+    connector_config_changed_at TIMESTAMPTZ,
+    -- {code, message, at, retry_at?, service_code?, reason?}; NULL when nothing is wrong.
+    last_error                  JSONB,
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (NOT enabled OR (remote_id IS NOT NULL AND hostname IS NOT NULL AND api_url IS NOT NULL
+                           AND ca_terms_accepted_at IS NOT NULL))
+);
+
 -- ============================================================================
 -- Sharing links. Only a sha-256 of each token is stored.
 -- ============================================================================

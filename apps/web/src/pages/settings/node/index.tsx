@@ -17,6 +17,7 @@ import { useNodeSettings } from "./useNodeSettings";
 import { AiSection } from "./AiSection";
 import { NotificationsSection } from "./NotificationsSection";
 import { AccessSection } from "./AccessSection";
+import { RemoteAccessSection } from "./RemoteAccessSection";
 import { StorageSection } from "./StorageSection";
 import { SearchSection } from "./SearchSection";
 import { BackupsSection } from "./BackupsSection";
@@ -60,7 +61,8 @@ export function NodeSettingsPage() {
   }
 
   const staleAiKey = (ai?.chat.endpoints.some((e) => e.api_key_stale) ?? false) || ai?.embed.api_key_stale;
-  const needs = category === "ai" ? ai : category === "access" ? true : ops;
+  // Access and Remote access load their own parts.
+  const needs = category === "ai" ? ai : category === "access" || category === "remote" ? true : ops;
   const shown = (key: NodeCategory) => (key === category ? "visible" : "hidden");
 
   return (
@@ -78,6 +80,9 @@ export function NodeSettingsPage() {
         <Activity mode={shown("notifications")}>{ops && <NotificationsSection ops={ops} onSaved={setOps} />}</Activity>
         <Activity mode={shown("access")}>
           <AccessSection ops={ops} onSaved={setOps} />
+        </Activity>
+        <Activity mode={shown("remote")}>
+          <RemoteAccessSection />
         </Activity>
         <Activity mode={shown("storage")}>{ops && <StorageSection ops={ops} onSaved={setOps} />}</Activity>
         <Activity mode={shown("search")}>{ops && <SearchSection ops={ops} onSaved={setOps} />}</Activity>

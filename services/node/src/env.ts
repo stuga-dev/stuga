@@ -12,6 +12,7 @@ import type { AiSettingsStore, ProviderBaseUrls } from "./config/settings/ai.js"
 import type { NodeSettingsStore } from "./config/settings/node.js";
 import type { NodeBackups } from "./ops/node-backups.js";
 import type { SearchLanguages } from "./search/languages.js";
+import type { RemoteAccess } from "./remote/service.js";
 
 export interface NotifyConfig {
   /** slack | teams | discord | email | webhook | none */
@@ -57,6 +58,14 @@ export interface NodeConfig {
   samplesUrl: string;
 }
 
+/**
+ * The remote address as it stands (docs/remote-access.md): read per request, since turning it on
+ * or off changes it. `id`, `hostname` and `origin` are set once the node is bound, whether on or not.
+ */
+export interface RemoteAccessView {
+  current(): { enabled: boolean; id: string | null; hostname: string | null; origin: string | null };
+}
+
 interface NodeServices {
   /** The AI configuration in force; the AI settings routes refresh it after a save. */
   aiSettings: AiSettingsStore;
@@ -87,6 +96,10 @@ interface NodeServices {
   nodeId: string;
   /** The backups the running node takes of itself; absent where nothing can quiet the node (tests). */
   backups?: NodeBackups;
+  /** The remote address, for origins and links; absent where the packaging offers no remote access. */
+  remote?: RemoteAccessView;
+  /** Turning the remote address on and off, for the admin API; absent with `remote`. */
+  remoteAccess?: RemoteAccess;
 }
 
 export type NodeEnv = NodeConfig & NodeServices;

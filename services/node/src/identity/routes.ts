@@ -37,8 +37,8 @@ import {
 import { hostLabel } from "@stuga/protocol/domain/node-name";
 import { SEARCH_LANGUAGES, parseSearchLanguages } from "@stuga/protocol/domain/search-languages";
 import type { IdentityProviderSettings } from "../config/settings/node.js";
-import { clientAddress } from "../platform/http-server.js";
 import type { RateLimiter } from "../platform/rate-limit.js";
+import { arrivalOf, clientBucket, servedOrigin } from "../http/arrival.js";
 import { matchRoute, type Route } from "../http/router.js";
 import type { IdentityDb } from "./db.js";
 import { fail, field, json, readJson } from "./http.js";
@@ -90,6 +90,8 @@ export interface IdentityDeps {
   limiter?: RateLimiter;
   /** Believe the proxy's `X-Forwarded-For` / `X-Real-IP` for the address bucket; otherwise they are caller-chosen. */
   trustProxyHeaders?: boolean;
+  /** The node's name at its remote address, once bound: what an unnamed node goes by there, in place of its LAN host. */
+  remoteId?: () => string | null;
 }
 
 export interface IdentityRouter {
@@ -222,20 +224,27 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
   };
   const provider = createProviderRoutes(core);
 
-  async function config(): Promise<Response> {
+  async function config(req: Request): Promise<Response> {
     // No account yet: the SPA opens on first-run setup, whose account administers the node.
     // Once claimed, an account is created only with an invite link.
     const unclaimed = (await db.countAccounts()) === 0;
     const idp = deps.identityProvider?.() ?? null;
     const b = deps.branding?.() ?? { accentColor: null };
+    const nodeName = deps.nodeName?.() ?? null;
+    // At the remote address, nothing that names the LAN: an unnamed node goes by its remote id, not its host.
+    const remote = arrivalOf(req) === "remote";
+    const origin = remote ? servedOrigin(req) : deps.publicOrigin;
+    const nodeLabel = remote
+      ? (nodeName ?? deps.remoteId?.() ?? hostLabel(origin))
+      : (deps.nodeLabel?.() ?? hostLabel(deps.publicOrigin));
     return json({
       provider: idp ? { label: idp.label } : null,
       unclaimed,
       // The name an administrator gave the node, shown in place of the product's; null until there is one.
-      node_name: deps.nodeName?.() ?? null,
+      node_name: nodeName,
       // Which node this is, as /mcp names it: the stdio server reads it and the origin, whatever address it reached the node at.
-      node_label: deps.nodeLabel?.() ?? hostLabel(deps.publicOrigin),
-      origin: deps.publicOrigin,
+      node_label: nodeLabel,
+      origin,
       branding: { accent_color: b.accentColor },
     });
   }
@@ -271,6 +280,10 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
       if (!inviteHash) return inviteRequired();
       if (!(await db.inviteIsRedeemable(inviteHash))) return inviteInvalid();
     } else {
+      // The setup code is printed on the node's own machine; its remote address never takes one.
+      if (arrivalOf(req) === "remote") {
+        return fail(403, "setup_not_remote", "set up this node from its own network, not its remote address");
+      }
       const code = field(body, "setup_code");
       if (!code.trim()) return setupCodeRequired();
       if (!setupCodeMatches(deps.setupCode?.() ?? null, code)) {
@@ -472,7 +485,9 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     });
   }
 
-  function discovery(): Response {
+  /** Not at the remote address: the issuer is PUBLIC_ORIGIN, which that address never names. */
+  function discovery(req: Request): Response {
+    if (arrivalOf(req) === "remote") return json({ error: "not_found" }, 404);
     return json({
       issuer: auth.issuer,
       jwks_uri: `${deps.publicOrigin}/.well-known/jwks.json`,
@@ -497,10 +512,14 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     "/auth/oidc/link",
   ]);
 
-  /** Two buckets per attempt, both of which must have budget: the source address and the targeted identifier. */
+  /**
+   * Two buckets per attempt, both of which must have budget: the source address and the targeted
+   * identifier. Each per listener, so a stranger guessing at the remote address cannot lock the
+   * LAN out of an account.
+   */
   async function throttled(req: Request, path: string): Promise<Response | null> {
     if (!deps.limiter || !THROTTLED.has(path)) return null;
-    const keys = [`auth:ip:${clientAddress(req, deps.trustProxyHeaders ?? false)}`];
+    const keys = [`auth:ip:${clientBucket(req, deps.trustProxyHeaders ?? false)}`];
     const target = await req
       .clone()
       .json()
@@ -511,7 +530,7 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
         return username || (token ? `token:${sha256Hex(token)}` : "");
       })
       .catch(() => "");
-    if (target) keys.push(`auth:id:${target}`);
+    if (target) keys.push(`auth:id:${arrivalOf(req)}:${target}`);
     for (const key of keys) {
       const { success } = await deps.limiter.limit({ key });
       if (!success) {

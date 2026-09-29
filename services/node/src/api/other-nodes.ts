@@ -11,6 +11,7 @@ import {
   type OtherNodes,
 } from "@stuga/protocol/api/other-nodes";
 import { UNSAFE_TEXT, hasVisibleText } from "@stuga/protocol/domain/node-name";
+import { ownOrigins } from "../http/arrival.js";
 import { error, json } from "../http/respond.js";
 import type { AccountCall } from "../http/router.js";
 import { newId } from "../ids.js";
@@ -30,7 +31,8 @@ function nodeView(row: UserNodeRow): OtherNode {
 export async function listOtherNodes({ ctx }: AccountCall): Promise<Response> {
   const rows = await listUserNodes(ctx.sql, ctx.alias);
   const body: OtherNodes = {
-    current: { name: ctx.env.settings.current().nodeLabel, origin: ctx.env.publicOrigin },
+    // The address the caller is at: the remote one there, PUBLIC_ORIGIN on the network.
+    current: { name: ctx.env.settings.current().nodeLabel, origin: ctx.servedOrigin },
     nodes: rows.map(nodeView),
   };
   return json(body);
@@ -54,7 +56,7 @@ export async function addOtherNode({ ctx, req }: AccountCall): Promise<Response>
   const body = (await req.json().catch(() => ({}))) as { label?: unknown; url?: unknown } | null;
   const url = parseNodeUrl(body?.url);
   if (!url) return refuse(400, "invalid_url", "url must be an absolute http or https address");
-  if (url.origin === ctx.env.publicOrigin || ctx.env.extraOrigins.includes(url.origin)) {
+  if (ownOrigins(ctx.env).includes(url.origin)) {
     return refuse(400, "own_node", "that is this node's own address");
   }
 

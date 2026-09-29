@@ -126,7 +126,7 @@ give the node an https address as [Network access](network-access.md#https) desc
 | `Too many attempts. Wait a moment and try again.` | The sign-in limit. Behind a reverse proxy every attempt shares the proxy's address unless `TRUST_PROXY_HEADERS` is set: [Network access](network-access.md#a-reverse-proxy). |
 | You forgot your password, and no other administrator can sign in | Run `reset-password` on the node's machine: [Operations](operations.md#reset-a-password). |
 | `this is the last node administrator; appoint another one first` | Appoint another administrator in **Settings → This node → Access** first. |
-| `Couldn’t sign in with <label>.` | The node could not finish a sign-in through the identity provider: the provider refused it, it took longer than 10 minutes, it finished in a different browser from the one that started it, or it started at an address that is neither `PUBLIC_ORIGIN` nor in `EXTRA_ORIGINS`. The node's log has an `[auth]` line with the reason. |
+| `Couldn’t sign in with <label>.` | The node could not finish a sign-in through the identity provider: the provider refused it, it took longer than 10 minutes, it finished in a different browser from the one that started it, or it started at an address that is neither `PUBLIC_ORIGIN`, in `EXTRA_ORIGINS`, nor the node's [remote address](remote-access.md). The node's log has an `[auth]` line with the reason. |
 | `Couldn’t sign in with <label>.` every time, and the log's reason is `browser_binding` | The browser did not send back the cookie that ties a sign-in to it. Allow cookies for the node's address. |
 | The provider's own page says the client is unknown, or the log's reason starts with `token_`, such as `token_invalid_client` | The client ID or secret is wrong. Saving the provider checks only its issuer, so they show at the first sign-in. Correct them under **Identity provider** in **Settings → This node → Access**. |
 | The identity provider refuses the redirect URI | Register the callback URL that **Settings → This node → Access** lists for the address in the browser: [Identity provider](configuration.md#identity-provider). |
@@ -142,7 +142,7 @@ give the node an https address as [Network access](network-access.md#https) desc
 
 | What you see | What it is |
 |---|---|
-| Adding to **Other nodes** says `That’s this node’s own address.` | The address is this node's `PUBLIC_ORIGIN` or in its `EXTRA_ORIGINS`. The switcher already lists this node's workspaces. |
+| Adding to **Other nodes** says `That’s this node’s own address.` | The address is this node's `PUBLIC_ORIGIN`, in its `EXTRA_ORIGINS`, or its [remote address](remote-access.md). The switcher already lists this node's workspaces. |
 | A shortcut under **Other nodes** opens a sign-in page | Expected. Each node has its own sign-in, and being signed in here signs you in nowhere else: [Several nodes](network-access.md#several-nodes). |
 | A shortcut opens the wrong page, or nothing | A shortcut keeps the address it was added with, and nothing checks it. Remove it and add the node's current address. |
 | Adding a second node to one client fails, or the installer says the name is taken | A client cannot hold two entries called `stuga`. Add the second under another name: write `stuga-work` in the Claude Code command, change the key in a pasted config, or run an installer as `curl -fsSL '…' \| STUGA_SERVER=stuga-work sh`. |

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isIpLiteral, isLocalName, isLoopbackHost, isNonPublicAddress } from "./addresses.js";
+import { isIpLiteral, isLocalName, isLoopbackHost, isNonPublicAddress, perSubnet } from "./addresses.js";
 import { reachableFromInternet } from "../agents/setup.js";
 
 describe("isNonPublicAddress", () => {
@@ -41,5 +41,22 @@ describe("outbound vetting and agent reachability agree", () => {
   it("reads loopback through an IPv4-mapped IPv6 address", () => {
     expect(isLoopbackHost("::ffff:7f00:1")).toBe(true);
     expect(isLoopbackHost("192.168.1.1")).toBe(false);
+  });
+});
+
+describe("perSubnet", () => {
+  it("keys an IPv6 address on its /64, however it is written", () => {
+    expect(perSubnet("2001:db8:5:17::abcd")).toBe("2001:db8:5:17::/64");
+    expect(perSubnet("2001:0db8:0005:0017:ffff:1:2:3")).toBe("2001:db8:5:17::/64");
+    expect(perSubnet("2001:DB8::1")).toBe("2001:db8:0:0::/64");
+    expect(perSubnet("::1")).toBe("0:0:0:0::/64");
+    expect(perSubnet("64:ff9b::192.0.2.33")).toBe("64:ff9b:0:0::/64");
+  });
+
+  it("keeps anything else as given", () => {
+    expect(perSubnet("203.0.113.7")).toBe("203.0.113.7");
+    expect(perSubnet("unknown")).toBe("unknown");
+    expect(perSubnet("1:2:3")).toBe("1:2:3");
+    expect(perSubnet("1::2::3")).toBe("1::2::3");
   });
 });

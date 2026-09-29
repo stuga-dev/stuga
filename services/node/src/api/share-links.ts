@@ -84,7 +84,7 @@ export async function createShareLink({ ctx, req, match }: WorkspaceCall): Promi
       ? new Date(Date.now() + body.expires_in_days * 86400_000).toISOString()
       : null;
   await insertShareLink(ctx.sql, { tokenHash, docId, workspaceId: ctx.workspaceId, role, createdBy: ctx.alias, expiresAt });
-  const linkUrl = `${ctx.env.publicOrigin}/s/${token}`;
+  const linkUrl = `${ctx.servedOrigin}/s/${token}`;
   recordAudit(ctx, {
     action: "share_link.create",
     targetKind: itemKind(doc),

@@ -38,13 +38,14 @@ process and Postgres, with no cloud in between. Everyone else uses it in a brows
 
 ## Your data stays on your machine
 
-Stuga sends no telemetry, and nothing reaches us. The node makes outbound requests only for features
-in use on it: the AI providers a node admin configures, the notification sink and webhooks admins
-set up, the identity provider when an admin adds one, images an agent adds by URL, which the node
-downloads and serves itself, the metadata document of an app that signs in with one, and, when
-someone opens **Create a workspace**, the list of sample workspaces, and the sample they pick, from
-GitHub or a mirror the node is configured with. AI is off until an admin turns it on, and the model can run
-on the same machine.
+Stuga sends no telemetry. Nothing reaches us unless an administrator turns on remote access;
+[docs/remote-access.md](docs/remote-access.md) lists what the node sends then. The node makes
+outbound requests only for features in use on it: the AI providers a node admin configures, the
+notification sink and webhooks admins set up, the identity provider when an admin adds one, images
+an agent adds by URL, which the node downloads and serves itself, the metadata document of an app
+that signs in with one, and, when someone opens **Create a workspace**, the list of sample
+workspaces, and the sample they pick, from GitHub or a mirror the node is configured with. AI is off
+until an admin turns it on, and the model can run on the same machine.
 
 An AI app you connect sees what its model reads and writes. A hosted one, such as Claude on the web,
 handles it on its vendor's servers.

@@ -21,6 +21,7 @@ export * from "./grants.js";
 export * from "./governance.js";
 export * from "./audit.js";
 export * from "./node.js";
+export * from "./remote-access.js";
 export { runBootRepairs, type RepairOutcome } from "./schema/boot-repairs.js";
 export { initSchema, readSchemaVersion, SCHEMA_VERSION, type MigrationOutcome } from "./schema/migrate.js";
 export {

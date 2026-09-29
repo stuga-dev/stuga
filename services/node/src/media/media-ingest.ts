@@ -6,6 +6,7 @@
  */
 import { fencedLines } from "@stuga/crdt-ops";
 import type { NodeEnv } from "../env.js";
+import { ownOrigins } from "../http/arrival.js";
 import {
   MediaValidationError,
   decodeBase64Image,
@@ -17,8 +18,8 @@ import {
 } from "./media.js";
 import { MEDIA_GET_PATH } from "@stuga/protocol/api/media";
 
-/** The media store, the node's origin, and the settings whose upload ceiling an agent's image must meet. */
-export type IngestEnv = Pick<NodeEnv, "media" | "publicOrigin" | "settings">;
+/** The media store, the node's origins, and the settings whose upload ceiling an agent's image must meet. */
+export type IngestEnv = Pick<NodeEnv, "media" | "publicOrigin" | "extraOrigins" | "remote" | "settings">;
 
 /** Images fetched per edit; past it destinations are left alone and reported. */
 const MAX_INGEST_PER_EDIT = 8;
@@ -163,13 +164,14 @@ function isAlreadyLocal(dest: string, env: IngestEnv): string | null {
   } catch {
     return null;
   }
-  let sameHost = false;
-  try {
-    sameHost = !!env.publicOrigin && new URL(env.publicOrigin).host === url.host;
-  } catch {
-    sameHost = false;
-  }
-  // The node's own absolute URL collapses to the relative form, so the document works from any origin.
+  const sameHost = ownOrigins(env).some((origin) => {
+    try {
+      return new URL(origin).host === url.host;
+    } catch {
+      return false;
+    }
+  });
+  // The node's own absolute URL, at any of its addresses, collapses to the relative form, so the document works from any origin.
   return sameHost && MEDIA_GET_PATH.test(url.pathname) ? url.pathname : null;
 }
 

@@ -10,7 +10,7 @@ import {
   wellKnownAuthorizationServer,
   wellKnownProtectedResource,
 } from "./oauth.js";
-import { PEER_ADDRESS_HEADER, REQUEST_HOST_HEADER } from "../platform/http-server.js";
+import { ARRIVAL_HEADER, PEER_ADDRESS_HEADER, REQUEST_HOST_HEADER } from "../platform/http-server.js";
 import type { NodeEnv } from "../env.js";
 
 describe("isValidRedirectUri", () => {
@@ -142,6 +142,27 @@ describe("discovery", () => {
   });
 });
 
+describe("discovery at the remote address", () => {
+  const REMOTE = "https://k7f3q2.stuga.test";
+  const env = { publicOrigin: "http://livs-air.local:8787", extraOrigins: ["http://192.168.1.50:8787"] } as unknown as NodeEnv;
+  // The remote listener rebuilds the URL on the remote origin; the Host it stamps is whatever the visitor sent.
+  const remote = (host = "k7f3q2.stuga.test") =>
+    new Request(`${REMOTE}/.well-known/oauth-authorization-server`, { headers: { [ARRIVAL_HEADER]: "remote", [REQUEST_HOST_HEADER]: host } });
+
+  it("names only the remote origin, whatever Host was sent", async () => {
+    for (const req of [remote(), remote("livs-air.local:8787"), remote("192.168.1.50:8787")]) {
+      expect(requestOrigin(env, req)).toBe(REMOTE);
+      const metadata = await wellKnownAuthorizationServer(env, req).json();
+      expect(metadata).toMatchObject({ issuer: REMOTE, token_endpoint: `${REMOTE}/oauth/token`, client_id_metadata_document_supported: true });
+      expect(JSON.stringify(metadata)).not.toMatch(/livs-air|192\.168/);
+      expect(await wellKnownProtectedResource(env, req).json()).toMatchObject({ resource: `${REMOTE}/mcp`, authorization_servers: [REMOTE] });
+      expect(unauthorizedChallenge(env, req).headers.get("www-authenticate")).toBe(
+        `Bearer resource_metadata="${REMOTE}/.well-known/oauth-protected-resource/mcp"`,
+      );
+    }
+  });
+});
+
 describe("handleAuthorize parameter defaults", () => {
   const CHALLENGE = "qqLprUxSAsxwPaXb_Fp1VciYctx4dpL9O2-GV2Y5CWQ";
   const REDIRECT = "http://localhost:27062/oauth/callback";
@@ -229,6 +250,29 @@ describe("handleAuthorize parameter defaults", () => {
     },
   );
 
+  describe("by the listener it came in on", () => {
+    const REMOTE = "https://k7f3q2.stuga.test";
+    const at = (query: string, arrival: "local" | "remote") =>
+      handleAuthorize(
+        envWithClient(),
+        new Request(`${arrival === "remote" ? REMOTE : "http://localhost:8787"}/oauth/authorize?${query}`, { headers: { [ARRIVAL_HEADER]: arrival } }),
+      );
+    const withResource = (resource: string) => `${base}&resource=${encodeURIComponent(resource)}`;
+
+    it("at the remote address, takes the remote /mcp and no other, and hands off there", async () => {
+      const res = await at(withResource(`${REMOTE}/mcp`), "remote");
+      expect(res.status).toBe(302);
+      expect(new URL(res.headers.get("location")!).origin).toBe(REMOTE);
+      expect((await at(withResource("http://localhost:8787/mcp"), "remote")).status).toBe(400);
+      expect((await at(withResource("http://stuga.local:8787/mcp"), "remote")).status).toBe(400);
+    });
+
+    it("on the LAN, never takes the remote /mcp", async () => {
+      expect((await at(withResource(`${REMOTE}/mcp`), "local")).status).toBe(400);
+      expect((await at(withResource("http://localhost:8787/mcp"), "local")).status).toBe(302);
+    });
+  });
+
   it("still refuses a response_type that is stated and is not code", async () => {
     const res = await authorize(`${base}&response_type=token`);
     expect(res.status).toBe(400);
@@ -288,7 +332,7 @@ describe("handleRegister bounds an endpoint that cannot ask who is calling", () 
       [PEER_ADDRESS_HEADER]: "10.0.0.7",
       "x-forwarded-for": "203.0.113.9",
     });
-    expect(seen).toEqual(["oauth:register:10.0.0.7"]);
+    expect(seen).toEqual(["oauth:register:local:10.0.0.7"]);
   });
 
   it("behind a trusted proxy, keys on the address that proxy appended", async () => {
@@ -301,7 +345,29 @@ describe("handleRegister bounds an endpoint that cannot ask who is calling", () 
       [PEER_ADDRESS_HEADER]: "10.0.0.7",
       "x-forwarded-for": "198.51.100.77, 203.0.113.9",
     });
-    expect(seen).toEqual(["oauth:register:203.0.113.9"]);
+    expect(seen).toEqual(["oauth:register:local:203.0.113.9"]);
+  });
+
+  it("at the remote address, keys its budget on the PROXY source apart from the LAN's, however the caller dresses it", async () => {
+    const seen: string[] = [];
+    const { env } = envWith(async ({ key }) => {
+      seen.push(key);
+      return { success: true };
+    }, true);
+    await handleRegister(
+      env,
+      new Request("https://k7f3q2.stuga.test/oauth/register", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [ARRIVAL_HEADER]: "remote",
+          [PEER_ADDRESS_HEADER]: "2001:db8:5:17::99",
+          "x-forwarded-for": "203.0.113.9",
+        },
+        body: JSON.stringify({ redirect_uris: [REDIRECT] }),
+      }),
+    );
+    expect(seen).toEqual(["oauth:register:remote:2001:db8:5:17::/64"]);
   });
 
   it("refuses with 429 once that budget is spent, and writes nothing", async () => {

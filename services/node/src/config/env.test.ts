@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MAX_EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
 import { ConfigError, parseConfig, parseOpsConfig, type Env } from "./env.js";
 
@@ -141,6 +141,42 @@ describe("the platform hints packaging may set", () => {
     expect(cfg({ SAMPLES_URL: "HTTPS://Mirror.LAN" }).samplesUrl).toBe("https://mirror.lan");
     for (const bad of ["mirror.lan/samples", "ftp://mirror.lan", "https://mirror.lan/?tag=1", "https://mirror.lan/#x", "https://liv:pw@mirror.lan"]) {
       expect(() => cfg({ SAMPLES_URL: bad }), bad).toThrow(ConfigError);
+    }
+  });
+
+  it("offers remote access only with both of its hints", () => {
+    expect(cfg().remote).toBeUndefined();
+    expect(cfg({ STUGA_REMOTE_SERVICE: "https://api.stuga.dev/", STUGA_REMOTE_DIR: "/Users/liv/.stuga-remote/" }).remote).toEqual({
+      service: "https://api.stuga.dev",
+      dir: "/Users/liv/.stuga-remote",
+    });
+  });
+
+  it("says so once, and leaves remote access off, when packaging sets one hint without the other", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(cfg({ STUGA_REMOTE_SERVICE: "https://api.stuga.dev" }).remote).toBeUndefined();
+      expect(cfg({ STUGA_REMOTE_DIR: "/Users/liv/.stuga-remote" }).remote).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls[0]![0]).toContain("STUGA_REMOTE_DIR");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("takes the remote-access service over https only, or plain HTTP on loopback for tests", () => {
+    const dir = { STUGA_REMOTE_DIR: "/Users/liv/.stuga-remote" };
+    expect(cfg({ ...dir, STUGA_REMOTE_SERVICE: "http://127.0.0.1:18080" }).remote?.service).toBe("http://127.0.0.1:18080");
+    expect(cfg({ ...dir, STUGA_REMOTE_SERVICE: "http://localhost:18080" }).remote?.service).toBe("http://localhost:18080");
+    for (const bad of ["http://api.stuga.dev", "api.stuga.dev", "https://api.stuga.dev/v1", "https://api.stuga.dev/?x=1", "https://liv:pw@api.stuga.dev"]) {
+      expect(() => cfg({ ...dir, STUGA_REMOTE_SERVICE: bad }), bad).toThrow(ConfigError);
+    }
+  });
+
+  it("needs an absolute STUGA_REMOTE_DIR, since an env file does not expand ~", () => {
+    const service = { STUGA_REMOTE_SERVICE: "https://api.stuga.dev" };
+    for (const bad of ["~/.stuga-remote", ".stuga-remote", "remote/dir"]) {
+      expect(() => cfg({ ...service, STUGA_REMOTE_DIR: bad }), bad).toThrow(/absolute/);
     }
   });
 });

@@ -1,3 +1,4 @@
+import type { RemoteAccessEnableRequest, RemoteAccessStatus } from "@stuga/protocol/api/remote-access";
 import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { api } from "../lib/http/client";
 import type { AuditCursor, AuditEvent } from "./audit";
@@ -242,6 +243,8 @@ export interface NodeOperationalSettings {
     public_origin: string;
     /** Further origins browsers may call this node from. */
     extra_origins: string[];
+    /** The remote address once the node is bound, on or off (docs/remote-access.md); null before. */
+    remote_origin: string | null;
     bind: string;
     port: number;
     data_dir: string;
@@ -362,4 +365,12 @@ export const NodeSettings = {
   /** Ask the machine to install `version`, the newest the node knows of; the node restarts on it. */
   installVersion: (version: string) =>
     api<NodeVersion>("/api/node/version/install", { method: "POST", body: JSON.stringify({ version }) }),
+
+  /** The node's remote address and where it stands; `{ available: false }` where the packaging offers none. */
+  getRemoteAccess: () => api<RemoteAccessStatus>("/api/node/remote-access"),
+  /** Turn it on, with a code while the node has no address (or to restore or replace one); answers like the GET. */
+  enableRemoteAccess: (input: RemoteAccessEnableRequest) =>
+    api<RemoteAccessStatus>("/api/node/remote-access/enable", { method: "POST", body: JSON.stringify(input) }),
+  /** Turn it off, keeping the address. */
+  disableRemoteAccess: () => api<RemoteAccessStatus>("/api/node/remote-access/disable", { method: "POST" }),
 };

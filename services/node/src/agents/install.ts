@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MCP_SERVER_KEY } from "@stuga/protocol/domain/node-name";
 import { APP_ROOT } from "../app-root.js";
+import { servedOrigin } from "../http/arrival.js";
 import { error } from "../http/respond.js";
 import type { PublicCall } from "../http/router.js";
 
@@ -252,10 +253,11 @@ function readAction(value: string | null): InstallAction {
 
 /**
  * GET /api/agent-install/:client — public because it hands out no credential:
- * the script points the host at `/mcp`, and OAuth grants the access.
+ * the script points the host at `/mcp`, and OAuth grants the access. At the
+ * origin it was fetched from, so the remote address never gives out the LAN's.
  */
-export async function getAgentInstaller({ env, url, match }: PublicCall): Promise<Response> {
-  const script = installScript(match[1] ?? "", readAction(url.searchParams.get("action")), env.publicOrigin);
+export async function getAgentInstaller({ req, url, match }: PublicCall): Promise<Response> {
+  const script = installScript(match[1] ?? "", readAction(url.searchParams.get("action")), servedOrigin(req));
   if (script === null) return error(404, "unknown agent host");
   return new Response(script, {
     headers: {

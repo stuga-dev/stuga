@@ -132,6 +132,7 @@ These are optional. The app has a neutral default for each.
 | `STUGA_STDIO_ENTRY` | unset: the bundled `stuga-mcp.js` | `""`: no local path an agent outside the container can open | unset |
 | `AI_OLLAMA_DEFAULT_URL` | `http://127.0.0.1:11434` | `http://host.docker.internal:11434` (compose maps the host) | unset |
 | `STUGA_UPGRADE_REQUESTS`, `STUGA_UPGRADE_STATUS` | unset: the node offers no install | unset | the package's helper: `<root>/requests` and `<root>/status/upgrade.json` |
+| `STUGA_REMOTE_SERVICE`, `STUGA_REMOTE_DIR` | unset: the node offers no remote access | unset | unset |
 
 `STUGA_RESTART_HINT` is a full sentence, shown after a change that needs a restart.
 `STUGA_UPGRADE_HINT` is a full sentence too, shown to a node administrator beside a newer version.
@@ -144,6 +145,15 @@ with both set does **About** offer **Update now**. The helper must install nothi
 release's own package, verified.
 `STUGA_STDIO_ENTRY` names the stdio MCP server that agent setup offers. When it is empty, agent
 setup offers none.
+`STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR` offer remote access
+([docs/remote-access.md](../docs/remote-access.md)): the service the node enrolls with first, an
+https origin, and the absolute path of a directory the node shares with the connector, which it
+creates `0750` when missing and refuses when another user owns it or its group or others can write to it. The
+node writes the connector's settings and credential there and listens on `https.sock` in it, so
+`<dir>/https.sock` must fit a unix socket path, 103 bytes. A packaging that sets them also runs the
+connector, or leaves it to the administrator
+([Running the connector yourself](../docs/remote-access.md#running-the-connector-yourself)). With
+only one set, the node logs a warning and offers none.
 
 ## Postgres
 

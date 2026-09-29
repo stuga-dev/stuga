@@ -26,7 +26,8 @@ import {
 } from "@stuga/db";
 import { extractToken, hashConnectorToken, mintConnectorToken, randomBase64url, sha256Hex } from "@stuga/auth";
 import { newAgentId } from "../agents/keys.js";
-import { clientAddress, REQUEST_HOST_HEADER } from "../platform/http-server.js";
+import { REQUEST_HOST_HEADER } from "../platform/http-server.js";
+import { arrivalOf, clientBucket, servedOrigin } from "../http/arrival.js";
 import type { NodeEnv } from "../env.js";
 import { buildAccountContext, Unauthorized } from "../auth/context.js";
 import { error, json } from "../http/respond.js";
@@ -66,16 +67,22 @@ const sensitiveJson = (data: unknown, status: number): Response =>
 /**
  * The node's origin a request came in on: PUBLIC_ORIGIN or one of EXTRA_ORIGINS,
  * matched on the Host the client sent. Discovery answers on that origin, so a
- * client that reached the node by its LAN name is sent back to its LAN name.
+ * client that reached the node by its LAN name is sent back to its LAN name. At
+ * the remote address it is the remote origin, whatever the Host.
  */
 export function requestOrigin(env: Pick<NodeEnv, "publicOrigin" | "extraOrigins">, req: Request): string {
+  if (arrivalOf(req) === "remote") return servedOrigin(req);
   const host = req.headers.get(REQUEST_HOST_HEADER)?.toLowerCase();
   if (!host) return env.publicOrigin;
   return [env.publicOrigin, ...env.extraOrigins].find((origin) => new URL(origin).host === host) ?? env.publicOrigin;
 }
 
-/** Every URL this node answers /mcp at: one resource server, reachable by several names. */
-function mcpResources(env: Pick<NodeEnv, "publicOrigin" | "extraOrigins">): string[] {
+/**
+ * Every URL this node answers /mcp at for this request: one resource server, reachable by several
+ * names on the LAN. At the remote address, the remote /mcp alone; the LAN never names it.
+ */
+function mcpResources(env: Pick<NodeEnv, "publicOrigin" | "extraOrigins">, req: Request): string[] {
+  if (arrivalOf(req) === "remote") return [`${servedOrigin(req)}/mcp`];
   return [env.publicOrigin, ...env.extraOrigins].map((origin) => `${origin}/mcp`);
 }
 
@@ -206,7 +213,7 @@ export function redirectUriMatches(registered: readonly string[], given: string)
  * The standard budget, not the auth one, so a burst cannot lock people out of signing in.
  */
 async function clientBudgetSpent(env: NodeEnv, req: Request, what: "register" | "metadata"): Promise<boolean> {
-  const { success } = await env.rateLimit.limit({ key: `oauth:${what}:${clientAddress(req, env.trustProxyHeaders)}` });
+  const { success } = await env.rateLimit.limit({ key: `oauth:${what}:${clientBucket(req, env.trustProxyHeaders)}` });
   return !success;
 }
 
@@ -362,10 +369,10 @@ export async function handleClientInfo(env: NodeEnv, req: Request): Promise<Resp
  */
 export const CONSENT_PATH = "/oauth/consent";
 
-/** A `resource` names this node's /mcp, whichever of its origins; absent, it is the origin asked. */
-function resourceRefusal(env: NodeEnv, resource: string | null): string | null {
+/** A `resource` names this node's /mcp, whichever of the origins it answers this request on; absent, it is the origin asked. */
+function resourceRefusal(env: NodeEnv, req: Request, resource: string | null): string | null {
   if (resource === null || resource === "") return null;
-  return mcpResources(env).includes(resource.replace(/\/$/, "")) ? null : "resource is not this node's /mcp endpoint";
+  return mcpResources(env, req).includes(resource.replace(/\/$/, "")) ? null : "resource is not this node's /mcp endpoint";
 }
 
 /** Validate the authorize request and hand the browser to the consent screen with the checked parameters. */
@@ -394,7 +401,7 @@ export async function handleAuthorize(env: NodeEnv, req: Request): Promise<Respo
     throw e;
   }
   if (!redirectUriMatches(client.redirect_uris, redirectUri)) return error(400, "redirect_uri mismatch");
-  const badResource = resourceRefusal(env, q.get("resource"));
+  const badResource = resourceRefusal(env, req, q.get("resource"));
   if (badResource) return error(400, badResource);
 
   const consent = new URL(`${requestOrigin(env, req)}${CONSENT_PATH}`);
@@ -550,7 +557,7 @@ export async function handleToken(env: NodeEnv, req: Request): Promise<Response>
   const stringParam = (name: string): string => (typeof params[name] === "string" ? params[name] : "");
   const clientId = stringParam("client_id");
   if (!clientId || clientId.length > MAX_CLIENT_ID_CHARS) return tokenError("invalid_request");
-  if (resourceRefusal(env, stringParam("resource") || null)) return tokenError("invalid_target");
+  if (resourceRefusal(env, req, stringParam("resource") || null)) return tokenError("invalid_target");
 
   if (params.grant_type === "refresh_token") {
     const refreshToken = stringParam("refresh_token");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySecurityHeaders, withSecurityHeaders } from "./security-headers.js";
+import { applySecurityHeaders, withRemoteHeaders, withSecurityHeaders } from "./security-headers.js";
 import { CONSENT_PATH } from "../mcp/oauth.js";
 
 const at = (path: string, init?: RequestInit) => new Request(`https://node.example.test${path}`, init);
@@ -67,5 +67,26 @@ describe("withSecurityHeaders", () => {
     expect(await res.text()).toBe("not found");
     expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+  });
+
+  it("sends no HSTS: the LAN may be plain http", async () => {
+    const res = await withSecurityHeaders(async () => new Response("ok"))(at("/"));
+    expect(res.headers.has("strict-transport-security")).toBe(false);
+  });
+});
+
+describe("withRemoteHeaders", () => {
+  it("adds HSTS for a year, without subdomains or preload, to every answer", async () => {
+    const handler = withRemoteHeaders(withSecurityHeaders(async () => new Response("gone", { status: 503 })));
+    const res = await handler(at("/"));
+    expect(res.headers.get("strict-transport-security")).toBe("max-age=31536000");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+  });
+
+  it("keeps an HSTS the handler set, and the very response object", async () => {
+    const own = new Response(null, { headers: { "strict-transport-security": "max-age=60" } });
+    const res = await withRemoteHeaders(async () => own)(at("/"));
+    expect(res).toBe(own);
+    expect(res.headers.get("strict-transport-security")).toBe("max-age=60");
   });
 });

@@ -1,0 +1,9 @@
+{
+  "status": 200,
+  "body": {
+    "id": "k7f3q2",
+    "hostname": "k7f3q2.mystuga.com",
+    "zone": "mystuga.com",
+    "api": "https://api.stuga.dev"
+  }
+}

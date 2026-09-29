@@ -43,6 +43,7 @@ import type { Ctx } from "../auth/context.js";
 import { canReadDoc } from "../authz/authz.js";
 import { callDatabaseActor, projectedSchema } from "../databases/gate.js";
 import { releaseActor } from "../documents/access.js";
+import { ownOrigins } from "../http/arrival.js";
 import { ZipWriter, type ZipSink } from "../lib/zip.js";
 import { decodeBase64Image, fileName, isKeySafeWorkspaceId, mediaKey, sniffImageMime } from "../media/media.js";
 import { VERSION } from "../version.js";
@@ -470,7 +471,7 @@ export async function writeWorkspaceExport(ctx: Ctx, plan: ExportPlan, sink: Zip
     written: new Set(),
     authors: new Map(),
     origin: new URL(ctx.env.publicOrigin).origin,
-    origins: new Set([ctx.env.publicOrigin, ...ctx.env.extraOrigins].map((o) => new URL(o).origin)),
+    origins: new Set(ownOrigins(ctx.env).map((o) => new URL(o).origin)),
   };
 
   // Rows first: which documents are row pages shows only in the rows. A page sits in its

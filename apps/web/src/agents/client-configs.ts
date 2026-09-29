@@ -1,8 +1,10 @@
 /**
  * What the Agents card hands to each client, built only from the node's
- * AgentSetup, so every config names the one origin the node knows itself by.
- * A client stores one Stuga connection, under the product's own name: which
- * node and which workspace a call acts in is the `workspaces` listing's job.
+ * AgentSetup, so every config names an origin the node knows itself by: a
+ * hosted client the remote address while it is on, a client on the browser's
+ * machine the address the page was opened at. A client stores one Stuga
+ * connection, under the product's own name: which node and which workspace a
+ * call acts in is the `workspaces` listing's job.
  */
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
 import { MCP_BUNDLE_FILENAME, MCP_SERVER_KEY } from "@stuga/protocol/domain/node-name";
@@ -85,12 +87,30 @@ export interface InstallLink {
   withKey: string | null;
 }
 
+/** Where a hosted client, which dials from its vendor's cloud, reaches the node over HTTPS; null where it cannot. */
+function hostedEndpoint(setup: AgentSetup): string | null {
+  if (setup.remote) return setup.remote.mcp_url;
+  return setup.reachable && setup.secure ? setup.mcp_url : null;
+}
+
+/**
+ * Where a client on the browser's machine reaches the node. On the remote
+ * address that machine may be anywhere, so it gets the remote address; anywhere
+ * else PUBLIC_ORIGIN, so a client on the network never goes round by the relay.
+ */
+function localOrigin(setup: AgentSetup, pageOrigin: string | undefined): { url: string; mcpUrl: string; secure: boolean; remote: boolean } {
+  if (setup.remote && pageOrigin === setup.remote.url) {
+    return { url: setup.remote.url, mcpUrl: setup.remote.mcp_url, secure: true, remote: true };
+  }
+  return { url: setup.url, mcpUrl: setup.mcp_url, secure: setup.secure, remote: false };
+}
+
 /**
  * Every client in picker order. A hosted connector dials from its own cloud over
  * HTTPS, so it is offered only when the internet can reach the node that way.
  */
 export function clientTabs(setup: AgentSetup): [ClientTab, ...ClientTab[]] {
-  const hosted = setup.reachable && setup.secure;
+  const hosted = hostedEndpoint(setup) !== null;
   const listed = CLIENT_GROUPS.flatMap((g) => g.clients).filter((t) => t !== "claude" || hosted);
   const [first, ...rest] = listed;
   return first === undefined ? ["other"] : [first, ...rest, "other"];
@@ -122,7 +142,8 @@ function installLinks(mcpUrl: string, name: string, key: string): Record<LinkCli
 }
 
 interface ClientConfigs {
-  mcpUrl: string;
+  /** What a hosted client such as Claude on the web dials; `clientTabs` offers none where nothing can. */
+  hostedMcpUrl: string;
   /** `stuga`: what every config calls this connection, and what Claude Code lists it as. */
   serverKey: string;
   /** The name the downloaded extension is saved under, which the instructions repeat. */
@@ -157,30 +178,33 @@ interface ClientConfigs {
   desktopJson: string | null;
 }
 
-export function clientConfigs(setup: AgentSetup, token: string | null): ClientConfigs {
+/** `pageOrigin` is the origin the page was opened at, `location.origin`. */
+export function clientConfigs(setup: AgentSetup, token: string | null, pageOrigin?: string): ClientConfigs {
   const key = token ?? TOKEN_PLACEHOLDER;
-  const entry = setup.loopback ? setup.stdio.entry : null;
+  const local = localOrigin(setup, pageOrigin);
+  // The node's files are the browser's only on a loopback node, and a page at the remote address is not there.
+  const entry = setup.loopback && !local.remote ? setup.stdio.entry : null;
   const serverKey = MCP_SERVER_KEY;
-  const cliAdd = `claude mcp add -s user --transport http ${serverKey} ${setup.mcp_url}`;
+  const cliAdd = `claude mcp add -s user --transport http ${serverKey} ${local.mcpUrl}`;
   const installer = (client: InstallerClient): InstallerCommands => {
-    const run = (query = "") => `curl -fsSL '${setup.url}/api/agent-install/${client}${query}' | sh`;
+    const run = (query = "") => `curl -fsSL '${local.url}/api/agent-install/${client}${query}' | sh`;
     return { setup: run(), disconnect: run("?action=disconnect"), uninstall: run("?action=uninstall") };
   };
   return {
-    mcpUrl: setup.mcp_url,
+    hostedMcpUrl: hostedEndpoint(setup) ?? setup.mcp_url,
     serverKey,
     bundleFilename: MCP_BUNDLE_FILENAME,
-    cliCommand: setup.secure ? cliAdd : `${cliAdd} --header "Authorization: Bearer ${key}"`,
-    cliNeedsKey: !setup.secure,
+    cliCommand: local.secure ? cliAdd : `${cliAdd} --header "Authorization: Bearer ${key}"`,
+    cliNeedsKey: !local.secure,
     installers: { codex: installer("codex"), antigravity: installer("antigravity") },
-    links: installLinks(setup.mcp_url, serverKey, key),
+    links: installLinks(local.mcpUrl, serverKey, key),
     httpJson: JSON.stringify(
-      { mcpServers: { [serverKey]: { type: "http", url: setup.mcp_url, headers: { Authorization: `Bearer ${key}` } } } },
+      { mcpServers: { [serverKey]: { type: "http", url: local.mcpUrl, headers: { Authorization: `Bearer ${key}` } } } },
       null,
       2,
     ),
-    dshEnv: `STUGA_URL=${setup.url}\nSTUGA_API_KEY=${key}`,
-    piUrlEnv: `export STUGA_URL=${setup.url}`,
+    dshEnv: `STUGA_URL=${local.url}\nSTUGA_API_KEY=${key}`,
+    piUrlEnv: `export STUGA_URL=${local.url}`,
     piKeyEnv: `export STUGA_API_KEY=${key}`,
     desktopJson:
       entry === null
@@ -191,7 +215,7 @@ export function clientConfigs(setup: AgentSetup, token: string | null): ClientCo
                 [serverKey]: {
                   command: setup.stdio.command,
                   args: [entry],
-                  env: { STUGA_URL: setup.url, STUGA_TOKEN: key, STUGA_CLIENT: DESKTOP_CLIENT },
+                  env: { STUGA_URL: local.url, STUGA_TOKEN: key, STUGA_CLIENT: DESKTOP_CLIENT },
                 },
               },
             },

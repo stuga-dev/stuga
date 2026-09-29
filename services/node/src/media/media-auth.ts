@@ -9,8 +9,14 @@ import { constantTimeEqual } from "@stuga/auth";
 import { b64urlDecodeText, b64urlEncodeText, signTicket } from "../auth/signed-ticket.js";
 import { isKeySafeWorkspaceId } from "./media.js";
 
-/** Cookie name for the media read ticket. */
-export const MEDIA_COOKIE = "stuga_media";
+/**
+ * Cookie name for the media read ticket: `__Host-` on https, so the browser holds it to this very
+ * origin (Secure, Path=/, no Domain), which no other name on the same site can set or read. Plain
+ * http cannot carry the prefix.
+ */
+export function mediaCookieName(req: Request): string {
+  return new URL(req.url).protocol === "https:" ? "__Host-stuga_media" : "stuga_media";
+}
 
 /** Short, so losing access bites within a working session; the SPA re-mints well before it lapses. */
 export const MEDIA_TICKET_TTL_SECONDS = 2 * 60 * 60;
@@ -72,6 +78,11 @@ export async function verifyMediaTicket(
   return { alias, workspaceId, expiresAt };
 }
 
+/** The media ticket the request carries, under the name its scheme gives it. */
+export function readMediaCookie(req: Request): string | null {
+  return readCookie(req, mediaCookieName(req));
+}
+
 /** Read one cookie out of a request's Cookie header. */
 export function readCookie(req: Request, name: string): string | null {
   const header = req.headers.get("cookie");
@@ -90,9 +101,12 @@ export interface CookieEnv {
   mediaCookieSameSite: "Lax" | "Strict" | "None";
 }
 
-/** `Cross-Origin-Resource-Policy` for a served image; it must permit what the cookie's SameSite permits. */
-export function mediaCorp(env: CookieEnv): "same-site" | "cross-origin" {
-  return env.mediaCookieSameSite === "None" ? "cross-origin" : "same-site";
+/**
+ * `Cross-Origin-Resource-Policy` for a served image: this origin only, since each of the node's
+ * addresses holds its own cookie. It must permit what the cookie's SameSite permits.
+ */
+export function mediaCorp(env: CookieEnv): "same-origin" | "cross-origin" {
+  return env.mediaCookieSameSite === "None" ? "cross-origin" : "same-origin";
 }
 
 /**
@@ -103,7 +117,7 @@ export function mediaCookieHeader(req: Request, env: CookieEnv, value: string, m
   const secure = new URL(req.url).protocol === "https:";
   const declared = env.mediaCookieSameSite;
   const attrs = [
-    `${MEDIA_COOKIE}=${value}`,
+    `${mediaCookieName(req)}=${value}`,
     "Path=/",
     "HttpOnly",
     `Max-Age=${maxAgeSeconds}`,

@@ -1,0 +1,20 @@
+# Pebble and its DNS test server, for the remote-access integration suite. Throwaway, no volume.
+name: stuga-test-pebble
+services:
+  pebble:
+    # 2.10.1
+    image: ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
+    command: -config /config/pebble-config.json -strict -dnsserver 10.30.50.3:8053
+    environment: [PEBBLE_VA_NOSLEEP=1]
+    volumes: ["./pebble/pebble-config.json:/config/pebble-config.json:ro"]
+    ports: ["127.0.0.1:14000:14000", "127.0.0.1:15000:15000"]
+    networks: { acme: { ipv4_address: 10.30.50.2 } }
+  challtestsrv:
+    # 2.10.1
+    image: ghcr.io/letsencrypt/pebble-challtestsrv@sha256:12ce21884def456bcf9786542113949e1f19dc7738d2c70e156c2d0c38a1405b
+    command: -defaultIPv6 "" -defaultIPv4 10.30.50.3
+    ports: ["127.0.0.1:8055:8055", "127.0.0.1:8053:8053/udp", "127.0.0.1:8053:8053/tcp"]
+    networks: { acme: { ipv4_address: 10.30.50.3 } }
+networks:
+  acme:
+    ipam: { config: [{ subnet: 10.30.50.0/24 }] }

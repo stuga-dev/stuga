@@ -109,7 +109,7 @@ function ClientTabs({
 }) {
   const tabs = clientTabs(setup);
   const active = tab !== null && tabs.includes(tab) ? tab : tabs[0];
-  const configs = clientConfigs(setup, mint.minted?.token ?? null);
+  const configs = clientConfigs(setup, mint.minted?.token ?? null, window.location.origin);
   const options: SelectorProps["options"] = [
     ...CLIENT_GROUPS.map((group) => ({
       type: "section" as const,
@@ -130,7 +130,7 @@ function ClientTabs({
         searchPlaceholder="Search apps"
         width="min(100%, 20rem)"
       />
-      {active === "claude" && <ClaudeConnectorTab mcpUrl={configs.mcpUrl} />}
+      {active === "claude" && <ClaudeConnectorTab mcpUrl={configs.hostedMcpUrl} />}
       {active === "claude-desktop" && (
         <ClaudeDesktopTab
           canBundle={setup.bundle.available}

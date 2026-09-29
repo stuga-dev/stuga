@@ -349,6 +349,58 @@ TABLE node_ai_settings
   CONSTRAINT node_ai_settings_search_max_distance_check CHECK (((search_max_distance > (0)::double precision) AND (search_max_distance <= (2)::double precision)))
   INDEX node_ai_settings_pkey CREATE UNIQUE INDEX node_ai_settings_pkey ON public.node_ai_settings USING btree (id)
 
+TABLE node_remote_access
+  acme_account_directory text
+  acme_account_url text
+  acme_directory text
+  acme_profile text
+  acme_reissue_before timestamp with time zone
+  api_url text
+  binding_failing_since timestamp with time zone
+  binding_thumbprint text
+  bound_at timestamp with time zone
+  ca_terms_accepted_at timestamp with time zone
+  ca_terms_accepted_by text
+  ca_terms_url text
+  cert_directory text
+  cert_failures integer NOT NULL DEFAULT 0
+  cert_not_after timestamp with time zone
+  cert_not_before timestamp with time zone
+  cert_renew_at timestamp with time zone
+  cert_retry_at timestamp with time zone
+  cert_serial text
+  checkin_at timestamp with time zone
+  checkin_next_at timestamp with time zone
+  connector_config_changed_at timestamp with time zone
+  connector_config_sha256 text
+  credential_expires_at timestamp with time zone
+  credential_failures integer NOT NULL DEFAULT 0
+  credential_issued_at timestamp with time zone
+  credential_not_before timestamp with time zone
+  credential_refresh_at timestamp with time zone
+  credential_retry_at timestamp with time zone
+  credential_ttl integer
+  enabled boolean NOT NULL DEFAULT false
+  enabled_at timestamp with time zone
+  enabled_by text
+  hostname text
+  id boolean NOT NULL DEFAULT true
+  last_error jsonb
+  probe_at timestamp with time zone
+  probe_failures integer NOT NULL DEFAULT 0
+  probe_ok_at timestamp with time zone
+  relays jsonb NOT NULL DEFAULT '[]'::jsonb
+  remote_id text
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+  CONSTRAINT node_remote_access_api_url_check CHECK ((api_url ~ '^(https://[a-z0-9.-]+(:[0-9]{1,5})?|http://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?)$'::text))
+  CONSTRAINT node_remote_access_binding_thumbprint_check CHECK ((binding_thumbprint ~ '^[A-Za-z0-9_-]{43}$'::text))
+  CONSTRAINT node_remote_access_check CHECK (((NOT enabled) OR ((remote_id IS NOT NULL) AND (hostname IS NOT NULL) AND (api_url IS NOT NULL) AND (ca_terms_accepted_at IS NOT NULL))))
+  CONSTRAINT node_remote_access_hostname_check CHECK ((hostname ~ '^[0-9bcdfghjkmnpqrstvwxz]{6,12}(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'::text))
+  CONSTRAINT node_remote_access_id_check CHECK (id)
+  CONSTRAINT node_remote_access_pkey PRIMARY KEY (id)
+  CONSTRAINT node_remote_access_remote_id_check CHECK ((remote_id ~ '^[0-9bcdfghjkmnpqrstvwxz]{6,12}$'::text))
+  INDEX node_remote_access_pkey CREATE UNIQUE INDEX node_remote_access_pkey ON public.node_remote_access USING btree (id)
+
 TABLE node_settings
   ai_usage_retention_days integer
   ask_thread_retention_days integer

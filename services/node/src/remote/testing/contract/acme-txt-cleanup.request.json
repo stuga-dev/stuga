@@ -1,0 +1,14 @@
+{
+  "protected": {
+    "alg": "EdDSA",
+    "typ": "stuga-node+jwt",
+    "kid": "epnrdAhv6ihfu57nfrZyWa5dBDocHkmhCzeYSLAcgtE"
+  },
+  "payload": {
+    "pv": 1,
+    "iss": "k7f3q2",
+    "aud": "https://api.stuga.dev/v1/acme/txt/cleanup",
+    "iat": 1790900000,
+    "exp": 1790900060
+  }
+}

@@ -27,9 +27,13 @@ filled in: pick the app under **App**. Use it when it disagrees with an example 
   the machine can reach. **Your own AI** gives each a link that adds the node
   ([Apps that install from a link](#apps-that-install-from-a-link)).
 - **Claude on the web and on mobile** add custom connectors that Anthropic's cloud dials. Those need
-  the node at a public HTTPS origin, set as `PUBLIC_ORIGIN`. **Your own AI** offers **Claude**
-  only when `PUBLIC_ORIGIN` is https and not a loopback, private or local-network address. Ways to
-  give a node a public HTTPS origin are in [network-access.md](network-access.md#https).
+  the node at a public HTTPS origin: `PUBLIC_ORIGIN`, or its [remote address](remote-access.md).
+  **Your own AI** offers **Claude** while remote access is on, with the remote address's `/mcp`, and
+  otherwise only when `PUBLIC_ORIGIN` is https and not a loopback, private or local-network address.
+  Ways to give a node a public HTTPS origin are in [network-access.md](network-access.md#https).
+
+Apps on your own machine get the address the page is open at: `PUBLIC_ORIGIN` anywhere on the
+network, so they never go round by the relay, and the remote address when the page was opened there.
 
 An app you connect sees what its model reads and writes. A hosted one, such as Claude on the web,
 handles it on its vendor's servers.
@@ -180,7 +184,8 @@ Cowork does not ask for plugin settings. Claude on the web loads only its skill.
 ## Claude on the web
 
 In Claude, open Settings → Connectors → **Add custom connector** and paste the MCP endpoint
-**Your own AI** shows (`<PUBLIC_ORIGIN>/mcp`). Claude asks you to sign in to Stuga, and the
+**Your own AI** shows: `<PUBLIC_ORIGIN>/mcp`, or the remote address's `/mcp` while
+[remote access](remote-access.md) is on. Claude asks you to sign in to Stuga, and the
 connection appears under **Connected agents**.
 
 ## Codex and Google Antigravity

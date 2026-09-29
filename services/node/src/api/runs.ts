@@ -198,7 +198,7 @@ export async function proposeEdit({ ctx, req, match }: WorkspaceCall): Promise<R
   });
   if (outcome.kind === "error") return error(outcome.retryable ? 409 : (outcome.status ?? 400), outcome.message);
   // The stdio client does not know the app's origin.
-  const answer = proposeBody(outcome, `${ctx.env.publicOrigin}/doc/${docId}`);
+  const answer = proposeBody(outcome, `${ctx.servedOrigin}/doc/${docId}`);
   if (!ctx.isAgent || outcome.kind === "noop") return json(answer);
   return json({ ...answer, ...(await docInstructionLabelsOrNone(ctx, outcome.doc)) });
 }

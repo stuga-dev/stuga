@@ -53,6 +53,8 @@ export function SettingsLayout() {
   const [me, setMe] = useState("");
   /** A newer version the node knows of, which marks About in the rail; only an administrator is told. */
   const [update, setUpdate] = useState<AvailableUpdate | null>(null);
+  /** Whether the packaging offers remote access, which lists it in the rail. */
+  const [remoteOffered, setRemoteOffered] = useState(false);
 
   const load = useCallback(async () => {
     // Together, so the gated groups appear at once instead of growing the rail under the pointer.
@@ -78,6 +80,10 @@ export function SettingsLayout() {
     let alive = true;
     NodeSettings.version().then(
       (v) => alive && setUpdate(v.update.available),
+      () => {},
+    );
+    NodeSettings.getRemoteAccess().then(
+      (r) => alive && setRemoteOffered(r.available),
       () => {},
     );
     return () => {
@@ -148,7 +154,9 @@ export function SettingsLayout() {
 
           {isReady && isNodeAdmin && (
             <SideNavSection title="This node">
-              {NODE_CATEGORIES.map((c) => item(c.label, c.icon, `/settings/node/${c.key}`, c.key === "about" ? updateMark : undefined))}
+              {NODE_CATEGORIES.filter((c) => c.key !== "remote" || remoteOffered).map((c) =>
+                item(c.label, c.icon, `/settings/node/${c.key}`, c.key === "about" ? updateMark : undefined),
+              )}
             </SideNavSection>
           )}
         </SideNav>
