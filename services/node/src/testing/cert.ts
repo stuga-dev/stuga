@@ -22,6 +22,10 @@ export interface TestCertOptions {
   publicKey?: KeyObject;
   /** Signs the certificate in place of its own key, as a CA's does. */
   issuerKey?: KeyObject;
+  /** An authority key identifier with this keyIdentifier, as a CA's leaf carries. */
+  authorityKeyId?: Buffer;
+  /** The serial's bytes, big-endian; a zero byte goes in front of a high first bit. Default 16 random ones. */
+  serial?: Buffer;
 }
 
 export interface TestCert {
@@ -46,8 +50,8 @@ export function makeTestCert(options: TestCertOptions = {}): TestCert {
   const notAfter = options.notAfter ?? new Date(notBefore.getTime() + 24 * 60 * 60 * 1000);
   const spki = (options.publicKey ?? createPublicKey(privateKey)).export({ type: "spki", format: "der" });
 
-  const serialBytes = randomBytes(16);
-  serialBytes[0] = (serialBytes[0]! & 0x7f) | 0x01;
+  const serialBytes = options.serial ?? randomBytes(16);
+  if (!options.serial) serialBytes[0] = (serialBytes[0]! & 0x7f) | 0x01;
   const signatureAlgorithm = seq(oid(hash === "sha384" ? "1.2.840.10045.4.3.3" : "1.2.840.10045.4.3.2"));
   const name = seq(set(seq(oid("2.5.4.3"), tlv(0x0c, Buffer.from("Stuga test")))));
   const names = [
@@ -58,7 +62,8 @@ export function makeTestCert(options: TestCertOptions = {}): TestCert {
       return tlv(0x87, bytes);
     }),
   ];
-  const extensions = tlv(0xa3, seq(seq(oid("2.5.29.17"), tlv(0x04, seq(...names)))));
+  const akid = options.authorityKeyId ? [seq(oid("2.5.29.35"), tlv(0x04, seq(tlv(0x80, options.authorityKeyId))))] : [];
+  const extensions = tlv(0xa3, seq(seq(oid("2.5.29.17"), tlv(0x04, seq(...names))), ...akid));
   const tbs = seq(
     tlv(0xa0, integer(Buffer.from([2]))),
     integer(serialBytes),

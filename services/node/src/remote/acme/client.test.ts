@@ -1,167 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { X509Certificate, createPublicKey, generateKeyPairSync, verify, type KeyObject } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { X509Certificate } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeTestCert } from "../../testing/cert.js";
 import { generateP256 } from "../keys.js";
-import { AcmeClient, AcmeError, fetchDirectory, retryAfterSeconds } from "./client.js";
-import { csrDer, toPem } from "./der.js";
-import type { AcmeResponse, AcmeTransport } from "./transport.js";
+import { FAKE_CA, fakeCa } from "../testing/fake-ca.js";
+import { AcmeClient, AcmeError, fetchDirectory, fetchRenewalInfo, retryAfterSeconds } from "./client.js";
+import { ariCertId, csrDer, toPem } from "./der.js";
+import type { AcmeTransport } from "./transport.js";
 
-const CA = "https://ca.stuga.test";
+const CA = FAKE_CA;
 const HOST = "k7f3q2.remote.stuga.test";
-
-interface Posted {
-  url: string;
-  body: string;
-  header: { alg: string; nonce: string; url: string; kid?: string; jwk?: Record<string, string> };
-  payload: string;
-  signature: Buffer;
-}
-
-/** Just enough DER to take the public key out of a PKCS#10 request: its info's third element. */
-function csrPublicKey(der: Buffer): KeyObject {
-  const read = (buf: Buffer, at: number) => {
-    let len = buf[at + 1]!;
-    let start = at + 2;
-    if (len & 0x80) {
-      const n = len & 0x7f;
-      len = 0;
-      for (let i = 0; i < n; i++) len = len * 256 + buf[start + i]!;
-      start += n;
-    }
-    return { start, end: start + len };
-  };
-  const outer = read(der, 0);
-  const info = read(der, outer.start);
-  let at = info.start;
-  at = read(der, at).end; // version
-  at = read(der, at).end; // subject
-  const spki = read(der, at);
-  return createPublicKey({ key: der.subarray(at, spki.end), format: "der", type: "spki" });
-}
-
-/**
- * An ACME CA in memory: one account, one order at a time, dns-01 only. `badNonces` refuses that
- * many signed requests for their nonce first; `authzPolls` answers pending that many times.
- */
-function fakeCa(opts: { badNonces?: number; authzPolls?: number; failAuthz?: boolean; failCert?: boolean; retryAfter?: string } = {}) {
-  let nonce = 0;
-  let badNonces = opts.badNonces ?? 0;
-  let authzPolls = opts.authzPolls ?? 1;
-  const issued = new Set<string>();
-  const posted: Posted[] = [];
-  const caKey = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
-  let accountKey: KeyObject | null = null;
-  const state = { order: "pending", authz: "pending", challenge: "pending", chain: "" };
-  const newNonce = () => {
-    const n = `nonce-${++nonce}`;
-    issued.add(n);
-    return n;
-  };
-  const answer = (status: number, body: unknown, headers: Record<string, string> = {}): AcmeResponse => ({
-    status,
-    headers: new Headers({ "replay-nonce": newNonce(), ...headers }),
-    body: new Uint8Array(Buffer.from(typeof body === "string" ? body : JSON.stringify(body))),
-  });
-  const problem = (status: number, type: string, detail: string) => answer(status, { type: `urn:ietf:params:acme:error:${type}`, detail });
-
-  const transport: AcmeTransport = {
-    async request(url, init) {
-      const path = url.slice(CA.length);
-      if (init.method === "GET" && path === "/dir") {
-        return answer(200, {
-          newNonce: `${CA}/nonce`,
-          newAccount: `${CA}/acct`,
-          newOrder: `${CA}/order`,
-          revokeCert: `${CA}/revoke`,
-          keyChange: `${CA}/key-change`,
-          renewalInfo: `${CA}/ari`,
-          someFutureMember: { anything: true },
-          meta: { termsOfService: `${CA}/terms`, profiles: { classic: "x" }, website: "https://ca.stuga.test" },
-        });
-      }
-      if (init.method === "HEAD" && path === "/nonce") return answer(200, "");
-      const jws = JSON.parse(init.body!) as { protected: string; payload: string; signature: string };
-      const header = JSON.parse(Buffer.from(jws.protected, "base64url").toString()) as Posted["header"];
-      const p: Posted = { url, body: init.body!, header, payload: jws.payload, signature: Buffer.from(jws.signature, "base64url") };
-      posted.push(p);
-      if (!issued.delete(header.nonce)) return problem(400, "badNonce", "unknown nonce");
-      if (badNonces > 0) {
-        badNonces -= 1;
-        return problem(400, "badNonce", "try again");
-      }
-      const key = header.jwk ? createPublicKey({ key: header.jwk, format: "jwk" }) : accountKey!;
-      if (!verify("sha256", Buffer.from(`${jws.protected}.${jws.payload}`), { key, dsaEncoding: "ieee-p1363" }, p.signature)) {
-        return problem(400, "malformed", "bad signature");
-      }
-      const payload = jws.payload ? (JSON.parse(Buffer.from(jws.payload, "base64url").toString()) as Record<string, unknown>) : null;
-      switch (path) {
-        case "/acct":
-          accountKey = key;
-          return answer(201, { status: "valid" }, { location: `${CA}/acct/1` });
-        case "/order":
-          // A valid authorization is reused, as Let's Encrypt does for 30 days; any other starts over.
-          if (state.authz === "valid") state.order = "ready";
-          else Object.assign(state, { order: "pending", authz: "pending", challenge: "pending" });
-          return answer(201, { status: state.order, authorizations: [`${CA}/authz/1`], finalize: `${CA}/finalize/1`, identifiers: payload!.identifiers }, { location: `${CA}/order/1` });
-        case "/authz/1":
-          if (payload?.status === "deactivated") {
-            // RFC 8555 7.5.2: only a pending or valid authorization can be deactivated.
-            if (state.authz !== "pending" && state.authz !== "valid") return problem(403, "malformed", `the authorization is ${state.authz}`);
-            state.authz = "deactivated";
-          } else if (state.challenge === "processing" && --authzPolls <= 0) {
-            state.authz = opts.failAuthz ? "invalid" : "valid";
-            state.challenge = state.authz;
-            if (state.authz === "valid") state.order = "ready";
-          }
-          return answer(
-            200,
-            {
-              status: state.authz,
-              identifier: { type: "dns", value: HOST },
-              challenges: [
-                { type: "http-01", url: `${CA}/chall/http`, token: "t-http", status: "pending" },
-                {
-                  type: "dns-01",
-                  url: `${CA}/chall/1`,
-                  token: "t-dns",
-                  status: state.challenge,
-                  ...(state.authz === "invalid" ? { error: { type: "urn:ietf:params:acme:error:incorrectResponse", detail: "no TXT" } } : {}),
-                },
-              ],
-            },
-            opts.retryAfter ? { "retry-after": opts.retryAfter } : {},
-          );
-        case "/chall/1":
-          state.challenge = "processing";
-          return answer(200, { type: "dns-01", status: "processing" });
-        case "/finalize/1": {
-          const csr = Buffer.from(payload!.csr as string, "base64url");
-          const leaf = makeTestCert({ dnsNames: [HOST], publicKey: csrPublicKey(csr), issuerKey: caKey });
-          state.chain = leaf.cert + makeTestCert({ dnsNames: ["ca.stuga.test"], privateKey: caKey }).cert;
-          state.order = "valid";
-          return answer(200, { status: "processing" });
-        }
-        case "/order/1":
-          return answer(200, {
-            status: state.order,
-            authorizations: [`${CA}/authz/1`],
-            finalize: `${CA}/finalize/1`,
-            ...(state.order === "valid" ? { certificate: `${CA}/cert/1` } : {}),
-          });
-        case "/cert/1":
-          if (opts.failCert) return problem(500, "serverInternal", "no certificate today");
-          return answer(200, state.chain, { "content-type": "application/pem-certificate-chain" });
-        default:
-          return problem(404, "malformed", "no such resource");
-      }
-    },
-  };
-  return { transport, posted, state };
-}
 
 const noSleep = { now: Date.now, sleep: async () => {} };
 
@@ -313,6 +164,73 @@ describe("the ACME client", () => {
     expect(err.is("rateLimited")).toBe(true);
   });
 
+  it("names the CA's renewal information in the directory, and nothing that is not a URL", async () => {
+    expect((await fetchDirectory(fakeCa().transport, `${CA}/dir`)).renewalInfo).toBe(`${CA}/ari`);
+    expect((await fetchDirectory(fakeCa({ renewalInfo: false }).transport, `${CA}/dir`)).renewalInfo).toBeUndefined();
+    const odd: AcmeTransport = {
+      async request() {
+        const dir = { newNonce: `${CA}/n`, newAccount: `${CA}/a`, newOrder: `${CA}/o`, renewalInfo: { url: `${CA}/ari` } };
+        return { status: 200, headers: new Headers(), body: new Uint8Array(Buffer.from(JSON.stringify(dir))) };
+      },
+    };
+    expect(await fetchDirectory(odd, `${CA}/dir`)).not.toHaveProperty("renewalInfo");
+  });
+
+  it("names the certificate it renews, and orders again without that when the CA refuses it", async () => {
+    const ca = fakeCa();
+    const c = await client(ca);
+    await c.ensureAccount();
+    await c.issue({ hostname: HOST, key: generateP256(), replaces: "aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE", dns: dns() });
+    expect(ca.orders).toEqual([{ identifiers: [{ type: "dns", value: HOST }], replaces: "aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE" }]);
+
+    ca.refuseReplaces("alreadyReplaced");
+    const chain = await c.issue({ hostname: HOST, key: generateP256(), replaces: "aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE", dns: dns() });
+    expect(new X509Certificate(chain).subjectAltName).toBe(`DNS:${HOST}`);
+    expect(ca.orders.slice(1)).toEqual([
+      { identifiers: [{ type: "dns", value: HOST }], replaces: "aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE" },
+      { identifiers: [{ type: "dns", value: HOST }] },
+    ]);
+  });
+
+  it("does not order again without it when the refusal is a rate limit", async () => {
+    const ca = fakeCa();
+    const c = await client(ca);
+    await c.ensureAccount();
+    ca.refuseReplaces("rateLimited");
+    const err = (await c.issue({ hostname: HOST, key: generateP256(), replaces: "x.y", dns: dns() }).catch((e: unknown) => e)) as AcmeError;
+    expect(err.is("rateLimited")).toBe(true);
+    expect(ca.orders).toHaveLength(1);
+  });
+
+  it("reads the CA's renewal window, with Retry-After held between an hour and a day", async () => {
+    const ca = fakeCa();
+    const start = new Date("2026-10-20T00:00:00Z");
+    const end = new Date("2026-10-21T00:00:00Z");
+    const read = async (retryAfter?: string) => {
+      ca.setAri("*", { window: { start, end }, ...(retryAfter !== undefined ? { retryAfter } : {}) });
+      return fetchRenewalInfo(ca.transport, `${CA}/ari`, "aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE");
+    };
+    expect(await read("21600")).toEqual({ start, end, explanationUrl: `${CA}/ari-docs`, retryAfterMs: 6 * 3_600_000 });
+    expect(ca.ariRequests.at(-1)).toBe("aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE");
+    expect((await read("60")).retryAfterMs).toBe(3_600_000);
+    expect((await read("604800")).retryAfterMs).toBe(24 * 3_600_000);
+    expect((await read()).retryAfterMs).toBe(6 * 3_600_000);
+    expect((await read("soon")).retryAfterMs).toBe(6 * 3_600_000);
+  });
+
+  it("takes a window that ends before it starts, an answer that is no window, or an error, for no answer", async () => {
+    const ca = fakeCa();
+    const get = () => fetchRenewalInfo(ca.transport, `${CA}/ari`, "a.b");
+    ca.setAri("*", { window: { start: new Date("2026-10-21T00:00:00Z"), end: new Date("2026-10-21T00:00:00Z") } });
+    await expect(get()).rejects.toBeInstanceOf(AcmeError);
+    ca.setAri("*", { body: '{"suggestedWindow":{"start":"soon"}}' });
+    await expect(get()).rejects.toBeInstanceOf(AcmeError);
+    ca.setAri("*", { body: "<html>" });
+    await expect(get()).rejects.toBeInstanceOf(AcmeError);
+    ca.setAri("*", { status: 503, body: '{"type":"urn:ietf:params:acme:error:serverInternal","detail":"busy"}' });
+    await expect(get()).rejects.toMatchObject({ status: 503, detail: "busy" });
+  });
+
   it("reads Retry-After in seconds or as a date", () => {
     expect(retryAfterSeconds(new Headers({ "retry-after": "120" }))).toBe(120);
     const now = Date.parse("2026-10-02T00:00:00Z");
@@ -340,5 +258,60 @@ describe("the certificate request", () => {
     const sig = der.subarray(der.indexOf(0x30, bitString));
     expect(sig[0]).toBe(0x30);
     expect(sig.length).toBeGreaterThanOrEqual(70);
+  });
+});
+
+/** RFC 9773 appendix A. */
+const RFC_9773_EXAMPLE = `-----BEGIN CERTIFICATE-----
+MIIBQzCB66ADAgECAgUAh2VDITAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpFeGFt
+cGxlIENBMCIYDzAwMDEwMTAxMDAwMDAwWhgPMDAwMTAxMDEwMDAwMDBaMBYxFDAS
+BgNVBAMTC2V4YW1wbGUuY29tMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEeBZu
+7cbpAYNXZLbbh8rNIzuOoqOOtmxA1v7cRm//AwyMwWxyHz4zfwmBhcSrf47NUAFf
+qzLQ2PPQxdTXREYEnKMjMCEwHwYDVR0jBBgwFoAUaYhba4dGQEHhs3uEe6CuLN4B
+yNQwCgYIKoZIzj0EAwIDRwAwRAIge09+S5TZAlw5tgtiVvuERV6cT4mfutXIlwTb
++FYN/8oCIClDsqBklhB9KAelFiYt9+6FDj3z4KGVelYM5MdsO3pK
+-----END CERTIFICATE-----
+`;
+
+const derOf = (pem: string): Buffer => Buffer.from(pem.replace(/-----[^-]+-----|\s/g, ""), "base64");
+
+describe("a certificate's identifier for renewal information", () => {
+  it("is the RFC's for its example certificate, the serial's leading zero byte kept", () => {
+    expect(ariCertId(derOf(RFC_9773_EXAMPLE))).toBe("aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE");
+  });
+
+  it("reads a leaf a CA signed with openssl, as Let's Encrypt's are made", () => {
+    const dir = mkdtempSync(join(tmpdir(), "stuga-ari-"));
+    dirs.push(dir);
+    const at = (name: string) => join(dir, name);
+    const openssl = (...args: string[]) => execFileSync("openssl", args, { encoding: "utf8", stdio: "pipe", cwd: dir });
+    openssl("ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "ca.key");
+    writeFileSync(
+      at("ext.cnf"),
+      "[ca]\nbasicConstraints=critical,CA:true\nsubjectKeyIdentifier=hash\n[leaf]\nauthorityKeyIdentifier=keyid:always\nsubjectAltName=DNS:k7f3q2.mystuga.com\n",
+    );
+    openssl("req", "-new", "-key", "ca.key", "-subj", "/CN=Stuga test CA", "-out", "ca.csr");
+    openssl("x509", "-req", "-in", "ca.csr", "-signkey", "ca.key", "-days", "1", "-extfile", "ext.cnf", "-extensions", "ca", "-out", "ca.pem");
+    openssl("ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "leaf.key");
+    openssl("req", "-new", "-key", "leaf.key", "-subj", "/CN=k7f3q2.mystuga.com", "-out", "leaf.csr");
+    openssl("x509", "-req", "-in", "leaf.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-set_serial", "0x87654321", "-days", "1",
+      "-extfile", "ext.cnf", "-extensions", "leaf", "-out", "leaf.pem");
+    const text = openssl("x509", "-in", "leaf.pem", "-noout", "-text");
+    const keyId = /keyid:([0-9A-F:]+)/.exec(text)![1]!.replace(/:/g, "");
+    expect(ariCertId(derOf(readFileSync(at("leaf.pem"), "utf8")))).toBe(
+      `${Buffer.from(keyId, "hex").toString("base64url")}.${Buffer.from("0087654321", "hex").toString("base64url")}`,
+    );
+  });
+
+  it("is none for a certificate with no authority key identifier, or bytes that are no certificate", () => {
+    expect(ariCertId(makeTestCert().der)).toBeNull();
+    expect(ariCertId(Buffer.from("3003020101", "hex"))).toBeNull();
+    expect(ariCertId(Buffer.from([0x30, 0x84, 0xff, 0xff, 0xff, 0xff]))).toBeNull();
+    expect(ariCertId(Buffer.alloc(0))).toBeNull();
+  });
+
+  it("keeps a serial without a high bit as it is", () => {
+    const leaf = makeTestCert({ serial: Buffer.from("01020304", "hex"), authorityKeyId: Buffer.from("aabb", "hex") });
+    expect(ariCertId(leaf.der)).toBe("qrs.AQIDBA");
   });
 });
