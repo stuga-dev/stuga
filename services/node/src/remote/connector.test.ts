@@ -265,6 +265,63 @@ describe("the desired state", () => {
     expect(c.running(null)).toBe(false);
   });
 
+  it("takes a status from before the line was last asked for as no answer, running or not", async () => {
+    // A node restarted an hour after the connector last said it ran: it asks again at start.
+    const { c, wrote, at } = control();
+    report({ state: "running", config_sha: SHA }, T0 - 60 * MIN);
+    await c.want(ON);
+    expect(wrote()).toBe(1);
+    await c.read();
+    expect(c.running(SHA)).toBe(false);
+    at(MIN);
+    await c.reconcile();
+    expect(wrote()).toBe(2);
+
+    report({ state: "running", config_sha: SHA }, T0 + MIN + 1_000);
+    at(MIN + 1_000);
+    await c.reconcile();
+    expect(c.running(SHA)).toBe(true);
+    at(10 * MIN);
+    await c.reconcile();
+    expect(wrote()).toBe(2);
+  });
+
+  it("leaves a runtime without the connector be while asked on, and takes it as off", async () => {
+    const { c, wrote, at } = control();
+    await c.want(ON);
+    expect(wrote()).toBe(1);
+    report({ state: "unavailable", message: "this runtime has no connector" }, T0 + 1_000);
+    at(3 * 60 * MIN);
+    await c.reconcile();
+    expect(wrote()).toBe(1);
+    expect(await c.report()).toMatchObject({ status: { state: "unavailable" }, retryAt: null, behindSince: null });
+    await c.want("off");
+    at(4 * 60 * MIN);
+    report({ state: "unavailable" }, T0 + 4 * 60 * MIN);
+    await c.reconcile();
+    expect(wrote()).toBe(2);
+    expect(await c.report()).toMatchObject({ retryAt: null, behindSince: null });
+  });
+
+  it("reports since when the connector hasn't done what was asked, once it was asked again", async () => {
+    const { c, at } = control();
+    await c.want(ON);
+    expect((await c.report()).behindSince).toBeNull();
+    report({ state: "stopped" }, T0 + 1_000);
+    at(MIN);
+    await c.reconcile();
+    expect((await c.report()).behindSince).toEqual(new Date(T0));
+    report({ state: "running", config_sha: SHA }, T0 + 2 * MIN);
+    at(2 * MIN);
+    await c.reconcile();
+    expect((await c.report()).behindSince).toBeNull();
+    // Off is nobody's to worry about.
+    await c.want("off");
+    at(10 * MIN);
+    await c.reconcile();
+    expect((await c.report()).behindSince).toBeNull();
+  });
+
   it("says once why it can't write, and writes once it can", async () => {
     rmSync(join(work, "requests"), { recursive: true });
     const { c, errors, at } = control();

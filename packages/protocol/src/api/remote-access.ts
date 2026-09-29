@@ -27,10 +27,15 @@ export type RemoteErrorCode =
   | "socket_path_too_long"
   /** Worked out from the state rather than kept: the certificate ran out and no new one is here yet. */
   | "certificate_expired"
-  /** Worked out from the connector's status: it failed for a reason that passes, and is asked again at `retry_at`. */
+  /**
+   * Worked out from the connector's status: it failed for a reason that passes, or has not started
+   * since it was asked, and is asked again at `retry_at`.
+   */
   | "connector_failed"
   /** Worked out from the connector's status: the packaging refused to run it, until an administrator retries. */
-  | "connector_refused";
+  | "connector_refused"
+  /** Worked out from the connector's status: this installation has no connector. */
+  | "connector_unavailable";
 
 /** What the packaging that runs the connector last reported (docs/remote-access.md). */
 export type ConnectorState = "installing" | "running" | "stopped" | "refused" | "failed" | "unavailable";

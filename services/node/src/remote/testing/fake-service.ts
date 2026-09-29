@@ -82,6 +82,8 @@ export interface FakeRemoteService {
   setAcmeDirectory(url: string): void;
   setCredentialTtl(seconds: number): void;
   setCheckinInterval(seconds: number): void;
+  /** The relays check-ins name from now on. */
+  setRelays(relays: RelayEntry[]): void;
   /** Hold every answer until `resume`. */
   pause(): void;
   resume(): void;
@@ -179,7 +181,7 @@ export async function startFakeRemoteService(opts: FakeRemoteServiceOptions): Pr
   let checkinInterval = opts.checkinInterval ?? 21_600;
   let minProtocol = opts.minProtocol ?? 1;
   let reissueBefore: number | null = null;
-  const relays: RelayEntry[] = opts.relays ?? [
+  let relays: RelayEntry[] = opts.relays ?? [
     {
       name: "relay-1",
       addr: `relay-1.${zone}`,
@@ -519,6 +521,9 @@ export async function startFakeRemoteService(opts: FakeRemoteServiceOptions): Pr
     },
     setCheckinInterval(seconds) {
       checkinInterval = seconds;
+    },
+    setRelays(next) {
+      relays = next;
     },
     pause() {
       paused = true;

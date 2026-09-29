@@ -21,13 +21,15 @@ const ERROR_STATE = new Set<string>([
   "remote_dir_unusable",
   "socket_path_too_long",
   "connector_refused",
+  "connector_unavailable",
 ]);
 
 /**
  * The error the page shows. One an administrator must act on comes first; then what the state
- * itself says, never kept, so it goes when the state does: a refused connector, an expired
- * certificate, a failed connector; then the error kept. `connector` is there where the packaging
- * runs the connector.
+ * itself says, never kept, so it goes when the state does: a refused or missing connector, an
+ * expired certificate (after a kept reason renewal is stuck, which says more), a failed connector,
+ * one not running what it was asked to; then the error kept. `connector` is there where the
+ * packaging runs the connector.
  */
 export function shownError(row: NodeRemoteAccessRow, now: Date, connector?: ConnectorReport): RemoteError | null {
   const kept = row.last_error as RemoteError | null;
@@ -38,16 +40,19 @@ export function shownError(row: NodeRemoteAccessRow, now: Date, connector?: Conn
   if (status?.state === "refused") {
     return { code: "connector_refused", message: status.message || "The connector was refused.", at: status.at };
   }
+  if (status?.state === "unavailable") {
+    return { code: "connector_unavailable", message: status.message || "This installation doesn't include the connector.", at: status.at };
+  }
   if (row.cert_not_after !== null && row.cert_not_after.getTime() <= now.getTime()) {
+    if (kept && errorKind(kept.code) === "issuance") return kept;
     return { code: "certificate_expired", message: "The certificate expired.", at: row.cert_not_after.toISOString() };
   }
+  const retry = connector?.retryAt ? { retry_at: connector.retryAt.toISOString() } : {};
   if (status?.state === "failed") {
-    return {
-      code: "connector_failed",
-      message: status.message || "The connector failed.",
-      at: status.at,
-      ...(connector?.retryAt ? { retry_at: connector.retryAt.toISOString() } : {}),
-    };
+    return { code: "connector_failed", message: status.message || "The connector failed.", at: status.at, ...retry };
+  }
+  if (connector?.behindSince) {
+    return { code: "connector_failed", message: "The connector isn't running.", at: connector.behindSince.toISOString(), ...retry };
   }
   return kept;
 }

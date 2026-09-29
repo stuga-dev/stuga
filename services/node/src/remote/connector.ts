@@ -3,7 +3,8 @@
  * `on <sha-256 of the connector's settings>` or `off`, as one line the packaging reads, and reads
  * back what the packaging did. The line is a desired state, not an event: the packaging keeps it and
  * compares it with what runs whenever it wakes, and the node writes it again, backing off, while the
- * two disagree. A refusal waits for an administrator, or for a different line.
+ * two disagree. A refusal, or a runtime without the connector, waits for an administrator, or for a
+ * different line. Only a status stamped since the line last changed answers it.
  */
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -56,7 +57,7 @@ export function connectorBackoffMs(rewrites: number): number {
   return (BACKOFF_MINUTES[rewrites] ?? BACKOFF_MINUTES.at(-1)!) * MINUTE;
 }
 
-/** Whether `status` shows `line` done, or under way. */
+/** Whether `status` shows `line` done, or under way; whether it answers `line` at all is the caller's to say. */
 export function connectorSettled(line: ConnectorLine, status: ConnectorStatus | null, now: number): boolean {
   if (!status) return false;
   if (line === "off") return status.state === "stopped" || status.state === "unavailable";
@@ -73,8 +74,10 @@ export interface ConnectorReport {
   status: ConnectorStatus | null;
   /** The status is from before the node last changed what it asks for: not an answer to it yet. */
   stale: boolean;
-  /** When the node asks again; null while nothing is wrong, or a refusal waits for an administrator. */
+  /** When the node asks again; null while nothing is wrong, or the answer waits for an administrator. */
   retryAt: Date | null;
+  /** Asked on, and not done after being asked again: since when it was asked. */
+  behindSince: Date | null;
 }
 
 export interface ConnectorControl {
@@ -130,7 +133,13 @@ export function createConnectorControl(opts: {
     return changedAt !== null && Number.isFinite(at) && at < Math.floor(changedAt / 1000) * 1000;
   };
 
-  const waitsForAdministrator = (status: ConnectorStatus | null): boolean => status?.state === "refused" && !stale(status);
+  /** A refusal, or a runtime without the connector: asking again changes nothing. */
+  const waitsForAdministrator = (status: ConnectorStatus | null): boolean =>
+    status !== null && !stale(status) && (status.state === "refused" || (status.state === "unavailable" && asked !== "off"));
+
+  /** Done or under way, in an answer to what was last asked. */
+  const settled = (status: ConnectorStatus | null): boolean =>
+    asked === null || (status !== null && !stale(status) && connectorSettled(asked, status, now()));
 
   async function read(): Promise<ConnectorStatus | null> {
     last = await readConnectorStatus(hints);
@@ -148,7 +157,7 @@ export function createConnectorControl(opts: {
     async reconcile() {
       const status = await read();
       if (asked === null) return status;
-      if (connectorSettled(asked, status, now())) {
+      if (settled(status)) {
         // A later lapse waits a minute too: the packaging may be trying again already.
         rewrites = 0;
         writtenAt = now();
@@ -163,12 +172,13 @@ export function createConnectorControl(opts: {
     async report() {
       const status = await read();
       const isStale = status !== null && stale(status);
-      const settled = asked === null || connectorSettled(asked, status, now());
-      const retryAt = settled || waitsForAdministrator(status) ? null : new Date(Math.max(writtenAt + connectorBackoffMs(rewrites), now()));
-      return { status, stale: isStale, retryAt };
+      const waiting = settled(status) || waitsForAdministrator(status);
+      const retryAt = waiting ? null : new Date(Math.max(writtenAt + connectorBackoffMs(rewrites), now()));
+      const behind = !waiting && asked !== null && asked !== "off" && rewrites > 0 && changedAt !== null;
+      return { status, stale: isStale, retryAt, behindSince: behind ? new Date(changedAt!) : null };
     },
     running(configSha) {
-      return configSha !== null && last?.state === "running" && last.config_sha === configSha;
+      return configSha !== null && last !== null && !stale(last) && last.state === "running" && last.config_sha === configSha;
     },
     line: () => asked,
     reset() {

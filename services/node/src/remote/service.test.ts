@@ -54,10 +54,17 @@ const memory = vi.hoisted(() => {
     updated_at: null,
   });
   let row: Record<string, unknown> = blank();
+  /** The database is out of reach: reading the row fails. */
+  let broken = false;
   return {
     row: () => row,
+    broken: () => broken,
+    breakReads: (b: boolean) => {
+      broken = b;
+    },
     reset: () => {
       row = blank();
+      broken = false;
     },
     set: (patch: Record<string, unknown>) => {
       row = { ...row, ...patch };
@@ -69,7 +76,10 @@ vi.mock("@stuga/db", async (importOriginal) => {
   type Db = typeof import("@stuga/db");
   return {
     ...(await importOriginal<Db>()),
-    getRemoteAccess: async () => ({ ...memory.row() }),
+    getRemoteAccess: async () => {
+      if (memory.broken()) throw new Error("the database is out of reach");
+      return { ...memory.row() };
+    },
     saveRemoteBinding: async (_sql: unknown, b: Parameters<Db["saveRemoteBinding"]>[1]) =>
       memory.set({ remote_id: b.remoteId, hostname: b.hostname, api_url: b.apiUrl, binding_thumbprint: b.thumbprint, bound_at: b.boundAt, binding_failing_since: null }),
     setRemoteEnabled: async (_sql: unknown, e: { enabled: boolean; by?: string; at?: Date; caTermsAcceptedBy?: string; caTermsAcceptedAt?: Date }) =>
@@ -670,6 +680,151 @@ describe("where the packaging runs the connector", () => {
     expect(status).toMatchObject({ state: "degraded", last_error: { code: "connector_failed", message: "Couldn't download the connector." } });
     if (!status.available) throw new Error("unavailable");
     expect(Date.parse(status.last_error!.retry_at!)).toBeGreaterThan(clock());
+  });
+
+  /** The relay's certificate replaced: new settings for the connector. */
+  function newRelayCa(): void {
+    const name = "relay-1.mystuga.com";
+    fake.setRelays([{ name: "relay-1", addr: name, port: 7000, server_name: name, ca_pem: makeTestCert({ dnsNames: [name] }).cert }]);
+  }
+
+  it("asks for new settings in the tick that brings them, and holds the self-check until the connector runs them", async () => {
+    let probes = 0;
+    const s = await managed({
+      probe: async () => {
+        probes += 1;
+        return { ok: true };
+      },
+      // Ticks only when kicked; a self-check due at every one.
+      timing: { serviceTickMs: 60_000, probeEveryMs: 50 },
+    });
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    helper("running");
+    await until("the first self-check", () => probes === 1);
+    const before = request();
+
+    newRelayCa();
+    s.kick();
+    await until("the new settings asked for", () => request() !== before);
+    expect(request()).toBe(on());
+
+    // The status still names the settings before.
+    for (let i = 0; i < 3; i += 1) {
+      s.kick();
+      await sleep(100);
+    }
+    expect(probes).toBe(1);
+
+    helper("running");
+    const started = Date.now();
+    await until("the self-check", () => probes === 2);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("asks for new settings after a refusal without waiting for Retry", async () => {
+    const s = await managed({ timing: { serviceTickMs: 60_000 } });
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    const before = request();
+    helper("refused", { message: "The connector's signature isn't Stuga's." });
+    expect(await s.status()).toMatchObject({ state: "error" });
+
+    shift += 2_000;
+    newRelayCa();
+    s.kick();
+    await until("the new settings asked for", () => request() !== before);
+    expect(request()).toBe(on());
+    // The refusal answered other settings.
+    expect(await s.status()).toMatchObject({ state: "starting", last_error: null });
+  });
+
+  it("keeps checking the address once the connector has run, and says when it no longer answers", async () => {
+    let up = true;
+    const s = await managed({
+      probe: async () => (up ? { ok: true } : { ok: false, code: "connector_unreachable", message: "no answer through the relay" }),
+      timing: { probeEveryMs: 50 },
+    });
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    helper("running");
+    await until("reachable", () => memory.row().probe_ok_at !== null);
+    expect(await s.status()).toMatchObject({ state: "on" });
+
+    // Seen stopped before the address stops answering.
+    helper("stopped");
+    await sleep(300);
+    up = false;
+    await until("the self-check fails", () => lastError()?.code === "connector_unreachable");
+    expect(await s.status()).toMatchObject({ state: "degraded", last_error: { code: "connector_unreachable" } });
+  });
+
+  it("takes a status from before a restart as no answer, and checks the address once the connector answers", async () => {
+    let probes = 0;
+    const probe = async (): Promise<ProbeResult> => {
+      probes += 1;
+      return { ok: true };
+    };
+    const s = await managed({ probe });
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    helper("running");
+    await until("the self-check", () => probes === 1);
+    await s.stop();
+
+    helper("running", { ago: 60 * 60_000 });
+    const restarted = service({ connector: hints, now: clock, probe, timing: { serviceTickMs: 100, connectorPollMs: 20, probeDelayMs: 10 } });
+    await restarted.start();
+    await sleep(500);
+    expect(probes).toBe(1);
+
+    helper("running");
+    await until("the self-check", () => probes === 2);
+  });
+
+  it("says an installation without the connector is an error, and doesn't ask again by itself", async () => {
+    const s = await managed();
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    helper("unavailable", { message: "This installation doesn't include the connector." });
+    expect(await s.status()).toMatchObject({
+      state: "error",
+      last_error: { code: "connector_unavailable", message: "This installation doesn't include the connector." },
+      connector: { status: { state: "unavailable" } },
+    });
+
+    rmSync(hints.request);
+    shift += 5 * 60_000;
+    await sleep(400);
+    expect(request()).toBeNull();
+  });
+
+  it("says the connector isn't running once it was asked again to no effect", async () => {
+    const s = await managed();
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    helper("stopped");
+    expect(await s.status()).toMatchObject({ state: "starting", last_error: null });
+
+    shift += 2 * 60_000;
+    await sleep(300);
+    const status = await s.status();
+    expect(status).toMatchObject({ state: "degraded", last_error: { code: "connector_failed", message: "The connector isn't running." } });
+    if (!status.available) throw new Error("unavailable");
+    expect(Date.parse(status.last_error!.retry_at!)).toBeGreaterThan(clock());
+  });
+
+  it("asks again on its backoff even while the rest of the tick fails", async () => {
+    const s = await managed();
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    const line = request();
+    memory.breakReads(true);
+    // A tick already past reading the row finishes first.
+    await sleep(300);
+    rmSync(hints.request);
+    shift += 2 * 60_000;
+    await until("asked again", () => request() === line);
   });
 
   it("refuses a retry where the packaging does not run the connector", async () => {

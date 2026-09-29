@@ -219,6 +219,8 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   let dirUsable = false;
   /** The settings the packaging's connector was last seen running, by their sha-256; null when not running. */
   let connectorRunningFor: string | null = null;
+  /** The settings the connector has run since it was last asked on: the self-check waits for it once per settings. */
+  let connectorRanFor: string | null = null;
   let connectorWatched = false;
   let listener: RemoteListener | null = null;
   let listenerHost: string | null = null;
@@ -422,7 +424,9 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   /** Ask for the connector the state allows, at once when that changed. Under the lock. */
   async function syncConnector(opts: { force?: boolean } = {}): Promise<void> {
     if (!connector) return;
-    await connector.want(connectorLine(), opts);
+    const line = connectorLine();
+    await connector.want(line, opts);
+    if (line === "off") connectorRanFor = null;
     watchConnector();
   }
 
@@ -438,6 +442,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       serviceLoop?.kick();
     }
     connectorRunningFor = running ? sha : null;
+    if (running) connectorRanFor = sha;
     watchConnector();
   }
 
@@ -601,8 +606,9 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     if (!r?.enabled || !listener || !cert || !r.hostname) return;
     const current = held();
     if (!current || current.exp <= now()) return;
-    // The packaging's connector not yet running these settings: nothing to check, and no failure.
-    if (connector && !connectorRunsCurrent()) return;
+    // The packaging's connector not yet started on these settings: nothing to check, and no failure.
+    // Once it has, the self-check is what notices it stopped.
+    if (connector && connectorRanFor !== r.connector_config_sha256) return;
     if (probeDueAt !== null && now() < probeDueAt) return;
     probeDueAt = now() + timing.probeEveryMs;
     const result = await probe(r.hostname, cert.spkiSha256);
@@ -625,14 +631,18 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
 
   async function serviceTick(): Promise<void> {
     if (stopped) return;
-    await serviceWork();
-    if (!connector || stopped) return;
-    // Settings a check-in just changed are asked for now; then, while the packaging has not done what
-    // was asked, again after 1, 5, 15 and 60 minutes.
-    await locked(async () => {
-      await syncConnector();
-      await observeConnector(connector.reconcile);
-    });
+    try {
+      await serviceWork();
+    } finally {
+      // Settings a check-in just changed are asked for now; then, while the packaging has not done what
+      // was asked, again after 1, 5, 15 and 60 minutes, whatever else failed this tick.
+      if (connector && !stopped) {
+        await locked(async () => {
+          await syncConnector();
+          await observeConnector(connector.reconcile);
+        });
+      }
+    }
   }
 
   async function serviceWork(): Promise<void> {
@@ -967,6 +977,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       // Asked once at every start, whatever was asked before: the packaging compares it with what runs.
       connector?.reset();
       connectorRunningFor = null;
+      connectorRanFor = null;
       connectorWatched = false;
       // Whatever is wrong here is the loops' to report and retry: never a reason for the node not to start.
       try {
