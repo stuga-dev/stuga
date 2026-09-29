@@ -6,7 +6,7 @@ import type { DatabaseSchema } from "@stuga/protocol/databases/types";
 import type { AgentBackend } from "./backend.js";
 import { MCP_CONTRACT_VERSION, READ_TOOLS, TOOL_NAMES } from "./catalog.js";
 import { registerAgentTools, type AgentSurface, type Reach, type ToolCall, type WorkspaceRoute } from "./register.js";
-import { EMPTY_SCOPE_NOTE, RETRIEVE_AI_DISABLED_MESSAGE } from "./render/search.js";
+import { EMPTY_SCOPE_NOTE, RETRIEVE_SEMANTIC_OFF_MESSAGE } from "./render/search.js";
 
 const SCHEMA: DatabaseSchema = {
   database_id: "db1",
@@ -430,8 +430,8 @@ describe("search and retrieval across workspaces", () => {
 
     const off = surface({ ws1: backend({ retrieve: vi.fn(async () => ({ chunks: [], ai_disabled: true })) }) });
     const offCall = (await connect(off.s)).call;
-    expect(await offCall("retrieve", { workspace_ids: ["ws1"], q: "x" })).toEqual({ text: `error: ${RETRIEVE_AI_DISABLED_MESSAGE}`, isError: true });
+    expect(await offCall("retrieve", { workspace_ids: ["ws1"], q: "x" })).toEqual({ text: `error: ${RETRIEVE_SEMANTIC_OFF_MESSAGE}`, isError: true });
     // Agent skills fall back to keyword search on this exact sentence.
-    expect(RETRIEVE_AI_DISABLED_MESSAGE).toMatch(/^AI chat is disabled on this node\b/);
+    expect(RETRIEVE_SEMANTIC_OFF_MESSAGE).toMatch(/^Semantic search is off on this node\b/);
   });
 });

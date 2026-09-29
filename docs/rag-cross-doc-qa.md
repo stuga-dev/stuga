@@ -102,8 +102,8 @@ guards live here so no surface can skip them:
   account of itself as consensus. Further passages from the same document fill in only when there are
   not enough from others.
 - **Degradation is reported.** If the question cannot be embedded, retrieval runs keyword-only and
-  `degraded` is set, which Ask turns into a notice under the answer ("Embeddings were
-  unavailable…"). If the rerank call fails or its answer cannot be used, passages keep their fusion
+  `degraded` is set, which Ask turns into a notice under the answer ("Semantic search
+  was unavailable…"). If the rerank call fails or its answer cannot be used, passages keep their fusion
   order and the node logs why.
 
 Tokens spent on the embedding and the rerank are recorded against the asker.

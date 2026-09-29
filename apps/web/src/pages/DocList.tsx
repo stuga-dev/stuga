@@ -391,7 +391,7 @@ export function DocList() {
                   <Banner
                     status="warning"
                     title="Matching words only"
-                    description="Embeddings are unavailable right now."
+                    description="Semantic search is unavailable right now."
                   />
                 )}
                 <List hasDividers>

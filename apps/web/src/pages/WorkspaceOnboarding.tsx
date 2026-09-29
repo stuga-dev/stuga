@@ -184,7 +184,7 @@ export function WorkspaceOnboarding() {
         />
       }
     >
-      {/* The AI step holds Your own AI's client tabs and commands, so it takes that settings page's width. */}
+      {/* The AI step holds Your AI agents's client tabs and commands, so it takes that settings page's width. */}
       <Layout contentWidth={ai ? 760 : 560} padding={6}>
         <LayoutContent>
           {ai ? (
@@ -297,8 +297,8 @@ function AiChoices({
         <VStack gap={4}>
           <Choice
             icon={<Plug size={18} />}
-            title="Your own AI"
-            about="Claude, Codex and others, on your own subscription. Just for you: each member connects their own."
+            title="Your AI agents"
+            about="Connect Claude, Codex or another AI agent, on your own subscription. Each member connects their own."
             isOpen={open.agent}
             onOpen={() => show("agent", true)}
           >

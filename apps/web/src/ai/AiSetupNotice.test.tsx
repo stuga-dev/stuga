@@ -33,17 +33,17 @@ describe("AiSetupNotice, for someone who is not a node administrator", () => {
   it("offers their own AI rather than the settings when the check fails", async () => {
     me.whoami.mockRejectedValueOnce(new Error("offline"));
     await render();
-    expect(host.textContent).toContain("Ask your administrator to turn it on, or use your own AI.");
-    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Connect your own AI"]);
+    expect(host.textContent).toContain("Ask your administrator to turn it on, or connect your own AI agent.");
+    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Connect your AI agent"]);
   });
 
   it("names who can turn AI on, and offers their own AI instead of a page that would refuse them", async () => {
     me.whoami.mockResolvedValue({ node_admin: false });
     await render();
     expect(host.textContent).toContain("AI chat is off");
-    expect(host.textContent).toContain("Ask your administrator to turn it on, or use your own AI.");
+    expect(host.textContent).toContain("Ask your administrator to turn it on, or connect your own AI agent.");
     // Outside Settings and the switcher the UI never says "node".
     expect(host.textContent).not.toMatch(/node/i);
-    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Connect your own AI"]);
+    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Connect your AI agent"]);
   });
 });

@@ -20,7 +20,7 @@ import { NodeSettingsPage } from "./pages/settings/node";
 import { SettingsLayout } from "./pages/settings/SettingsLayout";
 import { Profile } from "./pages/settings/Profile";
 import { Appearance } from "./pages/settings/Appearance";
-import { YourOwnAi } from "./pages/settings/YourOwnAi";
+import { YourAiAgents } from "./pages/settings/YourAiAgents";
 import { WorkspaceGeneral } from "./pages/settings/WorkspaceGeneral";
 import { WorkspaceMembers } from "./pages/settings/WorkspaceMembers";
 import { AuditLog } from "./pages/settings/AuditLog";
@@ -162,7 +162,7 @@ export function App() {
                 <Route index element={<Navigate to="/settings/profile" replace />} />
                 <Route path="profile" element={<Profile />} />
                 <Route path="appearance" element={<Appearance />} />
-                <Route path="agents" element={<YourOwnAi />} />
+                <Route path="agents" element={<YourAiAgents />} />
                 <Route path="workspace" element={<WorkspaceGeneral />} />
                 <Route path="workspace/members" element={<WorkspaceMembers />} />
                 <Route path="workspace/audit" element={<AuditLog />} />

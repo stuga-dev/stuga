@@ -52,7 +52,7 @@ function turnNotice(stop: AskStopReason, degraded: boolean, failure?: ModelFailu
   if (stop === "budget") return "The AI budget ran out part-way through the answer.";
   if (stop === "aborted") return "Stopped.";
   if (stop === "error") return failureReason(failure) ?? "Something failed part-way through; this answer may be incomplete.";
-  if (degraded) return "Embeddings were unavailable, so this matched words only. Results may be less relevant.";
+  if (degraded) return "Semantic search was unavailable, so this matched words only. Results may be less relevant.";
   return null;
 }
 

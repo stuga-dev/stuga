@@ -11,7 +11,7 @@ import { useIsNodeAdmin } from "../state/node-admin";
 /** Where chat is set up and switched on. */
 const AI_SETTINGS_PATH = "/settings/node/ai";
 /** Where anyone connects an agent on their own subscription. */
-const YOUR_OWN_AI_PATH = "/settings/agents";
+const YOUR_AI_AGENTS_PATH = "/settings/agents";
 
 export function AiSetupNotice() {
   const nav = useNavigate();
@@ -23,12 +23,12 @@ export function AiSetupNotice() {
       status="info"
       // Workspace UI: "node" belongs to Settings and the switcher, and AI is set per node, so no noun at all.
       title="AI chat is off"
-      description={isAdmin ? undefined : "Ask your administrator to turn it on, or use your own AI."}
+      description={isAdmin ? undefined : "Ask your administrator to turn it on, or connect your own AI agent."}
       endContent={
         isAdmin ? (
           <Button label="AI settings" variant="primary" size="sm" onClick={() => nav(AI_SETTINGS_PATH)} />
         ) : (
-          <Button label="Connect your own AI" variant="primary" size="sm" onClick={() => nav(YOUR_OWN_AI_PATH)} />
+          <Button label="Connect your AI agent" variant="primary" size="sm" onClick={() => nav(YOUR_AI_AGENTS_PATH)} />
         )
       }
     />

@@ -199,7 +199,7 @@ export function OAuthAuthorize() {
             <Text type="supporting" color="secondary">
               Revoke anytime in{" "}
               <Link href="/settings/agents" target="_blank" rel="noopener noreferrer" type="supporting">
-                Settings → Your own AI
+                Settings → Your AI agents
               </Link>
               .
             </Text>

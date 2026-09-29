@@ -1,5 +1,5 @@
 /**
- * Settings → Your own AI: the card for connecting a client. A grouped, searchable
+ * Settings → Your AI agents: the card for connecting a client. A grouped, searchable
  * picker chooses the client and its setup shows below, so the card stays one
  * client tall however many there are. Every config comes from the node's
  * AgentSetup, so the card waits for it. A key is pinned to the workspace it is

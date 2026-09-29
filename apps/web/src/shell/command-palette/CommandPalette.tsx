@@ -173,7 +173,7 @@ export function CommandPalette() {
       },
       {
         id: "agents",
-        label: "Your own AI",
+        label: "Your AI agents",
         hint: "Navigate",
         icon: <Plug size={16} />,
         terms: ["agents", "connect", "mcp", "claude", "codex", "antigravity", "subscription"],

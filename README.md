@@ -107,7 +107,7 @@ Then [docs/getting-started.md](docs/getting-started.md) walks through the first 
 ## Connect your agents
 
 Agents reach Stuga over MCP: the node serves `/mcp`, and `stuga-mcp` is a local stdio server that
-forwards to it for desktop clients. **Settings → Your own AI** in the app gives the setup for Claude
+forwards to it for desktop clients. **Settings → Your AI agents** in the app gives the setup for Claude
 Code, Claude Desktop, Codex, Antigravity, Cursor, VS Code, Kiro, Goose, LM Studio, DeepSeek Harness
 and Pi, the Claude app's connector on a node
 with a public HTTPS address, and the URL and key any other MCP client needs. Most clients sign in

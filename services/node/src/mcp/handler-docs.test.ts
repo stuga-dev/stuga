@@ -46,7 +46,7 @@ const { workspaceContextFor } = await import("../auth/context.js");
 const { WORKSPACE_UNAVAILABLE_MESSAGE } = await import("./handler.js");
 const { callerFor, resolvingTo, inWorkspace, callToolAs } = await import("./testing/call.js");
 const { retrieve: restRetrieve, search: restSearch } = await import("../api/search.js");
-import { EMPTY_SCOPE_NOTE, RETRIEVE_AI_DISABLED_MESSAGE } from "@stuga/agent-surface/render/search";
+import { EMPTY_SCOPE_NOTE, RETRIEVE_SEMANTIC_OFF_MESSAGE } from "@stuga/agent-surface/render/search";
 import { NO_INSTRUCTIONS } from "@stuga/agent-surface/render/docs";
 import type { Ctx } from "../auth/context.js";
 import { agentCtx, fixed, nodeSettings, personCtx, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
@@ -168,7 +168,7 @@ describe("retrieve", () => {
 
     ai = { chat: { enabled: true }, embed: { enabled: false, model: "embed-1" } };
     const off = await callTool(ctxOf(), "retrieve", { q: "expenses" });
-    expect(off).toEqual({ isError: true, text: `error: ${RETRIEVE_AI_DISABLED_MESSAGE}` });
+    expect(off).toEqual({ isError: true, text: `error: ${RETRIEVE_SEMANTIC_OFF_MESSAGE}` });
     expect(mockRetrieve).toHaveBeenCalledTimes(1);
   });
 

@@ -337,9 +337,9 @@ describe("the /mcp contract", () => {
     });
   });
 
-  it("refuses retrieval with fixed wording when embeddings are off, for one workspace or all", async () => {
+  it("refuses retrieval with fixed wording when semantic search is off, for one workspace or all", async () => {
     const wording =
-      "error: AI chat is disabled on this node for retrieval (embeddings are off) — use `search` for keyword search instead";
+      "error: Semantic search is off on this node — use `search` for keyword search instead";
     expect(await callText("retrieve", { q: "anything" })).toBe(wording);
     expect(await callText("retrieve", { q: "anything", workspace_ids: ["*"] })).toBe(wording);
   });

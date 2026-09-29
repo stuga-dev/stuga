@@ -48,7 +48,7 @@ once the node is claimed.
 `https://stuga.example.com`. The node builds the URL of every request on the network on it, never on
 the `Host` header. The links it hands back there, such as invite and share links, carry it; so do the
 links it sends by itself, in notifications for example, the agent setup in
-**Settings → Your own AI** and the issuer of every session token. At the
+**Settings → Your AI agents** and the issuer of every session token. At the
 [remote address](#remote-access), links handed back carry that address instead. `PUBLIC_ORIGIN` is
 also the origin browsers may call the node from, and its host is what agents call the node until an
 administrator [names the node](configuration.md#the-nodes-name-and-id).

@@ -139,7 +139,7 @@ describe("WorkspaceOnboarding", () => {
     expect(host.querySelector('[data-testid="destination"]')?.textContent).toBe("/");
   });
 
-  it("offers an administrator their own agent, built-in AI and embeddings, none required", async () => {
+  it("offers an administrator their own agent, built-in AI and semantic search, none required", async () => {
     services.whoami.mockResolvedValue({ node_admin: true });
     services.ai.mockResolvedValue(NOTHING_SET_UP);
     await render();
@@ -147,8 +147,8 @@ describe("WorkspaceOnboarding", () => {
     await click("Create workspace");
 
     expect(host.textContent).toContain("Your workspace is ready");
-    for (const row of ["Your own AI", "Built-in AI", "Embeddings"]) expect(host.textContent).toContain(row);
-    expect(host.textContent).toContain("Just for you: each member connects their own.");
+    for (const row of ["Your AI agents", "Built-in AI", "Semantic search"]) expect(host.textContent).toContain(row);
+    expect(host.textContent).toContain("Each member connects their own.");
     expect(host.textContent).toContain("for every member, on your API key");
     expect(buttons("Set up")).toHaveLength(3);
     await click("Start using Stuga");

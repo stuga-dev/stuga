@@ -73,31 +73,31 @@ another Stuga node ([Several nodes](network-access.md#several-nodes)).
 
 AI comes in three ways, each optional and each set up on its own:
 
-- **Your own AI**: Claude, Codex or another agent connects over MCP and brings its own model, so a
+- **Your AI agents**: Claude, Codex or another agent connects over MCP and brings its own model, so a
   subscription you already have is enough and the node needs no key. It is yours alone: the agent
   acts with your access, and each member connects their own. See [5. Connect an agent](#5-connect-an-agent).
 - **Built-in AI** (chat): the co-author, Ask and the table assistant, for every member of the node,
   on the API key you enter (or a local Ollama).
-- **Embeddings** (semantic search): search by meaning, not only exact words, for the search box, Ask
-  and agents.
+- **Semantic search** (embeddings): finds documents by meaning, even when the words differ, in the
+  search box, Ask and agents.
 
 Nothing is sent to any model until you set one up, and documents, collaboration and keyword search
 work without any of them, so you can skip this step.
 
 Right after you create the first workspace, Stuga shows all three, each with its own **Set up**, and
-**Start using Stuga** when you are done. Later, your own agent is in **Settings → Your own AI**, and
+**Start using Stuga** when you are done. Later, your own agent is in **Settings → Your AI agents**, and
 the other two are in **Settings → This node → AI providers**, each set up the same way:
 
 1. Choose **Set up**, then a **Service**, and enter its **API key** unless it is a local server. For a
    local Ollama, choose **Ollama (local)**. The address it fills in is the right one for your platform.
 2. Choose a **Model**. The list comes from the service, newest first, which also shows that the key
-   works. For **Embeddings**, choose one that returns the node's vector width, 1024 by default.
+   works. For **Semantic search**, choose one that returns the node's vector width, 1024 by default.
 3. Click **Connect**.
 
 That turns it on; there is no switch to turn on afterwards. Your own agent, such as Claude
-Desktop, needs no **Built-in AI**, since it brings the model; **Embeddings** still help it
-find text. A chat-only service such as
-Anthropic leaves search matching words until **Embeddings** are set up on another service.
+Desktop, needs no **Built-in AI**, since it brings the model; **Semantic search** still helps
+it find text. A chat-only service such as
+Anthropic leaves search matching words until **Semantic search** is set up on another service.
 
 Once either is set up, its switch turns it off and keeps it, and **Remove** forgets it. Offer more
 of a provider's models from its **Edit**.
@@ -107,7 +107,7 @@ of a provider's models from its **Edit**.
 
 ## 5. Connect an agent
 
-Open **Settings → Your own AI**, or choose **Set up** under **Your own AI** right after you create
+Open **Settings → Your AI agents**, or choose **Set up** under **Your AI agents** right after you create
 the first workspace. It has a tab for each kind of client, with the setup for this node filled in,
 and lists the agents you have connected so far. Each member connects their own. [Agents](agents.md) covers each client, and how
 one agent works with several nodes.

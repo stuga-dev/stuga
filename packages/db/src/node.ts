@@ -84,7 +84,7 @@ export async function getNodeSettings(sql: Sql): Promise<NodeSettingsRow | null>
   const rows = await sql<NodeSettingsRow[]>`
     SELECT node_name, max_upload_bytes, audit_retention_days, database_ops_keep, ai_usage_retention_days,
            ask_thread_retention_days, notify_sink, notify_webhook_label, smtp_label, email_from,
-           brand_accent_color, update_check, backup_auto, backup_hour, time_zone,
+           brand_accent_color, update_check, backup_auto, backup_hour, backup_weekday, backup_keep, time_zone,
            idp_issuer, idp_client_id, idp_client_secret_label, idp_label, idp_scopes,
            updated_by, updated_at
     FROM node_settings WHERE id = TRUE`;
@@ -106,10 +106,14 @@ export interface NodeSettingsInput {
   brandAccentColor: string | null;
   /** Null takes the default, which looks for a newer version. */
   updateCheck: boolean | null;
-  /** Null takes the default, which backs up daily. */
+  /** Null takes the default, which backs up. */
   backupAuto: boolean | null;
   /** Null takes the default hour, 3. */
   backupHour: number | null;
+  /** Null backs up every day; 0 (Sunday) to 6, once a week. */
+  backupWeekday: number | null;
+  /** Null takes the default, 7. */
+  backupKeep: number | null;
   /** Null is UTC. */
   timeZone: string | null;
   /** Null removes the provider; the columns are written together. */
@@ -179,6 +183,8 @@ export async function saveNodeSettings(sql: Sql, input: NodeSettingsInput): Prom
         update_check: input.updateCheck,
         backup_auto: input.backupAuto,
         backup_hour: input.backupHour,
+        backup_weekday: input.backupWeekday,
+        backup_keep: input.backupKeep,
         time_zone: input.timeZone,
         idp_issuer: idp?.issuer ?? null,
         idp_client_id: idp?.clientId ?? null,
@@ -202,6 +208,8 @@ export async function saveNodeSettings(sql: Sql, input: NodeSettingsInput): Prom
         update_check              = EXCLUDED.update_check,
         backup_auto               = EXCLUDED.backup_auto,
         backup_hour               = EXCLUDED.backup_hour,
+        backup_weekday            = EXCLUDED.backup_weekday,
+        backup_keep               = EXCLUDED.backup_keep,
         time_zone                 = EXCLUDED.time_zone,
         idp_issuer                = EXCLUDED.idp_issuer,
         idp_client_id             = EXCLUDED.idp_client_id,

@@ -77,7 +77,7 @@ pnpm dev
 
 This runs the node on port 8788, reloading on changes, and the Vite dev server on
 <http://localhost:3001>, which proxies API, WebSocket and MCP requests to the node. The node keeps
-its data in `data/dev-node`. **Settings → Your own AI** offers the desktop extension only once the MCP bundle
+its data in `data/dev-node`. **Settings → Your AI agents** offers the desktop extension only once the MCP bundle
 exists, so run `pnpm build` first if you need it.
 
 To try the packaged node on Docker, `pnpm check:packaged` builds both images from your working tree

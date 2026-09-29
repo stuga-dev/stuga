@@ -77,7 +77,7 @@ Packagings set these to fit their platform. Each has a neutral default.
 |---|---|---|
 | `STUGA_RESTART_HINT` | `Restart the node to apply.` | The sentence the Settings page shows next to values that come from the environment. |
 | `STUGA_UPGRADE_HINT` | `Upgrade on the machine that runs the node.` | The sentence **About** shows beside a newer version: how this packaging upgrades. |
-| `STUGA_STDIO_ENTRY` | the bundled `stuga-mcp.js` | The stdio MCP server **Your own AI** offers to local clients. Empty offers none. |
+| `STUGA_STDIO_ENTRY` | the bundled `stuga-mcp.js` | The stdio MCP server **Your AI agents** offers to local clients. Empty offers none. |
 | `STUGA_UPGRADE_REQUESTS`, `STUGA_UPGRADE_STATUS` | none | Where an upgrade helper beside the node takes a request and reports how it went. With both set, **About** offers **Update now**. The Mac package sets them. |
 | `STUGA_REMOTE_SERVICE` | none | The remote access service, an https origin, for the node's first enrollment ([Remote access](remote-access.md#configuration)). |
 | `STUGA_REMOTE_DIR` | none | The directory, an absolute path, the node shares with the remote access connector: its settings, its credential and the node's socket. Only with both set does **This node** list **Remote access**; one alone is logged and ignored. |
@@ -92,8 +92,8 @@ and node administrators also see **This node**.
 
 | Where | What |
 |---|---|
-| Preferences → **Your own AI** | Connecting your own agent, such as Claude Desktop, Claude Code or Codex, and the agents you have connected: apps that signed in, and keys ([agents.md](agents.md)). Each person connects their own. |
-| This node → **AI providers** | **Built-in AI** (chat), with its model providers and **Default model**; **Embeddings** (semantic search), with its service, model and [match cutoffs](#match-cutoffs); and **Reranking**, a model that puts the most relevant passages first for Ask and agents (TypeSafe's Jev, directly or through OpenRouter; without it, Built-in AI reranks). Each is set up on its own and runs without the others. Setting one up turns it on, its switch turns it off and keeps it, and **Remove** forgets it. **Test** in an **Edit** checks that service. |
+| Preferences → **Your AI agents** | Connecting your own agent, such as Claude Desktop, Claude Code or Codex, and the agents you have connected: apps that signed in, and keys ([agents.md](agents.md)). Each person connects their own. |
+| This node → **AI providers** | **Built-in AI** (chat), with its model providers and **Default model**; **Semantic search** (embeddings), with its service, model and [match cutoffs](#match-cutoffs); and **Reranking**, a model that puts the most relevant passages first for Ask and agents (TypeSafe's Jev, directly or through OpenRouter; without it, Built-in AI reranks). Each is set up on its own and runs without the others. Setting one up turns it on, its switch turns it off and keeps it, and **Remove** forgets it. **Test** in an **Edit** checks that service. |
 | This node → **Notifications** | Where notifications go: Slack, Microsoft Teams, Discord, a plain webhook or email, with **Send a test**. |
 | This node → **Access** | The node's address and accepted origins, and its remote address once it has one (read-only), the [identity provider](#identity-provider), administrators, the node's audit log, and account recovery links. |
 | This node → **Remote access** | Where the packaging offers it: the node's public https address, turned on with a code and off again, with where it stands and the connector's command ([Remote access](remote-access.md)). |
@@ -112,7 +112,7 @@ URL entered in Settings are kept under `DATA_DIR/secrets`, not in the database.
 
 The semantic half of search drops a passage whose meaning is too far from the query. How far is a
 maximum cosine distance between the two embeddings: greater than 0 and at most 2, where lower is
-stricter. There are two, under **Match cutoffs** in the **Edit** of **Embeddings** in
+stricter. There are two, under **Match cutoffs** in the **Edit** of **Semantic search** in
 **Settings → This node → AI providers**, and a change applies to the next query once saved. Nothing is re-indexed.
 
 | Setting | Default | Applies to |

@@ -2,7 +2,7 @@
  * Chat, semantic search and the ranker, each set up on its own: any runs without
  * the others, as semantic search does for an outside agent that brings its own
  * chat. Setting a part up turns it on. Its switch, shown once it is set up, turns
- * it off and keeps it; Remove forgets it. Shown as Built-in AI, Embeddings and
+ * it off and keeps it; Remove forgets it. Shown as Built-in AI, Semantic search and
  * Reranking.
  */
 import { useState, type ReactNode } from "react";
@@ -352,7 +352,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       <Text type="supporting" color="secondary">
         Using Claude, Codex or another AI on your own subscription? Connect it in{" "}
         {/* In-app navigation: a full page load would drop the in-memory session. */}
-        <Link type="supporting" onClick={() => nav("/settings/agents")}>Your own AI</Link>.
+        <Link type="supporting" onClick={() => nav("/settings/agents")}>Your AI agents</Link>.
       </Text>
       <SectionStatusBanners status={status} />
       {probe && <ProbeBanner probe={probe} labels={labels} />}

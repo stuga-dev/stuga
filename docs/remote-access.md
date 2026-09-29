@@ -147,7 +147,7 @@ from the one on `BIND` and `PORT`. The relay reaches it through the connector.
   agents' endpoints, carry the remote address when asked there. Links it sends by itself, in
   notifications for example, carry `PUBLIC_ORIGIN`.
 - **Agents** that connect there sign in there, and the resource they name is `<remote address>/mcp`.
-  **Your own AI** gives hosted clients, such as Claude on the web, the remote address while it is on
+  **Your AI agents** gives hosted clients, such as Claude on the web, the remote address while it is on
   ([Agents](agents.md#claude-on-the-web)).
 
 `PUBLIC_ORIGIN` cannot be the remote address. The identity provider needs the remote address's

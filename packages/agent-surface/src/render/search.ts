@@ -12,9 +12,8 @@ export const EMPTY_SCOPE_NOTE =
   "This collection resolved to 0 documents this connector can access. The collection may be empty, or " +
   "its documents may not be shared with this connector — ask the workspace owner to share them.";
 
-/** Agent skills match the leading "AI chat is disabled on this node" verbatim to fall back to keyword search. */
-export const RETRIEVE_AI_DISABLED_MESSAGE =
-  "AI chat is disabled on this node for retrieval (embeddings are off) — use `search` for keyword search instead";
+/** Agent skills match the leading "Semantic search is off on this node" verbatim to fall back to keyword search. */
+export const RETRIEVE_SEMANTIC_OFF_MESSAGE = "Semantic search is off on this node — use `search` for keyword search instead";
 
 /** A workspace a call named but could not cover just now, and why. */
 export interface UnavailableWorkspace {

@@ -49,7 +49,7 @@ import {
 import { instructionFields, renderPropose, renderProvenance, renderRead, renderStatus } from "./render/docs.js";
 import { renderUpload } from "./render/media.js";
 import {
-  RETRIEVE_AI_DISABLED_MESSAGE,
+  RETRIEVE_SEMANTIC_OFF_MESSAGE,
   renderPassages,
   renderSearch,
   type UnavailableWorkspace,
@@ -189,7 +189,7 @@ async function acrossWorkspaces(tool: "search" | "retrieve", raw: Record<string,
           return { workspaceId, refusal };
         }
         // Embeddings are a node's setting: say so, or an empty list reads as "nothing matched" and the agent rephrases forever.
-        if ("ai_disabled" in body && body.ai_disabled) return { workspaceId, refusal: RETRIEVE_AI_DISABLED_MESSAGE };
+        if ("ai_disabled" in body && body.ai_disabled) return { workspaceId, refusal: RETRIEVE_SEMANTIC_OFF_MESSAGE };
         return { workspaceId, origin: resolved.backend.origin, body };
       } finally {
         resolved.settled(refusal);
@@ -204,8 +204,8 @@ async function acrossWorkspaces(tool: "search" | "retrieve", raw: Record<string,
   ];
   const parts = outcomes.flatMap((o) => ("body" in o ? [{ workspace_id: o.workspaceId, origin: o.origin, body: o.body }] : []));
   if (parts.length === 0 && ids.length === 1 && !reach) return err(unavailable[0]!.reason);
-  if (parts.length === 0 && unavailable.length > 0 && unavailable.every((u) => u.reason === RETRIEVE_AI_DISABLED_MESSAGE)) {
-    return err(RETRIEVE_AI_DISABLED_MESSAGE);
+  if (parts.length === 0 && unavailable.length > 0 && unavailable.every((u) => u.reason === RETRIEVE_SEMANTIC_OFF_MESSAGE)) {
+    return err(RETRIEVE_SEMANTIC_OFF_MESSAGE);
   }
   return ok(
     tool === "search"

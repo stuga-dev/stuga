@@ -6,7 +6,7 @@ run ledger, where it is attributed, shown change by change, and waits for review
 is set to let AI edits apply directly. This page covers connecting clients, credentials, the tools,
 and what the ledger shows.
 
-**Settings → Your own AI** in Stuga has the setup for the node you are running, with its address already
+**Settings → Your AI agents** in Stuga has the setup for the node you are running, with its address already
 filled in: pick the app under **App**. Use it when it disagrees with an example here.
 
 ## Which clients can reach a node
@@ -14,21 +14,21 @@ filled in: pick the app under **App**. Use it when it disagrees with an example 
 - **Claude Code, Claude Desktop, and other MCP clients on your own machine** work with any node they
   can reach, including one on `localhost` or your local network. Claude Code dials the node's `/mcp`
   endpoint. Its browser sign-in needs the node on https or on loopback, so on a plain-http network
-  address **Your own AI** gives it a command carrying a key instead. Claude Desktop runs Stuga's
+  address **Your AI agents** gives it a command carrying a key instead. Claude Desktop runs Stuga's
   stdio server from an extension, and the server forwards to the node's `/mcp`. The
   [Stuga plugin](#the-stuga-plugin) runs the same server in Claude Code and in Cowork, and signs in
   through the browser at any address.
 - **Codex and Google Antigravity** dial the node's `/mcp` endpoint and work with any node the machine
-  can reach. **Your own AI** gives one command per host that installs the Stuga Skill and adds the
+  can reach. **Your AI agents** gives one command per host that installs the Stuga Skill and adds the
   node; both hosts sign in through the browser, so no key is pasted.
 - **Pi** dials the node's `/mcp` endpoint through pi-mcp-adapter and works with any node the machine
   can reach. It signs in through the browser, or takes a key ([Pi](#pi)).
 - **Cursor, VS Code, Kiro, Goose and LM Studio** dial the node's `/mcp` endpoint and work with any node
-  the machine can reach. **Your own AI** gives each a link that adds the node
+  the machine can reach. **Your AI agents** gives each a link that adds the node
   ([Apps that install from a link](#apps-that-install-from-a-link)).
 - **Claude on the web and on mobile** add custom connectors that Anthropic's cloud dials. Those need
   the node at a public HTTPS origin: `PUBLIC_ORIGIN`, or its [remote address](remote-access.md).
-  **Your own AI** offers **Claude** while remote access is on, with the remote address's `/mcp`, and
+  **Your AI agents** offers **Claude** while remote access is on, with the remote address's `/mcp`, and
   otherwise only when `PUBLIC_ORIGIN` is https and not a loopback, private or local-network address.
   Ways to give a node a public HTTPS origin are in [network-access.md](network-access.md#https).
 
@@ -116,7 +116,7 @@ same `client_id`) renews it with your new answers and keeps its name and its age
 under one agent. It acts as its own agent for you, and the rules for agents under
 [API keys](#api-keys) apply to it.
 
-**Connected agents**, under **Settings → Your own AI**, lists each connection as *signed in*, with
+**Connected agents**, under **Settings → Your AI agents**, lists each connection as *signed in*, with
 `verified by <host>` for a verified app, and a badge when it reaches fewer workspaces than you
 belong to or only reads.
 
@@ -141,14 +141,14 @@ on `/mcp`; the REST API refuses them. The OAuth routes are in [api.md](api.md#ag
 claude mcp add -s user --transport http stuga http://localhost:8787/mcp
 ```
 
-Use your node's origin in place of `http://localhost:8787`; **Your own AI** fills it in. `-s user`
+Use your node's origin in place of `http://localhost:8787`; **Your AI agents** fills it in. `-s user`
 adds the connection once for every project. Then run `/mcp` in Claude Code, pick **stuga**, and choose
 Authenticate. You sign in to your node in the browser and choose its workspaces and access, and no
 key is pasted ([Apps that sign in](#apps-that-sign-in)).
 
 That sign-in only works when `PUBLIC_ORIGIN` is https or a loopback address. Claude Code refuses to
 send a credential to a token endpoint that is neither, so on a node at a plain-http network address,
-such as `http://nas.local:8787`, **Your own AI** names a key in the command instead:
+such as `http://nas.local:8787`, **Your AI agents** names a key in the command instead:
 
 ```sh
 claude mcp add -s user --transport http stuga http://nas.local:8787/mcp \
@@ -156,7 +156,7 @@ claude mcp add -s user --transport http stuga http://nas.local:8787/mcp \
 ```
 
 Name the agent under **Claude Code** and the command comes back with its key in place. The key
-is stored in Claude Code's own configuration file in plain text, and is revoked in **Your own AI**
+is stored in Claude Code's own configuration file in plain text, and is revoked in **Your AI agents**
 like any other. Giving the node [an https address](network-access.md#https) brings the browser
 sign-in back.
 
@@ -184,13 +184,13 @@ Cowork does not ask for plugin settings. Claude on the web loads only its skill.
 ## Claude on the web
 
 In Claude, open Settings → Connectors → **Add custom connector** and paste the MCP endpoint
-**Your own AI** shows: `<PUBLIC_ORIGIN>/mcp`, or the remote address's `/mcp` while
+**Your AI agents** shows: `<PUBLIC_ORIGIN>/mcp`, or the remote address's `/mcp` while
 [remote access](remote-access.md) is on. Claude asks you to sign in to Stuga, and the
 connection appears under **Connected agents**.
 
 ## Codex and Google Antigravity
 
-Both hosts set up from one command, shown under their name in **Your own AI**:
+Both hosts set up from one command, shown under their name in **Your AI agents**:
 
 ```sh
 curl -fsSL 'http://localhost:8787/api/agent-install/codex' | sh
@@ -241,7 +241,7 @@ then restart the host.
 
 ## Claude Desktop
 
-In **Your own AI**, open **Claude Desktop** and click **Add to Claude Desktop**. Double-click the
+In **Your AI agents**, open **Claude Desktop** and click **Add to Claude Desktop**. Double-click the
 downloaded `stuga.mcpb` and click **Install**. The extension asks for:
 
 - **Stuga address**, filled in with the node the file came from.
@@ -261,7 +261,7 @@ If the tools do not appear, quit Claude fully and reopen it, then read the exten
 ### Setting it up by hand
 
 When the node's `PUBLIC_ORIGIN` is a loopback address, so the browser and the node share a machine,
-**Your own AI** also offers **Set it up by hand instead**: a `claude_desktop_config.json` entry with
+**Your AI agents** also offers **Set it up by hand instead**: a `claude_desktop_config.json` entry with
 a key you mint there, the absolute path of the Node interpreter running the node, and the absolute
 path of the node's stdio server. Paste it in Claude Desktop under Settings → Developer →
 **Edit Config**. Paths are absolute because desktop clients start servers without your shell's
@@ -296,7 +296,7 @@ pnpm --filter @stuga/mcp build   # writes services/mcp/dist/stuga-mcp.js
 
 ## Apps that install from a link
 
-Cursor, VS Code, Kiro, Goose and LM Studio add a server from a link. **Your own AI** builds one per app
+Cursor, VS Code, Kiro, Goose and LM Studio add a server from a link. **Your AI agents** builds one per app
 with the node's `/mcp` endpoint in it: **Add to Cursor** opens Cursor with the server, named `stuga`,
 ready to install, and the app signs in through the browser when it first connects. To use a key
 instead, open **Use an agent key instead**, mint one, and follow **Add to … with this key**; Goose's link
@@ -307,7 +307,7 @@ under **Connected agents**.
 
 Any client that speaks Streamable HTTP can use `<PUBLIC_ORIGIN>/mcp`. A client that supports OAuth
 signs in like Claude Code. Any other client sends a key as `Authorization: Bearer vk_...`, and the
-**Other clients** in **Your own AI** builds that config.
+**Other clients** in **Your AI agents** builds that config.
 
 ## The stdio server
 
@@ -363,14 +363,14 @@ carries the workspace's instructions for agents, explains that a `Proposed` resu
 must not be retried, and says to follow the instructions that come back with a document
 ([below](#instructions-for-agents)).
 
-In **Your own AI**, open **DeepSeek Harness** and mint a key. Then, on the machine that runs dsh:
+In **Your AI agents**, open **DeepSeek Harness** and mint a key. Then, on the machine that runs dsh:
 
 ```sh
 dsh plugin --profile web add @stuga/dsh-plugin
 ```
 
 Put `STUGA_URL` (the node's origin) and `STUGA_API_KEY` (the key) in `$DSH_HOME/.env` or in the
-environment that launches dsh, and restart `dsh web`. **Your own AI** prints both lines with the key
+environment that launches dsh, and restart `dsh web`. **Your AI agents** prints both lines with the key
 filled in. The harness's runs appear in the review inbox labelled `deepseek-harness`, under the key's
 name.
 
@@ -394,7 +394,7 @@ pi install npm:@stuga/pi-package
 export STUGA_URL=http://localhost:8787
 ```
 
-Use your node's origin; **Your own AI** fills it in under **Pi**. Set `STUGA_URL` in the shell
+Use your node's origin; **Your AI agents** fills it in under **Pi**. Set `STUGA_URL` in the shell
 that starts Pi, or put `{ "stuga": { "url": "…" } }` in `~/.pi/agent/settings.json`. Then start Pi
 and run `/mcp-auth stuga`: you sign in in the browser ([Apps that sign in](#apps-that-sign-in)), at
 any node address, and the connection is listed as **Pi**. To use a key instead, open **Use an agent
@@ -406,7 +406,7 @@ revoke the connection or the key under **Connected agents**.
 
 ## API keys
 
-Mint a key in **Your own AI**, or with `POST /api/keys` ([api.md](api.md#authentication)). A key
+Mint a key in **Your AI agents**, or with `POST /api/keys` ([api.md](api.md#authentication)). A key
 looks like `vk_<id>_<secret>`. The secret is shown once, and the node stores only its hash. An app
 that signs in gets no key: its sign-in is a connection ([above](#apps-that-sign-in)).
 
@@ -429,7 +429,7 @@ that signs in gets no key: its sign-in is a connection ([above](#apps-that-sign-
   and a read-only one lists and opens them. The person sees every change, and the audit ledger names
   the agent and the person it acted for ([collections.md](collections.md)).
 - **A key can be narrowed below its owner's reach**: confined to folders (each with its subtree),
-  made read-only, or given an expiry. **Your own AI** sets these when a key is minted, and
+  made read-only, or given an expiry. **Your AI agents** sets these when a key is minted, and
   `PATCH /api/keys/:id` changes them later. A narrowing only removes reach. A folder-scoped key's
   listings, search, retrieval and events are filtered to its folders, and a document elsewhere reads
   as not found. A read-only key reads and searches everything its owner can reach and changes

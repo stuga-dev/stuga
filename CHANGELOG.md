@@ -13,7 +13,7 @@ its first section, are its summary: the release notes show that and link here fo
 
 ### Added
 
-- **Cursor, VS Code, Kiro, Goose and LM Studio** in **Settings → Your own AI**: one link opens the app
+- **Cursor, VS Code, Kiro, Goose and LM Studio** in **Settings → Your AI agents**: one link opens the app
   with the node filled in, and the app signs in. Apps are now picked from one searchable list, grouped
   into chat apps, editors and coding agents, and the page remembers the last one.
 - **Remote access** in **Settings → Remote access**, for a node whose packaging names an account
@@ -24,6 +24,10 @@ its first section, are its summary: the release notes show that and link here fo
 
 ### Changed
 
+- **Your own AI** is now **Your AI agents**, and **Embeddings** is **Semantic search**, in Settings
+  and at first run.
+- `retrieve` with semantic search off now answers `Semantic search is off on this node`; it said
+  `AI chat is disabled on this node`, though chat has nothing to do with it.
 - The setting is now called **Let AI edits apply directly** (was **Let agents apply changes at
   once**), and its chip **AI edits apply directly**: it covers the co-author as well as connected
   agents. What agents are told about it uses the same name, so they can point a person to it.

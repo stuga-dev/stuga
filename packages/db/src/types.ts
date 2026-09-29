@@ -543,10 +543,14 @@ export interface NodeSettingsRow {
   brand_accent_color: string | null;
   /** Whether the node looks for a newer version; null looks. */
   update_check: boolean | null;
-  /** Whether the daily backup runs; null runs. */
+  /** Whether the scheduled backup runs; null runs. */
   backup_auto: boolean | null;
-  /** The hour the daily backup starts, 0–23 in time_zone; null is 3. */
+  /** The hour the scheduled backup starts, 0–23 in time_zone; null is 3. */
   backup_hour: number | null;
+  /** The weekday of a weekly backup, 0 (Sunday) to 6; null backs up every day. */
+  backup_weekday: number | null;
+  /** How many backups are kept, at least 1; null is 7. */
+  backup_keep: number | null;
   /** An IANA time zone name for scheduled work; null is UTC. */
   time_zone: string | null;
   /** Set together with idp_client_id, or neither. */

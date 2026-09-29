@@ -108,7 +108,7 @@ export function SettingsLayout() {
 
   // The server refuses these below admin; the pages keep their own refusal states for deep links.
   const canSeeLedger = scope.canManage;
-  // Your own AI mints keys pinned to the active workspace, so it needs one too.
+  // Your AI agents mints keys pinned to the active workspace, so it needs one too.
   const needsWorkspace = pathname.startsWith("/settings/workspace") || pathname === "/settings/agents";
 
   const item = (label: string, icon: ReactNode, path: string, endContent?: ReactNode) => (
@@ -139,7 +139,7 @@ export function SettingsLayout() {
           <SideNavSection title="Preferences">
             {item("Profile", <UserRound size={16} />, "/settings/profile")}
             {item("Appearance", <Palette size={16} />, "/settings/appearance")}
-            {item("Your own AI", <Plug size={16} />, "/settings/agents")}
+            {item("Your AI agents", <Plug size={16} />, "/settings/agents")}
           </SideNavSection>
 
           {isReady && workspace && (

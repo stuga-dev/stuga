@@ -291,7 +291,7 @@ async function mount(category = "ai") {
         <CaptureNavigate />
         <Routes>
           <Route path="/settings/node/:category" element={<NodeSettingsPage />} />
-          <Route path="/settings/agents" element={<p>Your own AI page</p>} />
+          <Route path="/settings/agents" element={<p>Your AI agents page</p>} />
         </Routes>
       </MemoryRouter>,
     );
@@ -422,13 +422,13 @@ describe("NodeSettingsPage", () => {
     });
   });
 
-  it("sends someone with their own subscription to Your own AI, where their agent connects", async () => {
+  it("sends someone with their own subscription to Your AI agents, where their agent connects", async () => {
     await mount();
     await settle();
-    const link = [...host.querySelectorAll("a, button")].find((e) => e.textContent === "Your own AI");
-    expect(link, "no Your own AI link").toBeDefined();
+    const link = [...host.querySelectorAll("a, button")].find((e) => e.textContent === "Your AI agents");
+    expect(link, "no Your AI agents link").toBeDefined();
     await act(async () => link!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    expect(host.textContent).toContain("Your own AI page");
+    expect(host.textContent).toContain("Your AI agents page");
   });
 
   it("sets semantic search up on its own, as for an agent that brings its own chat", async () => {
@@ -452,7 +452,7 @@ describe("NodeSettingsPage", () => {
     expect(nodeApi.saveAi).toHaveBeenCalledWith({
       embed: { provider: "openai", base_url: "https://api.openai.com/v1", model: "text-embedding-3-small", api_key: "sk-embed" },
     });
-    expect(host.textContent).toContain("Embeddings are on with text-embedding-3-small.");
+    expect(host.textContent).toContain("Semantic search is on with text-embedding-3-small.");
   });
 
   it("removes semantic search only after asking, forgetting its model and key", async () => {

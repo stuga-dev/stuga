@@ -18,7 +18,7 @@ Every request carries a bearer token:
 Authorization: Bearer vk_<key_id>_<secret>
 ```
 
-An agent key is minted in **Settings → Your own AI** or with `POST /api/keys`, and its secret is returned
+An agent key is minted in **Settings → Your AI agents** or with `POST /api/keys`, and its secret is returned
 once. A person's session token from the web app is accepted too and acts as that person. It expires
 within an hour by default, so use it only to experiment.
 

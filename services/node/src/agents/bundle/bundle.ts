@@ -20,7 +20,7 @@ import {
 import { MCP_BUNDLE_FILENAME } from "@stuga/protocol/domain/node-name";
 import { zipFiles } from "../../lib/zip.js";
 
-/** The name Your own AI saves the extension under: the product's, for every node. */
+/** The name Your AI agents saves the extension under: the product's, for every node. */
 export const bundleFilename = MCP_BUNDLE_FILENAME;
 
 /** Rendered from apps/web/public/favicon.svg: `sips -z 256 256 -s format png favicon.svg --out icon.png`. */

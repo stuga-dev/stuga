@@ -612,9 +612,12 @@ CREATE TABLE node_settings (
     brand_accent_color        TEXT CHECK (brand_accent_color IS NULL OR brand_accent_color ~ '^#[0-9a-fA-F]{6}$'),
     -- Whether the node looks for a newer version once a day; NULL looks.
     update_check              BOOLEAN,
-    -- The daily backup: whether it runs (NULL runs) and the hour it starts, in time_zone (NULL is 3).
+    -- The scheduled backup: whether it runs (NULL runs), the hour it starts in time_zone (NULL is 3),
+    -- the weekday of a weekly one (0 is Sunday; NULL backs up every day), and how many are kept (NULL is 7).
     backup_auto               BOOLEAN,
     backup_hour               SMALLINT CHECK (backup_hour IS NULL OR backup_hour BETWEEN 0 AND 23),
+    backup_weekday            SMALLINT CHECK (backup_weekday IS NULL OR backup_weekday BETWEEN 0 AND 6),
+    backup_keep               SMALLINT CHECK (backup_keep IS NULL OR backup_keep BETWEEN 1 AND 100),
     -- The node's time zone for scheduled work, an IANA name; NULL is UTC. Setup sends the browser's.
     time_zone                 TEXT CHECK (time_zone IS NULL OR length(time_zone) BETWEEN 1 AND 64),
     -- The extra keyword tokenizers, language codes (ko, ar) checked by the node rather
