@@ -47,7 +47,7 @@ function csrPublicKey(der: Buffer): KeyObject {
  * An ACME CA in memory: one account, one order at a time, dns-01 only. `badNonces` refuses that
  * many signed requests for their nonce first; `authzPolls` answers pending that many times.
  */
-function fakeCa(opts: { badNonces?: number; authzPolls?: number; failAuthz?: boolean; retryAfter?: string } = {}) {
+function fakeCa(opts: { badNonces?: number; authzPolls?: number; failAuthz?: boolean; failCert?: boolean; retryAfter?: string } = {}) {
   let nonce = 0;
   let badNonces = opts.badNonces ?? 0;
   let authzPolls = opts.authzPolls ?? 1;
@@ -103,10 +103,16 @@ function fakeCa(opts: { badNonces?: number; authzPolls?: number; failAuthz?: boo
           accountKey = key;
           return answer(201, { status: "valid" }, { location: `${CA}/acct/1` });
         case "/order":
+          // A valid authorization is reused, as Let's Encrypt does for 30 days; any other starts over.
+          if (state.authz === "valid") state.order = "ready";
+          else Object.assign(state, { order: "pending", authz: "pending", challenge: "pending" });
           return answer(201, { status: state.order, authorizations: [`${CA}/authz/1`], finalize: `${CA}/finalize/1`, identifiers: payload!.identifiers }, { location: `${CA}/order/1` });
         case "/authz/1":
-          if (payload?.status === "deactivated") state.authz = "deactivated";
-          else if (state.challenge === "processing" && --authzPolls <= 0) {
+          if (payload?.status === "deactivated") {
+            // RFC 8555 7.5.2: only a pending or valid authorization can be deactivated.
+            if (state.authz !== "pending" && state.authz !== "valid") return problem(403, "malformed", `the authorization is ${state.authz}`);
+            state.authz = "deactivated";
+          } else if (state.challenge === "processing" && --authzPolls <= 0) {
             state.authz = opts.failAuthz ? "invalid" : "valid";
             state.challenge = state.authz;
             if (state.authz === "valid") state.order = "ready";
@@ -147,6 +153,7 @@ function fakeCa(opts: { badNonces?: number; authzPolls?: number; failAuthz?: boo
             ...(state.order === "valid" ? { certificate: `${CA}/cert/1` } : {}),
           });
         case "/cert/1":
+          if (opts.failCert) return problem(500, "serverInternal", "no certificate today");
           return answer(200, state.chain, { "content-type": "application/pem-certificate-chain" });
         default:
           return problem(404, "malformed", "no such resource");
@@ -265,7 +272,27 @@ describe("the ACME client", () => {
     expect(err.authorization).toBe(true);
     expect(err.is("incorrectResponse")).toBe(true);
     expect(d.calls.at(-1)).toBe("cleanup");
-    expect(ca.posted.at(-1)!.url).toBe(`${CA}/authz/1`);
+    const last = ca.posted.at(-1)!;
+    expect(last.url).toBe(`${CA}/authz/1`);
+    expect(JSON.parse(Buffer.from(last.payload, "base64url").toString())).toEqual({ status: "deactivated" });
+  });
+
+  it("needs the challenge again for the next certificate, because it gave the last authorization up", async () => {
+    const ca = fakeCa();
+    const c = await client(ca);
+    await c.ensureAccount();
+    await c.issue({ hostname: HOST, key: generateP256(), dns: dns() });
+    const second = dns();
+    await c.issue({ hostname: HOST, key: generateP256(), dns: second });
+    expect(second.calls).toEqual([`present ${c.dnsValue("t-dns")}`, `verify ${c.dnsValue("t-dns")}`, "cleanup"]);
+  });
+
+  it("gives up an authorization it was granted when the order fails after it", async () => {
+    const ca = fakeCa({ failCert: true });
+    const c = await client(ca);
+    await c.ensureAccount();
+    await expect(c.issue({ hostname: HOST, key: generateP256(), dns: dns() })).rejects.toBeInstanceOf(AcmeError);
+    expect(ca.state.authz).toBe("deactivated");
   });
 
   it("carries the CA's problem type, status and Retry-After", async () => {

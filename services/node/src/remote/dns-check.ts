@@ -84,14 +84,18 @@ function readName(buf: Buffer, offset: number): { name: string; next: number } {
   }
 }
 
-/** The answer to query `id`, or null when `buf` answers something else. */
-export function parseTxtResponse(buf: Buffer, id: number, fqdn: string): TxtAnswer | null {
+/**
+ * The answer to query `id`, or null when `buf` answers something else. `trustAll` reads an answer
+ * without AA as the zone's own: for test servers, which never set it.
+ */
+export function parseTxtResponse(buf: Buffer, id: number, fqdn: string, trustAll = false): TxtAnswer | null {
   if (buf.length < 12 || buf.readUInt16BE(0) !== id) return null;
   const flags = buf.readUInt16BE(2);
   if (!(flags & FLAG_QR)) return null;
-  const authoritative = (flags & FLAG_AA) !== 0;
+  // Not the zone's own server, whatever it says: a refusal from it is no more an answer than its data.
+  if (!(flags & FLAG_AA) && !trustAll) return { authoritative: false, records: [] };
   const rcode = flags & 0x000f;
-  if (rcode === RCODE_NXDOMAIN) return { authoritative, records: [] };
+  if (rcode === RCODE_NXDOMAIN) return { authoritative: true, records: [] };
   if (rcode !== 0) throw new DnsQueryError("ESERVFAIL", `the server answered with rcode ${rcode}`);
   if (flags & FLAG_TC) throw new DnsQueryError("ETRUNCATED", "the answer was truncated");
 
@@ -120,17 +124,20 @@ export function parseTxtResponse(buf: Buffer, id: number, fqdn: string): TxtAnsw
     }
     at = end;
   }
-  return { authoritative, records };
+  return { authoritative: true, records };
 }
 
 /** One TXT query over UDP to one server, with no retry and no fallback to another. */
-export function queryTxt(server: string, fqdn: string, timeoutMs = QUERY_TIMEOUT_MS): Promise<TxtAnswer> {
+export function queryTxt(server: string, fqdn: string, timeoutMs = QUERY_TIMEOUT_MS, trustAll = false): Promise<TxtAnswer> {
   const { host, port } = parseServer(server);
   const id = randomInt(0x10000);
   const query = encodeQuery(id, fqdn);
   const socket = createSocket(isIPv6(host) ? "udp6" : "udp4");
   return new Promise<TxtAnswer>((resolve, reject) => {
+    let settled = false;
     const finish = (settle: () => void) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       socket.close();
       settle();
@@ -141,14 +148,18 @@ export function queryTxt(server: string, fqdn: string, timeoutMs = QUERY_TIMEOUT
     socket.on("message", (msg) => {
       let answer: TxtAnswer | null;
       try {
-        answer = parseTxtResponse(msg, id, fqdn);
+        answer = parseTxtResponse(msg, id, fqdn, trustAll);
       } catch (e) {
         finish(() => reject(e));
         return;
       }
       if (answer) finish(() => resolve(answer));
     });
-    socket.connect(port, host, () => socket.send(query));
+    // A failed connect comes back here, not as 'error'; sending on it would throw outside the promise.
+    socket.connect(port, host, (err?: Error) => {
+      if (err) finish(() => reject(err));
+      else socket.send(query, (e) => e && finish(() => reject(e)));
+    });
   });
 }
 
@@ -175,7 +186,7 @@ export function systemChallengeResolver(): ChallengeResolver {
 export function fixedChallengeResolver(servers: string[]): ChallengeResolver {
   return {
     servers: async () => [...servers],
-    txt: async (server, fqdn) => ({ ...(await queryTxt(server, fqdn)), authoritative: true }),
+    txt: (server, fqdn) => queryTxt(server, fqdn, QUERY_TIMEOUT_MS, true),
   };
 }
 
@@ -197,7 +208,10 @@ export interface DnsWaitOptions {
   now?: () => number;
 }
 
-type Seen = "yes" | "no" | "timeout" | "not_authoritative";
+type Seen = "yes" | "no" | "unreachable" | "not_authoritative";
+
+/** No answer at all: dropped (timeout) or refused on the way (ICMP unreachable, a local firewall). */
+const UNREACHABLE = new Set(["ETIMEOUT", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EACCES", "EPERM", "EADDRNOTAVAIL"]);
 
 /** Resolve once every authoritative server answers `value` for `fqdn`; DnsNotVisible when they don't in time. */
 export async function waitForTxt(opts: DnsWaitOptions): Promise<void> {
@@ -212,6 +226,7 @@ export async function waitForTxt(opts: DnsWaitOptions): Promise<void> {
 
   const deadline = now() + timeoutMs;
   const pending = new Set(servers);
+  let seen = false;
   for (let round = 0; ; round++) {
     const answers = await Promise.all(
       [...pending].map(async (server): Promise<{ server: string; seen: Seen }> => {
@@ -220,17 +235,24 @@ export async function waitForTxt(opts: DnsWaitOptions): Promise<void> {
           if (!authoritative) return { server, seen: "not_authoritative" };
           return { server, seen: records.some((chunks) => chunks.join("") === opts.value) ? "yes" : "no" };
         } catch (e) {
-          return { server, seen: (e as NodeJS.ErrnoException).code === "ETIMEOUT" ? "timeout" : "no" };
+          return { server, seen: UNREACHABLE.has((e as NodeJS.ErrnoException).code ?? "") ? "unreachable" : "no" };
         }
       }),
     );
-    if (round === 0 && answers.every((a) => a.seen === "timeout" || a.seen === "not_authoritative")) {
+    if (round === 0 && answers.every((a) => a.seen === "unreachable" || a.seen === "not_authoritative")) {
       await sleep(blindWaitMs);
       return;
     }
     // Asking again reaches the same stand-in, so a server behind one is left to the others.
-    for (const a of answers) if (a.seen === "yes" || a.seen === "not_authoritative") pending.delete(a.server);
-    if (pending.size === 0) return;
+    for (const a of answers) {
+      if (a.seen === "yes") seen = true;
+      if (a.seen === "yes" || a.seen === "not_authoritative") pending.delete(a.server);
+    }
+    // Every server left behind a stand-in before one showed the value: nothing to go on but the wait.
+    if (pending.size === 0) {
+      if (!seen) await sleep(blindWaitMs);
+      return;
+    }
     if (now() + pollMs > deadline) {
       throw new DnsNotVisible(`${opts.fqdn} was not visible on ${[...pending].join(", ")} within ${timeoutMs / 1000}s`);
     }

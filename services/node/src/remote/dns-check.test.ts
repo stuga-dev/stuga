@@ -95,6 +95,18 @@ describe("waiting for the challenge record", () => {
     expect(s.rounds.get("192.0.2.1")).toBe(1);
   });
 
+  it("takes a port 53 refused on the way, as by an ICMP reject, like one dropped: waits 20 seconds", async () => {
+    const s = setup(() => Object.assign(new Error("refused"), { code: "ECONNREFUSED" }));
+    await waitForTxt(s.opts);
+    expect(s.sleeps).toEqual([20_000]);
+  });
+
+  it("waits 20 seconds too when the last trustworthy server turns out to be behind a stand-in", async () => {
+    const s = setup((server, round) => (server === "192.0.2.1" ? standIn() : round === 0 ? nodata() : standIn()));
+    await waitForTxt(s.opts);
+    expect(s.sleeps).toEqual([2000, 20_000]);
+  });
+
   it("never counts a stand-in's copy of the value", async () => {
     const s = setup((server) => (server === "192.0.2.1" ? { authoritative: false, records: [[VALUE]] } : nodata()));
     await expect(waitForTxt(s.opts)).rejects.toBeInstanceOf(DnsNotVisible);
@@ -160,9 +172,19 @@ describe("one query on the wire", () => {
     expect(q.readUInt16BE(q.length - 4)).toBe(16);
   });
 
-  it("reports an answer without AA as not authoritative", async () => {
+  it("reports an answer without AA as not authoritative, and reads none of its records", async () => {
     const server = await serve((q) => answer(q, 0x0080, [txtRecord(POINTER_TO_QUESTION, [VALUE])]));
-    await expect(queryTxt(server, FQDN)).resolves.toEqual({ authoritative: false, records: [[VALUE]] });
+    await expect(queryTxt(server, FQDN)).resolves.toEqual({ authoritative: false, records: [] });
+  });
+
+  it("reads a refusal without AA as not authoritative, not as the zone's refusal", async () => {
+    const server = await serve((q) => answer(q, 0x0080 | 5, []));
+    await expect(queryTxt(server, FQDN)).resolves.toEqual({ authoritative: false, records: [] });
+  });
+
+  it("rejects, and never throws past the promise, when the socket cannot connect", async () => {
+    // A multicast address with no scope: connect(2) fails on macOS and Linux alike.
+    await expect(queryTxt("ff02::1", FQDN, 500)).rejects.toBeInstanceOf(Error);
   });
 
   it("takes NXDOMAIN for no records, and skips records for other names", async () => {
