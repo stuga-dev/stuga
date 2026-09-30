@@ -48,7 +48,7 @@ Until the node serves, it answers with a page that says it is starting. `./stuga
 | `compose.yml` | The stack, with both images pinned to one release. An upgrade replaces it, so do not edit it. |
 | `.env` | Your settings and the database password, readable only by you. Compose reads it, and passes it to the node. |
 | `stuga` | The operator commands. |
-| `compose.rollback.yml` | Only after going back to an older release: keeps the node on it until the next upgrade. See [Roll back](#roll-back). |
+| `compose.rollback.yml` | Only after going back to an older release: keeps the node on it until the next upgrade, through `COMPOSE_FILE` in `.env`. See [Roll back](#roll-back). |
 | `data/node/` | The node's data directory (`DATA_DIR`): document snapshots, media, per-actor SQLite stores, the signing key and secrets. |
 | the `stuga_pgdata` volume | The Postgres cluster. `docker volume inspect stuga_pgdata` shows where Docker keeps it. |
 | `backups/` | Backups: the node's daily ones, the one it takes before an upgrade, and `./stuga backup`'s. |
@@ -84,7 +84,8 @@ out. To change it, delete the line and run `docker compose stop node`, `./stuga 
 
 To add to the stack, for example another volume, put the change in `compose.override.yml` and set
 `COMPOSE_FILE=compose.yml:compose.override.yml` in `.env`, so that `./stuga` uses the same files
-as `docker compose`.
+as `docker compose`. After a [roll back](#roll-back), `COMPOSE_FILE` also names
+`compose.rollback.yml`: leave it there.
 
 ### Reaching the node from other devices
 
@@ -150,7 +151,8 @@ It downloads that release's `compose.yml`, `env.example` and `stuga` over the on
 version backs up the database before it changes anything, and answers with a page that says so
 meanwhile. `./stuga upgrade` ends by printing the version change and the restore command that
 undoes it; if the new version does not serve, it prints the command for the node's log and the same
-restore command. It refuses an older release than the running one: going back is a restore. Compare
+restore command, or, when the new version stopped before its backup and changed nothing, keeps the
+node on the previous release as [Roll back](#roll-back) describes. It refuses an older release than the running one: going back is a restore. Compare
 the new `env.example` with your `.env` for settings the release adds. When `.env` has no
 `POSTGRES_PASSWORD`, the upgrade stops the node and gives the database a random one first.
 
@@ -199,14 +201,11 @@ Restore the backup the new version took before it upgraded, which `./stuga upgra
 
 The node comes back on the release whose data the backup holds. Keep `compose.yml`: it names the
 newer images, but an older release's `compose.yml` does not know the database password. The
-restore writes `compose.rollback.yml`, which keeps the node on the older release, so until the next
-upgrade start the stack with both files:
+restore writes `compose.rollback.yml`, which keeps the node on the older release, and adds it to
+`COMPOSE_FILE` in `.env`, so `docker compose up -d` keeps the node there too.
 
-```sh
-docker compose -f compose.yml -f compose.rollback.yml up -d
-```
-
-`./stuga upgrade` removes `compose.rollback.yml` once the node serves the newer release.
+The next `./stuga upgrade` takes `compose.rollback.yml` out of `.env` and deletes it before it
+starts the newer release.
 
 ## Uninstall
 

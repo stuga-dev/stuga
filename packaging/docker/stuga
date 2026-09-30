@@ -31,19 +31,36 @@ env_value() {
   sed -n "s/^[[:space:]]*$1=//p" .env | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
 }
 
-# The compose files as docker compose itself picks them, so a pin file can be added to the same list.
-COMPOSE=(docker compose)
-SHOWN_FILES=""
-compose_files="${COMPOSE_FILE:-$(env_value COMPOSE_FILE)}"
-old_ifs="$IFS"
-IFS="${COMPOSE_PATH_SEPARATOR:-:}"
-for f in ${compose_files:-compose.yml}; do COMPOSE+=(-f "$f"); SHOWN_FILES="$SHOWN_FILES -f $f"; done
-IFS="$old_ifs"
-SHOWN="docker compose"
-
 # Keeps the node on an older release than compose.yml names, after a restore or a failed upgrade
-# goes back to it. compose.yml itself stays: it carries this node's database password.
+# goes back to it. compose.yml itself stays: it carries this node's database password. It is added
+# to COMPOSE_FILE in .env, so a plain `docker compose up -d` keeps the node on that release too.
 ROLLBACK_FILE="compose.rollback.yml"
+COMPOSE_SEP="${COMPOSE_PATH_SEPARATOR:-$(env_value COMPOSE_PATH_SEPARATOR)}"
+COMPOSE_SEP="${COMPOSE_SEP:-:}"
+
+# The compose files as docker compose itself picks them, so a pin file can be added to the same
+# list. BASE leaves out the rollback file: it names the release compose.yml does. SHOWN is how to
+# run compose by hand, plain unless the rollback file exists and what compose reads does not name it.
+load_compose() {
+  local files f listed=no old_ifs="$IFS"
+  files="${COMPOSE_FILE:-$(env_value COMPOSE_FILE)}"
+  BASE=(docker compose)
+  SHOWN_FILES=""
+  IFS="$COMPOSE_SEP"
+  for f in ${files:-compose.yml}; do
+    if [ "$f" = "$ROLLBACK_FILE" ]; then listed=yes; continue; fi
+    BASE+=(-f "$f")
+    SHOWN_FILES="$SHOWN_FILES -f $f"
+  done
+  IFS="$old_ifs"
+  COMPOSE=("${BASE[@]}")
+  SHOWN="docker compose"
+  if [ -f "$ROLLBACK_FILE" ]; then
+    COMPOSE+=(-f "$ROLLBACK_FILE")
+    [ "$listed" = yes ] || SHOWN="docker compose$SHOWN_FILES -f $ROLLBACK_FILE"
+  fi
+}
+load_compose
 
 DATA_PARENT="$ROOT/data"
 DATA_NAME="node"
@@ -61,19 +78,20 @@ for setting in "STUGA_READY_QUIET_SECONDS=$READY_QUIET_SECONDS" "STUGA_READY_MAX
 done
 
 compose() { "${COMPOSE[@]}" "$@"; }
+base_compose() { "${BASE[@]}" "$@"; }
 compose_running() { compose ps --status running --services 2>/dev/null; }
 node_running() { compose_running | grep -qx node; }
 
 # True when the compose files build from source, as compose.build.yml does.
-buildable() { compose config 2>/dev/null | grep -qE '^[[:space:]]+build:'; }
+buildable() { base_compose config 2>/dev/null | grep -qE '^[[:space:]]+build:'; }
 
-pinned_node_tag() { compose config --images 2>/dev/null | sed -n 's|.*/stuga-node:||p' | head -1 || true; }
-compose_node_image() { compose config --images 2>/dev/null | grep '/stuga-node:' | head -1 || true; }
+pinned_node_tag() { base_compose config --images 2>/dev/null | sed -n 's|.*/stuga-node:||p' | head -1 || true; }
+compose_node_image() { base_compose config --images 2>/dev/null | grep '/stuga-node:' | head -1 || true; }
 
 # True when every image the compose files name is already on this machine, as after a docker load.
 images_present() {
   local image images
-  images="$(compose config --images 2>/dev/null)" || return 1
+  images="$(base_compose config --images 2>/dev/null)" || return 1
   [ -n "$images" ] || return 1
   for image in $images; do
     docker image inspect "$image" >/dev/null 2>&1 || return 1
@@ -111,16 +129,86 @@ pin_image() {
 }
 pinned() { if [ -n "$PIN_FILE" ]; then compose -f "$PIN_FILE" "$@"; else compose "$@"; fi; }
 
+# The file .env is, following links: a rename onto .env itself would replace a link with a file.
+env_file() {
+  local f=.env link n=0
+  while [ -L "$f" ] && [ "$n" -lt 20 ]; do
+    link="$(readlink "$f")"
+    case "$link" in /*) f="$link" ;; *) f="$(dirname "$f")/$link" ;; esac
+    n=$((n + 1))
+  done
+  printf '%s' "$f"
+}
+
+# rewrite_env <sed script> [<line>…]: .env through the sed script, then the lines, put in place of
+# .env in one rename. The new file starts as a copy, so it keeps .env's owner and group; it is 0600.
+ENV_TMP=""
+rewrite_env() {
+  local script="$1" target
+  shift
+  target="$(env_file)"
+  ENV_TMP="$(mktemp "$(dirname "$target")/.env.XXXXXX")" || { ENV_TMP=""; return 1; }
+  if [ -f "$target" ]; then cp -p "$target" "$ENV_TMP" || return 1; fi
+  chmod 600 "$ENV_TMP" || return 1
+  if [ -f "$target" ]; then sed "$script" "$target" > "$ENV_TMP" || return 1; fi
+  if [ -n "$(tail -c 1 "$ENV_TMP")" ]; then echo >> "$ENV_TMP" || return 1; fi
+  if [ $# -gt 0 ]; then printf '%s\n' "$@" >> "$ENV_TMP" || return 1; fi
+  mv -f "$ENV_TMP" "$target" || return 1
+  ENV_TMP=""
+}
+
+# The files a plain `docker compose` here reads, as .env lists them, without the rollback file.
+default_compose_list() {
+  if [ -f compose.override.yml ]; then printf 'compose.yml%scompose.override.yml' "$COMPOSE_SEP"; else printf compose.yml; fi
+}
+env_compose_list() {
+  local files f list="" old_ifs="$IFS"
+  files="$(env_value COMPOSE_FILE)"
+  IFS="$COMPOSE_SEP"
+  for f in ${files:-$(default_compose_list)}; do
+    if [ "$f" != "$ROLLBACK_FILE" ]; then list="${list:+$list$COMPOSE_SEP}$f"; fi
+  done
+  IFS="$old_ifs"
+  printf '%s' "$list"
+}
+rollback_in_env() {
+  case "$COMPOSE_SEP$(env_value COMPOSE_FILE)$COMPOSE_SEP" in *"$COMPOSE_SEP$ROLLBACK_FILE$COMPOSE_SEP"*) return 0 ;; esac
+  return 1
+}
+
+# set_compose_file <list>: COMPOSE_FILE in .env, or none when <list> is empty.
+set_compose_file() {
+  local drop="/^[[:space:]]*COMPOSE_FILE=/d; /^#.*compose\\.rollback\\.yml/d"
+  if [ -z "$1" ]; then rewrite_env "$drop"; return; fi
+  rewrite_env "$drop" "# $ROLLBACK_FILE keeps the node on an older release; the next upgrade takes it out." "COMPOSE_FILE=$1"
+}
+
 # write_rollback <image>: keep the node on <image> until the next upgrade.
 write_rollback() {
   local tmp
   tmp="$(mktemp .stuga-pin.XXXXXX)" || return 1
-  if printf 'services:\n  node:\n    image: "%s"\n' "$1" > "$tmp" && mv -f "$tmp" "$ROLLBACK_FILE"; then return 0; fi
-  rm -f "$tmp"
-  return 1
+  if ! { printf 'services:\n  node:\n    image: "%s"\n' "$1" > "$tmp" && mv -f "$tmp" "$ROLLBACK_FILE"; }; then
+    rm -f "$tmp"
+    return 1
+  fi
+  # Without it in .env the file still holds; SHOWN then names it.
+  rollback_in_env || set_compose_file "$(env_compose_list)$COMPOSE_SEP$ROLLBACK_FILE" \
+    || warn "could not add $ROLLBACK_FILE to COMPOSE_FILE in .env"
+  load_compose
 }
-rolled_back() { if [ -f "$ROLLBACK_FILE" ]; then compose -f "$ROLLBACK_FILE" "$@"; else compose "$@"; fi; }
-rolled_back_shown() { printf '%s%s -f %s' "$SHOWN" "$SHOWN_FILES" "$ROLLBACK_FILE"; }
+
+# remove_rollback: back to the release compose.yml names. .env first: a list naming a missing file
+# stops docker compose.
+remove_rollback() {
+  local list
+  if rollback_in_env; then
+    list="$(env_compose_list)"
+    if [ "$list" = compose.yml ]; then list=""; fi
+    set_compose_file "$list" || return 1
+  fi
+  rm -f "$ROLLBACK_FILE"
+  load_compose
+}
 
 # Set while this script has stopped a node nothing has changed under yet: any exit starts it again.
 NODE_STOPPED_BY_US=no
@@ -128,14 +216,18 @@ RESTORE_RUNNING=no
 # Set while the role has a password .env does not name: any exit puts OLD_ROLE_PASSWORD back.
 ROLE_PASSWORD_CHANGED=no
 OLD_ROLE_PASSWORD=""
-ENV_TMP=""
+NEW_ROLE_PASSWORD=""
 
 on_exit() {
   local code=$?
   if [ -n "$ENV_TMP" ]; then rm -f "$ENV_TMP"; fi
   if [ "$ROLE_PASSWORD_CHANGED" = yes ]; then
     ROLE_PASSWORD_CHANGED=no
-    if put_back_role_password; then
+    if [ -n "$NEW_ROLE_PASSWORD" ] && [ "$(env_value POSTGRES_PASSWORD)" = "$NEW_ROLE_PASSWORD" ]; then
+      # Stopped just after .env took the password: both agree, but the stopped container has the old one.
+      NODE_STOPPED_BY_US=no
+      warn "the database has its own password now, in .env; start the node with: $SHOWN up -d" >&2
+    elif put_back_role_password; then
       warn "the database password was put back as it was" >&2
     else
       # A node started now could not sign in.
@@ -309,6 +401,13 @@ start_again() {
 
 db_password_set() { [ -n "${POSTGRES_PASSWORD:-$(env_value POSTGRES_PASSWORD)}" ]; }
 
+# Compose takes a POSTGRES_PASSWORD from the shell over .env's, but the role never got that one.
+refuse_shell_password() {
+  if [ -n "${POSTGRES_PASSWORD:-}" ] && [ -z "$(env_value POSTGRES_PASSWORD)" ]; then
+    fail 2 "POSTGRES_PASSWORD is set in this shell and not in .env; nothing was changed. Unset it (unset POSTGRES_PASSWORD), or put it in .env if it is the database's password"
+  fi
+}
+
 # role_sql: SQL on stdin, never in an argument, as the superuser over the container's own socket,
 # which needs no password. The session logs no statement, so a password stays out of Postgres's log.
 role_sql() {
@@ -341,18 +440,13 @@ ensure_db_password() {
   case "$password" in *[!A-Za-z0-9_-]*) password="" ;; esac
   [ "${#password}" -eq 43 ] || fail 3 "could not make a random password; nothing was changed"
 
+  NEW_ROLE_PASSWORD="$password"
   ROLE_PASSWORD_CHANGED=yes
   printf "ALTER ROLE stuga PASSWORD '%s';\n" "$password" | role_sql >/dev/null \
     || fail 3 "could not set the database password; nothing was changed"
-  # Beside .env, so the rename replaces it in one step; mktemp makes it 0600.
-  ENV_TMP="$(mktemp .env.XXXXXX)" || fail 3 "could not write .env; nothing was changed"
-  {
-    if [ -f .env ]; then cat .env && echo; fi
-    echo "# The database's password, which Postgres holds too: change it only as docs/install/docker.md says."
-    printf 'POSTGRES_PASSWORD=%s\n' "$password"
-  } > "$ENV_TMP" || fail 3 "could not write .env; nothing was changed"
-  mv -f "$ENV_TMP" .env || fail 3 "could not write .env; nothing was changed"
-  ENV_TMP=""
+  rewrite_env "" "" \
+    "# The database's password, which Postgres holds too: change it only as docs/install/docker.md says." \
+    "POSTGRES_PASSWORD=$password" || fail 3 "could not write .env; nothing was changed"
   ROLE_PASSWORD_CHANGED=no
   # The node's container still has the old password: only `up -d` starts it now.
   NODE_STOPPED_BY_US=no
@@ -501,14 +595,15 @@ cmd_restore() {
   # release that failed, and it would migrate the restored data forward. So an older build is kept
   # in the rollback file, beside compose.yml rather than in place of it.
   if [ "$target" = "$(compose_node_image)" ]; then
-    rm -f "$ROLLBACK_FILE"
+    remove_rollback || fail 4 "restored, but could not take $ROLLBACK_FILE out of COMPOSE_FILE in .env, so the node was left stopped.
+       What the restore replaced is kept: database \"$replaced_db\", $DATA_PARENT/$replaced_dir"
     start_it="Start it with: $SHOWN up -d node"
   else
     write_rollback "$target" || fail 4 "restored, but could not write $ROLLBACK_FILE, so the node was left stopped.
        What the restore replaced is kept: database \"$replaced_db\", $DATA_PARENT/$replaced_dir"
-    start_it="Start it on the build that took the backup ($target) with: $(rolled_back_shown) up -d node"
+    start_it="Start it on the build that took the backup ($target) with: $SHOWN up -d node"
   fi
-  rolled_back up -d node >/dev/null 2>&1 \
+  compose up -d node >/dev/null 2>&1 \
     || fail 4 "restored, but the node did not start. $start_it
        What the restore replaced is kept: database \"$replaced_db\", $DATA_PARENT/$replaced_dir"
   if ! wait_node_ready; then
@@ -524,7 +619,7 @@ cmd_restore() {
   if [ -n "$replaced_dir" ]; then say "The data directory it replaced is kept at $DATA_PARENT/$replaced_dir."; fi
   say "Delete them once you are satisfied."
   if [ -f "$ROLLBACK_FILE" ]; then
-    warn "the node now runs $target, and compose.yml names a newer release. Keep compose.yml; until the next upgrade, start the stack with: $(rolled_back_shown) up -d"
+    warn "the node now runs $target, and compose.yml names a newer release. Keep compose.yml: $ROLLBACK_FILE keeps the node on $target until the next upgrade. Start the stack with: $SHOWN up -d"
   fi
 }
 
@@ -598,6 +693,7 @@ fetch_release() {
 # it changes anything, so this fetches the images and starts them. A build from source keeps its
 # version, so there this takes the backup itself, first.
 cmd_upgrade() {
+  refuse_shell_password
   require_postgres
   local before after pin backup="" wanted="" fetched=no arg old_image
   for arg in "$@"; do
@@ -630,13 +726,13 @@ cmd_upgrade() {
   say "Fetching the new images"
   local fetched=yes
   if buildable; then
-    compose build --pull || fetched=no
+    base_compose build --pull || fetched=no
   elif printf '%s' "$pin" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' && images_present; then
     # A published version's images never change, so the ones here are the ones a pull would bring.
     # This is how a node with no way to the registry upgrades: from images loaded by hand.
     ok "already on this machine"
   else
-    compose pull || fetched=no
+    base_compose pull || fetched=no
   fi
   if [ "$fetched" = no ]; then
     if [ "$BACKUP_WAS_RUNNING" = yes ]; then start_again; fi
@@ -653,6 +749,9 @@ cmd_upgrade() {
     fi
     ensure_db_password
   fi
+
+  # Out before the new version starts: a pin left behind would put the old one back on migrated data.
+  remove_rollback || fail 3 "could not take $ROLLBACK_FILE out of COMPOSE_FILE in .env; the node was not upgraded"
 
   # From here the new version may migrate the database: never restart the old one behind it.
   NODE_STOPPED_BY_US=no
@@ -673,12 +772,11 @@ cmd_upgrade() {
     if [ -n "$old_image" ] && [ "$old_image" != "$(compose_node_image)" ] && write_rollback "$old_image"; then
       fail 4 "the node did not become ready after the upgrade, and it took no backup, so it changed nothing:
        it backs up before it upgrades, and stops if it cannot. Look at the log: $SHOWN logs --tail 50 node
-       To go back to stuga $before, keep compose.yml and run: $(rolled_back_shown) up -d"
+       To go back to stuga $before, keep compose.yml and run: $SHOWN up -d ($ROLLBACK_FILE keeps the node on it)"
     fi
     fail 4 "the node did not become ready after the upgrade, and it took no backup, so it changed nothing:
        it backs up before it upgrades, and stops if it cannot. Look at the log: $SHOWN logs --tail 50 node"
   fi
-  rm -f "$ROLLBACK_FILE"
 
   after="$(node_version_raw)"
   after="${after:-0.0.0-dev}"
@@ -735,7 +833,7 @@ cmd_status() {
     warn "a restore kept what it replaced — run: $SELF list"
   fi
   if [ -f "$ROLLBACK_FILE" ]; then
-    warn "$ROLLBACK_FILE keeps the node on an older release than compose.yml: start the stack with $(rolled_back_shown) up -d"
+    warn "$ROLLBACK_FILE keeps the node on an older release than compose.yml until the next upgrade: start the stack with $SHOWN up -d"
   fi
 
   say ""
@@ -762,6 +860,7 @@ cmd_media_scan() {
 
 # install.sh runs this before the first start; an upgrade runs ensure_db_password itself.
 cmd_db_password() {
+  refuse_shell_password
   if db_password_set; then ok "POSTGRES_PASSWORD is set already"; return 0; fi
   if node_running; then fail 2 "stop the node first: $SHOWN stop node, then $SELF db-password, then $SHOWN up -d"; fi
   ensure_db_password
