@@ -141,6 +141,8 @@ if [ -n "$identity" ]; then
     echo "error: signing the Postgres tree failed (full log: $LOGS/sign.log)" >&2
     exit 1
   fi
+  # So Login Items lists the jobs under Stuga.app, signed by the same team.
+  codesign --force --options runtime --timestamp --sign "$identity" "$ROOT/runtime/$version/bin/stuga-job"
 else
   echo "no --identity: the Postgres tree keeps its upstream signatures, so library validation stays off"
 fi

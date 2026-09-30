@@ -9,6 +9,10 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Fixed
+
+- On a Mac, **Login Items** no longer lists Stuga's four background services as `bash` from an unidentified developer: they are listed under Stuga.
+
 ## [0.1.8] - 2026-09-30
 
 ### Changed

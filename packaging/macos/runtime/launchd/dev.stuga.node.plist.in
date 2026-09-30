@@ -6,6 +6,8 @@
   and the connector's two, so a local trial runs the connector by hand), SETUP_CODE_FILE and
   STUGA_BONJOUR_NAME.
 
+  - Every job's program is stuga-job, which runs its script with /bin/bash: signed by Stuga's team,
+    it lets Login Items list the job under Stuga.app rather than as "bash" (stuga-job.c).
   - node-wrapper.sh waits for Postgres, then execs the node, so launchd's SIGTERM starts its
     graceful shutdown; ExitTimeOut is the backstop behind the node's own 25 s limit.
   - The database is reached over the unix socket in DATABASE_URL's host=, with peer
@@ -23,7 +25,7 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/bash</string>
+    <string>@ROOT@/current/bin/stuga-job</string>
     <string>@ROOT@/current/bin/node-wrapper.sh</string>
   </array>
 

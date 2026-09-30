@@ -116,6 +116,7 @@ if [ -n "$app_identity" ]; then
 <plist version="1.0"><dict><key>com.apple.security.cs.allow-jit</key><true/></dict></plist>
 PLIST
   sign_one "$runtime/node/bin/node" "$work/node.entitlements"
+  sign_one "$runtime/bin/stuga-job"
   # Whatever else is native in the app tree. The node's bundle carries none today; this keeps a new one signed.
   while IFS= read -r -d '' file; do
     case "$(file -b "$file")" in *Mach-O*) sign_one "$file" ;; esac

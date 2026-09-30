@@ -1,9 +1,9 @@
 #!/bin/bash
 # After a Stuga package installs its runtime: the _stuga and _stugaremote accounts, the directories,
-# `current`, the four jobs, the database cluster once, and a start. It then opens the menu-bar app
-# for whoever is at the Mac, which opens the setup page once Stuga serves, until someone has set it
-# up; an upgrade starts the new version, which backs up the data before it changes anything.
-# build-pkg.sh fills in the version.
+# `current`, the four jobs, the database cluster once, and a start. Before the jobs it opens the
+# menu-bar app for whoever is at the Mac, which opens the setup page once Stuga serves, until someone
+# has set it up; an upgrade starts the new version, which backs up the data before it changes
+# anything. build-pkg.sh fills in the version.
 set -euo pipefail
 
 # preinstall's mark that Stuga is stopped on purpose goes however this ends: Stuga runs again, or
@@ -49,6 +49,7 @@ main() {
   local origin
   origin="$(plutil -extract EnvironmentVariables.PUBLIC_ORIGIN raw /Library/LaunchDaemons/dev.stuga.node.plist 2> /dev/null || true)"
   [ -n "$origin" ] || origin="http://$(scutil --get LocalHostName | tr '[:upper:]' '[:lower:]').local:$port"
+  open_app
   local remote_plist=/Library/LaunchDaemons/dev.stuga.remote.plist first_remote=no
   [ -f "$remote_plist" ] || first_remote=yes
   STUGA_LAUNCHD_TEMPLATES="$runtime/share/launchd/templates" bash "$runtime/share/launchd/render-launchd.sh" \
@@ -78,7 +79,6 @@ main() {
     launchctl bootstrap system /Library/LaunchDaemons/dev.stuga.helper.plist
 
   prune_runtimes "$root" "$version" "$previous"
-  greet
 }
 
 # ensure_account <name> <real name>: a user and a group of that name, hidden, with no shell and no
@@ -134,13 +134,19 @@ prune_runtimes() {
   done
 }
 
-# For whoever is at the Mac: the menu-bar app. Nothing here waits for Stuga to start.
-greet() {
+# For whoever is at the Mac: the menu-bar app, and a few seconds for Login Items to learn of it. It
+# files a job under the app its AssociatedBundleIdentifiers names only if the app has run by the time
+# it first sees the job, and under the developer otherwise, for good. Nothing waits for Stuga.
+open_app() {
   local user uid
   user="$(stat -f %Su /dev/console 2> /dev/null || true)"
   uid="$(stat -f %u /dev/console 2> /dev/null || true)"
   [ -n "$uid" ] && [ "$user" != root ] || return 0
-  launchctl asuser "$uid" sudo -u "$user" open -a /Applications/Stuga.app > /dev/null 2>&1 || true
+  launchctl asuser "$uid" sudo -u "$user" open -a /Applications/Stuga.app > /dev/null 2>&1 || return 0
+  for _ in $(seq 1 10); do
+    case "$(sfltool dumpbtm 2> /dev/null)" in *"Identifier: 2.dev.stuga.app"*) return 0 ;; esac
+    sleep 1
+  done
 }
 
 main "$@"

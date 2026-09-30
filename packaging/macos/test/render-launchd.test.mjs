@@ -111,7 +111,7 @@ test("daemon mode renders the four jobs, the connector's as _stugaremote", { ski
   assert.equal(remote.Label, "dev.stuga.remote");
   assert.equal(remote.UserName, "_stugaremote");
   assert.equal(remote.GroupName, "_stugaremote");
-  assert.deepEqual(remote.ProgramArguments, ["/bin/bash", "/tmp/stuga root/current/bin/remote-wrapper.sh"]);
+  assert.deepEqual(remote.ProgramArguments, ["/tmp/stuga root/current/bin/stuga-job", "/tmp/stuga root/current/bin/remote-wrapper.sh"]);
   assert.deepEqual(remote.EnvironmentVariables, { STUGA_ROOT: "/tmp/stuga root", STUGA_LOG_DIR: "/tmp/stuga logs/remote" });
   assert.deepEqual(remote.KeepAlive, { SuccessfulExit: false });
   assert.equal(remote.ThrottleInterval, 10);
