@@ -97,6 +97,8 @@ export async function writeConnectorFiles(args: {
   /** The relays listed before, whose files go when they are no longer listed. */
   previous: readonly { name: string }[];
   logLevel?: FrpcLogLevel | undefined;
+  /** The group the files are given, where the connector is kept apart by one (ensureRemoteDir). */
+  gid?: number | undefined;
 }): Promise<{ sha256: string }> {
   const hash = createHash("sha256");
   for (const relay of [...args.relays].sort((a, b) => a.name.localeCompare(b.name))) {
@@ -105,7 +107,7 @@ export async function writeConnectorFiles(args: {
       [caFile(args.dir, relay.name), relay.ca_pem],
     ];
     for (const [path, content] of files) {
-      if ((await readOrNull(path)) !== content) await writeFileDurable(path, content, FILE_MODE);
+      if ((await readOrNull(path)) !== content) await writeFileDurable(path, content, FILE_MODE, { gid: args.gid });
       hash.update(`${path}\0${content}\0`);
     }
   }
@@ -118,8 +120,13 @@ export async function writeConnectorFiles(args: {
 }
 
 /** Put the credential where each relay's connector reads it, as one line, replaced whole. */
-export async function writeTokenFiles(dir: string, relays: readonly { name: string }[], credential: string): Promise<void> {
-  for (const relay of relays) await writeFileDurable(tokenFile(dir, relay.name), `${credential}\n`, FILE_MODE);
+export async function writeTokenFiles(
+  dir: string,
+  relays: readonly { name: string }[],
+  credential: string,
+  opts: { gid?: number | undefined } = {},
+): Promise<void> {
+  for (const relay of relays) await writeFileDurable(tokenFile(dir, relay.name), `${credential}\n`, FILE_MODE, opts);
 }
 
 /** The credential, from every relay's files: the connector then has nothing to log in with. */

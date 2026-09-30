@@ -198,6 +198,27 @@ describe("the platform hints packaging may set", () => {
     }
   });
 
+  it("takes the connector's group and user beside the remote hints, both or neither, as ids", () => {
+    const remote = { STUGA_REMOTE_SERVICE: "https://api.stuga.dev", STUGA_REMOTE_DIR: "/run/stuga-remote" };
+    const pair = { STUGA_REMOTE_GID: "65532", STUGA_REMOTE_CONNECTOR_UID: "65532" };
+    expect(cfg({ ...remote, ...pair }).remote?.group).toEqual({ gid: 65532, connectorUid: 65532 });
+    expect(cfg({ ...remote, STUGA_REMOTE_GID: "0", STUGA_REMOTE_CONNECTOR_UID: "4294967294" }).remote?.group).toEqual({ gid: 0, connectorUid: 4294967294 });
+    expect(cfg(remote).remote?.group).toBeUndefined();
+    expect(cfg(pair).remote).toBeUndefined();
+    for (const bad of ["-1", "65532.0", "stuga", "4294967295"]) {
+      expect(() => cfg({ ...remote, ...pair, STUGA_REMOTE_GID: bad }), bad).toThrow(ConfigError);
+    }
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(cfg({ ...remote, STUGA_REMOTE_GID: "65532" }).remote).toMatchObject({ dir: "/run/stuga-remote" });
+      expect(cfg({ ...remote, STUGA_REMOTE_GID: "65532" }).remote?.group).toBeUndefined();
+      expect(warn.mock.calls[0]![0]).toContain("STUGA_REMOTE_CONNECTOR_UID");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("needs an absolute STUGA_REMOTE_DIR, since an env file does not expand ~", () => {
     const service = { STUGA_REMOTE_SERVICE: "https://api.stuga.dev" };
     for (const bad of ["~/.stuga-remote", ".stuga-remote", "remote/dir"]) {

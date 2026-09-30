@@ -5,8 +5,14 @@
  * compares it with what runs whenever it wakes, and the node writes it again, backing off, while the
  * two disagree. A refusal, or a runtime without the connector, waits for an administrator, or for a
  * different line. Only a status stamped since the line last changed answers it.
+ *
+ * Neither file's writer is trusted to have more privilege than the node: the request is written
+ * through a new file no one else could have put there, and the status is read only from a regular
+ * file, never through a link, a pipe or a device, and only when small.
  */
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { constants } from "node:fs";
+import { open, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { ConnectorState, ConnectorStatus } from "@stuga/protocol/api/remote-access";
 import type { ConnectorHints } from "../config/env.js";
@@ -16,6 +22,9 @@ export type ConnectorLine = "off" | `on ${string}`;
 const LINE = /^(on [0-9a-f]{64}|off)$/;
 const SHA = /^[0-9a-f]{64}$/;
 const STATES = new Set<ConnectorState>(["installing", "running", "stopped", "refused", "failed", "unavailable"]);
+/** A status is a few hundred bytes; anything larger is not one. */
+const MAX_STATUS_BYTES = 4096;
+const REQUEST_MODE = 0o640;
 
 const MINUTE = 60_000;
 /** Between writes of a line the packaging has not acted on: 1, 5, 15, then every 60 minutes. */
@@ -23,17 +32,68 @@ const BACKOFF_MINUTES = [1, 5, 15, 60];
 /** An install silent for this long has been abandoned: its download gives up after 5 minutes. */
 const INSTALL_SILENT_MS = 15 * MINUTE;
 
-/** Ask for `line`. Written whole and renamed in, so the packaging never reads half of it. */
-export async function writeConnectorRequest(hints: ConnectorHints, line: ConnectorLine): Promise<void> {
+/**
+ * Ask for `line`. Written whole and renamed in, so the packaging never reads half of it; through a
+ * temporary file of a random name, created new and never through a link. With `gid`, the file is that
+ * group's, for a connector kept apart by one.
+ */
+export async function writeConnectorRequest(hints: ConnectorHints, line: ConnectorLine, opts: { gid?: number | undefined } = {}): Promise<void> {
   if (!LINE.test(line)) throw new Error(`not a connector request: ${line}`);
-  const tmp = join(dirname(hints.request), `.${basename(hints.request)}.${process.pid}.tmp`);
-  await writeFile(tmp, `${line}\n`, { mode: 0o640 });
-  await rename(tmp, hints.request);
+  const tmp = join(dirname(hints.request), `.${basename(hints.request)}.${randomBytes(8).toString("hex")}.tmp`);
+  // Named by the request, not the temporary file, so the same failure reads the same each time.
+  const failed = (e: unknown) => new Error(`can't write ${hints.request}: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`, { cause: e });
+  let handle;
+  try {
+    handle = await open(tmp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, REQUEST_MODE);
+  } catch (e) {
+    throw failed(e);
+  }
+  try {
+    await handle.writeFile(`${line}\n`);
+    // The umask narrows the mode given at creation.
+    await handle.chmod(REQUEST_MODE);
+    if (opts.gid !== undefined) await handle.chown(-1, opts.gid);
+    await handle.close();
+    await rename(tmp, hints.request);
+  } catch (e) {
+    await handle.close().catch(() => {});
+    await unlink(tmp).catch(() => {});
+    throw failed(e);
+  }
+}
+
+/** The status file's text: a regular file of at most MAX_STATUS_BYTES, reached without a link; null otherwise. */
+async function readStatusText(path: string): Promise<string | null> {
+  let handle;
+  try {
+    // Non-blocking, so a pipe put there cannot hold the node up before it is told apart.
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch {
+    return null;
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > MAX_STATUS_BYTES) return null;
+    // One byte more than allowed: a file that grew since is refused too.
+    const buffer = Buffer.alloc(MAX_STATUS_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > MAX_STATUS_BYTES) return null;
+    return buffer.subarray(0, length).toString("utf8");
+  } catch {
+    return null;
+  } finally {
+    await handle.close().catch(() => {});
+  }
 }
 
 /** What the packaging last reported, or null when there is nothing readable. */
 export async function readConnectorStatus(hints: ConnectorHints): Promise<ConnectorStatus | null> {
-  const text = await readFile(hints.status, "utf8").catch(() => null);
+  const text = await readStatusText(hints.status);
   if (!text) return null;
   let raw: Record<string, unknown>;
   try {
@@ -98,6 +158,8 @@ export interface ConnectorControl {
 
 export function createConnectorControl(opts: {
   hints: ConnectorHints;
+  /** The group the request is given, where the connector is kept apart by one. */
+  gid?: number | undefined;
   now: () => number;
   onError: (error: unknown) => void;
 }): ConnectorControl {
@@ -115,7 +177,7 @@ export function createConnectorControl(opts: {
   /** False when the write failed: said once per reason, and tried again at the next call. */
   async function write(line: ConnectorLine): Promise<boolean> {
     try {
-      await writeConnectorRequest(hints, line);
+      await writeConnectorRequest(hints, line, { gid: opts.gid });
     } catch (e) {
       const why = (e as Error).message;
       if (why !== failing) opts.onError(e);

@@ -353,6 +353,13 @@ describe("the remote listener", () => {
     expect(frames).toEqual(["hello", "echo:one"]);
   });
 
+  it("gives its socket the group asked for, where the connector is kept apart by one", async () => {
+    const gid = process.getgroups!().find((g) => g !== process.getgid!()) ?? process.getgid!();
+    const served = await serve({ gid });
+    expect(statSync(served.socketPath).gid).toBe(gid);
+    expect(statSync(served.socketPath).mode & 0o777).toBe(0o660);
+  });
+
   it("removes its socket file on close, replaces a stale one, and will not take a path that is not a socket", async () => {
     const served = await serve();
     expect(statSync(served.socketPath).isSocket()).toBe(true);

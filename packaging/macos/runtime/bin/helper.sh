@@ -67,9 +67,9 @@ write_status() {
   mv -f "$tmp" "$status_dir/$1"
 }
 
-# json_text <text>: safe between JSON quotes.
+# json_text <text>: safe between JSON quotes, and short: the node reads no status over 4 KiB.
 json_text() {
-  printf '%s' "$1" | tr -d '\\"' | tr '\n\t' '  ' | tr -d '[:cntrl:]'
+  printf '%s' "$1" | tr -d '\\"' | tr '\n\t' '  ' | tr -d '[:cntrl:]' | head -c 1024
 }
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
