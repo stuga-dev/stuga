@@ -150,7 +150,7 @@ start_connectors() {
   for file in "$dir"/*.toml; do
     if [ ! -e "$file" ] && [ ! -L "$file" ]; then continue; fi
     relay="$(basename "$file" .toml)"
-    if ! printf '%s' "$relay" | grep -Eq '^[a-z0-9-]{1,32}$'; then
+    if ! [[ $relay =~ ^[a-z0-9-]{1,32}$ ]]; then
       write_status refused "$(basename "$file") does not name a relay" "$sha"
       return
     fi

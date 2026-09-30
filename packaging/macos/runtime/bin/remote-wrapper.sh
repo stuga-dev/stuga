@@ -39,7 +39,7 @@ main() {
   for file in "$dir"/*.toml; do
     if [ ! -e "$file" ] && [ ! -L "$file" ]; then continue; fi
     relay="$(basename "$file" .toml)"
-    printf '%s' "$relay" | grep -Eq '^[a-z0-9-]{1,32}$' || refuse "$file does not name a relay"
+    [[ $relay =~ ^[a-z0-9-]{1,32}$ ]] || refuse "$file does not name a relay"
     if [ -L "$file" ] || [ ! -f "$file" ]; then refuse "$file is not a plain file"; fi
     relays+=("$relay")
   done

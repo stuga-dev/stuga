@@ -26,6 +26,8 @@ const GOLDEN = /const GOLDEN = `([^`]*)`;/.exec(golden)[1];
 const GOLDEN_DIR = "/Users/liv/.stuga-remote";
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
+// A relay whose file name carries lines of its own: frpc would read them as settings, an admin API among them.
+const INJECTED = 'x"\nmetadatas.z = \'\'\'\nwebServer.port = 7400\nuser = """\nok\n"""\nmetadatas.a = "';
 
 // Records its arguments and the config it was given, then runs until TERM, or exits as told.
 const FRPC = String.raw`#!/bin/bash
@@ -232,6 +234,10 @@ for (const [what, prepare] of [
     h.write(h.config("Relay_1"), "Relay_1");
     h.ask(`on ${SHA_A}`);
   }],
+  ["a config under a relay's name with lines of its own", (h) => {
+    h.write(h.config(INJECTED), INJECTED);
+    h.ask(`on ${SHA_A}`);
+  }],
   ["a config that is a symbolic link", (h) => {
     writeFileSync(join(h.base, "elsewhere.toml"), h.config());
     symlinkSync(join(h.base, "elsewhere.toml"), join(h.dir, "relay-1.toml"));
@@ -251,6 +257,17 @@ for (const [what, prepare] of [
     await stop(s);
   });
 }
+
+test("check_config refuses a relay's name with lines of its own", () => {
+  const h = setup();
+  const copy = join(h.base, "tmp/copy.toml");
+  writeFileSync(copy, h.config(INJECTED));
+  const result = spawnSync("bash", ["-c", '. "$1"; check_config "$2" "$3" "$4" || { echo "$reason"; exit 1; }', "-", checkToml, copy, INJECTED, h.dir], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stdout, /the relay's name is not a relay/);
+});
 
 test("a request it may not read is a failure, not a refusal", { skip: process.getuid?.() === 0 && "root reads anything" }, async () => {
   const h = setup();

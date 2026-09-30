@@ -196,6 +196,17 @@ test("refuses a config under a name that is not a relay's", { skip }, () => {
   assert.match(run.stderr, /does not name a relay/);
 });
 
+test("refuses a relay's name with lines of its own", { skip }, () => {
+  const h = setup();
+  // frpc would read the name's lines as settings, an admin API among them.
+  const relay = 'x"\nmetadatas.z = \'\'\'\nwebServer.port = 7400\nuser = """\nok\n"""\nmetadatas.a = "';
+  h.write(h.config(relay), relay);
+  const run = runToEnd(h);
+  assert.equal(run.status, 78, run.stderr);
+  assert.match(run.stderr, /does not name a relay/);
+  assert.deepEqual(h.started(), []);
+});
+
 test("refuses a config that is a symbolic link", { skip }, () => {
   const h = setup();
   writeFileSync(join(h.root, "elsewhere.toml"), h.config());

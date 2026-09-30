@@ -28,6 +28,9 @@ check_config() {
   local dns_re="^$label(\\.$label)*\$" id_re="^$node_id\$" host_re="^$node_id(\\.$label)+\$"
   local port_re='^[1-9][0-9]{0,4}$' level_re='^(info|warn)$'
   local addr port server id host level
+  # The whole name, not a line of it: the relay is written into the expected text below.
+  reason="the relay's name is not a relay"
+  [[ $relay =~ ^[a-z0-9-]{1,32}$ ]] || return 1
   # value <sed pattern>: the first match's \1, or nothing. Every line is compared below.
   value() { sed -n "/^$1\$/{s//\\1/p;q;}" "$copy"; }
   addr="$(value 'serverAddr = "\(.*\)"')"
