@@ -4,7 +4,7 @@
  * where the connector is kept apart by a group of its own, arranged.
  */
 import { constants, type Stats } from "node:fs";
-import { chmod, lchown, lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
+import { chmod, lchown, lstat, mkdir, open, readdir, rename, rmdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { RemoteGroup } from "../config/env.js";
 
@@ -92,7 +92,8 @@ export type Chown = (path: string, uid: number, gid: number) => Promise<void>;
  * With `group`, arranged rather than checked, owner and mode put right wherever they are wrong: the
  * directory the node's user's and `group`'s, 02750; `control/`, where the node asks, the same, 0750;
  * `status/`, where the connector answers, its user's and `group`'s, 0750; and the node's files in
- * the directory the node's user's and `group`'s, 0640.
+ * the directory the node's user's and `group`'s, 0640. Anything else in the directory or `control/`
+ * that is not a file of the node's user, or its socket, is removed.
  */
 export async function ensureRemoteDir(dir: string, opts: { group?: RemoteGroup | undefined; chown?: Chown } = {}): Promise<string> {
   if (opts.group) await arrangeRemoteDir(dir, opts.group, opts.chown ?? lchown);
@@ -138,12 +139,19 @@ async function arrangeRemoteDir(dir: string, group: RemoteGroup, chown: Chown): 
     await arrange(dir, { uid, gid: group.gid, mode: 0o2750, chown, top: true });
     await arrange(join(dir, CONTROL_DIR), { uid, gid: group.gid, mode: 0o750, chown, top: false });
     await arrange(join(dir, STATUS_DIR), { uid: group.connectorUid, gid: group.gid, mode: 0o750, chown, top: false });
+    // Only the node can write these now: whatever it did not write goes, so nothing planted passes for its own.
     for (const name of await readdir(dir)) {
-      if (!CONNECTOR_FILE.test(name)) continue;
+      if (name === CONTROL_DIR || name === STATUS_DIR) continue;
       const path = join(dir, name);
-      const stat = await lstat(path).catch(() => null);
-      // A link or anything else there is replaced when the node next writes that file.
-      if (stat?.isFile()) await putRight(path, stat, { uid, gid: group.gid, mode: CONNECTOR_FILE_MODE, chown });
+      const stat = await lstat(path);
+      if (stat.uid !== uid || !(name === SOCKET_NAME ? stat.isSocket() : stat.isFile())) await removeEntry(path, stat, uid, chown);
+      else if (CONNECTOR_FILE.test(name)) await putRight(path, stat, { uid, gid: group.gid, mode: CONNECTOR_FILE_MODE, chown });
+    }
+    const control = join(dir, CONTROL_DIR);
+    for (const name of await readdir(control)) {
+      const path = join(control, name);
+      const stat = await lstat(path);
+      if (stat.uid !== uid || !stat.isFile()) await removeEntry(path, stat, uid, chown);
     }
   } catch (e) {
     if (e instanceof RemoteDirError) throw e;
@@ -177,6 +185,21 @@ async function putRight(path: string, stat: Stats, want: { uid: number; gid: num
     mode = (await lstat(path)).mode & 0o7777;
   }
   if (mode !== want.mode) await chmod(path, want.mode);
+}
+
+/**
+ * Remove an entry of a directory only the node can write, never following a link. A directory is
+ * made the node's alone before it is read, so nothing in it can be swapped for a link meanwhile.
+ */
+async function removeEntry(path: string, stat: Stats, uid: number, chown: Chown): Promise<void> {
+  if (!stat.isDirectory()) return unlink(path);
+  if (stat.uid !== uid) await chown(path, uid, stat.gid);
+  await chmod(path, 0o700);
+  for (const name of await readdir(path)) {
+    const child = join(path, name);
+    await removeEntry(child, await lstat(child), uid, chown);
+  }
+  await rmdir(path);
 }
 
 function unusable(dir: string, why: string): RemoteDirError {

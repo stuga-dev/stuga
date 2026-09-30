@@ -4,7 +4,7 @@
  * anywhere else. The connector's side runs as its own user, 65532, in a child process.
  */
 import { spawnSync } from "node:child_process";
-import { chmodSync, chownSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, lchownSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -94,6 +94,27 @@ describe.skipIf(process.getuid?.() !== 0)("the shared directory, arranged as roo
     expect(owner(join(dir, "control"))).toEqual({ uid: 0, gid: CONNECTOR, mode: 0o750 });
     expect(owner(join(dir, "status"))).toEqual({ uid: CONNECTOR, gid: CONNECTOR, mode: 0o750 });
     expect(owner(join(dir, "relay-1.toml"))).toEqual({ uid: 0, gid: CONNECTOR, mode: 0o640 });
+  });
+
+  it("removes what the connector planted before the node first arranged the volume", async () => {
+    const dir = connectorsVolume();
+    const plant = (name: string, make: (path: string) => void) => {
+      make(join(dir, name));
+      lchownSync(join(dir, name), CONNECTOR, CONNECTOR);
+    };
+    // A credential that would pass for the node's, a file where the socket goes, a directory where a setting goes.
+    plant("relay-1.jwt", (p) => writeFileSync(p, "a.b.c\n", { mode: 0o640 }));
+    plant("https.sock", (p) => writeFileSync(p, ""));
+    plant("relay-1.toml", (p) => mkdirSync(p, { mode: 0o777 }));
+    plant("relay-1.toml/etc", (p) => symlinkSync("/etc", p));
+    plant("control", (p) => mkdirSync(p, { mode: 0o777 }));
+    plant("control/request", (p) => mkdirSync(p));
+    const etc = owner("/etc");
+    await ensureRemoteDir(dir, { group });
+    expect(readdirSync(dir).sort()).toEqual(["control", "status"]);
+    expect(readdirSync(join(dir, "control"))).toEqual([]);
+    expect(owner("/etc")).toEqual(etc);
+    expect(existsSync("/etc/passwd")).toBe(true);
   });
 
   it("lets the connector read its files, reach the socket and write only status/", async () => {

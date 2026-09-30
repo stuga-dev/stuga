@@ -160,15 +160,33 @@ describe("ensureRemoteDir with a group", () => {
     chmodSync(elsewhere, 0o700);
     symlinkSync(elsewhere, join(dir, "control"));
     writeFileSync(join(dir, "status"), "not a directory");
-    // A link where a node's file goes is left for the node's next write to replace.
-    writeFileSync(join(elsewhere, "target"), "x", { mode: 0o600 });
-    symlinkSync(join(elsewhere, "target"), join(dir, "relay-1.jwt"));
     await ensureRemoteDir(dir, { group });
     expect(lstatSync(join(dir, "control")).isDirectory()).toBe(true);
     expect(lstatSync(join(dir, "status")).isDirectory()).toBe(true);
     expect(mode(elsewhere)).toBe(0o700);
+  });
+
+  it("removes what the node would not have written, never following a link, and keeps the rest", async () => {
+    const dir = tempDir();
+    const elsewhere = tempDir();
+    writeFileSync(join(elsewhere, "target"), "x", { mode: 0o600 });
+    symlinkSync(join(elsewhere, "target"), join(dir, "relay-1.jwt"));
+    mkdirSync(join(dir, "relay-1.toml", "deeper"), { recursive: true, mode: 0o777 });
+    symlinkSync(elsewhere, join(dir, "relay-1.toml", "deeper", "out"));
+    writeFileSync(join(dir, "relay-1.toml", "deeper", "file"), "x", { mode: 0o400 });
+    writeFileSync(join(dir, "https.sock"), "not a socket");
+    mkdirSync(join(dir, "control", "request"), { recursive: true });
+    writeFileSync(join(dir, "control", ".request.1f2e.tmp"), "off\n");
+    writeFileSync(join(dir, "relay-1.ca.pem"), "x");
+    writeFileSync(join(dir, "notes.txt"), "x");
+    mkdirSync(join(dir, "status"));
+    writeFileSync(join(dir, "status", "status.json"), "{}");
+    await ensureRemoteDir(dir, { group });
+    expect(readdirSync(dir).sort()).toEqual(["control", "notes.txt", "relay-1.ca.pem", "status"]);
+    expect(readdirSync(join(dir, "control"))).toEqual([".request.1f2e.tmp"]);
+    expect(readdirSync(join(dir, "status"))).toEqual(["status.json"]);
+    expect(readdirSync(elsewhere)).toEqual(["target"]);
     expect(mode(join(elsewhere, "target"))).toBe(0o600);
-    expect(lstatSync(join(dir, "relay-1.jwt")).isSymbolicLink()).toBe(true);
   });
 
   it("still refuses a path that is not a directory, or one it cannot arrange", async () => {

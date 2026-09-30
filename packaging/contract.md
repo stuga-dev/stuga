@@ -178,7 +178,8 @@ connector as a user of its own in a group of its own
 node then arranges the shared directory at every start instead of refusing it, putting wrong owners
 and modes right: the directory the node's user's and the group's, `02750`; `control/` the same,
 `0750`; `status/` the connector's user's and the group's, `0750`; and every file the node writes
-there, the request included, the group's. A packaging that sets them points the request into
+there, the request included, the group's; anything else in the directory or `control/` it did not
+write, it removes. A packaging that sets them points the request into
 `control/` and the status into `status/`, and the node must be able to give files away, as root
 can. With only one set, the node logs a warning and checks the directory as without either. They
 count only beside `STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR`.

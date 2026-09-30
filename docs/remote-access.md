@@ -122,8 +122,9 @@ of the node's data. New files in the directory take its group.
 With `STUGA_REMOTE_GID` and `STUGA_REMOTE_CONNECTOR_UID`, the connector runs as a user of its own
 in a group of its own, and each directory has one writer. The node arranges the directory at every
 start, on or off, rather than checking it: whatever owner or mode is wrong, it puts right. It does
-the directory first, so that nothing else can change what is in it meanwhile, and replaces a link or
-a file where `control/` or `status/` goes.
+the directory first, so that nothing else can change what is in it meanwhile, replaces a link or a
+file where `control/` or `status/` goes, and removes anything else in the directory or `control/`
+that it did not write.
 
 | Path | Owner | Group | Mode |
 |---|---|---|---|
