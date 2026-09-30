@@ -132,8 +132,9 @@ These are optional. The app has a neutral default for each.
 | `STUGA_STDIO_ENTRY` | unset: the bundled `stuga-mcp.js` | `""`: no local path an agent outside the container can open | unset |
 | `AI_OLLAMA_DEFAULT_URL` | `http://127.0.0.1:11434` | `http://host.docker.internal:11434` (compose maps the host) | unset |
 | `STUGA_UPGRADE_REQUESTS`, `STUGA_UPGRADE_STATUS` | unset: the node offers no install | unset | the package's helper: `<root>/requests` and `<root>/status/upgrade.json` |
-| `STUGA_REMOTE_SERVICE`, `STUGA_REMOTE_DIR` | unset: the node offers no remote access | unset | `https://api.stuga.dev` and `<root>/remote` |
-| `STUGA_CONNECTOR_REQUEST`, `STUGA_CONNECTOR_STATUS` | unset: the administrator runs the connector | unset | the package's helper: `<root>/requests/remote` and `<root>/status/remote.json`; unset in the local trial |
+| `STUGA_REMOTE_SERVICE`, `STUGA_REMOTE_DIR` | unset: the node offers no remote access | `https://api.stuga.dev` and `/run/stuga-remote` | `https://api.stuga.dev` and `<root>/remote` |
+| `STUGA_CONNECTOR_REQUEST`, `STUGA_CONNECTOR_STATUS` | unset: the administrator runs the connector | the `stuga-remote` container: `/run/stuga-remote/control/request` and `/run/stuga-remote/status/status.json` | the package's helper: `<root>/requests/remote` and `<root>/status/remote.json`; unset in the local trial |
+| `STUGA_REMOTE_GID`, `STUGA_REMOTE_CONNECTOR_UID` | unset: the node checks the shared directory, and arranges nothing | `65532` and `65532` | unset |
 
 `STUGA_RESTART_HINT` is a full sentence, shown after a change that needs a restart.
 `STUGA_UPGRADE_HINT` is a full sentence too, shown to a node administrator beside a newer version.
@@ -149,7 +150,8 @@ setup offers none.
 `STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR` offer remote access
 ([docs/remote-access.md](../docs/remote-access.md)): the service the node enrolls with first, an
 https origin, and the absolute path of a directory the node shares with the connector, which it
-creates `0750` when missing and refuses when another user owns it or its group or others can write to it. The
+creates `0750` when missing and refuses when another user owns it or its group or others can write to it,
+unless it arranges it for the connector's group (below). The
 node writes the connector's settings and credential there and listens on `https.sock` in it, so
 `<dir>/https.sock` must fit a unix socket path, 103 bytes. A packaging that sets them also runs the
 connector, or leaves it to the administrator
@@ -166,8 +168,19 @@ connector only when the settings or the connector changed. The node writes it at
 it changes, and again, backing off, while the status disagrees. The packaging writes a fresh status,
 with `at` in ISO 8601, after every pass over the request, even one that changes nothing: the node
 takes a status stamped before it last changed the line, to the second, as no answer, and asks again
-for `on` after an `installing` status silent for 15 minutes. Both paths are absolute; with only
-one set, the node logs a warning and takes it that the packaging does not run the connector. They
+for `on` after an `installing` status silent for 15 minutes. The status must be a regular file of
+at most 4 KiB: the node never reads it through a link, and takes anything else as no status. Both
+paths are absolute; with only one set, the node logs a warning and takes it that the packaging does
+not run the connector. They count only beside `STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR`.
+`STUGA_REMOTE_GID` and `STUGA_REMOTE_CONNECTOR_UID`, numbers, say that the packaging runs the
+connector as a user of its own in a group of its own
+([A group of the connector's own](../docs/remote-access.md#a-group-of-the-connectors-own)). The
+node then arranges the shared directory at every start instead of refusing it, putting wrong owners
+and modes right: the directory the node's user's and the group's, `02750`; `control/` the same,
+`0750`; `status/` the connector's user's and the group's, `0750`; and every file the node writes
+there, the request included, the group's. A packaging that sets them points the request into
+`control/` and the status into `status/`, and the node must be able to give files away, as root
+can. With only one set, the node logs a warning and checks the directory as without either. They
 count only beside `STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR`.
 
 ## Postgres

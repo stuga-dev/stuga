@@ -101,7 +101,7 @@ Under `STUGA_REMOTE_DIR`, written by the node and read by the connector:
 
 | Path | What | Mode |
 |---|---|---|
-| the directory | Created by the node if missing. It must belong to the node's user, and neither its group nor anyone else may write to it. | `0750` |
+| the directory | Created by the node if missing. It must belong to the node's user, and neither its group nor anyone else may write to it. With a [group of the connector's own](#a-group-of-the-connectors-own), arranged instead. | `0750` |
 | `<relay>.toml` | The connector's settings for that relay. | `0640` |
 | `<relay>.jwt` | The relay credential, one line, replaced whole. | `0640` |
 | `<relay>.ca.pem` | The relay's certificate. | `0640` |
@@ -116,6 +116,32 @@ The Mac package creates it as `/Library/Application Support/Stuga/remote`, owned
 node's account, with the group `_stugaremote`, `0750`. `_stugaremote` is the connector's own account
 and the only member of its group: it reads the connector's files and reaches the socket, and nothing
 of the node's data. New files in the directory take its group.
+
+### A group of the connector's own
+
+With `STUGA_REMOTE_GID` and `STUGA_REMOTE_CONNECTOR_UID`, the connector runs as a user of its own
+in a group of its own, and each directory has one writer. The node arranges the directory at every
+start, on or off, rather than checking it: whatever owner or mode is wrong, it puts right. It does
+the directory first, so that nothing else can change what is in it meanwhile, and replaces a link or
+a file where `control/` or `status/` goes.
+
+| Path | Owner | Group | Mode |
+|---|---|---|---|
+| the directory | the node's user | `STUGA_REMOTE_GID` | `02750` |
+| `<relay>.toml`, `<relay>.jwt`, `<relay>.ca.pem` | the node's user | `STUGA_REMOTE_GID` | `0640` |
+| `https.sock` | the node's user | `STUGA_REMOTE_GID` | `0660` |
+| `control/`, where the node writes the connector's request | the node's user | `STUGA_REMOTE_GID` | `0750` |
+| `status/`, where the connector writes its status | `STUGA_REMOTE_CONNECTOR_UID` | `STUGA_REMOTE_GID` | `0750` |
+
+The connector reads its files and reaches the socket through the group, and can write nothing but
+`status/`. The node gives every file it writes there the group itself, whatever the directory's
+setgid bit says.
+
+The Docker install uses this. The node runs as root, the connector as `65532:65532` in a container
+of its own, and the directory is a named volume mounted at `/run/stuga-remote` in both, with the
+request at `control/request` and the status at `status/status.json`. A new volume may belong to
+whichever container mounted it first; the node's next start puts it right. The volume is not in
+backups: the node writes all of it again.
 
 ## The connector
 
@@ -137,6 +163,11 @@ The packaging writes a fresh status, with `at`, after every pass over the reques
 changes nothing: the node takes a status stamped before it last changed the line, to the second, as
 no answer yet. An `installing` status not refreshed within 15 minutes counts as abandoned, and the
 node asks again.
+
+Neither side is trusted to have more privilege than the other. The node writes the request through
+a temporary file of a random name beside it, created new and never through a link, then renames it
+in. It reads the status only from a regular file of at most 4 KiB, never through a link, and takes
+anything else as no status.
 
 On a Mac:
 
@@ -246,7 +277,9 @@ certificate is in place it gets a new credential, and only then asks for the con
 The packaging sets both, or neither ([packaging/contract.md](../packaging/contract.md#packaging-hints)).
 With only one set, the node logs a warning and offers no remote access. The connector's pair, too,
 is both or neither, and counts only beside the first two; with one of them, the node logs a warning
-and takes it that nobody but the administrator runs the connector.
+and takes it that nobody but the administrator runs the connector. So are the group and the
+connector's user, which also count only beside the first two: with one of them, the node logs a
+warning and checks the directory as it does without either.
 
 | Variable | Default | |
 |---|---|---|
@@ -254,6 +287,8 @@ and takes it that nobody but the administrator runs the connector.
 | `STUGA_REMOTE_DIR` | unset: no remote access | The directory the node shares with the connector, as an absolute path. |
 | `STUGA_CONNECTOR_REQUEST` | unset: the administrator runs the connector | The file the node writes `on <sha-256>` or `off` to, as an absolute path, replaced whole. |
 | `STUGA_CONNECTOR_STATUS` | unset: the administrator runs the connector | The JSON file the packaging reports in, as an absolute path: `state` (`installing`, `running`, `stopped`, `refused`, `failed` or `unavailable`), `message`, `at` (ISO 8601, written afresh after every pass over the request), and `connector_sha` and `config_sha`, the sha-256 of the connector and of the settings it runs. A status stamped before the node last changed its request is no answer to it; `installing` not refreshed within 15 minutes is abandoned. |
+| `STUGA_REMOTE_GID` | unset: the directory is checked, not arranged | The group the connector reads its files and reaches the socket through, as a number ([A group of the connector's own](#a-group-of-the-connectors-own)). |
+| `STUGA_REMOTE_CONNECTOR_UID` | unset: the directory is checked, not arranged | The connector's user, as a number, which owns `status/`. |
 
 ## Running the connector yourself
 
