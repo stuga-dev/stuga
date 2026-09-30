@@ -1,8 +1,9 @@
 #!/bin/bash
 # After a Stuga package installs its runtime: the _stuga and _stugaremote accounts, the directories,
-# `current`, the four jobs, the database cluster once, and a start. A first install then opens the
-# menu-bar app and the setup page for whoever is at the Mac; an upgrade starts the new version, which
-# backs up the data before it changes anything. build-pkg.sh fills in the version.
+# `current`, the four jobs, the database cluster once, and a start. It then opens the menu-bar app
+# for whoever is at the Mac, which opens the setup page once Stuga serves, until someone has set it
+# up; an upgrade starts the new version, which backs up the data before it changes anything.
+# build-pkg.sh fills in the version.
 set -euo pipefail
 
 # preinstall's mark that Stuga is stopped on purpose goes however this ends: Stuga runs again, or
@@ -30,6 +31,13 @@ main() {
   # The connector, installed by the helper: only _stugaremote can run it, and neither account can
   # change it.
   install -d -o root -g _stugaremote -m 0750 "$root/connector"
+  # The setup code, until someone sets Stuga up: the node writes it, the Mac's administrators read it.
+  install -d -o _stuga -g admin -m 0750 "$root/setup"
+  # Where 0.1.7 kept it, which only _stuga could read.
+  if [ -f "$root/data/node/setup-code" ]; then
+    install -o _stuga -g admin -m 0640 "$root/data/node/setup-code" "$root/setup/setup-code"
+    rm -f "$root/data/node/setup-code"
+  fi
   # Passable, not listable: _stugaremote reaches its own logs and cannot write _stuga's.
   install -d -o _stuga -g admin -m 0751 "$logs"
   install -d -o _stugaremote -g admin -m 0750 "$logs/remote"
@@ -70,7 +78,7 @@ main() {
     launchctl bootstrap system /Library/LaunchDaemons/dev.stuga.helper.plist
 
   prune_runtimes "$root" "$version" "$previous"
-  greet "$root" "$origin" "$port"
+  greet
 }
 
 # ensure_account <name> <real name>: a user and a group of that name, hidden, with no shell and no
@@ -126,21 +134,13 @@ prune_runtimes() {
   done
 }
 
-# For whoever is at the Mac: the menu-bar app, and the setup page while nobody has claimed the node.
+# For whoever is at the Mac: the menu-bar app. Nothing here waits for Stuga to start.
 greet() {
-  local root="$1" origin="$2" port="$3" user uid code
+  local user uid
   user="$(stat -f %Su /dev/console 2> /dev/null || true)"
   uid="$(stat -f %u /dev/console 2> /dev/null || true)"
   [ -n "$uid" ] && [ "$user" != root ] || return 0
   launchctl asuser "$uid" sudo -u "$user" open -a /Applications/Stuga.app > /dev/null 2>&1 || true
-  # A first start creates the database and its search indexes before it serves.
-  for _ in $(seq 1 120); do
-    curl -fsS --max-time 2 -o /dev/null "http://127.0.0.1:$port/ready" 2> /dev/null && break
-    sleep 1
-  done
-  code="$(tr -d '[:space:]' 2> /dev/null < "$root/data/node/setup-code" || true)"
-  [ -n "$code" ] || return 0
-  launchctl asuser "$uid" sudo -u "$user" open "$origin/login?setup=$code" > /dev/null 2>&1 || true
 }
 
 main "$@"

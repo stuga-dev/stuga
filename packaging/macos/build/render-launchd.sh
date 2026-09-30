@@ -120,9 +120,10 @@ render() { # render <template> <label>
     plutil -remove UserName "$target.tmp" > /dev/null
     plutil -remove GroupName "$target.tmp" > /dev/null
     # No helper runs beside a local trial, so the node offers no install, and the connector is
-    # run by hand.
+    # run by hand. Its setup code stays in the data directory, which its own user reads, and it
+    # advertises nothing over Bonjour, which macOS asks a launchd agent's user to allow.
     local key
-    for key in STUGA_UPGRADE_REQUESTS STUGA_UPGRADE_STATUS STUGA_CONNECTOR_REQUEST STUGA_CONNECTOR_STATUS; do
+    for key in STUGA_UPGRADE_REQUESTS STUGA_UPGRADE_STATUS STUGA_CONNECTOR_REQUEST STUGA_CONNECTOR_STATUS SETUP_CODE_FILE STUGA_BONJOUR_NAME; do
       plutil -remove "EnvironmentVariables.$key" "$target.tmp" > /dev/null 2>&1 || true
     done
   fi

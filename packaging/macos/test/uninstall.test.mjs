@@ -19,7 +19,6 @@ const LABELS = ["dev.stuga.helper", "dev.stuga.remote", "dev.stuga.node", "dev.s
 // be starting the connector, so a connector booted out before it is marked started again.
 const STUBS = {
   id: "#!/bin/bash\necho 0\n",
-  stat: "#!/bin/bash\nexit 1\n",
   launchctl: [
     "#!/bin/bash",
     'echo "launchctl $*" >> "$STUB_DIR/calls"',
@@ -38,6 +37,9 @@ echo "pkgutil $*" >> "$STUB_DIR/calls"
 `,
   dscl: String.raw`#!/bin/bash
 echo "dscl $*" >> "$STUB_DIR/calls"
+`,
+  osascript: String.raw`#!/bin/bash
+echo "osascript $*" >> "$STUB_DIR/calls"
 `,
 };
 
@@ -78,4 +80,9 @@ test("--delete-data also removes both accounts", () => {
     assert.ok(calls.includes(`dscl . -delete /Users/${account}`), calls.join("\n"));
     assert.ok(calls.includes(`dscl . -delete /Groups/${account}`), calls.join("\n"));
   }
+});
+
+test("sends the menu-bar app nothing: the app is what waits for this script, and it quits itself", () => {
+  const { calls } = run();
+  assert.ok(!calls.some((call) => call.startsWith("osascript")), calls.join("\n"));
 });

@@ -134,18 +134,22 @@ test("daemon mode points the node at the helper for upgrades and the connector",
   assert.equal(node.EnvironmentVariables.STUGA_CONNECTOR_STATUS, "/tmp/stuga root/status/remote.json");
   assert.equal(node.EnvironmentVariables.STUGA_UPGRADE_REQUESTS, "/tmp/stuga root/requests");
   assert.equal(node.EnvironmentVariables.STUGA_UPGRADE_STATUS, "/tmp/stuga root/status/upgrade.json");
+  // Where the Mac's administrators read it, with no password.
+  assert.equal(node.EnvironmentVariables.SETUP_CODE_FILE, "/tmp/stuga root/setup/setup-code");
+  // So the Mac's .local name is published while the node runs.
+  assert.equal(node.EnvironmentVariables.STUGA_BONJOUR_NAME, "Stuga");
   // The helper watches the directory both requests go into.
   assert.deepEqual(plist(join(out, "dev.stuga.helper.plist")).WatchPaths, ["/tmp/stuga root/requests"]);
 });
 
-test("agent mode keeps remote access and drops the helper's paths: a local trial runs the connector by hand", { skip }, () => {
+test("agent mode keeps remote access and the setup code in the data directory, and drops the helper's paths", { skip }, () => {
   const out = scratch();
   renderAgent(out, "--public-origin", "http://127.0.0.1:8787");
   assert.deepEqual(readdirSync(out).sort(), ["dev.stuga.local.node.plist", "dev.stuga.local.postgres.plist"]);
   const env = environment(join(out, "dev.stuga.local.node.plist"));
   assert.equal(env.STUGA_REMOTE_DIR, "/tmp/stuga root/remote");
   assert.equal(env.STUGA_REMOTE_SERVICE, "https://api.stuga.dev");
-  for (const key of ["STUGA_CONNECTOR_REQUEST", "STUGA_CONNECTOR_STATUS", "STUGA_UPGRADE_REQUESTS", "STUGA_UPGRADE_STATUS"]) {
+  for (const key of ["STUGA_CONNECTOR_REQUEST", "STUGA_CONNECTOR_STATUS", "STUGA_UPGRADE_REQUESTS", "STUGA_UPGRADE_STATUS", "SETUP_CODE_FILE", "STUGA_BONJOUR_NAME"]) {
     assert.equal(env[key], undefined, key);
   }
 });

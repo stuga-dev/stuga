@@ -9,9 +9,9 @@ Stuga runs on a Mac with Apple silicon, on macOS 13 or later. There are two ways
 ## Install the package
 
 Download [Stuga.pkg](https://github.com/stuga-dev/stuga/releases/latest/download/Stuga.pkg) and open
-it. The installer asks for an administrator's password. When it finishes, your browser opens
-Stuga's setup page with the node's setup code filled in, and the Stuga mark appears in the menu bar.
-Continue with [Getting started](../getting-started.md).
+it. The installer asks for an administrator's password. When it finishes, the Stuga mark appears in
+the menu bar, and once Stuga runs your browser opens its setup page with the node's setup code filled
+in. Continue with [Getting started](../getting-started.md).
 
 Stuga then runs as two system services, its Postgres and its node, under the hidden account
 `_stuga`; while remote access is on, a third runs its connector under `_stugaremote`. They start
@@ -29,7 +29,7 @@ its Postgres test suites against this exact build before every release.
 | Item | |
 |---|---|
 | The status line | `Running at <address>`, `Ready to set up at <address>`, `Starting…`, `Installing an update…`, or what is wrong once Stuga has been failing for a minute, such as `Stuga is not responding`. |
-| **Open Stuga** | Opens the node in your browser. While nobody has claimed it, **Set Up Stuga…** reads the setup code, which needs an administrator's password, and opens the setup page. |
+| **Open Stuga** | Opens the node in your browser. While nobody has claimed it, **Set Up Stuga…** opens the setup page with the setup code filled in; someone who is not an administrator of the Mac is asked for an administrator's password. The menu also opens that page itself whenever it starts, at login included, until the node is claimed. |
 | **Copy Address** | Copies the address other devices use. While nobody has claimed the node it is **Copy Setup Link**, which copies the setup page's link with the code in it, for setting up from another browser. |
 | **Show Address as QR Code…** | Shows that address for a phone's camera; while nobody has claimed the node, **Show Setup Link as QR Code…** shows the setup link instead. |
 | **Show Logs** | Opens `/Library/Logs/Stuga`. |
@@ -46,7 +46,10 @@ however slowly, backing up and installing an update do not count.
 ### Network
 
 The node listens on every address of the Mac, and its address (`PUBLIC_ORIGIN`) is
-`http://<the Mac's local host name>.local:8787`, which invite links carry. A device that cannot
+`http://<the Mac's local host name>.local:8787`, which invite links carry. macOS publishes that name
+only while something on the Mac advertises itself over Bonjour, so the node advertises Stuga while it
+runs. A browser other than Safari asks once whether it may find devices on local networks: allow it,
+or turn it on later in **System Settings → Privacy & Security → Local Network**. A device that cannot
 resolve `.local` names opens the node by the Mac's IP address instead. If the macOS firewall asks
 whether `node` may accept incoming connections, allow it. Only whoever has the setup code can claim
 the node, so it is safe on the network from its first start. Plain http on a network is not
@@ -85,6 +88,7 @@ Machine on purpose.
 | `/Applications/Stuga.app` | The menu-bar app. |
 | `/Library/Application Support/Stuga/runtime/<version>/` | The runtime: Postgres, Node.js, Stuga, and the scripts launchd runs. `THIRD-PARTY-NOTICES.txt` there lists the licenses of what it redistributes. `current` points at the one in use; the one before it is kept. |
 | `/Library/Application Support/Stuga/data/` | The Postgres cluster (`pgdata`), the node's data directory (`node`, `DATA_DIR`) and the backups (`backups`), owned by `_stuga`. |
+| `/Library/Application Support/Stuga/setup/` | The setup code (`SETUP_CODE_FILE`) until someone claims the node, readable by the node and the Mac's administrators. |
 | `/Library/Application Support/Stuga/remote/` | What the node shares with the connector (`STUGA_REMOTE_DIR`): its settings, its credential and the node's socket. |
 | `/Library/Application Support/Stuga/connector/` | The connector, one directory per build; `current` points at the one in use, and the one before it is kept. Only `_stugaremote` can run it. |
 | `/Library/LaunchDaemons/dev.stuga.{postgres,node,helper,remote}.plist` | The services' definitions. `helper` installs a newer package, and starts and stops the connector, when the node asks. `remote` runs the connector, and is off until remote access is turned on. |

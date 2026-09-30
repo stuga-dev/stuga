@@ -9,6 +9,12 @@
 # The node's output goes through rotate-log.mjs into $STUGA_LOG_DIR/node-<Day>.log: launchd
 # never rotates a plist's log file, and the node runs for months. The plist's own log keeps
 # only this wrapper's lines. Everything the node reads comes from the plist's environment.
+#
+# macOS publishes the Mac's .local name, PUBLIC_ORIGIN's host, only while something on the Mac
+# advertises a Bonjour service, and a Mac with no Apple Account and nothing shared advertises
+# nothing. With STUGA_BONJOUR_NAME set, the node advertises Stuga for as long as it runs: the
+# advertiser ends when the node's fd 3 closes. The package sets it; a local trial, a launchd agent
+# macOS would ask a permission for, does not.
 set -euo pipefail
 
 main() {
@@ -54,10 +60,13 @@ main() {
   done
 
   cd "$app"
+  if [ -n "${STUGA_BONJOUR_NAME:-}" ]; then
+    exec 3> >(exec > /dev/null 2>&1; /usr/bin/dns-sd -R "$STUGA_BONJOUR_NAME" _http._tcp local. "${PORT:-8787}" path=/ & ad=$!; cat; kill "$ad")
+  fi
   say "Postgres is up; starting the node, logging to $STUGA_LOG_DIR/node-<Day>.log"
   # The node stays exec'd with its output piped to rotate-log; the plist's AbandonProcessGroup
   # lets rotate-log copy the node's last lines and exit when the pipe closes.
-  exec > >(exec "$node" "$rotate" "$STUGA_LOG_DIR" node) 2>&1
+  exec > >(exec "$node" "$rotate" "$STUGA_LOG_DIR" node 3>&-) 2>&1
   exec "$node" bin/stuga-node.js serve
 }
 

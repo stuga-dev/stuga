@@ -2,8 +2,9 @@
 // daemons (dev.stuga.node, dev.stuga.postgres) from boot, whether or not anyone is logged in; this
 // app only shows their state and opens the node. It reads the node's address and port from the
 // node's job definition, which anyone may read, and asks for an administrator's password for what
-// changes the system: restarting Stuga, reading the setup code, uninstalling. Health.swift decides
-// when Stuga has stopped rather than started slowly; this app then says so, once.
+// changes the system: restarting Stuga and uninstalling it. Until someone sets Stuga up, it opens the
+// setup page once Stuga serves, each time it starts. Health.swift decides when Stuga has stopped
+// rather than started slowly; this app then says so, once.
 import AppKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
@@ -12,6 +13,8 @@ import ServiceManagement
 
 let root = "/Library/Application Support/Stuga"
 let nodePlist = "/Library/LaunchDaemons/dev.stuga.node.plist"
+/// The node's SETUP_CODE_FILE, which only the node and the Mac's administrators can read.
+let setupCodeFile = root + "/setup/setup-code"
 let logs = "/Library/Logs/Stuga"
 
 /// What the node's job definition says about where it listens.
@@ -56,7 +59,7 @@ func asAdministrator(_ command: String, prompt: String) -> String? {
 }
 
 enum State: Equatable {
-    case missing, starting, running, unclaimed, installing
+    case missing, starting, running, unclaimed, installing, uninstalling
     case down(Fault)
 }
 
@@ -123,8 +126,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     var node: Node? = Node.read()
-    /// Read once per unclaimed spell, so opening, copying and the QR code ask for the password once.
+    /// Read once per unclaimed spell, so someone who is not an administrator is asked for a password once.
     var setupCode: String?
+    /// Open the setup page when Stuga first serves after this app starts, if nobody has set it up.
+    var greeting = true
     var watch = Watch()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -180,8 +185,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             DispatchQueue.main.async {
+                // The uninstall under way says what happens next.
+                guard self.state != .uninstalling else { return }
                 self.node = node
                 guard let look else {
+                    // Uninstalled from a terminal: nothing is left to show.
+                    if !FileManager.default.fileExists(atPath: Bundle.main.bundlePath) { return NSApp.terminate(nil) }
                     self.watch.reset()
                     self.state = .missing
                     return
@@ -192,6 +201,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .starting: self.state = .starting
                 case .installing: self.state = .installing
                 case .down(let fault): self.state = .down(fault)
+                }
+                if self.greeting && health == .serving {
+                    self.greeting = false
+                    // No password asked for here: it is not what someone who just logged in expects.
+                    if unclaimed, let node, let link = self.setupLink(node, ask: false) { NSWorkspace.shared.open(link) }
                 }
                 // From the run loop, so the alert does not hold up the main queue.
                 if let announce { self.perform(#selector(self.announce(_:)), with: announce.title, afterDelay: 0) }
@@ -225,6 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .running: statusLine.title = "Running at \(address)"
         case .unclaimed: statusLine.title = "Ready to set up at \(address)"
         case .installing: statusLine.title = "Installing an update…"
+        case .uninstalling: statusLine.title = "Uninstalling…"
         case .down(let fault): statusLine.title = fault.title
         }
         if case .down = state {
@@ -239,8 +254,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         copyItem.title = state == .unclaimed ? "Copy Setup Link" : "Copy Address"
         qrItem.title = state == .unclaimed ? "Show Setup Link as QR Code…" : "Show Address as QR Code…"
         openItem.isEnabled = state == .running || state == .unclaimed
-        copyItem.isEnabled = node != nil
-        qrItem.isEnabled = node != nil
+        copyItem.isEnabled = node != nil && state != .uninstalling
+        qrItem.isEnabled = node != nil && state != .uninstalling
     }
 
     // MARK: actions
@@ -254,11 +269,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// The setup page with the node's setup code, which only root and the node can read.
-    func setupLink(_ node: Node) -> URL? {
+    /// The setup page with the node's setup code. Someone who is not an administrator of this Mac
+    /// cannot read the code, and is asked for an administrator's password unless `ask` is false.
+    func setupLink(_ node: Node, ask: Bool = true) -> URL? {
         // Only a code is kept: a refused password or an empty read asks again next time.
         if setupCode == nil,
-           let read = asAdministrator("cat '\(root)/data/node/setup-code'", prompt: "Stuga needs your password to read its setup code.")?
+           let read = ((try? String(contentsOfFile: setupCodeFile, encoding: .utf8))
+               ?? (ask ? asAdministrator("cat '\(setupCodeFile)'", prompt: "Stuga needs an administrator's password to read its setup code.") : nil))?
                .trimmingCharacters(in: .whitespacesAndNewlines), !read.isEmpty {
             setupCode = read
         }
@@ -314,6 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func restart() {
+        guard state != .uninstalling else { return }
         state = .starting
         DispatchQueue.global().async {
             let restarted = asAdministrator("launchctl kickstart -k system/dev.stuga.postgres; launchctl kickstart -k system/dev.stuga.node", prompt: "Stuga needs your password to restart.") != nil
@@ -326,6 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func uninstall() {
+        guard state != .uninstalling else { return }
         let alert = NSAlert()
         alert.messageText = "Uninstall Stuga?"
         alert.informativeText = "Stuga stops and is removed from this Mac. Your documents and backups stay in \(root)/data unless you delete them too."
@@ -337,8 +356,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if choice == .alertSecondButtonReturn { return }
         let deleteData = choice == .alertThirdButtonReturn
         let script = "'\(root)/current/bin/uninstall.sh'\(deleteData ? " --delete-data" : "")"
-        guard asAdministrator(script, prompt: "Stuga needs your password to uninstall.") != nil else { return }
-        NSApp.terminate(nil)
+        let before = state
+        state = .uninstalling
+        // Off the main thread, so the menu says what is happening while it does.
+        DispatchQueue.global().async {
+            let removed = asAdministrator(script, prompt: "Stuga needs your password to uninstall.") != nil
+            DispatchQueue.main.async {
+                if removed { return NSApp.terminate(nil) }
+                self.state = before
+                self.poll()
+            }
+        }
     }
 }
 

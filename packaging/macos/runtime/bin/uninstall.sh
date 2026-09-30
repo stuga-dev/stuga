@@ -2,13 +2,14 @@
 # Remove Stuga from this Mac: its four jobs, Stuga.app, the runtime and the remote access connector.
 # The data and the backups stay in /Library/Application Support/Stuga/data unless --delete-data is
 # given, which also removes the logs, the connector's settings and the _stuga and _stugaremote
-# accounts. The menu bar's Uninstall Stuga… runs this.
+# accounts. The menu bar's Uninstall Stuga… runs this, and waits for it: nothing here waits for the
+# menu-bar app, which quits itself once Stuga is gone.
 #
 #   sudo "/Library/Application Support/Stuga/current/bin/uninstall.sh" [--delete-data]
 set -euo pipefail
 
 main() {
-  local root="/Library/Application Support/Stuga" delete=no label user uid account
+  local root="/Library/Application Support/Stuga" delete=no label account
   case "${1:-}" in
     "") ;;
     --delete-data) delete=yes ;;
@@ -23,13 +24,8 @@ main() {
     rm -f "/Library/LaunchDaemons/$label.plist"
   done
 
-  user="$(stat -f %Su /dev/console 2> /dev/null || true)"
-  uid="$(stat -f %u /dev/console 2> /dev/null || true)"
-  if [ -n "$uid" ] && [ "$user" != root ]; then
-    launchctl asuser "$uid" sudo -u "$user" osascript -e 'quit app id "dev.stuga.app"' > /dev/null 2>&1 || true
-  fi
   rm -rf /Applications/Stuga.app
-  rm -rf "$root/runtime" "$root/current" "$root/requests" "$root/status" "$root/connector"
+  rm -rf "$root/runtime" "$root/current" "$root/requests" "$root/status" "$root/connector" "$root/setup"
   pkgutil --forget dev.stuga.node > /dev/null 2>&1 || true
 
   if [ "$delete" = yes ]; then
