@@ -48,7 +48,7 @@ const DEGRADED: Partial<Record<RemoteErrorCode, string>> = {
   dns_not_visible: "The certificate check’s DNS record didn’t appear in time.",
   acme_error: "Getting a certificate failed.",
   connector_unreachable: "The address doesn’t reach this node. Check that the connector is running.",
-  wrong_certificate: "The address answered with a certificate that isn’t this node’s.",
+  wrong_certificate: "Another computer is using this address. Turn off remote access on the one you no longer use.",
   certificate_expired: "The certificate expired. The node is getting a new one.",
   connector_failed: "The connector couldn’t start.",
 };

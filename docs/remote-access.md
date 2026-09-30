@@ -239,9 +239,13 @@ callback registered too; **Settings → This node → Access** lists it
 
 Every 10 minutes, and soon after its first credential and each new certificate, the node opens its
 own address through the relay and compares the certificate it gets with its own. It sends no request over that
-connection. A different certificate is shown as a problem in Settings. Where the packaging runs the
+connection. After a check that fails, the next two come sooner. A different certificate means another
+computer answers at the address: the node checks in with the service first, and turns remote access
+off if a restore code moved the address there ([below](#turning-off-restoring-and-backups));
+otherwise Settings shows *Another computer is using this address.* Where the packaging runs the
 connector, the first check waits until the packaging reports it running the current settings, and
-follows within seconds.
+follows within seconds. After a restore code, the first check waits a few minutes for the relay to
+hand the address over.
 
 ## Certificates
 
@@ -285,15 +289,18 @@ certificate is in place it gets a new credential, and only then asks for the con
 - **A new computer, or a lost data directory:** get a restore code from the remote access service's
   account page (**Move to another computer**) or its operator, and enter it in
   **Settings → This node → Remote access** on the new computer. The node enrolls a new key for the
-  same address, and the old key stops working. A bound node also takes a code under
-  **Use a different code**.
-- **The old computer,** if it still runs, is refused with `node_moved` the next time it calls the
-  service. It turns remote access off as **Turn off** does, forgets the address, shows
+  same address, and the old key stops working. The relay hands the address over within a few
+  minutes: the page shows remote access starting until then, and on after. A bound node also takes
+  a code under **Use a different code**.
+- **The old computer,** if it still runs, learns at its next check of the address, which finds
+  another computer there, or its next call to the service, which refuses its key with `node_moved`.
+  It turns remote access off as **Turn off** does, forgets the address, shows
   *This address moved to another computer.* and notifies its administrators once. It keeps its key
   files and its certificate, and turns on again only with a new code.
-- **Backups** include the binding key, so a restored node keeps its address. A backup restored on a
-  second computer while the first still runs gives both the same address; whichever connects to the
-  relay first gets the traffic.
+- **Backups** include the binding key and the certificate, so a restored node keeps its address. A
+  backup restored on a second computer while the first still runs gives both the same address, and
+  both show remote access on; whichever connects to the relay first gets the traffic. To keep the
+  address on the restored computer alone, enter a restore code there under **Use a different code**.
 
 ## Configuration
 

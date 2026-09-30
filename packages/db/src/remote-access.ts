@@ -263,6 +263,11 @@ export async function recordRemoteProbe(sql: Queryable, p: { at: Date; ok: boole
     WHERE id = TRUE`;
 }
 
+/** The self-check's record gone: it was of the key or the address before a new binding. */
+export async function clearRemoteProbe(sql: Queryable): Promise<void> {
+  await update(sql, { probe_at: null, probe_ok_at: null, probe_failures: 0 });
+}
+
 export async function recordRemoteConnectorConfig(sql: Queryable, c: { sha256: string; changedAt: Date }): Promise<void> {
   await update(sql, { connector_config_sha256: c.sha256, connector_config_changed_at: c.changedAt });
 }

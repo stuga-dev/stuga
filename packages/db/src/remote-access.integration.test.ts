@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { closeClients, createClient, type Sql } from "./client.js";
 import {
+  clearRemoteProbe,
   forgetRemoteBinding,
   getRemoteAccess,
   recordRemoteAccount,
@@ -159,6 +160,7 @@ describe.skipIf(!URL)("node_remote_access", () => {
       ],
       ["recordRemoteProbe failed", () => recordRemoteProbe(sql, { at: at(6), ok: false }), ["probe_at", "probe_failures"]],
       ["recordRemoteProbe ok", () => recordRemoteProbe(sql, { at: at(7), ok: true }), ["probe_at", "probe_failures", "probe_ok_at"]],
+      ["clearRemoteProbe", () => clearRemoteProbe(sql), ["probe_at", "probe_ok_at"]],
       [
         "recordRemoteConnectorConfig",
         () => recordRemoteConnectorConfig(sql, { sha256: "a".repeat(64), changedAt: at(8) }),

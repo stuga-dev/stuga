@@ -60,16 +60,20 @@ const memory = vi.hoisted(() => {
     updated_at: null,
   });
   let row: Record<string, unknown> = blank();
+  /** Every error recorded, in order: one replaced at once is still seen. */
+  let errors: string[] = [];
   /** The database is out of reach: reading the row fails. */
   let broken = false;
   return {
     row: () => row,
+    errors: () => errors,
     broken: () => broken,
     breakReads: (b: boolean) => {
       broken = b;
     },
     reset: () => {
       row = blank();
+      errors = [];
       broken = false;
     },
     set: (patch: Record<string, unknown>) => {
@@ -96,7 +100,10 @@ vi.mock("@stuga/db", async (importOriginal) => {
           ? { enabled: true, enabled_by: e.by, enabled_at: e.at, ca_terms_accepted_by: e.caTermsAcceptedBy, ca_terms_accepted_at: e.caTermsAcceptedAt }
           : { enabled: false },
       ),
-    setRemoteError: async (_sql: unknown, err: unknown) => memory.set({ last_error: err }),
+    setRemoteError: async (_sql: unknown, err: { code: string } | null) => {
+      if (err) memory.errors().push(err.code);
+      memory.set({ last_error: err });
+    },
     recordRemoteCheckin: async (_sql: unknown, c: Parameters<Db["recordRemoteCheckin"]>[1]) =>
       memory.set({
         checkin_at: c.at,
@@ -147,6 +154,7 @@ vi.mock("@stuga/db", async (importOriginal) => {
       memory.set({ credential_failures: f.failures, credential_retry_at: f.retryAt }),
     recordRemoteProbe: async (_sql: unknown, p: { at: Date; ok: boolean }) =>
       memory.set(p.ok ? { probe_at: p.at, probe_ok_at: p.at, probe_failures: 0 } : { probe_at: p.at, probe_failures: (memory.row().probe_failures as number) + 1 }),
+    clearRemoteProbe: async () => memory.set({ probe_at: null, probe_ok_at: null, probe_failures: 0 }),
     recordRemoteConnectorConfig: async (_sql: unknown, c: { sha256: string; changedAt: Date }) =>
       memory.set({ connector_config_sha256: c.sha256, connector_config_changed_at: c.changedAt }),
     setRemoteBindingFailing: async (_sql: unknown, since: Date) =>
@@ -237,6 +245,24 @@ async function moveElsewhere(id: string): Promise<void> {
   const { privateKey } = generateKeyPairSync("ed25519");
   const x = (privateKey.export({ format: "jwk" }) as { x: string }).x;
   await createServiceClient().rebind(fake.url, { privateKey, x, thumbprint: okpThumbprint(x) }, fake.mintCode("rebind", id));
+}
+
+/**
+ * A new computer that took the address with a restore code, with a day's certificate for it on disk.
+ * `boundAt` is taken before the code goes in.
+ */
+async function restored(opts: Parameters<typeof service>[0] = {}): Promise<{ s: RemoteAccess; boundAt: number }> {
+  await service().enable({ code: fake.mintCode("enroll"), acceptCaTerms: true, by: "liv" });
+  const id = memory.row().remote_id as string;
+  memory.reset();
+  rmSync(join(dataDir, "secrets"), { recursive: true });
+  const s = service(opts);
+  const boundAt = Date.now();
+  const { via } = await s.enable({ code: fake.mintCode("rebind", id), acceptCaTerms: true, by: "liv" });
+  expect(via).toBe("rebind");
+  const cert = makeTestCert({ dnsNames: [memory.row().hostname as string] });
+  await writeCertificate(dataDir, cert.privateKey, cert.cert);
+  return { s, boundAt };
 }
 
 /** The zone's servers, as the fake service's records. */
@@ -555,11 +581,65 @@ describe("the service loop", () => {
     const s = await bound();
     const id = memory.row().remote_id as string;
     await s.start();
-    await until("a credential", () => fake.issuedCredentials.length === 1);
+    // Held, not just issued: one still on its way when the code goes in would be taken for the new binding's.
+    await until("a credential", () => memory.row().credential_expires_at !== null);
     // The relays refuse a credential issued before a rebind: the one held is no use now.
     await s.enable({ code: fake.mintCode("rebind", id), acceptCaTerms: true, by: "liv" });
     await until("a new credential", () => fake.issuedCredentials.length === 2);
     expect(memory.row()).toMatchObject({ enabled: true, remote_id: id, last_error: null });
+  });
+
+  it("holds the first self-check a few minutes after a restore code, and not after an enrollment", async () => {
+    const probes: number[] = [];
+    const probe = async (): Promise<ProbeResult> => {
+      probes.push(Date.now());
+      return { ok: true };
+    };
+    const timing = { serviceTickMs: 100, probeDelayMs: 10, probeAfterRebindMs: 1_500 };
+    const enrolled = await bound({ probe, timing });
+    const started = Date.now();
+    await enrolled.start();
+    await until("the self-check", () => probes.length === 1);
+    expect(probes[0]! - started).toBeLessThan(1_000);
+    await enrolled.stop();
+
+    probes.length = 0;
+    const { s, boundAt } = await restored({ probe, timing });
+    await s.start();
+    await until("a credential", () => memory.row().credential_expires_at !== null);
+    await sleep(300);
+    // Waiting for the relay to let go of the computer it moved from: starting, with nothing wrong.
+    expect(probes).toEqual([]);
+    expect(await s.status()).toMatchObject({ state: "starting", last_error: null });
+    await until("the self-check", () => probes.length === 1, 5_000);
+    expect(probes[0]! - boundAt).toBeGreaterThanOrEqual(1_500);
+    await until("on", () => memory.row().probe_ok_at !== null);
+    expect(await s.status()).toMatchObject({ state: "on" });
+  });
+
+  it("shows starting after a restore code on a computer restored from a backup, until its own self-check", async () => {
+    const probes: number[] = [];
+    const s = await bound({
+      probe: async () => {
+        probes.push(Date.now());
+        return { ok: true };
+      },
+      timing: { serviceTickMs: 100, probeDelayMs: 10, probeAfterRebindMs: 1_500 },
+    });
+    await s.start();
+    await until("on", () => memory.row().probe_ok_at !== null);
+    // The backup's record of the self-check, as the old computer last made it.
+    memory.set({ probe_failures: 1 });
+    const boundAt = Date.now();
+    await s.enable({ code: fake.mintCode("rebind", memory.row().remote_id as string), acceptCaTerms: true, by: "liv" });
+    expect(memory.row()).toMatchObject({ probe_at: null, probe_ok_at: null, probe_failures: 0 });
+    await until("a new credential", () => fake.issuedCredentials.length === 2);
+    await until("the credential recorded", () => memory.row().credential_expires_at !== null);
+    expect(await s.status()).toMatchObject({ state: "starting", last_error: null });
+    await until("the self-check", () => probes.length === 2, 5_000);
+    expect(probes[1]! - boundAt).toBeGreaterThanOrEqual(1_500);
+    await until("on", () => memory.row().probe_ok_at !== null);
+    expect(await s.status()).toMatchObject({ state: "on" });
   });
 
   it("is back on after a restart once the service stops asking for an upgrade", async () => {
@@ -981,9 +1061,116 @@ describe("where the packaging runs the connector", () => {
     expect(readdirSync(join(dataDir, "secrets")).filter((f) => f.startsWith("remote-binding.retired-"))).toHaveLength(1);
   });
 
+  it("holds the first self-check after a restore code even once the connector runs", async () => {
+    const probes: number[] = [];
+    const { s, boundAt } = await restored({
+      connector: hints,
+      now: clock,
+      probe: async () => {
+        probes.push(Date.now());
+        return { ok: true };
+      },
+      timing: { serviceTickMs: 100, connectorPollMs: 20, probeDelayMs: 10, probeAfterRebindMs: 1_500 },
+    });
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    helper("running");
+    await sleep(300);
+    expect(probes).toEqual([]);
+    expect(await s.status()).toMatchObject({ state: "starting", last_error: null, connector: { status: { state: "running" } } });
+    await until("the self-check", () => probes.length === 1, 5_000);
+    expect(probes[0]! - boundAt).toBeGreaterThanOrEqual(1_500);
+  });
+
   it("refuses a retry where the packaging does not run the connector", async () => {
     const s = service();
     expect(await refusal(s.retryConnector("liv"))).toMatchObject({ status: 409, code: "unavailable" });
+  });
+});
+
+describe("the self-check", () => {
+  /** This node's clock and the fake service's, moved together. */
+  let shift = 0;
+  const clock = () => Date.now() + shift;
+  const WRONG: ProbeResult = { ok: false, code: "wrong_certificate", message: "another certificate" };
+
+  beforeEach(async () => {
+    shift = 0;
+    await fake.close();
+    fake = await startFakeRemoteService({ acmeDirectory: "https://ca.stuga.test/dir", zone: "mystuga.com", now: clock });
+  });
+
+  const paths = (from: number) => fake.requests.slice(from).map((r) => r.path);
+
+  it("checks in when another certificate answers, and turns off without calling it a problem once the address moved", async () => {
+    let answer: ProbeResult = { ok: true };
+    const s = await bound({ now: clock, probe: async () => answer, timing: { serviceTickMs: 100, probeDelayMs: 10, probeEveryMs: 50 } });
+    await s.start();
+    await until("reachable", () => memory.row().probe_ok_at !== null);
+    await moveElsewhere(memory.row().remote_id as string);
+    const heard = fake.requests.length;
+    answer = WRONG;
+    await until("moved", () => lastError()?.code === "moved");
+    // The check-in, signed by the key the restore code replaced, is the call that learns it.
+    expect(fake.requests.slice(heard).map((r) => [r.path, r.status])).toEqual([["/v1/checkin", 401]]);
+    expect(memory.errors()).not.toContain("wrong_certificate");
+    expect(memory.row()).toMatchObject({ enabled: false, remote_id: null, probe_failures: 1 });
+    expect(await s.status()).toMatchObject({
+      state: "off",
+      last_error: { code: "moved", message: "This address moved to another computer.", service_code: "node_moved" },
+    });
+  });
+
+  it("says another certificate answers after a check-in that finds the address still here, and checks in for it every ten minutes at most", async () => {
+    const s = await bound({ now: clock, probe: async () => WRONG, timing: { serviceTickMs: 100, probeDelayMs: 10, probeEveryMs: 50, probeRetryMs: 50 } });
+    await s.start();
+    await until("wrong_certificate", () => lastError()?.code === "wrong_certificate");
+    expect(paths(0)).toEqual(["/v1/enroll", "/v1/checkin", "/v1/relay-credential", "/v1/checkin"]);
+    expect(await s.status()).toMatchObject({ state: "degraded", last_error: { code: "wrong_certificate" } });
+
+    const heard = fake.requests.length;
+    await until("more self-checks", () => (memory.row().probe_failures as number) >= 4);
+    expect(paths(heard)).toEqual([]);
+
+    // Nine minutes on: a new credential for the failing self-checks, and no check-in for the certificate yet.
+    shift = 9 * 60_000;
+    const failures = memory.row().probe_failures as number;
+    await until("more self-checks", () => (memory.row().probe_failures as number) >= failures + 3);
+    expect(paths(heard)).toEqual(["/v1/checkin", "/v1/relay-credential"]);
+
+    // Ten: the certificate's check-in again, and nothing else.
+    shift = 10 * 60_000 + 1_000;
+    await until("the check-in", () => paths(heard).length === 3);
+    const after = memory.row().probe_failures as number;
+    await until("more self-checks", () => (memory.row().probe_failures as number) >= after + 3);
+    expect(paths(heard)).toEqual(["/v1/checkin", "/v1/relay-credential", "/v1/checkin"]);
+    expect(lastError()?.code).toBe("wrong_certificate");
+  });
+
+  it("checks again soon after a failure, twice, then at the usual interval, without calling the service", async () => {
+    let up = true;
+    const failed: number[] = [];
+    const s = await bound({
+      now: clock,
+      probe: async () => {
+        if (up) return { ok: true };
+        failed.push(Date.now());
+        return { ok: false, code: "connector_unreachable", message: "no answer through the relay" };
+      },
+      timing: { serviceTickMs: 50, probeDelayMs: 10, probeEveryMs: 1_000, probeRetryMs: 150 },
+    });
+    await s.start();
+    await until("reachable", () => memory.row().probe_ok_at !== null);
+    const heard = fake.requests.length;
+    up = false;
+    await until("four failures", () => failed.length === 4, 6_000);
+    const gaps = failed.slice(1).map((t, i) => t - failed[i]!);
+    expect(gaps[0]).toBeGreaterThanOrEqual(150);
+    expect(gaps[0]).toBeLessThan(600);
+    expect(gaps[1]).toBeGreaterThanOrEqual(150);
+    expect(gaps[1]).toBeLessThan(600);
+    expect(gaps[2]).toBeGreaterThanOrEqual(1_000);
+    expect(paths(heard)).toEqual([]);
   });
 });
 

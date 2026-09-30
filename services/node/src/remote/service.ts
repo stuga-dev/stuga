@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Sql } from "@stuga/db";
 import {
+  clearRemoteProbe,
   forgetRemoteBinding,
   getRemoteAccess,
   recordRemoteAccount,
@@ -92,7 +93,11 @@ export interface RemoteTiming {
   serviceTickMs: number;
   /** After the first credential and after a new certificate. */
   probeDelayMs: number;
+  /** After a restore code bound the address here: the relay lets go of the computer it moved from first. */
+  probeAfterRebindMs: number;
   probeEveryMs: number;
+  /** After a failed self-check, the first two in a row; then `probeEveryMs`. */
+  probeRetryMs: number;
   refreshSpacingMs: number;
   probeRefreshSpacingMs: number;
   issuanceTimeoutMs: number;
@@ -105,7 +110,9 @@ const DEFAULT_TIMING: RemoteTiming = {
   certTickMs: 60_000,
   serviceTickMs: 30_000,
   probeDelayMs: 30_000,
+  probeAfterRebindMs: 3 * 60_000,
   probeEveryMs: 10 * 60_000,
+  probeRetryMs: 2 * 60_000,
   refreshSpacingMs: DEFAULT_REFRESH_SPACING_MS,
   probeRefreshSpacingMs: DEFAULT_PROBE_REFRESH_SPACING_MS,
   issuanceTimeoutMs: 10 * 60_000,
@@ -194,6 +201,9 @@ const STICKY = new Set([
   "moved",
 ]);
 
+/** Least time between the check-ins a self-check asks for: through the relay while denied, or another certificate at the address. */
+const PROBE_CHECKIN_SPACING_MS = 10 * 60_000;
+
 /** Less than this left of enable's budget is too little for the service to answer in. */
 const MIN_CALL_MS = 1_000;
 
@@ -255,6 +265,9 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   let lastProbeRefreshAt: number | null = null;
   let probeDueAt: number | null = null;
   let deniedProbeCheckinAt: number | null = null;
+  let wrongCertCheckinAt: number | null = null;
+  /** No self-check before this, after a restore code bound the address here. */
+  let probeHeldUntil: number | null = null;
   /** The issuance under way: turning off or stopping aborts it, and nothing more of it goes out. */
   let issuing: AbortController | null = null;
   let stopped = false;
@@ -458,11 +471,8 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     await read();
     const sha = row?.connector_config_sha256 ?? null;
     const running = connector.running(sha);
-    // Started, or restarted on new settings: the self-check within seconds.
-    if (running && connectorRunningFor !== sha) {
-      probeDueAt = now();
-      serviceLoop?.kick();
-    }
+    // Started, or restarted on new settings: the self-check within seconds, or once a restore code's hold ends.
+    if (running && connectorRunningFor !== sha) scheduleProbe(0);
     connectorRunningFor = running ? sha : null;
     if (running) connectorRanFor = sha;
     watchConnector();
@@ -626,12 +636,34 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     }
   }
 
+  /** The self-check in `inMs`, or when the hold after a restore code ends if that is later. */
   function scheduleProbe(inMs: number): void {
-    probeDueAt = now() + inMs;
-    later(inMs, () => serviceLoop?.kick());
+    const at = Math.max(now() + inMs, probeHeldUntil ?? 0);
+    probeDueAt = at;
+    later(at - now(), () => serviceLoop?.kick());
   }
 
-  async function maybeProbe(): Promise<void> {
+  /**
+   * Another certificate answered at the address: a check-in first, at most once in ten minutes, so a
+   * node whose address a restore code moved turns off rather than report a problem. True once off,
+   * moved or turned off meanwhile.
+   */
+  async function movedAway(gen: number): Promise<boolean> {
+    if (wrongCertCheckinAt !== null && now() - wrongCertCheckinAt < PROBE_CHECKIN_SPACING_MS) return false;
+    wrongCertCheckinAt = now();
+    const r = row!;
+    const key = await bindingKey(r);
+    if (!key) return false;
+    try {
+      await checkIn(key, gen);
+    } catch (e) {
+      if (!(e instanceof ServiceError)) throw e;
+      await serviceRefused(e, "service", r.binding_thumbprint);
+    }
+    return !row?.enabled;
+  }
+
+  async function maybeProbe(gen: number): Promise<void> {
     const r = row;
     if (!r?.enabled || !listener || !cert || !r.hostname) return;
     const current = held();
@@ -649,13 +681,16 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       await succeeded("probe");
       // Back through the relay while denied: the deny may have been lifted.
       const code = row!.last_error?.code;
-      if ((code === "denied" || code === "retired") && (deniedProbeCheckinAt === null || now() - deniedProbeCheckinAt >= 10 * 60_000)) {
+      if ((code === "denied" || code === "retired") && (deniedProbeCheckinAt === null || now() - deniedProbeCheckinAt >= PROBE_CHECKIN_SPACING_MS)) {
         deniedProbeCheckinAt = now();
         checkinWanted = true;
         serviceLoop?.kick();
       }
     } else {
+      if (result.code === "wrong_certificate" && (await movedAway(gen))) return;
       await recordError(remoteError(result.code, result.message, at));
+      // A computer the address is moving from may answer for a minute or two: soon again, twice.
+      if (row!.probe_failures <= 2) scheduleProbe(timing.probeRetryMs);
     }
   }
 
@@ -708,7 +743,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
         await serviceRefused(e, "service", r.binding_thumbprint);
       }
     }
-    await maybeProbe();
+    await maybeProbe(gen);
   }
 
   // ---- the certificate loop --------------------------------------------------
@@ -1018,6 +1053,8 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
         // A credential names the address it was issued for, and a rebind has the relays refuse any issued before it.
         credential = null;
         await recordRemoteCredential(sql, { issuedAt: null, expiresAt: null, refreshAt: null });
+        // A self-check from before, as a restored backup holds, says nothing about this binding: starting until the next.
+        await clearRemoteProbe(sql);
       }
       return via;
     });
@@ -1031,6 +1068,8 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       }
       await refreshRow();
       checkinWanted = true;
+      // The relay hands the address over from the computer it moved from: the first self-check waits for that.
+      probeHeldUntil = via === "rebind" ? now() + timing.probeAfterRebindMs : null;
       await settleListener();
     });
     certLoop?.kick();

@@ -225,6 +225,14 @@ describe("RemoteAccessSection", () => {
     expect(buttons("Turn off")).toHaveLength(1);
   });
 
+  it("says another computer is using the address, and what to do", async () => {
+    await mount({ ...ON, state: "degraded", last_error: problem("wrong_certificate", "k7f3q2.remote.example answered with a certificate that is not this node's") });
+    expect(text()).toContain("Another computer is using this address. Turn off remote access on the one you no longer use.");
+    expect(text()).not.toContain("certificate that");
+    expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    expect(buttons("Turn off")).toHaveLength(1);
+  });
+
   it("says a denied address is off, with the service's own words", async () => {
     await mount({ ...ON, state: "denied", last_error: problem("denied", "This address was reported for abuse.", { reason: "abuse" }) });
     expect(text()).toContain("Remote access is off for this address.");
