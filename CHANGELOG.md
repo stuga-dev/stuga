@@ -16,6 +16,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 ### Fixed
 
 - On a Mac, **Login Items** no longer lists Stuga's four background services as `bash` from an unidentified developer: they are listed under Stuga.
+- Removing a chat provider under **Settings → This node → AI providers** deletes its API key from the node too.
 
 ## [0.1.8] - 2026-09-30
 

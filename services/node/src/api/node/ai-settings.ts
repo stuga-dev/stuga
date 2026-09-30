@@ -439,7 +439,6 @@ async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
     if (key === null) removeSecretFile(ctx.env.dataDir, chatKeyFile(id));
     else writeSecretFile(ctx.env.dataDir, chatKeyFile(id), key);
   }
-  // A removed endpoint's key file is left behind, inert.
   for (const [file, key] of [
     [EMBED_KEY_FILE, embedKey],
     [RERANK_KEY_FILE, rerankKey],
@@ -474,6 +473,11 @@ async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
     rerankApiKeyFp: stored.rerankApiKey ? fingerprint(stored.rerankApiKey) : null,
     updatedBy: ctx.alias,
   });
+  // A removed provider takes its key with it, once the settings without it are saved.
+  if (sent.chat) {
+    const kept = new Set((stored.chatEndpoints ?? []).map((e) => e.id));
+    for (const e of before.chat.endpoints) if (!kept.has(e.id)) removeSecretFile(ctx.env.dataDir, chatKeyFile(e.id));
+  }
   await ctx.env.aiSettings.refresh();
 
   // A new embedding endpoint invalidates every vector. `embed_hash` covers the

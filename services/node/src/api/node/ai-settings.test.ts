@@ -334,6 +334,22 @@ describe("each half's switch", () => {
     expect(row).toMatchObject({ embed_enabled: null, embed_model: null });
   });
 
+  it("deletes a removed provider's key and keeps the others'", async () => {
+    const one = { id: "ep1", ...OPENAI, models: [{ id: "m1", name: "M1" }] };
+    const two = { id: "ep2", ...OPENAI, models: [{ id: "m2", name: "M2" }] };
+    const keyFile = (id: string) => join(dataDir, "secrets", `ai-chat-${id}`);
+    await put(admin(), { chat: { enabled: false, default_model: "m1", endpoints: [{ ...one, api_key: "k1" }, { ...two, api_key: "k2" }] } });
+    expect(existsSync(keyFile("ep1"))).toBe(true);
+
+    expect((await put(admin(), { chat: { enabled: false, default_model: "m2", endpoints: [two] } }))?.status).toBe(200);
+    expect(existsSync(keyFile("ep1"))).toBe(false);
+    expect(readFileSync(keyFile("ep2"), "utf8").trim()).toBe("k2");
+
+    // A save that leaves chat out leaves its keys alone. (Embeddings follow the first chat provider.)
+    expect((await put(admin(), { embed: { enabled: false, provider: "openai", base_url: "", model: "" } }))?.status).toBe(200);
+    expect(existsSync(keyFile("ep2"))).toBe(true);
+  });
+
   describe("the reranker", () => {
     const JEV = { base_url: "https://api.typesafe.test/v1", model: "jev-latest" };
     /** A System One endpoint that answers, or refuses with `status`; records each request. */
