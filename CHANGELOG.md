@@ -9,6 +9,10 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Changed
+
+- Reviewing an agent's edits, a sentence rewritten in other words shows as one removal and one insertion, not interleaved words.
+
 ### Fixed
 
 - On a Mac, **Login Items** no longer lists Stuga's four background services as `bash` from an unidentified developer: they are listed under Stuga.

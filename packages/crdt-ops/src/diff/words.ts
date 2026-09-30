@@ -8,6 +8,12 @@ export type WordOp = { type: "eq" | "del" | "ins"; text: string };
 /** Per-side token cap for the O(n·m) LCS; beyond it the changed middle is one del + one ins, so the table stays ≤ ~2.25M cells. */
 const WORD_DIFF_MAX_TOKENS = 1500;
 
+/**
+ * Below this share of the changed middle's words kept, the middle reads as a rewrite: one del + one
+ * ins. Interleaving a few shared words ("~~Delivery~~ The ~~is~~ Supplier…") is unreadable.
+ */
+const REWRITE_BELOW_SHARED = 1 / 3;
+
 /** Split into tokens that alternate non-space / space runs, so joining round-trips. */
 function tokenize(s: string): string[] {
   return s.match(/\s+|\S+/g) ?? [];
@@ -47,6 +53,8 @@ export function wordDiff(oldText: string, newText: string): WordOp[] {
     push("del", midA.join(""));
     push("ins", midB.join(""));
   } else {
+    const middle: WordOp[] = [];
+    const add = (type: WordOp["type"], text: string) => middle.push({ type, text });
     const lcs: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
     for (let i = n - 1; i >= 0; i--) {
       for (let j = m - 1; j >= 0; j--) {
@@ -57,19 +65,27 @@ export function wordDiff(oldText: string, newText: string): WordOp[] {
     let j = 0;
     while (i < n && j < m) {
       if (midA[i] === midB[j]) {
-        push("eq", midA[i]!);
+        add("eq", midA[i]!);
         i++;
         j++;
       } else if (lcs[i + 1]![j]! >= lcs[i]![j + 1]!) {
-        push("del", midA[i]!);
+        add("del", midA[i]!);
         i++;
       } else {
-        push("ins", midB[j]!);
+        add("ins", midB[j]!);
         j++;
       }
     }
-    while (i < n) push("del", midA[i++]!);
-    while (j < m) push("ins", midB[j++]!);
+    while (i < n) add("del", midA[i++]!);
+    while (j < m) add("ins", midB[j++]!);
+    const words = (ts: string[]) => ts.filter((t) => /\S/.test(t)).length;
+    const shared = middle.filter((o) => o.type === "eq" && /\S/.test(o.text)).length;
+    if (shared < REWRITE_BELOW_SHARED * Math.max(words(midA), words(midB))) {
+      push("del", midA.join(""));
+      push("ins", midB.join(""));
+    } else {
+      for (const o of middle) push(o.type, o.text);
+    }
   }
 
   if (hiA < a.length) push("eq", a.slice(hiA).join(""));

@@ -1099,6 +1099,25 @@ describe("word diff", () => {
     expect(ops.filter((o) => o.type === "ins").map((o) => o.text.trim())).toEqual(["ran"]);
   });
 
+  it("shows a sentence rewritten in other words as one removal and one insertion, not interleaved", () => {
+    const ops = wordDiff("4.4 Delivery is conditional upon receipt of payment in full.", "4.4 The Supplier must deliver, and the Buyer must pay in full.");
+    expect(ops).toEqual([
+      { type: "eq", text: "4.4 " },
+      { type: "del", text: "Delivery is conditional upon receipt of payment" },
+      { type: "ins", text: "The Supplier must deliver, and the Buyer must pay" },
+      { type: "eq", text: " in full." },
+    ]);
+    expect(reconstruct(ops)).toEqual({
+      oldText: "4.4 Delivery is conditional upon receipt of payment in full.",
+      newText: "4.4 The Supplier must deliver, and the Buyer must pay in full.",
+    });
+  });
+
+  it("keeps word-level marks when most of the words stay", () => {
+    const ops = wordDiff("Tom and I met when we were eleven, and he has been late since.", "Tom and I met when we were eleven, and he's been late ever since.");
+    expect(ops.filter((o) => o.type === "eq").length).toBeGreaterThan(1);
+  });
+
   it("caps huge inputs: collapses to one del + one ins instead of an O(n*m) matrix", () => {
     // A pathologically long block (well over the token cap) with a fully different
     // middle must not allocate a giant LCS table — it falls back to del+ins.
