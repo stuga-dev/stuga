@@ -77,10 +77,11 @@ The node answers on its own machine, but not from other devices.
   shows.
 - **A Mac** built with `--local-only` serves only itself. If the macOS firewall is on, allow `node`
   to accept incoming connections.
-- A device that cannot resolve `<name>.local` opens the node by the Mac's IP address instead. For
-  invite links to carry that address too, set it as `PUBLIC_ORIGIN` in the node's definition
-  ([install/macos.md](install/macos.md#where-things-live)), or rebuild a build from a checkout with
-  `--origin`.
+- A device that cannot resolve `<name>.local` opens the node by the Mac's IP address instead.
+  Android resolves `.local` names from Android 12; one that still cannot may have **Private DNS**
+  turned on in its network settings. For invite links to carry that address too, set it as
+  `PUBLIC_ORIGIN` in the node's definition ([install/macos.md](install/macos.md#where-things-live)),
+  or rebuild a build from a checkout with `--origin`.
 - Check that the address is still the machine's. A new DHCP lease is a new address.
 - Check that the machine's firewall allows the port, and that both devices are on the same network.
   A guest Wi-Fi often keeps its devices apart.
