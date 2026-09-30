@@ -71,7 +71,7 @@ runtime have both been built at the tag's version and booted.
 | Job | Runs after | Checks |
 |---|---|---|
 | `changelog` | | The tag's version is the newest entry in CHANGELOG.md. Writes `releases.json` and the Release notes from it. |
-| `verify` | | All of CI (`ci.yml`): lint, typecheck, unit tests, the packaging checks, the integration suites, the Docker restore drill and the backup suite inside the node image, and the macOS job (integration suites on the Mac Postgres tree, a runtime build, its smoke test and restore drill, and an unsigned connector build). |
+| `verify` | | All of CI (`ci.yml`): lint, typecheck, unit tests, the packaging checks, the integration suites, the Docker restore drill, the database password test and the backup suite inside the node image, and the macOS job (integration suites on the Mac Postgres tree, a runtime build, its smoke test and restore drill, and an unsigned connector build). |
 | `docker-images` | `verify`, `changelog` | Refuses a version whose images already exist. Builds `stuga-node` and `stuga-postgres` for `linux/amd64` and `linux/arm64` with the build arguments in `packaging/versions.env`, and pushes only the exact version tag, with provenance and an SBOM. |
 | `docker-package` | `docker-images` | Lays out the Docker release assets with `package.sh` (`compose.yml` pinned to the version, `env.example`, `stuga`), checks that `compose.yml` names both images at the version, and checks that both architectures were published. |
 | `docker-smoke` | `docker-package` | On an amd64 and an arm64 runner, boots the stamped `compose.yml` against the published images. Checks that `/ready` answers, `/` serves the web app, the image's `/app/VERSION` is the version, and the boot line names it. |

@@ -11,6 +11,33 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- On Docker, `./stuga upgrade` stops the node briefly to give the database a random password of its
+  own, in `.env`, when `.env` has none. Keep that `.env` with the database: the old default password
+  no longer signs in.
+- To go back to an older release, use `./stuga restore`, and keep the current `compose.yml`: an
+  older release's `compose.yml` does not know the database password. The restore adds
+  `compose.rollback.yml` to `COMPOSE_FILE` in `.env`, which keeps the node on the older release
+  until the next upgrade.
+
+### Added
+
+- `./stuga db-password` gives the database a random password in `.env`, when `.env` has none.
+  `install.sh` and `./stuga upgrade` do it themselves.
+
+### Changed
+
+- On Docker, the database has its own password, and Postgres is on an internal network only the
+  node joins, with no published port and no way out.
+- On Docker, going back to an older release keeps the current `compose.yml`; `compose.rollback.yml`
+  keeps the node on the older release in its place.
+
+### Fixed
+
+- `./stuga upgrade` ends with the restore command for the backup the new version took, where it
+  said it found no backup.
+
 ## [0.1.6] - 2026-09-30
 
 - Remote access from the Mac package, with no terminal: the package runs the connector itself.

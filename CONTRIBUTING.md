@@ -111,6 +111,7 @@ Ports in use:
 | 8788 | the source node (`pnpm dev`) |
 | 55433 | the development Postgres |
 | 55432 | the throwaway Postgres of `pnpm test:integration` |
+| 8798 | the Docker database password test |
 | 8799 | the Docker restore drill |
 | 9876 | the mock identity provider |
 
@@ -164,6 +165,11 @@ Scope a turbo-driven command to one package with a filter: `pnpm --filter @stuga
     packaging/macos/test/smoke.sh /tmp/stuga-macos/runtime/0.0.0-ci
     packaging/macos/test/restore-drill.sh /tmp/stuga-macos/runtime/0.0.0-ci
     ```
+
+- **The database password on Docker** (`packaging/docker/test/db-password.sh`, `--no-build` to use
+  the drill's images): a first install, `install.sh` over the volume an earlier install left,
+  upgrades from a stack on the default password that finish, cannot fetch their images, or fail
+  between changing the role and writing `.env`, and a restore back to the older release.
 
 - **Packaging checks:** `bash packaging/check-pins.sh`, and `node --test "packaging/**/*.test.mjs"`
   for the image's health check, the Mac log rotation, the launchd plists, the helper and the
