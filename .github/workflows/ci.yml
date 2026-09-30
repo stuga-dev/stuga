@@ -62,6 +62,8 @@ jobs:
       - uses: actions/checkout@v7
       - run: bash packaging/docker/test/restore-drill.sh
       - run: bash packaging/docker/test/backup-suite-in-image.sh ghcr.io/stuga-dev/stuga-node:0.0.0-drill
+      # The shared remote-access directory with real owners, as root: skipped by `pnpm test`.
+      - run: bash packaging/docker/test/remote-dir-in-image.sh
 
   macos:
     runs-on: macos-15
