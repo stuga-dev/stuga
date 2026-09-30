@@ -1,5 +1,16 @@
 # shellcheck shell=bash
-# Sourced by build.sh. Tested by packaging/macos/test/connector.test.mjs.
+# Sourced by build.sh. Tested by packaging/shared/test/connector.test.mjs.
+
+# go_for_target <target> <uname -s> <uname -m>: the Go download (os-arch) and the versions.env key of
+# its sha256, when this machine builds the target natively; nothing, and 1, otherwise.
+go_for_target() {
+  case "$1 $2/$3" in
+    "darwin/arm64 Darwin/arm64") echo "darwin-arm64 GO_DARWIN_ARM64_SHA256" ;;
+    "linux/amd64 Linux/x86_64") echo "linux-amd64 GO_LINUX_AMD64_SHA256" ;;
+    "linux/arm64 Linux/aarch64" | "linux/arm64 Linux/arm64") echo "linux-arm64 GO_LINUX_ARM64_SHA256" ;;
+    *) return 1 ;;
+  esac
+}
 
 # pinned_team <helper.sh>: the team whose Developer ID the upgrade helper trusts (STUGA_TEAM_ID).
 pinned_team() { sed -n 's/.*STUGA_TEAM_ID:-\([A-Z0-9]*\)}.*/\1/p' "$1"; }

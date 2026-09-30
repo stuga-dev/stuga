@@ -89,7 +89,7 @@ jobs:
       - name: Build the connector
         env:
           STUGA_MACOS_CACHE: ${{ runner.temp }}/stuga-macos-cache
-        run: bash packaging/macos/connector/build.sh --out "$RUNNER_TEMP/connector"
+        run: bash packaging/shared/connector/build.sh --target darwin/arm64 --out "$RUNNER_TEMP/connector"
       # A runtime naming that connector, as a release's does.
       - name: Build a runtime
         env:

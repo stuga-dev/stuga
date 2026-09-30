@@ -8,7 +8,10 @@
 
 STUGA_MACOS_CACHE="${STUGA_MACOS_CACHE:-${TMPDIR:-/tmp}/stuga-macos-downloads}"
 
-sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
+# Linux has sha256sum, and a slim image no shasum.
+sha256_of() {
+  if command -v sha256sum > /dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{print $1}'
+}
 
 # fetch <url> <sha256>: prints the path of a verified copy in the cache.
 fetch() {

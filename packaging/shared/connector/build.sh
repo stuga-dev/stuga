@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Build the remote-access connector: stuga-connector-darwin-arm64.zip with frpc, frp's LICENSE and
-# THIRD-PARTY-NOTICES.txt, and beside it a copy of that frpc.
+# Build the remote-access connector: frpc, frp's LICENSE and THIRD-PARTY-NOTICES.txt. For the Mac,
+# stuga-connector-darwin-arm64.zip holding the three, and beside it a copy of that frpc; for Linux,
+# the three files, which the stuga-remote image carries.
 #
-#   packaging/macos/connector/build.sh --out <dir> [--identity <Developer ID Application>]
-#       [--notary-profile <keychain profile>]
+#   packaging/shared/connector/build.sh --target <darwin/arm64|linux/amd64|linux/arm64> --out <dir>
+#       [--identity <Developer ID Application>] [--notary-profile <keychain profile>]
 #
 # frpc is built from frp's pinned commit with the pinned Go (packaging/versions.env), without the
 # web UI, and its build info is checked. go-licenses writes the notices, which must name every module
@@ -12,23 +13,25 @@
 # requirement, a Developer ID of the team helper.sh pins, and the zip is notarized (a bare binary
 # cannot be stapled). Without either it keeps the linker's ad hoc signature: fine for CI, not to ship.
 #
-# Builds on Apple silicon, or unsigned on linux/amd64 (a container, say).
+# Each target builds natively, on its own OS and architecture; the Linux ones are never signed.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-macos="$(cd "$here/.." && pwd)"
+packaging="$(cd "$here/../.." && pwd)"
+macos="$packaging/macos"
 # shellcheck source=../../versions.env
-. "$macos/../versions.env"
-# shellcheck source=../build/lib/fetch.sh
+. "$packaging/versions.env"
+# shellcheck source=../../macos/build/lib/fetch.sh
 . "$macos/build/lib/fetch.sh"
 # shellcheck source=lib.sh
 . "$here/lib.sh"
 
-usage() { sed -n '5,6p' "$0" | sed 's/^# \{0,3\}//' >&2; exit 2; }
+usage() { sed -n '6,7p' "$0" | sed 's/^# \{0,3\}//' >&2; exit 2; }
 
-out="" identity="" notary=""
+target="" out="" identity="" notary=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --target) target="${2:-}"; shift 2 ;;
     --out) out="${2:-}"; shift 2 ;;
     --identity) identity="${2:-}"; shift 2 ;;
     --notary-profile) notary="${2:-}"; shift 2 ;;
@@ -36,7 +39,16 @@ while [ $# -gt 0 ]; do
     *) echo "error: unknown option $1" >&2; usage ;;
   esac
 done
-[ -n "$out" ] || usage
+[ -n "$target" ] && [ -n "$out" ] || usage
+case "$target" in
+  darwin/arm64 | linux/amd64 | linux/arm64) ;;
+  *) echo "error: --target is darwin/arm64, linux/amd64 or linux/arm64, not \"$target\"" >&2; exit 2 ;;
+esac
+goos="${target%/*}" goarch="${target#*/}"
+if [ -n "$identity" ] && [ "$goos" != darwin ]; then
+  echo "error: only the darwin/arm64 connector is signed" >&2
+  exit 2
+fi
 if [ -n "$notary" ] && [ -z "$identity" ]; then
   echo "error: notarizing needs --identity" >&2
   exit 2
@@ -44,15 +56,12 @@ fi
 # Byte order for sort and the rest, whatever the caller's locale.
 export LC_ALL=C
 
-case "$(uname -s)/$(uname -m)" in
-  Darwin/arm64) go_platform=darwin-arm64 go_sha="$GO_DARWIN_ARM64_SHA256" ;;
-  Linux/x86_64) go_platform=linux-amd64 go_sha="$GO_LINUX_AMD64_SHA256" ;;
-  *) echo "error: build on Apple silicon or linux/amd64" >&2; exit 1 ;;
-esac
-if [ -n "$identity" ] && [ "$go_platform" != darwin-arm64 ]; then
-  echo "error: signing needs a Mac" >&2
+if ! go="$(go_for_target "$target" "$(uname -s)" "$(uname -m)")"; then
+  echo "error: build $target on $target, not on $(uname -s)/$(uname -m)" >&2
   exit 1
 fi
+go_platform="${go% *}" go_sha_key="${go#* }"
+go_sha="${!go_sha_key}"
 if [ -n "$notary" ] && ! command -v jq > /dev/null; then
   echo "error: notarizing needs jq (in /usr/bin since macOS 15)" >&2
   exit 1
@@ -68,7 +77,7 @@ trap 'rm -rf "$work"' EXIT
 src="$work/frp"
 stage="$work/stage"
 mkdir -p "$stage" "$work/bin"
-zip_name=stuga-connector-darwin-arm64.zip
+zip_name=stuga-connector-$goos-$goarch.zip
 
 say "go $GO_VERSION"
 tarball="$(fetch "$(go_url "$go_platform")" "$go_sha")"
@@ -90,14 +99,14 @@ git -c advice.detachedHead=false clone --quiet --depth 1 --branch "v$FRP_VERSION
 head="$(git -C "$src" rev-parse HEAD)"
 [ "$head" = "$FRP_COMMIT" ] || fail "frp's tag v$FRP_VERSION is $head, not the pinned $FRP_COMMIT"
 
-say "frpc for darwin/arm64"
-(cd "$src" && GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -tags frpc,noweb \
+say "frpc for $target"
+(cd "$src" && GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "-s -w" -tags frpc,noweb \
   -o "$stage/frpc" ./cmd/frpc)
 go version -m "$stage/frpc" > "$work/buildinfo"
 [ "$(head -1 "$work/buildinfo")" = "$stage/frpc: go$GO_VERSION" ] || fail "frpc was not built with go$GO_VERSION"
 tab="$(printf '\t')"
 for line in "path${tab}github.com/fatedier/frp/cmd/frpc" "build${tab}-tags=frpc,noweb" "build${tab}-trimpath=true" \
-  "build${tab}CGO_ENABLED=0" "build${tab}GOOS=darwin" "build${tab}GOARCH=arm64" \
+  "build${tab}CGO_ENABLED=0" "build${tab}GOOS=$goos" "build${tab}GOARCH=$goarch" \
   "build${tab}vcs.revision=$FRP_COMMIT" "build${tab}vcs.modified=false"; do
   grep -qxF "${tab}$line" "$work/buildinfo" || fail "frpc's build info lacks \"${line#*"$tab"}\""
 done
@@ -116,7 +125,7 @@ cat > "$work/report.tmpl" <<'TMPL'
 {{range .}}{{.Name}}	{{.Version}}	{{.LicenseName}}	{{.LicensePath}}
 {{end}}
 TMPL
-if ! (cd "$src" && GOOS=darwin GOARCH=arm64 GOFLAGS="-modcacherw -tags=frpc,noweb" \
+if ! (cd "$src" && GOOS="$goos" GOARCH="$goarch" GOFLAGS="-modcacherw -tags=frpc,noweb" \
   "$work/bin/go-licenses" report --template "$work/report.tmpl" ./cmd/frpc \
   > "$work/report.tsv" 2> "$work/go-licenses.log"); then
   cat "$work/go-licenses.log" >&2
@@ -232,8 +241,13 @@ if [ -n "$identity" ]; then
       || fail "frpc's signature is not a Developer ID of team $team"
   fi
 fi
-if [ "$go_platform" = darwin-arm64 ]; then
-  [ "$("$stage/frpc" --version)" = "$FRP_VERSION" ] || fail "frpc --version is not $FRP_VERSION"
+[ "$("$stage/frpc" --version)" = "$FRP_VERSION" ] || fail "frpc --version is not $FRP_VERSION"
+
+if [ "$goos" = linux ]; then
+  rm -f "$out/frpc" "$out/LICENSE" "$out/THIRD-PARTY-NOTICES.txt"
+  cp "$stage/frpc" "$stage/LICENSE" "$notices" "$out/"
+  say "done: $out/frpc, sha256 $(sha256_of "$out/frpc")"
+  exit 0
 fi
 
 say "$zip_name"

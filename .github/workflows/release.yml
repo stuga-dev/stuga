@@ -212,7 +212,7 @@ jobs:
         name: Build, sign and notarize the connector
         run: |
           set -euo pipefail
-          bash packaging/macos/connector/build.sh --out "$RUNNER_TEMP/connector" \
+          bash packaging/shared/connector/build.sh --target darwin/arm64 --out "$RUNNER_TEMP/connector" \
             --identity "$APP_IDENTITY" --notary-profile stuga-notary
           echo "sha256=$(shasum -a 256 "$RUNNER_TEMP/connector/stuga-connector-darwin-arm64.zip" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       # The zip is the release asset; frpc, the same file as in it, is attested so the unpacked binary verifies too.
