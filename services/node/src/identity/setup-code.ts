@@ -3,12 +3,13 @@
  * Without it the first visitor to reach the node would become its
  * administrator, and a node on a network is reachable by everyone on it.
  *
- * It lives in `DATA_DIR/setup-code` until the node is claimed, so a restart
- * keeps it and the packaging can read it to open the setup page for whoever
- * installed the node. The node prints it in its log at every start.
+ * It lives in `DATA_DIR/setup-code`, or where `SETUP_CODE_FILE` says, until
+ * the node is claimed, so a restart keeps it and the packaging can read it to
+ * open the setup page for whoever installed the node. The node prints it in
+ * its log at every start.
  */
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /** Crockford's base32: no I, L, O or U, so it reads aloud and types without confusion. */
@@ -17,6 +18,20 @@ const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const LENGTH = 10;
 
 export const SETUP_CODE_FILE = "setup-code";
+
+/** Where the code is kept, and who may read it there. */
+export interface SetupCodeFile {
+  path: string;
+  mode: number;
+}
+
+/**
+ * `DATA_DIR/setup-code`, owner-only, or the file `named` (SETUP_CODE_FILE), which its group may read
+ * too: a packaging names one to let the machine's administrators read the code.
+ */
+export function setupCodeFile(dataDir: string, named?: string): SetupCodeFile {
+  return named ? { path: named, mode: 0o640 } : { path: join(dataDir, SETUP_CODE_FILE), mode: 0o600 };
+}
 
 function newCode(): string {
   let code = "";
@@ -50,19 +65,20 @@ export function setupCodeMatches(expected: string | null, given: unknown): boole
   return timingSafeEqual(digest(expected), digest(given));
 }
 
-/** The code kept in `dataDir`, or a new one written there (owner-only) when there is none. */
-export async function loadOrCreateSetupCode(dataDir: string): Promise<string> {
-  const path = join(dataDir, SETUP_CODE_FILE);
+/** The code kept in `file`, or a new one written there when there is none. */
+export async function loadOrCreateSetupCode({ path, mode }: SetupCodeFile): Promise<string> {
   const kept = normalizeSetupCode(await readFile(path, "utf8").catch(() => ""));
   if (kept.length === LENGTH) return kept;
   const code = newCode();
   const tmp = `${path}.${process.pid}.tmp`;
-  await writeFile(tmp, `${formatSetupCode(code)}\n`, { mode: 0o600 });
+  await writeFile(tmp, `${formatSetupCode(code)}\n`, { mode });
+  // The umask narrows the mode given at creation.
+  await chmod(tmp, mode);
   await rename(tmp, path);
   return code;
 }
 
 /** Forget the code once the node is claimed. */
-export async function removeSetupCode(dataDir: string): Promise<void> {
-  await rm(join(dataDir, SETUP_CODE_FILE), { force: true });
+export async function removeSetupCode({ path }: SetupCodeFile): Promise<void> {
+  await rm(path, { force: true });
 }

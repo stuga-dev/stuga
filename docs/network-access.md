@@ -39,7 +39,8 @@ else, and the same limits apply.
 The first account created on a node administers it, and needs no invite link. It needs the node's
 setup code instead, so a node that others can reach from its first start is still claimed only by
 whoever installed it. While nobody has claimed the node, every start logs a link to the setup page
-with the code in it, and the node keeps the code in `DATA_DIR/setup-code`. The code stops working
+with the code in it, and the node keeps the code in `DATA_DIR/setup-code`, or where
+[`SETUP_CODE_FILE`](configuration.md#database-and-files) says. The code stops working
 once the node is claimed.
 
 ## PUBLIC_ORIGIN and EXTRA_ORIGINS

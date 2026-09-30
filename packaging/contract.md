@@ -217,7 +217,9 @@ count only beside `STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR`.
 - **Setup.** While no account exists, the node keeps its setup code in `DATA_DIR/setup-code`, one
   line such as `7KD2M-X9QPA`, and logs a link to `<PUBLIC_ORIGIN>/login?setup=<code>` at every start.
   The first account needs the code. A packaging may read the file to open that link for whoever
-  installed the node. The node deletes the file once it is claimed.
+  installed the node, or name another with `SETUP_CODE_FILE`, which the node makes readable by its
+  group: the Mac package's is readable by the Mac's administrators. The node deletes the file once it
+  is claimed.
 - **Identity.** The node picks its ID on the first boot and keeps it in the database, with any name
   an administrator sets, so both follow the database through a backup and restore. No platform sets
   the ID or a set name; until one is set, the name is the host of `PUBLIC_ORIGIN`.

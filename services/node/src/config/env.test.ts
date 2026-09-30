@@ -105,6 +105,11 @@ describe("the platform hints packaging may set", () => {
     expect(cfg({ WEB_DIST_DIR: "/opt/stuga/web" }).webDistDir).toBe("/opt/stuga/web");
   });
 
+  it("keeps the setup code in the data directory unless packaging names a file", () => {
+    expect(cfg().setupCodeFile).toBeUndefined();
+    expect(cfg({ SETUP_CODE_FILE: "/opt/stuga/setup/setup-code" }).setupCodeFile).toBe("/opt/stuga/setup/setup-code");
+  });
+
   it("tells an operator how an environment change lands, in a sentence packaging may replace", () => {
     expect(cfg().restartHint).toBe("Restart the node to apply.");
     expect(cfg({ STUGA_RESTART_HINT: "Restart the Stuga service to apply." }).restartHint).toBe(

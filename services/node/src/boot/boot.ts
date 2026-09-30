@@ -43,7 +43,7 @@ import { handleJobBatch } from "../jobs/worker.js";
 import { createServingGate } from "../http/serving-gate.js";
 import { DEFAULT_MAX_UPLOAD_BYTES, bodyBytesFor } from "../media/media.js";
 import { parseBackupEnv } from "../ops/env.js";
-import { formatSetupCode, loadOrCreateSetupCode, removeSetupCode, setupLink } from "../identity/setup-code.js";
+import { formatSetupCode, loadOrCreateSetupCode, removeSetupCode, setupCodeFile, setupLink } from "../identity/setup-code.js";
 import { createHttpServer, type TlsOptions } from "../platform/http-server.js";
 import { createInternalApi } from "../platform/internal-api.js";
 import { startInterval } from "../platform/interval.js";
@@ -183,7 +183,8 @@ async function boot(): Promise<void> {
   const searchLanguages = createSearchLanguages({ sql, languages: bootLanguages });
 
   // Only whoever holds the setup code may make the first account, which administers the node.
-  let setupCode = (await countAccounts(sql)) === 0 ? await loadOrCreateSetupCode(cfg.dataDir) : null;
+  const setupCodeAt = setupCodeFile(cfg.dataDir, cfg.setupCodeFile);
+  let setupCode = (await countAccounts(sql)) === 0 ? await loadOrCreateSetupCode(setupCodeAt) : null;
 
   // The column's width is fixed when the database is created; embeddings at any
   // other width would be refused by it.
@@ -242,7 +243,7 @@ async function boot(): Promise<void> {
 
   const limiters = createRateLimiters();
 
-  const { tlsCertDir: _tlsCertDir, webDistDir, remote: remoteHints, ...nodeConfig } = cfg;
+  const { tlsCertDir: _tlsCertDir, setupCodeFile: _setupCodeFile, webDistDir, remote: remoteHints, ...nodeConfig } = cfg;
   const env: NodeEnv = {
     ...nodeConfig,
     docs,
@@ -284,7 +285,7 @@ async function boot(): Promise<void> {
     onFirstAccount: (alias) => {
       console.info("[node] first account created; it administers this node", { alias });
       setupCode = null;
-      void removeSetupCode(cfg.dataDir).catch((err: unknown) => console.warn("[node] could not remove the used setup code", err));
+      void removeSetupCode(setupCodeAt).catch((err: unknown) => console.warn("[node] could not remove the used setup code", err));
       // Setup gave the node its time zone, in the account's own transaction.
       void settings.refresh().catch(() => {});
       // And chosen search languages, which the indexes, built at boot for none, are rebuilt for.

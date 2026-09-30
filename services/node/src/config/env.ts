@@ -18,6 +18,8 @@ interface NodeBootConfig extends NodeConfig {
   /** Directory of `<host>/fullchain.pem` + `privkey.pem`; set, the node serves https. */
   tlsCertDir?: string;
   webDistDir: string;
+  /** SETUP_CODE_FILE: where the packaging wants the setup code kept; unset, the data directory. */
+  setupCodeFile?: string;
   /**
    * The packaging's remote-access hints (docs/remote-access.md): where the service is, for the first
    * enrollment only, and the directory the node shares with the connector. Absent, the feature is.
@@ -316,6 +318,8 @@ export function parseConfig(env: Env = process.env, opts: { internalSecret?: str
   };
   const tlsCertDir = str(env, "TLS_CERT_DIR");
   if (tlsCertDir) cfg.tlsCertDir = resolve(tlsCertDir);
+  const setupCodeFile = str(env, "SETUP_CODE_FILE");
+  if (setupCodeFile) cfg.setupCodeFile = resolve(setupCodeFile);
   const requests = str(env, "STUGA_UPGRADE_REQUESTS");
   const status = str(env, "STUGA_UPGRADE_STATUS");
   if (requests && status) cfg.upgradeHelper = { requests: resolve(requests), status: resolve(status) };

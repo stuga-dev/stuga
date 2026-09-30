@@ -25,6 +25,7 @@ definition on [macOS](install/macos.md#where-things-live), or the build flags an
 | `WEB_DIST_DIR` | `apps/web/dist` in the app tree | The built web app. |
 | `PG_BIN` | the `PATH` | The directory with `pg_dump` and `pg_restore` for the server's Postgres major, used by backups and restores. |
 | `BACKUP_DIR` | `backups` beside `DATA_DIR` | Where backups go. |
+| `SETUP_CODE_FILE` | `<DATA_DIR>/setup-code` | Where the node keeps its [setup code](network-access.md#claiming-the-node) until it is claimed. A file named here is readable by its group too, so a packaging can let the machine's administrators read it. |
 
 ### Network
 
