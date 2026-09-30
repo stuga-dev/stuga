@@ -269,6 +269,41 @@ test("check_config refuses a relay's name with lines of its own", () => {
   assert.match(result.stdout, /the relay's name is not a relay/);
 });
 
+test("a request rewritten while it is read is looked at again", async () => {
+  const h = setup();
+  h.write(`${h.config()}webServer.port = 7400\n`);
+  h.ask(`on ${SHA_A}`);
+  // head, but the first time the request is read, the node renames a new one into place just after.
+  const real = spawnSync("bash", ["-c", "command -v head"], { encoding: "utf8" }).stdout.trim();
+  mkdirSync(join(h.base, "shim"));
+  writeFileSync(
+    join(h.base, "shim/head"),
+    `#!/bin/bash\n"${real}" "$@"; code=$?\nswap="${h.base}/swap"\nif [ -f "$swap" ] && [ "\${!#}" = "${h.dir}/control/request" ]; then mv -f "$swap" "\${!#}"; fi\nexit $code\n`,
+  );
+  chmodSync(join(h.base, "shim/head"), 0o755);
+  writeFileSync(join(h.base, "swap"), `on ${SHA_B}\n`);
+  const s = run({ ...h, env: { ...h.env, PATH: `${join(h.base, "shim")}:${h.env.PATH}` } });
+  await until(() => h.status()?.state === "refused" && h.status().config_sha === SHA_B, "refused for the new request", s.log);
+  assert.ok(!existsSync(join(h.base, "swap")), "the request was swapped");
+  await stop(s);
+});
+
+test("a config it may not read is a failure, and it keeps running", { skip: process.getuid?.() === 0 && "root reads anything" }, async () => {
+  const h = setup();
+  h.write(h.config());
+  chmodSync(join(h.dir, "relay-1.toml"), 0o000);
+  h.ask(`on ${SHA_A}`);
+  const s = run(h);
+  await until(() => h.status()?.state === "failed", "failed", s.log);
+  assert.match(h.status().message, /relay-1\.toml is not readable/);
+  assert.equal(h.status().config_sha, SHA_A);
+  assert.deepEqual(readdirSync(join(h.base, "tmp")).filter((n) => n.startsWith("connector.")), [], "no private copy is left");
+  chmodSync(join(h.dir, "relay-1.toml"), 0o644);
+  h.ask(`on ${SHA_A}`);
+  await until(() => h.status()?.state === "running", "running once asked again", s.log);
+  await stop(s);
+});
+
 test("a request it may not read is a failure, not a refusal", { skip: process.getuid?.() === 0 && "root reads anything" }, async () => {
   const h = setup();
   h.ask("off");

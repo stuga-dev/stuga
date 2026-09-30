@@ -165,11 +165,21 @@ start_connectors() {
     return
   fi
 
-  private="$(mktemp -d "$tmp/connector.XXXXXX")"
-  chmod 0700 "$private"
+  # Failures here wait for the node to ask again, like a refusal; under set -e they would end the loop.
+  if ! private="$(mktemp -d "$tmp/connector.XXXXXX")" || ! chmod 0700 "$private"; then
+    if [ -n "$private" ]; then rm -rf "$private"; fi
+    private=""
+    write_status failed "could not make a private copy of the settings" "$sha"
+    return
+  fi
   for relay in "${relays[@]}"; do
     # Read once: the connector starts from this copy, whatever the node writes next.
-    head -c 4096 "$dir/$relay.toml" > "$private/$relay.toml"
+    if ! head -c 4096 "$dir/$relay.toml" > "$private/$relay.toml" 2> /dev/null; then
+      rm -rf "$private"
+      private=""
+      write_status failed "$relay.toml is not readable by the connector's group" "$sha"
+      return
+    fi
     if ! check_config "$private/$relay.toml" "$relay" "$dir"; then
       rm -rf "$private"
       private=""
@@ -193,8 +203,9 @@ seen="" written="" waiting_for="" exited_at=0
 
 reconcile() {
   local wanted current changed=no
-  wanted="$(read_request)"
+  # Seen before it is read: a request renamed into place between the two is then new next time.
   current="$(request_seen)"
+  wanted="$(read_request)"
   if [ "$current" != "$seen" ]; then changed=yes; fi
   seen="$current"
 
