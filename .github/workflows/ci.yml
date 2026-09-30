@@ -61,6 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: bash packaging/docker/test/restore-drill.sh
+      - run: bash packaging/docker/test/db-password.sh --no-build
       - run: bash packaging/docker/test/backup-suite-in-image.sh ghcr.io/stuga-dev/stuga-node:0.0.0-drill
 
   macos:
