@@ -3,6 +3,7 @@
 #
 #   ./stuga status | backup | verify <backup> | list | restore [--yes] <backup> | upgrade
 #   ./stuga reset-password <username> | media-scan [--reclaim] [--empty-trash[=<days>]] [--grace-hours=<hours>]
+#   ./stuga db-password
 #
 # The work is the node's own `stuga-node`, run in a one-off container of the image that wrote
 # the data; this shell stops and starts the compose node around it. Exit codes are stuga-node's:
@@ -32,12 +33,17 @@ env_value() {
 
 # The compose files as docker compose itself picks them, so a pin file can be added to the same list.
 COMPOSE=(docker compose)
+SHOWN_FILES=""
 compose_files="${COMPOSE_FILE:-$(env_value COMPOSE_FILE)}"
 old_ifs="$IFS"
 IFS="${COMPOSE_PATH_SEPARATOR:-:}"
-for f in ${compose_files:-compose.yml}; do COMPOSE+=(-f "$f"); done
+for f in ${compose_files:-compose.yml}; do COMPOSE+=(-f "$f"); SHOWN_FILES="$SHOWN_FILES -f $f"; done
 IFS="$old_ifs"
 SHOWN="docker compose"
+
+# Keeps the node on an older release than compose.yml names, after a restore or a failed upgrade
+# goes back to it. compose.yml itself stays: it carries this node's database password.
+ROLLBACK_FILE="compose.rollback.yml"
 
 DATA_PARENT="$ROOT/data"
 DATA_NAME="node"
@@ -62,6 +68,7 @@ node_running() { compose_running | grep -qx node; }
 buildable() { compose config 2>/dev/null | grep -qE '^[[:space:]]+build:'; }
 
 pinned_node_tag() { compose config --images 2>/dev/null | sed -n 's|.*/stuga-node:||p' | head -1 || true; }
+compose_node_image() { compose config --images 2>/dev/null | grep '/stuga-node:' | head -1 || true; }
 
 # True when every image the compose files name is already on this machine, as after a docker load.
 images_present() {
@@ -103,16 +110,40 @@ pin_image() {
   printf 'services:\n  node:\n    image: "%s"\n' "$PIN" > "$PIN_FILE"
 }
 pinned() { if [ -n "$PIN_FILE" ]; then compose -f "$PIN_FILE" "$@"; else compose "$@"; fi; }
-pinned_shown() { if [ -n "$PIN_FILE" ]; then printf '%s -f %s' "$SHOWN" "$PIN_FILE"; else printf '%s' "$SHOWN"; fi; }
+
+# write_rollback <image>: keep the node on <image> until the next upgrade.
+write_rollback() {
+  local tmp
+  tmp="$(mktemp .stuga-pin.XXXXXX)" || return 1
+  if printf 'services:\n  node:\n    image: "%s"\n' "$1" > "$tmp" && mv -f "$tmp" "$ROLLBACK_FILE"; then return 0; fi
+  rm -f "$tmp"
+  return 1
+}
+rolled_back() { if [ -f "$ROLLBACK_FILE" ]; then compose -f "$ROLLBACK_FILE" "$@"; else compose "$@"; fi; }
+rolled_back_shown() { printf '%s%s -f %s' "$SHOWN" "$SHOWN_FILES" "$ROLLBACK_FILE"; }
 
 # Set while this script has stopped a node nothing has changed under yet: any exit starts it again.
 NODE_STOPPED_BY_US=no
 RESTORE_RUNNING=no
-# Set when a message has told the operator to run a command naming PIN_FILE.
-KEEP_PIN=no
+# Set while the role has a password .env does not name: any exit puts OLD_ROLE_PASSWORD back.
+ROLE_PASSWORD_CHANGED=no
+OLD_ROLE_PASSWORD=""
+ENV_TMP=""
 
 on_exit() {
   local code=$?
+  if [ -n "$ENV_TMP" ]; then rm -f "$ENV_TMP"; fi
+  if [ "$ROLE_PASSWORD_CHANGED" = yes ]; then
+    ROLE_PASSWORD_CHANGED=no
+    if put_back_role_password; then
+      warn "the database password was put back as it was" >&2
+    else
+      # A node started now could not sign in.
+      NODE_STOPPED_BY_US=no
+      printf '\033[31merror:\033[0m %s\n' "the database password was changed and could not be put back, so the node cannot sign in to Postgres. Run $SELF db-password, then $SHOWN up -d" >&2
+      code=4
+    fi
+  fi
   if [ "$NODE_STOPPED_BY_US" = yes ]; then
     NODE_STOPPED_BY_US=no
     warn "interrupted; starting the node again (its data was not changed)" >&2
@@ -122,7 +153,7 @@ on_exit() {
     printf '\033[31merror:\033[0m %s\n' "interrupted during the restore. The node was left stopped: run $SELF list to see what is in place before starting it." >&2
     code=4
   fi
-  if [ -n "$PIN_FILE" ] && [ "$KEEP_PIN" != yes ]; then rm -f "$PIN_FILE"; fi
+  if [ -n "$PIN_FILE" ]; then rm -f "$PIN_FILE"; fi
   exit "$code"
 }
 trap on_exit EXIT
@@ -274,6 +305,60 @@ start_again() {
   fi
 }
 
+# ---------------------------------------------------------------- database password
+
+db_password_set() { [ -n "${POSTGRES_PASSWORD:-$(env_value POSTGRES_PASSWORD)}" ]; }
+
+# role_sql: SQL on stdin, never in an argument, as the superuser over the container's own socket,
+# which needs no password. The session logs no statement, so a password stays out of Postgres's log.
+role_sql() {
+  { printf "SET log_statement = 'none';\nSET log_min_error_statement = 'panic';\n"; cat; } \
+    | compose exec -T postgres psql -X -q -tA -v ON_ERROR_STOP=1 -U stuga -d postgres
+}
+
+# The verifier Postgres keeps is a password it accepts back as it is.
+put_back_role_password() {
+  if [ -n "$OLD_ROLE_PASSWORD" ]; then
+    printf "ALTER ROLE stuga PASSWORD '%s';\n" "$OLD_ROLE_PASSWORD" | role_sql
+  else
+    printf 'ALTER ROLE stuga PASSWORD NULL;\n' | role_sql
+  fi
+}
+
+# ensure_db_password: when .env names no POSTGRES_PASSWORD, give the role a random one and write it
+# there. The role changes first and .env last; a failure between puts the old password back. The
+# node must be stopped: it signs in with the old password until `up -d` recreates it.
+ensure_db_password() {
+  local password
+  if db_password_set; then return 0; fi
+  if ! compose_running | grep -qx postgres; then
+    compose up -d --wait postgres || fail 3 "postgres did not start; nothing was changed. Its log: $SHOWN logs --tail 50 postgres"
+  fi
+  OLD_ROLE_PASSWORD="$(printf "SELECT rolpassword FROM pg_authid WHERE rolname = 'stuga';\n" | role_sql)" \
+    || fail 3 "could not read the database role; nothing was changed"
+  case "$OLD_ROLE_PASSWORD" in *"'"* | *\\*) fail 3 "the database role's password is not one this can put back; nothing was changed" ;; esac
+  password="$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')"
+  case "$password" in *[!A-Za-z0-9_-]*) password="" ;; esac
+  [ "${#password}" -eq 43 ] || fail 3 "could not make a random password; nothing was changed"
+
+  ROLE_PASSWORD_CHANGED=yes
+  printf "ALTER ROLE stuga PASSWORD '%s';\n" "$password" | role_sql >/dev/null \
+    || fail 3 "could not set the database password; nothing was changed"
+  # Beside .env, so the rename replaces it in one step; mktemp makes it 0600.
+  ENV_TMP="$(mktemp .env.XXXXXX)" || fail 3 "could not write .env; nothing was changed"
+  {
+    if [ -f .env ]; then cat .env && echo; fi
+    echo "# The database's password, which Postgres holds too: change it only as docs/install/docker.md says."
+    printf 'POSTGRES_PASSWORD=%s\n' "$password"
+  } > "$ENV_TMP" || fail 3 "could not write .env; nothing was changed"
+  mv -f "$ENV_TMP" .env || fail 3 "could not write .env; nothing was changed"
+  ENV_TMP=""
+  ROLE_PASSWORD_CHANGED=no
+  # The node's container still has the old password: only `up -d` starts it now.
+  NODE_STOPPED_BY_US=no
+  ok "gave the database a random password, in .env"
+}
+
 # ---------------------------------------------------------------- backup
 
 # cmd_backup [--leave-stopped]: the node is the only writer, so it is stopped for the two halves to
@@ -413,10 +498,17 @@ cmd_restore() {
   ok "database and data directory restored"
 
   # A plain `up -d` would start the image compose.yml names, which after a failed upgrade is the
-  # release that failed, and it would migrate the restored data forward.
-  KEEP_PIN=yes
-  start_it="Start it on the build that took the backup ($target) with: $(pinned_shown) up -d node"
-  pinned up -d node >/dev/null 2>&1 \
+  # release that failed, and it would migrate the restored data forward. So an older build is kept
+  # in the rollback file, beside compose.yml rather than in place of it.
+  if [ "$target" = "$(compose_node_image)" ]; then
+    rm -f "$ROLLBACK_FILE"
+    start_it="Start it with: $SHOWN up -d node"
+  else
+    write_rollback "$target" || fail 4 "restored, but could not write $ROLLBACK_FILE, so the node was left stopped.
+       What the restore replaced is kept: database \"$replaced_db\", $DATA_PARENT/$replaced_dir"
+    start_it="Start it on the build that took the backup ($target) with: $(rolled_back_shown) up -d node"
+  fi
+  rolled_back up -d node >/dev/null 2>&1 \
     || fail 4 "restored, but the node did not start. $start_it
        What the restore replaced is kept: database \"$replaced_db\", $DATA_PARENT/$replaced_dir"
   if ! wait_node_ready; then
@@ -424,7 +516,6 @@ cmd_restore() {
        $start_it
        What the restore replaced is kept: database \"$replaced_db\", $DATA_PARENT/$replaced_dir"
   fi
-  KEEP_PIN=no
   ok "node is ready"
 
   say ""
@@ -432,8 +523,8 @@ cmd_restore() {
   if [ -n "$replaced_db" ]; then say "The database it replaced is kept as \"$replaced_db\"."; fi
   if [ -n "$replaced_dir" ]; then say "The data directory it replaced is kept at $DATA_PARENT/$replaced_dir."; fi
   say "Delete them once you are satisfied."
-  if [ "$target" != "$created" ]; then
-    warn "the node now runs $target; compose.yml names another image, so download the compose.yml of that release before the next '$SHOWN up'"
+  if [ -f "$ROLLBACK_FILE" ]; then
+    warn "the node now runs $target, and compose.yml names a newer release. Keep compose.yml; until the next upgrade, start the stack with: $(rolled_back_shown) up -d"
   fi
 }
 
@@ -508,7 +599,7 @@ fetch_release() {
 # version, so there this takes the backup itself, first.
 cmd_upgrade() {
   require_postgres
-  local before after pin backup="" wanted="" fetched=no arg
+  local before after pin backup="" wanted="" fetched=no arg old_image
   for arg in "$@"; do
     case "$arg" in
       --fetched) fetched=yes ;;
@@ -553,8 +644,19 @@ cmd_upgrade() {
   fi
   ok "images ready"
 
+  # A node that has run on the default password gets its own before the new version starts.
+  if ! db_password_set; then
+    if node_running; then
+      NODE_STOPPED_BY_US=yes
+      compose stop node >/dev/null 2>&1 || fail 3 "could not stop the node; nothing was changed"
+      ok "node stopped"
+    fi
+    ensure_db_password
+  fi
+
   # From here the new version may migrate the database: never restart the old one behind it.
   NODE_STOPPED_BY_US=no
+  old_image="$(created_node_image)"
   say "Starting the new version; it backs up stuga $before's data before it changes anything"
   if ! compose up -d; then
     fail 4 "the new version did not start. Look at its log: $SHOWN logs --tail 50 node
@@ -568,10 +670,15 @@ cmd_upgrade() {
        A verified backup of stuga $before's data, taken before the upgrade changed anything: $backup
        To go back:              $SELF restore $backup"
     fi
-    fail 4 "the node did not become ready after the upgrade, and it took no backup, so it changed nothing:
+    if [ -n "$old_image" ] && [ "$old_image" != "$(compose_node_image)" ] && write_rollback "$old_image"; then
+      fail 4 "the node did not become ready after the upgrade, and it took no backup, so it changed nothing:
        it backs up before it upgrades, and stops if it cannot. Look at the log: $SHOWN logs --tail 50 node
-       To go back, put the compose.yml of stuga $before back and run $SHOWN up -d."
+       To go back to stuga $before, keep compose.yml and run: $(rolled_back_shown) up -d"
+    fi
+    fail 4 "the node did not become ready after the upgrade, and it took no backup, so it changed nothing:
+       it backs up before it upgrades, and stops if it cannot. Look at the log: $SHOWN logs --tail 50 node"
   fi
+  rm -f "$ROLLBACK_FILE"
 
   after="$(node_version_raw)"
   after="${after:-0.0.0-dev}"
@@ -627,6 +734,9 @@ cmd_status() {
   if printf '%s' "$out" | grep -qE '"replaced(DataDirs|Databases)":\["'; then
     warn "a restore kept what it replaced — run: $SELF list"
   fi
+  if [ -f "$ROLLBACK_FILE" ]; then
+    warn "$ROLLBACK_FILE keeps the node on an older release than compose.yml: start the stack with $(rolled_back_shown) up -d"
+  fi
 
   say ""
   compose ps
@@ -650,6 +760,13 @@ cmd_media_scan() {
   compose exec -T node node bin/stuga-node.js media-scan "$@"
 }
 
+# install.sh runs this before the first start; an upgrade runs ensure_db_password itself.
+cmd_db_password() {
+  if db_password_set; then ok "POSTGRES_PASSWORD is set already"; return 0; fi
+  if node_running; then fail 2 "stop the node first: $SHOWN stop node, then $SELF db-password, then $SHOWN up -d"; fi
+  ensure_db_password
+}
+
 case "${1:-}" in
   backup)  shift; cmd_backup "$@" ;;
   verify)  shift; cmd_verify "$@" ;;
@@ -659,6 +776,7 @@ case "${1:-}" in
   status)  shift; cmd_status "$@" ;;
   media-scan) shift; cmd_media_scan "$@" ;;
   reset-password) shift; cmd_reset_password "$@" ;;
+  db-password) shift; cmd_db_password "$@" ;;
   *)
     cat <<USAGE
 Stuga operator commands.
@@ -678,6 +796,8 @@ Stuga operator commands.
                              move those to trash/ — reversible, frees nothing yet
   $SELF media-scan --empty-trash=30 --reclaim
                              destroy what has sat in trash/ 30+ days. NOT reversible
+  $SELF db-password          give the database a random password in .env, when it has none
+                             (the node stopped; start it after with $SHOWN up -d)
 
 Backups live in $BACKUP_DIR (BACKUP_DIR). How many are kept: Settings → This node → Backups.
 USAGE
