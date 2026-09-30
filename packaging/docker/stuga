@@ -627,6 +627,21 @@ cmd_status() {
     warn "a restore kept what it replaced — run: $SELF list"
   fi
 
+  # The connector's own report; its message is safe between JSON quotes, so sed can take it out.
+  local remote state message
+  if compose_running | grep -qx remote; then
+    remote="$(compose exec -T remote cat /run/stuga-remote/status/status.json 2>/dev/null || true)"
+    state="$(printf '%s' "$remote" | sed -n 's/.*"state":"\([^"]*\)".*/\1/p')"
+    message="$(printf '%s' "$remote" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p')"
+    if [ -n "$state" ]; then
+      say "remote       $state — $message"
+    else
+      say "remote       idle — remote access has not been turned on"
+    fi
+  else
+    say "remote       not running — start it with: $SHOWN up -d remote"
+  fi
+
   say ""
   compose ps
 }

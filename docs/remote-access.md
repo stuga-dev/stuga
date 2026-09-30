@@ -163,7 +163,8 @@ With Docker, installed with `install.sh`:
   starting the connector it copies each settings file and refuses to start on anything but the lines
   the node writes.
 - It restarts only when its settings change, or the image with an upgrade.
-- It logs warnings only, to `docker compose logs remote`, at most 30 MB.
+- It logs warnings only, to `docker compose logs remote`, at most 30 MB. `./stuga status` shows its
+  state.
 
 Its settings name one https proxy for the node's own hostname onto the socket, and nothing else: no
 `exec` source, no included files, no admin interface, no `user` or metadata. The node rewrites them

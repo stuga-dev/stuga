@@ -59,8 +59,10 @@ remote access connector's is `docker compose logs remote`. Add `-f` to follow on
 
 Put settings in `.env`, then run `docker compose up -d`. A `docker compose restart` keeps the old
 environment. Any node variable in [Configuration](../configuration.md) can go in `.env`, except the
-ones the stack sets itself. `compose.yml` sets `DATABASE_URL`, `DATA_DIR`, `BIND`, `PORT` and
-`BACKUP_DIR` inside the container, and a value for them in `.env` has no effect there. The image sets `PG_BIN` and the packaging hints, so leave
+ones the stack sets itself. `compose.yml` sets `DATABASE_URL`, `DATA_DIR`, `BIND`, `PORT`,
+`BACKUP_DIR` and the remote access hints (`STUGA_REMOTE_SERVICE`, `STUGA_REMOTE_DIR`,
+`STUGA_CONNECTOR_REQUEST`, `STUGA_CONNECTOR_STATUS`, `STUGA_REMOTE_GID`,
+`STUGA_REMOTE_CONNECTOR_UID`) inside the container, and a value for them in `.env` has no effect there. The image sets `PG_BIN` and the packaging hints, so leave
 those out too.
 
 These variables belong to the stack, not to the node:
@@ -100,7 +102,7 @@ What each command does, and its exit codes, are described in [Operations](../ope
 
 | Command | |
 |---|---|
-| `./stuga status` | Version, schema, whether the node is serving, the last backup, and the setup link while nobody has claimed the node. |
+| `./stuga status` | Version, schema, whether the node is serving, the last backup, the remote access connector's state, and the setup link while nobody has claimed the node. |
 | `./stuga backup` | Stops the node, takes a verified backup, and starts the node again. |
 | `./stuga verify <backup>` | Checks that a backup is whole and that this release can restore it. |
 | `./stuga list` | Backups, and what restores kept beside the data. |
