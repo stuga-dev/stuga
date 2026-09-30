@@ -9,6 +9,10 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Added
+
+- When a restore code moves remote access to another computer, the old one turns it off and says the address moved ([docs/remote-access.md](docs/remote-access.md#turning-off-restoring-and-backups)).
+
 ### Fixed
 
 - On a Mac, **Login Items** no longer lists Stuga's four background services as `bash` from an unidentified developer: they are listed under Stuga.

@@ -156,6 +156,12 @@ describe("the status body", () => {
   it("keeps the address while off", () => {
     expect(remoteStatus(row({ enabled: false }), { dir: "/d", now: NOW })).toMatchObject({ state: "off", address: "https://k7f3q2.mystuga.com" });
   });
+
+  it("says the address moved while off and unbound", () => {
+    const moved = { ...err("moved"), message: "This address moved to another computer.", service_code: "node_moved" };
+    const r = row({ enabled: false, remote_id: null, hostname: null, binding_thumbprint: null, last_error: moved });
+    expect(remoteStatus(r, { dir: "/d", now: NOW, connector: report("stopped") })).toMatchObject({ state: "off", address: null, last_error: moved });
+  });
 });
 
 const SHA = "a".repeat(64);
@@ -274,6 +280,8 @@ describe("clearing the error", () => {
     expect(clearedBy("service", err("upgrade_required"))).toBe(true);
     expect(clearedBy("dir", err("remote_dir_unusable"))).toBe(true);
     expect(clearedBy("service", null)).toBe(false);
+    // Only turning on with a new code clears it.
+    for (const kind of ["service", "issuance", "probe", "dir"] as const) expect(clearedBy(kind, err("moved"))).toBe(false);
   });
 });
 
@@ -319,6 +327,15 @@ describe("what each answer from the service means (the protocol's error table)",
     const day = serviceFailure(fail(401, code), ctx({ failures: 5, since: earlier(24 * 60 * MIN) }));
     expect(day.lastError).toMatchObject({ code: "binding_rejected", service_code: code });
     expect(inMs(day.retryAt)).toBe(6 * 60 * MIN);
+  });
+
+  it("401 node_moved: moved, never called again", () => {
+    const f = serviceFailure(fail(401, "node_moved"), ctx({ failures: 3 }));
+    expect(f).toEqual({
+      lastError: { code: "moved", message: "This address moved to another computer.", at: NOW.toISOString(), service_code: "node_moved" },
+      retryAt: null,
+      moved: true,
+    });
   });
 
   it("403 node_denied: denied, with the service's reason and message, and an hourly check-in", () => {

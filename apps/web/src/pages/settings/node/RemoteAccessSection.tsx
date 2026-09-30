@@ -262,8 +262,10 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
 
   let body;
   if (!status.enabled) {
+    // A moved address is forgotten here, so turning on again takes a code.
     body = (
       <>
+        {error?.code === "moved" && <Banner status="info" title="This address moved to another computer." />}
         {bound && <Text color="secondary">{status.address}</Text>}
         {turnOnForm(!bound)}
       </>

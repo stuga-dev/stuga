@@ -1,0 +1,8 @@
+{
+  "status": 401,
+  "body": {
+    "error": "node_moved",
+    "message": "This address moved to another computer.",
+    "server_time": 1790900000
+  }
+}

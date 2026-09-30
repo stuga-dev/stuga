@@ -3,6 +3,7 @@
  * the binding key's order of writes, and what each refusal becomes; and the service loop on a
  * certificate made here. The loops run end to end, with a real CA, in remote-access.integration.test.ts.
  */
+import { generateKeyPairSync } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -87,6 +88,8 @@ vi.mock("@stuga/db", async (importOriginal) => {
     },
     saveRemoteBinding: async (_sql: unknown, b: Parameters<Db["saveRemoteBinding"]>[1]) =>
       memory.set({ remote_id: b.remoteId, hostname: b.hostname, api_url: b.apiUrl, binding_thumbprint: b.thumbprint, bound_at: b.boundAt, binding_failing_since: null }),
+    forgetRemoteBinding: async () =>
+      memory.set({ enabled: false, remote_id: null, hostname: null, binding_thumbprint: null, bound_at: null, binding_failing_since: null }),
     setRemoteEnabled: async (_sql: unknown, e: { enabled: boolean; by?: string; at?: Date; caTermsAcceptedBy?: string; caTermsAcceptedAt?: Date }) =>
       memory.set(
         e.enabled
@@ -158,6 +161,8 @@ const { readCertificate, writeCertificate } = await import("./certificates.js");
 import { makeTestCert } from "../testing/cert.js";
 import type { ConnectorHints, RemoteGroup } from "../config/env.js";
 import { ariCertId } from "./acme/der.js";
+import { okpThumbprint } from "./keys.js";
+import { createServiceClient } from "./service-client.js";
 import type { ChallengeResolver } from "./dns-check.js";
 import type { RemoteNotice } from "./notify.js";
 import { FAKE_CA, FAKE_CA_DIRECTORY, fakeCa, type FakeCa } from "./testing/fake-ca.js";
@@ -225,6 +230,13 @@ async function bound(opts: Parameters<typeof service>[0] & { certFor?: { notBefo
   const cert = makeTestCert({ dnsNames: [memory.row().hostname as string], ...certFor });
   await writeCertificate(dataDir, cert.privateKey, cert.cert);
   return s;
+}
+
+/** Another computer takes the address with a restore code: the service replaces this node's key. */
+async function moveElsewhere(id: string): Promise<void> {
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const x = (privateKey.export({ format: "jwk" }) as { x: string }).x;
+  await createServiceClient().rebind(fake.url, { privateKey, x, thumbprint: okpThumbprint(x) }, fake.mintCode("rebind", id));
 }
 
 /** The zone's servers, as the fake service's records. */
@@ -513,6 +525,41 @@ describe("the service loop", () => {
     expect(fake.requests.length).toBe(heard);
     // Kept as it is: the node never deletes a binding key.
     expect(readFileSync(path, "utf8")).toBe(damaged);
+  });
+
+  it("keeps a binding made while a request under the key it replaced was out", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const realFetch = globalThis.fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const res = await realFetch(input, init);
+      if (String(input).endsWith("/v1/checkin")) await held;
+      return res;
+    });
+    const s = await bound();
+    const id = memory.row().remote_id as string;
+    fake.failNext("/v1/checkin", 401, { error: "node_moved", message: "This address moved to another computer." });
+    await s.start();
+    await until("the check-in out", () => fake.requests.some((r) => r.path === "/v1/checkin"));
+    // Restored with a code meanwhile, as the node still bound.
+    await s.enable({ code: fake.mintCode("rebind", id), acceptCaTerms: true, by: "liv" });
+    expect(fake.requests.map((r) => r.path)).toEqual(["/v1/enroll", "/v1/checkin", "/v1/rebind"]);
+    const thumbprint = memory.row().binding_thumbprint;
+    release();
+    await until("a check-in with the new key", () => fake.requests.some((r) => r.path === "/v1/checkin" && r.status === 200));
+    expect(memory.row()).toMatchObject({ enabled: true, remote_id: id, binding_thumbprint: thumbprint });
+    expect(lastError()?.code).not.toBe("moved");
+  });
+
+  it("gets a new credential at once after a restore code on the same address", async () => {
+    const s = await bound();
+    const id = memory.row().remote_id as string;
+    await s.start();
+    await until("a credential", () => fake.issuedCredentials.length === 1);
+    // The relays refuse a credential issued before a rebind: the one held is no use now.
+    await s.enable({ code: fake.mintCode("rebind", id), acceptCaTerms: true, by: "liv" });
+    await until("a new credential", () => fake.issuedCredentials.length === 2);
+    expect(memory.row()).toMatchObject({ enabled: true, remote_id: id, last_error: null });
   });
 
   it("is back on after a restart once the service stops asking for an upgrade", async () => {
@@ -883,6 +930,57 @@ describe("where the packaging runs the connector", () => {
     await until("asked again", () => request() === line);
   });
 
+  it("stops as Turn off does once the address moved to another computer, and turns on again only with a code", async () => {
+    const told: RemoteNotice[] = [];
+    const s = await bound({
+      connector: hints,
+      now: clock,
+      notify: async (n) => void told.push(n),
+      timing: { serviceTickMs: 100, connectorPollMs: 20, probeDelayMs: 10 },
+    });
+    await s.start();
+    await until("on", () => request()?.startsWith("on ") ?? false);
+    const id = memory.row().remote_id as string;
+    const hostname = memory.row().hostname as string;
+    const keyPath = join(dataDir, "secrets", "remote-binding.jwk");
+    const key = readFileSync(keyPath, "utf8");
+
+    await moveElsewhere(id);
+    s.kick();
+    await until("moved", () => lastError()?.code === "moved");
+    expect(request()).toBe("off");
+    expect(readdirSync(remoteDir).filter((f) => f.startsWith("relay-1.") || f === "https.sock")).toEqual([]);
+    expect(memory.row()).toMatchObject({ enabled: false, remote_id: null, hostname: null, binding_thumbprint: null, credential_expires_at: null });
+    expect(await s.status()).toMatchObject({
+      state: "off",
+      address: null,
+      last_error: { code: "moved", message: "This address moved to another computer.", service_code: "node_moved" },
+    });
+    expect(s.view.current()).toEqual({ enabled: false, id: null, hostname: null, origin: null });
+    // The key the service no longer takes and the certificate both stay.
+    expect(readFileSync(keyPath, "utf8")).toBe(key);
+    expect((await readCertificate(dataDir)).kind).toBe("ok");
+    await until("the notice", () => told.some((n) => n.event === "REMOTE_ADDRESS_MOVED"));
+    expect(told.find((n) => n.event === "REMOTE_ADDRESS_MOVED")!.body).toContain(`https://${hostname}`);
+
+    // Nothing more goes to the service.
+    const heard = fake.requests.length;
+    for (let i = 0; i < 3; i += 1) {
+      s.kick();
+      await sleep(100);
+    }
+    expect(fake.requests.length).toBe(heard);
+    expect(request()).toBe("off");
+
+    expect(await refusal(s.enable({ acceptCaTerms: true, by: "liv" }))).toMatchObject({ status: 400, code: "code_required" });
+    // A code for this address brings it back.
+    const back = await s.enable({ code: fake.mintCode("rebind", id), acceptCaTerms: true, by: "liv" });
+    expect(back.via).toBe("rebind");
+    expect(memory.row()).toMatchObject({ enabled: true, remote_id: id, hostname, last_error: null });
+    await until("on again", () => request()?.startsWith("on ") ?? false);
+    expect(readdirSync(join(dataDir, "secrets")).filter((f) => f.startsWith("remote-binding.retired-"))).toHaveLength(1);
+  });
+
   it("refuses a retry where the packaging does not run the connector", async () => {
     const s = service();
     expect(await refusal(s.retryConnector("liv"))).toMatchObject({ status: 409, code: "unavailable" });
@@ -1041,6 +1139,18 @@ describe("the certificate loop", () => {
     expect(told.map((n) => n.event)).toEqual(["REMOTE_CERT_RENEWAL_FAILED", "REMOTE_BINDING_REJECTED", "REMOTE_CERT_RECOVERED"]);
     expect(told.at(-1)!.key).toBe(serial);
     expect(row().cert_alerted_serial).toBeNull();
+  });
+
+  it("stops when the service says the address moved while it orders a certificate", async () => {
+    const s = service({ ca: fakeCa(), timing });
+    await s.enable({ code: fake.mintCode("enroll"), acceptCaTerms: true, by: "liv" });
+    fake.failNext("/v1/acme/txt", 401, { error: "node_moved", message: "This address moved to another computer." });
+    await s.start();
+    await until("moved", () => lastError()?.code === "moved", 10_000);
+    const heard = fake.requests.length;
+    await sleep(150);
+    expect(row()).toMatchObject({ enabled: false, remote_id: null, cert_serial: null, cert_failures: 0 });
+    expect(fake.requests.slice(heard).filter((r) => r.path !== "/v1/acme/txt/cleanup")).toEqual([]);
   });
 
   /** Under a tenth of its life left, by the row: the certificate on disk stays as it is. */

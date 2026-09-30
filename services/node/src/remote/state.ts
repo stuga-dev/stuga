@@ -103,7 +103,8 @@ export function errorKind(code: string): ErrorKind {
  * until it restarts, so the first success that clears it is a newer Stuga's.
  */
 export function clearedBy(kind: ErrorKind, current: StoredRemoteError | null): boolean {
-  if (!current) return false;
+  // Only a new code binds a moved node again, and turning on with it clears this.
+  if (!current || current.code === "moved") return false;
   const of = errorKind(current.code);
   return of === kind || (kind === "issuance" && of === "service");
 }
@@ -158,6 +159,8 @@ export interface ServiceFailure {
   /** Denied or retired: no credential until a check-in gets through. */
   denied?: true;
   upgradeRequired?: true;
+  /** The address moved to another computer: off, and unbound. */
+  moved?: true;
 }
 
 /** `failures` counts this one; `bindingFailingSince` is the run's start, now when this is its first. */
@@ -207,6 +210,12 @@ export function serviceFailure(
         denied: true,
       };
     }
+    case "node_moved":
+      return {
+        lastError: remoteError("moved", "This address moved to another computer.", now, { serviceCode: err.code }),
+        retryAt: null,
+        moved: true,
+      };
     case "upgrade_required":
       return { lastError: remoteError("upgrade_required", "Update Stuga to use remote access.", now), retryAt: null, upgradeRequired: true };
     case "rate_limited":

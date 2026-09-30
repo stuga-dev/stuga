@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { closeClients, createClient, type Sql } from "./client.js";
 import {
+  forgetRemoteBinding,
   getRemoteAccess,
   recordRemoteAccount,
   recordRemoteCert,
@@ -212,6 +213,18 @@ describe.skipIf(!URL)("node_remote_access", () => {
     await setRemoteEnabled(sql, on);
     expect((await getRemoteAccess(sql)).enabled).toBe(true);
     await expect(sql`UPDATE node_remote_access SET ca_terms_accepted_at = NULL`).rejects.toThrow(/check constraint/);
+  });
+
+  it("forgets the binding and turns off, keeping the rest of the row", async () => {
+    await saveRemoteBinding(sql, BINDING);
+    await setRemoteEnabled(sql, { enabled: true, by: "liv", at: T0, caTermsAcceptedBy: "liv", caTermsAcceptedAt: T0 });
+    await recordRemoteCheckin(sql, CHECKIN);
+    await setRemoteBindingFailing(sql, at(60));
+    const before = await getRemoteAccess(sql);
+    await forgetRemoteBinding(sql);
+    const after = await getRemoteAccess(sql);
+    expect(changed(before, after)).toEqual(["binding_failing_since", "binding_thumbprint", "bound_at", "enabled", "hostname", "remote_id"]);
+    expect(after).toMatchObject({ enabled: false, remote_id: null, hostname: null, api_url: CHECKIN.apiUrl, relays: [RELAY] });
   });
 
   it.each([

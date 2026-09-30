@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { NodeRemoteAccessRow } from "@stuga/db";
 import type { NotifyDeliverMessage } from "@stuga/protocol/internal/jobs";
-import { bindingNotice, certNotices, notifyRemoteAccess, recoveredNotice, type RemoteNotice } from "./notify.js";
+import { bindingNotice, certNotices, movedNotice, notifyRemoteAccess, recoveredNotice, type RemoteNotice } from "./notify.js";
 
 const HOST = "k7f3q2.mystuga.com";
 const HOUR = 60 * 60_000;
@@ -105,6 +105,17 @@ describe("the warning about the binding", () => {
     const refused = row({ binding_failing_since: new Date(T0), last_error: { code: "binding_rejected", message: "m", at, service_code: "unknown_key" } });
     expect(bindingNotice(refused, T0 + HOUR)).toBeNull();
     expect(bindingNotice(row(), T0)).toBeNull();
+  });
+});
+
+describe("the notice of a move", () => {
+  it("names the address that moved, keyed by when the node learned of it", () => {
+    expect(movedNotice(HOST, "2026-10-03T04:05:06.000Z")).toEqual({
+      event: "REMOTE_ADDRESS_MOVED",
+      key: "2026-10-03T04:05:06.000Z",
+      title: "Remote access moved to another computer",
+      body: `https://${HOST} now reaches another computer. Remote access is off on this one.`,
+    });
   });
 });
 

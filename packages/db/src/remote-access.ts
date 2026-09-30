@@ -93,6 +93,22 @@ export async function saveRemoteBinding(sql: Queryable, b: RemoteBinding): Promi
   });
 }
 
+/**
+ * The address given up, as when it moved to another computer: off, and as if never bound, so only a
+ * code binds it again. The rest of the row stays, the certificate's columns and the service's origin
+ * among them.
+ */
+export async function forgetRemoteBinding(sql: Queryable): Promise<void> {
+  await update(sql, {
+    enabled: false,
+    remote_id: null,
+    hostname: null,
+    binding_thumbprint: null,
+    bound_at: null,
+    binding_failing_since: null,
+  });
+}
+
 export type RemoteEnabled =
   | { enabled: true; by: string; at: Date; caTermsAcceptedBy: string; caTermsAcceptedAt: Date }
   | { enabled: false };

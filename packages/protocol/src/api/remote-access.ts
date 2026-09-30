@@ -13,6 +13,8 @@ export type RemoteErrorCode =
   | "upgrade_required"
   | "denied"
   | "retired"
+  /** A restore code moved the address to another computer: off here, and unbound until a new code. */
+  | "moved"
   | "issuance_budget"
   | "acme_rate_limited"
   | "acme_challenge_failed"

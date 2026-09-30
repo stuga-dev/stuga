@@ -246,6 +246,22 @@ describe("RemoteAccessSection", () => {
     expect(nodeApi.enableRemoteAccess).toHaveBeenCalledWith({ code: "3NVQ-8RKW-6HXD-2PMB", accept_ca_terms: true });
   });
 
+  it("says the address moved to another computer, and turns on again only with a code", async () => {
+    nodeApi.enableRemoteAccess.mockResolvedValue(STARTING);
+    await mount({ ...OFF, last_error: problem("moved", "This address moved to another computer.", { service_code: "node_moved" }) });
+    expect(text()).toContain("This address moved to another computer.");
+    expect(text()).not.toContain("restore code");
+    expect(buttons("Use a different code")).toHaveLength(0);
+    await click(checkbox());
+    expect(isDisabled(buttons("Turn on")[0])).toBe(true);
+    await typeInto(field("Code"), "3NVQ-8RKW-6HXD-2PMB");
+    await click(buttons("Turn on")[0]);
+    await settle();
+    expect(nodeApi.enableRemoteAccess).toHaveBeenCalledWith({ code: "3NVQ-8RKW-6HXD-2PMB", accept_ca_terms: true });
+    expect(text()).not.toContain("moved to another computer");
+    expect(text()).toContain("Getting a certificate…");
+  });
+
   it("names what an administrator or a newer Stuga must fix", async () => {
     await mount({ ...ON, state: "error", last_error: problem("upgrade_required", "Update Stuga to use remote access.") });
     expect(text()).toContain("Update Stuga to use remote access.");

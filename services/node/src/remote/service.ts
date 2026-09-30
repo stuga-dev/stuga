@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Sql } from "@stuga/db";
 import {
+  forgetRemoteBinding,
   getRemoteAccess,
   recordRemoteAccount,
   recordRemoteCert,
@@ -81,7 +82,7 @@ import {
   UnreadableKey,
   type BindingKey,
 } from "./keys.js";
-import { bindingNotice, certNotices, recoveredNotice, type RemoteNotice } from "./notify.js";
+import { bindingNotice, certNotices, movedNotice, recoveredNotice, type RemoteNotice } from "./notify.js";
 import { probeThroughRelay, type ProbeResult } from "./probe.js";
 import { createServiceClient, ServiceError, type CheckinAnswer, type EnrollAnswer } from "./service-client.js";
 import { clearedBy, deniedCheckinDelay, remoteError, remoteStatus, serviceFailure, type ErrorKind } from "./state.js";
@@ -190,6 +191,7 @@ const STICKY = new Set([
   "socket_path_too_long",
   "denied",
   "retired",
+  "moved",
 ]);
 
 /** Less than this left of enable's budget is too little for the service to answer in. */
@@ -487,8 +489,11 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
 
   // ---- the service's refusals ------------------------------------------------
 
-  /** A failure calling the service, from either loop: the error, and the side effects the table names. */
-  async function serviceRefused(err: ServiceError, loop: "service" | "cert"): Promise<Date | null> {
+  /**
+   * A failure calling the service, from either loop: the error, and the side effects the table names.
+   * `thumbprint` is the binding the request was made under.
+   */
+  async function serviceRefused(err: ServiceError, loop: "service" | "cert", thumbprint: string | null): Promise<Date | null> {
     const r = row!;
     const at = new Date(now());
     if (err.code === "unknown_key" || err.code === "bad_signature") {
@@ -497,6 +502,10 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     }
     const failures = (loop === "service" ? r.credential_failures : r.cert_failures) + 1;
     const f = serviceFailure(err, { now: at, failures, bindingFailingSince: row!.binding_failing_since, rand });
+    if (f.moved) {
+      await moved(f.lastError, thumbprint);
+      return null;
+    }
     if (f.upgradeRequired) upgradeRequired = true;
     const wasDenied = r.last_error?.code === "denied" || r.last_error?.code === "retired";
     await recordError(f.lastError);
@@ -696,7 +705,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
         if (answer && plan.refresh) await refreshCredential(key, gen, answer, plan.refresh);
       } catch (e) {
         if (!(e instanceof ServiceError)) throw e;
-        await serviceRefused(e, "service");
+        await serviceRefused(e, "service", r.binding_thumbprint);
       }
     }
     await maybeProbe();
@@ -756,8 +765,9 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       if (e instanceof Stopped) return;
       await refreshRow();
       if (e instanceof ServiceError) {
-        const retryAt = await serviceRefused(e, "cert");
-        await recordRemoteCertFailure(sql, { failures: row!.cert_failures + 1, retryAt });
+        const retryAt = await serviceRefused(e, "cert", r.binding_thumbprint);
+        // Moved, or turned off meanwhile: nothing to try again.
+        if (row!.enabled) await recordRemoteCertFailure(sql, { failures: row!.cert_failures + 1, retryAt });
       } else {
         const f = certFailure(e, { now: new Date(now()), failures: row!.cert_failures + 1, rand });
         if (f.forgetAccount) await recordRemoteAccount(sql, { directory: null, url: null, termsUrl: row!.ca_terms_url });
@@ -1004,8 +1014,8 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
         await setRemoteEnabled(tx, enabled);
       });
       await promotePendingKey(config.dataDir, at);
-      if (answer.id !== r.remote_id) {
-        // A credential names the address it was issued for.
+      if (answer.id !== r.remote_id || via === "rebind") {
+        // A credential names the address it was issued for, and a rebind has the relays refuse any issued before it.
         credential = null;
         await recordRemoteCredential(sql, { issuedAt: null, expiresAt: null, refreshAt: null });
       }
@@ -1015,7 +1025,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       generation += 1;
       const r = await refreshRow();
       // An administrator turning it on again is the action these wait for.
-      if (r.last_error && ["acme_action_required", "binding_rejected"].includes(r.last_error.code)) {
+      if (r.last_error && ["acme_action_required", "binding_rejected", "moved"].includes(r.last_error.code)) {
         await setRemoteError(sql, null);
         await recordRemoteCertFailure(sql, { failures: 0, retryAt: null });
       }
@@ -1032,25 +1042,49 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     return new RemoteAccessRefusal(409, undefined, "PUBLIC_ORIGIN is this node's remote address; the remote address needs an origin of its own.");
   }
 
+  /** Off: the listener closed, the connector's credential and settings deleted, and the connector asked off. Under the lock. */
+  async function turnOff(): Promise<void> {
+    generation += 1;
+    // An order under way stops where it is: nothing more goes to the service or the CA.
+    issuing?.abort(new Stopped());
+    const r = await refreshRow();
+    await setRemoteEnabled(sql, { enabled: false });
+    await recordRemoteCredential(sql, { issuedAt: null, expiresAt: null, refreshAt: null });
+    credential = null;
+    probeDueAt = null;
+    await closeListener();
+    // One a stopped node left behind; the listener removes its own.
+    await removeSocketFile(join(config.dir, SOCKET_NAME), { refuseOther: false }).catch(() => {});
+    await removeConnectorFiles(config.dir, r.relays.map((relay) => relay.name));
+    jwtOnDisk = false;
+    await refreshRow();
+    await syncConnector();
+  }
+
   async function disable(_by: string): Promise<RemoteAccessStatus> {
-    await locked(async () => {
-      generation += 1;
-      // An order under way stops where it is: nothing more goes to the service or the CA.
-      issuing?.abort(new Stopped());
-      const r = await refreshRow();
-      await setRemoteEnabled(sql, { enabled: false });
-      await recordRemoteCredential(sql, { issuedAt: null, expiresAt: null, refreshAt: null });
-      credential = null;
-      probeDueAt = null;
-      await closeListener();
-      // One a stopped node left behind; the listener removes its own.
-      await removeSocketFile(join(config.dir, SOCKET_NAME), { refuseOther: false }).catch(() => {});
-      await removeConnectorFiles(config.dir, r.relays.map((relay) => relay.name));
-      jwtOnDisk = false;
-      await refreshRow();
-      await syncConnector();
-    });
+    await locked(turnOff);
     return status();
+  }
+
+  /**
+   * A restore code moved the address to another computer: off as Turn off leaves it, and the address
+   * forgotten, so this node never competes for it and only a new code turns it on again. The key,
+   * which the service no longer takes, stays on disk like every binding key; the certificate stays for
+   * the address coming back. Nothing, when the node was bound anew since the refused request.
+   */
+  async function moved(lastError: StoredRemoteError, thumbprint: string | null): Promise<void> {
+    const hostname = await locked(async () => {
+      const r = await refreshRow();
+      if (r.remote_id === null || r.binding_thumbprint !== thumbprint) return null;
+      await turnOff();
+      await sql.begin(async (tx) => {
+        await forgetRemoteBinding(tx);
+        await setRemoteError(tx, lastError);
+      });
+      await refreshRow();
+      return r.hostname;
+    });
+    if (hostname) await tell(movedNotice(hostname, lastError.at));
   }
 
   async function retryConnector(_by: string): Promise<RemoteAccessStatus> {

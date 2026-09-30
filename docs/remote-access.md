@@ -82,8 +82,10 @@ the service's last answer named.
 
 A refusal is `{"error": "<code>", "message": "…", "server_time": <unix seconds>}`, with `retry_after`
 on a `429` or `503`. The node never deletes its binding key because of a refusal: a key the service
-stops accepting is retried for a day before the Settings page asks for a restore code, and a denied
-address checks in hourly and comes back by itself once the service lifts the denial.
+stops accepting is retried for a day before the Settings page asks for a restore code, a denied
+address checks in hourly and comes back by itself once the service lifts the denial, and a key that a
+restore code replaced on another computer (`node_moved`) turns remote access off
+([Turning off, restoring and backups](#turning-off-restoring-and-backups)).
 
 ## Files
 
@@ -270,7 +272,8 @@ times in a row or waits for someone; when less than a tenth of the certificate's
 has expired, and renewing it has failed or can't be tried (a node back from a long sleep renews
 first); and when a new one is in use after any of these; also when the service has refused
 the node's key for a day, or the key is missing or can't be read. Each is sent once, and only while
-remote access is on.
+remote access is on. One more is sent once when the address moved to another computer, as the node
+turns remote access off.
 
 A certificate that has expired, or no longer names the address, takes the tunnel down: the node
 closes the remote listener, asks for the connector `off` and deletes the relay credential. Once a new
@@ -279,12 +282,17 @@ certificate is in place it gets a new credential, and only then asks for the con
 ## Turning off, restoring and backups
 
 - **Turning off** keeps the address ([above](#turning-it-on)).
-- **A new machine, or a lost data directory:** ask the service's operator for a restore code, and
-  enter it in **Settings → This node → Remote access**. The node enrolls a new key for the same
-  address, and the old key stops working. A bound node also takes a code under
+- **A new computer, or a lost data directory:** get a restore code from the remote access service's
+  account page (**Move to another computer**) or its operator, and enter it in
+  **Settings → This node → Remote access** on the new computer. The node enrolls a new key for the
+  same address, and the old key stops working. A bound node also takes a code under
   **Use a different code**.
+- **The old computer,** if it still runs, is refused with `node_moved` the next time it calls the
+  service. It turns remote access off as **Turn off** does, forgets the address, shows
+  *This address moved to another computer.* and notifies its administrators once. It keeps its key
+  files and its certificate, and turns on again only with a new code.
 - **Backups** include the binding key, so a restored node keeps its address. A backup restored on a
-  second machine while the first still runs gives both the same address; whichever connects to the
+  second computer while the first still runs gives both the same address; whichever connects to the
   relay first gets the traffic.
 
 ## Configuration
@@ -330,6 +338,9 @@ For node administrators; agents are refused. Times are ISO 8601.
 | `POST /api/node/remote-access/enable` | `{ "code"?, "accept_ca_terms": true }`. A node with no address needs a code; with one, a code restores or replaces it. Waits up to 25 seconds for the service, then answers like the `GET`, usually `starting`. A refusal is `{ "error", "code" }`. |
 | `POST /api/node/remote-access/disable` | Turns it off and answers like the `GET`. |
 | `POST /api/node/remote-access/connector/retry` | Where the packaging runs the connector, asks for it again after a refusal, and answers like the `GET`. Refused with `409` elsewhere. |
+
+While off, `last_error` is `moved` once the address moved to another computer; turning on again then
+takes a code.
 
 Four errors are worked out from the state rather than kept, so they go when their cause does:
 `connector_refused` (an error, with the packaging's reason, until **Retry**), `connector_unavailable`

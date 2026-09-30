@@ -1,8 +1,9 @@
 /**
  * What remote access tells the node's administrators (docs/remote-access.md): a certificate that
- * will not renew, runs short or has run out, and one in use again after that; and a key the service
- * no longer takes. Each goes to every node administrator, in the app and through the node's sink,
- * once: its id names the certificate or the run of refusals it is about.
+ * will not renew, runs short or has run out, and one in use again after that; a key the service
+ * no longer takes; and an address that moved to another computer. Each goes to every node
+ * administrator, in the app and through the node's sink, once: its id names the certificate, the
+ * run of refusals or the move it is about.
  */
 import type { NodeRemoteAccessRow } from "@stuga/db";
 import type { NotifyDeliverMessage } from "@stuga/protocol/internal/jobs";
@@ -16,6 +17,8 @@ export const REMOTE_ACCESS_PATH = "/settings/node/remote";
 export type CertNoticeKind = "renewal_failed" | "expiring" | "expired" | "recovered";
 
 export const BINDING_REJECTED_EVENT = "REMOTE_BINDING_REJECTED";
+
+export const MOVED_EVENT = "REMOTE_ADDRESS_MOVED";
 
 export const certEvent = (kind: CertNoticeKind): string => `REMOTE_CERT_${kind.toUpperCase()}`;
 
@@ -99,6 +102,16 @@ export function bindingNotice(row: NodeRemoteAccessRow, now: number): RemoteNoti
     return { event: BINDING_REJECTED_EVENT, key: error.at, title, body: error.message };
   }
   return null;
+}
+
+/** A restore code moved `hostname` to another computer, which this node learned at `at`. */
+export function movedNotice(hostname: string, at: string): RemoteNotice {
+  return {
+    event: MOVED_EVENT,
+    key: at,
+    title: "Remote access moved to another computer",
+    body: `https://${hostname} now reaches another computer. Remote access is off on this one.`,
+  };
 }
 
 /** One notification per administrator, in the app and through the sink; one already written is left alone. */

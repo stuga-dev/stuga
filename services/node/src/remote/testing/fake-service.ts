@@ -272,7 +272,7 @@ export async function startFakeRemoteService(opts: FakeRemoteServiceOptions): Pr
     } else {
       thumbprint = String(header.kid);
       const key = keys.get(thumbprint);
-      if (!key || key.revoked || !nodes.has(key.nodeId)) throw new Refusal(401, "unknown_key", "This key is not known.");
+      if (!key || !nodes.has(key.nodeId)) throw new Refusal(401, "unknown_key", "This key is not known.");
       x = key.x;
       nodeId = key.nodeId;
     }
@@ -280,6 +280,8 @@ export async function startFakeRemoteService(opts: FakeRemoteServiceOptions): Pr
     if (!verify(null, Buffer.from(`${parts[0]}.${parts[1]}`), publicKey, Buffer.from(parts[2]!, "base64url"))) {
       throw new Refusal(401, "bad_signature", "The signature does not verify.");
     }
+    // A key a rebind replaced, told only once its holder has signed: the address is another key's now.
+    if (!bare && keys.get(thumbprint)!.revoked) throw new Refusal(401, "node_moved", "This address moved to another computer.");
     if (payload.aud !== `${origin}${path}`) throw new Refusal(400, "bad_request", "The audience is not this endpoint.");
     if (!bare) {
       if (payload.iss !== nodeId) throw new Refusal(400, "bad_request", "The issuer is not this key's node.");

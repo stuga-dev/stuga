@@ -116,6 +116,10 @@ describe("answers, against the contract's samples", () => {
   it.each([
     ["error.stale-request.json", { status: 503, code: "stale_request" }],
     ["error.node-denied.json", { status: 403, code: "node_denied", detail: { reason: "abuse", serverTime: 1_790_900_000 } }],
+    [
+      "error.node-moved.json",
+      { status: 401, code: "node_moved", message: "This address moved to another computer.", detail: { serverTime: 1_790_900_000 } },
+    ],
     ["error.upgrade-required.json", { status: 426, code: "upgrade_required", detail: { minProtocol: 2, serverTime: 1_790_900_000 } }],
     ["error.issuance-budget.json", { status: 429, code: "issuance_budget", detail: { retryAfter: 86_400, serverTime: 1_790_900_000 } }],
   ])("turns %s into a ServiceError", async (name, expected) => {
@@ -194,8 +198,10 @@ describe("the fake service, against the contract's samples", () => {
       return res;
     }) as unknown as typeof fetch;
     const client = createServiceClient({ fetch: recording });
-    const bound = await client.enroll(fake.url, bindingKey(), fake.mintCode("enroll"));
+    const key1 = bindingKey();
+    const bound = await client.enroll(fake.url, key1, fake.mintCode("enroll"));
     await client.rebind(fake.url, bindingKey(), fake.mintCode("rebind", bound.id));
+    await client.checkin(fake.url, key1, bound.id).catch(() => {});
     const key2 = bindingKey();
     const node = await client.enroll(fake.url, key2, fake.mintCode("enroll"));
     const checkin = await client.checkin(fake.url, key2, node.id);
@@ -227,6 +233,7 @@ describe("the fake service, against the contract's samples", () => {
       ["/v1/acme/txt/cleanup", "acme-txt-cleanup.response.json"],
       ["/v1/relay-credential", "relay-credential.response.json"],
       ["error.node_denied", "error.node-denied.json"],
+      ["error.node_moved", "error.node-moved.json"],
       ["error.upgrade_required", "error.upgrade-required.json"],
       ["error.stale_request", "error.stale-request.json"],
       ["error.issuance_budget", "error.issuance-budget.json"],

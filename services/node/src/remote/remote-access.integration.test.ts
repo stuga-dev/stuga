@@ -535,7 +535,7 @@ describe.skipIf(!URL_ || !pebble)("remote access, against Pebble and the fake se
     expect(id()).toBe(before);
     await waitOn();
     const client = createServiceClient();
-    await expect(client.checkin(fake.url, oldKey, before)).rejects.toMatchObject({ status: 401, code: "unknown_key" });
+    await expect(client.checkin(fake.url, oldKey, before)).rejects.toMatchObject({ status: 401, code: "node_moved" });
     expect(fake.keysOf(before).filter((k) => !k.revoked)).toHaveLength(1);
 
     // A node with nothing at all, given a restore code: enroll says it is the other kind, and rebind takes it.
