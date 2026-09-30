@@ -23,6 +23,11 @@ its first section, are its summary: the release notes show that and link here fo
 
 ### Added
 
+- **Remote access on Docker**: the stack from `install.sh` runs the connector itself, in a new
+  service and image, `stuga-remote`: frp's `frpc`, built by Stuga from frp's source at a fixed
+  version, with its licenses. It idles until an administrator turns remote access on in
+  **Settings → This node → Remote access**, runs as its own user with a read-only file system and no
+  privileges, and has no route to Postgres ([docs/remote-access.md](docs/remote-access.md)).
 - `./stuga db-password` gives the database a random password in `.env`, when `.env` has none.
   `install.sh` and `./stuga upgrade` do it themselves.
 
@@ -35,6 +40,7 @@ its first section, are its summary: the release notes show that and link here fo
 
 ### Fixed
 
+- On the Mac, turning remote access off while the connector was starting could leave it running.
 - `./stuga upgrade` ends with the restore command for the backup the new version took, where it
   said it found no backup.
 
