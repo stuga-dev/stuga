@@ -1,4 +1,18 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -69,6 +83,30 @@ describe("the request", () => {
     expect(statSync(hints.request).mode & 0o777).toBe(0o640);
   });
 
+  it("replaces a link at its path rather than writing through it", async () => {
+    const elsewhere = join(work, "elsewhere");
+    writeFileSync(elsewhere, "keep\n");
+    symlinkSync(elsewhere, hints.request);
+    await writeConnectorRequest(hints, "off");
+    expect(lstatSync(hints.request).isFile()).toBe(true);
+    expect(readFileSync(hints.request, "utf8")).toBe("off\n");
+    expect(readFileSync(elsewhere, "utf8")).toBe("keep\n");
+  });
+
+  it("goes through a temporary file of a new name each time, and leaves none behind", async () => {
+    // Created exclusively: writes at once would collide on a name that did not change.
+    await Promise.all(Array.from({ length: 8 }, (_, i) => writeConnectorRequest(hints, i % 2 ? "off" : ON)));
+    expect(readdirSync(join(work, "requests"))).toEqual(["remote"]);
+    expect(["off\n", `${ON}\n`]).toContain(readFileSync(hints.request, "utf8"));
+  });
+
+  it("gives the request the group asked for", async () => {
+    const gid = process.getgroups!().find((g) => g !== process.getgid!()) ?? process.getgid!();
+    await writeConnectorRequest(hints, "off", { gid });
+    expect(statSync(hints.request).gid).toBe(gid);
+    expect(statSync(hints.request).mode & 0o777).toBe(0o640);
+  });
+
   it("is only ever on with a sha-256, or off", async () => {
     for (const bad of ["on", `on ${SHA.toUpperCase()}`, `on ${SHA}\noff`, "on abc", "stop"]) {
       await expect(writeConnectorRequest(hints, bad as ConnectorLine), bad).rejects.toThrow(/not a connector request/);
@@ -97,6 +135,28 @@ describe("the status", () => {
     }
     mkdirSync(join(work, "status", "dir.json"));
     expect(await readConnectorStatus({ ...hints, status: join(work, "status", "dir.json") })).toBeNull();
+  });
+
+  it("reads only a regular file, never through a link, a pipe or a device, and only a small one", async () => {
+    const good = JSON.stringify({ state: "stopped", message: "", at: new Date(T0).toISOString(), connector_sha: null, config_sha: null });
+    const elsewhere = join(work, "elsewhere.json");
+    writeFileSync(elsewhere, good);
+    symlinkSync(elsewhere, hints.status);
+    expect(await readConnectorStatus(hints)).toBeNull();
+    unlinkSync(hints.status);
+
+    // Opened blocking, a pipe no one writes to would hold the read forever.
+    execFileSync("mkfifo", [hints.status]);
+    expect(await readConnectorStatus(hints)).toBeNull();
+    unlinkSync(hints.status);
+
+    expect(await readConnectorStatus({ ...hints, status: "/dev/zero" })).toBeNull();
+
+    writeFileSync(hints.status, good.replace('"message":""', `"message":"${"x".repeat(4096)}"`));
+    expect(await readConnectorStatus(hints)).toBeNull();
+    writeFileSync(hints.status, good.replace('"message":""', `"message":"${"x".repeat(4096 - good.length)}"`));
+    expect(statSync(hints.status).size).toBe(4096);
+    expect(await readConnectorStatus(hints)).toMatchObject({ state: "stopped" });
   });
 
   it("keeps a known state with what else it can read", async () => {
