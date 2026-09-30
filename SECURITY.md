@@ -35,7 +35,7 @@ you would rather not be.
   and the `stuga-node` backup and restore commands.
 - **The agent pieces that run on your machine:** the `stuga-mcp` server, its browser sign-in and the
   tokens it keeps, the Claude Desktop extension, and the installer scripts the node serves.
-- **The packaging:** the `stuga-node` and `stuga-postgres` container images and the Docker release
+- **The packaging:** the `stuga-node`, `stuga-postgres` and `stuga-remote` container images and the Docker release
   assets (`compose.yml`, `env.example`, the `stuga` script and `install.sh`) that a release
   publishes, and the Mac package, `Stuga.pkg`, and the Stuga.app that `packaging/macos` builds, with
   their launchd jobs, the upgrade helper that runs as root, and Postgres configuration.

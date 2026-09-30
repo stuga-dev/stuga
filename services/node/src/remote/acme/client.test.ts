@@ -252,12 +252,36 @@ describe("the certificate request", () => {
   });
 
   it("is signed in DER, where a JWS is signed r||s", () => {
-    const der = csrDer(generateP256(), HOST);
-    // The last element is a BIT STRING holding an ECDSA-Sig-Value: SEQUENCE { r, s }.
-    const bitString = der.lastIndexOf(0x03, der.length - 60);
-    const sig = der.subarray(der.indexOf(0x30, bitString));
-    expect(sig[0]).toBe(0x30);
-    expect(sig.length).toBeGreaterThanOrEqual(70);
+    /** One TLV at `at`: its tag, where its content starts and where it ends. */
+    const tlv = (buf: Buffer, at: number) => {
+      let len = buf[at + 1]!;
+      let start = at + 2;
+      if (len & 0x80) {
+        const n = len & 0x7f;
+        len = buf.readUIntBE(at + 2, n);
+        start += n;
+      }
+      return { tag: buf[at]!, start, end: start + len };
+    };
+    for (let i = 0; i < 20; i++) {
+      const der = csrDer(generateP256(), HOST);
+      // SEQUENCE { CertificationRequestInfo, AlgorithmIdentifier, BIT STRING { ECDSA-Sig-Value } }
+      const outer = tlv(der, 0);
+      expect(outer.end).toBe(der.length);
+      const info = tlv(der, outer.start);
+      const alg = tlv(der, info.end);
+      const bits = tlv(der, alg.end);
+      expect(bits.tag).toBe(0x03);
+      expect(bits.end).toBe(der.length);
+      expect(der[bits.start]).toBe(0); // no unused bits
+      const sig = tlv(der, bits.start + 1);
+      expect(sig.tag).toBe(0x30);
+      expect(sig.end).toBe(der.length);
+      const r = tlv(der, sig.start);
+      const s = tlv(der, r.end);
+      expect([r.tag, s.tag]).toEqual([0x02, 0x02]);
+      expect(s.end).toBe(sig.end);
+    }
   });
 });
 

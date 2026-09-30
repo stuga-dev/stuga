@@ -5,7 +5,7 @@
  * the LAN listener uses, on the remote origin. A connection is dropped before TLS when its header is
  * late or malformed, or when its source already holds `perSource` of them.
  */
-import { chmod, lstat, unlink } from "node:fs/promises";
+import { chmod, chown, lstat, unlink } from "node:fs/promises";
 import http from "node:http";
 import net, { type Socket } from "node:net";
 import { Duplex } from "node:stream";
@@ -26,6 +26,8 @@ export interface RemoteListenerOptions {
   upgrade: RequestHandler;
   /** applyRemoteHeaders: the same headers on an answer the listener makes itself, which neither of those sees. */
   decorate: (response: Response) => Response;
+  /** The group the socket is given, where the connector is kept apart by one; the directory's otherwise. */
+  gid?: number | undefined;
   maxBodyBytes: () => number;
   readsOwnBody: (method: string, path: string) => boolean;
   /** Defaults below; tests shrink them. */
@@ -211,6 +213,7 @@ export function createRemoteListener(options: RemoteListenerOptions): RemoteList
       });
       listening = true;
       await chmod(socketPath, 0o660);
+      if (options.gid !== undefined) await chown(socketPath, -1, options.gid);
       // Node starts the tracking headersTimeout relies on when a server starts listening, and this
       // one never does: it is only handed connections. Started by hand, as if it had.
       server.emit("listening");

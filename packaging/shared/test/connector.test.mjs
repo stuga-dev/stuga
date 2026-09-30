@@ -1,4 +1,4 @@
-// node --test packaging/macos/test/connector.test.mjs
+// node --test packaging/shared/test/connector.test.mjs
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 
 const lib = new URL("../connector/lib.sh", import.meta.url).pathname;
-const helper = new URL("../runtime/bin/helper.sh", import.meta.url).pathname;
+const build = new URL("../connector/build.sh", import.meta.url).pathname;
+const helper = new URL("../../macos/runtime/bin/helper.sh", import.meta.url).pathname;
 const roots = [];
 after(() => roots.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
 
@@ -26,6 +27,44 @@ function scratch() {
   roots.push(dir);
   return dir;
 }
+
+test("each target builds natively, with its own platform's Go", () => {
+  const go = (target, os, machine) => run('go_for_target "$1" "$2" "$3" || echo none', [target, os, machine]).trim();
+  assert.equal(go("darwin/arm64", "Darwin", "arm64"), "darwin-arm64 GO_DARWIN_ARM64_SHA256");
+  assert.equal(go("linux/amd64", "Linux", "x86_64"), "linux-amd64 GO_LINUX_AMD64_SHA256");
+  assert.equal(go("linux/arm64", "Linux", "aarch64"), "linux-arm64 GO_LINUX_ARM64_SHA256");
+  assert.equal(go("linux/arm64", "Linux", "arm64"), "linux-arm64 GO_LINUX_ARM64_SHA256");
+  assert.equal(go("linux/amd64", "Darwin", "arm64"), "none");
+  assert.equal(go("darwin/arm64", "Linux", "aarch64"), "none");
+  assert.equal(go("linux/arm64", "Linux", "x86_64"), "none");
+  assert.equal(go("linux/386", "Linux", "i686"), "none");
+});
+
+/** build.sh with these arguments, for the ones it refuses before it downloads anything. */
+function refused(args) {
+  const result = spawnSync("bash", [build, ...args], { env: { PATH: process.env.PATH }, encoding: "utf8", timeout: 10_000 });
+  return { status: result.status, stderr: result.stderr };
+}
+
+test("build.sh needs a target, one of three", () => {
+  const out = scratch();
+  assert.equal(refused(["--out", out]).status, 2);
+  const other = refused(["--target", "windows/amd64", "--out", out]);
+  assert.equal(other.status, 2);
+  assert.match(other.stderr, /--target is darwin\/arm64, linux\/amd64 or linux\/arm64/);
+});
+
+test("build.sh signs only the Mac's connector, and builds only natively", () => {
+  const out = scratch();
+  const signed = refused(["--target", "linux/amd64", "--out", out, "--identity", "Developer ID Application: Liv"]);
+  assert.equal(signed.status, 2);
+  assert.match(signed.stderr, /only the darwin\/arm64 connector is signed/);
+  const native = `${process.platform}/${process.arch === "x64" ? "amd64" : process.arch}`;
+  const foreign = native === "darwin/arm64" ? "linux/amd64" : "darwin/arm64";
+  const cross = refused(["--target", foreign, "--out", out]);
+  assert.equal(cross.status, 1);
+  assert.match(cross.stderr, new RegExp(`build ${foreign} on ${foreign}, not on `));
+});
 
 test("the requirement is the helper's, of the team helper.sh pins", () => {
   const team = run('pinned_team "$1"', [helper]).trim();

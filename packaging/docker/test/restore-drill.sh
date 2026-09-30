@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The restore drill on Docker. Builds both images from this checkout as version 0.0.0-drill,
+# The restore drill on Docker. Builds the three images from this checkout as version 0.0.0-drill,
 # installs them the way an operator does (package.sh's compose.yml, env.example as .env, ./stuga)
 # in a throwaway directory, and runs packaging/test/drill-content.sh with ./stuga's own commands.
 #
@@ -15,6 +15,7 @@ VOLUME=stuga_drill_pgdata
 PORT=8799
 NODE_IMAGE="ghcr.io/stuga-dev/stuga-node:$VERSION"
 POSTGRES_IMAGE="ghcr.io/stuga-dev/stuga-postgres:$VERSION"
+REMOTE_IMAGE="ghcr.io/stuga-dev/stuga-remote:$VERSION"
 
 # The hooks drill-content.sh runs, with the throwaway directory as DRILL_DIR.
 if [ "${1:-}" = --hook ]; then
@@ -47,6 +48,7 @@ SELF="$ROOT/packaging/docker/test/restore-drill.sh"
 if [ "${1:-}" != --no-build ]; then
   docker build -f "$ROOT/packaging/docker/postgres.Dockerfile" -t "$POSTGRES_IMAGE" "$ROOT"
   docker build -f "$ROOT/packaging/docker/node.Dockerfile" --build-arg STUGA_VERSION="$VERSION" -t "$NODE_IMAGE" "$ROOT"
+  docker build -f "$ROOT/packaging/docker/remote.Dockerfile" --build-arg STUGA_VERSION="$VERSION" -t "$REMOTE_IMAGE" "$ROOT"
 fi
 
 # Physical path: Docker Desktop shares /private/var/folders, and a bind mount through the /var symlink can land in its VM instead.

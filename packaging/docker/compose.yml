@@ -5,7 +5,9 @@
 #
 # Postgres keeps its cluster in the pgdata volume; the node keeps blobs, actor stores and keys in ./data/node,
 # and writes the backups it takes itself (daily, and before an upgrade) to ./backups, as ./stuga does.
-# Both image tags are one version: a checkout's source build, which a release replaces with its own.
+# Postgres is on the internal db network, which only the node joins: it has no way out and no published port.
+# remote runs the remote access connector when an administrator turns remote access on, and idles
+# until then. The image tags are one version: a checkout's source build, which a release replaces with its own.
 
 # Pinned so the volume and containers do not follow the directory's name; COMPOSE_PROJECT_NAME overrides it.
 name: stuga
@@ -16,13 +18,16 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: stuga
-      POSTGRES_PASSWORD: stuga
+      # Read only when the cluster is created; ./stuga db-password sets the role's to .env's.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stuga}
       POSTGRES_DB: stuga
+    networks: [db]
     volumes:
       # The parent of the cluster directory: the image keeps the cluster under 18/docker.
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U stuga -d stuga"]
+      # Over TCP: while the image creates a cluster, it runs a server on the socket only.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U stuga -d stuga"]
       interval: 3s
       timeout: 5s
       retries: 20
@@ -41,23 +46,64 @@ services:
     # Here rather than only in the image, because these outrank .env: the volume below, the
     # published port and ./stuga assume these values.
     environment:
-      DATABASE_URL: postgres://stuga:stuga@postgres:5432/stuga
+      # The password is base64url, so it needs no escaping here.
+      DATABASE_URL: postgres://stuga:${POSTGRES_PASSWORD:-stuga}@postgres:5432/stuga
       DATA_DIR: /data
       # .env's BACKUP_DIR is the host directory, mounted here.
       BACKUP_DIR: /backups
       BIND: 0.0.0.0
       PORT: "8787"
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8787}
+      # Remote access: the node writes the connector's files and what it wants into the remote
+      # volume, and the remote service runs the connector. 65532 is the remote service's user and group.
+      STUGA_REMOTE_SERVICE: https://api.stuga.dev
+      STUGA_REMOTE_DIR: /run/stuga-remote
+      STUGA_CONNECTOR_REQUEST: /run/stuga-remote/control/request
+      STUGA_CONNECTOR_STATUS: /run/stuga-remote/status/status.json
+      STUGA_REMOTE_GID: "65532"
+      STUGA_REMOTE_CONNECTOR_UID: "65532"
+    networks: [db, default]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./data/node:/data
       - ${BACKUP_DIR:-./backups}:/backups
+      - remote:/run/stuga-remote
     # Every address of this machine: only whoever has the setup code the node logs can claim it.
     # PUBLIC_ORIGIN is the address invite links carry.
     ports:
       - "${HOST_BIND:-0.0.0.0}:${HOST_PORT:-8787}:8787"
 
+  # The connector, one per relay, started from checked copies of the node's settings. It reaches the
+  # node only as any machine on the network does, through the published port, and never Postgres; it
+  # can write only the volume's status/ and a small /tmp, and its log is capped.
+  remote:
+    image: ghcr.io/stuga-dev/stuga-remote:0.0.0-dev
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=16m
+    volumes:
+      - remote:/run/stuga-remote
+    networks: [remote]
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  # Postgres and the node only, with no way out.
+  db:
+    internal: true
+  # The remote service's own, out to the relay.
+  remote:
+
 volumes:
   pgdata:
     name: ${STUGA_VOLUME_NAME:-stuga_pgdata}
+  # The connector's settings, credential and socket, and what the node and the connector tell each
+  # other; the node writes it anew, so it is not in backups.
+  remote:

@@ -11,8 +11,9 @@
 #   --local-only       serve this machine only
 #
 # Makes the directory, downloads the release's compose.yml, env.example and stuga into it, writes
-# .env with this machine's address on the network as PUBLIC_ORIGIN, starts the stack, waits until
-# the node serves, and prints the link that sets it up. Written for bash 3.2.
+# .env with this machine's address on the network as PUBLIC_ORIGIN and a random database password,
+# starts the stack, waits until the node serves, and prints the link that sets it up. Written for
+# bash 3.2.
 set -euo pipefail
 
 RELEASES="https://github.com/stuga-dev/stuga/releases"
@@ -29,7 +30,7 @@ while [ $# -gt 0 ]; do
     --port) port="${2:?--port needs a number}"; shift 2 ;;
     --origin) origin="${2:?--origin needs an address}"; shift 2 ;;
     --local-only) local_only=yes; shift ;;
-    -h | --help) sed -n '2,15p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,16p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) fail "unknown option $1 (see --help)" ;;
   esac
 done
@@ -85,7 +86,8 @@ done
 chmod +x stuga
 ok "downloaded $(sed -n 's|^    image: .*/stuga-node:||p' compose.yml | head -1)"
 
-cp env.example .env
+# Only this user reads it: it gets the database password.
+(umask 077 && cp env.example .env)
 {
   printf '\n# Written by install.sh\n'
   printf 'PUBLIC_ORIGIN=%s\n' "$origin"
@@ -102,6 +104,11 @@ ok "wrote .env (address $origin)"
 
 # ---- start, and wait until it serves
 say "Starting Stuga (the first start downloads the images)"
+# Also on a stuga_pgdata volume an earlier install left, whose password this .env does not know.
+# A release from before the database had its own password has no such step.
+if grep -q 'POSTGRES_PASSWORD:-' compose.yml; then
+  ./stuga db-password </dev/null || fail "could not give the database a password"
+fi
 docker compose up -d
 waited=0
 until curl -fsS --max-time 5 -o /dev/null "http://127.0.0.1:$port/ready" 2>/dev/null; do

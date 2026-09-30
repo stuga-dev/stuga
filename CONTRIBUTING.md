@@ -80,8 +80,8 @@ This runs the node on port 8788, reloading on changes, and the Vite dev server o
 its data in `data/dev-node`. **Settings → Your AI agents** offers the desktop extension only once the MCP bundle
 exists, so run `pnpm build` first if you need it.
 
-To try the packaged node on Docker, `pnpm check:packaged` builds both images from your working tree
-and starts them on port 8787, with its `.env` and data under `packaging/docker`. It runs as the
+To try the packaged node on Docker, `pnpm check:packaged` builds the three images from your
+working tree and starts them on port 8787, with its `.env` and data under `packaging/docker`. It runs as the
 Compose project `stuga-check` with the volume `stuga_check_pgdata`, so it leaves a Docker install
 on the same machine alone, but it cannot start while anything else holds port 8787. Stop it with
 `docker compose -p stuga-check down`, and add `-v` to delete its database too.
@@ -111,6 +111,7 @@ Ports in use:
 | 8788 | the source node (`pnpm dev`) |
 | 55433 | the development Postgres |
 | 55432 | the throwaway Postgres of `pnpm test:integration` |
+| 8798 | the Docker database password test |
 | 8799 | the Docker restore drill |
 | 9876 | the mock identity provider |
 
@@ -155,7 +156,7 @@ Scope a turbo-driven command to one package with a filter: `pnpm --filter @stuga
 - **The restore drill** (`packaging/test/drill-content.sh`) puts one of each kind of state into a
   node, backs up, destroys the database and the data directory, restores, and checks that
   everything came back.
-  - On Docker, `pnpm test:drill` builds both images and installs them in a temporary directory
+  - On Docker, `pnpm test:drill` builds the three images and installs them in a temporary directory
     the way an operator does.
   - On a Mac, build a runtime and run the smoke test and the drill against it:
 
@@ -164,6 +165,11 @@ Scope a turbo-driven command to one package with a filter: `pnpm --filter @stuga
     packaging/macos/test/smoke.sh /tmp/stuga-macos/runtime/0.0.0-ci
     packaging/macos/test/restore-drill.sh /tmp/stuga-macos/runtime/0.0.0-ci
     ```
+
+- **The database password on Docker** (`packaging/docker/test/db-password.sh`, `--no-build` to use
+  the drill's images): a first install, `install.sh` over the volume an earlier install left,
+  upgrades from a stack on the default password that finish, cannot fetch their images, or fail
+  between changing the role and writing `.env`, and a restore back to the older release.
 
 - **Packaging checks:** `bash packaging/check-pins.sh`, and `node --test "packaging/**/*.test.mjs"`
   for the image's health check, the Mac log rotation, the launchd plists, the helper and the

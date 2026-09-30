@@ -5,15 +5,17 @@
 # The node runs as _stuga, so what it wrote is never trusted. Each <relay>.toml is read once into a
 # directory only this job can read, and that copy must be, byte for byte, the config the node renders
 # (renderFrpcToml in services/node/src/remote/frpc-config.ts), with every value of the shape the node
-# checks it has. The connector then starts from the copy, with --strict-config and never
-# --allow-unsafe. So no settings open an admin interface, a visitor, another plugin or a template,
-# or point the connector at files outside $STUGA_ROOT/remote.
+# checks it has (check-toml.sh, beside this script). The connector then starts from the copy, with
+# --strict-config and never --allow-unsafe. So no settings open an admin interface, a visitor,
+# another plugin or a template, or point the connector at files outside $STUGA_ROOT/remote.
 #
 # Exits 78 when a config is refused (the helper reports it and stops the job), 0 when there is
 # nothing to run (retrying cannot fix it), and 1 when a connector exits, after stopping the others:
 # launchd starts the job again. TERM and INT stop every connector first. The connectors' output goes
 # through rotate-log.mjs into $STUGA_LOG_DIR/frpc-<Day>.log; the plist's log keeps this wrapper's lines.
 set -euo pipefail
+# shellcheck source=../../../shared/connector/check-toml.sh
+. "$(dirname "$0")/check-toml.sh"
 
 main() {
   say() { printf '%s [remote-wrapper] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
@@ -26,16 +28,7 @@ main() {
       exit 0
     fi
   done
-  # The paths in a config are compared as the node writes them: absolute, normalized, and with
-  # nothing its TOML strings would escape.
-  case "$STUGA_ROOT" in
-    /*) ;;
-    *) refuse "STUGA_ROOT is not an absolute path" ;;
-  esac
-  case "$STUGA_ROOT" in
-    */ | *//* | */./* | */../* | */. | */.. | *[\"\\{}]* | *[[:cntrl:]]*)
-      refuse "STUGA_ROOT is not a path the node's configs can name" ;;
-  esac
+  config_dir_ok "$STUGA_ROOT/remote" || refuse "STUGA_ROOT is not a path the node's configs can name"
 
   local dir="$STUGA_ROOT/remote"
   local frpc="$STUGA_ROOT/connector/current/frpc"
@@ -46,7 +39,7 @@ main() {
   for file in "$dir"/*.toml; do
     if [ ! -e "$file" ] && [ ! -L "$file" ]; then continue; fi
     relay="$(basename "$file" .toml)"
-    printf '%s' "$relay" | grep -Eq '^[a-z0-9-]{1,32}$' || refuse "$file does not name a relay"
+    [[ $relay =~ ^[a-z0-9-]{1,32}$ ]] || refuse "$file does not name a relay"
     if [ -L "$file" ] || [ ! -f "$file" ]; then refuse "$file is not a plain file"; fi
     relays+=("$relay")
   done
@@ -82,25 +75,30 @@ main() {
   exec 3> >(exec "$node" "$rotate" "$STUGA_LOG_DIR" frpc)
   local rotate_pid=$!
 
+  # Before any connector starts: a stop that comes while they start still reaches each one.
   pids=()
-  for relay in "${relays[@]}"; do
-    "$frpc" -c "$private/$relay.toml" --strict-config >&3 2>&3 &
-    pids+=("$!")
-    say "started the connector for $relay (pid $!), logging to $STUGA_LOG_DIR/frpc-<Day>.log"
-  done
-
   stopping=no
   # shellcheck disable=SC2329 # invoked by the trap below
   stop() {
     stopping=yes
     local pid
-    for pid in "${pids[@]}"; do kill -TERM "$pid" 2> /dev/null || true; done
+    # bash 3.2 calls an empty array unbound under set -u.
+    for pid in ${pids[@]+"${pids[@]}"}; do kill -TERM "$pid" 2> /dev/null || true; done
   }
   trap 'say "stop requested; stopping the connectors"; stop' TERM INT
 
+  for relay in "${relays[@]}"; do
+    [ "$stopping" = no ] || break
+    "$frpc" -c "$private/$relay.toml" --strict-config >&3 2>&3 &
+    pids+=("$!")
+    say "started the connector for $relay (pid $!), logging to $STUGA_LOG_DIR/frpc-<Day>.log"
+  done
+  # A stop between starting a connector and noting its pid missed that one: tell them all again.
+  if [ "$stopping" = yes ]; then stop; fi
+
   local pid exited="" status=0
   while [ "$stopping" = no ] && [ -z "$exited" ]; do
-    for pid in "${pids[@]}"; do
+    for pid in ${pids[@]+"${pids[@]}"}; do
       if ! kill -0 "$pid" 2> /dev/null; then exited="$pid"; break; fi
     done
     # In the background, so a signal is handled at once.
@@ -112,7 +110,7 @@ main() {
     stop
   fi
   # wait returns whenever a trapped signal arrives: keep waiting until each connector is gone.
-  for pid in "${pids[@]}"; do
+  for pid in ${pids[@]+"${pids[@]}"}; do
     while kill -0 "$pid" 2> /dev/null; do wait "$pid" || true; done
   done
   # rotate-log.mjs exits once its input ends, after writing the connectors' last lines. Not a child
@@ -125,76 +123,6 @@ main() {
   if [ -n "$exited" ]; then exit 1; fi
   say "stopped"
   exit 0
-}
-
-# check_config <copy> <relay> <dir>: the copy is exactly what renderFrpcToml writes for that relay
-# in that directory, with each value of the shape the node checks. Sets `reason` when it is not.
-check_config() {
-  local copy="$1" relay="$2" dir="$3"
-  local label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
-  local node_id='[0-9bcdfghjkmnpqrstvwxz]{6,12}'
-  local dns_re="^$label(\\.$label)*\$" id_re="^$node_id\$" host_re="^$node_id(\\.$label)+\$"
-  local port_re='^[1-9][0-9]{0,4}$' level_re='^(info|warn)$'
-  local addr port server id host level
-  # value <sed pattern>: the first match's \1, or nothing. Every line is compared below.
-  value() { sed -n "/^$1\$/{s//\\1/p;q;}" "$copy"; }
-  addr="$(value 'serverAddr = "\(.*\)"')"
-  port="$(value 'serverPort = \(.*\)')"
-  server="$(value 'transport\.tls\.serverName = "\(.*\)"')"
-  level="$(value 'log\.level = "\(.*\)"')"
-  id="$(value 'name = "\(.*\)"')"
-  host="$(value 'customDomains = \["\(.*\)"\]')"
-
-  reason="serverAddr is not a host name"
-  [[ $addr =~ $dns_re ]] || return 1
-  reason="serverPort is not a port"
-  [[ $port =~ $port_re ]] && [ "$port" -le 65535 ] || return 1
-  reason="transport.tls.serverName is not a host name"
-  [[ $server =~ $dns_re ]] || return 1
-  reason="log.level is neither info nor warn"
-  [[ $level =~ $level_re ]] || return 1
-  reason="the proxy's name is not a node id"
-  [[ $id =~ $id_re ]] || return 1
-  reason="customDomains is not the node's own host name"
-  [[ $host =~ $host_re ]] && [ "${host%%.*}" = "$id" ] || return 1
-
-  cat > "$copy.expected" << EOF
-# Written by Stuga. Changes are overwritten.
-serverAddr = "$addr"
-serverPort = $port
-loginFailExit = false
-auth.method = "oidc"
-auth.additionalScopes = ["HeartBeats"]
-auth.oidc.tokenSource.type = "file"
-auth.oidc.tokenSource.file.path = "$dir/$relay.jwt"
-transport.tls.enable = true
-transport.tls.trustedCaFile = "$dir/$relay.ca.pem"
-transport.tls.serverName = "$server"
-transport.heartbeatInterval = 30
-transport.heartbeatTimeout = 90
-transport.poolCount = 2
-log.to = "console"
-log.level = "$level"
-
-[[proxies]]
-name = "$id"
-type = "https"
-customDomains = ["$host"]
-transport.proxyProtocolVersion = "v2"
-[proxies.plugin]
-type = "unix_domain_socket"
-unixPath = "$dir/https.sock"
-EOF
-  local differ
-  if ! differ="$(cmp "$copy.expected" "$copy" 2>&1)"; then
-    # Where, never what: the line may hold anything.
-    case "$differ" in
-      *", line "*) reason="it is not the config the node writes (${differ##*, })" ;;
-      *) reason="it is not the config the node writes (a line is missing or extra)" ;;
-    esac
-    return 1
-  fi
-  rm -f "$copy.expected"
 }
 
 # The whole script is one function called on the last line, like the other wrappers: an upgrade

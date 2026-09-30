@@ -15,9 +15,9 @@ curl -fsSL https://github.com/stuga-dev/stuga/releases/latest/download/install.s
 ```
 
 This makes a `stuga` directory, downloads the release's `compose.yml`, `env.example` and `stuga`
-into it, writes `.env` with this machine's address on the network as `PUBLIC_ORIGIN`, starts the
-stack and waits until the node serves. It ends by printing the link that sets the node up, with its
-setup code in it. Continue with [Getting started](../getting-started.md).
+into it, writes `.env` with this machine's address on the network as `PUBLIC_ORIGIN` and a random
+database password, starts the stack and waits until the node serves. It ends by printing the link
+that sets the node up, with its setup code in it. Continue with [Getting started](../getting-started.md).
 
 Options go after `bash -s --`: `--dir <dir>`, `--version <1.2.3>`, `--port <n>`, `--origin <url>`
 when this machine's address is not the one other devices use, and `--local-only` to serve this
@@ -33,6 +33,7 @@ done
 chmod +x stuga
 cp env.example .env
 echo "PUBLIC_ORIGIN=http://192.168.1.50:8787" >> .env   # this machine's address on the network
+./stuga db-password                                     # a random database password, in .env
 docker compose up -d
 ```
 
@@ -44,22 +45,29 @@ Until the node serves, it answers with a page that says it is starting. `./stuga
 
 | Path | Holds |
 |---|---|
-| `compose.yml` | The stack, with both images pinned to one release. An upgrade replaces it, so do not edit it. |
-| `.env` | Your settings. Compose reads it, and passes it to the node. |
+| `compose.yml` | The stack, with its three images pinned to one release. An upgrade replaces it, so do not edit it. |
+| `.env` | Your settings and the database password, readable only by you. Compose reads it, and passes it to the node. |
 | `stuga` | The operator commands. |
+| `compose.rollback.yml` | Only after going back to an older release: keeps the node on it until the next upgrade, through `COMPOSE_FILE` in `.env`. See [Roll back](#roll-back). |
 | `data/node/` | The node's data directory (`DATA_DIR`): document snapshots, media, per-actor SQLite stores, the signing key and secrets. |
 | the `stuga_pgdata` volume | The Postgres cluster. `docker volume inspect stuga_pgdata` shows where Docker keeps it. |
+| the `stuga_remote` volume | What the node and the remote access connector share: its settings, credential and socket. The node writes it again, so it is not backed up. |
 | `backups/` | Backups: the node's daily ones, the one it takes before an upgrade, and `./stuga backup`'s. |
 
-The node's log is `docker compose logs node`, and Postgres's is `docker compose logs postgres`. Add
-`-f` to follow either one.
+Postgres is on the internal `stuga_db` network, which only the node joins: it publishes no port and
+has no route out.
+
+The node's log is `docker compose logs node`, Postgres's is `docker compose logs postgres`, and the
+remote access connector's is `docker compose logs remote`. Add `-f` to follow one.
 
 ## Settings
 
 Put settings in `.env`, then run `docker compose up -d`. A `docker compose restart` keeps the old
 environment. Any node variable in [Configuration](../configuration.md) can go in `.env`, except the
-ones the stack sets itself. `compose.yml` sets `DATABASE_URL`, `DATA_DIR`, `BIND`, `PORT` and
-`BACKUP_DIR` inside the container, and a value for them in `.env` has no effect there. The image sets `PG_BIN` and the packaging hints, so leave
+ones the stack sets itself. `compose.yml` sets `DATABASE_URL`, `DATA_DIR`, `BIND`, `PORT`,
+`BACKUP_DIR` and the remote access hints (`STUGA_REMOTE_SERVICE`, `STUGA_REMOTE_DIR`,
+`STUGA_CONNECTOR_REQUEST`, `STUGA_CONNECTOR_STATUS`, `STUGA_REMOTE_GID`,
+`STUGA_REMOTE_CONNECTOR_UID`) inside the container, and a value for them in `.env` has no effect there. The image sets `PG_BIN` and the packaging hints, so leave
 those out too.
 
 These variables belong to the stack, not to the node:
@@ -71,10 +79,16 @@ These variables belong to the stack, not to the node:
 | `STUGA_VOLUME_NAME` | `stuga_pgdata` | The Postgres volume. |
 | `COMPOSE_PROJECT_NAME` | `stuga` | The Compose project. Give a second stack on the same host its own project, volume and port. |
 | `BACKUP_DIR` | `./backups` | Where backups go, the node's own and `./stuga`'s. |
+| `POSTGRES_PASSWORD` | `stuga` | The database password. `install.sh` and `./stuga upgrade` write a random one when `.env` has none. |
+
+Postgres keeps its own copy of `POSTGRES_PASSWORD`, so changing it in `.env` alone locks the node
+out. To change it, delete the line and run `docker compose stop node`, `./stuga db-password` and
+`docker compose up -d`.
 
 To add to the stack, for example another volume, put the change in `compose.override.yml` and set
 `COMPOSE_FILE=compose.yml:compose.override.yml` in `.env`, so that `./stuga` uses the same files
-as `docker compose`.
+as `docker compose`. After a [roll back](#roll-back), `COMPOSE_FILE` also names
+`compose.rollback.yml`: leave it there.
 
 ### Reaching the node from other devices
 
@@ -99,7 +113,7 @@ What each command does, and its exit codes, are described in [Operations](../ope
 
 | Command | |
 |---|---|
-| `./stuga status` | Version, schema, whether the node is serving, the last backup, and the setup link while nobody has claimed the node. |
+| `./stuga status` | Version, schema, whether the node is serving, the last backup, the remote access connector's state, and the setup link while nobody has claimed the node. |
 | `./stuga backup` | Stops the node, takes a verified backup, and starts the node again. |
 | `./stuga verify <backup>` | Checks that a backup is whole and that this release can restore it. |
 | `./stuga list` | Backups, and what restores kept beside the data. |
@@ -107,6 +121,7 @@ What each command does, and its exit codes, are described in [Operations](../ope
 | `./stuga upgrade [<version>]` | Fetches the newest release's files (or the named one's), pulls its images unless they are already on the machine, starts them and waits until the node serves. The node backs up before it upgrades. |
 | `./stuga reset-password <username>` | Prints a password reset link. The node must be running. |
 | `./stuga media-scan [--reclaim] [--empty-trash[=<days>]] [--grace-hours=<hours>]` | Reports or reclaims media no document uses. The node must be running. |
+| `./stuga db-password` | Gives the database a random password and writes it to `.env`, when `.env` has none. The node must be stopped. |
 
 A `<backup>` is a name in `BACKUP_DIR`, or a path inside it. To restore a backup taken elsewhere,
 copy its directory into `backups/` first.
@@ -139,8 +154,10 @@ It downloads that release's `compose.yml`, `env.example` and `stuga` over the on
 version backs up the database before it changes anything, and answers with a page that says so
 meanwhile. `./stuga upgrade` ends by printing the version change and the restore command that
 undoes it; if the new version does not serve, it prints the command for the node's log and the same
-restore command. It refuses an older release than the running one: going back is a restore. Compare
-the new `env.example` with your `.env` for settings the release adds.
+restore command, or, when the new version stopped before its backup and changed nothing, keeps the
+node on the previous release as [Roll back](#roll-back) describes. It refuses an older release than the running one: going back is a restore. Compare
+the new `env.example` with your `.env` for settings the release adds. When `.env` has no
+`POSTGRES_PASSWORD`, the upgrade stops the node and gives the database a random one first.
 
 A NAS app store that updates the images does the same without `./stuga`: the node backs up before it
 upgrades, whatever started it.
@@ -148,18 +165,19 @@ upgrades, whatever started it.
 ### Without a connection to the registry
 
 A node that cannot reach `ghcr.io` upgrades from images carried to it. On a machine that is online,
-fetch the release's three files and save both images for the node's architecture (`linux/arm64` or
-`linux/amd64`):
+fetch the release's three files and save its three images for the node's architecture (`linux/arm64`
+or `linux/amd64`):
 
 ```sh
 V=1.2.3
 for f in compose.yml env.example stuga; do
   curl -fsSLO "https://github.com/stuga-dev/stuga/releases/download/v$V/$f"
 done
-for image in stuga-node stuga-postgres; do
+for image in stuga-node stuga-postgres stuga-remote; do
   docker pull --platform linux/arm64 "ghcr.io/stuga-dev/$image:$V"
 done
-docker save -o "stuga-$V-images.tar" "ghcr.io/stuga-dev/stuga-node:$V" "ghcr.io/stuga-dev/stuga-postgres:$V"
+docker save -o "stuga-$V-images.tar" "ghcr.io/stuga-dev/stuga-node:$V" \
+  "ghcr.io/stuga-dev/stuga-postgres:$V" "ghcr.io/stuga-dev/stuga-remote:$V"
 ```
 
 Carry the three files and the archive to the node. There, load the images, put the three files over
@@ -175,7 +193,7 @@ chmod +x stuga
 The backup, the wait and the way back are the same as with a connection. Keep the previous version's
 images until you are satisfied with the new one: a roll back starts the node on them, and
 `docker image prune -a` would remove them. A first install works the same way, with
-`docker compose up -d` in place of `./stuga upgrade`.
+`./stuga db-password` and `docker compose up -d` in place of `./stuga upgrade`.
 
 ## Roll back
 
@@ -185,9 +203,13 @@ Restore the backup the new version took before it upgraded, which `./stuga upgra
 ./stuga restore <backup>
 ```
 
-The node comes back on the release whose data the backup holds. Before the next
-`docker compose up`, download that release's `compose.yml` from `releases/download/v<version>/`,
-because the one in the directory still names the newer images.
+The node comes back on the release whose data the backup holds. Keep `compose.yml`: it names the
+newer images, but an older release's `compose.yml` does not know the database password. The
+restore writes `compose.rollback.yml`, which keeps the node on the older release, and adds it to
+`COMPOSE_FILE` in `.env`, so `docker compose up -d` keeps the node there too.
+
+The next `./stuga upgrade` takes `compose.rollback.yml` out of `.env` and deletes it before it
+starts the newer release.
 
 ## Uninstall
 
@@ -197,6 +219,7 @@ In the Stuga directory:
 docker compose down
 ```
 
-This removes the containers. Your data stays in `data/`, `backups/` and the `stuga_pgdata` volume.
-To delete it and the images too, run `docker compose down -v --rmi all` and remove the directory.
+This removes the containers. Your data stays in `data/`, `backups/` and the `stuga_pgdata` volume, and
+the `stuga_remote` volume stays too. To delete them and the images too, run
+`docker compose down -v --rmi all` and remove the directory.
 The node writes its files as root, so on Linux that needs `sudo rm -rf`.

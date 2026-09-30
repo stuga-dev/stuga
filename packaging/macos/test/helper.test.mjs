@@ -54,7 +54,10 @@ case "$1" in
     ;;
   bootout) rm -f "$STUB_DIR/loaded" "$STUB_DIR/pid" "$STUB_DIR/exit" ;;
   bootstrap)
-    if [ -f "$STUB_DIR/bootstrap-fails" ]; then echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; fi
+    if [ -f "$STUB_DIR/bootstrap-fails" ]; then
+      if [ -s "$STUB_DIR/bootstrap-fails" ]; then cat "$STUB_DIR/bootstrap-fails" >&2; else echo "Bootstrap failed: 5: Input/output error" >&2; fi
+      exit 5
+    fi
     touch "$STUB_DIR/loaded"
     case "$(cat "$STUB_DIR/job" 2> /dev/null || echo runs)" in
       runs) echo $((RANDOM + 1000)) > "$STUB_DIR/pid" ;;
@@ -473,6 +476,17 @@ test("launchd refusing the job is failed, with what it said", { skip }, () => {
   const status = h.status();
   assertStatus(status, "failed", h.connectorSha, CONFIG_SHA);
   assert.match(status.message, /Input\/output error/);
+});
+
+test("however much launchd says, the status stays small enough for the node to read", { skip }, () => {
+  const h = setup();
+  writeFileSync(join(h.stub, "bootstrap-fails"), "Bootstrap failed: é\"\\\n".repeat(2000));
+  h.request(on());
+  h.run();
+  assert.ok(lstatSync(join(h.root, "status", "remote.json")).size <= 4096);
+  const status = h.status();
+  assertStatus(status, "failed", h.connectorSha, CONFIG_SHA);
+  assert.match(status.message, /^launchd did not start the connector: Bootstrap failed/);
 });
 
 test("a request that changes during a run is taken in another round", { skip }, () => {

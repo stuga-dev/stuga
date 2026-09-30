@@ -3,7 +3,7 @@
  * the binding key's order of writes, and what each refusal becomes; and the service loop on a
  * certificate made here. The loops run end to end, with a real CA, in remote-access.integration.test.ts.
  */
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -156,7 +156,7 @@ const { createServingGate } = await import("../http/serving-gate.js");
 const { startFakeRemoteService } = await import("./testing/fake-service.js");
 const { readCertificate, writeCertificate } = await import("./certificates.js");
 import { makeTestCert } from "../testing/cert.js";
-import type { ConnectorHints } from "../config/env.js";
+import type { ConnectorHints, RemoteGroup } from "../config/env.js";
 import { ariCertId } from "./acme/der.js";
 import type { ChallengeResolver } from "./dns-check.js";
 import type { RemoteNotice } from "./notify.js";
@@ -179,6 +179,7 @@ function service(
     publicOrigin?: string;
     timing?: Partial<RemoteTiming>;
     connector?: ConnectorHints;
+    group?: RemoteGroup;
     probe?: () => Promise<ProbeResult>;
     now?: () => number;
     ca?: FakeCa;
@@ -188,7 +189,7 @@ function service(
   const s = createRemoteAccess({
     sql: sql as never,
     env: { publicOrigin: opts.publicOrigin ?? "http://livs-air.local:8787" },
-    config: { service: fake.url, dir: remoteDir, dataDir, connector: opts.connector },
+    config: { service: fake.url, dir: remoteDir, dataDir, connector: opts.connector, group: opts.group },
     gate: createServingGate(),
     readsOwnBody: () => false,
     maxBodyBytes: () => 1 << 20,
@@ -587,6 +588,31 @@ describe("where the packaging runs the connector", () => {
     expect(readFileSync(join(remoteDir, "relay-1.toml"), "utf8")).toContain('log.level = "warn"');
     const status = await s.status();
     expect(status).toMatchObject({ state: "starting", connector: { managed: true, status: null, config_path: null } });
+  });
+
+  it("keeps a connector apart by a group: the directory arranged at every start, off too, and every file the group's", async () => {
+    // A group this user is in, other than its own where it has one: only such a group can be given without root.
+    const gid = process.getgroups!().find((g) => g !== process.getgid!()) ?? process.getgid!();
+    const group = { gid, connectorUid: process.getuid!() };
+    const layout = { request: join(remoteDir, "control", "request"), status: join(remoteDir, "status", "status.json") };
+    const off = service({ connector: layout, group });
+    await off.start();
+    expect(lstatSync(remoteDir).mode & 0o7777).toBe(0o2750);
+    expect(lstatSync(join(remoteDir, "status")).mode & 0o7777).toBe(0o750);
+    expect(readFileSync(layout.request, "utf8")).toBe("off\n");
+    expect(lstatSync(layout.request).gid).toBe(gid);
+    await off.stop();
+
+    chmodSync(join(remoteDir, "control"), 0o777);
+    const s = await bound({ connector: layout, group, now: clock, timing: { serviceTickMs: 100, connectorPollMs: 20, probeDelayMs: 10 } });
+    await s.start();
+    expect(lstatSync(join(remoteDir, "control")).mode & 0o7777).toBe(0o750);
+    await until("on", () => readFileSync(layout.request, "utf8").startsWith("on "));
+    for (const name of ["control/request", "relay-1.toml", "relay-1.ca.pem", "relay-1.jwt"]) {
+      expect(lstatSync(join(remoteDir, name)).gid, name).toBe(gid);
+      expect(lstatSync(join(remoteDir, name)).mode & 0o777, name).toBe(0o640);
+    }
+    expect(lstatSync(join(remoteDir, "https.sock"))).toMatchObject({ gid });
   });
 
   it("holds the first self-check until the connector runs these settings, then makes it within seconds", async () => {

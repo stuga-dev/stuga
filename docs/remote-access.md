@@ -27,9 +27,9 @@ remote access service gave them, accepts the Let's Encrypt Subscriber Agreement,
 4. gets a short-lived relay credential, and writes the connector's files;
 5. listens for the relay on a unix socket, and checks that its address reaches it.
 
-The page says what it is waiting on until the address works. The Mac package downloads and starts
-the connector by itself ([The connector](#the-connector)); elsewhere the page shows the command that
-starts it ([Running the connector yourself](#running-the-connector-yourself)).
+The page says what it is waiting on until the address works. The Mac package and the Docker install
+start the connector by themselves ([The connector](#the-connector)); elsewhere the page shows the
+command that starts it ([Running the connector yourself](#running-the-connector-yourself)).
 
 **Turn off** closes the remote listener at once, deletes the connector's credential, settings and
 relay certificate, asks the packaging to stop the connector where it runs it, and stops calling the
@@ -101,7 +101,7 @@ Under `STUGA_REMOTE_DIR`, written by the node and read by the connector:
 
 | Path | What | Mode |
 |---|---|---|
-| the directory | Created by the node if missing. It must belong to the node's user, and neither its group nor anyone else may write to it. | `0750` |
+| the directory | Created by the node if missing. It must belong to the node's user, and neither its group nor anyone else may write to it. With a [group of the connector's own](#a-group-of-the-connectors-own), arranged instead. | `0750` |
 | `<relay>.toml` | The connector's settings for that relay. | `0640` |
 | `<relay>.jwt` | The relay credential, one line, replaced whole. | `0640` |
 | `<relay>.ca.pem` | The relay's certificate. | `0640` |
@@ -116,6 +116,33 @@ The Mac package creates it as `/Library/Application Support/Stuga/remote`, owned
 node's account, with the group `_stugaremote`, `0750`. `_stugaremote` is the connector's own account
 and the only member of its group: it reads the connector's files and reaches the socket, and nothing
 of the node's data. New files in the directory take its group.
+
+### A group of the connector's own
+
+With `STUGA_REMOTE_GID` and `STUGA_REMOTE_CONNECTOR_UID`, the connector runs as a user of its own
+in a group of its own, and each directory has one writer. The node arranges the directory at every
+start, on or off, rather than checking it: whatever owner or mode is wrong, it puts right. It does
+the directory first, so that nothing else can change what is in it meanwhile, replaces a link or a
+file where `control/` or `status/` goes, and removes anything else in the directory or `control/`
+that it did not write.
+
+| Path | Owner | Group | Mode |
+|---|---|---|---|
+| the directory | the node's user | `STUGA_REMOTE_GID` | `02750` |
+| `<relay>.toml`, `<relay>.jwt`, `<relay>.ca.pem` | the node's user | `STUGA_REMOTE_GID` | `0640` |
+| `https.sock` | the node's user | `STUGA_REMOTE_GID` | `0660` |
+| `control/`, where the node writes the connector's request | the node's user | `STUGA_REMOTE_GID` | `0750` |
+| `status/`, where the connector writes its status | `STUGA_REMOTE_CONNECTOR_UID` | `STUGA_REMOTE_GID` | `0750` |
+
+The connector reads its files and reaches the socket through the group, and can write nothing but
+`status/`. The node gives every file it writes there the group itself, whatever the directory's
+setgid bit says.
+
+The Docker install uses this. The node runs as root, the connector as `65532:65532` in a container
+of its own, and the directory is a named volume mounted at `/run/stuga-remote` in both, with the
+request at `control/request` and the status at `status/status.json`. A new volume may belong to
+whichever container mounted it first; the node's next start puts it right. The volume is not in
+backups: the node writes all of it again.
 
 ## The connector
 
@@ -138,6 +165,11 @@ changes nothing: the node takes a status stamped before it last changed the line
 no answer yet. An `installing` status not refreshed within 15 minutes counts as abandoned, and the
 node asks again.
 
+Neither side is trusted to have more privilege than the other. The node writes the request through
+a temporary file of a random name beside it, created new and never through a link, then renames it
+in. It reads the status only from a regular file of at most 4 KiB, never through a link, and takes
+anything else as no status.
+
 On a Mac:
 
 - The connector is built from frp's source at a fixed commit, signed and notarized as
@@ -151,6 +183,20 @@ On a Mac:
 - It restarts only when its settings or the connector itself change. A new credential does not
   restart it, so remote connections stay open.
 - It logs warnings only.
+
+With Docker, installed with `install.sh`:
+
+- The connector is built the same way, from the same commit with the same Go, and comes in the
+  `stuga-remote` image of each release, which has provenance and an SBOM. It idles, connecting
+  nowhere, until remote access is turned on.
+- The `remote` service runs it as user 65532 in a read-only container without capabilities, on a
+  network of its own: it cannot reach Postgres, and reaches the node only as any machine on the
+  network does. It shares one volume with the node and can write only its status there. Before
+  starting the connector it copies each settings file and refuses to start on anything but the lines
+  the node writes.
+- It restarts only when its settings change, or the image with an upgrade.
+- It logs warnings only, to `docker compose logs remote`, at most 30 MB. `./stuga status` shows its
+  state.
 
 Its settings name one https proxy for the node's own hostname onto the socket, and nothing else: no
 `exec` source, no included files, no admin interface, no `user` or metadata. The node rewrites them
@@ -246,7 +292,9 @@ certificate is in place it gets a new credential, and only then asks for the con
 The packaging sets both, or neither ([packaging/contract.md](../packaging/contract.md#packaging-hints)).
 With only one set, the node logs a warning and offers no remote access. The connector's pair, too,
 is both or neither, and counts only beside the first two; with one of them, the node logs a warning
-and takes it that nobody but the administrator runs the connector.
+and takes it that nobody but the administrator runs the connector. So are the group and the
+connector's user, which also count only beside the first two: with one of them, the node logs a
+warning and checks the directory as it does without either.
 
 | Variable | Default | |
 |---|---|---|
@@ -254,12 +302,15 @@ and takes it that nobody but the administrator runs the connector.
 | `STUGA_REMOTE_DIR` | unset: no remote access | The directory the node shares with the connector, as an absolute path. |
 | `STUGA_CONNECTOR_REQUEST` | unset: the administrator runs the connector | The file the node writes `on <sha-256>` or `off` to, as an absolute path, replaced whole. |
 | `STUGA_CONNECTOR_STATUS` | unset: the administrator runs the connector | The JSON file the packaging reports in, as an absolute path: `state` (`installing`, `running`, `stopped`, `refused`, `failed` or `unavailable`), `message`, `at` (ISO 8601, written afresh after every pass over the request), and `connector_sha` and `config_sha`, the sha-256 of the connector and of the settings it runs. A status stamped before the node last changed its request is no answer to it; `installing` not refreshed within 15 minutes is abandoned. |
+| `STUGA_REMOTE_GID` | unset: the directory is checked, not arranged | The group the connector reads its files and reaches the socket through, as a number ([A group of the connector's own](#a-group-of-the-connectors-own)). |
+| `STUGA_REMOTE_CONNECTOR_UID` | unset: the directory is checked, not arranged | The connector's user, as a number, which owns `status/`. |
 
 ## Running the connector yourself
 
-For now only the Mac package offers remote access. For development, and in the Mac's local trial
-([Build from a checkout](install/macos.md#build-from-a-checkout)), run the connector as the node's
-user, with frp 0.71.0:
+The Mac package and the Docker install from `install.sh` run the connector themselves. Anywhere
+else, such as a compose file of your own, in development, and in the Mac's local trial
+([Build from a checkout](install/macos.md#build-from-a-checkout)), run it as the node's user, with
+frp 0.71.0:
 
 ```sh
 frpc -c <STUGA_REMOTE_DIR>/<relay>.toml

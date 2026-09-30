@@ -13,6 +13,7 @@ import { after, test } from "node:test";
 
 const wrapper = new URL("../runtime/bin/remote-wrapper.sh", import.meta.url).pathname;
 const rotate = new URL("../runtime/bin/rotate-log.mjs", import.meta.url).pathname;
+const checkToml = new URL("../../shared/connector/check-toml.sh", import.meta.url).pathname;
 const skip = process.platform !== "darwin" && "runs under macOS's /bin/bash";
 const roots = [];
 after(() => roots.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
@@ -24,11 +25,12 @@ const GOLDEN_DIR = "/Users/liv/.stuga-remote";
 // Records its arguments and the config it was given, then runs until TERM, or exits as told.
 const FRPC = String.raw`#!/bin/bash
 here="$(cd "$(dirname "$0")" && pwd)"
+# Before it says it started: a TERM right after that is its to handle.
+trap 'echo "frpc got TERM"; exit 0' TERM
 { printf '%s\n' "$@"; } > "$here/../../started.$$"
 cp "$2" "$here/../../config.$$"
 echo "frpc says hello"
 [ ! -f "$here/../../exit-now" ] || exit 3
-trap 'echo "frpc got TERM"; exit 0' TERM
 while :; do sleep 0.1; done
 `;
 
@@ -41,12 +43,16 @@ function setup() {
   mkdirSync(logs);
   symlinkSync(process.execPath, join(root, "current/node/bin/node"));
   symlinkSync(rotate, join(root, "current/bin/rotate-log.mjs"));
+  // As the runtime lays them out: check-toml.sh beside the wrapper.
+  symlinkSync(wrapper, join(root, "current/bin/remote-wrapper.sh"));
+  symlinkSync(checkToml, join(root, "current/bin/check-toml.sh"));
   writeFileSync(join(root, "connector/current/frpc"), FRPC);
   chmodSync(join(root, "connector/current/frpc"), 0o755);
   const dir = join(root, "remote");
   return {
     root,
     logs,
+    wrapper: join(root, "current/bin/remote-wrapper.sh"),
     dir,
     /** The node's config for `relay`, as the golden test has it, in this root. */
     config: (relay = "relay-1") => GOLDEN.replaceAll(GOLDEN_DIR, dir).replaceAll("relay-1.jwt", `${relay}.jwt`).replaceAll("relay-1.ca.pem", `${relay}.ca.pem`),
@@ -61,12 +67,12 @@ function setup() {
 
 /** Runs the wrapper to its end: for configs it refuses, or nothing to run. */
 function runToEnd(h) {
-  return spawnSync("/bin/bash", [wrapper], { env: h.env, encoding: "utf8", timeout: 20_000 });
+  return spawnSync("/bin/bash", [h.wrapper], { env: h.env, encoding: "utf8", timeout: 20_000 });
 }
 
 /** Starts the wrapper; resolves once `count` connectors are running. */
 async function start(h, count = 1) {
-  const child = spawn("/bin/bash", [wrapper], { env: h.env, stdio: ["ignore", "ignore", "pipe"] });
+  const child = spawn("/bin/bash", [h.wrapper], { env: h.env, stdio: ["ignore", "ignore", "pipe"] });
   let stderr = "";
   child.stderr.on("data", (d) => (stderr += d));
   const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal, stderr: () => stderr })));
@@ -104,11 +110,38 @@ test("starts one connector per relay from a private copy, with --strict-config, 
   assert.match(text, /frpc got TERM/, "the connectors' last lines reach the log");
 });
 
+test("a stop that comes while the connectors start leaves none of them running", { skip }, async () => {
+  for (let round = 0; round < 3; round++) {
+    const h = setup();
+    // Twenty relays, and the TERM the moment the first connector is up: the others are still starting.
+    for (let r = 1; r <= 20; r++) h.write(h.config(`relay-${r}`), `relay-${r}`);
+    const child = spawn("/bin/bash", [h.wrapper], { env: h.env, stdio: ["ignore", "ignore", "ignore"] });
+    const exited = new Promise((resolve) => child.on("exit", resolve));
+    const started = () => readdirSync(h.root).filter((n) => n.startsWith("started."));
+    for (let i = 0; i < 5000 && started().length === 0; i++) await delay(1);
+    child.kill("SIGTERM");
+    await exited;
+    await delay(500);
+    const alive = started()
+      .map((n) => Number(n.slice("started.".length)))
+      .filter((pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    for (const pid of alive) process.kill(pid, "SIGKILL");
+    assert.deepEqual(alive, [], "connectors outlived the wrapper");
+  }
+});
+
 test("a connector that exits stops the others, and the wrapper exits 1", { skip }, async () => {
   const h = setup();
   h.write(h.config());
   writeFileSync(join(h.root, "exit-now"), "");
-  const child = spawn("/bin/bash", [wrapper], { env: h.env, stdio: ["ignore", "ignore", "pipe"] });
+  const child = spawn("/bin/bash", [h.wrapper], { env: h.env, stdio: ["ignore", "ignore", "pipe"] });
   let stderr = "";
   child.stderr.on("data", (d) => (stderr += d));
   const code = await new Promise((resolve) => child.on("exit", resolve));
@@ -191,6 +224,17 @@ test("refuses a config under a name that is not a relay's", { skip }, () => {
   assert.match(run.stderr, /does not name a relay/);
 });
 
+test("refuses a relay's name with lines of its own", { skip }, () => {
+  const h = setup();
+  // frpc would read the name's lines as settings, an admin API among them.
+  const relay = 'x"\nmetadatas.z = \'\'\'\nwebServer.port = 7400\nuser = """\nok\n"""\nmetadatas.a = "';
+  h.write(h.config(relay), relay);
+  const run = runToEnd(h);
+  assert.equal(run.status, 78, run.stderr);
+  assert.match(run.stderr, /does not name a relay/);
+  assert.deepEqual(h.started(), []);
+});
+
 test("refuses a config that is a symbolic link", { skip }, () => {
   const h = setup();
   writeFileSync(join(h.root, "elsewhere.toml"), h.config());
@@ -198,6 +242,17 @@ test("refuses a config that is a symbolic link", { skip }, () => {
   const run = runToEnd(h);
   assert.equal(run.status, 78, run.stderr);
   assert.match(run.stderr, /not a plain file/);
+});
+
+test("refuses a STUGA_ROOT its configs cannot name", { skip }, () => {
+  const h = setup();
+  h.write(h.config());
+  for (const root of [`${h.root}/`, `${h.root}/../Stuga`, "Stuga", `${h.root}{x}`]) {
+    const run = spawnSync("/bin/bash", [h.wrapper], { env: { ...h.env, STUGA_ROOT: root }, encoding: "utf8", timeout: 20_000 });
+    assert.equal(run.status, 78, root);
+    assert.match(run.stderr, /STUGA_ROOT is not a path the node's configs can name/);
+  }
+  assert.deepEqual(h.started(), []);
 });
 
 test("never passes --allow-unsafe", { skip }, () => {

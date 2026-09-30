@@ -61,7 +61,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: bash packaging/docker/test/restore-drill.sh
+      - run: bash packaging/docker/test/db-password.sh --no-build
       - run: bash packaging/docker/test/backup-suite-in-image.sh ghcr.io/stuga-dev/stuga-node:0.0.0-drill
+      # The shared remote-access directory with real owners, as root: skipped by `pnpm test`.
+      - run: bash packaging/docker/test/remote-dir-in-image.sh
 
   macos:
     runs-on: macos-15
@@ -89,7 +92,7 @@ jobs:
       - name: Build the connector
         env:
           STUGA_MACOS_CACHE: ${{ runner.temp }}/stuga-macos-cache
-        run: bash packaging/macos/connector/build.sh --out "$RUNNER_TEMP/connector"
+        run: bash packaging/shared/connector/build.sh --target darwin/arm64 --out "$RUNNER_TEMP/connector"
       # A runtime naming that connector, as a release's does.
       - name: Build a runtime
         env:
