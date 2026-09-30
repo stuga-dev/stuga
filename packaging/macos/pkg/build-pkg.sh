@@ -10,7 +10,7 @@
 #
 # Without identities the package is signed ad hoc and unsigned: fine to inspect, not to ship.
 # --connector-sha256 names the stuga-connector-darwin-arm64.zip of the same release
-# (packaging/macos/connector/build.sh), which the helper downloads; a notarized package needs it.
+# (packaging/shared/connector/build.sh), which the helper downloads; a notarized package needs it.
 # A notary profile is stored once with `xcrun notarytool store-credentials <profile>`, in a
 # terminal of your own, so the credential never passes through this script.
 set -euo pipefail
