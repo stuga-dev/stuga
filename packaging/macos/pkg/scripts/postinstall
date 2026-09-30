@@ -81,8 +81,10 @@ ensure_account() {
   id="$(free_id "$name")"
   if ! dscl . -read "/Groups/$name" > /dev/null 2>&1; then
     # A user left without its group, by an uninstall cut short: the group gets its old id back when free.
-    local was
-    was="$(dscl . -read "/Users/$name" PrimaryGroupID 2>/dev/null | awk '{print $2}')"
+    local was=""
+    if dscl . -read "/Users/$name" > /dev/null 2>&1; then
+      was="$(dscl . -read "/Users/$name" PrimaryGroupID | awk '{print $2}')"
+    fi
     case "$was" in
       '' | *[!0-9]*) ;;
       *) dscl . -list /Groups PrimaryGroupID | awk '{print $2}' | grep -qx "$was" || id="$was" ;;
@@ -136,7 +138,7 @@ greet() {
     curl -fsS --max-time 2 -o /dev/null "http://127.0.0.1:$port/ready" 2> /dev/null && break
     sleep 1
   done
-  code="$(tr -d '[:space:]' < "$root/data/node/setup-code" 2> /dev/null || true)"
+  code="$(tr -d '[:space:]' 2> /dev/null < "$root/data/node/setup-code" || true)"
   [ -n "$code" ] || return 0
   launchctl asuser "$uid" sudo -u "$user" open "$origin/login?setup=$code" > /dev/null 2>&1 || true
 }
