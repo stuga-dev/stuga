@@ -4,139 +4,91 @@
 
 **AI suggests. You decide.**
 
-Stuga is a workspace of documents and databases for teams that let AI agents write into their work.
-When Claude, Codex or any other MCP client edits a document or a table, the change arrives as a
-suggestion, marked up like tracked changes, and it lands only when a person accepts it. Edits people
-make go straight in.
+Self-hosted documents and databases where edits from Claude Code, Codex or any MCP client arrive as
+tracked changes and, by default, land only when a person accepts them. Use it on your own or with
+your team.
 
-It runs on a machine you own, such as a Mac mini in the office, a Linux server or a NAS: one Node.js
-process and Postgres, with no cloud in between. Everyone else uses it in a browser.
+![Claude Code's edits to a document arriving as tracked changes, accepted and rejected one by one](docs/images/review-demo.gif)
 
 [Download for Mac](https://github.com/stuga-dev/stuga/releases/latest/download/Stuga.pkg) ·
 [Install with Docker](docs/install/docker.md) · [Connect an agent](docs/agents.md) ·
-[Documentation](#documentation)
+[Documentation](docs/)
+
+With Docker:
+
+```sh
+curl -fsSL https://github.com/stuga-dev/stuga/releases/latest/download/install.sh | bash
+```
 
 ## How agent edits work
 
-- **A suggestion, not a silent write.** Each agent's editing session on a document or database is a
-  *run*. It records which agent made it, whose key it used, the client and model it reported, and
-  every change it proposed. You accept or reject the changes one by one, in the document itself.
-  Other people never see pending agent text, and their own editing carries on as usual.
-- **Waiting is the default.** A suggestion waits for a person for as long as that takes, and you are
-  notified that it is there. Nothing applies it on a timer, and the agent is never blocked waiting on
-  you. The owner of a document or database, or a workspace admin, can switch it to **Let agents
-  apply changes at once**. Changes then land immediately and stay recorded, attributed and
-  revertible.
-- **One inbox.** **Review AI edits** lists every run that needs someone, across documents and
-  databases, with each agent's record of accepted and rejected changes beside it.
-- **Who wrote this?** An agent can ask a document who wrote which passage and whether a person has
-  reviewed it, so one agent does not take another's unreviewed text as settled.
-- **Narrow access, full audit.** An app that signs in reaches only the workspaces you tick, and can
-  be limited to reading. A key can also be confined to folders or given an expiry. Every call an
-  agent makes over MCP, reads included, is in the audit log. An event feed and signed webhooks tell
-  agents and other systems what changed.
+- **Review by default.** An agent's changes wait for a person, who is notified and accepts or
+  rejects each one in the document or table. Nothing lands on a timer.
+- **Nobody is blocked.** Collaborators never see pending agent text and keep editing. The agent
+  carries on, and its later reads include its own pending edits.
+- **Or apply at once.** The owner of a document or database, or a workspace admin, can choose
+  **Let AI edits apply directly**. Changes then land at once, recorded, attributed and revertible.
+- **A run per session.** Each run records the agent, the person it acts for, the client and model it
+  reported, and every change. **Review AI edits** lists the runs that need someone.
+- **Who wrote this?** An agent can ask a document which passages agents wrote and whether a person
+  accepted them.
+- **Instructions that stack.** The workspace, folders, documents and databases can each carry
+  instructions for agents. They advise the model; permissions and review decide what a write does.
 
-## Your data stays on your machine
-
-Stuga sends no telemetry. Nothing reaches us unless an administrator turns on remote access;
-[docs/remote-access.md](docs/remote-access.md) lists what the node sends then. The node makes
-outbound requests only for features in use on it: the AI providers a node admin configures, the
-notification sink and webhooks admins set up, the identity provider when an admin adds one, images
-an agent adds by URL, which the node downloads and serves itself, the metadata document of an app
-that signs in with one, and, when someone opens **Create a workspace**, the list of sample
-workspaces, and the sample they pick, from GitHub or a mirror the node is configured with. AI is off
-until an admin turns it on, and the model can run on the same machine.
-
-An AI app you connect sees what its model reads and writes. A hosted one, such as Claude on the web,
-handles it on its vendor's servers.
-
-One request is the node's own: once a day it asks GitHub for the list of Stuga releases, to tell its
-admins when a newer one is out. The request says nothing about the node, not even its version, and
-the comparison happens on the node. The first one is made once someone has set the node up, and
-**Check for new versions** under **Settings → This node → About** turns it off
-([docs/operations.md](docs/operations.md#learning-of-a-new-version)). On a Mac, **Update now** there
-downloads the release's package from GitHub, when an administrator chooses it.
-
-Stuga does not encrypt data at rest. Documents, the database and keys are stored in plaintext on the
-node's disk, readable by anyone who can read that disk. Reaching a node from other devices, and what
-each way of doing that protects, is covered in [docs/network-access.md](docs/network-access.md).
+![Claude Code's changes to a table waiting as proposals, then accepted](docs/images/database-demo.gif)
 
 ## What's in it
 
-- **Documents people write together.** Real-time editing in the browser (Tiptap over a Yjs CRDT),
-  with presence, comments, @mentions and version history, and clients that re-sync cleanly after a
-  dropped connection. Markdown files import as documents.
-- **Databases with real SQL.** Typed tables live beside your documents, and each database has its own
-  SQLite store. Saved views filter, sort and group rows, every row can open as a page, and CSV
-  imports in one step. People and agents query them with plain read-only SQL, not a lookalike filter
-  language.
-- **Search that follows permissions.** Keyword and semantic search are fused in one SQL statement and
-  filtered by access inside the query, so results follow sharing changes immediately and never
-  include a document the searcher cannot open. Chinese and Japanese are split into words by
-  dictionary, not character by character.
-- **AI built in, and optional.** A co-author in the editor, an assistant for tables, and **Ask**, which
-  answers questions across your documents and databases with citations. Their edits go through the
-  same review as any agent's. A node admin picks the provider: OpenAI, Anthropic, Gemini, DeepSeek,
-  Mistral, Qwen and more, or Ollama on the same machine.
+- **Documents written together.** Real-time editing (Tiptap over a Yjs CRDT) with presence,
+  comments, @mentions and version history.
+- **Databases with SQL.** Typed tables beside your documents, each database its own SQLite file,
+  with saved views, row pages and CSV import. Agents, Ask and the REST API run read-only SQL on them.
+- **Search that follows permissions.** Keyword (BM25, pg_search) and semantic (pgvector) search in
+  one SQL statement, with access checked inside it. Chinese and Japanese are split into words.
+- **Built-in AI, off until set up.** A co-author and a table assistant, whose edits are reviewed like
+  an agent's, and **Ask**, which cites sources. OpenAI, Anthropic, Gemini, DeepSeek and more, or Ollama.
 - **Sharing and sign-in.** Workspaces, folders, per-document sharing, groups and guests. People join
-  by invite link and sign in with a username, or through your own OpenID Connect provider.
-- **Looks after itself.** The node backs itself up every day and before every upgrade, and tells its
-  admins when a new version is out.
+  by invite link and sign in with a password or your OpenID Connect provider.
+- **Import and export.** A Notion export, or a zipped Obsidian vault or folder of Markdown, becomes a
+  workspace; a workspace exports as one `.stuga.zip` of Markdown, JSON Lines and its files.
 
-## Who it's for
-
-- Teams that have agents drafting plans, specs, knowledge bases or business tables, and want a person
-  to approve what changes.
-- People who want that work on hardware they control, including the model if they choose.
-- Anyone wiring Claude Code, Codex or their own agents into documents a team shares.
-
-Stuga is not a personal notes app. There is no native phone app and no plugin system; phones and
-other computers open it in a browser.
-
-## Install
-
-- **A Mac with Apple silicon**, on macOS 13 or later: download
-  [Stuga.pkg](https://github.com/stuga-dev/stuga/releases/latest/download/Stuga.pkg) and open it
-  ([docs/install/macos.md](docs/install/macos.md)).
-- **Docker**, on a Linux server or a NAS (x86-64 or arm64):
-  `curl -fsSL https://github.com/stuga-dev/stuga/releases/latest/download/install.sh | bash`
-  ([docs/install/docker.md](docs/install/docker.md)).
-
-Then [docs/getting-started.md](docs/getting-started.md) walks through the first hour with a new node.
+![The built-in co-author's edits arriving as suggestions, accepted and rejected one by one](docs/images/coauthor-demo.gif)
 
 ## Connect your agents
 
-Agents reach Stuga over MCP: the node serves `/mcp`, and `stuga-mcp` is a local stdio server that
-forwards to it for desktop clients. **Settings → Your AI agents** in the app gives the setup for Claude
-Code, Claude Desktop, Codex, Antigravity, Cursor, VS Code, Kiro, Goose, LM Studio, DeepSeek Harness
-and Pi, the Claude app's connector on a node
-with a public HTTPS address, and the URL and key any other MCP client needs. Most clients sign in
-through the browser, where you choose the workspaces the app may use and whether it may only read.
-A client holds one connection, called **Stuga**, that reaches every workspace you allowed, and each
-call names the one it acts in. API keys, the tools and how agent work appears in the run ledger are
-covered in [docs/agents.md](docs/agents.md).
+Agents connect over MCP. **Settings → Your AI agents** gives the setup for Claude Code,
+Claude Desktop, Codex, Antigravity, Cursor, VS Code, Kiro, Goose, LM Studio, DeepSeek Harness and Pi,
+with your node's address filled in, and the URL any other MCP client needs
+([docs/agents.md](docs/agents.md)). Each agent brings its own model, so the node needs no AI key.
 
-## Status
+- **Scoped sign-in.** Most clients sign in through the browser, where you tick the workspaces an app
+  may use and choose **Read only** or **Read and suggest changes**. **Revoke** ends its access.
+- **Narrow keys.** A client without sign-in uses an API key, which can be confined to folders, made
+  read-only or given an expiry.
+- **Content only.** Agents change documents and databases. Renaming, moving, deleting, sharing and
+  the review setting stay with people.
+- **Full audit.** Every MCP call, reads included, is in the workspace's audit log. An event feed
+  and signed webhooks report what changed.
 
-Stuga is pre-1.0. Only the most recent release gets fixes ([SECURITY.md](SECURITY.md)), and
-[CHANGELOG.md](CHANGELOG.md) lists every release.
+## Your data
 
-## Documentation
+Stuga sends no telemetry, and nothing reaches us unless a node admin turns on
+[remote access](docs/remote-access.md). The node makes outbound requests only for features in use,
+such as an AI provider, and asks GitHub once a day for the list of releases unless a node admin
+turns that off. [docs/privacy.md](docs/privacy.md) lists what the node sends and stores.
 
-- [docs/install/docker.md](docs/install/docker.md) and [docs/install/macos.md](docs/install/macos.md): installing on each platform.
-- [docs/getting-started.md](docs/getting-started.md): the first hour with a new node.
-- [docs/configuration.md](docs/configuration.md): environment variables and node settings.
-- [docs/operations.md](docs/operations.md): backups, restores, moving a workspace to another node, learning of a new version, and upgrades.
-- [docs/network-access.md](docs/network-access.md): reaching a node from other devices, and using several nodes.
-- [docs/troubleshooting.md](docs/troubleshooting.md): starts from the symptom.
-- [docs/agents.md](docs/agents.md): connecting agents, API keys, the MCP tools and the run ledger.
-- [docs/api.md](docs/api.md): the REST API.
-- [docs/architecture.md](docs/architecture.md): how the node works.
-- [docs/rag-cross-doc-qa.md](docs/rag-cross-doc-qa.md): how Ask finds, reads and cites passages.
-- [docs/collections.md](docs/collections.md): scoping search and Ask to a named set of documents.
-- [docs/workspace-archive.md](docs/workspace-archive.md): the workspace archive, what export and import carry, and the samples index.
-- [docs/import.md](docs/import.md): importing from Notion, Obsidian or a folder of Markdown.
-- [packaging/contract.md](packaging/contract.md): what every packaging of Stuga provides.
+## Install
+
+- **A Mac with Apple silicon**, on macOS 13 or later: open
+  [Stuga.pkg](https://github.com/stuga-dev/stuga/releases/latest/download/Stuga.pkg). It carries its
+  own Postgres and Node.js ([docs/install/macos.md](docs/install/macos.md)).
+- **Docker** on x86-64 or arm64, such as a Linux server or a NAS: `install.sh` starts Postgres
+  and the node with Compose ([docs/install/docker.md](docs/install/docker.md)).
+
+A node is one Node.js process and Postgres with pgvector and pg_search; people open it in a browser.
+It backs itself up every day by default and before every upgrade
+([docs/operations.md](docs/operations.md)). [docs/getting-started.md](docs/getting-started.md) walks
+through the first hour.
 
 ## Questions and feedback
 
