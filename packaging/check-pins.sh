@@ -52,7 +52,8 @@ arg_defaults() {
   sed -n 's/^ARG \([A-Z0-9_]*\)=\(.*\)$/\1	\2/p' "$1" | sed 's/	"\(.*\)"$/	\1/'
 }
 
-for dockerfile in packaging/docker/node.Dockerfile packaging/docker/postgres.Dockerfile; do
+for dockerfile in packaging/docker/node.Dockerfile packaging/docker/postgres.Dockerfile \
+  packaging/docker/remote.Dockerfile; do
   seen=0
   while IFS="$(printf '\t')" read -r name value; do
     if [ -n "${!name+set}" ] && printf '%s\n' "${required[@]}" | grep -qx "$name"; then
