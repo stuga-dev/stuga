@@ -93,6 +93,8 @@ main() {
     pids+=("$!")
     say "started the connector for $relay (pid $!), logging to $STUGA_LOG_DIR/frpc-<Day>.log"
   done
+  # A stop between starting a connector and noting its pid missed that one: tell them all again.
+  if [ "$stopping" = yes ]; then stop; fi
 
   local pid exited="" status=0
   while [ "$stopping" = no ] && [ -z "$exited" ]; do
