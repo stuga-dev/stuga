@@ -99,6 +99,14 @@ export function setNodeNameConfig(node: { name: string | null; label: string }):
   cachedConfig = { ...authConfig(), nodeName: node.name, nodeLabel: node.label };
 }
 
+/**
+ * `path` on the node's own address, which is what other people can open: the browser on the node's
+ * Mac reaches it at 127.0.0.1. This page's address when the config could not be fetched.
+ */
+export function nodeLink(path: string): string {
+  return `${authConfig().origin ?? window.location.origin}${path}`;
+}
+
 /** True when /auth/config could not be fetched and the fallback is in force. */
 export function authConfigUnavailable(): boolean {
   return configFailed;

@@ -10,6 +10,7 @@ import { MoreMenu } from "@astryxdesign/core/MoreMenu";
 import { useToast } from "@astryxdesign/core/Toast";
 import { FolderInput, Link as LinkIcon, Pencil, Trash2 } from "lucide-react";
 import { Docs, type DocSummary } from "../api";
+import { nodeLink } from "../lib/session/auth-config";
 import { useDocStateMenu } from "./doc-state";
 import { useInstructionsDialog } from "./use-instructions-dialog";
 import { FolderPicker } from "../ui/FolderPicker";
@@ -50,7 +51,7 @@ export function ItemOptionsMenu({
 
   async function copyLink() {
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      await navigator.clipboard.writeText(nodeLink(location.pathname + location.search + location.hash));
       toast({ body: "Link copied. Only people with access can open it.", type: "info" });
     } catch {
       toast({ body: "Couldn’t copy the link.", type: "error" });
