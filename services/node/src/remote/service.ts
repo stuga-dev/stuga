@@ -32,7 +32,7 @@ import {
   type StoredRemoteError,
 } from "@stuga/db";
 import type { ConnectorStatus, RemoteAccessStatus } from "@stuga/protocol/api/remote-access";
-import type { ConnectorHints } from "../config/env.js";
+import type { ConnectorHints, RemoteGroup } from "../config/env.js";
 import type { NodeEnv, RemoteAccessView } from "../env.js";
 import { applyRemoteHeaders, withRemoteHeaders, withSecurityHeaders } from "../http/security-headers.js";
 import type { ServingGate } from "../http/serving-gate.js";
@@ -117,9 +117,10 @@ export interface RemoteAccessDeps {
   env: Pick<NodeEnv, "publicOrigin">;
   /**
    * The packaging's hints, and the data directory the keys and the certificate live under.
-   * `connector` is there where the packaging runs the connector.
+   * `connector` is there where the packaging runs the connector, `group` where it keeps the connector
+   * apart by a group of its own.
    */
-  config: { service: string; dir: string; dataDir: string; connector?: ConnectorHints | undefined };
+  config: { service: string; dir: string; dataDir: string; connector?: ConnectorHints | undefined; group?: RemoteGroup | undefined };
   /** The LAN's gate: the remote listener serves and pauses with it. */
   gate: ServingGate;
   /** Tells the node's administrators, in the app and through the sink. None in tests that don't ask. */
@@ -219,7 +220,10 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   const client = createServiceClient({ now });
   const locked = createLock();
   const directories: DirectoryCache = new Map();
-  const connector = config.connector ? createConnectorControl({ hints: config.connector, now, onError }) : null;
+  /** The group the node's files in the shared directory are given, where there is one. */
+  const gid = config.group?.gid;
+  const connector = config.connector ? createConnectorControl({ hints: config.connector, gid, now, onError }) : null;
+  const ensureDir = (): Promise<string> => ensureRemoteDir(config.dir, { group: config.group });
   const notify = deps.notify ?? (async () => {});
   /** What this process has told the administrators: a tick does not write it again. */
   const told = new Set<string>();
@@ -326,7 +330,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   /** The shared directory is usable, and a problem with it cleared once it is; false after recording why not. */
   async function checkDir(): Promise<boolean> {
     try {
-      await ensureRemoteDir(config.dir);
+      await ensureDir();
     } catch (e) {
       if (!(e instanceof RemoteDirError)) throw e;
       await recordError(remoteError(e.code, e.message, new Date(now())));
@@ -368,13 +372,14 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       }
       return;
     }
-    const socketPath = await ensureRemoteDir(config.dir);
+    const socketPath = await ensureDir();
     const next = createRemoteListener({
       socketPath,
       hostname: r.hostname!,
       handler: withRemoteHeaders(withSecurityHeaders(deps.gate.handler)),
       upgrade: withRemoteHeaders(withSecurityHeaders(deps.gate.upgrade)),
       decorate: applyRemoteHeaders,
+      gid,
       maxBodyBytes: deps.maxBodyBytes,
       readsOwnBody: deps.readsOwnBody,
       onError,
@@ -544,10 +549,11 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
         relays: answer.relays,
         previous: before.relays,
         logLevel: connector ? "warn" : "info",
+        gid,
       });
       if (sha256 !== row!.connector_config_sha256) await recordRemoteConnectorConfig(sql, { sha256, changedAt: at });
       const names = (relays: readonly { name: string }[]) => relays.map((relay) => relay.name).join(",");
-      if (credential && names(before.relays) !== names(answer.relays)) await writeTokenFiles(config.dir, answer.relays, credential.jwt);
+      if (credential && names(before.relays) !== names(answer.relays)) await writeTokenFiles(config.dir, answer.relays, credential.jwt, { gid });
       await refreshRow();
     }
     // Credentials from before this time are refused: a new one now, not at the next tick.
@@ -584,7 +590,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
           const firstCredential = credential === null;
           credential = { jwt: issued.credential, iat: claims?.iat ?? issued.issued_at, exp: claims?.exp ?? issued.expires_at };
           if (await checkDir()) {
-            await writeTokenFiles(config.dir, row.relays, issued.credential);
+            await writeTokenFiles(config.dir, row.relays, issued.credential, { gid });
             jwtOnDisk = true;
           }
           await recordRemoteCredential(sql, {
@@ -969,7 +975,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       if (upgradeRequired) throw new RemoteAccessRefusal(409, "upgrade_required", "Update Stuga to turn on remote access.");
       const r = await refreshRow();
       try {
-        await ensureRemoteDir(config.dir);
+        await ensureDir();
       } catch (e) {
         if (e instanceof RemoteDirError) throw new RemoteAccessRefusal(409, e.code, e.message);
         throw e;
@@ -1084,6 +1090,9 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       connectorRunningFor = null;
       connectorRanFor = null;
       connectorWatched = false;
+      // Arranged at every start, on or off: the connector's request and status are in it. What is
+      // wrong with it is recorded once remote access is on.
+      if (config.group) await locked(ensureDir).catch(onError);
       // Whatever is wrong here is the loops' to report and retry: never a reason for the node not to start.
       try {
         const r = await refreshRow();

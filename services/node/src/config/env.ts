@@ -30,6 +30,17 @@ export interface RemoteHints {
   dir: string;
   /** Where the packaging runs the connector: the request the node writes and the status it reads back. */
   connector?: ConnectorHints;
+  /** Where the connector is kept apart from the node by a group of its own (Docker): see RemoteGroup. */
+  group?: RemoteGroup;
+}
+
+/**
+ * The group the shared directory is arranged for, and the connector's user, which writes its
+ * `status/`. Numbers, not names: in a container they need not name anyone.
+ */
+export interface RemoteGroup {
+  gid: number;
+  connectorUid: number;
 }
 
 export interface ConnectorHints {
@@ -229,7 +240,30 @@ function remoteHints(env: Env): RemoteHints | undefined {
   const hints: RemoteHints = { service: remoteServiceOrigin(service), dir: normalize(dir).replace(/(.)\/+$/, "$1") };
   const connector = connectorHints(env);
   if (connector) hints.connector = connector;
+  const group = remoteGroup(env);
+  if (group) hints.group = group;
   return hints;
+}
+
+/** The largest id `chown` takes; one more is its "unchanged". */
+const MAX_ID = 2 ** 32 - 2;
+
+/** The same rule for the group and the connector's user, which also mean something only beside the remote hints. */
+function remoteGroup(env: Env): RemoteGroup | undefined {
+  const gid = str(env, "STUGA_REMOTE_GID");
+  const uid = str(env, "STUGA_REMOTE_CONNECTOR_UID");
+  if (!gid && !uid) return undefined;
+  if (!gid || !uid) {
+    console.warn(
+      `[node] ${gid ? "STUGA_REMOTE_GID" : "STUGA_REMOTE_CONNECTOR_UID"} is set without ` +
+        `${gid ? "STUGA_REMOTE_CONNECTOR_UID" : "STUGA_REMOTE_GID"}; the shared directory's owners are left as they are`,
+    );
+    return undefined;
+  }
+  return {
+    gid: int(env, "STUGA_REMOTE_GID", 0, { max: MAX_ID }),
+    connectorUid: int(env, "STUGA_REMOTE_CONNECTOR_UID", 0, { max: MAX_ID }),
+  };
 }
 
 /** The same rule for the connector's pair, which means something only beside the remote hints. */
