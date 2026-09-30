@@ -50,7 +50,7 @@ const PERSIST_THRESHOLD = 10; // updates
 export const PENDING_SNAPSHOT_BYTES = 1024 * 1024;
 
 /** What the actor persists under "meta". */
-interface StoredMeta {
+export interface StoredMeta {
   docId: string;
   seq: number;
   epoch: number;

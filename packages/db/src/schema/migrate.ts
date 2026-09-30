@@ -16,6 +16,15 @@ import type { Queryable } from "../sql.js";
  */
 export const MIGRATIONS: readonly string[] = ["0001_initial.sql"];
 
+/**
+ * Each migration's checksum, pinned when it is added: a unit test fails when a file stops matching.
+ * Once a release ships a migration its pin never changes, because every database that ran it
+ * recorded that checksum.
+ */
+export const MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
+  "0001_initial.sql": "1a7acca75c129611",
+};
+
 /** `0007_foo.sql` → 7. Throws on a filename that is not numbered. */
 export function migrationId(filename: string): number {
   const match = /^(\d{4})_[a-z0-9_]+\.sql$/.exec(filename);
@@ -60,7 +69,8 @@ function assertEmbeddingDims(embeddingDims: number): void {
   }
 }
 
-function checksum(raw: string): string {
+/** What `schema_migrations` records for a migration file. */
+export function migrationChecksum(raw: string): string {
   return createHash("sha256").update(raw, "utf8").digest("hex").slice(0, 16);
 }
 
@@ -96,7 +106,7 @@ export async function initSchema(sql: Sql, opts: { embeddingDims?: number } = {}
   const files = await Promise.all(
     MIGRATIONS.map(async (name) => {
       const raw = await readFile(join(MIGRATIONS_DIR, name), "utf8");
-      return { name, id: migrationId(name), raw, sum: checksum(raw) };
+      return { name, id: migrationId(name), raw, sum: migrationChecksum(raw) };
     }),
   );
 

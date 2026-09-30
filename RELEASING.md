@@ -56,6 +56,10 @@ an **Upgrade notes** section if the version needs a decision or an action from s
 node. `node packaging/release/feed.mjs check 1.2.3` passes once the entry is the newest one, and
 `node packaging/release/feed.mjs notes 1.2.3` prints the notes the Release will carry.
 
+A tag freezes what it ships: the migrations and their checksums in `MIGRATION_CHECKSUMS`, and each
+actor store version's pin in `store-version.test.ts`. A later schema change is a new migration or a
+new store version ([CONTRIBUTING.md](CONTRIBUTING.md#schema-changes)).
+
 ## Tagging
 
 ```sh

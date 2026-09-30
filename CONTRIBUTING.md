@@ -181,22 +181,14 @@ on Linux and on macOS.
 
 ## Schema changes
 
-Until Stuga has its first public users, `0001_initial.sql` is the whole schema and a change edits it
-in place. The node refuses to start when an applied file has changed, so recreate your dev database
-afterwards. From then on a schema change is a new file, `0002_short_name.sql` and up, appended to
+Migrations are append-only. A schema change is a new file, `0002_short_name.sql` and up, appended to
 `MIGRATIONS` in `packages/db/src/schema/migrate.ts`, with contiguous numbers as the schema version;
-the node applies pending migrations in one transaction when it boots.
+the node applies pending migrations in one transaction when it boots. Pin the new file's checksum
+in `MIGRATION_CHECKSUMS` beside it: the unit test that checks the pins prints it.
 
-The structured databases are not Postgres: each one is SQLite inside its actor, created by
-`ensureSchema` in `packages/database-actor/src/schema-ops.ts`, which has no migration mechanism of
-its own.
-
-What an actor keeps carries a version instead: `DOC_STORE_VERSION` and `DATABASE_STORE_VERSION`. The
-host stamps each actor's SQLite file with its namespace's version (`PRAGMA user_version`) and refuses
-a file stamped higher, so an older build never opens what a newer one wrote. A change to what a
-store holds raises its version, together with the step in `claimStoreVersion`
-(`packages/runtime/src/actor-host.ts`) that brings an older store forward; the host refuses an older
-store rather than restamp it while no such step exists.
+Once a release ships a migration, the file and its pin never change. Every database that ran it
+recorded its checksum, and the node refuses to start when the file no longer matches. A migration
+no release has shipped yet may still change, with its pin; recreate your dev database afterwards.
 
 Then regenerate `packages/db/schema.snapshot.txt`, with `TEST_DATABASE_URL` pointing at a database
 you can lose, and check that its diff holds only the change you meant. The integration suites fail
@@ -210,12 +202,27 @@ A statement that must hold on every boot, such as extension versions or the BM25
 `schema/search-indexes.ts`, is not a migration. It belongs in
 `packages/db/src/schema/boot-repairs.ts`, which runs each time the node starts.
 
+The structured databases are not Postgres: each one is SQLite inside its actor, created by
+`ensureSchema` in `packages/database-actor/src/schema-ops.ts`, which has no migration mechanism of
+its own.
+
+What an actor keeps carries a version instead: `DOC_STORE_VERSION` and `DATABASE_STORE_VERSION`. The
+host stamps each actor's SQLite file with its namespace's version (`PRAGMA user_version`) and refuses
+a file stamped higher, so an older build never opens what a newer one wrote. A change to what a
+store holds raises its version, together with the step in `claimStoreVersion`
+(`packages/runtime/src/actor-host.ts`) that brings an older store forward; the host refuses an older
+store rather than restamp it while no such step exists. `store-version.test.ts` in each actor
+package pins what each version's store holds: its SQL schema, and for documents its keys and the
+types of their values. A change to either fails that test until the version is raised and the new
+store pinned under it.
+
 ## The changelog
 
 A change someone running or using a node will notice gets a line under `## [Unreleased]` in
 [CHANGELOG.md](CHANGELOG.md), in the section that fits: **Added**, **Changed**, **Fixed**, **Removed**,
 **Security** for a fixed vulnerability, and **Upgrade notes** for anything that person has to decide or
-do. The release workflow turns the file into the release's notes and into the list running nodes read
+do. One line per change, in one section, as that person sees it; link the docs for how it works.
+Build, CI and test changes stay out. The release workflow turns the file into the release's notes and into the list running nodes read
 ([RELEASING.md](RELEASING.md#the-changelog)), so a **Security** section is what makes nodes tell
 their administrators.
 

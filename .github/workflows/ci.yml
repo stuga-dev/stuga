@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # The release tags, for the test that holds each migration a release shipped to that file.
+      - run: git fetch --no-tags --depth=1 origin '+refs/tags/v*:refs/tags/v*'
       - id: pins
         run: . packaging/versions.env && echo "node=$NODE_VERSION" >> "$GITHUB_OUTPUT"
       - uses: pnpm/action-setup@v6

@@ -8,6 +8,7 @@
  * calls `actor.alarm()` itself — and socket close callbacks are delivered only
  * when a test calls `closeSocket`.
  */
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type {
   Actor,
@@ -227,5 +228,43 @@ export class MemoryJobQueue<T = unknown> implements JobQueue<T> {
 
   async send(message: T): Promise<void> {
     this.sent.push(structuredClone(message));
+  }
+}
+
+// ---- store versions --------------------------------------------------------------
+
+/**
+ * An actor's store file as its store version pins it: every schema object, whitespace aside, and
+ * the stamp, with a short fingerprint of them. `leaveOut` drops the objects on those tables, and
+ * `rename` puts a placeholder for a table or column name the store's contents chose.
+ */
+export function storeSchema(
+  path: string,
+  opts: { leaveOut?: string[]; rename?: Record<string, string> } = {},
+): { schema: string; fingerprint: string } {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const objects = db.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master").all() as {
+      type: string;
+      name: string;
+      tbl_name: string;
+      sql: string | null;
+    }[];
+    const { user_version } = db.prepare("PRAGMA user_version").get() as { user_version: number };
+    const rename = opts.rename ?? {};
+    const quoted = (sql: string) => Object.entries(rename).reduce((t, [from, to]) => t.split(`"${from}"`).join(`"${to}"`), sql);
+    const tidy = (sql: string) => quoted(sql.replace(/\s+/g, " ").replace(/\s*([(),])\s*/g, "$1"));
+    const lines = objects
+      .filter((o) => !opts.leaveOut?.includes(o.tbl_name))
+      .map((o) => {
+        const table = Object.hasOwn(rename, o.tbl_name) ? rename[o.tbl_name]! : o.tbl_name;
+        const name = o.name.split(o.tbl_name).join(table);
+        return `${o.type} ${name} on ${table}: ${o.sql === null ? "(automatic)" : tidy(o.sql)}`;
+      })
+      .sort();
+    const schema = [`user_version ${user_version}`, ...lines].join("\n");
+    return { schema, fingerprint: createHash("sha256").update(schema).digest("hex").slice(0, 16) };
+  } finally {
+    db.close();
   }
 }
