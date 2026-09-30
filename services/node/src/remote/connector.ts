@@ -40,13 +40,13 @@ const INSTALL_SILENT_MS = 15 * MINUTE;
 export async function writeConnectorRequest(hints: ConnectorHints, line: ConnectorLine, opts: { gid?: number | undefined } = {}): Promise<void> {
   if (!LINE.test(line)) throw new Error(`not a connector request: ${line}`);
   const tmp = join(dirname(hints.request), `.${basename(hints.request)}.${randomBytes(8).toString("hex")}.tmp`);
+  // Named by the request, not the temporary file, so the same failure reads the same each time.
+  const failed = (e: unknown) => new Error(`can't write ${hints.request}: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`, { cause: e });
   let handle;
   try {
     handle = await open(tmp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, REQUEST_MODE);
   } catch (e) {
-    // Named by the request, not the temporary file, so the same failure reads the same each time.
-    const code = (e as NodeJS.ErrnoException).code ?? (e as Error).message;
-    throw new Error(`can't write ${hints.request}: ${code}`, { cause: e });
+    throw failed(e);
   }
   try {
     await handle.writeFile(`${line}\n`);
@@ -58,7 +58,7 @@ export async function writeConnectorRequest(hints: ConnectorHints, line: Connect
   } catch (e) {
     await handle.close().catch(() => {});
     await unlink(tmp).catch(() => {});
-    throw e;
+    throw failed(e);
   }
 }
 

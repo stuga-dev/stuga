@@ -396,6 +396,19 @@ describe("the desired state", () => {
     expect(c.line()).toBe(ON);
   });
 
+  it("says once why it can't replace the request, however often it tries", async () => {
+    mkdirSync(hints.request);
+    writeFileSync(join(hints.request, "planted"), "");
+    const { c, errors, at } = control();
+    await c.want(ON);
+    at(1_000);
+    await c.want(ON);
+    expect(c.line()).toBeNull();
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as Error).message).toBe(`can't write ${hints.request}: ${(errors[0] as { cause: NodeJS.ErrnoException }).cause.code}`);
+    expect(readdirSync(join(work, "requests"))).toEqual(["remote"]);
+  });
+
   it("does not touch a request it never made", async () => {
     writeFileSync(hints.request, "off\n");
     const past = new Date(T0 - 60 * MIN);
