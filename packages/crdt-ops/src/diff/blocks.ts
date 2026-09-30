@@ -43,22 +43,99 @@ interface ChangedRun {
 }
 
 /**
- * Split a changed run into 1:1 replacements when both sides line up by type,
- * so two adjacent edited items are two reviewable changes. The pieces cover
- * exactly the same blocks; a run whose sides differ in length or type order
- * stays whole.
+ * Split a changed run into reviewable pieces covering exactly the same blocks.
+ * When both sides line up by type, every block is its own 1:1 replacement, so
+ * two adjacent edited items are two changes. Otherwise each edited block is
+ * paired with its new version ({@link pairEdits}), so a typo fixed beside a
+ * deleted section is a change of its own, decided apart from the deletion. A
+ * run with nothing to pair stays whole.
  */
 function splitRun(base: PMNode[], run: ChangedRun): ChangedRun[] {
   const n = run.endBlock - run.startBlock;
-  if (n < 2 || run.replacement.length !== n) return [run];
-  for (let i = 0; i < n; i++) {
-    if (base[run.startBlock + i]!.type !== run.replacement[i]!.type) return [run];
+  const m = run.replacement.length;
+  if (n >= 2 && m === n && run.replacement.every((r, i) => base[run.startBlock + i]!.type === r.type)) {
+    return Array.from({ length: n }, (_, i) => ({
+      startBlock: run.startBlock + i,
+      endBlock: run.startBlock + i + 1,
+      replacement: [run.replacement[i]!],
+    }));
   }
-  return Array.from({ length: n }, (_, i) => ({
-    startBlock: run.startBlock + i,
-    endBlock: run.startBlock + i + 1,
-    replacement: [run.replacement[i]!],
-  }));
+  if (n === 0 || m === 0 || n + m < 3 || n * m > MAX_PAIRING_CELLS) return [run];
+  const pairs = pairEdits(base.slice(run.startBlock, run.endBlock), run.replacement);
+  if (pairs.length === 0) return [run];
+
+  const pieces: ChangedRun[] = [];
+  let bi = 0;
+  let ri = 0;
+  /** The unpaired blocks before a pair, as one piece: a deletion, an insertion, or both. */
+  const gap = (toB: number, toR: number) => {
+    if (toB > bi || toR > ri) {
+      pieces.push({ startBlock: run.startBlock + bi, endBlock: run.startBlock + toB, replacement: run.replacement.slice(ri, toR) });
+    }
+  };
+  for (const [i, j] of pairs) {
+    gap(i, j);
+    pieces.push({ startBlock: run.startBlock + i, endBlock: run.startBlock + i + 1, replacement: [run.replacement[j]!] });
+    bi = i + 1;
+    ri = j + 1;
+  }
+  gap(n, m);
+  return pieces;
+}
+
+/** Past this many block comparisons a run (a wholesale rewrite) stays one change. */
+const MAX_PAIRING_CELLS = 10_000;
+/** How alike, by shared words, a block and its replacement must be to count as an edit of it. */
+const EDIT_LIKENESS = 0.5;
+
+function wordsOf(node: PMNode): Set<string> {
+  return new Set(node.textContent.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+}
+
+/** The Dice coefficient of two blocks' word sets: 1 for the same words, 0 for none shared. */
+function likeness(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let shared = 0;
+  for (const w of a) if (b.has(w)) shared++;
+  return (2 * shared) / (a.size + b.size);
+}
+
+/**
+ * Old and new blocks that are edits of each other (same type, mostly the same
+ * words), in order and without crossing: the alignment with the most pairs,
+ * ties broken by total likeness. Index pairs into `old` and `next`.
+ */
+function pairEdits(old: PMNode[], next: PMNode[]): Array<[number, number]> {
+  const ow = old.map(wordsOf);
+  const nw = next.map(wordsOf);
+  const n = old.length;
+  const m = next.length;
+  const like = (i: number, j: number) => (old[i]!.type === next[j]!.type ? likeness(ow[i]!, nw[j]!) : 0);
+  // score[i][j]: the best alignment of old[i..] with next[j..], as pairs + likeness / (n + m) (< 1).
+  const score: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      const l = like(i, j);
+      const pair = l >= EDIT_LIKENESS ? 1 + l / (n + m) + score[i + 1]![j + 1]! : -1;
+      score[i]![j] = Math.max(pair, score[i + 1]![j]!, score[i]![j + 1]!);
+    }
+  }
+  const pairs: Array<[number, number]> = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    const l = like(i, j);
+    if (l >= EDIT_LIKENESS && score[i]![j] === 1 + l / (n + m) + score[i + 1]![j + 1]!) {
+      pairs.push([i, j]);
+      i++;
+      j++;
+    } else if (score[i + 1]![j]! >= score[i]![j + 1]!) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  return pairs;
 }
 
 /**

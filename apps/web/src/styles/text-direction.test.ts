@@ -121,10 +121,10 @@ describe("text direction", () => {
     const html = `
       <div class="ai-edit-composer"><div class="ai-edit-composer__quote">“نص مقتبس”</div></div>
       <ul class="agent-run-changes"><li class="agent-run-change"><button class="agent-run-change__body">
-        <span class="agent-run-change__marker">+</span><span class="agent-run-change__text">يطبق GDPR على الشركات</span>
+        <span class="agent-run-change__marker">+</span><span class="agent-run-change__text">يطبق GDPR على الشركات</span><span class="agent-run-change__context">يطبق GDPR</span>
       </button></li></ul>
       <div class="stuga-editor"><div class="ai-preview-ghost ai-preview-ghost--words"><span class="ai-preview-hunk">يطبق <ins>القانون</ins></span></div></div>`;
-    const parts = ".ai-edit-composer__quote, .agent-run-change__text, .ai-preview-ghost--words .ai-preview-hunk";
+    const parts = ".ai-edit-composer__quote, .agent-run-change__text, .agent-run-change__context, .ai-preview-ghost--words .ai-preview-hunk";
     expect(new Set(bidiOf(html, parts))).toEqual(new Set(["plaintext"]));
   });
 

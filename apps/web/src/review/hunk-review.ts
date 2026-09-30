@@ -8,14 +8,24 @@ interface HunkSummary {
   kind: HunkKind;
   /** Single-glyph marker for the row: `+` added, `−` removed, `~` reworded. */
   marker: "+" | "−" | "~";
-  /** Short, whitespace-collapsed description of the changed span. */
+  /** Short, whitespace-collapsed description of the changed span: "before → after" for a reword. */
   text: string;
+  /** The line the span sits in, when the span is only part of it, so a short change says where it is. */
+  context?: string;
   /** Fuller "before → after" for the row's tooltip. */
   detail: string;
 }
 
 /** How much of the changed span a row shows before it is elided. */
 const SUMMARY_MAX = 60;
+
+/** A list item's, heading's or quote's marker at the start of a line of a hunk. */
+const BLOCK_MARKER = /^[ \t]*(?:[*+-]|\d+[.)]|#{1,6}|>)[ \t]+(?:\[[ xX]\][ \t]+)?/gm;
+
+/** A hunk's Markdown as the words a reader sees: no block markers, whitespace collapsed. */
+function plain(s: string): string {
+  return collapse(s.replace(BLOCK_MARKER, ""));
+}
 
 
 function collapse(s: string): string {
@@ -57,21 +67,26 @@ function changedSpan(before: string, after: string): { before: string; after: st
 }
 
 export function summarizeHunk(hunk: { old_string: string; new_string: string }): HunkSummary {
-  const span = changedSpan(collapse(hunk.old_string), collapse(hunk.new_string));
+  const old = plain(hunk.old_string), next = plain(hunk.new_string);
+  const span = changedSpan(old, next);
+  /** The whole line, when it says more than the span. */
+  const within = (line: string, part: string) => (line && line !== part ? { context: clip(line, SUMMARY_MAX * 2) } : {});
   if (span.before && !span.after) {
-    return { kind: "remove", marker: "−", text: clip(span.before), detail: `Removes: ${clip(span.before, 200)}` };
+    return { kind: "remove", marker: "−", text: clip(span.before), detail: `Removes: ${clip(span.before, 200)}`, ...within(old, span.before) };
   }
   if (span.after && !span.before) {
-    return { kind: "add", marker: "+", text: clip(span.after), detail: `Adds: ${clip(span.after, 200)}` };
+    return { kind: "add", marker: "+", text: clip(span.after), detail: `Adds: ${clip(span.after, 200)}`, ...within(next, span.after) };
   }
   // A reword, or a whitespace-only edit where the full pair is the description.
-  const after = span.after || collapse(hunk.new_string);
-  const before = span.before || collapse(hunk.old_string);
+  const after = span.after || next;
+  const before = span.before || old;
+  const half = Math.floor(SUMMARY_MAX / 2);
   return {
     kind: "change",
     marker: "~",
-    text: clip(after || before),
+    text: before && after ? `${clip(before, half)} → ${clip(after, half)}` : clip(after || before),
     detail: `${clip(before, 200)} → ${clip(after, 200)}`,
+    ...within(next || old, after),
   };
 }
 

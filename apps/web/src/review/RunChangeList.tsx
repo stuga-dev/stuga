@@ -65,7 +65,10 @@ export function RunChangeList({ run }: { run: AgentRunSummary }) {
               <span className={`agent-run-change__marker agent-run-change__marker--${summary.kind}`} aria-hidden="true">
                 {summary.marker}
               </span>
-              <span className="agent-run-change__text">{summary.text}</span>
+              <span className="agent-run-change__lines">
+                <span className="agent-run-change__text">{summary.text}</span>
+                {summary.context && <span className="agent-run-change__context">{summary.context}</span>}
+              </span>
               {!row.isAnchored && (
                 <span className="agent-run-change__note">can’t be shown inline — decide it here</span>
               )}

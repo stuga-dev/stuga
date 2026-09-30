@@ -81,7 +81,8 @@ ol > .ai-preview-ghost { list-style: none; margin-left: 0; }
 .agent-run-bar--live { animation: agent-run-pulse 1.2s ease-in-out 2; }
 @keyframes agent-run-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.72; } }
 
-/* One line: the count stays whole and the hint ellipses, then disappears on a narrow row. */
+/* One line: the count stays whole and the hint ellipses, then disappears on a narrow row, where the
+   title wraps rather than run under the controls. */
 .agent-run-title { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
 .agent-run-title__main { flex: 0 0 auto; white-space: nowrap; }
 .agent-run-title__hint {
@@ -90,7 +91,10 @@ ol > .ai-preview-ghost { list-style: none; margin-left: 0; }
 }
 /* Drawn in CSS, so it stays out of the accessible name. */
 .agent-run-title__hint::before { content: "· "; }
-@media (max-width: 900px) { .agent-run-title__hint { display: none; } }
+@media (max-width: 900px) {
+  .agent-run-title__hint { display: none; }
+  .agent-run-title__main { flex-shrink: 1; min-width: 0; white-space: normal; }
+}
 
 .agent-run-nav { display: inline-flex; align-items: center; gap: 0.15rem; }
 .agent-run-nav__count {
@@ -122,11 +126,14 @@ ol > .ai-preview-ghost { list-style: none; margin-left: 0; }
 .agent-run-change__marker--add { color: var(--color-text-green); }
 .agent-run-change__marker--remove { color: var(--color-text-red); }
 .agent-run-change__marker--change { color: var(--color-text-secondary); }
+.agent-run-change__lines { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 /* Document text, so it reads in its own direction, and a cut one loses its end, not its start. */
-.agent-run-change__text {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.agent-run-change__text, .agent-run-change__context {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   unicode-bidi: plaintext; text-align: start;
 }
+/* The line the change sits in, so "04/05 → 5 April" says which date it is. */
+.agent-run-change__context { font-size: var(--text-supporting-size); color: var(--color-text-secondary); }
 .agent-run-change__note { flex: 0 0 auto; font-size: var(--text-body-size); color: var(--color-text-secondary); font-style: italic; }
 .agent-run-change__actions { flex: 0 0 auto; display: inline-flex; gap: 0.3rem; }
 

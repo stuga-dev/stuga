@@ -240,7 +240,9 @@ describe("AgentRunBar", () => {
 
     await click(byLabel("Review each change"));
     const rows = [...container.querySelectorAll(".agent-run-change__text")].map((e) => e.textContent);
-    expect(rows).toEqual(["rewritten for h2", "rewritten for h1", "rewritten for h3"]);
+    expect(rows).toEqual(["as written → rewritten for h2", "as written → rewritten for h1", "as written → rewritten for h3"]);
+    // Each row names the line its change sits in.
+    expect(container.querySelector(".agent-run-change__context")!.textContent).toBe("the h2 section rewritten for h2");
     expect(container.textContent).toContain("can’t be shown inline — decide it here");
 
     await click(byLabel("Show change 1 of 3 in the document"));

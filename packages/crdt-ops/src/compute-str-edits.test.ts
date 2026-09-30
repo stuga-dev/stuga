@@ -149,6 +149,33 @@ describe("computeStrEdits round-trip identity", () => {
     for (const e of edits) expect(e.old_string.length).toBeLessThan(base.length);
   });
 
+  it("an edit BESIDE a deletion is its own hunk, decided apart from it", () => {
+    const base = "A one.\n\nB two.\n\nC three.\n\nD four.";
+    const next = "A one, edited.\n\nC three.\n\nD four.";
+    const edits = roundTrip(base, next);
+    expect(edits).toHaveLength(2);
+    expect(edits.find((e) => e.new_string.includes("edited"))!.old_string).not.toContain("B two");
+  });
+
+  it("a typo fixed beside a deleted section can be accepted without the deletion", () => {
+    const base = canon(
+      "## Summary\n\nGuests book a table and recieve a confirmation.\n\n## Scope\n\n- A booking flow\n- Menu pages\n\n## Timeline\n\nLaunch on 12 May.",
+    );
+    const next = canon("## Summary\n\nGuests book a table and receive a confirmation.\n\n## Timeline\n\nLaunch on 12 May.");
+    const edits = roundTrip(base, next);
+    const typo = edits.find((e) => e.new_string.includes("receive"))!;
+    expect(typo.old_string).not.toContain("Scope");
+    const typoOnly = applyStrEditsStrict(base, [typo]);
+    expect(typoOnly.markdown).toContain("receive a confirmation");
+    expect(typoOnly.markdown).toContain("## Scope");
+  });
+
+  it("an unrelated replacement beside a deletion stays one change", () => {
+    const base = "A one.\n\nB two.\n\nC three.";
+    const next = "Something else entirely.\n\nC three.";
+    expect(roundTrip(base, next)).toHaveLength(1);
+  });
+
   it("deletion of everything", () => {
     roundTrip("Only paragraph.", "");
     roundTrip("# H\n\nBody one.\n\nBody two.", "");

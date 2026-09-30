@@ -54,7 +54,7 @@ const sameTotal = (n: number, ...keys: HunkKey[]) => new Map(keys.map((k) => [k,
 
 describe("hunk identity", () => {
   it("summarizes a change with a kind marker and collapsed whitespace", () => {
-    expect(hunkSummary("old text", "new   text\nhere")).toBe("~ new text here");
+    expect(hunkSummary("old text", "new   text\nhere")).toBe("~ old text → new text here");
     expect(hunkSummary("", "added")).toBe("+ added");
     expect(hunkSummary("removed", "")).toBe("− removed");
   });
@@ -120,7 +120,7 @@ describe("buildRunSegments", () => {
     ]);
     expect(segments).toHaveLength(1);
     expect(segments[0]!.hunks.map((p) => p.key)).toEqual(["run_a:h1", "run_a:h2"]);
-    expect(segments[0]!.hunks.map((p) => p.summary)).toEqual(["~ swift", "~ sleepy"]);
+    expect(segments[0]!.hunks.map((p) => p.summary)).toEqual(["~ quick → swift", "~ lazy → sleepy"]);
   });
 
   it("keeps hunks in DIFFERENT blocks as separate ghosts", () => {
