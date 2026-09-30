@@ -11,6 +11,11 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-09-30
+
+- Remote access on Docker: the stack from `install.sh` runs the connector itself.
+- On Docker, the database has a random password of its own, and Postgres sits on an internal network with no way out.
+
 ### Upgrade notes
 
 - On Docker, `./stuga upgrade` stops the node briefly to give the database a random password of its
