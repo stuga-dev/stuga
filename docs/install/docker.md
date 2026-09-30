@@ -44,15 +44,16 @@ Until the node serves, it answers with a page that says it is starting. `./stuga
 
 | Path | Holds |
 |---|---|
-| `compose.yml` | The stack, with both images pinned to one release. An upgrade replaces it, so do not edit it. |
+| `compose.yml` | The stack, with its three images pinned to one release. An upgrade replaces it, so do not edit it. |
 | `.env` | Your settings. Compose reads it, and passes it to the node. |
 | `stuga` | The operator commands. |
 | `data/node/` | The node's data directory (`DATA_DIR`): document snapshots, media, per-actor SQLite stores, the signing key and secrets. |
 | the `stuga_pgdata` volume | The Postgres cluster. `docker volume inspect stuga_pgdata` shows where Docker keeps it. |
+| the `stuga_remote` volume | What the node and the remote access connector share: its settings, credential and socket. The node writes it again, so it is not backed up. |
 | `backups/` | Backups: the node's daily ones, the one it takes before an upgrade, and `./stuga backup`'s. |
 
-The node's log is `docker compose logs node`, and Postgres's is `docker compose logs postgres`. Add
-`-f` to follow either one.
+The node's log is `docker compose logs node`, Postgres's is `docker compose logs postgres`, and the
+remote access connector's is `docker compose logs remote`. Add `-f` to follow one.
 
 ## Settings
 
@@ -148,18 +149,19 @@ upgrades, whatever started it.
 ### Without a connection to the registry
 
 A node that cannot reach `ghcr.io` upgrades from images carried to it. On a machine that is online,
-fetch the release's three files and save both images for the node's architecture (`linux/arm64` or
-`linux/amd64`):
+fetch the release's three files and save its three images for the node's architecture (`linux/arm64`
+or `linux/amd64`):
 
 ```sh
 V=1.2.3
 for f in compose.yml env.example stuga; do
   curl -fsSLO "https://github.com/stuga-dev/stuga/releases/download/v$V/$f"
 done
-for image in stuga-node stuga-postgres; do
+for image in stuga-node stuga-postgres stuga-remote; do
   docker pull --platform linux/arm64 "ghcr.io/stuga-dev/$image:$V"
 done
-docker save -o "stuga-$V-images.tar" "ghcr.io/stuga-dev/stuga-node:$V" "ghcr.io/stuga-dev/stuga-postgres:$V"
+docker save -o "stuga-$V-images.tar" "ghcr.io/stuga-dev/stuga-node:$V" \
+  "ghcr.io/stuga-dev/stuga-postgres:$V" "ghcr.io/stuga-dev/stuga-remote:$V"
 ```
 
 Carry the three files and the archive to the node. There, load the images, put the three files over
@@ -197,6 +199,7 @@ In the Stuga directory:
 docker compose down
 ```
 
-This removes the containers. Your data stays in `data/`, `backups/` and the `stuga_pgdata` volume.
-To delete it and the images too, run `docker compose down -v --rmi all` and remove the directory.
+This removes the containers. Your data stays in `data/`, `backups/` and the `stuga_pgdata` volume, and
+the `stuga_remote` volume stays too. To delete them and the images too, run
+`docker compose down -v --rmi all` and remove the directory.
 The node writes its files as root, so on Linux that needs `sudo rm -rf`.

@@ -1,4 +1,4 @@
-# Builds both images from this checkout, tagged as compose.yml names them:
+# Builds the images from this checkout, tagged as compose.yml names them:
 #
 #   docker compose -f compose.yml -f compose.build.yml up -d --build
 services:
@@ -10,3 +10,7 @@ services:
     build:
       context: ../..
       dockerfile: packaging/docker/node.Dockerfile
+  remote:
+    build:
+      context: ../..
+      dockerfile: packaging/docker/remote.Dockerfile

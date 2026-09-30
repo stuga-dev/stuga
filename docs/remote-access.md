@@ -27,9 +27,9 @@ remote access service gave them, accepts the Let's Encrypt Subscriber Agreement,
 4. gets a short-lived relay credential, and writes the connector's files;
 5. listens for the relay on a unix socket, and checks that its address reaches it.
 
-The page says what it is waiting on until the address works. The Mac package downloads and starts
-the connector by itself ([The connector](#the-connector)); elsewhere the page shows the command that
-starts it ([Running the connector yourself](#running-the-connector-yourself)).
+The page says what it is waiting on until the address works. The Mac package and the Docker install
+start the connector by themselves ([The connector](#the-connector)); elsewhere the page shows the
+command that starts it ([Running the connector yourself](#running-the-connector-yourself)).
 
 **Turn off** closes the remote listener at once, deletes the connector's credential, settings and
 relay certificate, asks the packaging to stop the connector where it runs it, and stops calling the
@@ -152,6 +152,19 @@ On a Mac:
   restart it, so remote connections stay open.
 - It logs warnings only.
 
+With Docker, installed with `install.sh`:
+
+- The connector is built the same way, from the same commit with the same Go, and comes in the
+  `stuga-remote` image of each release, which has provenance and an SBOM. It idles, connecting
+  nowhere, until remote access is turned on.
+- The `remote` service runs it as user 65532 in a read-only container without capabilities, on a
+  network of its own: it cannot reach Postgres, and reaches the node only as any machine on the
+  network does. It shares one volume with the node and can write only its status there. Before
+  starting the connector it copies each settings file and refuses to start on anything but the lines
+  the node writes.
+- It restarts only when its settings change, or the image with an upgrade.
+- It logs warnings only, to `docker compose logs remote`, at most 30 MB.
+
 Its settings name one https proxy for the node's own hostname onto the socket, and nothing else: no
 `exec` source, no included files, no admin interface, no `user` or metadata. The node rewrites them
 when the relays change, and removes the files of a relay that is no longer listed.
@@ -257,7 +270,7 @@ and takes it that nobody but the administrator runs the connector.
 
 ## Running the connector yourself
 
-For now only the Mac package offers remote access. For development, and in the Mac's local trial
+The Mac package and the Docker install run the connector themselves. For development, and in the Mac's local trial
 ([Build from a checkout](install/macos.md#build-from-a-checkout)), run the connector as the node's
 user, with frp 0.71.0:
 
