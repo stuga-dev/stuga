@@ -445,7 +445,8 @@ upgrade_backup() {
   local out
   pin_image "$(created_node_image)"
   out="$(node_cli list --json 2>/dev/null || true)"
-  printf '%s' "$out" | sed -n 's/.*"backups":\[{"name":"\([^"]*\)","path":"[^"]*","database":"[^"]*","created_at":"[^"]*","stuga_version":"\([^"]*\)".*/\1 \2/p' \
+  # A last line with no newline is one `read` never returns.
+  printf '%s\n' "$out" | sed -n 's/.*"backups":\[{"name":"\([^"]*\)","path":"[^"]*","database":"[^"]*","created_at":"[^"]*","stuga_version":"\([^"]*\)".*/\1 \2/p' \
     | while read -r name version; do
       if [ "$version" = "$1" ]; then printf '%s/%s' "$BACKUP_DIR" "$name"; fi
     done
