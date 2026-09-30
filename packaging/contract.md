@@ -132,7 +132,7 @@ These are optional. The app has a neutral default for each.
 | `STUGA_STDIO_ENTRY` | unset: the bundled `stuga-mcp.js` | `""`: no local path an agent outside the container can open | unset |
 | `AI_OLLAMA_DEFAULT_URL` | `http://127.0.0.1:11434` | `http://host.docker.internal:11434` (compose maps the host) | unset |
 | `STUGA_UPGRADE_REQUESTS`, `STUGA_UPGRADE_STATUS` | unset: the node offers no install | unset | the package's helper: `<root>/requests` and `<root>/status/upgrade.json` |
-| `STUGA_REMOTE_SERVICE`, `STUGA_REMOTE_DIR` | unset: the node offers no remote access | `https://api.stuga.dev` and `/run/stuga-remote` | `https://api.stuga.dev` and `<root>/remote` |
+| `STUGA_REMOTE_SERVICE`, `STUGA_REMOTE_DIR` | unset: the node offers no remote access | `/run/stuga-remote`, only when `.env` sets `STUGA_REMOTE_SERVICE` | `<root>/remote`, only when the render has `STUGA_REMOTE_SERVICE` in its environment |
 | `STUGA_CONNECTOR_REQUEST`, `STUGA_CONNECTOR_STATUS` | unset: the administrator runs the connector | the `stuga-remote` container: `/run/stuga-remote/control/request` and `/run/stuga-remote/status/status.json` | the package's helper: `<root>/requests/remote` and `<root>/status/remote.json`; unset in the local trial |
 | `STUGA_REMOTE_GID`, `STUGA_REMOTE_CONNECTOR_UID` | unset: the node checks the shared directory, and arranges nothing | `65532` and `65532` | unset |
 

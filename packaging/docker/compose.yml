@@ -54,14 +54,15 @@ services:
       BIND: 0.0.0.0
       PORT: "8787"
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8787}
-      # Remote access: the node writes the connector's files and what it wants into the remote
-      # volume, and the remote service runs the connector. 65532 is the remote service's user and group.
-      STUGA_REMOTE_SERVICE: https://api.stuga.dev
-      STUGA_REMOTE_DIR: /run/stuga-remote
-      STUGA_CONNECTOR_REQUEST: /run/stuga-remote/control/request
-      STUGA_CONNECTOR_STATUS: /run/stuga-remote/status/status.json
-      STUGA_REMOTE_GID: "65532"
-      STUGA_REMOTE_CONNECTOR_UID: "65532"
+      # Remote access is off until STUGA_REMOTE_SERVICE is in .env: the node writes the connector's files
+      # and what it wants into the remote volume, and the remote service runs the connector. 65532 is the
+      # remote service's user and group.
+      STUGA_REMOTE_SERVICE: ${STUGA_REMOTE_SERVICE:-}
+      STUGA_REMOTE_DIR: ${STUGA_REMOTE_SERVICE:+/run/stuga-remote}
+      STUGA_CONNECTOR_REQUEST: ${STUGA_REMOTE_SERVICE:+/run/stuga-remote/control/request}
+      STUGA_CONNECTOR_STATUS: ${STUGA_REMOTE_SERVICE:+/run/stuga-remote/status/status.json}
+      STUGA_REMOTE_GID: ${STUGA_REMOTE_SERVICE:+65532}
+      STUGA_REMOTE_CONNECTOR_UID: ${STUGA_REMOTE_SERVICE:+65532}
     networks: [db, default]
     extra_hosts:
       - "host.docker.internal:host-gateway"

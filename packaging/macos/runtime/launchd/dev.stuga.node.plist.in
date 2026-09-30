@@ -60,7 +60,7 @@
     <key>STUGA_UPGRADE_STATUS</key>
     <string>@ROOT@/status/upgrade.json</string>
     <key>STUGA_REMOTE_SERVICE</key>
-    <string>https://api.stuga.dev</string>
+    <string>@REMOTE_SERVICE@</string>
     <key>STUGA_REMOTE_DIR</key>
     <string>@ROOT@/remote</string>
     <key>STUGA_CONNECTOR_REQUEST</key>

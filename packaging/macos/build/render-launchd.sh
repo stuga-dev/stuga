@@ -16,6 +16,10 @@
 # --port to 8787. Writes <out>/<label>.plist for each job and lints them. With --keep-env, the
 # environment variables of a plist already there that this script does not set are carried over;
 # the ones it sets are rendered anew, and each of those whose value changes is named on stderr.
+#
+# Remote access is off unless STUGA_REMOTE_SERVICE is in this script's environment (the service's
+# origin, e.g. https://api.stuga.dev): without it the node's plist carries none of the remote access
+# variables, so the node offers nothing. A release build leaves it out until remote access launches.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -25,6 +29,7 @@ templates="${STUGA_LAUNCHD_TEMPLATES:-$here/../runtime/launchd}"
 
 usage() { sed -n '4,5p' "$0" | sed 's/^# \{0,3\}//' >&2; exit 2; }
 
+remote_service="${STUGA_REMOTE_SERVICE:-}"
 mode="" out="" origin="" root="" logs="" bind=127.0.0.1 port=8787 extra_origins="" keep_env=no
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -110,6 +115,7 @@ render() { # render <template> <label>
       -e "s|@PORT@|$port|g" \
       -e "s|@RESTART_HINT@|$(replacement "$restart_hint")|g" \
       -e "s|@UPGRADE_HINT@|$(replacement "$upgrade_hint")|g" \
+      -e "s|@REMOTE_SERVICE@|$(replacement "$remote_service")|g" \
       "$templates/$1" > "$target.tmp"
   if grep -n '@[A-Z_]*@' "$target.tmp" >&2; then
     rm -f "$target.tmp"
@@ -125,6 +131,12 @@ render() { # render <template> <label>
     local key
     for key in STUGA_UPGRADE_REQUESTS STUGA_UPGRADE_STATUS STUGA_CONNECTOR_REQUEST STUGA_CONNECTOR_STATUS SETUP_CODE_FILE STUGA_BONJOUR_NAME; do
       plutil -remove "EnvironmentVariables.$key" "$target.tmp" > /dev/null 2>&1 || true
+    done
+  fi
+  if [ -z "$remote_service" ]; then
+    local remote_key
+    for remote_key in STUGA_REMOTE_SERVICE STUGA_REMOTE_DIR STUGA_CONNECTOR_REQUEST STUGA_CONNECTOR_STATUS; do
+      plutil -remove "EnvironmentVariables.$remote_key" "$target.tmp" > /dev/null 2>&1 || true
     done
   fi
   if [ "$keep_env" = yes ] && [ -f "$target" ]; then

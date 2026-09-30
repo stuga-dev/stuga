@@ -11,12 +11,24 @@ const skip = process.platform !== "darwin" && "needs plutil";
 const roots = [];
 after(() => roots.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
 
+const SERVICE = "https://api.stuga.dev";
+
+/** The script's environment: remote access is rendered only when STUGA_REMOTE_SERVICE is in it. */
+const renderEnv = (remote) => {
+  const { STUGA_REMOTE_SERVICE: _, ...rest } = process.env;
+  return remote ? { ...rest, STUGA_REMOTE_SERVICE: SERVICE } : rest;
+};
+
 /** Renders the agent plists; what the script printed on stderr. */
 function renderAgent(out, ...flags) {
+  return renderAgentWith(false, out, ...flags);
+}
+
+function renderAgentWith(remote, out, ...flags) {
   const run = spawnSync(
     render,
     ["--mode", "agent", "--out", out, "--root", "/tmp/stuga root", "--logs", "/tmp/stuga logs", ...flags],
-    { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" },
+    { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8", env: renderEnv(remote) },
   );
   assert.equal(run.status, 0, run.stderr);
   return run.stderr;
@@ -92,11 +104,11 @@ test("the upgrade hint says how this packaging moves to a newer version", { skip
 });
 
 /** Renders the daemon plists into a scratch directory. */
-function renderDaemon(out) {
+function renderDaemon(out, remote = true) {
   const run = spawnSync(
     render,
     ["--mode", "daemon", "--out", out, "--root", "/tmp/stuga root", "--logs", "/tmp/stuga logs", "--public-origin", "http://livs-air.local:8787"],
-    { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8" },
+    { stdio: ["ignore", "ignore", "pipe"], encoding: "utf8", env: renderEnv(remote) },
   );
   assert.equal(run.status, 0, run.stderr);
 }
@@ -144,12 +156,24 @@ test("daemon mode points the node at the helper for upgrades and the connector",
 
 test("agent mode keeps remote access and the setup code in the data directory, and drops the helper's paths", { skip }, () => {
   const out = scratch();
-  renderAgent(out, "--public-origin", "http://127.0.0.1:8787");
+  renderAgentWith(true, out, "--public-origin", "http://127.0.0.1:8787");
   assert.deepEqual(readdirSync(out).sort(), ["dev.stuga.local.node.plist", "dev.stuga.local.postgres.plist"]);
   const env = environment(join(out, "dev.stuga.local.node.plist"));
   assert.equal(env.STUGA_REMOTE_DIR, "/tmp/stuga root/remote");
   assert.equal(env.STUGA_REMOTE_SERVICE, "https://api.stuga.dev");
   for (const key of ["STUGA_CONNECTOR_REQUEST", "STUGA_CONNECTOR_STATUS", "STUGA_UPGRADE_REQUESTS", "STUGA_UPGRADE_STATUS", "SETUP_CODE_FILE", "STUGA_BONJOUR_NAME"]) {
     assert.equal(env[key], undefined, key);
+  }
+});
+
+test("without STUGA_REMOTE_SERVICE the node's plist carries no remote access variables", { skip }, () => {
+  for (const mode of ["daemon", "agent"]) {
+    const out = scratch();
+    if (mode === "daemon") renderDaemon(out, false);
+    else renderAgent(out, "--public-origin", "http://127.0.0.1:8787");
+    const env = environment(join(out, mode === "daemon" ? "dev.stuga.node.plist" : "dev.stuga.local.node.plist"));
+    for (const key of ["STUGA_REMOTE_SERVICE", "STUGA_REMOTE_DIR", "STUGA_CONNECTOR_REQUEST", "STUGA_CONNECTOR_STATUS"]) {
+      assert.equal(env[key], undefined, `${mode} ${key}`);
+    }
   }
 });

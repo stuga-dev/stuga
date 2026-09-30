@@ -65,9 +65,10 @@ remote access connector's is `docker compose logs remote`. Add `-f` to follow on
 Put settings in `.env`, then run `docker compose up -d`. A `docker compose restart` keeps the old
 environment. Any node variable in [Configuration](../configuration.md) can go in `.env`, except the
 ones the stack sets itself. `compose.yml` sets `DATABASE_URL`, `DATA_DIR`, `BIND`, `PORT`,
-`BACKUP_DIR` and the remote access hints (`STUGA_REMOTE_SERVICE`, `STUGA_REMOTE_DIR`,
-`STUGA_CONNECTOR_REQUEST`, `STUGA_CONNECTOR_STATUS`, `STUGA_REMOTE_GID`,
-`STUGA_REMOTE_CONNECTOR_UID`) inside the container, and a value for them in `.env` has no effect there. The image sets `PG_BIN` and the packaging hints, so leave
+`BACKUP_DIR` and the remote access hints (`STUGA_REMOTE_DIR`, `STUGA_CONNECTOR_REQUEST`,
+`STUGA_CONNECTOR_STATUS`, `STUGA_REMOTE_GID`, `STUGA_REMOTE_CONNECTOR_UID`) inside the container, and
+a value for them in `.env` has no effect there. Remote access is off until `.env` sets
+`STUGA_REMOTE_SERVICE`, which switches the rest on. The image sets `PG_BIN` and the packaging hints, so leave
 those out too.
 
 These variables belong to the stack, not to the node:
