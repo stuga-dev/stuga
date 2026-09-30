@@ -11,6 +11,11 @@ its first section, are its summary: the release notes show that and link here fo
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-30
+
+- Remote access from the Mac package, with no terminal: the package runs the connector itself.
+- Certificate renewal when the CA suggests, and notices to administrators when renewal is in trouble.
+
 ### Added
 
 - **Remote access from the Mac package**: **Settings → This node → Remote access** turns it on with
@@ -29,6 +34,11 @@ its first section, are its summary: the release notes show that and link here fo
 
 - A remote certificate that has expired, or no longer names the address, takes the tunnel down
   until a new one is in place.
+
+### Fixed
+
+- The Mac package installs over a `_stuga` account left without its group by an earlier uninstall,
+  and gives the group back its old id.
 
 ## [0.1.5] - 2026-09-29
 
