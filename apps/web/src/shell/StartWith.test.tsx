@@ -15,7 +15,7 @@ const workspaces = vi.hoisted(() => ({
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), Workspaces: workspaces }));
 
 const { SAMPLES_RECHECK_MS, StartWith, createWorkspaceFrom, importHeldFile, landingPath, useNewWorkspace, useWorkspaceSamples } = await import("./StartWith");
-import { chooseRadio, mountInto, pickFile, typeInto } from "../test/form-input";
+import { chooseRadio, chooseSegment, mountInto, pickFile, typeInto } from "../test/form-input";
 import type { Creation } from "./StartWith";
 
 const ARCHIVE = new File(["PK"], "Team handbook.stuga.zip", { type: "application/zip" });
@@ -29,7 +29,7 @@ let root: Root;
 function Harness({ isOpen = true }: { isOpen?: boolean }) {
   const { name, setName, start, setStart, ready, nameOptional } = useNewWorkspace();
   const samples = useWorkspaceSamples(isOpen);
-  const picked = start.kind === "file" ? (start.file?.name ?? null) : start.kind === "sample" ? start.sample.id : null;
+  const picked = start.kind === "file" ? (start.file?.name ?? null) : start.kind === "sample" ? (start.sample?.id ?? null) : null;
   return (
     <>
       <input aria-label="name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -41,6 +41,8 @@ function Harness({ isOpen = true }: { isOpen?: boolean }) {
 
 const state = () =>
   JSON.parse(host.querySelector('[data-testid="state"]')!.textContent!) as { name: string; kind: string; picked: string | null; ready: boolean; nameOptional: boolean };
+const segments = () => [...host.querySelectorAll('button[role="radio"]')].map((b) => b.textContent);
+/** The samples offered: the radios below the segments. */
 const labels = () => [...host.querySelectorAll('input[type="radio"]')].map((r) => document.getElementById(r.getAttribute("aria-labelledby") ?? "")?.textContent);
 
 const typeName = (value: string) => typeInto(host.querySelector<HTMLInputElement>('input[aria-label="name"]'), value);
@@ -57,24 +59,23 @@ beforeEach(() => {
 });
 
 describe("Start with", () => {
-  it("offers an empty workspace or one from a file, and shows the file picker only for a file", async () => {
+  it("offers an empty workspace, a sample or a file, and shows the file picker only for a file", async () => {
     await act(async () => root.render(<Harness />));
-    expect(host.textContent).toContain("Start with");
-    expect(host.textContent).toContain("Empty workspace");
-    expect(host.textContent).toContain("From a file");
+    expect(segments()).toEqual(["Empty", "Sample", "Import"]);
     expect(host.querySelector('input[type="file"]')).toBeNull();
     expect(state()).toMatchObject({ kind: "empty", ready: false });
 
-    await chooseRadio(host, "From a file");
+    await chooseSegment(host, "Import");
     expect(host.querySelector<HTMLInputElement>('input[type="file"]')?.accept).toBe(".zip,application/zip");
+    expect(host.textContent).toContain("Choose a Notion export, a zipped Obsidian vault or Markdown folder, or a .stuga.zip");
     expect(state()).toMatchObject({ kind: "file", picked: null, ready: false });
-    await chooseRadio(host, "Empty workspace");
+    await chooseSegment(host, "Empty");
     expect(host.querySelector('input[type="file"]')).toBeNull();
   });
 
   it("leaves a file's workspace the name its archive carries, unless a name was typed", async () => {
     await act(async () => root.render(<Harness />));
-    await chooseRadio(host, "From a file");
+    await chooseSegment(host, "Import");
     expect(state()).toEqual({ name: "", kind: "file", picked: null, ready: false, nameOptional: true });
     // Not the file's name, which a browser's " (1)" or a dropped character can change.
     await pickFile(host, new File(["PK"], "Team handbook.stuga (1).zip", { type: "application/zip" }));
@@ -83,41 +84,50 @@ describe("Start with", () => {
     await typeName("Handbook");
     await pickFile(host, ARCHIVE);
     expect(state()).toMatchObject({ name: "Handbook", picked: "Team handbook.stuga.zip", ready: true });
-    await chooseRadio(host, "Empty workspace");
+    await chooseSegment(host, "Empty");
     expect(state()).toMatchObject({ name: "Handbook", kind: "empty", ready: true, nameOptional: false });
   });
 
-  it("offers the node's samples between an empty workspace and a file, each with its line", async () => {
+  it("lists the node's samples only under Sample, each with its line, the first one chosen", async () => {
     workspaces.samples.mockResolvedValue({ samples: [PYTHON, LAWS] });
     await act(async () => root.render(<Harness />));
-    expect(labels()).toEqual(["Empty workspace", "Python specs", "Privacy laws", "From a file"]);
+    expect(labels()).toEqual([]);
+    expect(host.textContent).not.toContain("Six laws in their own languages.");
+    await chooseSegment(host, "Sample");
+    expect(labels()).toEqual(["Python specs", "Privacy laws"]);
     expect(host.textContent).toContain("Six laws in their own languages.");
-    expect(host.textContent).not.toContain("Samples need an internet connection.");
-    expect(host.textContent).not.toContain("Loading samples…");
+    expect(state()).toEqual({ name: "Python specs (sample)", kind: "sample", picked: "python-specs", ready: true, nameOptional: false });
   });
 
   it("says the samples are loading until the node answers, and shows a list still fresh at once", async () => {
     let answer!: (list: { samples: unknown[] }) => void;
     workspaces.samples.mockReturnValue(new Promise((resolve) => (answer = resolve)));
     await act(async () => root.render(<Harness />));
-    expect(labels()).toEqual(["Empty workspace", "From a file"]);
-    expect(host.textContent).toContain("Loading samples…");
-    await act(async () => answer({ samples: [LAWS] }));
-    expect(labels()).toEqual(["Empty workspace", "Privacy laws", "From a file"]);
     expect(host.textContent).not.toContain("Loading samples…");
+    await chooseSegment(host, "Sample");
+    expect(labels()).toEqual([]);
+    expect(host.textContent).toContain("Loading samples…");
+    expect(state()).toMatchObject({ name: "", kind: "sample", picked: null, ready: false });
+    await act(async () => answer({ samples: [LAWS] }));
+    expect(labels()).toEqual(["Privacy laws"]);
+    expect(host.textContent).not.toContain("Loading samples…");
+    await chooseRadio(host, "Privacy laws");
+    expect(state()).toMatchObject({ name: "Privacy laws (sample)", picked: "privacy-laws", ready: true });
 
     act(() => root.unmount());
     ({ host, root } = mountInto());
     workspaces.cachedSamples.mockReturnValue({ samples: [LAWS] });
     workspaces.samples.mockReturnValue(new Promise(() => {}));
     await act(async () => root.render(<Harness />));
-    expect(labels()).toEqual(["Empty workspace", "Privacy laws", "From a file"]);
+    await chooseSegment(host, "Sample");
+    expect(labels()).toEqual(["Privacy laws"]);
     expect(host.textContent).not.toContain("Loading samples…");
   });
 
   it("shows each opening what is fresh, else loading, rather than the list an earlier opening had", async () => {
     workspaces.samples.mockResolvedValue({ samples: [PYTHON, LAWS] });
     await act(async () => root.render(<Harness />));
+    await chooseSegment(host, "Sample");
     await chooseRadio(host, "Privacy laws");
     await act(async () => root.render(<Harness isOpen={false} />));
 
@@ -125,25 +135,26 @@ describe("Start with", () => {
     let answer!: (list: { samples: unknown[]; unavailable?: boolean }) => void;
     workspaces.samples.mockReturnValue(new Promise((resolve) => (answer = resolve)));
     await act(async () => root.render(<Harness isOpen />));
-    expect(labels()).toEqual(["Empty workspace", "From a file"]);
+    expect(labels()).toEqual([]);
     expect(host.textContent).toContain("Loading samples…");
     // The sample chosen from the old list is gone with it, and so is the name it gave.
-    expect(state()).toMatchObject({ name: "", kind: "empty", ready: false });
+    expect(state()).toMatchObject({ name: "", kind: "sample", picked: null, ready: false });
     await act(async () => answer({ samples: [], unavailable: true }));
     expect(host.textContent).toContain("Samples need an internet connection.");
   });
 
-  it("falls back to an empty workspace when the latest list no longer offers the chosen sample", async () => {
+  it("lets go of a chosen sample the latest list no longer offers", async () => {
     workspaces.cachedSamples.mockReturnValue({ samples: [PYTHON, LAWS] });
     let answer!: (list: { samples: unknown[] }) => void;
     workspaces.samples.mockReturnValue(new Promise((resolve) => (answer = resolve)));
     await act(async () => root.render(<Harness />));
+    await chooseSegment(host, "Sample");
     await chooseRadio(host, "Privacy laws");
     expect(state()).toMatchObject({ name: "Privacy laws (sample)", kind: "sample" });
     await act(async () => answer({ samples: [PYTHON] }));
-    expect(labels()).toEqual(["Empty workspace", "Python specs", "From a file"]);
-    expect(state()).toMatchObject({ name: "", kind: "empty", ready: false });
-    expect(host.querySelector<HTMLInputElement>('input[type="radio"]:checked')?.value).toBe("empty");
+    expect(labels()).toEqual(["Python specs"]);
+    expect(state()).toMatchObject({ name: "", kind: "sample", picked: null, ready: false });
+    expect(host.querySelector('input[type="radio"]:checked')).toBeNull();
   });
 
   it("asks for the samples only once it is open", async () => {
@@ -159,8 +170,10 @@ describe("Start with", () => {
   ])("says samples need an internet connection when %s", async (_case, arrange) => {
     arrange();
     await act(async () => root.render(<Harness />));
-    expect(labels()).toEqual(["Empty workspace", "From a file"]);
+    await chooseSegment(host, "Sample");
+    expect(labels()).toEqual([]);
     expect(host.textContent).toContain("Samples need an internet connection.");
+    expect(state()).toMatchObject({ kind: "sample", picked: null, ready: false });
   });
 
   it("asks again for samples the node could not offer when the browser comes back online or to the page, and each minute", async () => {
@@ -169,6 +182,7 @@ describe("Start with", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
       await act(async () => root.render(<Harness />));
+      await chooseSegment(host, "Sample");
       expect(workspaces.samplesAgain).not.toHaveBeenCalled();
       await act(async () => void window.dispatchEvent(new Event("online")));
       await act(async () => void window.dispatchEvent(new Event("focus")));
@@ -177,7 +191,7 @@ describe("Start with", () => {
 
       workspaces.samplesAgain.mockResolvedValue({ samples: [PYTHON] });
       await act(async () => void (await vi.advanceTimersByTimeAsync(SAMPLES_RECHECK_MS)));
-      expect(labels()).toEqual(["Empty workspace", "Python specs", "From a file"]);
+      expect(labels()).toEqual(["Python specs"]);
       expect(host.textContent).not.toContain("Samples need an internet connection.");
 
       // Offered now, so asked for again only as usual.
@@ -200,21 +214,23 @@ describe("Start with", () => {
   it("names the workspace after the chosen sample, unless a name was typed, and takes that name away with the sample", async () => {
     workspaces.samples.mockResolvedValue({ samples: [PYTHON, LAWS] });
     await act(async () => root.render(<Harness />));
+    await chooseSegment(host, "Sample");
     await chooseRadio(host, "Privacy laws");
     expect(state()).toEqual({ name: "Privacy laws (sample)", kind: "sample", picked: "privacy-laws", ready: true, nameOptional: false });
     await chooseRadio(host, "Python specs");
     expect(state()).toMatchObject({ name: "Python specs (sample)", picked: "python-specs" });
-    await chooseRadio(host, "Empty workspace");
+    await chooseSegment(host, "Empty");
     expect(state()).toMatchObject({ name: "", kind: "empty", ready: false });
-    await chooseRadio(host, "Privacy laws");
-    await chooseRadio(host, "From a file");
+    await chooseSegment(host, "Sample");
+    expect(state()).toMatchObject({ name: "Python specs (sample)", picked: "python-specs" });
+    await chooseSegment(host, "Import");
     expect(state()).toMatchObject({ name: "", kind: "file" });
-    await chooseRadio(host, "Python specs");
+    await chooseSegment(host, "Sample");
 
     await typeName("Our specs");
     await chooseRadio(host, "Privacy laws");
     expect(state()).toMatchObject({ name: "Our specs", picked: "privacy-laws" });
-    await chooseRadio(host, "Empty workspace");
+    await chooseSegment(host, "Empty");
     expect(state()).toMatchObject({ name: "Our specs", kind: "empty", picked: null });
   });
 });
@@ -225,6 +241,15 @@ describe("creating from a start", () => {
     if (!("workspace" in out)) throw new Error("held, not made");
     return landingPath(out.workspace);
   };
+
+  it("creates nothing but an empty workspace from a start with no sample or file chosen", async () => {
+    workspaces.create.mockResolvedValue({ workspace_id: "w_0" });
+    await createWorkspaceFrom({ kind: "sample", sample: null }, "Notes", "private");
+    await createWorkspaceFrom({ kind: "file", file: null }, "Notes", "private");
+    expect(workspaces.create).toHaveBeenCalledTimes(2);
+    expect(workspaces.createFromSample).not.toHaveBeenCalled();
+    expect(workspaces.checkImport).not.toHaveBeenCalled();
+  });
 
   it("creates an empty workspace, or checks the file and imports it at once when it leaves nothing out, opening the document it starts with", async () => {
     workspaces.create.mockResolvedValue({ workspace_id: "w_1" });

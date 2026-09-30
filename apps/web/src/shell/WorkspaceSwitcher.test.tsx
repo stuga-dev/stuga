@@ -69,7 +69,7 @@ vi.mock("@astryxdesign/core/DropdownMenu", () => ({
 const { bookmarkHost, openableOrigin, survivesSwitch, WorkspaceSwitcher } = await import("./WorkspaceSwitcher");
 const { setAuthConfigForTest } = await import("../lib/session/auth-config");
 const { getActiveWorkspace } = await import("../lib/session/workspace-pointer");
-import { chooseRadio, mountInto, pickFile, typeInto } from "../test/form-input";
+import { chooseRadio, chooseSegment, mountInto, pickFile, typeInto } from "../test/form-input";
 
 describe("survivesSwitch", () => {
   it("keeps every settings section, nested ones included", () => {
@@ -279,7 +279,7 @@ describe("the switcher's menu", () => {
       workspaces.checkImport.mockResolvedValue({ import_id: "wsi_1", name: "Team handbook", expires_at: "2026-09-28T01:00:00Z" });
       workspaces.importHeld.mockResolvedValue({ workspace_id: "ws3", start_doc_id: "d9" });
       await act(async () => button("Create workspace")!.click());
-      await chooseRadio(open(), "From a file");
+      await chooseSegment(open(), "Import");
       const file = new File(["PK"], "Team handbook.stuga.zip", { type: "application/zip" });
       await pickFile(open(), file);
       await act(async () => dialogButton("Create workspace").click());
@@ -292,6 +292,7 @@ describe("the switcher's menu", () => {
     it("creates from a sample, enters the new workspace and opens the document it starts with", async () => {
       workspaces.createFromSample.mockResolvedValue({ workspace_id: "ws5", start_doc_id: "d_laws" });
       await act(async () => button("Create workspace")!.click());
+      await chooseSegment(open(), "Sample");
       await chooseRadio(open(), "Privacy laws");
       await act(async () => dialogButton("Create workspace").click());
       expect(workspaces.createFromSample).toHaveBeenCalledWith("privacy-laws", "Privacy laws (sample)", "workspace_edit");

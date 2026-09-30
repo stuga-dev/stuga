@@ -215,6 +215,7 @@ export function WorkspaceOnboarding() {
                 )}
                 {error && <Banner ref={errorRef} status="error" title="Workspace creation failed" description={error} />}
                 <VStack gap={4}>
+                  <StartWith value={start} onChange={setStart} samples={samples} isDisabled={busy} />
                   <TextInput
                     label="Workspace name"
                     placeholder={nameOptional ? ARCHIVE_NAME_PLACEHOLDER : "For example, My projects"}
@@ -234,7 +235,6 @@ export function WorkspaceOnboarding() {
                     options={WORKSPACE_ACCESS_OPTIONS}
                     isDisabled={busy}
                   />
-                  <StartWith value={start} onChange={setStart} samples={samples} isDisabled={busy} />
                 </VStack>
                 <HStack justify="end">
                   <Button

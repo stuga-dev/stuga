@@ -131,6 +131,7 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
             ) : (
               <VStack gap={4}>
                 {banners}
+                <StartWith value={start} onChange={setStart} samples={samples} isDisabled={busy} />
                 <TextInput
                   label="Workspace name"
                   placeholder={nameOptional ? ARCHIVE_NAME_PLACEHOLDER : "For example, Team notes"}
@@ -149,7 +150,6 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
                   options={WORKSPACE_ACCESS_OPTIONS}
                   isDisabled={busy}
                 />
-                <StartWith value={start} onChange={setStart} samples={samples} isDisabled={busy} />
               </VStack>
             )}
           </LayoutContent>

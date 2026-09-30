@@ -4,7 +4,7 @@ import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getActiveWorkspace } from "../lib/session/workspace-pointer";
-import { chooseRadio, mountInto, pickFile, typeInto } from "../test/form-input";
+import { chooseRadio, chooseSegment, mountInto, pickFile, typeInto } from "../test/form-input";
 
 const services = vi.hoisted(() => ({
   create: vi.fn(),
@@ -100,7 +100,9 @@ async function click(label: string) {
   await act(async () => target!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
-const name = (value: string) => typeInto(host.querySelector("input"), value);
+/** The name field, below the start's own inputs. */
+const nameInput = () => host.querySelector<HTMLInputElement>('input[type="text"], input:not([type])')!;
+const name = (value: string) => typeInto(nameInput(), value);
 
 beforeEach(() => {
   localStorage.clear();
@@ -190,11 +192,11 @@ describe("WorkspaceOnboarding", () => {
   });
   it("creates a workspace from a file, under the name its archive carries, and opens the document it starts with", async () => {
     await render();
-    await chooseRadio(host, "From a file");
+    await chooseSegment(host, "Import");
     expect(button("Create workspace")?.disabled).toBe(true);
     const file = new File(["PK"], "Team handbook.stuga.zip", { type: "application/zip" });
     await pickFile(host, file);
-    expect(host.querySelector("input")!.placeholder).toBe("Taken from the file");
+    expect(nameInput().placeholder).toBe("Taken from the file");
     await click("Create workspace");
 
     expect(services.checkImport).toHaveBeenCalledWith(file);
@@ -207,7 +209,7 @@ describe("WorkspaceOnboarding", () => {
   it("lists what a file would leave out and imports it only on Import", async () => {
     services.checkImport.mockResolvedValue({ import_id: "wsi_2", name: "Notion", expires_at: "2026-09-28T01:00:00Z", left_out: { count: 1, files: ["Home/Brief.pdf"] } });
     await render();
-    await chooseRadio(host, "From a file");
+    await chooseSegment(host, "Import");
     await pickFile(host, new File(["PK"], "Export.zip", { type: "application/zip" }));
     await click("Create workspace");
 
@@ -228,7 +230,7 @@ describe("WorkspaceOnboarding", () => {
     services.whoami.mockResolvedValue({ node_admin: true });
     services.ai.mockResolvedValue(NOTHING_SET_UP);
     await render();
-    await chooseRadio(host, "From a file");
+    await chooseSegment(host, "Import");
     await pickFile(host, new File(["PK"], "Handbook.zip", { type: "application/zip" }));
     await click("Create workspace");
     expect(host.textContent).toContain("Your workspace is ready");
@@ -240,9 +242,10 @@ describe("WorkspaceOnboarding", () => {
     services.whoami.mockResolvedValue({ node_admin: true });
     services.ai.mockResolvedValue(NOTHING_SET_UP);
     await render();
+    await chooseSegment(host, "Sample");
     expect(host.textContent).toContain("Six laws in their own languages.");
     await chooseRadio(host, "Privacy laws");
-    expect(host.querySelector("input")!.value).toBe("Privacy laws (sample)");
+    expect(nameInput().value).toBe("Privacy laws (sample)");
     await click("Create workspace");
 
     expect(services.createFromSample).toHaveBeenCalledWith("privacy-laws", "Privacy laws (sample)", "workspace_edit");
@@ -255,6 +258,7 @@ describe("WorkspaceOnboarding", () => {
   it("says samples need an internet connection when the node has none to offer, and offers them once the browser is back online", async () => {
     services.samples.mockResolvedValue({ samples: [], unavailable: true });
     await render();
+    await chooseSegment(host, "Sample");
     expect(host.textContent).toContain("Samples need an internet connection.");
     expect(host.textContent).not.toContain("Privacy laws");
     await act(async () => void window.dispatchEvent(new Event("online")));
@@ -265,7 +269,7 @@ describe("WorkspaceOnboarding", () => {
   it("says why an archive could not be imported and stays on the page", async () => {
     services.checkImport.mockRejectedValue(new Error("cannot import this archive: stuga.json: is missing"));
     await render();
-    await chooseRadio(host, "From a file");
+    await chooseSegment(host, "Import");
     await pickFile(host, new File(["PK"], "Handbook.zip", { type: "application/zip" }));
     await click("Create workspace");
     expect(host.textContent).toContain("cannot import this archive: stuga.json: is missing");
@@ -279,7 +283,7 @@ describe("WorkspaceOnboarding", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     services.importHeld.mockRejectedValue(Object.assign(new Error("try again"), { status: 504 }));
     await render();
-    await chooseRadio(host, "From a file");
+    await chooseSegment(host, "Import");
     await pickFile(host, new File(["PK"], "Handbook.zip", { type: "application/zip" }));
     await click("Create workspace");
     expect(host.textContent).toContain("The import may still finish");
@@ -295,7 +299,7 @@ describe("WorkspaceOnboarding", () => {
 
     // Nothing asks for a second meanwhile, which the node would refuse, or copy once the first is done.
     expect(button("Create workspace")?.disabled).toBe(true);
-    await act(async () => host.querySelector("input")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    await act(async () => nameInput().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     expect(services.importHeld).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain("The import may still finish");
 
@@ -311,7 +315,7 @@ describe("WorkspaceOnboarding", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
     services.importHeld.mockRejectedValue(Object.assign(new Error("try again"), { status: 504 }));
     await render();
-    await chooseRadio(host, "From a file");
+    await chooseSegment(host, "Import");
     await pickFile(host, new File(["PK"], "Handbook.zip", { type: "application/zip" }));
     await click("Create workspace");
     expect(host.textContent).toContain("The import may still finish");

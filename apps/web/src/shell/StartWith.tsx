@@ -2,8 +2,8 @@
  * What a new workspace starts with, wherever one is created: nothing, a published sample, or the
  * contents of a file: a workspace archive, or a Notion export or folder of Markdown the node
  * converts into one, which the person confirms first when it leaves files out. Each source is one
- * option of the list and one case of
- * `createWorkspaceFrom`, so another source joins as one more of each.
+ * segment of the control and one case of `createWorkspaceFrom`, so another source joins as one
+ * more of each; a sample or a file is then chosen below the control.
  */
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Banner } from "@astryxdesign/core/Banner";
@@ -11,6 +11,8 @@ import { FileInput } from "@astryxdesign/core/FileInput";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
 import { ScrollableArea } from "@astryxdesign/core/ScrollableArea";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 import { WORKSPACE_IMPORT_MAX_BYTES, type DocAccessMode } from "@stuga/protocol/domain/workspaces";
 import { Workspaces, type CreatedWorkspace, type HeldImport, type LeftOut, type WorkspaceSample, type WorkspaceSamples } from "../api";
@@ -18,7 +20,7 @@ import type { ApiError } from "../lib/http/client";
 
 export type StartChoice =
   | { kind: "empty" }
-  | { kind: "sample"; sample: WorkspaceSample }
+  | { kind: "sample"; sample: WorkspaceSample | null }
   | { kind: "file"; file: File | null };
 
 /** The samples as the list offers them: `loading` until the node has answered. */
@@ -27,7 +29,6 @@ export interface SampleChoices extends WorkspaceSamples {
 }
 
 const EMPTY: StartChoice = { kind: "empty" };
-const SAMPLE_VALUE = "sample:";
 const LOADING: SampleChoices = { samples: [], loading: true };
 
 /** What the name field says while it is empty for a file: the node takes the name the file carries. */
@@ -57,11 +58,14 @@ export type Creation = { workspace: CreatedWorkspace } | { held: HeldImport };
  * From a file, an empty `name` takes the file's.
  */
 export async function createWorkspaceFrom(start: StartChoice, name: string, access: DocAccessMode): Promise<Creation> {
-  if (start.kind === "empty" || (start.kind === "file" && !start.file)) return { workspace: await Workspaces.create(name, access) };
-  if (start.kind === "sample") return { workspace: await imported(() => Workspaces.createFromSample(start.sample.id, name, access)) };
+  if (start.kind === "sample" && start.sample) {
+    const { id } = start.sample;
+    return { workspace: await imported(() => Workspaces.createFromSample(id, name, access)) };
+  }
+  if (start.kind !== "file" || !start.file) return { workspace: await Workspaces.create(name, access) };
   let held: HeldImport;
   try {
-    held = await Workspaces.checkImport(start.file!);
+    held = await Workspaces.checkImport(start.file);
   } catch (err) {
     const { status, code } = err as ApiError;
     // The node says how large a file it takes; a 413 without a word of its own is a proxy's in front of it.
@@ -193,7 +197,7 @@ export function useNewWorkspace() {
   }, []);
   const setStart = useCallback((next: StartChoice) => {
     setStartValue(next);
-    if (!typed.current) setNameValue(next.kind === "sample" ? next.sample.name : "");
+    if (!typed.current) setNameValue(next.kind === "sample" ? (next.sample?.name ?? "") : "");
   }, []);
   const reset = useCallback(() => {
     typed.current = false;
@@ -201,7 +205,7 @@ export function useNewWorkspace() {
     setStartValue(EMPTY);
   }, []);
   const nameOptional = start.kind === "file";
-  const ready = start.kind === "file" ? start.file !== null : name.trim() !== "";
+  const ready = start.kind === "file" ? start.file !== null : (start.kind === "empty" || start.sample !== null) && name.trim() !== "";
   return { name, setName, start, setStart, reset, ready, nameOptional };
 }
 
@@ -213,36 +217,62 @@ interface StartWithProps {
   isDisabled?: boolean;
 }
 
+/** A segment's start as first chosen: a sample picks the first one offered. */
+function startOf(kind: StartChoice["kind"], offered: WorkspaceSample[]): StartChoice {
+  if (kind === "sample") return { kind, sample: offered[0] ?? null };
+  return kind === "file" ? { kind, file: null } : EMPTY;
+}
+
+/** Why no sample can be chosen yet. */
+function noSamples({ loading, unavailable }: SampleChoices): string {
+  if (loading) return "Loading samples…";
+  return unavailable ? "Samples need an internet connection." : "No samples to offer.";
+}
+
 export function StartWith({ value, onChange, samples, isDisabled = false }: StartWithProps) {
-  const selected = value.kind === "sample" ? `${SAMPLE_VALUE}${value.sample.id}` : value.kind;
   // A sample the latest list no longer offers cannot be created from.
-  const offered = value.kind !== "sample" || samples.samples.some((s) => s.id === value.sample.id);
+  const chosen = value.kind === "sample" ? value.sample : null;
+  const offered = !chosen || samples.samples.some((s) => s.id === chosen.id);
   useEffect(() => {
-    if (!offered) onChange(EMPTY);
+    if (!offered) onChange({ kind: "sample", sample: null });
   }, [offered, onChange]);
   return (
     <VStack gap={3}>
-      <RadioList
+      <SegmentedControl
         label="Start with"
-        description={samples.loading ? "Loading samples…" : samples.unavailable ? "Samples need an internet connection." : undefined}
-        value={selected}
+        layout="fill"
+        value={value.kind}
         isDisabled={isDisabled}
-        onChange={(next) => {
-          if (next === selected) return;
-          const sample = samples.samples.find((s) => `${SAMPLE_VALUE}${s.id}` === next);
-          onChange(sample ? { kind: "sample", sample } : next === "file" ? { kind: "file", file: null } : EMPTY);
-        }}
+        onChange={(kind) => kind !== value.kind && onChange(startOf(kind as StartChoice["kind"], samples.samples))}
       >
-        <RadioListItem value="empty" label="Empty workspace" />
-        {samples.samples.map((s) => (
-          <RadioListItem key={s.id} value={`${SAMPLE_VALUE}${s.id}`} label={s.title} description={s.description} />
+        <SegmentedControlItem value="empty" label="Empty" />
+        <SegmentedControlItem value="sample" label="Sample" />
+        <SegmentedControlItem value="file" label="Import" />
+      </SegmentedControl>
+      {value.kind === "sample" &&
+        (samples.samples.length === 0 ? (
+          <Text color="secondary">{noSamples(samples)}</Text>
+        ) : (
+          <RadioList
+            label="Sample"
+            isLabelHidden
+            value={chosen?.id ?? ""}
+            isDisabled={isDisabled}
+            onChange={(id) => {
+              const sample = samples.samples.find((s) => s.id === id);
+              if (sample && sample.id !== chosen?.id) onChange({ kind: "sample", sample });
+            }}
+          >
+            {samples.samples.map((s) => (
+              <RadioListItem key={s.id} value={s.id} label={s.title} description={s.description} />
+            ))}
+          </RadioList>
         ))}
-        <RadioListItem value="file" label="From a file" description="A Notion export, a zipped Obsidian vault or Markdown folder, or a .stuga.zip" />
-      </RadioList>
       {value.kind === "file" && (
         <FileInput
           label="File to import"
           isLabelHidden
+          placeholder="Choose a Notion export, a zipped Obsidian vault or Markdown folder, or a .stuga.zip"
           mode="dropzone"
           accept=".zip,application/zip"
           maxSize={WORKSPACE_IMPORT_MAX_BYTES}

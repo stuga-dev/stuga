@@ -3,7 +3,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WORKSPACE_IMPORT_MAX_BYTES } from "@stuga/protocol/domain/workspaces";
-import { chooseRadio, mountInto, pickFile, typeInto } from "../test/form-input";
+import { chooseRadio, chooseSegment, mountInto, pickFile, typeInto } from "../test/form-input";
 
 const samples = vi.hoisted(() => vi.fn());
 const importHeld = vi.hoisted(() => vi.fn());
@@ -60,7 +60,7 @@ beforeEach(() => {
 describe("CreateWorkspaceDialog", () => {
   it("creates an empty workspace by default, and opens it once it exists", async () => {
     await render(true);
-    expect(dialog().textContent).toContain("Start with");
+    expect(dialog().querySelector('[role="radiogroup"][aria-label="Start with"] [aria-checked="true"]')?.textContent).toBe("Empty");
     expect(button("Create workspace")!.disabled).toBe(true);
     await typeName("  Team notes ");
     await click("Create workspace");
@@ -74,7 +74,7 @@ describe("CreateWorkspaceDialog", () => {
     const held = { import_id: "wsi_1", name: "Notion", expires_at: "2026-09-28T01:00:00Z", left_out: { count: 12, files } };
     onSubmit.mockResolvedValue({ held });
     await render(true);
-    await chooseRadio(dialog(), "From a file");
+    await chooseSegment(dialog(), "Import");
     await pickFile(dialog(), ARCHIVE);
     await typeName("Notes");
     await click("Create workspace");
@@ -97,7 +97,7 @@ describe("CreateWorkspaceDialog", () => {
 
   it("creates from a chosen file, named as its archive is unless a name is typed, and waits for a file before it can", async () => {
     await render(true);
-    await chooseRadio(dialog(), "From a file");
+    await chooseSegment(dialog(), "Import");
     expect(button("Create workspace")!.disabled).toBe(true);
     expect(nameInput().placeholder).toBe("Taken from the file");
     expect(nameInput().required).toBe(false);
@@ -111,7 +111,7 @@ describe("CreateWorkspaceDialog", () => {
     const huge = new File(["PK"], "Everything.zip", { type: "application/zip" });
     Object.defineProperty(huge, "size", { value: WORKSPACE_IMPORT_MAX_BYTES + 1 });
     await render(true);
-    await chooseRadio(dialog(), "From a file");
+    await chooseSegment(dialog(), "Import");
     await pickFile(dialog(), huge);
     expect(dialog().textContent).toContain("Everything.zip");
     expect(button("Create workspace")!.disabled).toBe(true);
@@ -122,6 +122,7 @@ describe("CreateWorkspaceDialog", () => {
     expect(samples).not.toHaveBeenCalled();
     await render(true);
     expect(samples).toHaveBeenCalledTimes(1);
+    await chooseSegment(dialog(), "Sample");
     await chooseRadio(dialog(), "Privacy laws");
     expect(nameInput().value).toBe("Privacy laws (sample)");
     await click("Create workspace");
@@ -155,6 +156,7 @@ describe("CreateWorkspaceDialog", () => {
   it("says an import it stopped waiting for may still finish, not that it failed, and asks for no second", async () => {
     onSubmit.mockRejectedValue(new ImportMayFinish());
     await render(true);
+    await chooseSegment(dialog(), "Sample");
     await chooseRadio(dialog(), "Privacy laws");
     await click("Create workspace");
     expect(onSubmit).toHaveBeenCalledTimes(1);
@@ -175,7 +177,7 @@ describe("CreateWorkspaceDialog", () => {
   it("starts over when reopened", async () => {
     onSubmit.mockRejectedValue(new Error("offline"));
     await render(true);
-    await chooseRadio(dialog(), "From a file");
+    await chooseSegment(dialog(), "Import");
     await pickFile(dialog(), ARCHIVE);
     await click("Create workspace");
     expect(dialog().textContent).toContain("offline");

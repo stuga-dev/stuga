@@ -37,6 +37,13 @@ export async function chooseRadio(container: ParentNode, label: string): Promise
   await act(async () => radio!.click());
 }
 
+/** Pick the segment `label` names in a SegmentedControl, whose segments are buttons with the radio role. */
+export async function chooseSegment(container: ParentNode, label: string): Promise<void> {
+  const segment = [...container.querySelectorAll<HTMLButtonElement>('button[role="radio"]')].find((b) => b.textContent === label);
+  expect(segment, `no segment ${label}`).toBeDefined();
+  await act(async () => segment!.click());
+}
+
 /** Choose `file` in the one file picker under `container`. */
 export async function pickFile(container: ParentNode, file: File): Promise<void> {
   const input = container.querySelector<HTMLInputElement>('input[type="file"]');
