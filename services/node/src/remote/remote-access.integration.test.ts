@@ -154,7 +154,7 @@ describe.skipIf(!URL_ || !pebble)("remote access, against Pebble and the fake se
       challengeResolver: fixedChallengeResolver([pebble!.dns]),
       acmeTransport: transport,
       probe,
-      timing: { certTickMs: 1_000, serviceTickMs: 1_000, probeDelayMs: 300, probeEveryMs: 2_000, refreshSpacingMs: 1_000 },
+      timing: { certTickMs: 1_000, serviceTickMs: 1_000, probeDelayMs: 300, probeAfterRebindMs: 300, probeEveryMs: 2_000, probeRetryMs: 1_000, refreshSpacingMs: 1_000 },
       onError: (e) => console.error("[remote test]", e),
     });
     env.remote = service.view;

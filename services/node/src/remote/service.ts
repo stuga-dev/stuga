@@ -690,7 +690,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       if (result.code === "wrong_certificate" && (await movedAway(gen))) return;
       await recordError(remoteError(result.code, result.message, at));
       // A computer the address is moving from may answer for a minute or two: soon again, twice.
-      if (row!.probe_failures <= 2) scheduleProbe(timing.probeRetryMs);
+      if (row!.probe_failures <= 2) scheduleProbe(Math.min(timing.probeRetryMs, timing.probeEveryMs));
     }
   }
 
