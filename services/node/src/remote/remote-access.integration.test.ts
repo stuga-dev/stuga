@@ -90,12 +90,13 @@ describe.skipIf(!URL_ || !pebble)("remote access, against Pebble and the fake se
   let env: NodeEnv;
   let echo: HostedNamespace;
   let remote: RemoteAccess;
-  /** Every POST the node sent the CA. */
-  const posts: Array<{ url: string; body: string }> = [];
-  const orders = () => posts.filter((p) => p.url.endsWith("/order-plz")).length;
+  /** Every POST the node sent the CA, with the status it got. */
+  const posts: Array<{ url: string; body: string; status?: number }> = [];
+  const orderPosts = () => posts.filter((p) => p.url.endsWith("/order-plz"));
+  /** Orders the CA created: Pebble refuses 5% of nonces, and the client sends that order again. */
+  const orders = () => orderPosts().filter((p) => p.status === 201).length;
   const orderPayloads = () =>
-    posts
-      .filter((p) => p.url.endsWith("/order-plz"))
+    orderPosts()
       .map((p) => JSON.parse(Buffer.from((JSON.parse(p.body) as { payload: string }).payload, "base64url").toString()) as { replaces?: string });
   let lan: { close(): Promise<void> };
   let lanPort = 0;
@@ -110,14 +111,17 @@ describe.skipIf(!URL_ || !pebble)("remote access, against Pebble and the fake se
   let refusedAt: number | null = null;
   const transport: AcmeTransport = {
     async request(url, init) {
-      if (init.method === "POST") posts.push({ url, body: init.body ?? "" });
+      const post = init.method === "POST" ? { url, body: init.body ?? "", status: undefined as number | undefined } : null;
+      if (post) posts.push(post);
       if (refuseReplaces && url.endsWith("/order-plz") && orderPayloads().at(-1)?.replaces) {
         refuseReplaces = false;
-        refusedAt = orders() - 1;
+        refusedAt = orderPosts().length - 1;
+        post!.status = 409;
         const problem = { type: "urn:ietf:params:acme:error:alreadyReplaced", detail: "already replaced" };
         return { status: 409, headers: new Headers({ "content-type": "application/problem+json" }), body: new Uint8Array(Buffer.from(JSON.stringify(problem))) };
       }
       const res = await httpsTransport({ ca: pebble!.ca }).request(url, init);
+      if (post) post.status = res.status;
       if (ari || init.method !== "GET" || !url.endsWith("/dir") || res.status !== 200) return res;
       const { renewalInfo: _, ...directory } = JSON.parse(Buffer.from(res.body).toString("utf8")) as Record<string, unknown>;
       return { ...res, body: new Uint8Array(Buffer.from(JSON.stringify(directory))) };
