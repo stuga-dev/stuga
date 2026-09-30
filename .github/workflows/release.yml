@@ -236,8 +236,7 @@ jobs:
         run: |
           set -euo pipefail
           cp env.example .env
-          # Remote access is off unless .env names the service; name it, so the connector is checked too.
-          printf 'HOST_PORT=8790\nSTUGA_VOLUME_NAME=stuga_smoke_pgdata\nPUBLIC_ORIGIN=http://127.0.0.1:8790\nSTUGA_REMOTE_SERVICE=https://api.stuga.dev\n' >> .env
+          printf 'HOST_PORT=8790\nSTUGA_VOLUME_NAME=stuga_smoke_pgdata\nPUBLIC_ORIGIN=http://127.0.0.1:8790\n' >> .env
           docker compose -p stuga-smoke up -d --wait
 
       - name: Assert what a broken release would get wrong
@@ -251,6 +250,22 @@ jobs:
           curl -fsS http://127.0.0.1:8790/ | grep -q 'id="root"'
           test "$(docker run --rm --entrypoint cat "ghcr.io/${{ github.repository_owner }}/stuga-node:$V" /app/VERSION)" = "$V"
           docker compose -p stuga-smoke logs node | grep -q "stuga $V,"
+          # Remote access is off by default: the node is given no service and no directory, and writes
+          # nothing for the connector.
+          test -z "$(docker compose -p stuga-smoke exec -T node printenv STUGA_REMOTE_SERVICE || true)"
+          test -z "$(docker compose -p stuga-smoke exec -T node printenv STUGA_REMOTE_DIR || true)"
+          sleep 5
+          if docker compose -p stuga-smoke exec -T node test -e /run/stuga-remote/control/request; then
+            echo "::error::remote access is on by default"; exit 1
+          fi
+
+      - name: Assert the connector, with remote access named in .env
+        working-directory: smoke
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          printf 'STUGA_REMOTE_SERVICE=https://api.stuga.dev\n' >> .env
+          docker compose -p stuga-smoke up -d --wait
           # The connector is the pinned frp, and idles: healthy, no frpc running, and the node's `off`
           # answered through the shared volume.
           test "$(docker run --rm --entrypoint frpc "ghcr.io/${{ github.repository_owner }}/stuga-remote:$V" --version)" = "$FRP_VERSION"
