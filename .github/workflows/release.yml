@@ -236,7 +236,8 @@ jobs:
         run: |
           set -euo pipefail
           cp env.example .env
-          printf 'HOST_PORT=8790\nSTUGA_VOLUME_NAME=stuga_smoke_pgdata\nPUBLIC_ORIGIN=http://127.0.0.1:8790\n' >> .env
+          # Remote access is off unless .env names the service; name it, so the connector is checked too.
+          printf 'HOST_PORT=8790\nSTUGA_VOLUME_NAME=stuga_smoke_pgdata\nPUBLIC_ORIGIN=http://127.0.0.1:8790\nSTUGA_REMOTE_SERVICE=https://api.stuga.dev\n' >> .env
           docker compose -p stuga-smoke up -d --wait
 
       - name: Assert what a broken release would get wrong
