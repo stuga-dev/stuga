@@ -9,6 +9,8 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-09-30
+
 ### Added
 
 - When a restore code moves remote access to another computer, the old one turns it off and says the address moved ([docs/remote-access.md](docs/remote-access.md#turning-off-restoring-and-backups)).
