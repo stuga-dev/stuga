@@ -39,17 +39,34 @@ jobs:
 
   docker-images:
     needs: [verify, changelog]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
           - image: stuga-node
             dockerfile: packaging/docker/node.Dockerfile
+            runner: ubuntu-latest
+            platforms: linux/amd64,linux/arm64
           - image: stuga-postgres
             dockerfile: packaging/docker/postgres.Dockerfile
+            runner: ubuntu-latest
+            platforms: linux/amd64,linux/arm64
+          # frpc builds natively (packaging/shared/connector/build.sh): each architecture on its own
+          # runner, pushed by digest, and docker-remote tags the two as the version.
+          - image: stuga-remote
+            dockerfile: packaging/docker/remote.Dockerfile
+            runner: ubuntu-latest
+            platforms: linux/amd64
+            arch: amd64
+          - image: stuga-remote
+            dockerfile: packaging/docker/remote.Dockerfile
+            runner: ubuntu-24.04-arm
+            platforms: linux/arm64
+            arch: arm64
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
+        if: ${{ !matrix.arch }}
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -90,25 +107,71 @@ jobs:
             echo "ARGS"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: docker/build-push-action@v7
+      - id: build
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: ${{ matrix.platforms }}
+          push: ${{ !matrix.arch }}
+          tags: ${{ matrix.arch && format('ghcr.io/{0}/{1}', github.repository_owner, matrix.image) || steps.meta.outputs.tags }}
+          outputs: ${{ matrix.arch && 'type=image,push-by-digest=true,name-canonical=true,push=true' || '' }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ steps.args.outputs.list }}
           provenance: true
           sbom: true
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-from: type=gha,scope=${{ matrix.image }}${{ matrix.arch && format('-{0}', matrix.arch) || '' }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}${{ matrix.arch && format('-{0}', matrix.arch) || '' }}
 
-  docker-package:
+      - name: Keep the digest for docker-remote
+        if: matrix.arch
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v7
+        if: matrix.arch
+        with:
+          name: digest-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # stuga-remote's two architectures, each with its provenance and SBOM, under the version's tag.
+  docker-remote:
     needs: docker-images
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: digest-stuga-remote-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag both architectures as the version
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          image="ghcr.io/${{ github.repository_owner }}/stuga-remote"
+          digests=(*)
+          [ "${#digests[@]}" = 2 ] || { echo "::error::expected a digest per architecture, got ${digests[*]}"; exit 1; }
+          docker buildx imagetools create --tag "$image:$V" "${digests[@]/#/$image@sha256:}"
+
+  docker-package:
+    needs: [docker-images, docker-remote]
+    runs-on: ubuntu-latest
+    outputs:
+      frp: ${{ steps.pins.outputs.frp }}
+    steps:
       - uses: actions/checkout@v7
+      - id: pins
+        run: . packaging/versions.env && echo "frp=$FRP_VERSION" >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -123,13 +186,14 @@ jobs:
           owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           grep -qx "    image: ghcr.io/${owner}/stuga-node:${V}" release-assets/compose.yml
           grep -qx "    image: ghcr.io/${owner}/stuga-postgres:${V}" release-assets/compose.yml
+          grep -qx "    image: ghcr.io/${owner}/stuga-remote:${V}" release-assets/compose.yml
 
       # The unknown/unknown entries are the provenance and SBOM attestations, not platforms.
       - name: Check both architectures were published
         run: |
           set -euo pipefail
           V="${GITHUB_REF_NAME#v}"
-          for img in stuga-node stuga-postgres; do
+          for img in stuga-node stuga-postgres stuga-remote; do
             docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/$img:$V" --raw \
               | jq -r '.manifests[].platform | .os+"/"+.architecture' \
               | grep -v '^unknown/unknown$' | sort -u > /tmp/platforms
@@ -149,6 +213,8 @@ jobs:
   # The only test of what an operator downloads: the stamped compose.yml booting the published images.
   docker-smoke:
     needs: docker-package
+    env:
+      FRP_VERSION: ${{ needs.docker-package.outputs.frp }}
     strategy:
       fail-fast: false
       matrix:
@@ -184,6 +250,17 @@ jobs:
           curl -fsS http://127.0.0.1:8790/ | grep -q 'id="root"'
           test "$(docker run --rm --entrypoint cat "ghcr.io/${{ github.repository_owner }}/stuga-node:$V" /app/VERSION)" = "$V"
           docker compose -p stuga-smoke logs node | grep -q "stuga $V,"
+          # The connector is the pinned frp, and idles: healthy, no frpc running, and the node's `off`
+          # answered through the shared volume.
+          test "$(docker run --rm --entrypoint frpc "ghcr.io/${{ github.repository_owner }}/stuga-remote:$V" --version)" = "$FRP_VERSION"
+          test "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose -p stuga-smoke ps -q remote)")" = healthy
+          if docker compose -p stuga-smoke top remote | grep -q frpc; then echo "::error::frpc runs"; exit 1; fi
+          for _ in $(seq 30); do
+            status="$(docker compose -p stuga-smoke exec -T node cat /run/stuga-remote/status/status.json 2>/dev/null || true)"
+            if printf '%s' "$status" | grep -q '"state":"stopped"'; then break; fi
+            sleep 1
+          done
+          printf '%s' "$status" | grep -q '"state":"stopped"' || { echo "::error::the connector's status is ${status:-missing}"; exit 1; }
 
       - name: Tear down
         if: always()
@@ -306,7 +383,7 @@ jobs:
           V="${GITHUB_REF_NAME#v}"
           MINOR="${V%.*}"
           MAJOR="${V%%.*}"
-          for img in stuga-node stuga-postgres; do
+          for img in stuga-node stuga-postgres stuga-remote; do
             SRC="ghcr.io/${{ github.repository_owner }}/$img:$V"
             docker buildx imagetools create --tag "ghcr.io/${{ github.repository_owner }}/$img:$MINOR" "$SRC"
             docker buildx imagetools create --tag "ghcr.io/${{ github.repository_owner }}/$img:$MAJOR" "$SRC"
