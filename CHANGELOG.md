@@ -9,6 +9,19 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-09-30
+
+### Changed
+
+- Reviewing an agent's edits, a reworded passage reads as before → after with the line it sits in, and an edit beside a deleted section is a change of its own.
+
+### Fixed
+
+- **Uninstall Stuga…** in the Mac's menu bar no longer stalls for two minutes.
+- On a Mac with no Apple Account signed in and nothing shared, the Mac's `.local` address now works: Stuga advertises itself over Bonjour while it runs.
+- On a Mac, the setup page opens once Stuga has started, and **Set Up Stuga…** no longer asks the Mac's administrators for a password.
+- **Copy link** on a document copies it at the node's address, not the one the browser reached it at.
+
 ## [0.1.7] - 2026-09-30
 
 The first release: documents, databases and search for a team, on your own machine, with AI agents
