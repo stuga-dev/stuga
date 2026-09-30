@@ -13,6 +13,7 @@ import { after, test } from "node:test";
 
 const wrapper = new URL("../runtime/bin/remote-wrapper.sh", import.meta.url).pathname;
 const rotate = new URL("../runtime/bin/rotate-log.mjs", import.meta.url).pathname;
+const checkToml = new URL("../../shared/connector/check-toml.sh", import.meta.url).pathname;
 const skip = process.platform !== "darwin" && "runs under macOS's /bin/bash";
 const roots = [];
 after(() => roots.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
@@ -41,12 +42,16 @@ function setup() {
   mkdirSync(logs);
   symlinkSync(process.execPath, join(root, "current/node/bin/node"));
   symlinkSync(rotate, join(root, "current/bin/rotate-log.mjs"));
+  // As the runtime lays them out: check-toml.sh beside the wrapper.
+  symlinkSync(wrapper, join(root, "current/bin/remote-wrapper.sh"));
+  symlinkSync(checkToml, join(root, "current/bin/check-toml.sh"));
   writeFileSync(join(root, "connector/current/frpc"), FRPC);
   chmodSync(join(root, "connector/current/frpc"), 0o755);
   const dir = join(root, "remote");
   return {
     root,
     logs,
+    wrapper: join(root, "current/bin/remote-wrapper.sh"),
     dir,
     /** The node's config for `relay`, as the golden test has it, in this root. */
     config: (relay = "relay-1") => GOLDEN.replaceAll(GOLDEN_DIR, dir).replaceAll("relay-1.jwt", `${relay}.jwt`).replaceAll("relay-1.ca.pem", `${relay}.ca.pem`),
@@ -61,12 +66,12 @@ function setup() {
 
 /** Runs the wrapper to its end: for configs it refuses, or nothing to run. */
 function runToEnd(h) {
-  return spawnSync("/bin/bash", [wrapper], { env: h.env, encoding: "utf8", timeout: 20_000 });
+  return spawnSync("/bin/bash", [h.wrapper], { env: h.env, encoding: "utf8", timeout: 20_000 });
 }
 
 /** Starts the wrapper; resolves once `count` connectors are running. */
 async function start(h, count = 1) {
-  const child = spawn("/bin/bash", [wrapper], { env: h.env, stdio: ["ignore", "ignore", "pipe"] });
+  const child = spawn("/bin/bash", [h.wrapper], { env: h.env, stdio: ["ignore", "ignore", "pipe"] });
   let stderr = "";
   child.stderr.on("data", (d) => (stderr += d));
   const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal, stderr: () => stderr })));
@@ -108,7 +113,7 @@ test("a connector that exits stops the others, and the wrapper exits 1", { skip 
   const h = setup();
   h.write(h.config());
   writeFileSync(join(h.root, "exit-now"), "");
-  const child = spawn("/bin/bash", [wrapper], { env: h.env, stdio: ["ignore", "ignore", "pipe"] });
+  const child = spawn("/bin/bash", [h.wrapper], { env: h.env, stdio: ["ignore", "ignore", "pipe"] });
   let stderr = "";
   child.stderr.on("data", (d) => (stderr += d));
   const code = await new Promise((resolve) => child.on("exit", resolve));
@@ -198,6 +203,17 @@ test("refuses a config that is a symbolic link", { skip }, () => {
   const run = runToEnd(h);
   assert.equal(run.status, 78, run.stderr);
   assert.match(run.stderr, /not a plain file/);
+});
+
+test("refuses a STUGA_ROOT its configs cannot name", { skip }, () => {
+  const h = setup();
+  h.write(h.config());
+  for (const root of [`${h.root}/`, `${h.root}/../Stuga`, "Stuga", `${h.root}{x}`]) {
+    const run = spawnSync("/bin/bash", [h.wrapper], { env: { ...h.env, STUGA_ROOT: root }, encoding: "utf8", timeout: 20_000 });
+    assert.equal(run.status, 78, root);
+    assert.match(run.stderr, /STUGA_ROOT is not a path the node's configs can name/);
+  }
+  assert.deepEqual(h.started(), []);
 });
 
 test("never passes --allow-unsafe", { skip }, () => {
