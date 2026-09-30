@@ -32,6 +32,7 @@ PORT="${STUGA_TEST_PORT:-8798}"
 VOLUME="${PROJECT//-/_}_pgdata"
 NODE_IMAGE="ghcr.io/stuga-dev/stuga-node:$VERSION"
 POSTGRES_IMAGE="ghcr.io/stuga-dev/stuga-postgres:$VERSION"
+REMOTE_IMAGE="ghcr.io/stuga-dev/stuga-remote:$VERSION"
 OLD=8.0.0
 NEXT=9.0.0
 MISSING=9.0.1
@@ -73,7 +74,8 @@ cleanup() {
   done
   docker volume rm "$VOLUME" >/dev/null 2>&1 || true
   docker image rm "$OLD_NODE" "$REGISTRY/stuga-node:$NEXT" "$REGISTRY/stuga-postgres:$NEXT" \
-    "$REGISTRY/stuga-node:$BROKEN" "$REGISTRY/stuga-postgres:$BROKEN" >/dev/null 2>&1 || true
+    "$REGISTRY/stuga-node:$BROKEN" "$REGISTRY/stuga-postgres:$BROKEN" \
+    "$REGISTRY/stuga-remote:$NEXT" "$REGISTRY/stuga-remote:$BROKEN" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -95,11 +97,13 @@ RUN printf '%s\n' "$v" > /app/VERSION
 DOCKERFILE
 done
 docker tag "$POSTGRES_IMAGE" "$REGISTRY/stuga-postgres:$NEXT"
+docker tag "$REMOTE_IMAGE" "$REGISTRY/stuga-remote:$NEXT"
 docker build -q -t "$REGISTRY/stuga-node:$BROKEN" - >/dev/null <<DOCKERFILE
 FROM $NODE_IMAGE
 ENTRYPOINT ["sh", "-c", "exit 1"]
 DOCKERFILE
 docker tag "$POSTGRES_IMAGE" "$REGISTRY/stuga-postgres:$BROKEN"
+docker tag "$REMOTE_IMAGE" "$REGISTRY/stuga-remote:$BROKEN"
 
 # release <version>: that release's compose.yml, env.example and stuga, as GitHub would serve them.
 release() {
