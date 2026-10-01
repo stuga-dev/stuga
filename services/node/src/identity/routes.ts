@@ -942,8 +942,14 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
         const sibling = account ? await db.siblingRefreshSession({ of: stale.replaced_by, id: randomUUID(), tokenHash: next.hash }) : null;
         if (account && sibling) return json(tokenPair(await accessToken(req, account, sibling.session_id), next.token));
       }
-      // A replay: whoever holds the live successor loses it too.
-      if (stale?.revoked_at) await endSessions(stale.alias);
+      // A rotated token presented again after its grace: a replay. Whoever holds that sign-in's live
+      // successor loses it too; the account's other sign-ins stay. A token ended some other way (sign-out,
+      // a password change, a reset, Revoke everything, an upgrade) is only refused: ending more would sign
+      // the person out of the browser where they just signed in again.
+      if (stale?.replaced_by) {
+        const ended = await db.endSession(tokenHash, arrival);
+        if (ended) deps.onSessionsEnded?.(ended.alias, [ended.sessionId]);
+      }
       return unknown();
     }
 

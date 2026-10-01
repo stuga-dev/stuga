@@ -923,7 +923,7 @@ describe("where a session was signed in", () => {
 });
 
 describe("ending every session of an account", () => {
-  it("closes the sockets they opened, on a password change, a reset and a replay", async () => {
+  it("closes the sockets they opened, on a password change and a reset", async () => {
     const ended: string[] = [];
     const r = () => createIdentityRouter(baseDeps({ onSessionsEnded: (alias) => ended.push(alias) }));
     const pair = (await (await register()).json()) as TokenPair;
@@ -936,8 +936,30 @@ describe("ending every session of an account", () => {
     expect((await r().handle(post("/auth/reset", { token: "reset-1", new_password: "battery staple 10" }))).status).toBe(200);
     expect(ended).toEqual([alias, alias]);
 
-    // The first pair's refresh token was revoked with the change: presenting it again is a replay.
+    // The first pair's refresh token was revoked with the change, not rotated: refused, and nothing more ends.
     expect((await r().handle(post("/auth/refresh", { refresh_token: pair.refresh_token }))).status).toBe(401);
-    expect(ended).toEqual([alias, alias, alias]);
+    expect(ended).toEqual([alias, alias]);
+  });
+
+  it("keeps the session a password change gave when another browser presents its revoked token", async () => {
+    const old = (await (await register()).json()) as TokenPair;
+    const changed = await router().handle(post("/auth/password", { username: "ada", current_password: "correct horse", new_password: "battery staple 9" }));
+    expect(changed.status).toBe(200);
+    const fresh = (await changed.json()) as TokenPair;
+    // The other browser wakes up with the token the change revoked.
+    expect((await router().handle(post("/auth/refresh", { refresh_token: old.refresh_token }))).status).toBe(401);
+    expect((await router().handle(post("/auth/refresh", { refresh_token: fresh.refresh_token }))).status).toBe(200);
+  });
+
+  it("ends only the replayed sign-in, not the account's others", async () => {
+    await register();
+    const login = async () => (await (await router().handle(post("/auth/login", { username: "ada", password: "correct horse" }))).json()) as TokenPair;
+    const a = await login();
+    const b = await login();
+    const aNext = (await (await router().handle(post("/auth/refresh", { refresh_token: a.refresh_token }))).json()) as TokenPair;
+    // a's rotated token, presented again: a replay of that sign-in.
+    expect((await router().handle(post("/auth/refresh", { refresh_token: a.refresh_token }))).status).toBe(401);
+    expect((await router().handle(post("/auth/refresh", { refresh_token: aNext.refresh_token }))).status).toBe(401);
+    expect((await router().handle(post("/auth/refresh", { refresh_token: b.refresh_token }))).status).toBe(200);
   });
 });

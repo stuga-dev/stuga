@@ -9,31 +9,33 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- Everyone signs in again after upgrading, and apps connected over OAuth connect again.
+- Over plain http, the node takes passwords only from its own network. Add public ranges that belong to it with `LOCAL_PASSWORD_NETWORKS` ([Network access](docs/network-access.md#passwords-over-plain-http)).
+
 ### Added
 
-- **Revoke everything**, in **Settings → Profile**: every session ends, and the identity provider link, connected apps, API keys and the links you shared go; a new password is the way back in. Administrators do it for someone under **Account recovery**, which hands back a password link.
-- An alert about your account or the node says whether it also went out through the node's notifications: sending, sent, or not sent and why.
-- Changing your email tells you and the node's administrators; when notifications go by email, yours goes to the address it was. Changing where the node sends notifications tells every administrator through the channel it had, and an alert not yet sent then is not sent through the new one.
-- On a node whose address is `localhost`, invite and password links say they open only on this computer.
+- **Revoke everything** in **Settings → Profile** ends every session, connected app, API key and shared link; administrators do it for others under **Account recovery**.
+- Alerts say whether the node's notifications sent them.
+- Changing your email or the node's notification channel is told to you and the administrators.
 
 ### Changed
 
-- Reviewing an agent's edits, a sentence rewritten in other words shows as one removal and one insertion, not interleaved words.
-- Wrong passwords pause sign-ins for that account, for longer each time; every route that checks a password counts them.
-- Passwords are stored with a costlier hash, and a stored one is hashed again at the next sign-in.
-- A long passphrase, such as `trumpet walnut ceiling`, needs no letter-and-number mix.
-- Over plain http the node takes passwords only from its own network; `LOCAL_PASSWORD_NETWORKS` adds public ranges that belong to it. `reset-password` prints the SSH tunnel to open its link from outside the network.
-- A session's access tokens stop working the moment it ends, by signing out, a password change or a reset link, rather than up to an hour later; a password change or reset also closes the account's live document connections. Everyone signs in again after upgrading, and apps connected over OAuth are connected again.
-- Minting or rotating an API key, keeping one working longer, changing your email, setting a first password, linking or unlinking the identity provider, appointing an administrator, a password link, and changing the identity provider or notifications ask you to confirm it's you when you signed in more than five minutes ago.
-- A browser that signed in before keeps signing in while wrong passwords from elsewhere pause the account. Each browser keeps a cookie for this ([Privacy](docs/privacy.md#what-the-node-stores)).
-- A password change, an API key, Revoke everything and an hour-long pause after wrong passwords are notified to the person, in the app and through the node's notifications; Revoke everything to the administrators too.
-- An invite link made through the API without limits admits one person for seven days, as the dialog's does; `null` asks for no limit or no expiry.
-- In Slack, Discord and Teams notifications, a document's or an app's name shows as written, never as a link or a mention.
+- Reviewing an agent's edits, a rewritten sentence shows as one removal and one insertion.
+- Wrong passwords pause sign-in for that account, longer each time; a browser that signed in before keeps working ([Privacy](docs/privacy.md#what-the-node-stores)).
+- Passwords are stored with a stronger hash, upgraded at the next sign-in.
+- A long passphrase needs no letter-and-number mix.
+- Signing out, a password change or a reset ends a session's access at once.
+- Sensitive changes ask you to confirm it's you if you signed in more than five minutes ago.
+- An invite made through the API without limits admits one person for seven days.
+- Slack, Discord and Teams notifications show names as written, never as links or mentions.
 
 ### Fixed
 
-- On a Mac, **Login Items** no longer lists Stuga's four background services as `bash` from an unidentified developer: they are listed under Stuga.
-- Removing a chat provider under **Settings → This node → AI providers** deletes its API key from the node too.
+- An old browser waking up after a password change no longer signs you out of the one you just used.
+- On a Mac, **Login Items** lists Stuga's background services under Stuga, not as `bash`.
+- Removing a chat provider deletes its API key too.
 
 ## [0.1.8] - 2026-09-30
 
