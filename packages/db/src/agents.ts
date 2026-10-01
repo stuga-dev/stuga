@@ -1,5 +1,5 @@
 /** API keys, OAuth client registration and codes, and AI usage telemetry. */
-import type { AiUsageInsert, ApiKeyAccess, ApiKeyRow } from "./types.js";
+import type { AiUsageInsert, ApiKeyAccess, ApiKeyRow, CredentialArrival } from "./types.js";
 import { daysAgo } from "./sql.js";
 import type { Sql } from "./client.js";
 
@@ -222,6 +222,8 @@ export async function insertOauthCode(
     redirectUri: string;
     codeChallenge: string;
     expiresAt: Date;
+    /** The listener the person consented at: the code is exchanged only there. */
+    arrival: CredentialArrival;
   },
 ): Promise<void> {
   await sql`INSERT INTO oauth_codes ${sql({
@@ -233,6 +235,7 @@ export async function insertOauthCode(
     redirect_uri: input.redirectUri,
     code_challenge: input.codeChallenge,
     expires_at: input.expiresAt,
+    arrival: input.arrival,
   })}`;
 }
 
@@ -242,16 +245,17 @@ export interface ConsumedOauthCode {
   workspace_scope: string[] | null;
   access: ApiKeyAccess;
   redirect_uri: string;
+  arrival: CredentialArrival;
 }
 
 /**
  * Validate and consume a code in one statement. An expired code is deleted
- * regardless; a live one only when every binding matches, so a bad exchange
- * cannot burn a legitimate code.
+ * regardless; a live one only when every binding matches, the listener it is
+ * presented at included, so a bad exchange cannot burn a legitimate code.
  */
 export async function consumeOauthCode(
   sql: Sql,
-  input: { codeHash: string; clientId: string; redirectUri: string; codeChallenge: string },
+  input: { codeHash: string; clientId: string; redirectUri: string; codeChallenge: string; arrival: CredentialArrival },
 ): Promise<ConsumedOauthCode | null> {
   const rows = await sql<ConsumedOauthCode[]>`
     WITH consumed AS (
@@ -263,11 +267,12 @@ export async function consumeOauthCode(
             client_id = ${input.clientId}
             AND redirect_uri = ${input.redirectUri}
             AND code_challenge = ${input.codeChallenge}
+            AND arrival = ${input.arrival}
           )
         )
-      RETURNING client_id, user_alias, workspace_scope, access, redirect_uri, expires_at
+      RETURNING client_id, user_alias, workspace_scope, access, redirect_uri, arrival, expires_at
     )
-    SELECT client_id, user_alias, workspace_scope, access, redirect_uri
+    SELECT client_id, user_alias, workspace_scope, access, redirect_uri, arrival
     FROM consumed
     WHERE expires_at > now()`;
   return rows[0] ?? null;

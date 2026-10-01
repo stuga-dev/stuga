@@ -5,7 +5,8 @@
 import type { TransactionSql } from "postgres";
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
 import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
-import type { AccountRow, DirectoryRow, NodeAdminRow, RefreshSessionRow, UserRow } from "./types.js";
+import type { AccountRow, CredentialArrival, DirectoryRow, NodeAdminRow, RefreshSessionRow, SignedInWith, UserRow } from "./types.js";
+import { liveSessionQuery, lockSignIns, stillHolds, type StillHolds } from "./session-live.js";
 import { daysAgo, escapeLike } from "./sql.js";
 import { redeemWorkspaceInviteIn } from "./workspaces.js";
 import type { Sql } from "./client.js";
@@ -151,14 +152,19 @@ export interface InviteJoin {
  * What creating an account did. `admin`: it was the node's first account, which
  * claims the node and administers it. Refusals: `invite_required`, the node is
  * claimed and no invite came with the request; `invite_invalid`, the invite was
- * used up, revoked or expired by the time it was spent. Nothing is made on a refusal.
+ * used up, revoked or expired by the time it was spent; `invite_local_only`, an invite with no use
+ * limit or no expiry presented at the remote address. Nothing is made on a refusal.
  */
 export type NewAccount<Refusal extends string> =
   | { ok: true; account: AccountRow; joined: InviteJoin | null; admin: boolean }
-  | { ok: false; reason: Refusal | "invite_required" | "invite_invalid" };
+  | { ok: false; reason: Refusal | "invite_required" | "invite_invalid" | "invite_local_only" };
 
 /** Thrown inside an account's transaction to undo it when its invite cannot be spent. */
-class InviteRefused extends Error {}
+class InviteRefused extends Error {
+  constructor(readonly reason: "invite_invalid" | "invite_local_only") {
+    super(reason);
+  }
+}
 
 /**
  * Every account is created under this one lock, and decides under it whether
@@ -188,10 +194,15 @@ async function issuerStillTrusted(tx: TransactionSql, issuer: string): Promise<b
  * it: a check before the account is only advice, and a single-use invite must
  * never admit two accounts that race past it.
  */
-async function spendInvite(tx: TransactionSql, inviteHash: string | null | undefined, alias: string): Promise<InviteJoin | null> {
+async function spendInvite(
+  tx: TransactionSql,
+  inviteHash: string | null | undefined,
+  alias: string,
+  arrival: CredentialArrival,
+): Promise<InviteJoin | null> {
   if (!inviteHash) return null;
-  const redeemed = await redeemWorkspaceInviteIn(tx, inviteHash, alias);
-  if (!redeemed.ok) throw new InviteRefused();
+  const redeemed = await redeemWorkspaceInviteIn(tx, inviteHash, alias, arrival);
+  if (!redeemed.ok) throw new InviteRefused(redeemed.reason === "local_only" ? "invite_local_only" : "invite_invalid");
   return { workspaceId: redeemed.workspaceId, role: redeemed.role };
 }
 
@@ -212,6 +223,8 @@ export async function createLocalAccount(
     email?: string | null;
     /** The sha-256 of the invite the account is made with, spent here. The first account ignores it. */
     inviteHash?: string | null;
+    /** Where the account is made; an invite with no limit or no expiry is spent only on the node's own network. */
+    arrival?: CredentialArrival;
     /**
      * The caller proved the right to claim the node (its setup code). Decided here, under the
      * account lock, so a registration without it never becomes the first account, whatever it raced.
@@ -246,11 +259,11 @@ export async function createLocalAccount(
           ON CONFLICT (id) DO UPDATE
             SET ${tx(choices)}, updated_by = EXCLUDED.updated_by, updated_at = now()`;
       }
-      const joined = first ? null : await spendInvite(tx, input.inviteHash, alias);
+      const joined = first ? null : await spendInvite(tx, input.inviteHash, alias, input.arrival ?? "local");
       return { ok: true, account: { alias, username, password_hash: input.passwordHash, oidc_sub: null }, joined, admin: first };
     })) as NewAccount<"username_taken" | "setup_code_required">;
   } catch (err) {
-    if (err instanceof InviteRefused) return { ok: false, reason: "invite_invalid" };
+    if (err instanceof InviteRefused) return { ok: false, reason: err.reason };
     throw err;
   }
 }
@@ -274,6 +287,8 @@ export async function createProviderAccount(
     issuer: string;
     /** The sha-256 of the invite the account is made with, spent here. */
     inviteHash?: string | null;
+    /** Where the account is made; an invite with no limit or no expiry is spent only on the node's own network. */
+    arrival?: CredentialArrival;
   },
 ): Promise<NewAccount<"username_taken" | "already_linked" | "setup_required" | "provider_changed">> {
   const { alias, username, oidcSub } = input;
@@ -289,11 +304,11 @@ export async function createProviderAccount(
       if (taken.length > 0) return { ok: false, reason: "username_taken" };
       await tx`
         INSERT INTO users ${tx({ alias, username, display_name: input.displayName, email: input.email, oidc_sub: oidcSub })}`;
-      const joined = await spendInvite(tx, input.inviteHash, alias);
+      const joined = await spendInvite(tx, input.inviteHash, alias, input.arrival ?? "local");
       return { ok: true, account: { alias, username, password_hash: null, oidc_sub: oidcSub }, joined, admin: false };
     })) as NewAccount<"username_taken" | "already_linked" | "setup_required" | "provider_changed">;
   } catch (err) {
-    if (err instanceof InviteRefused) return { ok: false, reason: "invite_invalid" };
+    if (err instanceof InviteRefused) return { ok: false, reason: err.reason };
     // A subject linked to an existing account meanwhile, by linkIdentity, which takes no creation lock.
     if (isUniqueViolation(err, "users_oidc_sub_key")) return { ok: false, reason: "already_linked" };
     throw err;
@@ -355,28 +370,79 @@ export async function updateLocalPassword(sql: Sql, alias: string, passwordHash:
   return rows.length > 0;
 }
 
-/** Give an account its first password. False when it already has one, or does not exist. */
-export async function addLocalPassword(sql: Sql, alias: string, passwordHash: string): Promise<boolean> {
+/**
+ * Store a hash of the same password made at the current cost, only while `oldHash` is still the
+ * account's: a password changed meanwhile is never put back. False when it was.
+ */
+export async function rehashLocalPassword(sql: Sql, alias: string, oldHash: string, newHash: string): Promise<boolean> {
   const rows = await sql<{ alias: string }[]>`
-    INSERT INTO local_accounts (alias, password_hash)
-    SELECT alias, ${passwordHash} FROM users WHERE alias = ${alias}
-    ON CONFLICT (alias) DO NOTHING
+    UPDATE local_accounts SET password_hash = ${newHash}
+    WHERE alias = ${alias} AND password_hash = ${oldHash}
     RETURNING alias`;
   return rows.length > 0;
 }
 
+/**
+ * Replace the account's password and end every sign-in it has, at both addresses, in one step, only
+ * while `requires` still holds: the current password that was checked is still the account's, or
+ * the confirmed sign-in that asked is still on. False, with nothing written, when it does not, or
+ * the account has no password to replace.
+ */
+export async function replaceLocalPassword(
+  sql: Sql,
+  input: { alias: string; passwordHash: string; requires: StillHolds },
+): Promise<boolean> {
+  return (await sql.begin(async (tx) => {
+    await lockSignIns(tx, input.alias, "exclusive");
+    if (!(await stillHolds(tx, input.alias, input.requires))) return false;
+    const rows = await tx`
+      UPDATE local_accounts SET password_hash = ${input.passwordHash}
+      WHERE alias = ${input.alias}
+      RETURNING alias`;
+    if (rows.length === 0) return false;
+    await tx`UPDATE refresh_sessions SET revoked_at = now() WHERE alias = ${input.alias} AND revoked_at IS NULL`;
+    return true;
+  })) as boolean;
+}
+
+/**
+ * Give an account its first password. False when it already has one, or does not exist, or
+ * `requires` (the sign-in that asked is still on) no longer holds.
+ */
+export async function addLocalPassword(sql: Sql, alias: string, passwordHash: string, requires: StillHolds | null = null): Promise<boolean> {
+  return (await sql.begin(async (tx) => {
+    await lockSignIns(tx, alias, "shared");
+    if (requires && !(await stillHolds(tx, alias, requires))) return false;
+    const rows = await tx<{ alias: string }[]>`
+      INSERT INTO local_accounts (alias, password_hash)
+      SELECT alias, ${passwordHash} FROM users WHERE alias = ${alias}
+      ON CONFLICT (alias) DO NOTHING
+      RETURNING alias`;
+    return rows.length > 0;
+  })) as boolean;
+}
+
 /** What linking a subject to an account did. */
-export type LinkOutcome = "linked" | "already_linked" | "taken" | "other_sub" | "no_account" | "provider_changed";
+export type LinkOutcome = "linked" | "already_linked" | "taken" | "other_sub" | "no_account" | "provider_changed" | "changed";
 
 /**
  * Link an identity-provider subject to an account. `taken`: another account
  * holds the subject; `other_sub`: this account is linked to a different one;
- * `provider_changed`: `issuer`, which vouched for the subject, is no longer the node's.
+ * `provider_changed`: `issuer`, which vouched for the subject, is no longer the node's;
+ * `changed`: `requires` (the password that was checked) no longer holds.
  * Linking the subject the account already holds is `already_linked`, not an error.
  */
-export async function linkIdentity(sql: Sql, alias: string, sub: string, issuer: string): Promise<LinkOutcome> {
+export async function linkIdentity(
+  sql: Sql,
+  alias: string,
+  sub: string,
+  issuer: string,
+  requires: StillHolds | null = null,
+): Promise<LinkOutcome> {
   try {
     return (await sql.begin(async (tx) => {
+      await lockSignIns(tx, alias, "shared");
+      if (requires && !(await stillHolds(tx, alias, requires))) return "changed";
       if (!(await issuerStillTrusted(tx, issuer))) return "provider_changed";
       const holder = await tx<{ alias: string }[]>`SELECT alias FROM users WHERE oidc_sub = ${sub}`;
       if (holder[0]) return holder[0].alias === alias ? "already_linked" : "taken";
@@ -491,6 +557,12 @@ export async function redeemPasswordReset(sql: Sql, tokenHash: string, passwordH
   }) as Promise<string | null>;
 }
 
+/** Whether a reset token would still work: a cheap refusal before a new password is hashed. */
+export async function passwordResetIsLive(sql: Sql, tokenHash: string): Promise<boolean> {
+  const rows = await sql`SELECT 1 FROM password_resets WHERE token_hash = ${tokenHash} AND used_at IS NULL AND expires_at > now()`;
+  return rows.length > 0;
+}
+
 export async function purgePasswordResets(sql: Sql): Promise<number> {
   const res = await sql`
     DELETE FROM password_resets
@@ -500,19 +572,48 @@ export async function purgePasswordResets(sql: Sql): Promise<number> {
 
 // ---- Refresh sessions -------------------------------------------------------------
 
-export async function createRefreshSession(
+/** A new sign-in's first row: where and how it began, and when it ends unused and at the latest. */
+export interface NewRefreshSession {
+  id: string;
+  /** The sign-in's own id, which its access tokens carry as `sid`. */
+  sessionId: string;
+  alias: string;
+  tokenHash: string;
+  /** When the token lapses unused; capped at `absoluteExpiresAt`. */
+  expiresAt: Date | string;
+  arrival: CredentialArrival;
+  signedInWith: SignedInWith;
+  /** Required at the remote address, absent on the node's own network (a CHECK holds it so). */
+  absoluteExpiresAt: Date | string | null;
+}
+
+export async function createRefreshSession(sql: Sql, input: NewRefreshSession): Promise<RefreshSessionRow> {
+  return (await createRefreshSessionIf(sql, input, null))!;
+}
+
+/**
+ * A new sign-in, only while `requires` still holds (session-live.ts): null, with nothing written,
+ * when the password that was checked is no longer the account's, or the sign-in that asked has ended.
+ */
+export async function createRefreshSessionIf(
   sql: Sql,
-  input: { id: string; alias: string; tokenHash: string; expiresAt: Date | string },
-): Promise<RefreshSessionRow> {
-  const rows = await sql<RefreshSessionRow[]>`
-    INSERT INTO refresh_sessions ${sql({
-      id: input.id,
-      alias: input.alias,
-      token_hash: input.tokenHash,
-      expires_at: input.expiresAt,
-    })}
-    RETURNING *`;
-  return rows[0]!;
+  input: NewRefreshSession,
+  requires: StillHolds | null,
+): Promise<RefreshSessionRow | null> {
+  return (await sql.begin(async (tx) => {
+    await lockSignIns(tx, input.alias, "shared");
+    if (requires && !(await stillHolds(tx, input.alias, requires))) return null;
+    const rows = await tx<RefreshSessionRow[]>`
+      INSERT INTO refresh_sessions
+        (id, session_id, alias, token_hash, expires_at, arrival, signed_in_with, signed_in_at, confirmed_at, absolute_expires_at)
+      VALUES (
+        ${input.id}, ${input.sessionId}, ${input.alias}, ${input.tokenHash},
+        LEAST(${input.expiresAt}::timestamptz, ${input.absoluteExpiresAt}::timestamptz),
+        ${input.arrival}, ${input.signedInWith}, now(), now(), ${input.absoluteExpiresAt}
+      )
+      RETURNING *`;
+    return rows[0]!;
+  })) as RefreshSessionRow | null;
 }
 
 /** The session for a token in whatever state it is, so a replayed token can be told from an unknown one. */
@@ -523,46 +624,116 @@ export async function findRefreshSession(sql: Sql, tokenHash: string): Promise<R
 
 /**
  * Revoke the presented session and issue its successor, atomically, recording
- * `replaced_by`. Null, with nothing written, when the token is unknown, revoked
- * or expired; of two concurrent rotations the second gets null.
+ * `replaced_by`. The successor continues the same sign-in: it copies where and
+ * how it began and when it ends at the latest, and lapses unused at `expiresAt`
+ * or then, whichever is sooner. Null, with nothing written, when the token is
+ * unknown, revoked or expired, or was issued at another listener than `arrival`;
+ * of two concurrent rotations the second gets null.
  */
 export async function rotateRefreshSession(
   sql: Sql,
-  input: { tokenHash: string; id: string; nextTokenHash: string; expiresAt: Date | string },
+  input: { tokenHash: string; id: string; nextTokenHash: string; expiresAt: Date | string; arrival: CredentialArrival },
 ): Promise<RefreshSessionRow | null> {
   return sql.begin(async (tx) => {
-    const revoked = await tx<{ alias: string }[]>`
+    const [owner] = await tx<{ alias: string }[]>`SELECT alias FROM refresh_sessions WHERE token_hash = ${input.tokenHash}`;
+    if (!owner) return null;
+    await lockSignIns(tx, owner.alias, "shared");
+    const revoked = await tx<{ id: string }[]>`
       UPDATE refresh_sessions SET revoked_at = now(), replaced_by = ${input.nextTokenHash}
       WHERE token_hash = ${input.tokenHash} AND revoked_at IS NULL AND expires_at > now()
-      RETURNING alias`;
-    const alias = revoked[0]?.alias;
-    if (!alias) return null;
+        AND arrival = ${input.arrival}
+        AND (absolute_expires_at IS NULL OR absolute_expires_at > now())
+      RETURNING id`;
+    const parent = revoked[0]?.id;
+    if (!parent) return null;
     const rows = await tx<RefreshSessionRow[]>`
-      INSERT INTO refresh_sessions ${tx({
-        id: input.id,
-        alias,
-        token_hash: input.nextTokenHash,
-        expires_at: input.expiresAt,
-      })}
+      INSERT INTO refresh_sessions
+        (id, session_id, alias, token_hash, expires_at, arrival, signed_in_with, signed_in_at, confirmed_at, absolute_expires_at)
+      SELECT ${input.id}, session_id, alias, ${input.nextTokenHash},
+             LEAST(${input.expiresAt}::timestamptz, absolute_expires_at),
+             arrival, signed_in_with, signed_in_at, confirmed_at, absolute_expires_at
+      FROM refresh_sessions WHERE id = ${parent}
       RETURNING *`;
     return rows[0] ?? null;
   }) as Promise<RefreshSessionRow | null>;
 }
 
 /**
+ * A second successor for `of`, the live successor of a token renewed twice at once: the same
+ * sign-in, with every column copied, its unused expiry included, so the pair ends together.
+ */
+export async function siblingRefreshSession(
+  sql: Sql,
+  input: { of: string; id: string; tokenHash: string },
+): Promise<RefreshSessionRow | null> {
+  return (await sql.begin(async (tx) => {
+    const [owner] = await tx<{ alias: string }[]>`SELECT alias FROM refresh_sessions WHERE token_hash = ${input.of}`;
+    if (!owner) return null;
+    await lockSignIns(tx, owner.alias, "shared");
+    const rows = await tx<RefreshSessionRow[]>`
+      INSERT INTO refresh_sessions
+        (id, session_id, alias, token_hash, expires_at, arrival, signed_in_with, signed_in_at, confirmed_at, absolute_expires_at)
+      SELECT ${input.id}, session_id, alias, ${input.tokenHash}, expires_at,
+             arrival, signed_in_with, signed_in_at, confirmed_at, absolute_expires_at
+      FROM refresh_sessions
+      WHERE token_hash = ${input.of} AND revoked_at IS NULL AND expires_at > now()
+      RETURNING *`;
+    return rows[0] ?? null;
+  })) as RefreshSessionRow | null;
+}
+
+/**
+ * Whether the sign-in an access token names is still on: one of its rows is unrevoked and
+ * unexpired, it belongs to `alias`, and it was issued at `arrival`. A sign-out, a password change
+ * or a revocation ends it, and with it every access token it issued, at once.
+ */
+export async function isSessionLive(sql: Sql, input: { sessionId: string; alias: string; arrival: CredentialArrival }): Promise<boolean> {
+  const rows = await sql<{ live: boolean }[]>`
+    SELECT EXISTS (${liveSessionQuery(sql, input)}) AS live`;
+  return rows[0]?.live === true;
+}
+
+/**
+ * When the person behind a live sign-in last proved who they are: its sign-in, or a later
+ * confirmation. Null when the sign-in is not live.
+ */
+export async function sessionConfirmedAt(
+  sql: Sql,
+  input: { sessionId: string; alias: string; arrival: CredentialArrival },
+): Promise<Date | null> {
+  const rows = await sql<{ confirmed_at: Date | null }[]>`
+    SELECT max(confirmed_at) AS confirmed_at FROM refresh_sessions
+    WHERE session_id = ${input.sessionId} AND alias = ${input.alias} AND arrival = ${input.arrival}
+      AND revoked_at IS NULL AND expires_at > now()
+      AND (absolute_expires_at IS NULL OR absolute_expires_at > now())`;
+  const at = rows[0]?.confirmed_at;
+  return at ? new Date(at) : null;
+}
+
+/**
  * Sign a session out: revoke it if it is live, and drop the provider links its
  * account started and never finished, so a sign-in completed later in this
  * browser cannot attach an identity to the account that left. Whatever state
- * the token is in, it names its account. Returns that account, or null.
+ * the token is in, it names its account. Returns that account and the sign-in
+ * it ended, or null. A token issued at another listener than `arrival` signs
+ * nothing out there: it works only where it was issued.
  */
-export async function endRefreshSession(sql: Sql, tokenHash: string): Promise<string | null> {
+export async function endRefreshSession(
+  sql: Sql,
+  tokenHash: string,
+  arrival?: CredentialArrival,
+): Promise<{ alias: string; sessionId: string } | null> {
   return (await sql.begin(async (tx) => {
-    const [session] = await tx<{ alias: string }[]>`SELECT alias FROM refresh_sessions WHERE token_hash = ${tokenHash}`;
+    const [session] = await tx<{ alias: string; session_id: string; arrival: CredentialArrival }[]>`
+      SELECT alias, session_id, arrival FROM refresh_sessions WHERE token_hash = ${tokenHash}`;
     if (!session) return null;
-    await tx`UPDATE refresh_sessions SET revoked_at = now() WHERE token_hash = ${tokenHash} AND revoked_at IS NULL`;
+    if (arrival !== undefined && session.arrival !== arrival) return null;
+    await lockSignIns(tx, session.alias, "exclusive");
+    // The whole sign-in: a sibling a duplicate renewal left would otherwise keep its access tokens good.
+    await tx`UPDATE refresh_sessions SET revoked_at = now() WHERE session_id = ${session.session_id} AND revoked_at IS NULL`;
     await tx`DELETE FROM oidc_flows WHERE link_alias = ${session.alias}`;
-    return session.alias;
-  })) as string | null;
+    return { alias: session.alias, sessionId: session.session_id };
+  })) as { alias: string; sessionId: string } | null;
 }
 
 export async function revokeRefreshSession(sql: Sql, tokenHash: string): Promise<boolean> {
@@ -574,11 +745,14 @@ export async function revokeRefreshSession(sql: Sql, tokenHash: string): Promise
 }
 
 export async function revokeRefreshSessions(sql: Sql, alias: string): Promise<number> {
-  const rows = await sql<{ id: string }[]>`
-    UPDATE refresh_sessions SET revoked_at = now()
-    WHERE alias = ${alias} AND revoked_at IS NULL
-    RETURNING id`;
-  return rows.length;
+  return (await sql.begin(async (tx) => {
+    await lockSignIns(tx, alias, "exclusive");
+    const rows = await tx<{ id: string }[]>`
+      UPDATE refresh_sessions SET revoked_at = now()
+      WHERE alias = ${alias} AND revoked_at IS NULL
+      RETURNING id`;
+    return rows.length;
+  })) as number;
 }
 
 /**

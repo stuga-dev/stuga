@@ -3,7 +3,7 @@
  * path match wins, so a group's catch-all comes after the routes it covers.
  */
 import { getAcl, setAcl } from "../api/acl.js";
-import { getWhoami, updateWhoami } from "../api/account.js";
+import { getRevokeEverythingCounts, getWhoami, updateWhoami } from "../api/account.js";
 import {
   ask,
   createAskThreadRoute,
@@ -54,6 +54,8 @@ import {
   grantNodeAdminRoute,
   listNodeAdminsRoute,
   mintPasswordResetRoute,
+  revokeEverythingCountsRoute,
+  revokeEverythingForRoute,
   revokeNodeAdminRoute,
   searchNodeUsersRoute,
 } from "../api/node/admins.js";
@@ -190,10 +192,17 @@ const ACCOUNT = { auth: "account", humanOnly: "agents cannot manage workspaces" 
 /** A person's bookmarks to other nodes: an agent has no switcher to fill. */
 const OTHER_NODES = { auth: "account", humanOnly: "agents cannot read or change a person's other nodes" } as const;
 const CONNECTIONS = { auth: "account", humanOnly: "agents cannot manage connections" } as const;
+/** How a person gets in is theirs, and their administrators', to take back; never an agent's. */
+const REVOKE_EVERYTHING = { auth: "account", humanOnly: "agents cannot change how a person signs in" } as const;
+const RECOVERY = { ...NODE, humanOnly: "agents cannot change how a person signs in" };
 
 const DOC = "/api/docs/([^/]+)";
 const DATABASE = "/api/databases/([^/]+)";
 const re = (source: string): RegExp => new RegExp(`^${source}$`);
+
+/** The targets of signed uploads, whose URL is the whole credential: a database import's file, and a staged media file. */
+export const DATABASE_IMPORT_UPLOAD_PATH = re(`${DATABASE}/imports/([^/]+)/upload`);
+export const MEDIA_UPLOAD_PATH = re(`${DOC}/media/uploads/([^/]+)`);
 
 export const APP_ROUTES: readonly AppRoute[] = [
   // Readiness asks the database and says nothing else: anyone who can reach the port can call it.
@@ -239,14 +248,14 @@ export const APP_ROUTES: readonly AppRoute[] = [
   // The signed, single-use URL a staged import hands out is the whole credential.
   {
     method: "PUT",
-    path: re(`${DATABASE}/imports/([^/]+)/upload`),
+    path: DATABASE_IMPORT_UPLOAD_PATH,
     auth: "none",
     handler: ({ env, req, url, match }) => handleDatabaseImportUpload(env, req, match[1]!, match[2]!, url.searchParams.get("sig")),
   },
   // And so is the one a staged media upload hands out.
   {
     method: "PUT",
-    path: re(`${DOC}/media/uploads/([^/]+)`),
+    path: MEDIA_UPLOAD_PATH,
     auth: "none",
     handler: ({ env, req, url, match }) => handleMediaUpload(env, req, match[1]!, match[2]!, url.searchParams.get("sig")),
   },
@@ -266,6 +275,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: "GET", path: "/api/me/connections", ...CONNECTIONS, handler: listConnections },
   { method: "PATCH", path: /^\/api\/me\/connections\/([^/]+)$/, ...CONNECTIONS, handler: updateConnection },
   { method: "DELETE", path: /^\/api\/me\/connections\/([^/]+)$/, ...CONNECTIONS, handler: revokeConnection },
+  { method: "GET", path: "/api/me/revoke-everything", ...REVOKE_EVERYTHING, handler: getRevokeEverythingCounts },
   { method: "GET", path: "/api/me/nodes", ...OTHER_NODES, handler: listOtherNodes },
   { method: "POST", path: "/api/me/nodes", ...OTHER_NODES, handler: addOtherNode },
   { method: "DELETE", path: /^\/api\/me\/nodes\/([^/]+)$/, ...OTHER_NODES, handler: removeOtherNode },
@@ -327,6 +337,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("DELETE", /^\/api\/node\/admins\/([^/]+)$/, revokeNodeAdminRoute, NODE),
   api("POST", "/api/node/password-resets", mintPasswordResetRoute, NODE),
   api("GET", "/api/node/users", searchNodeUsersRoute, NODE),
+  api("GET", /^\/api\/node\/users\/([^/]+)\/revoke-everything$/, revokeEverythingCountsRoute, RECOVERY),
+  api("POST", /^\/api\/node\/users\/([^/]+)\/revoke-everything$/, revokeEverythingForRoute, RECOVERY),
   api("GET", "/api/node/settings", getNodeSettingsRoute, NODE),
   api("PUT", "/api/node/settings", saveNodeSettingsRoute, NODE),
   api("DELETE", "/api/node/settings", resetNodeSettingsRoute, NODE),

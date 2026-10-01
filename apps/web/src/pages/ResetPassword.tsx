@@ -20,6 +20,8 @@ import { AuthError, describeError } from "../lib/session/errors";
 import { takeLoginReturn } from "../lib/session/return-path";
 import { passwordOk, resetPassword } from "../lib/session/sign-in";
 import { setSession } from "../lib/session/tokens";
+import { useRemoteStrength } from "../lib/session/password-strength";
+import { PasswordStrengthHint } from "../ui/PasswordStrengthHint";
 import { PasswordRules } from "./Login";
 import "../styles/auth.css";
 
@@ -29,9 +31,11 @@ export function ResetPassword() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The link names no account the page can show, so the hint scores without a username; the node checks with it at sign-in.
+  const strength = useRemoteStrength(password, { username: "" });
 
   async function submit() {
-    if (!passwordOk(password)) {
+    if (!passwordOk(password, strength.strong)) {
       setError("Choose a password that meets all the requirements below.");
       return;
     }
@@ -86,7 +90,8 @@ export function ResetPassword() {
               autoComplete="new-password"
               onEnter={() => void submit()}
             />
-            {password.length > 0 && <PasswordRules password={password} />}
+            {password.length > 0 && <PasswordRules password={password} strong={strength.strong} />}
+            <PasswordStrengthHint password={password} strength={strength} />
             <Button label="Set password" variant="primary" size="lg" width="100%" isLoading={busy} onClick={() => void submit()} />
           </VStack>
         </VStack>

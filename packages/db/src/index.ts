@@ -12,6 +12,8 @@ export * from "./collections.js";
 export * from "./ask-threads.js";
 export * from "./workspaces.js";
 export * from "./identity.js";
+export * from "./account-security.js";
+export type { PresentedSession, StillHolds } from "./session-live.js";
 export * from "./oidc.js";
 export * from "./user-nodes.js";
 export * from "./sharing.js";

@@ -8,7 +8,7 @@ const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
   "access-control-allow-headers": "authorization,content-type,x-stuga-workspace",
   // Every custom header the browser client reads; an unexposed one reads back as null cross-origin.
-  "access-control-expose-headers": "x-stuga-user,x-stuga-name,x-request-id,x-stuga-workspace-required",
+  "access-control-expose-headers": "x-stuga-user,x-stuga-name,x-request-id,x-stuga-workspace-required,x-stuga-reauth",
 };
 
 type CorsEnv = Pick<NodeEnv, "publicOrigin" | "extraOrigins"> & Partial<Pick<NodeEnv, "remote">>;

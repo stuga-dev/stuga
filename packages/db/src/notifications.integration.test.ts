@@ -203,6 +203,19 @@ describe.skipIf(!URL)("a notification about the node itself", () => {
     expect(await insertNotification(sql, row("about-node", { workspace_id: null }))).toBe(false);
     expect(await listNotifications(sql, "alice", {}, 20, true)).toHaveLength(1);
   });
+  it("about the recipient's own account, reaches them whether or not they administer the node", async () => {
+    await insertNotification(sql, row("own-account", { workspace_id: null, event_type: "ACCOUNT_NEW_SIGN_IN" }));
+    await insertNotification(sql, row("bobs-account", { workspace_id: null, recipient_alias: "bob", event_type: "ACCOUNT_NEW_SIGN_IN" }));
+    const member = await listNotifications(sql, "alice", only(WS, ALICE));
+    expect(member.map((n) => n.id).sort()).toEqual(["in-ws", "own-account"]);
+    expect(member.find((n) => n.id === "own-account")).toMatchObject({ workspace_id: null, workspace_name: null });
+    expect(await unreadNotificationCount(sql, "alice", {})).toBe(1);
+    expect(await markNotificationsRead(sql, "alice", [])).toBe(1);
+    expect(await unreadNotificationCount(sql, "alice", {})).toBe(0);
+    // The node's own rows stay an administrator's.
+    expect(await unreadNotificationCount(sql, "alice", {}, true)).toBe(1);
+    expect(await unreadNotificationCount(sql, "bob", {})).toBe(1);
+  });
 });
 
 describe.skipIf(!URL)("a notification is readable only while its resource is", () => {

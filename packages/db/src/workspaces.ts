@@ -2,9 +2,10 @@
 import type { Fragment, TransactionSql } from "postgres";
 import type { DocAccessMode } from "@stuga/protocol/domain/workspaces";
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
-import type { DirectoryRow, DocRow, GroupRow, WorkspaceInviteRow, WorkspaceMemberRow, WorkspaceRow } from "./types.js";
+import type { CredentialArrival, DirectoryRow, DocRow, GroupRow, WorkspaceInviteRow, WorkspaceMemberRow, WorkspaceRow } from "./types.js";
 import type { Queryable } from "./sql.js";
 import type { Sql } from "./client.js";
+import { liveSessionQuery, type PresentedSession } from "./session-live.js";
 
 // ---- Groups -----------------------------------------------------------------
 
@@ -69,19 +70,23 @@ export interface HumanAuth {
   membership: { workspace_id: string; role: WorkspaceRole } | null;
   /** Group principals held in the resolved workspace. */
   groupIds: string[];
+  /** Whether the sign-in the request's access token names is still on; null when none was asked about. */
+  sessionLive: boolean | null;
 }
 
 /**
  * A human caller's directory row, workspace membership and groups in one
  * statement, read live on every request. `requestedWorkspaceId` applies only
  * where the caller is a member; otherwise the earliest-joined workspace is used,
- * never one still being imported.
+ * never one still being imported. With `session`, whether the sign-in the
+ * request's access token names is still on, in the same round trip.
  */
 export async function resolveHumanAuth(
   sql: Sql,
   alias: string,
   userPrincipal: string,
   requestedWorkspaceId: string | null,
+  session?: Omit<PresentedSession, "alias">,
 ): Promise<HumanAuth> {
   const rows = await sql<
     Array<{
@@ -92,6 +97,7 @@ export async function resolveHumanAuth(
       workspace_id: string | null;
       role: WorkspaceRole | null;
       group_ids: string[];
+      session_live: boolean | null;
     }>
   >`
     WITH usr AS (
@@ -117,7 +123,8 @@ export async function resolveHumanAuth(
       u.email        AS email,
       r.workspace_id AS workspace_id,
       r.role         AS role,
-      ${heldGroupIds(sql, userPrincipal, sql`r.workspace_id`)} AS group_ids
+      ${heldGroupIds(sql, userPrincipal, sql`r.workspace_id`)} AS group_ids,
+      ${session ? sql`EXISTS (${liveSessionQuery(sql, { ...session, alias })})` : sql`NULL::boolean`} AS session_live
     FROM (SELECT 1) AS anchor
     LEFT JOIN usr u      ON TRUE
     LEFT JOIN resolved r ON TRUE`;
@@ -127,6 +134,7 @@ export async function resolveHumanAuth(
     user: row.user_alias === null ? null : { display_name: row.display_name ?? "", username: row.username ?? "", email: row.email },
     membership: row.workspace_id === null || row.role === null ? null : { workspace_id: row.workspace_id, role: row.role },
     groupIds: row.group_ids,
+    sessionLive: row.session_live,
   };
 }
 
@@ -373,16 +381,30 @@ export async function revokeWorkspaceInvite(sql: Sql, tokenHash: string, workspa
   return rows.length > 0;
 }
 
-/** `invalid` carries no reason: a route must not reveal why a token failed. */
-export type InviteRedemption = { ok: true; workspaceId: string; role: WorkspaceRole } | { ok: false; reason: "invalid" };
+/**
+ * `invalid` carries no reason: a route must not reveal why a token failed. `local_only`: a link with
+ * no use limit or no expiry, presented at the remote address, where it would be an open sign-up for
+ * anyone it leaked to; it works only on the node's own network.
+ */
+export type InviteRedemption = { ok: true; workspaceId: string; role: WorkspaceRole } | { ok: false; reason: "invalid" | "local_only" };
+
+/** Whether an invite with these limits may be redeemed at `arrival`: an unlimited one only on the node's own network. */
+export function inviteWorksAt(invite: Pick<WorkspaceInviteRow, "expires_at" | "max_uses">, arrival: CredentialArrival): boolean {
+  return arrival === "local" || (invite.expires_at !== null && invite.max_uses !== null);
+}
 
 /**
  * Redeem an invite: add the caller at its role (an existing member keeps
  * theirs) and count the use, in one transaction so `max_uses` cannot be
  * exceeded. A refused redemption uses nothing.
  */
-export async function redeemWorkspaceInvite(sql: Sql, tokenHash: string, alias: string): Promise<InviteRedemption> {
-  return sql.begin((tx) => redeemWorkspaceInviteIn(tx, tokenHash, alias));
+export async function redeemWorkspaceInvite(
+  sql: Sql,
+  tokenHash: string,
+  alias: string,
+  arrival: CredentialArrival = "local",
+): Promise<InviteRedemption> {
+  return sql.begin((tx) => redeemWorkspaceInviteIn(tx, tokenHash, alias, arrival));
 }
 
 /**
@@ -395,6 +417,7 @@ export async function redeemWorkspaceInviteIn(
   tx: TransactionSql,
   tokenHash: string,
   alias: string,
+  arrival: CredentialArrival = "local",
 ): Promise<InviteRedemption> {
   const rows = await tx<WorkspaceInviteRow[]>`
     SELECT * FROM workspace_invites
@@ -405,6 +428,7 @@ export async function redeemWorkspaceInviteIn(
     FOR UPDATE`;
   const invite = rows[0];
   if (!invite) return { ok: false, reason: "invalid" };
+  if (!inviteWorksAt(invite, arrival)) return { ok: false, reason: "local_only" };
 
   // Invite row, then workspace row: the only path holding two locks.
   const ws = await lockWorkspace(tx, invite.workspace_id);
@@ -420,11 +444,18 @@ export async function redeemWorkspaceInviteIn(
 
 /** Whether an invite could be redeemed right now: not revoked, not expired, uses left. */
 export async function isWorkspaceInviteRedeemable(sql: Sql, tokenHash: string): Promise<boolean> {
-  const rows = await sql`
-    SELECT 1 FROM workspace_invites
+  return (await workspaceInviteStatus(sql, tokenHash, "local")) === "ok";
+}
+
+/** Whether an invite could be redeemed right now at `arrival`, and if not, the redemption's refusal. */
+export async function workspaceInviteStatus(sql: Sql, tokenHash: string, arrival: CredentialArrival): Promise<"ok" | "invalid" | "local_only"> {
+  const rows = await sql<Pick<WorkspaceInviteRow, "expires_at" | "max_uses">[]>`
+    SELECT expires_at, max_uses FROM workspace_invites
     WHERE token_hash = ${tokenHash}
       AND revoked_at IS NULL
       AND (expires_at IS NULL OR expires_at > now())
       AND (max_uses IS NULL OR use_count < max_uses)`;
-  return rows.length > 0;
+  const invite = rows[0];
+  if (!invite) return "invalid";
+  return inviteWorksAt(invite, arrival) ? "ok" : "local_only";
 }

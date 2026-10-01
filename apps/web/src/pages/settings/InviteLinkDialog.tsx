@@ -1,6 +1,8 @@
 /**
  * Create an invite link: who it admits, how many times, and for how long. The
  * link is shown once, in the same dialog, since the node keeps only its hash.
+ * Made at the remote address, the link points there, where a link with no
+ * limit or no expiry would be an open sign-up: the dialog does not offer those.
  */
 import { useEffect, useState } from "react";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
@@ -18,6 +20,7 @@ import { Workspaces } from "../../api";
 import type { InviteRole } from "@stuga/protocol/domain/roles";
 import { errorMessage } from "../../lib/http/client";
 import { copyText } from "../../lib/clipboard";
+import { atRemoteAddress } from "../../lib/session/auth-config";
 
 /** How long a new link works, in days; "never" keeps it working until someone revokes it. */
 type LinkExpiry = "1" | "7" | "30" | "never";
@@ -82,6 +85,9 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
 
   // An admin link admits one person; the node refuses any other.
   const effectiveUses = role === "admin" ? "1" : uses;
+  const remote = atRemoteAddress();
+  const usesOptions = remote ? USES_OPTIONS.filter((o) => o.value !== "unlimited") : USES_OPTIONS;
+  const expiryOptions = remote ? EXPIRY_OPTIONS.filter((o) => o.value !== "never") : EXPIRY_OPTIONS;
 
   function close() {
     if (!creating) onClose();
@@ -92,8 +98,8 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
     try {
       const { join_url } = await Workspaces.createInvite(workspaceId, {
         role,
-        ...(effectiveUses === "unlimited" ? {} : { max_uses: Number(effectiveUses) }),
-        ...(expiry === "never" ? {} : { expires_in_days: Number(expiry) }),
+        max_uses: effectiveUses === "unlimited" ? null : Number(effectiveUses),
+        expires_in_days: expiry === "never" ? null : Number(expiry),
       });
       setCreated({ url: join_url, summary: linkSummary(role, effectiveUses, expiry) });
       onCreated();
@@ -154,7 +160,7 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
                       width="100%"
                       value={effectiveUses}
                       onChange={(v) => setUses(v as LinkUses)}
-                      options={USES_OPTIONS}
+                      options={usesOptions}
                       isDisabled={role === "admin"}
                       disabledMessage="An admin link can be used once."
                     />
@@ -165,7 +171,7 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
                       width="100%"
                       value={expiry}
                       onChange={(v) => setExpiry(v as LinkExpiry)}
-                      options={EXPIRY_OPTIONS}
+                      options={expiryOptions}
                     />
                   </StackItem>
                 </HStack>

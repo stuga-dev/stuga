@@ -27,6 +27,7 @@ import {
 } from "../../config/settings/node.js";
 import type { NotifyConfig } from "../../env.js";
 import { error, json } from "../../http/respond.js";
+import { recentConfirmationRequired } from "../../identity/recency.js";
 import type { WorkspaceCall } from "../../http/router.js";
 import { deliver } from "../../jobs/sinks.js";
 import { parseSmtpUrl } from "../../jobs/smtp.js";
@@ -713,10 +714,25 @@ export async function getNodeSettingsRoute({ ctx }: WorkspaceCall): Promise<Resp
   return nodeSettingsResponse(ctx);
 }
 
+/**
+ * The identity provider decides who can sign in as anyone linked to it, and the sink is where alerts
+ * about sign-ins go: changing either takes a sign-in confirmed in the last five minutes.
+ */
 export async function saveNodeSettingsRoute({ ctx, req }: WorkspaceCall): Promise<Response> {
+  const body = (await req.clone().json().catch(() => null)) as Record<string, unknown> | null;
+  if (body && typeof body === "object" && (body.identity_provider !== undefined || body.notify !== undefined)) {
+    const stale = await recentConfirmationRequired(ctx);
+    if (stale) return stale;
+  }
   return saveNodeSettings(ctx, req);
 }
 
+/** The same holds for a reset that would remove a provider or a sink. */
 export async function resetNodeSettingsRoute({ ctx }: WorkspaceCall): Promise<Response> {
+  const current = ctx.env.settings.current();
+  if (current.identityProvider !== null || current.notify.sink !== "none") {
+    const stale = await recentConfirmationRequired(ctx);
+    if (stale) return stale;
+  }
   return resetNodeSettings(ctx);
 }

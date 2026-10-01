@@ -257,6 +257,8 @@ export async function startMockProvider(opts: MockProviderOptions = {}): Promise
       aud: provider.clientId,
       iat: now,
       exp: now + 300,
+      // Every code here is minted the moment the person signs in, or is let through.
+      auth_time: now,
       ...pending.user,
       ...(pending.nonce ? { nonce: pending.nonce } : {}),
       ...provider.overrides,

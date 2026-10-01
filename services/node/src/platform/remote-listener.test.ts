@@ -276,6 +276,138 @@ describe("the remote listener", () => {
     expect(text).toMatch(/\r\nstrict-transport-security: max-age=31536000\r\n/);
   });
 
+  describe("its front door", () => {
+    /** Writes a request's head and `body`, and resolves with whatever comes back once the connection closes. */
+    async function raw(dial: Served["dial"], head: string, body = "", source?: string): Promise<{ socket: tls.TLSSocket; answer: Promise<string> }> {
+      const socket = await dial(source ? { source } : {});
+      const answer = new Promise<string>((resolve) => {
+        let text = "";
+        socket.on("data", (d: Buffer) => (text += d.toString()));
+        socket.once("close", () => resolve(text));
+      });
+      socket.write(`${head}\r\n\r\n${body}`);
+      return { socket, answer };
+    }
+
+    it("refuses before reading a byte of the body, and closes the connection", async () => {
+      let handled = 0;
+      const seen: Request[] = [];
+      const { dial } = await serve({
+        maxBodyBytes: () => 64 << 20,
+        handler: async () => {
+          handled++;
+          return new Response("ok");
+        },
+        frontDoor: async (head) => {
+          seen.push(head);
+          return new Response("sign in first", { status: 401 });
+        },
+      });
+      // Ten megabytes promised, none sent: the answer comes anyway, at once.
+      const started = Date.now();
+      const { answer } = await raw(dial, `POST /api/docs HTTP/1.1\r\nHost: ${HOST}\r\ncontent-length: 10485760`);
+      expect(await answer).toMatch(/^HTTP\/1\.1 401 /);
+      expect(Date.now() - started).toBeLessThan(3000);
+      expect(handled).toBe(0);
+      // It saw the request as the handler would, but for the body.
+      expect(arrivalOf(seen[0]!)).toBe("remote");
+      expect(seen[0]!.headers.get(PEER_ADDRESS_HEADER)).toBe("203.0.113.7");
+      expect(seen[0]!.body).toBeNull();
+    });
+
+    it("holds a body to the cap it sets, below the listener's own", async () => {
+      const { get } = await serve({
+        maxBodyBytes: () => 1 << 20,
+        handler: async (req) => new Response(await req.text()),
+        frontDoor: async () => ({ maxBytes: 16, anonymous: true }),
+      });
+      expect(await get("/auth/login", { method: "POST", body: "x".repeat(16) })).toMatchObject({ status: 200, text: "x".repeat(16) });
+      expect((await get("/auth/login", { method: "POST", body: "x".repeat(17) })).status).toBe(413);
+    });
+
+    it("lets anonymous bodies take only so much at once, and says when to try again", async () => {
+      let admitted = 0;
+      const { dial, get } = await serve({
+        maxBodyBytes: () => 1 << 20,
+        handler: async (req) => new Response(await req.text()),
+        frontDoor: async (head) => {
+          admitted++;
+          return head.headers.has("authorization") ? {} : { maxBytes: 16, anonymous: true };
+        },
+        limits: { anonymousBodyBudget: 8 },
+      });
+      // Two sign-ins hold their bodies back, reserving the 4 bytes each said it would send.
+      const slow = [
+        await raw(dial, `POST /auth/login HTTP/1.1\r\nHost: ${HOST}\r\nconnection: close\r\ncontent-length: 4`, "ab"),
+        await raw(dial, `POST /auth/login HTTP/1.1\r\nHost: ${HOST}\r\nconnection: close\r\ncontent-length: 4`, "ab"),
+      ];
+      while (admitted < 2) await sleep(10);
+      const busy = await get("/auth/login", { method: "POST", body: "abcd" });
+      expect(busy.status).toBe(503);
+      expect(busy.headers["retry-after"]).toBe("5");
+      // A signed-in request is not counted against it.
+      expect((await get("/api/docs", { method: "POST", body: "abcd", headers: { authorization: "Bearer t" } })).status).toBe(200);
+      // Once a body is in, its place is free again.
+      slow[0]!.socket.write("cd");
+      expect(await slow[0]!.answer).toMatch(/^HTTP\/1\.1 200 /);
+      expect((await get("/auth/login", { method: "POST", body: "abcd" })).status).toBe(200);
+      slow[1]!.socket.destroy();
+    });
+
+    it("reserves what a body declares, not its cap, and refuses an anonymous body that declares no length", async () => {
+      const { get, dial } = await serve({
+        maxBodyBytes: () => 1 << 20,
+        handler: async (req) => new Response(await req.text()),
+        frontDoor: async () => ({ maxBytes: 16, anonymous: true }),
+        limits: { anonymousBodyBudget: 16 },
+      });
+      // A slow one of 4 bytes leaves room for another under a 16-byte budget.
+      const slow = await raw(dial, `POST /auth/login HTTP/1.1\r\nHost: ${HOST}\r\nconnection: close\r\ncontent-length: 4`, "ab");
+      await sleep(50);
+      expect((await get("/auth/login", { method: "POST", body: "abcd" })).status).toBe(200);
+      slow.socket.destroy();
+      const chunked = await raw(dial, `POST /auth/login HTTP/1.1\r\nHost: ${HOST}\r\ntransfer-encoding: chunked`, "4\r\nabcd\r\n0\r\n\r\n");
+      expect(await chunked.answer).toMatch(/^HTTP\/1\.1 411 /);
+    });
+
+    it("lets one source hold only its share of the anonymous budget", async () => {
+      let admitted = 0;
+      const { dial, get } = await serve({
+        maxBodyBytes: () => 1 << 20,
+        handler: async (req) => new Response(await req.text()),
+        frontDoor: async () => (admitted++, { maxBytes: 16, anonymous: true }),
+        limits: { anonymousPerSource: 2 },
+      });
+      const held = [
+        await raw(dial, `POST /auth/login HTTP/1.1\r\nHost: ${HOST}\r\nconnection: close\r\ncontent-length: 4`, "ab", "2001:db8:9:1::1"),
+        await raw(dial, `POST /auth/login HTTP/1.1\r\nHost: ${HOST}\r\nconnection: close\r\ncontent-length: 4`, "ab", "2001:db8:9:1::2"),
+      ];
+      while (admitted < 2) await sleep(10);
+      // The same /64 waits; anyone else does not.
+      expect((await get("/auth/login", { method: "POST", body: "abcd", source: "2001:db8:9:1::3" })).status).toBe(503);
+      expect((await get("/auth/login", { method: "POST", body: "abcd", source: "2001:db8:9:2::1" })).status).toBe(200);
+      for (const h of held) h.socket.destroy();
+    });
+
+    it("gives an anonymous body less time than a signed-in one", async () => {
+      const { dial } = await serve({
+        maxBodyBytes: () => 1 << 20,
+        handler: async (req) => new Response(await req.text()),
+        frontDoor: async () => ({ maxBytes: 16, anonymous: true }),
+        limits: { bodyMs: 60_000, anonymousBodyMs: 300 },
+      });
+      const started = Date.now();
+      const { answer } = await raw(dial, `POST /auth/login HTTP/1.1\r\nHost: ${HOST}\r\ncontent-length: 10`, "abc");
+      expect(await answer).toMatch(/^HTTP\/1\.1 408 /);
+      expect(Date.now() - started).toBeLessThan(3000);
+    });
+
+    it("lets a bodyless request through as it is", async () => {
+      const { get } = await serve({ frontDoor: async () => ({}) });
+      expect(await get("/")).toMatchObject({ status: 200, text: "ok" });
+    });
+  });
+
   describe("a body its handler reads as a stream", () => {
     const upload = { readsOwnBody: (method: string) => method === "PUT", maxBodyBytes: () => 64 };
     const counting: RequestHandler = async (req) => {

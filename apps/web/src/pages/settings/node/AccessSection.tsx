@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/VStack";
@@ -7,7 +10,9 @@ import { StackItem } from "@astryxdesign/core/Stack";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Divider } from "@astryxdesign/core/Divider";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
-import { NodeSettings as NodeApi, type NodeAdmin, type NodeOperationalSettings } from "../../../api";
+import { NodeSettings as NodeApi, type NodeAdmin, type NodeOperationalSettings, type RevokeEverythingCounts } from "../../../api";
+import { providerLabel } from "../../../lib/session/auth-config";
+import { getAlias } from "../../../lib/http/client";
 import { PersonPicker, type PersonItem } from "../../../ui/PersonPicker";
 import { NodeAudit } from "./NodeAudit";
 import { IdentityProviderSection } from "./IdentityProviderSection";
@@ -16,6 +21,7 @@ import { SectionStatusBanners, useSectionStatus } from "./status";
 /**
  * Who may reach and administer this node, most used first: administrators,
  * account recovery, the identity provider, allowed origins and the node ledger.
+ * An alert about someone's sign-in opens account recovery with them picked (?revoke=<username>).
  */
 export function AccessSection({
   ops,
@@ -31,6 +37,47 @@ export function AccessSection({
   const [resetFor, setResetFor] = useState<PersonItem | null>(null);
   /** The link just minted, shown once: only its hash is kept. */
   const [reset, setReset] = useState<{ url: string; name: string } | null>(null);
+  /** Revoke everything for `resetFor`, once its counts are in. */
+  const [revoking, setRevoking] = useState<{ person: PersonItem; counts: RevokeEverythingCounts | null } | null>(null);
+  const [revokeBusy, setRevokeBusy] = useState(false);
+  const nav = useNavigate();
+  const { pathname, search } = useLocation();
+
+  // An alert's link names the person: pick them, once.
+  useEffect(() => {
+    const username = new URLSearchParams(search).get("revoke");
+    if (!username) return;
+    nav(pathname, { replace: true });
+    void NodeApi.users(username)
+      .then(({ users }) => {
+        const found = users.find((u) => u.username === username);
+        if (found) setResetFor({ id: found.alias, label: found.display_name || found.username || found.alias, auxiliaryData: found });
+      })
+      .catch(() => {});
+  }, [search, pathname, nav]);
+
+  function askRevoke(person: PersonItem) {
+    setRevoking({ person, counts: null });
+    NodeApi.revokeEverythingCounts(person.id)
+      .then((counts) => setRevoking((cur) => (cur?.person.id === person.id ? { person, counts } : cur)))
+      .catch(() => {});
+  }
+
+  async function revoke() {
+    if (!revoking || revokeBusy) return;
+    setRevokeBusy(true);
+    try {
+      const { password_link } = await NodeApi.revokeEverythingFor(revoking.person.id);
+      setReset({ url: password_link.url, name: revoking.person.label });
+      setResetFor(null);
+      setRevoking(null);
+    } catch (e) {
+      status.fail(e);
+      setRevoking(null);
+    } finally {
+      setRevokeBusy(false);
+    }
+  }
 
   const loadAdmins = useCallback(
     () =>
@@ -117,6 +164,14 @@ export function AccessSection({
             />
           </StackItem>
           <Button
+            label="Revoke everything"
+            variant="secondary"
+            isDisabled={!resetFor || resetFor.id === getAlias()}
+            // Your own takes a new password, which Profile asks for.
+            tooltip={resetFor && resetFor.id === getAlias() ? "Revoke everything for yourself in Settings → Profile." : undefined}
+            onClick={() => resetFor && askRevoke(resetFor)}
+          />
+          <Button
             label="Create link"
             variant="secondary"
             isDisabled={!resetFor?.auxiliaryData?.username}
@@ -140,6 +195,31 @@ export function AccessSection({
             description={<Text type="supporting">{reset.url}</Text>}
           />
         )}
+        <Dialog isOpen={revoking !== null} onOpenChange={(o) => !o && !revokeBusy && setRevoking(null)} purpose="form" width={440}>
+          <Layout
+            header={
+              <DialogHeader
+                title={`Revoke everything for ${revoking?.person.label ?? ""}?`}
+                onOpenChange={(o) => !o && !revokeBusy && setRevoking(null)}
+              />
+            }
+            content={
+              <LayoutContent>
+                <Text type="supporting" color="secondary">
+                  {memberRevokeSummary(revoking?.counts ?? null, providerLabel())}
+                </Text>
+              </LayoutContent>
+            }
+            footer={
+              <LayoutFooter>
+                <HStack gap={2} justify="end">
+                  <Button label="Cancel" variant="ghost" onClick={() => setRevoking(null)} isDisabled={revokeBusy} />
+                  <Button label="Revoke everything" variant="primary" onClick={() => void revoke()} isLoading={revokeBusy} />
+                </HStack>
+              </LayoutFooter>
+            }
+          />
+        </Dialog>
       </VStack>
 
       {ops && (
@@ -181,4 +261,16 @@ export function AccessSection({
       <NodeAudit />
     </>
   );
+}
+
+/** What the confirmation says Revoke everything takes from someone, from the node's count. */
+export function memberRevokeSummary(counts: RevokeEverythingCounts | null, provider: string | null): string {
+  const parts = ["their password"];
+  if (counts?.provider) parts.push(`${provider ?? "identity provider"} sign-in`);
+  if (counts && counts.apps > 0) parts.push(counts.apps === 1 ? "a connected app" : `${counts.apps} connected apps`);
+  if (counts && counts.api_keys > 0) parts.push(counts.api_keys === 1 ? "an API key" : `${counts.api_keys} API keys`);
+  const links = counts ? counts.invites + counts.share_links : 0;
+  if (links > 0) parts.push(links === 1 ? "a link they shared" : `${links} links they shared`);
+  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  return `Signs them out everywhere and removes ${list}. You get a password link to send them.`;
 }

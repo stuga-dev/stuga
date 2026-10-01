@@ -107,6 +107,9 @@ provider, and the consent page asks two things:
   workspace where you are only a guest, whatever you ticked.
 - **Access.** **Read and suggest changes**, or **Read only**.
 
+At the [remote address](remote-access.md), allowing an app takes a sign-in from the last five
+minutes, or confirming it is you, as an API key does.
+
 The page names the app. An app that identifies itself by a metadata document the node fetched is
 shown as **Verified by** that document's host; any other is an **Unverified app**, with the host it
 returns to.
@@ -133,7 +136,9 @@ sign in again. A refresh token presented again within
 `REFRESH_ROTATION_GRACE_SECONDS` (60 by default) of its use is one app refreshing twice at once, and
 gets a pair of its own; presented later, it ends the tokens of that sign-in, because someone else
 holds a copy. The node stores only their hashes. These tokens work only
-on `/mcp`; the REST API refuses them. The OAuth routes are in [api.md](api.md#agents-over-oauth).
+on `/mcp`; the REST API refuses them. They also work only at the address where you consented: with
+remote access on, connect apps to the remote address, which works on your network too. The OAuth
+routes are in [api.md](api.md#agents-over-oauth).
 
 ## Claude Code
 

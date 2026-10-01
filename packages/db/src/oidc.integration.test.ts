@@ -52,14 +52,14 @@ describe.skipIf(!URL)("identity-provider sign-ins in flight", () => {
     expect(await takeOidcFlow(sql, "never")).toBeNull();
   });
 
-  it("keeps what the provider was asked about its session: nothing, silence, or which account", async () => {
-    for (const prompt of [null, "none", "select_account"] as const) {
+  it("keeps what the provider was asked about its session: nothing, silence, which account, or to sign in again", async () => {
+    for (const prompt of [null, "none", "select_account", "login"] as const) {
       await createOidcFlow(sql, { ...flowInput(`p-${prompt}`), prompt });
-      expect(await takeOidcFlow(sql, `p-${prompt}`)).toMatchObject({ prompt });
+      expect(await takeOidcFlow(sql, `p-${prompt}`)).toMatchObject({ prompt, confirm_session: null });
     }
     await expect(
       sql`INSERT INTO oidc_flows (state, binding_hash, nonce, code_verifier, redirect_uri, prompt, return_to, expires_at)
-          VALUES ('p-login', 'b', 'n', 'v', 'http://localhost:8787/auth/oidc/callback', 'login', '/', now() + interval '1 minute')`,
+          VALUES ('p-consent', 'b', 'n', 'v', 'http://localhost:8787/auth/oidc/callback', 'consent', '/', now() + interval '1 minute')`,
     ).rejects.toThrow(/oidc_flows_prompt_check/);
   });
 

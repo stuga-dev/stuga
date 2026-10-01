@@ -9,9 +9,22 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Added
+
+- **Revoke everything**, in **Settings → Profile**: every session ends, and the identity provider link, connected apps, API keys and the links you shared go; a new password is the way back in. Administrators do it for someone under **Account recovery**, which hands back a password link.
+
 ### Changed
 
 - Reviewing an agent's edits, a sentence rewritten in other words shows as one removal and one insertion, not interleaved words.
+- Wrong passwords pause sign-ins for that account, for longer each time; every route that checks a password counts them.
+- Passwords are stored with a costlier hash, and a stored one is hashed again at the next sign-in.
+- A long passphrase, such as `trumpet walnut ceiling`, needs no letter-and-number mix.
+- Over plain http the node takes passwords only from its own network; `LOCAL_PASSWORD_NETWORKS` adds public ranges that belong to it. `reset-password` prints the SSH tunnel to open its link from outside the network.
+- A session's access tokens stop working the moment it ends, by signing out, a password change or a reset link, rather than up to an hour later; a password change or reset also closes the account's live document connections. Everyone signs in again after upgrading, and apps connected over OAuth are connected again.
+- Minting or rotating an API key, keeping one working longer, changing your email, setting a first password, linking or unlinking the identity provider, appointing an administrator, a password link, and changing the identity provider or notifications ask you to confirm it's you when you signed in more than five minutes ago.
+- A browser that signed in before keeps signing in while wrong passwords from elsewhere pause the account. Each browser keeps a cookie for this ([Privacy](docs/privacy.md#what-the-node-stores)).
+- A password change, an API key, Revoke everything and an hour-long pause after wrong passwords are notified to the person, in the app and through the node's notifications; Revoke everything to the administrators too.
+- An invite link made through the API without limits admits one person for seven days, as the dialog's does; `null` asks for no limit or no expiry.
 
 ### Fixed
 

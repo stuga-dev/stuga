@@ -10,7 +10,12 @@ import {
   getMemberRole,
   getFolderSubtreeIds,
   grantForAccessToken,
+  isOauthAccessTokenLive,
+  isSessionLive,
+  type ApiKeyRow,
+  type CredentialArrival,
   type DirectoryRow,
+  type PresentedSession,
   type Sql,
 } from "@stuga/db";
 import {
@@ -29,7 +34,8 @@ import {
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
 import { AGENT_CLIENT_HEADER, AGENT_LABEL_MAX, AGENT_MODEL_HEADER } from "@stuga/protocol/api/headers";
 import type { NodeEnv } from "../env.js";
-import { servedOrigin } from "../http/arrival.js";
+import { arrivalOf, servedOrigin } from "../http/arrival.js";
+import { personTokenClaims, verifyPersonToken } from "./person-token.js";
 import { resolvePrincipals } from "./principals.js";
 import type { WsTicket } from "./ws-ticket.js";
 
@@ -54,12 +60,16 @@ interface AccountBase {
    * on its own (notifications, audit targets) stays on PUBLIC_ORIGIN.
    */
   servedOrigin: string;
+  /** The listener the request came in on: what a ticket or signed link minted for this caller is good at. */
+  arrival: CredentialArrival;
   env: NodeEnv;
 }
 
 /** A person, authenticated with a session token. */
 interface HumanAccountCtx extends AccountBase {
   isAgent: false;
+  /** The sign-in the session token names, which tickets minted for it carry. */
+  sid: string;
   onBehalfOf?: undefined;
   scope?: undefined;
   client?: undefined;
@@ -138,6 +148,7 @@ interface StoredScope {
   credentialId: string;
 }
 
+/** Before the session it names is found live: buildContext asks in the round trip that reads membership. */
 type AuthenticatedRequest =
   | { account: HumanAccountCtx }
   | { account: AgentAccountCtx; key: { workspaceId: string; scope: StoredScope } };
@@ -165,6 +176,45 @@ function surfaceOf(transport: Transport, isAgent: boolean): Surface {
   return isAgent ? "api-key" : "web";
 }
 
+/** The live key an API key token names, or Unauthorized. Reads only. */
+async function liveApiKey(sql: Sql, token: string): Promise<ApiKeyRow> {
+  const parsed = parseApiKey(token);
+  if (!parsed) throw new Unauthorized("malformed api key");
+  const row = await getApiKey(sql, parsed.keyId);
+  if (!row || !constantTimeEqual(sha256Hex(parsed.secret), row.secret_hash)) {
+    throw new Unauthorized("invalid api key");
+  }
+  if (row.expires_at && Date.parse(row.expires_at) <= Date.now()) throw new Unauthorized("api key expired");
+  return row;
+}
+
+/** How a person's token is checked when nothing else is read in the same round trip. */
+const sessionDeps = (env: NodeEnv) => ({ verifier: env.verifier, sessionIsLive: (s: PresentedSession) => isSessionLive(env.sql, s) });
+
+/**
+ * Whether the request's bearer credential would authenticate it here: a person's session, an API key, or an
+ * OAuth access token issued at this listener. What the remote address checks before it reads a body; it
+ * writes nothing, and the route still authenticates the request itself.
+ */
+export async function bearerAuthenticates(req: Request, env: NodeEnv): Promise<boolean> {
+  const token = extractToken(req);
+  if (!token) return false;
+  try {
+    const kind = connectorTokenKind(token);
+    if (kind === "access") return await isOauthAccessTokenLive(env.sql, hashConnectorToken(token), arrivalOf(req));
+    if (kind) return false;
+    if (looksLikeApiKey(token)) {
+      await liveApiKey(env.sql, token);
+      return true;
+    }
+    await verifyPersonToken(sessionDeps(env), req, token);
+    return true;
+  } catch (e) {
+    if (e instanceof Unauthorized || e instanceof AuthError) return false;
+    throw e;
+  }
+}
+
 /** Authenticate a request without assuming the user already belongs to a workspace. */
 async function authenticateRequest(req: Request, env: NodeEnv, transport: Transport): Promise<AuthenticatedRequest> {
   const token = extractToken(req);
@@ -175,14 +225,8 @@ async function authenticateRequest(req: Request, env: NodeEnv, transport: Transp
 
   // An API key resolves the key's own principal here; buildContext adds its owner's delegated set.
   if (looksLikeApiKey(token)) {
-    const parsed = parseApiKey(token);
-    if (!parsed) throw new Unauthorized("malformed api key");
-    const row = await getApiKey(sql, parsed.keyId);
-    if (!row || !constantTimeEqual(sha256Hex(parsed.secret), row.secret_hash)) {
-      throw new Unauthorized("invalid api key");
-    }
-    if (row.expires_at && Date.parse(row.expires_at) <= Date.now()) throw new Unauthorized("api key expired");
-    await touchApiKey(sql, parsed.keyId).catch(() => {});
+    const row = await liveApiKey(sql, token);
+    await touchApiKey(sql, row.key_id).catch(() => {});
     return {
       account: {
         sql,
@@ -194,6 +238,7 @@ async function authenticateRequest(req: Request, env: NodeEnv, transport: Transp
         client: agentLabel(req.headers.get(AGENT_CLIENT_HEADER)),
         model: agentLabel(req.headers.get(AGENT_MODEL_HEADER)),
         servedOrigin: servedOrigin(req),
+        arrival: arrivalOf(req),
         env,
       },
       key: {
@@ -204,8 +249,9 @@ async function authenticateRequest(req: Request, env: NodeEnv, transport: Transp
   }
 
   let alias: string;
+  let sid: string;
   try {
-    ({ alias } = await env.verifier.verify(token));
+    ({ alias, sid } = await personTokenClaims(env.verifier, req, token));
   } catch (err) {
     if (err instanceof AuthError) throw new Unauthorized("invalid token");
     throw err;
@@ -215,13 +261,30 @@ async function authenticateRequest(req: Request, env: NodeEnv, transport: Transp
       sql,
       surface: surfaceOf(transport, false),
       alias,
+      sid,
       // Filled from the directory row by the caller, which also refuses a token whose account is gone.
       displayName: "",
       isAgent: false,
       servedOrigin: servedOrigin(req),
+      arrival: arrivalOf(req),
       env,
     },
   };
+}
+
+/** Refuse a person's token whose sign-in has ended: signed out, revoked, or past its end. */
+function requireLiveSession(live: boolean | null): void {
+  if (live !== true) throw new Unauthorized("this session has ended; sign in again");
+}
+
+/** A person's directory row, once the session their token names is found live. */
+async function liveDirectoryRow(account: HumanAccountCtx): Promise<DirectoryRow | null> {
+  const [row, live] = await Promise.all([
+    getDirectoryRow(account.sql, account.alias),
+    isSessionLive(account.sql, { sessionId: account.sid, alias: account.alias, arrival: account.arrival }),
+  ]);
+  requireLiveSession(live);
+  return row;
 }
 
 /**
@@ -238,7 +301,7 @@ function directoryName(row: DirectoryRow | null): string {
 export async function buildAccountContext(req: Request, env: NodeEnv): Promise<AccountCtx> {
   const { account } = await authenticateRequest(req, env, "http");
   if (account.isAgent) return account;
-  return { ...account, displayName: directoryName(await getDirectoryRow(account.sql, account.alias)) };
+  return { ...account, displayName: directoryName(await liveDirectoryRow(account)) };
 }
 
 /** Build a workspace-scoped request context. */
@@ -273,12 +336,11 @@ export async function buildContext(req: Request, env: NodeEnv, transport: Transp
   // offboarding takes effect on the next request. The workspace override counts
   // only as a membership that exists; `|| null` turns an empty one into none.
   const requested = req.headers.get("x-stuga-workspace") || null;
-  const auth = await resolveHumanAuth(
-    account.sql,
-    account.alias,
-    userPrincipal(account.alias),
-    requested,
-  );
+  const auth = await resolveHumanAuth(account.sql, account.alias, userPrincipal(account.alias), requested, {
+    sessionId: account.sid,
+    arrival: account.arrival,
+  });
+  requireLiveSession(auth.sessionLive);
   // Before the membership check: a deleted account is refused, not sent to onboarding.
   const displayName = directoryName(auth.user);
 
@@ -301,11 +363,17 @@ export async function buildContext(req: Request, env: NodeEnv, transport: Transp
  * contributes identity and tenant only; reach is resolved from Postgres on every
  * upgrade. The equality check makes the signed tenant binding real, since
  * resolveHumanAuth falls back to another membership when asked for a foreign one.
- * `origin` is the one the upgrade was served on.
+ * The session the ticket was minted for must still be on, so a socket closed when
+ * it ends does not open again on the ticket in hand. `origin` is the one the
+ * upgrade was served on.
  */
 export async function buildSocketContext(env: NodeEnv, ticket: WsTicket, origin: string = env.publicOrigin): Promise<Ctx> {
   const sql = env.sql;
-  const auth = await resolveHumanAuth(sql, ticket.alias, userPrincipal(ticket.alias), ticket.workspaceId);
+  const auth = await resolveHumanAuth(sql, ticket.alias, userPrincipal(ticket.alias), ticket.workspaceId, {
+    sessionId: ticket.sid,
+    arrival: ticket.arrival,
+  });
+  requireLiveSession(auth.sessionLive);
   const displayName = directoryName(auth.user);
   if (!auth.membership || auth.membership.workspace_id !== ticket.workspaceId) {
     throw new Unauthorized("this ticket's holder is not a member of the workspace it names");
@@ -315,10 +383,12 @@ export async function buildSocketContext(env: NodeEnv, ticket: WsTicket, origin:
     sql,
     surface: "ws",
     alias: ticket.alias,
+    sid: ticket.sid,
     displayName,
     // Tickets are minted only for human sessions.
     isAgent: false,
     servedOrigin: origin,
+    arrival: ticket.arrival,
     env,
     principals: principalsFrom(ticket.alias, ticket.workspaceId, role, auth.groupIds),
     workspaceId: ticket.workspaceId,
@@ -356,7 +426,8 @@ export async function buildMcpCaller(req: Request, env: NodeEnv): Promise<McpCal
   const kind = connectorTokenKind(token);
   if (kind === "refresh") throw new Unauthorized("a refresh token is exchanged at /oauth/token, never sent as a bearer");
   if (kind === "access") {
-    const grant = await grantForAccessToken(env.sql, hashConnectorToken(token));
+    // Only at the listener the person consented at: elsewhere the client is sent to sign in there.
+    const grant = await grantForAccessToken(env.sql, hashConnectorToken(token), arrivalOf(req));
     if (!grant) throw new Unauthorized("invalid or expired token");
     return {
       account: {
@@ -370,6 +441,7 @@ export async function buildMcpCaller(req: Request, env: NodeEnv): Promise<McpCal
         client: agentLabel(req.headers.get(AGENT_CLIENT_HEADER)),
         model: agentLabel(req.headers.get(AGENT_MODEL_HEADER)),
         servedOrigin: servedOrigin(req),
+        arrival: arrivalOf(req),
         env,
       },
       workspaces: grant.workspace_scope,
@@ -381,7 +453,7 @@ export async function buildMcpCaller(req: Request, env: NodeEnv): Promise<McpCal
     const { account, key } = authenticated;
     return { account, workspaces: key.scope.folders ? [key.workspaceId] : null, readOnly: key.scope.readOnly, key };
   }
-  const displayName = directoryName(await getDirectoryRow(env.sql, authenticated.account.alias));
+  const displayName = directoryName(await liveDirectoryRow(authenticated.account));
   return { account: { ...authenticated.account, displayName }, workspaces: null, readOnly: false };
 }
 

@@ -40,6 +40,7 @@ How these fit together, and what each way of reaching a node protects, is in
 | `EXTRA_ORIGINS` | none | Further exact origins browsers may call from, comma-separated. Wildcards are refused. The node's own IP addresses and local names, at `PUBLIC_ORIGIN`'s http or https, need no entry ([Network access](network-access.md#public_origin-and-extra_origins)). An agent that calls the node at one of these signs in there ([Agents signing in](network-access.md#agents-signing-in)). |
 | `TRUST_PROXY_HEADERS` | `false` | Take the client address from `X-Forwarded-For` or `X-Real-IP`. Turn it on only behind a reverse proxy that sets them. |
 | `TLS_CERT_DIR` | none | A directory holding `<hostname>/fullchain.pem` and `<hostname>/privkey.pem`. When set, the node serves https only. |
+| `LOCAL_PASSWORD_NETWORKS` | none | Ranges that are this node's own network though their addresses are public, comma-separated CIDRs such as `203.0.113.0/24,2001:db8:5::/48`. Over plain http the node takes passwords only from its own network ([Passwords over plain http](network-access.md#passwords-over-plain-http)). A malformed range stops the node from starting. |
 | `SAMPLES_URL` | `https://github.com/stuga-dev/samples/releases` | Where the sample workspaces under **Start with** come from, laid out as GitHub's release list: the node reads the list from `<SAMPLES_URL>/latest/download/index.json`, keeps it an hour, and downloads a sample from `<SAMPLES_URL>/download/<tag>/<id>.stuga.zip`. The requests carry nothing about the node or anyone on it. For a network without internet access, serve a release's assets at those paths and point this at the server. No credentials, query or fragment. |
 
 ### Accounts and sign-in
@@ -51,6 +52,12 @@ administers it, and needs the node's setup code, which the node logs at every st
 account after the first is created with an invite link from **Settings → This workspace → Members**;
 there is no open signup to turn on.
 
+A password is at least 8 characters. To sign in at the [remote address](remote-access.md), it must
+be 15 characters or more and hard to guess, a check the node runs itself; any password works on the
+node's own network. Wrong passwords pause sign-ins for that account: 1, 5, 15, then 60 minutes after
+every fifth, starting over after a day without one. The node's own network and the remote address
+count apart, so guesses at one never pause the other; the counts are kept in memory only.
+
 A username is 2 to 32 characters: lowercase letters, digits, `.`, `_` and `-`, starting with a
 letter or a digit. These are reserved: `admin`, `administrator`, `root`, `stuga`, `support`,
 `security`, `abuse`, `postmaster`, `system`, `api`, `www`, `me`, `null` and `undefined`.
@@ -60,6 +67,9 @@ letter or a digit. These are reserved: `admin`, `administrator`, `root`, `stuga`
 | `NODE_SIGNING_KEY` | `<DATA_DIR>/identity/signing.jwk` | The key that signs session tokens, created on first start. Outside `DATA_DIR` it is not in backups, and losing it signs everyone out. |
 | `ACCESS_TOKEN_TTL_SECONDS` | `3600` | How long a session's access token lasts. At least 60. The tokens apps get through OAuth last an hour whatever this says. |
 | `REFRESH_TOKEN_TTL_SECONDS` | `2592000` (30 days) | How long a session lasts without being renewed. At least 60. |
+| `REMOTE_REFRESH_TOKEN_TTL_SECONDS` | `604800` (7 days) | The same at the remote address. At least 60. |
+| `REMOTE_SESSION_MAX_SECONDS` | `2592000` (30 days) | How long a session at the remote address lasts in all, however often it renews. At least 60. |
+| `REMOTE_PROVIDER_SESSION_MAX_SECONDS` | `43200` (12 hours) | The same for a sign-in through the identity provider: after it, the provider is asked again. At least 60. |
 | `REFRESH_ROTATION_GRACE_SECONDS` | `60` | How long a just-used refresh token is still accepted. A refresh token is used once, and a second use normally ends every session of the account. The grace window covers two tabs renewing at the same moment. `0` turns it off. |
 
 ### Search and media

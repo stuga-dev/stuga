@@ -19,6 +19,7 @@ import { Link } from "@astryxdesign/core/Link";
 import { Workspaces, type WorkspaceInfo } from "../api";
 import { Brand, nodeName } from "../shell/Brand";
 import { authHeaders } from "../lib/http/client";
+import { REAUTH_HEADER, confirmIdentity, reauthMethods } from "../lib/session/reauth";
 
 export interface ConsentRequest {
   clientId: string;
@@ -36,18 +37,26 @@ export interface ConsentChoice {
 /** Where the server sends the browser after this answer, or null when it refused the request. */
 export async function answerConsent(decision: "allow" | "deny", request: ConsentRequest, choice?: ConsentChoice): Promise<string | null> {
   try {
-    const res = await fetch("/oauth/consent", {
-      method: "POST",
-      headers: await authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({
-        decision,
-        client_id: request.clientId,
-        redirect_uri: request.redirectUri,
-        code_challenge: request.codeChallenge,
-        state: request.state,
-        ...(decision === "allow" && choice ? { workspaces: choice.workspaces, access: choice.access } : {}),
-      }),
-    });
+    const send = async () =>
+      fetch("/oauth/consent", {
+        method: "POST",
+        headers: await authHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          decision,
+          client_id: request.clientId,
+          redirect_uri: request.redirectUri,
+          code_challenge: request.codeChallenge,
+          state: request.state,
+          ...(decision === "allow" && choice ? { workspaces: choice.workspaces, access: choice.access } : {}),
+        }),
+      });
+    let res = await send();
+    // At the remote address an app is connected only from a sign-in confirmed in the last five minutes.
+    if (res.status === 401 && res.headers.get(REAUTH_HEADER)) {
+      const refused = (await res.json().catch(() => null)) as { error?: unknown; methods?: unknown } | null;
+      if (!(await confirmIdentity(reauthMethods({ code: refused?.error, methods: refused?.methods }) ?? []))) return null;
+      res = await send();
+    }
     if (!res.ok) return null;
     const body = (await res.json()) as { redirect?: unknown };
     return typeof body.redirect === "string" ? body.redirect : null;

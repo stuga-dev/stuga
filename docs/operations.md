@@ -157,6 +157,10 @@ This prints a link, valid for 24 hours, that sets a new password on that account
 link is stored, so it is shown once. Run the command again for another. Redeeming it ends every
 session of that account. The command writes an audit row attributed to `console`.
 
+While [remote access](remote-access.md) is on, the link is the remote address's and opens anywhere.
+Otherwise it is the node's own; over plain http the command also prints the SSH tunnel that opens it
+from outside the network ([Passwords over plain http](network-access.md#passwords-over-plain-http)).
+
 It is the way back in when no node administrator can sign in. It needs a shell on the node's
 machine, which can already read the signing key. A node administrator can mint the same link in
 **Settings → This node → Access**, under **Account recovery**.

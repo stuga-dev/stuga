@@ -7,14 +7,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRelyingParty, createVerifier, loadOrCreateSigningKey, sha256Hex, type AuthConfig, type LocalKeys } from "@stuga/auth";
+import { createRelyingParty, createVerifier, hashRefreshToken, loadOrCreateSigningKey, sha256Hex, type AuthConfig, type LocalKeys } from "@stuga/auth";
 import { startMockProvider, type MockProvider } from "@stuga/auth/testing";
 import type { IdentityProviderSettings } from "../config/settings/node.js";
 import { createIdentityRouter, type IdentityDeps, type IdentityEvent, type IdentityRouter, type TokenPair } from "./routes.js";
 import { memoryDb } from "./testing/memory-db.js";
-import { safeReturnTo, withQuery } from "./http.js";
+import { bindingHash, safeReturnTo, withQuery } from "./http.js";
 
 const ORIGIN = "http://localhost:8787";
+/** Every request here is a hand-built one, which counts as the node's own network. */
+const LOCAL = { arrival: "local" } as const;
 const LAN = "http://nas.local:8787";
 const keyDir = mkdtempSync(join(tmpdir(), "stuga-provider-"));
 afterAll(() => rmSync(keyDir, { recursive: true, force: true }));
@@ -216,12 +218,12 @@ describe("starting a sign-in", () => {
     expect(mem.flows.size).toBe(0);
   });
 
-  it("asks the provider which account with select_account, and refuses any prompt but that and none", async () => {
+  it("asks the provider which account with select_account, and refuses any prompt but that, none and login", async () => {
     const res = await new Browser().post("/auth/oidc/start", { prompt: "select_account" });
     expect(res.status).toBe(200);
     expect(new URL(((await res.json()) as { url: string }).url).searchParams.get("prompt")).toBe("select_account");
     expect([...mem.flows.values()][0]).toMatchObject({ prompt: "select_account" });
-    for (const prompt of ["login", "consent", "none select_account", 1]) {
+    for (const prompt of ["consent", "none select_account", 1]) {
       expect((await router.handle(post("/auth/oidc/start", { prompt }))).status, String(prompt)).toBe(400);
     }
   });
@@ -378,7 +380,7 @@ describe("a first visit", () => {
     expect(mem.emails.get(account.alias)).toBe("ada@example.test");
     expect(mem.admins.has(account.alias)).toBe(false);
     expect(joined).toEqual([expect.objectContaining({ alias: account.alias, workspaceId: "w1" })]);
-    expect((await createVerifier(auth, keys).verify(body.access_token)).alias).toBe(account.alias);
+    expect((await createVerifier(auth, keys).verify(body.access_token, LOCAL)).alias).toBe(account.alias);
 
     // Spent: the same ticket makes nothing twice.
     const again = await browser.post("/auth/oidc/complete", { ticket, username: "ada2", invite: invite("invite-2") });
@@ -466,8 +468,8 @@ describe("a first visit", () => {
     const res = await browser.post("/auth/oidc/link", { ticket, username: "ada", password: "correct horse" });
     expect(res.status).toBe(200);
     const pair = (await res.json()) as TokenPair & { return_to: string };
-    const alias = (await createVerifier(auth, keys).verify(owner.access_token)).alias;
-    expect((await createVerifier(auth, keys).verify(pair.access_token)).alias).toBe(alias);
+    const alias = (await createVerifier(auth, keys).verify(owner.access_token, LOCAL)).alias;
+    expect((await createVerifier(auth, keys).verify(pair.access_token, LOCAL)).alias).toBe(alias);
     expect((await mem.db.findAccountByAlias(alias))!.oidc_sub).toBe("mock-subject-1");
     expect(events).toEqual([{ alias, action: "node.identity.link", detail: { via: "first_visit" } }]);
     expect(browser.lastSetCookie).toMatch(/Max-Age=0/);
@@ -523,7 +525,7 @@ describe("signing in again", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as TokenPair & { return_to: string };
     expect(body.return_to).toBe("/w/docs/1");
-    expect((await createVerifier(auth, keys).verify(body.access_token)).alias).toBe(alias);
+    expect((await createVerifier(auth, keys).verify(body.access_token, LOCAL)).alias).toBe(alias);
     expect(browser.lastSetCookie).toMatch(/Max-Age=0/);
 
     // Single use, even presented again with the cookie it was bound to.
@@ -555,7 +557,7 @@ describe("signing in again", () => {
     const renewed = await router.handle(post("/auth/refresh", { refresh_token: pair.refresh_token }));
     expect(renewed.status).toBe(200);
     const next = (await renewed.json()) as TokenPair;
-    expect((await createVerifier(auth, keys).verify(next.access_token)).alias).toBe("u_owner");
+    expect((await createVerifier(auth, keys).verify(next.access_token, LOCAL)).alias).toBe("u_owner");
     const config = await router.handle(new Request(`${ORIGIN}/auth/config`));
     expect(config.status).toBe(200);
     expect(await config.json()).toMatchObject({ provider: { label: "Mock" }, unclaimed: false });
@@ -809,5 +811,127 @@ describe("where a sign-in may return to", () => {
   it("stores only a safe return path", async () => {
     await new Browser().post("/auth/oidc/start", { return_to: "//evil.test" });
     expect([...mem.flows.values()][0]!.return_to).toBe("/");
+  });
+});
+
+describe("a sign-in through the provider at the remote address", () => {
+  const REMOTE = "https://k7f3q2.stuga.test";
+
+  it("is a remote session, for the remote origin alone, that ends twelve hours after it began", async () => {
+    await claimed();
+    const binding = "b".repeat(43);
+    await mem.db.createOidcTicket({
+      ticketHash: sha256Hex("handoff-1"),
+      kind: "session",
+      bindingHash: bindingHash(binding, true),
+      alias: "u_owner",
+      returnTo: "/",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const res = await router.handle(
+      new Request(`${REMOTE}/auth/oidc/handoff`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-stuga-arrival": "remote", cookie: `__Host-stuga_signin=${binding}` },
+        body: JSON.stringify({ code: "handoff-1" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const pair = (await res.json()) as TokenPair;
+    const row = mem.sessions.get(hashRefreshToken(pair.refresh_token))!;
+    expect(row).toMatchObject({ arrival: "remote", signed_in_with: "provider" });
+    expect((Date.parse(row.absolute_expires_at!) - Date.now()) / 3_600_000).toBeCloseTo(12, 0);
+    expect(row.expires_at).toBe(row.absolute_expires_at);
+    expect((await createVerifier(auth, keys).verify(pair.access_token, { arrival: "remote", origin: REMOTE })).sid).toBe(row.session_id);
+    await expect(createVerifier(auth, keys).verify(pair.access_token, LOCAL)).rejects.toThrow();
+  });
+
+  it("on the LAN is an ordinary sliding session", async () => {
+    await claimed();
+    const browser = new Browser();
+    mem.accounts.get("u_owner")!.oidc_sub = "mock-subject-1";
+    const landed = await signIn(browser);
+    const res = await browser.post("/auth/oidc/handoff", { code: fragment(landed, "code") });
+    expect(res.status).toBe(200);
+    const row = mem.sessions.get(hashRefreshToken(((await res.json()) as TokenPair).refresh_token))!;
+    expect(row).toMatchObject({ arrival: "local", signed_in_with: "provider", absolute_expires_at: null });
+  });
+});
+
+describe("confirming who you are", () => {
+  const age = (minutes: number) => {
+    for (const row of mem.sessions.values()) row.confirmed_at = new Date(Date.now() - minutes * 60_000).toISOString();
+  };
+
+  /** A person linked to the provider, signed in through it a while ago. */
+  async function linkedSession(): Promise<{ pair: TokenPair; bearer: Record<string, string> }> {
+    await claimed();
+    const { browser, ticket } = await firstVisitTicket();
+    const pair = (await (await browser.post("/auth/oidc/complete", { ticket, username: "ada", invite: invite() })).json()) as TokenPair;
+    age(30);
+    return { pair, bearer: { authorization: `Bearer ${pair.access_token}` } };
+  }
+
+  it("links, and unlinks, only from a session confirmed in the last five minutes", async () => {
+    const pair = await passwordAccount("ada", "correct horse");
+    const bearer = { authorization: `Bearer ${pair.access_token}` };
+    age(6);
+    const link = await router.handle(post("/auth/oidc/start", {}, bearer));
+    expect(link.status).toBe(401);
+    expect(link.headers.get("x-stuga-reauth")).toBe("1");
+    // Not linked yet, so the provider cannot be how they confirm.
+    expect((await link.json()).methods).toEqual(["password"]);
+    expect(mem.flows.size).toBe(0);
+    age(1);
+    expect(await signIn(new Browser(), { return_to: "/settings/profile" }, bearer)).toBe("/settings/profile?provider=linked");
+
+    age(6);
+    const unlink = await router.handle(post("/auth/oidc/unlink", {}, bearer));
+    expect(unlink.status).toBe(401);
+    expect((await unlink.json()).methods).toEqual(["password", "provider"]);
+    expect((await mem.db.findAccountByUsername("ada"))!.oidc_sub).toBe("mock-subject-1");
+  });
+
+  it("through the provider: it is asked to have the person sign in again, and only the session's confirmed_at moves", async () => {
+    const { bearer } = await linkedSession();
+    const before = [...mem.sessions.values()].find((r) => !r.revoked_at)!;
+    const started = await new Browser().post("/auth/oidc/start", { prompt: "login", return_to: "/settings/node/access" }, bearer);
+    expect(started.status).toBe(200);
+    const url = new URL(((await started.json()) as { url: string }).url);
+    expect(url.searchParams.get("prompt")).toBe("login");
+    expect(url.searchParams.get("max_age")).toBe("0");
+    expect([...mem.flows.values()][0]).toMatchObject({ prompt: "login", link_alias: before.alias, confirm_session: before.session_id });
+
+    const landed = await signIn(new Browser(), { prompt: "login", return_to: "/settings/node/access" }, bearer);
+    expect(landed).toBe("/settings/node/access?reauth=confirmed");
+    const after = [...mem.sessions.values()].find((r) => !r.revoked_at)!;
+    expect(Date.now() - Date.parse(after.confirmed_at)).toBeLessThan(5_000);
+    expect(after.signed_in_at).toBe(before.signed_in_at);
+    expect(after.expires_at).toBe(before.expires_at);
+    // Nothing was linked or signed in: still one session, the same one.
+    expect([...mem.sessions.values()].filter((r) => !r.revoked_at)).toHaveLength(1);
+  });
+
+  it("is refused when the provider does not say the person signed in just now, or signs in someone else", async () => {
+    const { bearer } = await linkedSession();
+    const stale = () => [...mem.sessions.values()].find((r) => !r.revoked_at)!.confirmed_at;
+    const was = stale();
+
+    idp.overrides = { auth_time: Math.floor(Date.now() / 1000) - 600 };
+    expect(await signIn(new Browser(), { prompt: "login", return_to: "/x" }, bearer)).toBe("/x?reauth=failed");
+    idp.overrides = { auth_time: undefined };
+    expect(await signIn(new Browser(), { prompt: "login", return_to: "/x" }, bearer)).toBe("/x?reauth=failed");
+    idp.overrides = {};
+    idp.chooses = { sub: "someone-else" };
+    expect(await signIn(new Browser(), { prompt: "login", return_to: "/x" }, bearer)).toBe("/x?reauth=failed");
+    expect(stale()).toBe(was);
+  });
+
+  it("then sets a first password for an account the provider made", async () => {
+    const { bearer } = await linkedSession();
+    const refused = await router.handle(post("/auth/password", { new_password: "battery staple" }, bearer));
+    expect(refused.status).toBe(401);
+    expect((await refused.json()).methods).toEqual(["provider"]);
+    expect(await signIn(new Browser(), { prompt: "login", return_to: "/settings/profile" }, bearer)).toBe("/settings/profile?reauth=confirmed");
+    expect((await router.handle(post("/auth/password", { new_password: "battery staple" }, bearer))).status).toBe(204);
   });
 });

@@ -1,12 +1,17 @@
 /**
  * scrypt password hashes as `scrypt$N$r$p$salt$hash` (base64url). A hash
- * verifies with the parameters stored in it, so the cost can be raised later.
+ * verifies with the parameters stored in it, so the cost can be raised later:
+ * one made with other parameters `needsRehash`, and the node hashes it again
+ * on the next sign-in. The cost is OWASP's N=2^16, r=8, p=2 (64 MiB each),
+ * which takes as long as N=2^17, r=8, p=1 in half the memory. Callers that run
+ * hashes for people go through a HashQueue (./hash-queue.ts), so a burst of
+ * sign-ins cannot take every thread or all the memory.
  */
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 
-const SCRYPT_N = 16384;
-const SCRYPT_R = 8;
-const SCRYPT_P = 1;
+export const SCRYPT_N = 65536;
+export const SCRYPT_R = 8;
+export const SCRYPT_P = 2;
 const SALT_BYTES = 16;
 const KEY_BYTES = 32;
 
@@ -36,17 +41,39 @@ function positiveInt(s: string | undefined, max: number): number | null {
   return n >= 1 && n <= max ? n : null;
 }
 
-/** A malformed or foreign hash is a mismatch, never an exception. */
-export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+interface Parsed {
+  N: number;
+  r: number;
+  p: number;
+  salt: Buffer;
+  expected: Buffer;
+}
+
+function parse(stored: string): Parsed | null {
   const parts = stored.split("$");
-  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+  if (parts.length !== 6 || parts[0] !== "scrypt") return null;
   const N = positiveInt(parts[1], MAX_N);
   const r = positiveInt(parts[2], MAX_R);
   const p = positiveInt(parts[3], MAX_P);
-  if (N === null || r === null || p === null || (N & (N - 1)) !== 0) return false;
+  if (N === null || r === null || p === null || (N & (N - 1)) !== 0) return null;
   const salt = Buffer.from(parts[4]!, "base64url");
   const expected = Buffer.from(parts[5]!, "base64url");
-  if (salt.length === 0 || expected.length === 0) return false;
+  if (salt.length === 0 || expected.length === 0) return null;
+  return { N, r, p, salt, expected };
+}
+
+/** True when `stored` was not made with the current parameters, so the next sign-in should hash the password again. */
+export function needsRehash(stored: string): boolean {
+  const parsed = parse(stored);
+  if (!parsed) return false;
+  return parsed.N !== SCRYPT_N || parsed.r !== SCRYPT_R || parsed.p !== SCRYPT_P || parsed.expected.length !== KEY_BYTES;
+}
+
+/** A malformed or foreign hash is a mismatch, never an exception. */
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const parsed = parse(stored);
+  if (!parsed) return false;
+  const { N, r, p, salt, expected } = parsed;
   const actual = await derive(password, salt, expected.length, N, r, p);
   return timingSafeEqual(actual, expected);
 }

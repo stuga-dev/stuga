@@ -1,8 +1,10 @@
 /** `/api/keys`: the agent credentials a person has minted. */
 import { mintRotatedApiKeySecret } from "@stuga/auth";
-import { listApiKeys, revokeApiKey, rotateApiKeySecret, updateApiKey } from "@stuga/db";
+import { getApiKey, listApiKeys, revokeApiKey, rotateApiKeySecret, updateApiKey } from "@stuga/db";
 import { KeyNarrowingError, agentKeyKind, createAgentKey, validateNarrowing } from "../agents/keys.js";
 import { recordAudit } from "../audit/record.js";
+import { alertsFor } from "../identity/alerts.js";
+import { recentConfirmationRequired } from "../identity/recency.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
 
@@ -37,6 +39,9 @@ export async function mintKey({ ctx, req }: WorkspaceCall): Promise<Response> {
   };
   const name = (body.name ?? "").trim().slice(0, 100);
   if (!name) return error(400, "name required");
+  // A key is a lasting way in: only from a sign-in confirmed in the last five minutes.
+  const stale = await recentConfirmationRequired(ctx);
+  if (stale) return stale;
   try {
     const minted = await createAgentKey(ctx, name, {
       scopeFolders: body.scope_folders as string[] | null | undefined,
@@ -50,6 +55,7 @@ export async function mintKey({ ctx, req }: WorkspaceCall): Promise<Response> {
       targetLabel: name,
       detail: { agent_id: minted.agentId, name, scope_folders: minted.scopeFolders, access: minted.access, expires_at: minted.expiresAt },
     });
+    if (!ctx.isAgent) await alertsFor(ctx.env).apiKeyCreated({ alias: ctx.alias, keyId: minted.keyId, keyName: name });
     // The token is returned exactly once; only its hash is stored.
     return json(
       {
@@ -71,6 +77,8 @@ export async function mintKey({ ctx, req }: WorkspaceCall): Promise<Response> {
 }
 
 export async function rotateKey({ ctx, match }: WorkspaceCall): Promise<Response> {
+  const stale = await recentConfirmationRequired(ctx);
+  if (stale) return stale;
   // Same id and agent principal, so attribution is unchanged; the old token stops verifying.
   const rotated = mintRotatedApiKeySecret(match[1]!);
   const ok = await rotateApiKeySecret(ctx.sql, match[1]!, ctx.alias, rotated.secretHash);
@@ -105,6 +113,11 @@ export async function updateKey({ ctx, req, match }: WorkspaceCall): Promise<Res
       if (body.expires_in_days !== undefined) patch.expiresAt = narrowed.expiresAt;
     }
     if (body.clear_expiry === true) patch.expiresAt = null;
+    // Keeping a key working longer is minting it again: only from a recent confirmation.
+    if (patch.expiresAt !== undefined && (await extendsExpiry(ctx, match[1]!, patch.expiresAt))) {
+      const stale = await recentConfirmationRequired(ctx);
+      if (stale) return stale;
+    }
     const row = await updateApiKey(ctx.sql, match[1]!, ctx.alias, patch);
     if (!row) return error(404, "not found");
     recordAudit(ctx, {
@@ -133,4 +146,13 @@ export async function revokeKey({ ctx, match }: WorkspaceCall): Promise<Response
   if (ok) recordAudit(ctx, { action: "key.revoke", targetKind: "api_key", targetId: match[1]! });
   // 404, not 403: the key's existence is not disclosed.
   return ok ? json({ revoked: true }) : error(404, "not found");
+}
+
+/** Whether `next` keeps the caller's key working past when it would stop now: never, or later. */
+async function extendsExpiry(ctx: WorkspaceCall["ctx"], keyId: string, next: string | Date | null): Promise<boolean> {
+  const key = await getApiKey(ctx.sql, keyId);
+  if (!key || key.owner !== ctx.alias) return false;
+  if (key.expires_at === null) return false;
+  if (next === null) return true;
+  return new Date(next).getTime() > new Date(key.expires_at).getTime();
 }

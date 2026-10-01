@@ -75,7 +75,7 @@ These variables belong to the stack, not to the node:
 
 | Variable | Default | |
 |---|---|---|
-| `HOST_BIND` | `0.0.0.0` | The host address Docker publishes the node on. `127.0.0.1` keeps it to this machine. |
+| `HOST_BIND` | `0.0.0.0` | The host address Docker publishes the node on. `127.0.0.1` keeps it to this machine; this machine's network address keeps it to your network. |
 | `HOST_PORT` | `8787` | The host port Docker publishes the node on. `PUBLIC_ORIGIN` must name it. |
 | `STUGA_VOLUME_NAME` | `stuga_pgdata` | The Postgres volume. |
 | `COMPOSE_PROJECT_NAME` | `stuga` | The Compose project. Give a second stack on the same host its own project, volume and port. |
@@ -97,8 +97,26 @@ The node is published on every address of the machine, and only whoever has its 
 claim it ([Getting started](../getting-started.md#2-claim-the-node)). `PUBLIC_ORIGIN` is the address
 invite links carry; `install.sh` sets it to this machine's address on the network. Reserve that
 address on your router so it does not change. To keep the node to this machine, set
-`HOST_BIND=127.0.0.1`. [Network access](../network-access.md) explains what each way of reaching
-the node protects.
+`HOST_BIND=127.0.0.1`, or to your network, set it to this machine's network address.
+[Network access](../network-access.md) explains what each way of reaching the node protects.
+
+### On a server
+
+On a machine with a public address, such as a VPS, the default `HOST_BIND` puts the node's plain
+http port on the internet. The node takes no password there from outside its network
+([Passwords over plain http](../network-access.md#passwords-over-plain-http)), but sessions and
+pages still cross in the clear. Set `HOST_BIND=127.0.0.1` and open the node through an SSH tunnel
+from your computer:
+
+```sh
+ssh -L 8787:127.0.0.1:8787 <server>
+```
+
+Then open `http://localhost:8787` to claim the node and sign in. On a public address the install
+script prints the setup link this way, and `./stuga reset-password` prints the same tunnel with its
+link. To reach the node from anywhere without a tunnel, turn on
+[remote access](../remote-access.md), or serve HTTPS as below. While remote access is on,
+`./stuga status` says so when `HOST_BIND` still publishes the port on every address.
 
 For HTTPS, put a reverse proxy in front of the node, as
 [Network access](../network-access.md#https) describes, or let the node serve TLS itself: mount the

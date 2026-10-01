@@ -5,6 +5,7 @@
  */
 import { createHmac, randomBytes } from "node:crypto";
 import { constantTimeEqual } from "@stuga/auth";
+import type { CredentialArrival } from "@stuga/db";
 import { validateCellValue } from "@stuga/protocol/databases/cells";
 import { sanitizeIdentifier } from "@stuga/protocol/databases/identifiers";
 import {
@@ -35,14 +36,17 @@ export function importExpiry(importId: string): number | null {
   return Number.isFinite(exp) ? exp : null;
 }
 
-/** The upload URL's credential: domain-separated, scoped to one database and one import, expiring with the id. */
-export function signUpload(secret: string, docId: string, importId: string): string {
-  return createHmac("sha256", secret).update(`db-import-upload:${docId}:${importId}`).digest("hex");
+/**
+ * The upload URL's credential: domain-separated, scoped to one database and one import and the listener that
+ * staged it, expiring with the id.
+ */
+export function signUpload(secret: string, arrival: CredentialArrival, docId: string, importId: string): string {
+  return createHmac("sha256", secret).update(`db-import-upload/${arrival}:${docId}:${importId}`).digest("hex");
 }
 
-export function verifyUpload(secret: string, docId: string, importId: string, sig: string | null): boolean {
+export function verifyUpload(secret: string, arrival: CredentialArrival, docId: string, importId: string, sig: string | null): boolean {
   if (!sig || !/^[0-9a-f]{64}$/.test(sig)) return false;
-  return constantTimeEqual(signUpload(secret, docId, importId), sig);
+  return constantTimeEqual(signUpload(secret, arrival, docId, importId), sig);
 }
 
 /** Pick the delimiter the header line actually uses: comma, semicolon or tab. */

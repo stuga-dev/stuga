@@ -61,3 +61,44 @@ describe("the link", () => {
     expect(resetUrl("https://stuga.example.com", "abc")).toBe("https://stuga.example.com/reset/abc");
   });
 });
+
+describe("what reset-password prints", () => {
+  const base = {
+    alias: "u_fen",
+    username: "fen",
+    token: "t0ken",
+    hours: 24,
+    publicOrigin: "http://203.0.113.7:8787",
+    remoteHostname: null,
+    listener: { plainHttp: true, port: 8787 },
+  };
+
+  it("gives the remote address's link while it is on, which opens anywhere", async () => {
+    const { resetLinkText } = await import("./reset-command.js");
+    const text = resetLinkText({ ...base, remoteHostname: "k7f3q2.mystuga.com" });
+    expect(text).toContain("https://k7f3q2.mystuga.com/reset/t0ken");
+    expect(text).not.toContain("203.0.113.7");
+    expect(text).not.toContain("ssh -L");
+  });
+
+  it("over plain http, the node's own link and the SSH tunnel to open it from elsewhere", async () => {
+    const { resetLinkText } = await import("./reset-command.js");
+    const text = resetLinkText({ ...base, listener: { plainHttp: true, port: 9000 } });
+    expect(text).toContain("http://203.0.113.7:8787/reset/t0ken");
+    // Another computer on the node's network opens the link as it is: the tunnel is for outside it.
+    expect(text).toContain("From outside this network, open it through an SSH tunnel: ssh -L 9000:127.0.0.1:9000 <this machine>");
+    expect(text).toContain("http://localhost:9000/reset/t0ken");
+  });
+
+  it("over https, the node's own link alone", async () => {
+    const { resetLinkText } = await import("./reset-command.js");
+    expect(resetLinkText({ ...base, publicOrigin: "https://nas.example", listener: { plainHttp: false, port: 8787 } })).not.toContain("ssh -L");
+  });
+
+  it("reads the tunnel's port from the host's (Docker) before the node's own", async () => {
+    const { resetListener } = await import("./reset-command.js");
+    expect(resetListener({ PORT: "8787", STUGA_TUNNEL_PORT: "9100" })).toEqual({ plainHttp: true, port: 9100 });
+    expect(resetListener({ PORT: "8788", TLS_CERT_DIR: "/certs" })).toEqual({ plainHttp: false, port: 8788 });
+    expect(resetListener({})).toEqual({ plainHttp: true, port: 8787 });
+  });
+});

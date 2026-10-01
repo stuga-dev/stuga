@@ -22,6 +22,8 @@ export interface AuthClientConfig {
   /** The address the node knows itself by; null only when the config could not be fetched. */
   origin: string | null;
   branding: BrandingConfig;
+  /** The remote address while it is on: a password of 15 characters or more signs in there too. Null otherwise. */
+  remoteOrigin: string | null;
 }
 
 interface AuthConfigResponse {
@@ -31,6 +33,7 @@ interface AuthConfigResponse {
   node_label?: string | null;
   origin?: string | null;
   branding?: { accent_color?: string | null } | null;
+  remote_origin?: string | null;
 }
 
 /**
@@ -44,6 +47,7 @@ const FALLBACK_CONFIG: AuthClientConfig = {
   nodeLabel: null,
   origin: null,
   branding: { accentColor: null },
+  remoteOrigin: null,
 };
 
 let cachedConfig: AuthClientConfig | null = null;
@@ -60,6 +64,7 @@ function parseConfig(raw: AuthConfigResponse): AuthClientConfig {
     nodeLabel: text(raw.node_label),
     origin: text(raw.origin),
     branding: { accentColor: raw.branding?.accent_color ?? null },
+    remoteOrigin: text(raw.remote_origin),
   };
 }
 
@@ -105,6 +110,17 @@ export function setNodeNameConfig(node: { name: string | null; label: string }):
  */
 export function nodeLink(path: string): string {
   return `${authConfig().origin ?? window.location.origin}${path}`;
+}
+
+/** The remote address while it is on; null otherwise. */
+export function remoteOrigin(): string | null {
+  return authConfig().remoteOrigin;
+}
+
+/** True when this page was opened at the remote address. */
+export function atRemoteAddress(): boolean {
+  const remote = remoteOrigin();
+  return remote !== null && remote === window.location.origin;
 }
 
 /** True when /auth/config could not be fetched and the fallback is in force. */

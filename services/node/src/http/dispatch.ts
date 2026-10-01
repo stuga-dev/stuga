@@ -4,6 +4,8 @@
  * the origin gate and CORS, the credential a route asks for, the per-principal
  * budget, the denial ledger and the mapping of a failed context to a response.
  */
+import { isUpgradeResponse } from "@stuga/runtime";
+import { isSessionLive } from "@stuga/db";
 import {
   buildAccountContext,
   buildContext,
@@ -24,7 +26,7 @@ import type { IdentityRouter } from "../identity/index.js";
 import { requestId } from "../ids.js";
 import { unauthorizedChallenge } from "../mcp/oauth.js";
 import type { RequestHandler } from "../platform/http-server.js";
-import { servedOrigin } from "./arrival.js";
+import { arrivalOf, servedOrigin } from "./arrival.js";
 import { allowedCorsOrigin, reportRefusedOrigin, withCors } from "./cors.js";
 import { rateLimitRefusal } from "./rate-limit.js";
 import { error } from "./respond.js";
@@ -334,7 +336,7 @@ async function upgradeDocumentSocket(req: Request, url: URL, match: readonly str
   let writeCeiling = true;
   const socketTicket = url.searchParams.get("ticket");
   if (socketTicket) {
-    const ticket = verifyWsTicket(env.internalSecret, socketTicket);
+    const ticket = verifyWsTicket(env.internalSecret, socketTicket, arrivalOf(req));
     // A document mismatch and a bad signature answer identically.
     if (!ticket || ticket.docId !== docId) return new Response("unauthorized", { status: 401 });
     try {
@@ -358,6 +360,14 @@ async function upgradeDocumentSocket(req: Request, url: URL, match: readonly str
   }
   // A 101 is not a denial and is never cloned.
   const res = await routeWebSocket(ctx, env, docId, url.searchParams.get("agent"), writeCeiling);
+  // A person's socket closes when their sign-in ends. Tracked first, then looked up once more: a
+  // sign-in that ended while this socket was opening is missed by the closing that came with it.
+  if (!ctx.isAgent && isUpgradeResponse(res)) {
+    env.sessionSockets.track(ctx.sid, ctx.alias, res, ctx.arrival);
+    if (!(await isSessionLive(env.sql, { sessionId: ctx.sid, alias: ctx.alias, arrival: ctx.arrival }))) {
+      env.sessionSockets.closeSessions([ctx.sid]);
+    }
+  }
   noteDenial(ctx, res, { method: req.method, path: url.pathname });
   return res;
 }

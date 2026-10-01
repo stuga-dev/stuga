@@ -14,55 +14,75 @@ const SECRET = "internal-secret-value";
 const NOW = 1_760_000_000_000;
 const WS = "ws-AbC123xyz789";
 
+/** A person's ticket minted on the node's own network. */
+const lan = (alias: string, workspaceId: string) => ({ alias, workspaceId, sid: "sess-1", arrival: "local" as const });
+
 describe("media ticket", () => {
   it("round-trips the alias and workspace it was minted for", async () => {
-    const { value, expiresAt } = await mintMediaTicket(SECRET, "user-abc", WS, NOW);
-    const ticket = await verifyMediaTicket(SECRET, value, NOW);
+    const { value, expiresAt } = await mintMediaTicket(SECRET, lan("user-abc", WS), NOW);
+    const ticket = await verifyMediaTicket(SECRET, value, "local", NOW);
     expect(ticket?.alias).toBe("user-abc");
     expect(ticket?.workspaceId).toBe(WS);
     expect(ticket?.expiresAt).toBe(expiresAt);
   });
 
   it("refuses a ticket whose signed workspace was edited", async () => {
-    const { value } = await mintMediaTicket(SECRET, "user-abc", WS, NOW);
-    const [alias, , exp, sig] = value.split(".");
+    const { value } = await mintMediaTicket(SECRET, lan("user-abc", WS), NOW);
+    const [alias, , sid, exp, sig] = value.split(".");
     const other = btoa("ws-otherTenant").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    expect(await verifyMediaTicket(SECRET, `${alias}.${other}.${exp}.${sig}`, NOW)).toBeNull();
+    expect(await verifyMediaTicket(SECRET, `${alias}.${other}.${sid}.${exp}.${sig}`, "local", NOW)).toBeNull();
   });
 
   it("rejects a workspace id that could escape its media prefix", async () => {
-    const { value } = await mintMediaTicket(SECRET, "user-abc", "../trash", NOW);
-    expect(await verifyMediaTicket(SECRET, value, NOW)).toBeNull();
+    const { value } = await mintMediaTicket(SECRET, lan("user-abc", "../trash"), NOW);
+    expect(await verifyMediaTicket(SECRET, value, "local", NOW)).toBeNull();
   });
 
   it("survives an alias that is not URL-safe", async () => {
     const alias = "user+/=?ü";
-    const { value } = await mintMediaTicket(SECRET, alias, WS, NOW);
+    const { value } = await mintMediaTicket(SECRET, lan(alias, WS), NOW);
     expect(value).not.toContain("+");
-    expect((await verifyMediaTicket(SECRET, value, NOW))?.alias).toBe(alias);
+    expect((await verifyMediaTicket(SECRET, value, "local", NOW))?.alias).toBe(alias);
   });
 
   it("rejects a ticket signed with a different secret", async () => {
-    const { value } = await mintMediaTicket(SECRET, "user-abc", WS, NOW);
-    expect(await verifyMediaTicket("some-other-secret", value, NOW)).toBeNull();
+    const { value } = await mintMediaTicket(SECRET, lan("user-abc", WS), NOW);
+    expect(await verifyMediaTicket("some-other-secret", value, "local", NOW)).toBeNull();
   });
 
   it("rejects a tampered alias or expiry", async () => {
-    const { value } = await mintMediaTicket(SECRET, "user-abc", WS, NOW);
-    const [alias, ws, exp, sig] = value.split(".");
-    expect(await verifyMediaTicket(SECRET, `${alias}.${ws}.${Number(exp) + 86_400}.${sig}`, NOW)).toBeNull();
-    expect(await verifyMediaTicket(SECRET, `${alias}X.${ws}.${exp}.${sig}`, NOW)).toBeNull();
+    const { value } = await mintMediaTicket(SECRET, lan("user-abc", WS), NOW);
+    const [alias, ws, sid, exp, sig] = value.split(".");
+    expect(await verifyMediaTicket(SECRET, `${alias}.${ws}.${sid}.${Number(exp) + 86_400}.${sig}`, "local", NOW)).toBeNull();
+    expect(await verifyMediaTicket(SECRET, `${alias}X.${ws}.${sid}.${exp}.${sig}`, "local", NOW)).toBeNull();
+    // Nor the session it was minted for.
+    expect(await verifyMediaTicket(SECRET, `${alias}.${ws}.${btoa("sess-2").replace(/=+$/, "")}.${exp}.${sig}`, "local", NOW)).toBeNull();
   });
 
   it("expires", async () => {
-    const { value, expiresAt } = await mintMediaTicket(SECRET, "user-abc", WS, NOW, 60);
-    expect(await verifyMediaTicket(SECRET, value, expiresAt * 1000 - 1_000)).not.toBeNull();
-    expect(await verifyMediaTicket(SECRET, value, expiresAt * 1000 + 1_000)).toBeNull();
+    const { value, expiresAt } = await mintMediaTicket(SECRET, lan("user-abc", WS), NOW, 60);
+    expect(await verifyMediaTicket(SECRET, value, "local", expiresAt * 1000 - 1_000)).not.toBeNull();
+    expect(await verifyMediaTicket(SECRET, value, "local", expiresAt * 1000 + 1_000)).toBeNull();
+  });
+
+  it("carries the session it was minted for, or none for an agent's key", async () => {
+    const person = await mintMediaTicket(SECRET, lan("user-abc", WS), NOW);
+    expect((await verifyMediaTicket(SECRET, person.value, "local", NOW))?.sid).toBe("sess-1");
+    const agent = await mintMediaTicket(SECRET, { alias: "agent-1", workspaceId: WS, sid: null, arrival: "local" }, NOW);
+    expect((await verifyMediaTicket(SECRET, agent.value, "local", NOW))?.sid).toBeNull();
+  });
+
+  it("reads media only at the listener that minted it", async () => {
+    const local = await mintMediaTicket(SECRET, lan("user-abc", WS), NOW);
+    const remote = await mintMediaTicket(SECRET, { ...lan("user-abc", WS), arrival: "remote" }, NOW);
+    expect(await verifyMediaTicket(SECRET, local.value, "remote", NOW)).toBeNull();
+    expect(await verifyMediaTicket(SECRET, remote.value, "local", NOW)).toBeNull();
+    expect((await verifyMediaTicket(SECRET, remote.value, "remote", NOW))?.workspaceId).toBe(WS);
   });
 
   it("rejects junk without throwing", async () => {
     for (const junk of ["", "abc", "a.b", "a.b.1.c.d", "a.b.notanumber.c", "...", null, undefined]) {
-      expect(await verifyMediaTicket(SECRET, junk, NOW)).toBeNull();
+      expect(await verifyMediaTicket(SECRET, junk, "local", NOW)).toBeNull();
     }
   });
 });

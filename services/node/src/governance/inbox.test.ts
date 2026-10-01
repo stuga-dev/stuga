@@ -20,6 +20,8 @@ vi.mock("@stuga/db", async (importOriginal) => ({
   resolveDocInstructions: vi.fn(async () => []),
   listWorkspaceEvents: vi.fn(async () => []),
   latestWorkspaceEventId: vi.fn(async () => 7),
+  // Minting and rotating take a recent confirmation, which these sessions have.
+  sessionConfirmedAt: vi.fn(async () => new Date()),
 }));
 
 const {

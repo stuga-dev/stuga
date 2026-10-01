@@ -228,7 +228,8 @@ export const Workspaces = {
   /** The token is returned once. Omit a limit for none; an admin link must admit one person. */
   createInvite: (
     workspaceId: string,
-    opts: { role?: InviteRole; expires_in_days?: number; max_uses?: number } = {},
+    /** Omitted limits are one person and seven days; null is no limit, which works only on the node's own network. */
+    opts: { role?: InviteRole; expires_in_days?: number | null; max_uses?: number | null } = {},
   ) =>
     api<{
       token: string;

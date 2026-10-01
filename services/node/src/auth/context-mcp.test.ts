@@ -18,13 +18,16 @@ vi.mock("@stuga/db", async (orig) => ({
     user: { display_name: "Liv", username: "liv", email: null },
     membership: { workspace_id: "ws1", role: "member" },
     groupIds: [],
+    sessionLive: true,
   })),
+  isSessionLive: vi.fn(async () => true),
 }));
 
-const { grantForAccessToken, getApiKey, getDirectoryRow } = await import("@stuga/db");
+const { grantForAccessToken, getApiKey, getDirectoryRow, isSessionLive } = await import("@stuga/db");
 const { buildAccountContext, buildContext, buildMcpCaller, Unauthorized } = await import("./context.js");
+const { ARRIVAL_HEADER } = await import("../platform/http-server.js");
 
-const verify = vi.fn(async () => ({ alias: "liv", claims: {} }));
+const verify = vi.fn(async () => ({ alias: "liv", sid: "sess-1", claims: {} }));
 const env = { sql: {}, verifier: { verify } } as never;
 
 const bearer = (token: string, path = "/mcp") =>
@@ -79,6 +82,15 @@ describe("an OAuth access token", () => {
     expect(caller.readOnly).toBe(true);
     expect(caller.account.scope?.readOnly).toBe(true);
     expect(caller.workspaces).toBeNull();
+  });
+
+  it("is looked up for the listener it is presented at, so one consented on the LAN finds no grant at the remote address", async () => {
+    const access = mintConnectorToken("access");
+    vi.mocked(grantForAccessToken).mockImplementation(async (_sql, _hash, arrival) => (arrival === "local" ? grantRow() : null));
+    const remote = new Request("https://k7f3q2.stuga.test/mcp", { headers: { authorization: `Bearer ${access.token}`, [ARRIVAL_HEADER]: "remote" } });
+    await expect(buildMcpCaller(remote, env)).rejects.toBeInstanceOf(Unauthorized);
+    expect(vi.mocked(grantForAccessToken).mock.calls[0]![2]).toBe("remote");
+    expect((await buildMcpCaller(bearer(access.token), env)).account.arrival).toBe("local");
   });
 
   it("is refused on /mcp when no live grant stands behind it (unknown, expired or revoked)", async () => {
@@ -153,6 +165,12 @@ describe("the other credentials on /mcp", () => {
   it("refuses a session whose account no longer exists", async () => {
     vi.mocked(getDirectoryRow).mockResolvedValueOnce(null);
     await expect(buildMcpCaller(bearer("session-jwt"), env)).rejects.toBeInstanceOf(Unauthorized);
+  });
+
+  it("refuses a person's session that has ended", async () => {
+    vi.mocked(isSessionLive).mockResolvedValueOnce(false);
+    await expect(buildMcpCaller(bearer("session-jwt"), env)).rejects.toBeInstanceOf(Unauthorized);
+    expect(vi.mocked(isSessionLive).mock.calls[0]![1]).toEqual({ sessionId: "sess-1", alias: "liv", arrival: "local" });
   });
 });
 

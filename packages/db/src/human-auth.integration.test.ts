@@ -51,6 +51,28 @@ describe.skipIf(!URL)("resolveHumanAuth", () => {
     expect(auth.groupIds).toEqual(["group:eng"]);
   });
 
+  it("says in the same statement whether the sign-in an access token names is on, and only when asked", async () => {
+    await seedUser(sql, ALICE, "Alice", "alice@x.test", "alice");
+    await join(WS_A, ALICE, "member", "2026-01-01");
+    await sql`TRUNCATE refresh_sessions`;
+    await sql`INSERT INTO refresh_sessions
+      (id, session_id, alias, token_hash, expires_at, arrival, signed_in_with, signed_in_at, confirmed_at)
+      VALUES ('human-auth-row', 'sess-1', ${ALICE}, 'human-auth-token', now() + interval '1 hour', 'local', 'password', now(), now())`;
+    const asked = (sessionId: string, arrival: "local" | "remote") =>
+      resolveHumanAuth(sql, ALICE, `user:${ALICE}`, null, { sessionId, arrival });
+    expect((await resolveHumanAuth(sql, ALICE, `user:${ALICE}`, null)).sessionLive).toBeNull();
+    expect((await asked("sess-1", "local")).sessionLive).toBe(true);
+    expect((await asked("sess-1", "remote")).sessionLive).toBe(false);
+    expect((await asked("sess-2", "local")).sessionLive).toBe(false);
+    await sql`UPDATE refresh_sessions SET revoked_at = now()`;
+    const after = await asked("sess-1", "local");
+    expect(after.sessionLive).toBe(false);
+    // The rest of the answer is unchanged by asking.
+    expect(after.membership).toEqual({ workspace_id: WS_A, role: "member" });
+    // Other suites share the table.
+    await sql`TRUNCATE refresh_sessions`;
+  });
+
   it("picks the EARLIEST membership when no workspace is requested", async () => {
     await join(WS_B, ALICE, "admin", "2026-02-01");
     await join(WS_A, ALICE, "member", "2026-01-01");

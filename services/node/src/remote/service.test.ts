@@ -206,6 +206,7 @@ function service(
     gate: createServingGate(),
     readsOwnBody: () => false,
     maxBodyBytes: () => 1 << 20,
+    frontDoor: async () => ({}),
     probe: opts.probe ?? (async () => ({ ok: true })),
     ...(opts.timing ? { timing: opts.timing } : {}),
     ...(opts.now ? { now: opts.now } : {}),

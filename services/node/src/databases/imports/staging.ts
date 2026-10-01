@@ -40,6 +40,7 @@ import {
 } from "./format.js";
 import { proposeDatabaseOp } from "../propose.js";
 import type { NodeEnv } from "../../env.js";
+import { arrivalOf } from "../../http/arrival.js";
 import { error, json } from "../../http/respond.js";
 
 interface ImportMeta {
@@ -167,7 +168,7 @@ export async function createDatabaseImport(
   await ctx.env.snapshots.put(importKey(doc.doc_id, importId, "meta"), JSON.stringify(meta), {
     httpMetadata: { contentType: "application/json" },
   });
-  const sig = signUpload(ctx.env.internalSecret, doc.doc_id, importId);
+  const sig = signUpload(ctx.env.internalSecret, ctx.arrival, doc.doc_id, importId);
   const uploadPath = `/api/databases/${encodeURIComponent(doc.doc_id)}/imports/${importId}/upload?sig=${sig}`;
   const review = ctx.isAgent ? resolveReviewMode(ctx, doc).mode : "direct";
   return {
@@ -194,7 +195,7 @@ export async function handleDatabaseImportUpload(
   importId: string,
   sig: string | null,
 ): Promise<Response> {
-  if (!verifyUpload(env.internalSecret, docId, importId, sig)) {
+  if (!verifyUpload(env.internalSecret, arrivalOf(req), docId, importId, sig)) {
     return error(403, "invalid upload signature");
   }
   const exp = importExpiry(importId);

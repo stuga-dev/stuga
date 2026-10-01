@@ -5,9 +5,10 @@
  */
 import { isAbsolute, join, normalize, resolve } from "node:path";
 import type { AiProvider } from "@stuga/ai";
-import type { AuthConfig } from "@stuga/auth";
+import { REMOTE_SESSION_DEFAULTS, type AuthConfig } from "@stuga/auth";
 import { EMBEDDING_DIMS, MAX_EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
 import { APP_ROOT } from "../app-root.js";
+import { parseCidr, type Cidr } from "../net/cidr.js";
 import type { NodeConfig } from "../env.js";
 import { loadOrCreateInternalSecret } from "./secrets.js";
 
@@ -18,6 +19,11 @@ interface NodeBootConfig extends NodeConfig {
   /** Directory of `<host>/fullchain.pem` + `privkey.pem`; set, the node serves https. */
   tlsCertDir?: string;
   webDistDir: string;
+  /**
+   * LOCAL_PASSWORD_NETWORKS: public ranges that are this node's own network (a campus, a routed IPv6
+   * prefix, a site-to-site VPN), from which the plain-http LAN listener takes passwords.
+   */
+  localPasswordNetworks: Cidr[];
   /** SETUP_CODE_FILE: where the packaging wants the setup code kept; unset, the data directory. */
   setupCodeFile?: string;
   /**
@@ -160,6 +166,17 @@ function pathBase(env: Env, name: string, fallback: string): string {
 
 // ---- parsers ---------------------------------------------------------------
 
+/** Comma-separated CIDR ranges; a malformed one stops the node from starting. */
+function cidrList(env: Env, name: string): Cidr[] {
+  const out: Cidr[] = [];
+  for (const entry of (str(env, name) ?? "").split(",").map((v) => v.trim()).filter(Boolean)) {
+    const cidr = parseCidr(entry);
+    if (!cidr) throw new ConfigError(`${name} takes CIDR ranges such as 203.0.113.0/24 or 2001:db8::/48; "${entry}" is not one`);
+    out.push(cidr);
+  }
+  return out;
+}
+
 function requiredDatabaseUrl(env: Env): string {
   const databaseUrl = str(env, "DATABASE_URL");
   if (!databaseUrl) throw new ConfigError("DATABASE_URL is required (postgres://user:pass@host:5432/stuga)");
@@ -204,6 +221,14 @@ function authConfig(env: Env, ops: OpsConfig): AuthConfig {
     refreshTokenTtlSeconds: int(env, "REFRESH_TOKEN_TTL_SECONDS", DEFAULT_REFRESH_TOKEN_TTL_SECONDS, { min: 60 }),
     // 0 disables the grace window.
     refreshRotationGraceSeconds: int(env, "REFRESH_ROTATION_GRACE_SECONDS", DEFAULT_REFRESH_ROTATION_GRACE_SECONDS, { min: 0 }),
+    remoteRefreshTokenTtlSeconds: int(env, "REMOTE_REFRESH_TOKEN_TTL_SECONDS", REMOTE_SESSION_DEFAULTS.remoteRefreshTokenTtlSeconds, { min: 60 }),
+    remoteSessionMaxSeconds: int(env, "REMOTE_SESSION_MAX_SECONDS", REMOTE_SESSION_DEFAULTS.remoteSessionMaxSeconds, { min: 60 }),
+    remoteProviderSessionMaxSeconds: int(
+      env,
+      "REMOTE_PROVIDER_SESSION_MAX_SECONDS",
+      REMOTE_SESSION_DEFAULTS.remoteProviderSessionMaxSeconds,
+      { min: 60 },
+    ),
   };
 }
 
@@ -315,6 +340,7 @@ export function parseConfig(env: Env = process.env, opts: { internalSecret?: str
     stdioEntry: env.STUGA_STDIO_ENTRY,
     aiProviderBaseUrls: providerBaseUrls(baseUrl(env, "AI_OLLAMA_DEFAULT_URL", DEFAULT_OLLAMA_URL)),
     samplesUrl: pathBase(env, "SAMPLES_URL", DEFAULT_SAMPLES_URL),
+    localPasswordNetworks: cidrList(env, "LOCAL_PASSWORD_NETWORKS"),
   };
   const tlsCertDir = str(env, "TLS_CERT_DIR");
   if (tlsCertDir) cfg.tlsCertDir = resolve(tlsCertDir);

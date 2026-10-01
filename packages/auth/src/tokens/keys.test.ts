@@ -67,6 +67,7 @@ describe("signAccessToken", () => {
     const before = Math.floor(Date.now() / 1000);
     const token = await signAccessToken(keys, {
       alias: "u_abcdefghijklmnop",
+      sid: "s_1",
       username: "ada",
       displayName: "Ada",
       issuer: "http://localhost:8787",
@@ -79,6 +80,7 @@ describe("signAccessToken", () => {
       iss: "http://localhost:8787",
       aud: "stuga-node",
       sub: "u_abcdefghijklmnop",
+      sid: "s_1",
       preferred_username: "ada",
       name: "Ada",
       token_use: "access",
@@ -91,6 +93,7 @@ describe("signAccessToken", () => {
     const keys = await loadOrCreateSigningKey(join(dir, "signing.jwk"));
     const token = await signAccessToken(keys, {
       alias: "u_abcdefghijklmnop",
+      sid: "s_1",
       username: "nameless",
       displayName: "Nameless",
       issuer: "http://localhost:8787",

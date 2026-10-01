@@ -13,13 +13,19 @@
  * either makes a new account, which needs an invite like registration does, or
  * proves an existing one with its password. Nothing is ever linked by username
  * or email. Every endpoint refuses an agent's key.
+ *
+ * Linking and unlinking change how the account gets in, so they take a sign-in confirmed in the last
+ * five minutes. A person linked to the provider confirms through it (`prompt: "login"` with a
+ * session): the provider is asked to have them sign in again, with `max_age=0`, and the callback
+ * moves the session's `confirmed_at` only when the id_token's `auth_time` is that recent.
  */
-import { ProviderError, createRelyingParty, newAlias, randomBase64url, sha256Hex, verifyPassword } from "@stuga/auth";
+import { ProviderError, createRelyingParty, newAlias, randomBase64url, sha256Hex } from "@stuga/auth";
 import type { OidcTicketRow } from "@stuga/db";
 import { normalizeUsername, usernameSource } from "@stuga/protocol/domain/username";
 import { arrivalOf, servedOrigin } from "../http/arrival.js";
-import { MAX_NAME, MAX_PASSWORD, decoy } from "./passwords.js";
-import type { IdentityCore } from "./routes.js";
+import { MAX_NAME } from "./passwords.js";
+import { typedUsername, withCookies, type IdentityCore } from "./routes.js";
+import { RECENT_CONFIRMATION_MS } from "./recency.js";
 import {
   bindingCookie,
   bindingHash,
@@ -107,17 +113,29 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
     if (!idp) return fail(404, "no_provider", "no identity provider is set up on this node");
     const body = (await readJson(req)) ?? {};
     // "none": a silent attempt, which a provider without a session refuses. "select_account": ask which
-    // account, so a person who signed out does not land straight back in the one they left.
+    // account, so a person who signed out does not land straight back in the one they left. "login":
+    // have the person sign in at the provider again, which is how a signed-in person confirms.
     const prompt = body.prompt;
-    if (prompt !== undefined && prompt !== "none" && prompt !== "select_account") {
-      return fail(400, "bad_request", 'prompt can only be "none" or "select_account"');
+    if (prompt !== undefined && prompt !== "none" && prompt !== "select_account" && prompt !== "login") {
+      return fail(400, "bad_request", 'prompt can only be "none", "select_account" or "login"');
     }
 
-    // A signed-in person starting here links the provider to their own account.
-    const account = await core.bearerAccount(req);
-    if (account instanceof Response) return account;
-    if (account && prompt === "none") return fail(400, "bad_request", "linking cannot be silent");
-    if (account?.oidc_sub) return fail(409, "already_linked", "this account is already linked to the identity provider");
+    // A signed-in person starting here links the provider to their own account, or, already linked,
+    // confirms who they are through it.
+    const found = await core.bearerSession(req);
+    if (found instanceof Response) return found;
+    const account = found?.account ?? null;
+    let confirmSession: string | null = null;
+    if (found && account) {
+      if (prompt === "none") return fail(400, "bad_request", "linking cannot be silent");
+      if (account.oidc_sub) {
+        if (prompt !== "login") return fail(409, "already_linked", "this account is already linked to the identity provider");
+        confirmSession = found.token.sid;
+      } else {
+        const stale = await core.recentlyConfirmed(account, found.token);
+        if (stale) return stale;
+      }
+    }
 
     const origin = signInOrigin(req);
     const redirectUri = `${origin}${CALLBACK_PATH}`;
@@ -140,6 +158,7 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
       redirectUri,
       prompt: prompt ?? null,
       linkAlias: account?.alias ?? null,
+      confirmSession,
       returnTo: safeReturnTo(body.return_to),
       expiresAt: inSeconds(FLOW_TTL_S),
     });
@@ -154,6 +173,7 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
     const flow = state ? await db.takeOidcFlow(state) : null;
     const failed = (reason: string): Response => {
       console.warn("[auth] identity provider sign-in failed", { reason });
+      if (flow?.confirm_session) return redirect(withQuery(flow.return_to, "reauth=failed"));
       return redirect(flow?.link_alias ? withQuery(flow.return_to, "provider=failed") : "/login?provider=failed");
     };
     if (!flow) return failed("unknown_or_expired_state");
@@ -175,6 +195,18 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
     } catch (err) {
       if (!(err instanceof ProviderError)) throw err;
       return failed(err.reason);
+    }
+
+    // A confirmation: the account's own subject, signed in at the provider just now. Only the session moves.
+    if (flow.confirm_session && flow.link_alias) {
+      const account = await db.findAccountByAlias(flow.link_alias);
+      if (!account || account.oidc_sub !== identity.sub) return failed("confirm_other_subject");
+      // A provider that does not say when the person signed in cannot confirm anything.
+      const signedInAt = identity.authTime === null ? null : identity.authTime * 1000;
+      if (signedInAt === null || Date.now() - signedInAt > RECENT_CONFIRMATION_MS) return failed("confirm_not_recent");
+      const confirmed = await db.confirmSession({ sessionId: flow.confirm_session, alias: account.alias, arrival: arrivalOf(req) });
+      if (!confirmed) return failed("confirm_session_ended");
+      return redirect(withQuery(flow.return_to, "reauth=confirmed"));
     }
 
     // Everything below links the subject only while the issuer that just vouched for it is still the node's.
@@ -229,7 +261,8 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
     if (!(await db.takeOidcTicket(hash, "session"))) return invalid();
     const account = await db.findAccountByAlias(row.alias);
     if (!account) return invalid();
-    return json({ ...(await core.issueTokens(account)), return_to: row.return_to }, 200, cleared(req));
+    const done = await core.signIn(req, account, "provider");
+    return withCookies(json({ ...done.tokens, return_to: row.return_to }, 200, cleared(req)), [done.cookie]);
   }
 
   /** What a first visit's page shows: who the provider said this is, and a username to offer. Leaves the ticket in place. */
@@ -266,7 +299,8 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
     const invite = field(body, "invite").trim();
     if (!invite) return core.inviteRequired();
     const inviteHash = sha256Hex(invite);
-    if (!(await db.inviteIsRedeemable(inviteHash))) return core.inviteInvalid();
+    const refusedInvite = await core.inviteRefusal(req, inviteHash);
+    if (refusedInvite) return refusedInvite;
 
     const displayName = field(body, "name").trim().slice(0, MAX_NAME) || row.name?.slice(0, MAX_NAME) || username;
     const made = await db.createProviderAccount({
@@ -277,6 +311,7 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
       oidcSub: row.sub!,
       issuer: row.issuer!,
       inviteHash,
+      arrival: arrivalOf(req),
     });
     if (!made.ok) {
       switch (made.reason) {
@@ -288,6 +323,8 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
           return core.inviteRequired();
         case "invite_invalid":
           return core.inviteInvalid();
+        case "invite_local_only":
+          return core.inviteLocalOnly();
         case "setup_required":
           return setupRequired();
         case "already_linked":
@@ -297,7 +334,8 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
     // Spent only now: a refused username leaves the ticket for the next try.
     await db.takeOidcTicket(hash, "first_visit");
     core.reportJoin(made.account.alias, inviteHash, made.joined);
-    return json({ ...(await core.issueTokens(made.account, displayName)), return_to: row.return_to }, 201, cleared(req));
+    const done = await core.signIn(req, made.account, "provider", { displayName, quiet: true });
+    return withCookies(json({ ...done.tokens, return_to: row.return_to }, 201, cleared(req)), [done.cookie]);
   }
 
   /** Link a first-visit subject to an existing account, proven with that account's password. */
@@ -308,32 +346,46 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
     if (found instanceof Response) return found;
     const { hash, row } = found;
 
-    const username = normalizeUsername(field(body, "username"));
+    const username = typedUsername(field(body, "username"));
     const password = field(body, "password");
     if (!username || !password) return fail(400, "bad_request", "username and password are required");
     const wrong = () => fail(401, "invalid_credentials", "username or password is incorrect");
-    // Refused before hashing: scrypt cost grows with the input.
-    if (password.length > MAX_PASSWORD) return wrong();
-    const account = await db.findAccountByUsername(username);
-    const ok = await verifyPassword(password, account?.password_hash ?? (await decoy()));
-    if (!account?.password_hash || !ok) return wrong();
+    const existing = await db.findAccountByUsername(username);
+    const checked = await core.passwords.check(req, {
+      username: existing?.username ?? username,
+      account: existing,
+      password,
+      signedIn: false,
+      device: await core.knownDevice(req, existing),
+    });
+    if (!checked.ok) return checked.response;
+    const { account } = checked;
 
-    const outcome = await db.linkIdentity(account.alias, row.sub!, row.issuer!);
+    // Only while the password checked is still the account's: a recovery that lands meanwhile wins.
+    const stillHolds = { password: checked.hash };
+    const outcome = await db.linkIdentity(account.alias, row.sub!, row.issuer!, stillHolds);
     if (outcome === "provider_changed") return providerChanged(hash);
-    if (outcome === "no_account") return wrong();
+    if (outcome === "no_account" || outcome === "changed") return wrong();
     if (outcome === "taken" || outcome === "other_sub") {
       return fail(409, "already_linked", "that account, or this identity, is already linked to another one");
     }
     await db.takeOidcTicket(hash, "first_visit");
     if (outcome === "linked") linked(account.alias, "first_visit");
-    return json({ ...(await core.issueTokens(account)), return_to: row.return_to }, 200, cleared(req));
+    const done = await core.signInIf(req, account, "provider", stillHolds);
+    if (!done) return wrong();
+    return withCookies(json({ ...done.tokens, return_to: row.return_to }, 200, cleared(req)), [done.cookie]);
   }
 
-  /** Unlink the provider from your own account; refused while it is the only way in. */
+  /** Unlink the provider from your own account, from a recent confirmation; refused while it is the only way in. */
   async function unlink(req: Request): Promise<Response> {
-    const account = await core.bearerAccount(req);
-    if (account instanceof Response) return account;
-    if (!account) return fail(401, "invalid_token", "sign in again");
+    const found = await core.bearerSession(req);
+    if (found instanceof Response) return found;
+    if (!found) return fail(401, "invalid_token", "sign in again");
+    const { account } = found;
+    if (account.oidc_sub) {
+      const stale = await core.recentlyConfirmed(account, found.token);
+      if (stale) return stale;
+    }
     const outcome = await db.unlinkIdentity(account.alias);
     if (outcome === "no_password") return fail(409, "password_required", "set a password first");
     if (outcome === "unlinked") deps.onIdentityChange?.({ alias: account.alias, action: "node.identity.unlink", detail: {} });

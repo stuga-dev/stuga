@@ -844,6 +844,10 @@ cmd_status() {
     message="$(printf '%s' "$remote" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p')"
     if [ -n "$state" ]; then
       say "remote       $state — $message"
+      # The remote address is the one to share; the plain-http port belongs on this network.
+      if [ "$state" = "running" ] && host_bind_open; then
+        warn "Set HOST_BIND to this machine's network address to keep port $(host_port) on your network."
+      fi
     else
       say "remote       idle — remote access has not been turned on"
     fi
@@ -861,11 +865,26 @@ cmd_list() {
   node_cli list 2>&1 | sed -e "s#/parent/#$DATA_PARENT/#g" -e "s#/backups/#$BACKUP_DIR/#g"
 }
 
+# HOST_PORT as compose publishes it.
+host_port() {
+  local port
+  port="$(env_value HOST_PORT)"
+  printf '%s' "${port:-8787}"
+}
+
+# True when compose publishes the node on every address of this machine (HOST_BIND unset or 0.0.0.0).
+host_bind_open() {
+  local bind
+  bind="$(env_value HOST_BIND)"
+  [ -z "$bind" ] || [ "$bind" = "0.0.0.0" ]
+}
+
 # Needs shell access to this machine, which can already read the signing key, and adds no network route.
+# The link's SSH tunnel, when it prints one, goes to the port this machine publishes, not the container's.
 cmd_reset_password() {
   [ -n "${1:-}" ] || fail 2 "usage: $SELF reset-password <username>"
   require_node
-  compose exec -T node node bin/stuga-node.js reset-password "$@"
+  compose exec -T -e "STUGA_TUNNEL_PORT=$(host_port)" node node bin/stuga-node.js reset-password "$@"
 }
 
 cmd_media_scan() {

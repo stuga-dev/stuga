@@ -17,8 +17,23 @@ import { pipeline } from "node:stream/promises";
 import tls from "node:tls";
 import { WebSocketServer } from "ws";
 import { attachSocket, isUpgradeResponse, serverSocketOf } from "@stuga/runtime";
+import { perSubnet, unmappedAddress } from "../net/addresses.js";
 
 export type RequestHandler = (request: Request) => Promise<Response>;
+
+/** What a listener's front door lets a request read of its body, once it has seen its method, path and headers. */
+export interface Admission {
+  /** The largest body read, below the listener's own limit; that limit when absent. */
+  maxBytes?: number;
+  /** Sent by someone not signed in: its body counts against `anonymousBodyBudget` while it is read. */
+  anonymous?: boolean;
+}
+
+/**
+ * Decides on a request before a byte of its body is read, from a bodyless copy of it: a Response
+ * refuses it, and its body is never read; an Admission sets what may be read.
+ */
+export type FrontDoor = (head: Request) => Promise<Admission | Response>;
 
 export interface TlsOptions {
   /** `certDir/<hostname>/fullchain.pem` and `privkey.pem` per served name. */
@@ -52,6 +67,8 @@ interface HttpServerOptions {
   readsOwnBody?: (method: string, path: string) => boolean;
   tls?: TlsOptions;
   onError?: (error: unknown) => void;
+  /** As RequestPipelineOptions.frontDoor: the LAN's refuses only a password from outside its network. */
+  frontDoor?: FrontDoor;
 }
 
 export interface HttpServer {
@@ -299,8 +316,20 @@ export interface RequestPipelineOptions {
   bodyMs?: number;
   /** How long a body its handler reads may go without a byte before the connection is dropped. */
   bodyIdleMs?: number;
-  /** Headers for an answer the pipeline makes itself (421, 413, 408, 500), which no handler sees. */
+  /** Headers for an answer the pipeline makes itself (421, 413, 408, 500, 503), which no handler sees. */
   decorate?: (response: Response) => Response;
+  /** Asked before any body is read; its refusals go out as they are, with the connection closed. */
+  frontDoor?: FrontDoor;
+  /**
+   * Bytes of anonymous bodies (Admission.anonymous) read at once, each reserved at its declared length
+   * up to its cap; past it, 503. An anonymous body must declare its length (411 otherwise), so a slow
+   * one holds only what it said it would send.
+   */
+  anonymousBodyBudget?: number;
+  /** Anonymous bodies one source (an IPv6 one by its /64) reads at once; past it, 503. */
+  anonymousPerSource?: number;
+  /** How long an anonymous body may take, if shorter than `bodyMs`, else 408. */
+  anonymousBodyMs?: number;
 }
 
 export interface RequestPipeline {
@@ -319,6 +348,15 @@ function hostMatches(host: string | undefined, hostname: string): boolean {
 /** One listener's requests as Fetch requests, and its answers back onto the connection; a WebSocketServer of its own. */
 export function createRequestPipeline(options: RequestPipelineOptions): RequestPipeline {
   const { handler, upgrade, origin, arrival, peerOf, maxBodyBytes, readsOwnBody = () => false, hostname, bodyMs, bodyIdleMs } = options;
+  const { frontDoor, anonymousBodyBudget = Infinity, anonymousPerSource = Infinity, anonymousBodyMs } = options;
+  /** Bytes reserved by anonymous bodies being read now, and how many each source is reading. */
+  let anonymousInFlight = 0;
+  const anonymousBySource = new Map<string, number>();
+  const busy = (): Response => {
+    const response = own(503, "busy; try again shortly");
+    response.headers.set("retry-after", "5");
+    return response;
+  };
   const onError = options.onError ?? ((e: unknown) => console.error("[http] request failed", e));
   const decorate = options.decorate ?? ((response: Response) => response);
   const own = (status: number, text: string): Response => decorate(textResponse(status, text));
@@ -328,29 +366,70 @@ export function createRequestPipeline(options: RequestPipelineOptions): RequestP
 
   const onRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const method = (req.method ?? "GET").toUpperCase();
-    const ownBody = !BODYLESS_METHODS.has(method) && readsOwnBody(method, (req.url ?? "/").split("?")[0]!);
+    const bodyless = BODYLESS_METHODS.has(method);
+    const ownBody = !bodyless && readsOwnBody(method, (req.url ?? "/").split("?")[0]!);
     let response: Response;
-    let unread = false;
+    // Until the body is read or handed over: a refusal before then closes the connection.
+    let unread = !bodyless;
+    let reserved = 0;
+    let source: string | null = null;
     try {
       if (hostname !== undefined && !hostMatches(req.headers.host, hostname)) {
         unread = true;
         response = misdirected();
       } else {
-        const body = BODYLESS_METHODS.has(method)
-          ? null
-          : ownBody
-            ? bodyStream(req, bodyIdleMs)
-            : await readBody(req, maxBodyBytes(), bodyMs);
-        if (body === null) req.resume();
-        response = await handler(toRequest(arrived(req), req, body));
-        if (isUpgradeResponse(response)) response = own(500, "upgrade response on a plain request");
+        let cap = maxBodyBytes();
+        let admitted: Admission | Response = {};
+        if (frontDoor) admitted = await frontDoor(toRequest(arrived(req), req, null));
+        if (admitted instanceof Response) {
+          if (bodyless) req.resume();
+          response = admitted;
+        } else {
+          if (admitted.maxBytes !== undefined) cap = Math.min(cap, admitted.maxBytes);
+          const anonymous = !bodyless && admitted.anonymous === true;
+          const declared = req.headers["content-length"] === undefined ? NaN : Number(req.headers["content-length"]);
+          let refusal: Response | null = null;
+          if (anonymous) {
+            const from = perSubnet(unmappedAddress(peerOf(req.socket) ?? "unknown"));
+            const need = Math.min(cap, declared);
+            if (!Number.isFinite(declared) || declared < 0) refusal = own(411, "length required");
+            else if (anonymousInFlight + need > anonymousBodyBudget || (anonymousBySource.get(from) ?? 0) >= anonymousPerSource) refusal = busy();
+            else {
+              reserved = need;
+              anonymousInFlight += reserved;
+              source = from;
+              anonymousBySource.set(from, (anonymousBySource.get(from) ?? 0) + 1);
+            }
+          }
+          if (refusal) {
+            response = refusal;
+          } else {
+            let body: Buffer | ReadableStream<Uint8Array> | null;
+            const timeout = anonymous && anonymousBodyMs !== undefined ? Math.min(anonymousBodyMs, bodyMs ?? Infinity) : bodyMs;
+            try {
+              body = bodyless ? null : ownBody ? bodyStream(req, bodyIdleMs) : await readBody(req, cap, timeout);
+            } finally {
+              anonymousInFlight -= reserved;
+              reserved = 0;
+              if (source !== null) {
+                const left = (anonymousBySource.get(source) ?? 1) - 1;
+                if (left > 0) anonymousBySource.set(source, left);
+                else anonymousBySource.delete(source);
+                source = null;
+              }
+            }
+            unread = false;
+            if (body === null) req.resume();
+            response = await handler(toRequest(arrived(req), req, body));
+            if (isUpgradeResponse(response)) response = own(500, "upgrade response on a plain request");
+          }
+        }
       }
     } catch (e) {
       if (e instanceof BodyTooLarge) {
         response = own(413, "request body too large");
         response.headers.set("connection", "close");
       } else if (e instanceof BodyTooSlow) {
-        unread = true;
         response = own(408, "request body too slow");
       } else {
         onError(e);
@@ -413,6 +492,7 @@ export function createHttpServer(options: HttpServerOptions): HttpServer {
     maxBodyBytes: options.maxBodyBytes,
     readsOwnBody: options.readsOwnBody,
     onError: options.onError,
+    ...(options.frontDoor ? { frontDoor: options.frontDoor } : {}),
   });
 
   const listener = (req: IncomingMessage, res: ServerResponse): void => {

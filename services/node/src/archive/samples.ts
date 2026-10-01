@@ -274,6 +274,7 @@ function sampleAgentAccount(importer: AccountCtx): AccountCtx {
     isAgent: true,
     onBehalfOf: importer.alias,
     servedOrigin: importer.servedOrigin,
+    arrival: importer.arrival,
     env: importer.env,
     ...(importer.requestId ? { requestId: importer.requestId } : {}),
   };

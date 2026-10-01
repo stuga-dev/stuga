@@ -191,9 +191,11 @@ export interface OidcFlowRow {
   nonce: string;
   code_verifier: string;
   redirect_uri: string;
-  /** What the provider was asked to do about its own session: nothing, stay silent, or ask which account. */
-  prompt: "none" | "select_account" | null;
+  /** What the provider was asked to do about its own session: nothing, stay silent, ask which account, or sign in again. */
+  prompt: "none" | "select_account" | "login" | null;
   link_alias: string | null;
+  /** The sign-in of `link_alias` this flow confirms (prompt "login"); null for a sign-in or a link. */
+  confirm_session: string | null;
   return_to: string;
   expires_at: Date;
   created_at: Date;
@@ -224,15 +226,30 @@ export interface UserNodeRow {
   origin: string;
 }
 
+/** Which listener issued a credential, and so the only one it is good at: the node's own on its network, or its remote address's. */
+export type CredentialArrival = "local" | "remote";
+
+/** How a session began. */
+export type SignedInWith = "password" | "provider" | "reset" | "invite" | "setup";
+
 export interface RefreshSessionRow {
   id: string;
+  /** The sign-in this row's token continues: shared by its rotations, named by every access token as `sid`. */
+  session_id: string;
   alias: string;
   token_hash: string;
+  /** When the token lapses unused: never later than `absolute_expires_at`. */
   expires_at: string;
   created_at: string;
   revoked_at: string | null;
   /** The successor's token_hash when the row was rotated; null for any other revocation. */
   replaced_by: string | null;
+  arrival: CredentialArrival;
+  signed_in_with: SignedInWith;
+  signed_in_at: string;
+  confirmed_at: string;
+  /** At the remote address, when the session ends however often it renews; null on the node's own network. */
+  absolute_expires_at: string | null;
 }
 
 export interface CommentRow {

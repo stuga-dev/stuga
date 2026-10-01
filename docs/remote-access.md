@@ -221,9 +221,40 @@ from the one on `BIND` and `PORT`. The relay reaches it through the connector.
   request headers within 10 seconds.
 - **A sign-in of its own.** Browsers keep sessions per origin, so people sign in once at the remote
   address. Sessions on the network are unaffected, and turning remote access on or off signs nobody
-  out.
+  out. A session there lasts 7 days unused and 30 days in all however often it renews, 12 hours when
+  it began through the identity provider ([Configuration](configuration.md#accounts-and-sign-in)).
+- **Signing in.** A password signs in there when it is 15 characters or more and hard to guess, a
+  check the node runs itself before the password is checked, with the same answer whether it is
+  right or wrong. Any password keeps working on the network. Wrong passwords pause sign-ins for the
+  account at that address, and for a source that sends many; the network's count is its own. Changing
+  a password there needs a session there, signed in or confirmed in the last five minutes, which is
+  how someone whose password is too short for the address sets a longer one.
+- **New devices.** A sign-in at the remote address from a browser that has not signed in to that
+  account there before tells the person and the node's administrators, in the app and through the
+  node's notifications when an administrator set them up: the browser, the time and the address it
+  came from. Each alert opens Revoke everything. A browser that signed in before keeps signing in
+  while wrong passwords from elsewhere pause the account.
+- **Revoke everything.** In **Settings → Profile**, it ends every session at both addresses, unlinks
+  the identity provider, revokes every app and API key, forgets every browser, and closes the
+  invite and share links the person made; the new password chosen there is the way back in. An
+  administrator does it for someone under **Account recovery**, which removes their password too
+  and gives a password link to send them. Both take a session confirmed in the last five minutes.
+- **Where credentials work.** A person's session, an app's OAuth tokens, socket and image tickets and
+  signed upload links work only at the address that issued them: one from the network is refused
+  at the remote address, and the other way round. An app that consented on the network connects
+  again at the remote address, from a session signed in or confirmed in the last five minutes. API
+  keys work at both. Every request looks its session up, so
+  signing out or a password change ends a session's access tokens at once, on both addresses.
+- **Before signing in.** A visitor who has not signed in reaches the app's pages, sign-in, OAuth
+  discovery and agent installs, and nothing else: every other request needs a credential that works
+  there, and is refused before its body is read. Sign-in requests take 16 KiB at most and must be
+  JSON from the address's own pages, and state their length; they share 1 MiB of bodies in flight, four
+  at a time at most from one source, and each has 10 seconds to arrive. A client registers over
+  OAuth at most 200 times an hour. `/ready` and the issuer documents
+  (`/.well-known/jwks.json`, `/.well-known/openid-configuration`) answer 404 there.
 - **No setup.** The node cannot be claimed there: its setup code works only on the network. Invite
-  links work.
+  links work when they have a use limit and an expiry, as the invite dialog makes them there; a link
+  with no limit or no expiry admits people only on the network.
 - **HSTS.** Every answer carries `Strict-Transport-Security: max-age=31536000`, without
   `includeSubDomains`. The network address never sends it.
 - **Links follow the address.** Links the node hands back, such as invite, share and reset links and

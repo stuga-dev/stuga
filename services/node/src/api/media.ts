@@ -1,8 +1,10 @@
 /** Images and files: upload into a document, the read ticket a browser carries, and the read itself. */
 import { extractToken } from "@stuga/auth";
+import { isSessionLive } from "@stuga/db";
 import { buildContext } from "../auth/context.js";
 import { canWriteDoc } from "../authz/authz.js";
 import { authorizedDoc, lockedError } from "../documents/access.js";
+import { arrivalOf } from "../http/arrival.js";
 import { error, json } from "../http/respond.js";
 import type { PublicCall, WorkspaceCall } from "../http/router.js";
 import { MediaValidationError, imageUploadLimits, isSafeImageMime, mediaUrl, storeFile, storeImage, validateImageUpload } from "../media/media.js";
@@ -60,8 +62,8 @@ export async function uploadMedia({ ctx, req, match }: WorkspaceCall): Promise<R
 
 /** The media read ticket, for the workspace the full context resolved (never the header alone). */
 export async function mintMediaTicketRoute({ ctx, req }: WorkspaceCall): Promise<Response> {
-  const { alias, workspaceId } = ctx;
-  const ticket = await mintMediaTicket(ctx.env.internalSecret, alias, workspaceId);
+  const { alias, workspaceId, arrival } = ctx;
+  const ticket = await mintMediaTicket(ctx.env.internalSecret, { alias, workspaceId, sid: ctx.isAgent ? null : ctx.sid, arrival });
   return json(
     { expires_at: ticket.expiresAt, workspace_id: workspaceId },
     {
@@ -89,10 +91,19 @@ export async function readMedia({ env, req, match }: PublicCall): Promise<Respon
   return serveMedia(env, workspaceId, match[1]!, { files: true, docId, ...(match[2] === undefined ? {} : { name: match[2] }) });
 }
 
-/** The workspace this request may read media from, or null. */
+/**
+ * The workspace this request may read media from, or null. At the remote address a person's ticket
+ * also needs the sign-in it was minted for to be on still; on the node's own network it lapses on
+ * its own within MEDIA_TICKET_TTL_SECONDS, with no lookup per image.
+ */
 async function mediaReadWorkspace(req: Request, env: NodeEnv): Promise<string | null> {
-  const ticket = await verifyMediaTicket(env.internalSecret, readMediaCookie(req));
-  if (ticket) return ticket.workspaceId;
+  const arrival = arrivalOf(req);
+  const ticket = await verifyMediaTicket(env.internalSecret, readMediaCookie(req), arrival);
+  if (ticket) {
+    const live =
+      arrival === "local" || ticket.sid === null || (await isSessionLive(env.sql, { sessionId: ticket.sid, alias: ticket.alias, arrival }));
+    if (live) return ticket.workspaceId;
+  }
   if (!extractToken(req)) return null;
   try {
     return (await buildContext(req, env)).workspaceId;

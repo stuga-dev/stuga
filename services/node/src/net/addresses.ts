@@ -28,6 +28,11 @@ function unwrapMappedV4(h: string): string | null {
   return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
 }
 
+/** An IPv4 client as a dual-stack socket names it (`::ffff:203.0.113.7`) back as `203.0.113.7`; anything else as given. */
+export function unmappedAddress(address: string): string {
+  return unwrapMappedV4(bare(address)) ?? address;
+}
+
 /** Is this host written as a numeric address rather than a name to resolve? */
 export function isIpLiteral(host: string): boolean {
   const h = bare(host);
@@ -79,6 +84,21 @@ export function perSubnet(address: string): string {
     .slice(0, 4)
     .map((g) => g.toString(16))
     .join(":")}::/64`;
+}
+
+/**
+ * The wider block a per-source count also keys on: an IPv6 address's /48, the size a site is
+ * commonly given, holding 65,536 /64s. Null for anything else: IPv4 has no such block.
+ */
+export function perSite(address: string): string | null {
+  const h = bare(address);
+  if (unwrapMappedV4(h) !== null) return null;
+  const groups = ipv6Groups(h);
+  if (!groups) return null;
+  return `${groups
+    .slice(0, 3)
+    .map((g) => g.toString(16))
+    .join(":")}::/48`;
 }
 
 /** The eight groups of an IPv6 address, a dotted-quad tail included, or null when it is not one. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isIpLiteral, isLocalName, isLoopbackHost, isNonPublicAddress, perSubnet } from "./addresses.js";
+import { isIpLiteral, isLocalName, isLoopbackHost, isNonPublicAddress, perSite, perSubnet, unmappedAddress } from "./addresses.js";
 import { reachableFromInternet } from "../agents/setup.js";
 
 describe("isNonPublicAddress", () => {
@@ -58,5 +58,26 @@ describe("perSubnet", () => {
     expect(perSubnet("unknown")).toBe("unknown");
     expect(perSubnet("1:2:3")).toBe("1:2:3");
     expect(perSubnet("1::2::3")).toBe("1::2::3");
+  });
+});
+
+describe("perSite", () => {
+  it("keys an IPv6 address on its /48", () => {
+    expect(perSite("2001:db8:5:17::abcd")).toBe("2001:db8:5::/48");
+    expect(perSite("2001:db8:5:ffff:1:2:3:4")).toBe("2001:db8:5::/48");
+  });
+
+  it("has no block for IPv4, mapped or not", () => {
+    expect(perSite("203.0.113.7")).toBeNull();
+    expect(perSite("::ffff:203.0.113.7")).toBeNull();
+    expect(perSite("unknown")).toBeNull();
+  });
+});
+
+describe("unmappedAddress", () => {
+  it("names an IPv4 client the way IPv4 does", () => {
+    expect(unmappedAddress("::ffff:203.0.113.7")).toBe("203.0.113.7");
+    expect(unmappedAddress("2001:db8::1")).toBe("2001:db8::1");
+    expect(unmappedAddress("203.0.113.7")).toBe("203.0.113.7");
   });
 });

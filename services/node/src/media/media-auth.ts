@@ -1,11 +1,13 @@
 /**
  * Who may read a stored image. `<img src>` cannot send an Authorization header,
  * so the browser carries a short-lived HttpOnly cookie: an HMAC over alias,
- * workspace and expiry that only the media route consults. The workspace in the
+ * workspace, the sign-in it was minted for and expiry that only the media route
+ * consults, signed for the listener that minted it. The workspace in the
  * ticket selects the tenant's key prefix. Within one workspace a ticket unlocks
  * any hash its holder can name; there is no hash-to-document index to narrow it.
  */
 import { constantTimeEqual } from "@stuga/auth";
+import type { CredentialArrival } from "@stuga/db";
 import { b64urlDecodeText, b64urlEncodeText, signTicket } from "../auth/signed-ticket.js";
 import { isKeySafeWorkspaceId } from "./media.js";
 
@@ -24,17 +26,22 @@ export const MEDIA_TICKET_TTL_SECONDS = 2 * 60 * 60;
 /** Aliases are identity-provider subjects (a UUID); anything near this is not one. */
 const MAX_ALIAS_LENGTH = 256;
 
-/** The key-derivation label: a media ticket verifies as nothing else. Changing it invalidates every ticket. */
-const MEDIA_TICKET_DOMAIN = "stuga/media-ticket/v1";
+/**
+ * The key-derivation label, per listener: a media ticket verifies as nothing else, and only where it was
+ * minted. Changing it invalidates every ticket.
+ */
+const mediaTicketDomain = (arrival: CredentialArrival): string => `stuga/media-ticket/v2/${arrival}`;
 
-async function sign(secret: string, payload: string): Promise<string> {
-  return signTicket(secret, MEDIA_TICKET_DOMAIN, payload);
+async function sign(secret: string, arrival: CredentialArrival, payload: string): Promise<string> {
+  return signTicket(secret, mediaTicketDomain(arrival), payload);
 }
 
 export interface MediaTicket {
   alias: string;
   /** The tenant whose media prefix this ticket reads. */
   workspaceId: string;
+  /** The person's sign-in it was minted for; null for an agent's key, which is good at either address. */
+  sid: string | null;
   /** Epoch SECONDS at which the ticket stops verifying. */
   expiresAt: number;
 }
@@ -45,37 +52,39 @@ export interface MediaTicket {
  */
 export async function mintMediaTicket(
   secret: string,
-  alias: string,
-  workspaceId: string,
+  ticket: { alias: string; workspaceId: string; sid: string | null; arrival: CredentialArrival },
   nowMs: number = Date.now(),
   ttlSeconds: number = MEDIA_TICKET_TTL_SECONDS,
 ): Promise<{ value: string; expiresAt: number }> {
   const expiresAt = Math.floor(nowMs / 1000) + ttlSeconds;
-  const payload = `${b64urlEncodeText(alias)}.${b64urlEncodeText(workspaceId)}.${expiresAt}`;
-  return { value: `${payload}.${await sign(secret, payload)}`, expiresAt };
+  const payload = `${b64urlEncodeText(ticket.alias)}.${b64urlEncodeText(ticket.workspaceId)}.${b64urlEncodeText(ticket.sid ?? "")}.${expiresAt}`;
+  return { value: `${payload}.${await sign(secret, ticket.arrival, payload)}`, expiresAt };
 }
 
-/** Verify a ticket. Returns null for anything not currently valid. */
+/** Verify a ticket presented at `arrival`. Returns null for anything not currently valid there. */
 export async function verifyMediaTicket(
   secret: string,
   value: string | null | undefined,
+  arrival: CredentialArrival,
   nowMs: number = Date.now(),
 ): Promise<MediaTicket | null> {
   if (!value) return null;
   const parts = value.split(".");
-  if (parts.length !== 4) return null;
-  const [aliasPart, wsPart, expPart, signature] = parts as [string, string, string, string];
+  if (parts.length !== 5) return null;
+  const [aliasPart, wsPart, sidPart, expPart, signature] = parts as [string, string, string, string, string];
   const expiresAt = Number(expPart);
   // Before hashing, so an expired ticket is indistinguishable from a forged one.
   if (!Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(nowMs / 1000)) return null;
-  const expected = await sign(secret, `${aliasPart}.${wsPart}.${expPart}`);
+  const expected = await sign(secret, arrival, `${aliasPart}.${wsPart}.${sidPart}.${expPart}`);
   if (!constantTimeEqual(expected, signature)) return null;
   const alias = b64urlDecodeText(aliasPart);
   const workspaceId = b64urlDecodeText(wsPart);
+  const sid = b64urlDecodeText(sidPart);
   if (!alias || alias.length > MAX_ALIAS_LENGTH) return null;
   // The workspace becomes a blob key segment.
   if (!workspaceId || !isKeySafeWorkspaceId(workspaceId)) return null;
-  return { alias, workspaceId, expiresAt };
+  if (sid === null || sid.length > MAX_ALIAS_LENGTH) return null;
+  return { alias, workspaceId, sid: sid || null, expiresAt };
 }
 
 /** The media ticket the request carries, under the name its scheme gives it. */

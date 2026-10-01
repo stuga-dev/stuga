@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { jwtVerify, createLocalJWKSet } from "jose";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
+  createHashQueue,
   createVerifier,
   hashRefreshToken,
   loadOrCreateSigningKey,
   publicJwks,
   sha256Hex,
   type AuthConfig,
+  type HashLane,
   type LocalKeys,
 } from "@stuga/auth";
 import { SEARCH_LANGUAGES } from "@stuga/protocol/domain/search-languages";
@@ -74,6 +76,9 @@ function post(path: string, body: unknown, headers: Record<string, string> = {})
     body: JSON.stringify(body),
   });
 }
+
+/** Long and hard to guess: what signs in at the remote address. */
+const STRONG = "trumpet walnut ceiling";
 
 /** Carries the setup code, which only the first account needs; a later one's is ignored. */
 async function register(username = "ada", extra: Record<string, unknown> = {}) {
@@ -223,6 +228,25 @@ describe("register", () => {
     expect(joined).toHaveLength(1);
   });
 
+  it("makes an account from a link with no limit or no expiry only on the node's own network", async () => {
+    await register();
+    const token = "open-link";
+    mem.invites.set(sha256Hex(token), { tokenHash: "", usesLeft: 100, localOnly: true });
+    const remote = { [ARRIVAL_HEADER]: "remote", [PEER_ADDRESS_HEADER]: "203.0.113.7" };
+    const res = await router().handle(
+      new Request("https://k7f3q2.stuga.test/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...remote },
+        body: JSON.stringify({ username: "mallory", password: STRONG, invite: token }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "invite_local_only", message: "This invite link works only on this node's network." });
+    expect(await mem.db.findAccountByUsername("mallory")).toBeNull();
+    // The same link on the node's own network.
+    expect((await register("bob", { invite: token })).status).toBe(201);
+  });
+
   it("a single-use invite makes one account however many registrations race past the check", async () => {
     await register();
     const token = "invite-once";
@@ -368,6 +392,28 @@ describe("logout", () => {
     const after = await router().handle(post("/auth/refresh", { refresh_token: pair.refresh_token }));
     expect(after.status).toBe(401);
     expect((await router().handle(post("/auth/logout", {}))).status).toBe(204);
+  });
+
+  it("closes the sockets of the sign-in it ended, and only those", async () => {
+    const ended: Array<{ alias: string; sids: string[] | undefined }> = [];
+    const r = createIdentityRouter(baseDeps({ onSessionsEnded: (alias, sids) => void ended.push({ alias, sids }) }));
+    const pair = (await (await register()).json()) as TokenPair;
+    const sid = [...mem.sessions.values()][0]!.session_id;
+    expect((await r.handle(post("/auth/logout", { refresh_token: pair.refresh_token }))).status).toBe(204);
+    expect(ended).toEqual([{ alias: [...mem.sessions.values()][0]!.alias, sids: [sid] }]);
+  });
+
+  it("signs nothing out with a token presented at the other listener", async () => {
+    const pair = (await (await register()).json()) as TokenPair;
+    const remote = new Request("https://k7f3q2.stuga.test/auth/logout", {
+      method: "POST",
+      headers: { "content-type": "application/json", [ARRIVAL_HEADER]: "remote", [PEER_ADDRESS_HEADER]: "203.0.113.7" },
+      body: JSON.stringify({ refresh_token: pair.refresh_token }),
+    });
+    expect((await router().handle(remote)).status).toBe(204);
+    expect([...mem.sessions.values()].every((row) => row.revoked_at === null)).toBe(true);
+    // Still good where it was issued.
+    expect((await router().handle(post("/auth/refresh", { refresh_token: pair.refresh_token }))).status).toBe(200);
   });
 });
 
@@ -630,26 +676,21 @@ describe("credential throttling", () => {
   });
 
   it("refuses an oversized password before it reaches the hash", async () => {
-    // scrypt cost grows with input. Asserted through the account lookup: the 401 alone would pass without the cap.
-    let lookups = 0;
-    const counting: typeof mem.db = {
-      ...mem.db,
-      async findAccountByUsername(username: string) {
-        lookups += 1;
-        return mem.db.findAccountByUsername(username);
-      },
-    };
-    const r = createIdentityRouter(baseDeps({ db: counting }));
+    // scrypt cost grows with input. Asserted through the hash queue: the 401 alone would pass without the cap.
+    let hashes = 0;
+    const queue = createHashQueue();
+    const counting = { ...queue, run: <T,>(lane: HashLane, work: () => Promise<T>) => ((hashes += 1), queue.run(lane, work)) };
+    const r = createIdentityRouter(baseDeps({ hashQueue: counting }));
 
     const oversized = await r.handle(post("/auth/login", { username: "ada", password: "x".repeat(2000) }));
     expect(oversized.status).toBe(401);
     expect((await oversized.json()).error).toBe("invalid_credentials");
-    expect(lookups).toBe(0);
+    expect(hashes).toBe(0);
 
-    // A normal-length password still reaches the lookup.
+    // A normal-length password is hashed (against the decoy, made first, for a name with no account).
     const normal = await r.handle(post("/auth/login", { username: "ada", password: "nope" }));
     expect(normal.status).toBe(401);
-    expect(lookups).toBe(1);
+    expect(hashes).toBe(2);
   });
 });
 
@@ -673,12 +714,23 @@ describe("at the remote address", () => {
     expect(await (await named(null).handle(new Request(ORIGIN + "/auth/config"))).json()).toMatchObject({ node_label: "livs-air", origin: ORIGIN });
   });
 
-  it("has no issuer document, whose issuer is PUBLIC_ORIGIN; the keys are still served", async () => {
-    const res = await router().handle(remote("/.well-known/openid-configuration"));
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: "not_found" });
-    expect((await router().handle(remote("/.well-known/jwks.json"))).status).toBe(200);
-    expect((await router().handle(new Request(ORIGIN + "/.well-known/openid-configuration"))).status).toBe(200);
+  it("/auth/config names the remote address while it is on, on both listeners, and nothing while it is off", async () => {
+    let on = false;
+    const r = createIdentityRouter(baseDeps({ remoteOrigin: () => (on ? REMOTE : null) }));
+    const config = async (req: Request) => (await (await r.handle(req)).json()) as Record<string, unknown>;
+    expect(await config(new Request(ORIGIN + "/auth/config"))).not.toHaveProperty("remote_origin");
+    on = true;
+    expect(await config(new Request(ORIGIN + "/auth/config"))).toMatchObject({ remote_origin: REMOTE });
+    expect(await config(remote("/auth/config"))).toMatchObject({ remote_origin: REMOTE, origin: REMOTE });
+  });
+
+  it("has no issuer documents, whose issuer is PUBLIC_ORIGIN, while the LAN still serves both", async () => {
+    for (const path of ["/.well-known/openid-configuration", "/.well-known/jwks.json"]) {
+      const res = await router().handle(remote(path));
+      expect(res.status, path).toBe(404);
+      expect(await res.json()).toEqual({ error: "not_found" });
+      expect((await router().handle(new Request(ORIGIN + path))).status, path).toBe(200);
+    }
   });
 
   it("never claims the node with its setup code", async () => {
@@ -717,15 +769,175 @@ describe("at the remote address", () => {
     // The node's own budget: 20 attempts a minute per source and per account.
     const limiter = slidingWindowRateLimiter({ limit: 20, windowSeconds: 60 });
     const r = createIdentityRouter(baseDeps({ limiter }));
-    expect((await register("ada")).status).toBe(201);
+    expect((await register("ada", { password: STRONG })).status).toBe(201);
     for (let i = 0; i < 20; i++) {
       expect((await r.handle(remotePost("/auth/login", { username: "ada", password: "wrong one" }))).status).toBe(401);
     }
     expect((await r.handle(remotePost("/auth/login", { username: "ada", password: "wrong one" }))).status).toBe(429);
     // Another visitor at the remote address, and the owner on the LAN, both still get in.
-    expect((await r.handle(post("/auth/login", { username: "ada", password: "correct horse" }, { [PEER_ADDRESS_HEADER]: "10.0.0.7" }))).status).toBe(200);
+    expect((await r.handle(post("/auth/login", { username: "ada", password: STRONG }, { [PEER_ADDRESS_HEADER]: "10.0.0.7" }))).status).toBe(200);
     mem.invites.set(sha256Hex("second"), { tokenHash: sha256Hex("second"), usesLeft: 1 });
-    expect((await register("grace", { invite: "second" })).status).toBe(201);
-    expect((await r.handle(remotePost("/auth/login", { username: "grace", password: "correct horse" }, "198.51.100.23"))).status).toBe(200);
+    expect((await register("grace", { invite: "second", password: STRONG })).status).toBe(201);
+    expect((await r.handle(remotePost("/auth/login", { username: "grace", password: STRONG }, "198.51.100.23"))).status).toBe(200);
+  });
+});
+
+/** A session belongs to the listener it was signed in at, and records how and when it began (spec T2, T11, T15). */
+describe("where a session was signed in", () => {
+  const REMOTE = "https://k7f3q2.stuga.test";
+  const LOCAL = { arrival: "local" } as const;
+  const AT_REMOTE = { arrival: "remote", origin: REMOTE } as const;
+  const remotePost = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+    new Request(REMOTE + path, {
+      method: "POST",
+      headers: { "content-type": "application/json", [ARRIVAL_HEADER]: "remote", ...headers },
+      body: JSON.stringify(body),
+    });
+  const verify = (token: string, where: typeof LOCAL | typeof AT_REMOTE) => createVerifier(localAuth, keys).verify(token, where);
+  const rowOf = (token: string) => mem.sessions.get(hashRefreshToken(token))!;
+  const hours = (iso: string, from = Date.now()) => (Date.parse(iso) - from) / 3_600_000;
+
+  async function remoteLogin(r = router()): Promise<TokenPair> {
+    const res = await r.handle(remotePost("/auth/login", { username: "ada", password: STRONG }));
+    expect(res.status).toBe(200);
+    return (await res.json()) as TokenPair;
+  }
+
+  it("mints a remote sign-in's access token for the remote origin alone, naming its session", async () => {
+    await register("ada", { password: STRONG });
+    const pair = await remoteLogin();
+    const { sid } = await verify(pair.access_token, AT_REMOTE);
+    expect(sid).toBe(rowOf(pair.refresh_token).session_id);
+    await expect(verify(pair.access_token, LOCAL)).rejects.toThrow(/"aud" claim/);
+    // And a LAN sign-in's for the LAN alone.
+    const lan = (await (await router().handle(post("/auth/login", { username: "ada", password: STRONG }))).json()) as TokenPair;
+    expect((await verify(lan.access_token, LOCAL)).sid).toBe(rowOf(lan.refresh_token).session_id);
+    await expect(verify(lan.access_token, AT_REMOTE)).rejects.toThrow(/"aud" claim/);
+  });
+
+  it("records how each session began, and gives one at the remote address an end at sign-in", async () => {
+    const setup = (await (await register("ada", { password: STRONG })).json()) as TokenPair;
+    expect(rowOf(setup.refresh_token)).toMatchObject({ arrival: "local", signed_in_with: "setup", absolute_expires_at: null });
+    const pair = await remoteLogin();
+    const row = rowOf(pair.refresh_token);
+    expect(row).toMatchObject({ arrival: "remote", signed_in_with: "password" });
+    // Seven days unused, thirty in all.
+    expect(hours(row.expires_at)).toBeCloseTo(7 * 24, 0);
+    expect(hours(row.absolute_expires_at!)).toBeCloseTo(30 * 24, 0);
+    mem.invites.set(sha256Hex("inv"), { tokenHash: sha256Hex("inv"), usesLeft: 1 });
+    const joined = (await (await router().handle(remotePost("/auth/register", { username: "grace", password: "correct horse", invite: "inv" }))).json()) as TokenPair;
+    expect(rowOf(joined.refresh_token)).toMatchObject({ arrival: "remote", signed_in_with: "invite" });
+  });
+
+  it("renews a remote session only at the remote address, never past the end it was given, and keeps how it began", async () => {
+    await register("ada", { password: STRONG });
+    const r = routerWith({ remoteSessionMaxSeconds: 2 * 3600, remoteRefreshTokenTtlSeconds: 24 * 3600 });
+    const pair = await remoteLogin(r);
+    const first = rowOf(pair.refresh_token);
+    // At the LAN it is unknown, and nothing is signed out for it.
+    const elsewhere = await r.handle(post("/auth/refresh", { refresh_token: pair.refresh_token }));
+    expect(elsewhere.status).toBe(401);
+    expect(rowOf(pair.refresh_token).revoked_at).toBeNull();
+
+    const renewed = await r.handle(remotePost("/auth/refresh", { refresh_token: pair.refresh_token }));
+    expect(renewed.status).toBe(200);
+    const next = (await renewed.json()) as TokenPair;
+    const row = rowOf(next.refresh_token);
+    expect(row).toMatchObject({
+      session_id: first.session_id,
+      arrival: "remote",
+      signed_in_with: "password",
+      signed_in_at: first.signed_in_at,
+      confirmed_at: first.confirmed_at,
+      absolute_expires_at: first.absolute_expires_at,
+    });
+    // Asked for a day unused, given what is left of the two hours.
+    expect(row.expires_at).toBe(first.absolute_expires_at);
+    expect((await verify(next.access_token, AT_REMOTE)).sid).toBe(first.session_id);
+    await expect(verify(next.access_token, LOCAL)).rejects.toThrow();
+
+    // Past its end, renewal fails however recently it was used.
+    row.absolute_expires_at = new Date(Date.now() - 1000).toISOString();
+    expect((await r.handle(remotePost("/auth/refresh", { refresh_token: next.refresh_token }))).status).toBe(401);
+  });
+
+  it("refuses a LAN refresh token at the remote address without signing anyone out, and records it once an hour", async () => {
+    const pair = (await (await register()).json()) as TokenPair;
+    const r = router();
+    expect((await r.handle(remotePost("/auth/refresh", { refresh_token: pair.refresh_token }))).status).toBe(401);
+    expect((await r.handle(remotePost("/auth/refresh", { refresh_token: pair.refresh_token }))).status).toBe(401);
+    const alias = (await mem.db.findAccountByUsername("ada"))!.alias;
+    expect(identityEvents).toEqual([{ alias, action: "node.session.wrong_address", detail: { issued_at: "local", presented_at: "remote" } }]);
+    expect((await r.handle(post("/auth/refresh", { refresh_token: pair.refresh_token }))).status).toBe(200);
+  });
+
+  it("keeps a LAN session sliding, with no end of its own", async () => {
+    const pair = (await (await register()).json()) as TokenPair;
+    const next = (await (await routerWith({ refreshTokenTtlSeconds: 3600 }).handle(post("/auth/refresh", { refresh_token: pair.refresh_token }))).json()) as TokenPair;
+    expect(rowOf(next.refresh_token)).toMatchObject({ arrival: "local", absolute_expires_at: null });
+    expect(hours(rowOf(next.refresh_token).expires_at)).toBeCloseTo(1, 1);
+  });
+
+  it("gives a duplicate renewal's sibling the same sign-in and end, on the LAN and at the remote address (W4)", async () => {
+    await register("ada", { password: STRONG });
+    const grace = routerWith({ refreshRotationGraceSeconds: 60, remoteSessionMaxSeconds: 3 * 3600 });
+    for (const [label, start, send] of [
+      ["remote", () => remoteLogin(grace), (body: unknown) => remotePost("/auth/refresh", body)],
+      [
+        "local",
+        async () => (await (await grace.handle(post("/auth/login", { username: "ada", password: STRONG }))).json()) as TokenPair,
+        (body: unknown) => post("/auth/refresh", body),
+      ],
+    ] as const) {
+      const pair = await start();
+      const first = (await (await grace.handle(send({ refresh_token: pair.refresh_token }))).json()) as TokenPair;
+      const second = await grace.handle(send({ refresh_token: pair.refresh_token }));
+      expect(second.status, label).toBe(200);
+      const sibling = rowOf(((await second.json()) as TokenPair).refresh_token);
+      const successor = rowOf(first.refresh_token);
+      expect(sibling, label).toMatchObject({
+        session_id: successor.session_id,
+        arrival: successor.arrival,
+        signed_in_with: successor.signed_in_with,
+        signed_in_at: successor.signed_in_at,
+        confirmed_at: successor.confirmed_at,
+        absolute_expires_at: successor.absolute_expires_at,
+        expires_at: successor.expires_at,
+      });
+    }
+  });
+
+  it("refuses a person's token at the identity routes once its session has ended", async () => {
+    await register("ada", { password: STRONG });
+    const pair = await remoteLogin();
+    const bearer = { authorization: `Bearer ${pair.access_token}` };
+    // Unlinking needs a live session: before sign-out it reaches the account (which has nothing to unlink), after it does not.
+    expect((await router().handle(remotePost("/auth/oidc/unlink", {}, bearer))).status).toBe(204);
+    expect((await router().handle(remotePost("/auth/logout", { refresh_token: pair.refresh_token }))).status).toBe(204);
+    const after = await router().handle(remotePost("/auth/oidc/unlink", {}, bearer));
+    expect(after.status).toBe(401);
+    expect((await after.json()).error).toBe("invalid_token");
+    // And a token presented at the other listener is refused before any lookup.
+    expect((await router().handle(post("/auth/oidc/unlink", {}, bearer))).status).toBe(401);
+  });
+});
+
+describe("ending every session of an account", () => {
+  it("closes the sockets they opened, on a password change, a reset and a replay", async () => {
+    const ended: string[] = [];
+    const r = () => createIdentityRouter(baseDeps({ onSessionsEnded: (alias) => ended.push(alias) }));
+    const pair = (await (await register()).json()) as TokenPair;
+    const alias = (await mem.db.findAccountByUsername("ada"))!.alias;
+
+    expect((await r().handle(post("/auth/password", { username: "ada", current_password: "correct horse", new_password: "battery staple 9" }))).status).toBe(200);
+    expect(ended).toEqual([alias]);
+
+    mem.resets.set(sha256Hex("reset-1"), { alias, expiresAt: new Date(Date.now() + 60_000), used: false });
+    expect((await r().handle(post("/auth/reset", { token: "reset-1", new_password: "battery staple 10" }))).status).toBe(200);
+    expect(ended).toEqual([alias, alias]);
+
+    // The first pair's refresh token was revoked with the change: presenting it again is a replay.
+    expect((await r().handle(post("/auth/refresh", { refresh_token: pair.refresh_token }))).status).toBe(401);
+    expect(ended).toEqual([alias, alias, alias]);
   });
 });

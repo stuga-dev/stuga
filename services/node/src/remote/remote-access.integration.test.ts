@@ -151,6 +151,7 @@ describe.skipIf(!URL_ || !pebble)("remote access, against Pebble and the fake se
       gate,
       readsOwnBody: () => false,
       maxBodyBytes: () => 1 << 20,
+      frontDoor: async () => ({}),
       challengeResolver: fixedChallengeResolver([pebble!.dns]),
       acmeTransport: transport,
       probe,

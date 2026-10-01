@@ -35,6 +35,7 @@ describe.skipIf(!URL)("OAuth authorization codes", () => {
       redirectUri: "https://client.example.test/callback",
       codeChallenge: "challenge",
       expiresAt: new Date(Date.now() + 60_000),
+      arrival: "local",
     });
   });
 
@@ -43,11 +44,14 @@ describe.skipIf(!URL)("OAuth authorization codes", () => {
       codeHash: "code-hash",
       clientId: "client-1",
       redirectUri: "https://client.example.test/callback",
+      arrival: "local" as const,
     };
     expect(await consumeOauthCode(sql, { ...base, codeChallenge: "wrong" })).toBeNull();
+    // Consented at the LAN: the remote address cannot exchange it, and does not burn it trying.
+    expect(await consumeOauthCode(sql, { ...base, codeChallenge: "challenge", arrival: "remote" })).toBeNull();
 
     const consumed = await consumeOauthCode(sql, { ...base, codeChallenge: "challenge" });
-    expect(consumed).toMatchObject({ client_id: "client-1", user_alias: "alice", workspace_scope: ["ws-1"], access: "read" });
+    expect(consumed).toMatchObject({ client_id: "client-1", user_alias: "alice", workspace_scope: ["ws-1"], access: "read", arrival: "local" });
     expect(await consumeOauthCode(sql, { ...base, codeChallenge: "challenge" })).toBeNull();
   });
 
@@ -59,6 +63,7 @@ describe.skipIf(!URL)("OAuth authorization codes", () => {
         clientId: "client-1",
         redirectUri: "https://client.example.test/callback",
         codeChallenge: "challenge",
+        arrival: "local",
       }),
     ).toBeNull();
     const rows = await sql<{ count: string }[]>`SELECT count(*)::text AS count FROM oauth_codes`;

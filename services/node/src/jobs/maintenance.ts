@@ -137,6 +137,8 @@ async function purgeRetention(env: JobsEnv, d: JobDeps): Promise<void> {
   if (sessions > 0) d.log.info("purged dead refresh sessions", { purged: sessions });
   const resets = await d.db.purgePasswordResets();
   if (resets > 0) d.log.info("purged spent/expired password resets", { purged: resets });
+  const devices = await d.db.purgeKnownDevices();
+  if (devices > 0) d.log.info("forgot browsers not seen for 400 days", { purged: devices });
   const signIns = await d.db.purgeOidcSignIns();
   if (signIns > 0) d.log.info("purged expired identity-provider sign-ins", { purged: signIns });
   const clients = await d.db.purgeUnusedOauthClients(OAUTH_CLIENT_RETENTION_DAYS);

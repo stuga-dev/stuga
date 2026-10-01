@@ -16,6 +16,9 @@ import {
   findAccountByUsername,
   findRefreshSession,
   getAnyUserAliasByHandle,
+  isSessionLive,
+  rehashLocalPassword,
+  sessionConfirmedAt,
   getSignInMethods,
   getUserAliasByHandle,
   getUsers,
@@ -28,12 +31,14 @@ import {
   revokeRefreshSessions,
   rotateRefreshSession,
   searchAccounts,
+  siblingRefreshSession,
   searchUsers,
   setDisplayName,
   setUserEmail,
   takenUsernames,
   unlinkIdentity,
   updateLocalPassword,
+  type NewRefreshSession,
 } from "./identity.js";
 import { getNodeSettings, getSearchLanguages } from "./node.js";
 import { createOidcFlow } from "./oidc.js";
@@ -42,6 +47,11 @@ import { seedUser } from "./testing/fixtures.js";
 import type { Sql } from "./client.js";
 
 const URL = process.env.TEST_DATABASE_URL;
+
+/** A password sign-in on the node's own network, its row its own session. */
+function lanSession(input: { id: string; alias: string; tokenHash: string; expiresAt: Date }): NewRefreshSession {
+  return { ...input, sessionId: input.id, arrival: "local", signedInWith: "password", absoluteExpiresAt: null };
+}
 
 describe.skipIf(!URL)("user directory resolution", () => {
   let sql: Sql;
@@ -410,6 +420,16 @@ describe.skipIf(!URL)("local accounts", () => {
     expect((await findAccountByUsername(sql, "a1"))?.password_hash).toBe("new");
     expect(await updateLocalPassword(sql, "ghost", "new")).toBe(false);
   });
+
+  it("stores a rehash only while the old hash is still the account's", async () => {
+    await createLocalAccount(sql, { alias: "u1", username: "a1", passwordHash: "old", mayClaim: true });
+    expect(await rehashLocalPassword(sql, "u1", "old", "fresh")).toBe(true);
+    expect((await findAccountByUsername(sql, "a1"))?.password_hash).toBe("fresh");
+    // A password changed meanwhile is never put back.
+    await updateLocalPassword(sql, "u1", "changed");
+    expect(await rehashLocalPassword(sql, "u1", "fresh", "stale")).toBe(false);
+    expect((await findAccountByUsername(sql, "a1"))?.password_hash).toBe("changed");
+  });
 });
 
 describe.skipIf(!URL)("accounts through the identity provider", () => {
@@ -558,8 +578,8 @@ describe.skipIf(!URL)("accounts through the identity provider", () => {
 
   it("keeps a password-less account's refresh sessions working: it exists as long as its row does", async () => {
     await provider("u1", "ada", "sub-1");
-    await createRefreshSession(sql, { id: "s1", alias: "u1", tokenHash: "t1", expiresAt: future() });
-    const next = await rotateRefreshSession(sql, { tokenHash: "t1", id: "s2", nextTokenHash: "t2", expiresAt: future() });
+    await createRefreshSession(sql, lanSession({ id: "s1", alias: "u1", tokenHash: "t1", expiresAt: future() }));
+    const next = await rotateRefreshSession(sql, { tokenHash: "t1", id: "s2", nextTokenHash: "t2", expiresAt: future(), arrival: "local" });
     expect(next?.alias).toBe("u1");
     expect(await findAccountByAlias(sql, next!.alias)).not.toBeNull();
   });
@@ -588,37 +608,37 @@ describe.skipIf(!URL)("refresh sessions", () => {
   });
 
   it("rotates atomically: the old token is revoked and its successor issued for the same alias", async () => {
-    await createRefreshSession(sql, { id: "s1", alias: "alice", tokenHash: "t1", expiresAt: future() });
+    await createRefreshSession(sql, lanSession({ id: "s1", alias: "alice", tokenHash: "t1", expiresAt: future() }));
 
-    const next = await rotateRefreshSession(sql, { tokenHash: "t1", id: "s2", nextTokenHash: "t2", expiresAt: future() });
+    const next = await rotateRefreshSession(sql, { tokenHash: "t1", id: "s2", nextTokenHash: "t2", expiresAt: future(), arrival: "local" });
     expect(next).toMatchObject({ id: "s2", alias: "alice", token_hash: "t2", revoked_at: null });
 
     const old = await findRefreshSession(sql, "t1");
     expect(old?.revoked_at).not.toBeNull();
     expect(old?.replaced_by).toBe("t2");
-    expect(await rotateRefreshSession(sql, { tokenHash: "t1", id: "s3", nextTokenHash: "t3", expiresAt: future() })).toBeNull();
+    expect(await rotateRefreshSession(sql, { tokenHash: "t1", id: "s3", nextTokenHash: "t3", expiresAt: future(), arrival: "local" })).toBeNull();
     expect(await findRefreshSession(sql, "t3")).toBeNull();
     expect(await findRefreshSession(sql, "unknown")).toBeNull();
   });
 
   it("only one of two concurrent rotations of the same token wins", async () => {
-    await createRefreshSession(sql, { id: "s1", alias: "alice", tokenHash: "t1", expiresAt: future() });
+    await createRefreshSession(sql, lanSession({ id: "s1", alias: "alice", tokenHash: "t1", expiresAt: future() }));
     const results = await Promise.all([
-      rotateRefreshSession(sql, { tokenHash: "t1", id: "rot-a", nextTokenHash: "n1", expiresAt: future() }),
-      rotateRefreshSession(sql, { tokenHash: "t1", id: "rot-b", nextTokenHash: "n2", expiresAt: future() }),
+      rotateRefreshSession(sql, { tokenHash: "t1", id: "rot-a", nextTokenHash: "n1", expiresAt: future(), arrival: "local" }),
+      rotateRefreshSession(sql, { tokenHash: "t1", id: "rot-b", nextTokenHash: "n2", expiresAt: future(), arrival: "local" }),
     ]);
     expect(results.filter((r) => r !== null)).toHaveLength(1);
   });
 
   it("does not rotate an expired session", async () => {
-    await createRefreshSession(sql, { id: "s1", alias: "alice", tokenHash: "t1", expiresAt: new Date(Date.now() - 1000) });
-    expect(await rotateRefreshSession(sql, { tokenHash: "t1", id: "s2", nextTokenHash: "t2", expiresAt: future() })).toBeNull();
+    await createRefreshSession(sql, lanSession({ id: "s1", alias: "alice", tokenHash: "t1", expiresAt: new Date(Date.now() - 1000) }));
+    expect(await rotateRefreshSession(sql, { tokenHash: "t1", id: "s2", nextTokenHash: "t2", expiresAt: future(), arrival: "local" })).toBeNull();
   });
 
   it("revokes one session, or every session an alias holds", async () => {
-    await createRefreshSession(sql, { id: "a1", alias: "alice", tokenHash: "ta1", expiresAt: future() });
-    await createRefreshSession(sql, { id: "a2", alias: "alice", tokenHash: "ta2", expiresAt: future() });
-    await createRefreshSession(sql, { id: "b1", alias: "bob", tokenHash: "tb1", expiresAt: future() });
+    await createRefreshSession(sql, lanSession({ id: "a1", alias: "alice", tokenHash: "ta1", expiresAt: future() }));
+    await createRefreshSession(sql, lanSession({ id: "a2", alias: "alice", tokenHash: "ta2", expiresAt: future() }));
+    await createRefreshSession(sql, lanSession({ id: "b1", alias: "bob", tokenHash: "tb1", expiresAt: future() }));
 
     expect(await revokeRefreshSession(sql, "ta1")).toBe(true);
     expect(await revokeRefreshSession(sql, "ta1")).toBe(false);
@@ -646,29 +666,154 @@ describe.skipIf(!URL)("refresh sessions", () => {
     await flow("alice-link", "alice");
     await flow("bob-link", "bob");
     await flow("sign-in", null);
-    await createRefreshSession(sql, { id: "a1", alias: "alice", tokenHash: "ta1", expiresAt: future() });
+    await createRefreshSession(sql, lanSession({ id: "a1", alias: "alice", tokenHash: "ta1", expiresAt: future() }));
 
-    expect(await endRefreshSession(sql, "ta1")).toBe("alice");
+    expect(await endRefreshSession(sql, "ta1")).toMatchObject({ alias: "alice" });
     expect((await findRefreshSession(sql, "ta1"))?.revoked_at).not.toBeNull();
     const left = await sql<{ state: string }[]>`SELECT state FROM oidc_flows ORDER BY state`;
     expect(left.map((r) => r.state)).toEqual(["bob-link", "sign-in"]);
     // A token already revoked still names its account; an unknown one names nobody.
     await flow("alice-again", "alice");
-    expect(await endRefreshSession(sql, "ta1")).toBe("alice");
+    expect(await endRefreshSession(sql, "ta1")).toMatchObject({ alias: "alice" });
     expect(await sql`SELECT 1 FROM oidc_flows WHERE link_alias = 'alice'`).toHaveLength(0);
     expect(await endRefreshSession(sql, "unknown")).toBeNull();
   });
 
   it("purges sessions that can never be presented again, keeping recent revocations as replay evidence", async () => {
-    await createRefreshSession(sql, { id: "live", alias: "alice", tokenHash: "t-live", expiresAt: future() });
-    await createRefreshSession(sql, { id: "just-revoked", alias: "alice", tokenHash: "t-jr", expiresAt: future() });
+    await createRefreshSession(sql, lanSession({ id: "live", alias: "alice", tokenHash: "t-live", expiresAt: future() }));
+    await createRefreshSession(sql, lanSession({ id: "just-revoked", alias: "alice", tokenHash: "t-jr", expiresAt: future() }));
     await revokeRefreshSession(sql, "t-jr");
-    await createRefreshSession(sql, { id: "old-revoked", alias: "alice", tokenHash: "t-or", expiresAt: future() });
+    await createRefreshSession(sql, lanSession({ id: "old-revoked", alias: "alice", tokenHash: "t-or", expiresAt: future() }));
     await sql`UPDATE refresh_sessions SET revoked_at = now() - interval '30 days' WHERE id = 'old-revoked'`;
-    await createRefreshSession(sql, { id: "long-expired", alias: "alice", tokenHash: "t-le", expiresAt: new Date(Date.now() - 30 * 86400_000) });
+    await createRefreshSession(sql, lanSession({ id: "long-expired", alias: "alice", tokenHash: "t-le", expiresAt: new Date(Date.now() - 30 * 86400_000) }));
 
     expect(await purgeRefreshSessions(sql, 7)).toBe(2);
     const left = await sql<{ id: string }[]>`SELECT id FROM refresh_sessions ORDER BY id`;
     expect(left.map((r) => r.id)).toEqual(["just-revoked", "live"]);
+  });
+
+  const hours = (n: number) => new Date(Date.now() + n * 60 * 60 * 1000);
+  const remote = (over: Partial<NewRefreshSession> = {}): NewRefreshSession => ({
+    id: "r1",
+    sessionId: "sess-r",
+    alias: "alice",
+    tokenHash: "tr1",
+    expiresAt: hours(7 * 24),
+    arrival: "remote",
+    signedInWith: "password",
+    absoluteExpiresAt: hours(30 * 24),
+    ...over,
+  });
+
+  it("records where and how a session began, and caps its unused expiry at its absolute one", async () => {
+    const row = await createRefreshSession(sql, remote({ expiresAt: hours(7 * 24), absoluteExpiresAt: hours(1) }));
+    expect(row).toMatchObject({ session_id: "sess-r", arrival: "remote", signed_in_with: "password" });
+    expect(Date.parse(row.expires_at)).toBe(Date.parse(row.absolute_expires_at!));
+    expect(row.signed_in_at).toEqual(row.confirmed_at);
+    const lan = await createRefreshSession(sql, lanSession({ id: "l1", alias: "alice", tokenHash: "tl1", expiresAt: hours(1) }));
+    expect(lan).toMatchObject({ arrival: "local", absolute_expires_at: null });
+  });
+
+  it("renews a session only at the listener that issued it, copying how it began and never moving its end", async () => {
+    const first = await createRefreshSession(sql, remote({ absoluteExpiresAt: hours(2) }));
+    // At the node's own network, a remote token is unknown, and nothing is spent.
+    expect(await rotateRefreshSession(sql, { tokenHash: "tr1", id: "x", nextTokenHash: "tx", expiresAt: hours(24), arrival: "local" })).toBeNull();
+    expect((await findRefreshSession(sql, "tr1"))?.revoked_at).toBeNull();
+
+    const next = await rotateRefreshSession(sql, { tokenHash: "tr1", id: "r2", nextTokenHash: "tr2", expiresAt: hours(24), arrival: "remote" });
+    expect(next).toMatchObject({
+      session_id: "sess-r",
+      arrival: "remote",
+      signed_in_with: "password",
+      signed_in_at: first.signed_in_at,
+      confirmed_at: first.confirmed_at,
+      absolute_expires_at: first.absolute_expires_at,
+    });
+    // Asked for a day, given what is left of the two hours.
+    expect(Date.parse(next!.expires_at)).toBe(Date.parse(first.absolute_expires_at!));
+  });
+
+  it("refuses to renew a remote session past its absolute end, however recently it was used", async () => {
+    await createRefreshSession(sql, remote());
+    await sql`UPDATE refresh_sessions SET absolute_expires_at = now() - interval '1 second' WHERE id = 'r1'`;
+    expect(await rotateRefreshSession(sql, { tokenHash: "tr1", id: "r2", nextTokenHash: "tr2", expiresAt: hours(24), arrival: "remote" })).toBeNull();
+  });
+
+  it("issues a duplicate renewal's sibling as the same sign-in, ending when its successor does", async () => {
+    await createRefreshSession(sql, remote());
+    const successor = await rotateRefreshSession(sql, { tokenHash: "tr1", id: "r2", nextTokenHash: "tr2", expiresAt: hours(24), arrival: "remote" });
+    const sibling = await siblingRefreshSession(sql, { of: "tr2", id: "r3", tokenHash: "tr3" });
+    expect(sibling).toMatchObject({
+      session_id: "sess-r",
+      arrival: "remote",
+      signed_in_with: "password",
+      signed_in_at: successor!.signed_in_at,
+      confirmed_at: successor!.confirmed_at,
+      absolute_expires_at: successor!.absolute_expires_at,
+      expires_at: successor!.expires_at,
+    });
+    // Never of a successor that is gone.
+    await revokeRefreshSession(sql, "tr2");
+    expect(await siblingRefreshSession(sql, { of: "tr2", id: "r4", tokenHash: "tr4" })).toBeNull();
+  });
+
+  it("says a sign-in is live while a row of it is, for its own account at its own listener only", async () => {
+    await createRefreshSession(sql, remote());
+    const live = (over: Partial<{ sessionId: string; alias: string; arrival: "local" | "remote" }> = {}) =>
+      isSessionLive(sql, { sessionId: "sess-r", alias: "alice", arrival: "remote", ...over });
+    expect(await live()).toBe(true);
+    expect(await live({ arrival: "local" })).toBe(false);
+    expect(await live({ alias: "bob" })).toBe(false);
+    expect(await live({ sessionId: "other" })).toBe(false);
+    // Renewal keeps it on: the access tokens it issued before stay good.
+    await rotateRefreshSession(sql, { tokenHash: "tr1", id: "r2", nextTokenHash: "tr2", expiresAt: hours(24), arrival: "remote" });
+    expect(await live()).toBe(true);
+    await revokeRefreshSessions(sql, "alice");
+    expect(await live()).toBe(false);
+  });
+
+  it("says when a live sign-in was last confirmed, and nothing for one that is not live", async () => {
+    await createRefreshSession(sql, remote());
+    const at = () => sessionConfirmedAt(sql, { sessionId: "sess-r", alias: "alice", arrival: "remote" });
+    const first = await at();
+    expect(first).toBeInstanceOf(Date);
+    expect(Math.abs(first!.getTime() - Date.now())).toBeLessThan(60_000);
+    await sql`UPDATE refresh_sessions SET confirmed_at = now() - interval '10 minutes' WHERE id = 'r1'`;
+    expect(Date.now() - (await at())!.getTime()).toBeGreaterThan(9 * 60_000);
+    expect(await sessionConfirmedAt(sql, { sessionId: "sess-r", alias: "alice", arrival: "local" })).toBeNull();
+    await revokeRefreshSessions(sql, "alice");
+    expect(await at()).toBeNull();
+  });
+
+  it("is not live past either expiry", async () => {
+    await createRefreshSession(sql, remote());
+    await sql`UPDATE refresh_sessions SET expires_at = now() - interval '1 second' WHERE id = 'r1'`;
+    expect(await isSessionLive(sql, { sessionId: "sess-r", alias: "alice", arrival: "remote" })).toBe(false);
+    await sql`UPDATE refresh_sessions SET expires_at = now() + interval '1 hour', absolute_expires_at = now() - interval '1 second' WHERE id = 'r1'`;
+    expect(await isSessionLive(sql, { sessionId: "sess-r", alias: "alice", arrival: "remote" })).toBe(false);
+  });
+
+  it("signs the whole sign-in out, a sibling included", async () => {
+    await createRefreshSession(sql, remote());
+    await rotateRefreshSession(sql, { tokenHash: "tr1", id: "r2", nextTokenHash: "tr2", expiresAt: hours(24), arrival: "remote" });
+    await siblingRefreshSession(sql, { of: "tr2", id: "r3", tokenHash: "tr3" });
+    await createRefreshSession(sql, remote({ id: "other", sessionId: "sess-other", tokenHash: "t-other" }));
+    expect(await endRefreshSession(sql, "tr2")).toMatchObject({ alias: "alice" });
+    expect(await isSessionLive(sql, { sessionId: "sess-r", alias: "alice", arrival: "remote" })).toBe(false);
+    expect((await findRefreshSession(sql, "tr3"))?.revoked_at).not.toBeNull();
+    expect(await isSessionLive(sql, { sessionId: "sess-other", alias: "alice", arrival: "remote" })).toBe(true);
+  });
+
+  it("refuses a row that leaves out where or how it began, and a remote one without an end", async () => {
+    await expect(sql`INSERT INTO refresh_sessions (id, session_id, alias, token_hash, expires_at, signed_in_with, signed_in_at, confirmed_at)
+      VALUES ('n1', 'n1', 'alice', 'tn1', now() + interval '1 hour', 'password', now(), now())`).rejects.toThrow(/arrival/);
+    await expect(sql`INSERT INTO refresh_sessions (id, session_id, alias, token_hash, expires_at, arrival, signed_in_at, confirmed_at)
+      VALUES ('n2', 'n2', 'alice', 'tn2', now() + interval '1 hour', 'local', now(), now())`).rejects.toThrow(/signed_in_with/);
+    await expect(sql`INSERT INTO refresh_sessions (id, session_id, alias, token_hash, expires_at, arrival, signed_in_with, signed_in_at)
+      VALUES ('n3', 'n3', 'alice', 'tn3', now() + interval '1 hour', 'local', 'password', now())`).rejects.toThrow(/confirmed_at/);
+    await expect(createRefreshSession(sql, remote({ absoluteExpiresAt: null }))).rejects.toThrow(/refresh_sessions_remote_ends/);
+    await expect(createRefreshSession(sql, { ...lanSession({ id: "n4", alias: "alice", tokenHash: "tn4", expiresAt: hours(1) }), absoluteExpiresAt: hours(2) })).rejects.toThrow(
+      /refresh_sessions_remote_ends/,
+    );
   });
 });

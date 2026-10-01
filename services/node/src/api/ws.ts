@@ -73,7 +73,14 @@ export async function mintSocketTicket({ ctx, url }: WorkspaceCall): Promise<Res
   const wsDoc = await getDoc(ctx.sql, wsDocId);
   if (!wsDoc || wsDoc.workspace_id !== ctx.workspaceId) return error(404, "not found");
   if (!canReadDoc(ctx, wsDoc)) return error(403, "forbidden");
-  const wsTicket = mintWsTicket(ctx.env.internalSecret, ctx.alias, ctx.workspaceId, wsDocId, canWriteDoc(ctx, wsDoc));
+  const wsTicket = mintWsTicket(ctx.env.internalSecret, {
+    alias: ctx.alias,
+    workspaceId: ctx.workspaceId,
+    docId: wsDocId,
+    canWrite: canWriteDoc(ctx, wsDoc),
+    sid: ctx.sid,
+    arrival: ctx.arrival,
+  });
   return json(
     { ticket: wsTicket.value, expires_at: wsTicket.expiresAt, workspace_id: ctx.workspaceId },
     { headers: { "cache-control": "no-store" } },

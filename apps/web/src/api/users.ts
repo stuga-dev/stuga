@@ -1,5 +1,17 @@
 import { api } from "../lib/http/client";
 
+/** What Revoke everything takes from an account, counted before it does. */
+export interface RevokeEverythingCounts {
+  /** Sign-ins still on, at every address. */
+  sessions: number;
+  /** Linked to the node's identity provider. */
+  provider: boolean;
+  apps: number;
+  api_keys: number;
+  invites: number;
+  share_links: number;
+}
+
 export interface AiModel {
   id: string;
   name: string;
@@ -36,6 +48,8 @@ export const Me = {
       method: "PATCH",
       body: JSON.stringify({ email }),
     }),
+  /** What Revoke everything would take from you. */
+  revokeEverythingCounts: () => api<RevokeEverythingCounts>("/api/me/revoke-everything"),
   /** Empty while the node's AI chat is off. */
   models: () => api<AiModel[]>("/api/models"),
 };

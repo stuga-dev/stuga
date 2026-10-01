@@ -1,9 +1,10 @@
 /** `/api/whoami`: who the caller is, the name they go by, how to reach them, and how a person signs in. */
-import { getSignInMethods, getUsers, setDisplayName, setUserEmail } from "@stuga/db";
+import { getSignInMethods, getUsers, revokeEverythingCounts, setDisplayName, setUserEmail } from "@stuga/db";
 import { isEmailShaped } from "@stuga/protocol/domain/username";
 import { isNodeAdmin } from "../authz/authz.js";
 import { error, json } from "../http/respond.js";
-import type { WorkspaceCall } from "../http/router.js";
+import type { AccountCall, WorkspaceCall } from "../http/router.js";
+import { recentConfirmationRequired } from "../identity/recency.js";
 
 export async function getWhoami({ ctx }: WorkspaceCall): Promise<Response> {
   // An agent has no directory row of its own, and its answer has no sign-in fields.
@@ -28,6 +29,8 @@ export async function getWhoami({ ctx }: WorkspaceCall): Promise<Response> {
 /**
  * The name other people see, and the optional contact address. Both belong to
  * the person: an identity provider's email only seeds an account made through it.
+ * The address is where the node's alerts about their sign-ins go, so changing it
+ * takes a sign-in confirmed in the last five minutes.
  */
 export async function updateWhoami({ ctx, req }: WorkspaceCall): Promise<Response> {
   const body = (await req.json().catch(() => ({}))) as { display_name?: unknown; email?: unknown };
@@ -48,6 +51,10 @@ export async function updateWhoami({ ctx, req }: WorkspaceCall): Promise<Respons
   }
 
   if (name === null && email === undefined) return error(400, "a name is required");
+  if (email !== undefined) {
+    const stale = await recentConfirmationRequired(ctx);
+    if (stale) return stale;
+  }
   if (name !== null) {
     await setDisplayName(ctx.sql, ctx.alias, name);
     out.display_name = name;
@@ -57,4 +64,10 @@ export async function updateWhoami({ ctx, req }: WorkspaceCall): Promise<Respons
     out.email = email;
   }
   return json(out);
+}
+
+/** What Revoke everything would take from the caller (POST /auth/revoke-everything does it). */
+export async function getRevokeEverythingCounts({ ctx }: AccountCall): Promise<Response> {
+  const counts = await revokeEverythingCounts(ctx.sql, ctx.alias);
+  return counts ? json(counts) : error(404, "this account no longer exists");
 }

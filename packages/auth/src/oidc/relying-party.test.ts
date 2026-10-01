@@ -156,6 +156,15 @@ describe("the authorization request", () => {
     expect(idp.prompts).toEqual(["select_account"]);
   });
 
+  it("asks the person to sign in again with prompt=login, sent with max_age=0", async () => {
+    const start = await createRelyingParty().start(client(), { redirectUri: REDIRECT, prompt: "login" });
+    const params = new URL(start.url).searchParams;
+    expect(params.get("prompt")).toBe("login");
+    expect(params.get("max_age")).toBe("0");
+    const plain = new URL((await createRelyingParty().start(client(), { redirectUri: REDIRECT })).url).searchParams;
+    expect(plain.has("max_age")).toBe(false);
+  });
+
   it("asks for a silent answer with prompt=none, which a provider without a session refuses", async () => {
     const start = await createRelyingParty().start(client(), { redirectUri: REDIRECT, prompt: "none" });
     expect(new URL(start.url).searchParams.get("prompt")).toBe("none");
@@ -173,6 +182,7 @@ describe("finishing a sign-in", () => {
       preferredUsername: "ada",
       name: "Ada Lovelace",
       email: "ada@example.test",
+      authTime: expect.any(Number),
     });
     expect(idp.tokenRequests).toEqual([{ auth: "none", ok: true }]);
   });
@@ -215,7 +225,16 @@ describe("finishing a sign-in", () => {
 
   it("keeps an unusable email out, and control characters out of the names", async () => {
     idp.user = { sub: "s-2", preferred_username: "a\u0000da\u200b", name: "  Ada\nLovelace ", email: "ada@example.test\r\nBcc: x@y.z" };
-    expect(await signIn()).toEqual({ sub: "s-2", preferredUsername: "a da", name: "Ada Lovelace", email: null });
+    expect(await signIn()).toMatchObject({ sub: "s-2", preferredUsername: "a da", name: "Ada Lovelace", email: null });
+  });
+
+  it("reports when the person last signed in at the provider, or null when it does not say", async () => {
+    const before = Math.floor(Date.now() / 1000);
+    expect((await signIn()).authTime).toBeGreaterThanOrEqual(before);
+    idp.overrides = { auth_time: "yesterday" };
+    expect((await signIn()).authTime).toBeNull();
+    idp.overrides = { auth_time: undefined };
+    expect((await signIn()).authTime).toBeNull();
   });
 });
 

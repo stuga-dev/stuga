@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { hashPassword, verifyPassword } from "./password.js";
+import { hashPassword, needsRehash, verifyPassword } from "./password.js";
 
 describe("passwords (scrypt)", () => {
   it("round-trips and encodes its parameters and salt", async () => {
     const hash = await hashPassword("correct horse battery staple");
-    expect(hash).toMatch(/^scrypt\$16384\$8\$1\$[A-Za-z0-9_-]{22}\$[A-Za-z0-9_-]{43}$/);
+    expect(hash).toMatch(/^scrypt\$65536\$8\$2\$[A-Za-z0-9_-]{22}\$[A-Za-z0-9_-]{43}$/);
     expect(await verifyPassword("correct horse battery staple", hash)).toBe(true);
     expect(await verifyPassword("correct horse battery stapl", hash)).toBe(false);
     expect(await verifyPassword("", hash)).toBe(false);
@@ -22,7 +22,7 @@ describe("passwords (scrypt)", () => {
     const hash = await hashPassword("pw");
     // Re-label the hash as a cheaper derivation: the stored digest no longer
     // matches, proving the parameters in the string are the ones used.
-    const cheaper = hash.replace("$16384$", "$1024$");
+    const cheaper = hash.replace("$65536$", "$1024$");
     expect(await verifyPassword("pw", cheaper)).toBe(false);
   });
 
@@ -39,5 +39,20 @@ describe("passwords (scrypt)", () => {
     ]) {
       expect(await verifyPassword("pw", bad)).toBe(false);
     }
+  });
+
+  it("verifies an older, cheaper hash, and says it needs hashing again", async () => {
+    // N=2^14, r=8, p=1: what the node stored before the cost went up.
+    const { scrypt } = await import("node:crypto");
+    const salt = Buffer.from("0123456789abcdef");
+    const key = await new Promise<Buffer>((res, rej) =>
+      scrypt("pw", salt, 32, { N: 16384, r: 8, p: 1 }, (e, k) => (e ? rej(e) : res(k))),
+    );
+    const old = ["scrypt", 16384, 8, 1, salt.toString("base64url"), key.toString("base64url")].join("$");
+    expect(await verifyPassword("pw", old)).toBe(true);
+    expect(needsRehash(old)).toBe(true);
+    expect(needsRehash(await hashPassword("pw"))).toBe(false);
+    // Nothing to redo for what is not a hash at all.
+    expect(needsRehash("plaintext")).toBe(false);
   });
 });

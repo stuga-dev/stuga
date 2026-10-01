@@ -16,6 +16,7 @@
     "@astryxdesign/core": "0.6.3",
     "@astryxdesign/theme-neutral": "0.6.3",
     "@stuga/crdt-ops": "workspace:*",
+    "@stuga/password-strength": "workspace:*",
     "@stuga/protocol": "workspace:*",
     "@tiptap/extension-code-block": "3.31.3",
     "@tiptap/extension-collaboration": "3.31.3",

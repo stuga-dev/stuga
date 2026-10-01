@@ -14,6 +14,8 @@ export interface ClaimRules {
 export interface Principal {
   /** The account's alias, from `sub`. */
   alias: string;
+  /** The session the token was minted for, from `sid`: the caller looks it up, so a revoked one is refused at once. */
+  sid: string;
   claims: JWTPayload;
 }
 
@@ -24,7 +26,7 @@ export class AuthError extends Error {
   }
 }
 
-/** Verify signature, issuer, audience and expiry with `getKey`, and that it is an access token. */
+/** Verify signature, issuer, audience and expiry with `getKey`, and that it is an access token naming its session. */
 export async function verifyClaims(
   token: string,
   rules: ClaimRules,
@@ -47,7 +49,9 @@ export async function verifyClaims(
   }
   const alias = payload.sub;
   if (typeof alias !== "string" || alias.length === 0) throw new AuthError("missing sub claim");
-  return { alias, claims: payload };
+  const sid = payload["sid"];
+  if (typeof sid !== "string" || sid.length === 0) throw new AuthError("missing sid claim");
+  return { alias, sid, claims: payload };
 }
 
 /** The bearer token from the Authorization header; query parameters and cookies are ignored. */

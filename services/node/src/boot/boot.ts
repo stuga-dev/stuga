@@ -15,6 +15,7 @@ import {
   embeddingColumnDims,
   getSearchLanguages,
   initSchema,
+  isSessionLive,
   pgJobQueue,
   recordNodeBoot,
   runBootRepairs,
@@ -34,9 +35,13 @@ import { createAiSettingsStore } from "../config/settings/ai.js";
 import { createNodeSettingsStore, issuerHost } from "../config/settings/node.js";
 import type { NodeEnv } from "../env.js";
 import { createApp, createRequestHandler, readsOwnBody } from "../http/dispatch.js";
+import { createFrontDoor, createLocalFrontDoor } from "../http/front-door.js";
+import { createPasswordNetworkCheck } from "../identity/off-network.js";
+import { createSessionSockets } from "../auth/session-sockets.js";
 import { createRateLimiters } from "../http/rate-limit.js";
 import { withSecurityHeaders } from "../http/security-headers.js";
 import { createIdentityRouter, identityDb } from "../identity/index.js";
+import { alertsFor } from "../identity/alerts.js";
 import { handleInternalRequest } from "../internal/routes.js";
 import { runMaintenanceTick } from "../jobs/maintenance.js";
 import { handleJobBatch } from "../jobs/worker.js";
@@ -61,6 +66,7 @@ import { notifyRemoteAccess } from "../remote/notify.js";
 import { createRemoteAccess, type RemoteAccess } from "../remote/service.js";
 
 const MAINTENANCE_INTERVAL_MS = 2 * 60_000;
+const SOCKET_SWEEP_INTERVAL_MS = 60_000;
 /** How long a backup of the running node waits for the requests already being answered. */
 const BACKUP_DRAIN_MS = 60_000;
 
@@ -108,6 +114,13 @@ async function boot(): Promise<void> {
   let bodyLimit = (): number => bodyBytesFor(DEFAULT_MAX_UPLOAD_BYTES);
   let tls: TlsOptions | undefined;
   if (cfg.tlsCertDir) tls = { certDir: cfg.tlsCertDir, defaultHost: new URL(cfg.publicOrigin).hostname };
+  // The remote address while it is on; filled in once remote access has started.
+  let remoteOrigin = (): string | null => null;
+  const passwordNetwork = createPasswordNetworkCheck({
+    tls: tls !== undefined,
+    networks: cfg.localPasswordNetworks,
+    remoteOrigin: () => remoteOrigin(),
+  });
   const server = createHttpServer({
     handler: withSecurityHeaders(gate.handler),
     // A refused upgrade is an ordinary HTTP response; a completed handshake carries its own headers.
@@ -117,6 +130,7 @@ async function boot(): Promise<void> {
     port: cfg.port,
     maxBodyBytes: () => bodyLimit(),
     readsOwnBody,
+    frontDoor: createLocalFrontDoor(passwordNetwork),
     ...(tls ? { tls } : {}),
   });
   const bound = await server.listen();
@@ -213,6 +227,7 @@ async function boot(): Promise<void> {
 
   const keys = await loadOrCreateSigningKey(cfg.auth.keyFile);
   const verifier = createVerifier(cfg.auth, keys);
+  const sessionSockets = createSessionSockets();
 
   // ---- services ------------------------------------------------------------
   const snapshots = fsBlobStore(join(cfg.dataDir, "blobs", "snapshots"));
@@ -243,7 +258,14 @@ async function boot(): Promise<void> {
 
   const limiters = createRateLimiters();
 
-  const { tlsCertDir: _tlsCertDir, setupCodeFile: _setupCodeFile, webDistDir, remote: remoteHints, ...nodeConfig } = cfg;
+  const {
+    tlsCertDir: _tlsCertDir,
+    setupCodeFile: _setupCodeFile,
+    localPasswordNetworks: _localPasswordNetworks,
+    webDistDir,
+    remote: remoteHints,
+    ...nodeConfig
+  } = cfg;
   const env: NodeEnv = {
     ...nodeConfig,
     docs,
@@ -258,6 +280,7 @@ async function boot(): Promise<void> {
     settings,
     searchLanguages,
     verifier,
+    sessionSockets,
     previousVersion,
     nodeId,
   };
@@ -301,6 +324,10 @@ async function boot(): Promise<void> {
     limiter: limiters.auth,
     trustProxyHeaders: cfg.trustProxyHeaders,
     remoteId: () => env.remote?.current().id ?? null,
+    onSessionsEnded: (alias, sids) => void (sids ? sessionSockets.closeSessions(sids) : sessionSockets.closeAccount(alias)),
+    remoteOrigin: () => remoteOrigin(),
+    passwordNetwork,
+    alerts: alertsFor(env),
   });
 
   const spa = serveStatic(webDistDir);
@@ -328,9 +355,15 @@ async function boot(): Promise<void> {
       notify: (notice) => notifyRemoteAccess(env, notice),
       readsOwnBody,
       maxBodyBytes: () => bodyLimit(),
+      frontDoor: createFrontDoor({ env }),
     });
     env.remote = remote.view;
     env.remoteAccess = remote;
+    const view = remote.view;
+    remoteOrigin = () => {
+      const now = view.current();
+      return now.enabled ? now.origin : null;
+    };
     await remote.start();
   }
 
@@ -374,6 +407,11 @@ async function boot(): Promise<void> {
     notifyFailure: (message, at) => notifyBackupFailed(env, message, at),
   });
 
+  // A sign-in can end without a route ending it (its fixed end at the remote address, its idle
+  // expiry): its sockets close within a minute.
+  const socketSweep = startInterval(SOCKET_SWEEP_INTERVAL_MS, async () => {
+    await sessionSockets.sweep((session) => isSessionLive(sql, session));
+  });
   const maintenance = startInterval(MAINTENANCE_INTERVAL_MS, () =>
     exclusive(async () => {
       // Also picks up hand edits to the settings tables.
@@ -407,6 +445,7 @@ async function boot(): Promise<void> {
       { name: "remote access", run: () => remote?.stop() ?? Promise.resolve() },
       { name: "HTTP listener", run: () => server.close() },
       { name: "maintenance loop", run: () => maintenance.stop() },
+      { name: "socket sweep", run: () => socketSweep.stop() },
       { name: "search index rebuild", run: () => searchLanguages.stop() },
       { name: "job worker", run: () => worker.stop() },
       { name: "document actors", run: () => docs.close() },

@@ -37,8 +37,9 @@ import type { ConnectorStatus, RemoteAccessStatus } from "@stuga/protocol/api/re
 import type { ConnectorHints, RemoteGroup } from "../config/env.js";
 import type { NodeEnv, RemoteAccessView } from "../env.js";
 import { applyRemoteHeaders, withRemoteHeaders, withSecurityHeaders } from "../http/security-headers.js";
-import type { ServingGate } from "../http/serving-gate.js";
+import { behindGate, type ServingGate } from "../http/serving-gate.js";
 import { startInterval } from "../platform/interval.js";
+import type { FrontDoor } from "../platform/http-server.js";
 import { createRemoteListener, removeSocketFile, type RemoteListener } from "../platform/remote-listener.js";
 import { fetchRenewalInfo, type RenewalInfo } from "./acme/client.js";
 import { ariCertId } from "./acme/der.js";
@@ -135,6 +136,8 @@ export interface RemoteAccessDeps {
   notify?: (notice: RemoteNotice) => Promise<void>;
   readsOwnBody: (method: string, path: string) => boolean;
   maxBodyBytes: () => number;
+  /** What a visitor gets before a body is read (http/front-door.ts); its refusals get the remote headers here. */
+  frontDoor: FrontDoor;
   /** Epoch milliseconds. Tests. */
   now?: () => number;
   /** Tests: a DNS server that stands for the zone's (challtestsrv). */
@@ -397,6 +400,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       gid,
       maxBodyBytes: deps.maxBodyBytes,
       readsOwnBody: deps.readsOwnBody,
+      frontDoor: behindGate(deps.gate, deps.frontDoor),
       onError,
     });
     next.setCertificate({ key: cert!.keyPem, cert: cert!.chainPem });

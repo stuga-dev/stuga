@@ -4,6 +4,7 @@
  * LAN's (docs/remote-access.md). Each rebuilds request URLs on its own origin, so the URL says
  * which one a request was served on.
  */
+import type { TokenArrival } from "@stuga/auth";
 import type { NodeEnv } from "../env.js";
 import { perSubnet } from "../net/addresses.js";
 import { ARRIVAL_HEADER, clientAddress, type Arrival } from "../platform/http-server.js";
@@ -19,6 +20,11 @@ export function arrivalOf(req: Request): Arrival {
 /** The origin the request was served on: where links handed back to its caller point. */
 export function servedOrigin(req: Request): string {
   return new URL(req.url).origin;
+}
+
+/** Where a person's access token is presented, which decides the audience it must carry. */
+export function tokenArrival(req: Request): TokenArrival {
+  return arrivalOf(req) === "remote" ? { arrival: "remote", origin: servedOrigin(req) } : { arrival: "local" };
 }
 
 /**

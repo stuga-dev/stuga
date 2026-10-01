@@ -16,13 +16,16 @@ vi.mock("@stuga/db", async (orig) => ({
     user: { display_name: "Liv", username: "liv", email: null },
     membership: { workspace_id: "ws1", role: "member" },
     groupIds: [],
+    sessionLive: true,
   })),
+  isSessionLive: vi.fn(async () => true),
 }));
 
 const { createApp, createRequestHandler, readsOwnBody } = await import("./dispatch.js");
 const { createIdentityRouter } = await import("../identity/routes.js");
 const { memoryDb } = await import("../identity/testing/memory-db.js");
-const { createServingGate } = await import("./serving-gate.js");
+const { behindGate, createServingGate } = await import("./serving-gate.js");
+const { createFrontDoor } = await import("./front-door.js");
 const { applyRemoteHeaders, withRemoteHeaders, withSecurityHeaders } = await import("./security-headers.js");
 const { createHttpServer } = await import("../platform/http-server.js");
 const { createRemoteListener } = await import("../platform/remote-listener.js");
@@ -68,7 +71,7 @@ function nodeAt(publicOrigin: string, remote?: RemoteAccessView) {
     verifier: {
       verify: async (token: string) => {
         if (token !== "session-jwt") throw new AuthError("bad token");
-        return { alias: "liv", claims: {} };
+        return { alias: "liv", sid: "sess-1", claims: {} };
       },
     },
     rateLimit: { limit: async () => ({ success: true }) },
@@ -102,6 +105,7 @@ function nodeAt(publicOrigin: string, remote?: RemoteAccessView) {
     nodeLabel: () => LAN_NAME,
     setupCode: () => "ABCDE12345",
     remoteId: () => remote?.current().id ?? null,
+    remoteOrigin: () => (remote?.current().enabled ? remote.current().origin : null),
   });
   const gate = createServingGate();
   gate.open({ handler: createRequestHandler({ identity, app, spa: serveStatic(dir) }), upgrade: (req) => app.upgrade(req) });
@@ -140,9 +144,9 @@ async function lan(publicOrigin: string, remote?: RemoteAccessView) {
     });
 }
 
-/** The remote listener for REMOTE_HOST, over a socket in a fresh directory. */
+/** The remote listener for REMOTE_HOST, over a socket in a fresh directory, behind its front door. */
 async function remoteListener(publicOrigin: string) {
-  const { gate } = nodeAt(publicOrigin, bound(true));
+  const { gate, env } = nodeAt(publicOrigin, bound(true));
   const socketDir = mkdtempSync(join(tmpdir(), "stuga-surface-sock-"));
   cleanups.push(() => rmSync(socketDir, { recursive: true, force: true }));
   const socketPath = join(socketDir, "https.sock");
@@ -154,6 +158,7 @@ async function remoteListener(publicOrigin: string) {
     decorate: applyRemoteHeaders,
     maxBodyBytes: () => 1 << 20,
     readsOwnBody,
+    frontDoor: behindGate(gate, createFrontDoor({ env })),
     onError: () => {},
   });
   listener.setCertificate(makeTestCert({ dnsNames: [REMOTE_HOST] }));
@@ -196,6 +201,11 @@ describe("the remote address, to a visitor who has not signed in", () => {
     expect((await get("/mcp", { "content-type": "application/json" }, "POST")).headers["www-authenticate"]).toContain(REMOTE_ORIGIN);
     expect((await get("/api/agent-install/codex")).text).toContain(`${REMOTE_ORIGIN}/mcp`);
     expect((await get("/.well-known/openid-configuration")).status).toBe(404);
+    // Nor what only the LAN answers.
+    for (const path of ["/.well-known/jwks.json", "/ready"]) expect((await get(path)).status, path).toBe(404);
+    // What needs a credential says only that, without reading on.
+    expect((await get("/api/models")).status).toBe(401);
+    expect((await get("/api/no-such-route", {}, "POST")).status).toBe(401);
   });
 });
 
@@ -232,7 +242,7 @@ describe("the LAN's answers", () => {
 
   async function answers(remote?: RemoteAccessView) {
     const get = await lan(ORIGIN, remote);
-    const ticket = await mintMediaTicket(SECRET, "liv", "ws1");
+    const ticket = await mintMediaTicket(SECRET, { alias: "liv", workspaceId: "ws1", sid: "sess-1", arrival: "local" });
     // Under both names: the node before remote access read the plain one on https too.
     const cookie = { cookie: `stuga_media=${ticket.value}; __Host-stuga_media=${ticket.value}` };
     return {
@@ -345,11 +355,13 @@ describe("the LAN's answers", () => {
     expect(await answers()).toEqual(EXPECTED);
   });
 
-  it("stay the same once the node has a remote address, on or off, but for agent setup naming it while on", async () => {
+  it("stay the same once the node has a remote address, on or off, but for agent setup and sign-in's config naming it while on", async () => {
     expect(await answers(bound(false))).toEqual(EXPECTED);
     const on = await answers(bound(true));
     expect(on).toEqual({
       ...EXPECTED,
+      // Where a password of 15 characters or more also signs in, for the forms that set one.
+      config: { ...EXPECTED.config, body: { ...EXPECTED.config.body, remote_origin: REMOTE_ORIGIN } },
       agentSetup: { ...EXPECTED.agentSetup, body: { ...EXPECTED.agentSetup.body, remote: { url: REMOTE_ORIGIN, mcp_url: `${REMOTE_ORIGIN}/mcp` } } },
     });
   });

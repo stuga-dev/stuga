@@ -39,18 +39,27 @@ describe("GET /api/ws/ticket", () => {
     const res = await mintFor(ctx());
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ticket: string; expires_at: number };
-    expect(verifyWsTicket(SECRET, body.ticket)).toMatchObject({
+    expect(verifyWsTicket(SECRET, body.ticket, "local")).toMatchObject({
       alias: "alice",
       workspaceId: "ws1",
       docId: "d1",
       canWrite: true,
+      sid: "sess-1",
+      arrival: "local",
     });
+  });
+
+  it("signs it for the listener the request came in on: one minted at the remote address opens sockets there only", async () => {
+    const res = await mintFor(ctx({ arrival: "remote", sid: "sess-r" }));
+    const body = (await res.json()) as { ticket: string };
+    expect(verifyWsTicket(SECRET, body.ticket, "local")).toBeNull();
+    expect(verifyWsTicket(SECRET, body.ticket, "remote")).toMatchObject({ sid: "sess-r", arrival: "remote" });
   });
 
   it("gives a reader a read-only ticket", async () => {
     const res = await mintFor(ctx({ alias: "bob", principals: ["user:bob"] }));
     const body = (await res.json()) as { ticket: string };
-    expect(verifyWsTicket(SECRET, body.ticket)?.canWrite).toBe(false);
+    expect(verifyWsTicket(SECRET, body.ticket, "local")?.canWrite).toBe(false);
   });
 
   it("answers 404 for a document in another workspace, even to a principal in its ACL", async () => {

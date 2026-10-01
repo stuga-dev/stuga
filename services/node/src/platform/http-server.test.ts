@@ -415,3 +415,32 @@ describe("websocket upgrade", () => {
     expect(EchoActor.closes[1]).toEqual({ code: 4002, reason: "client done" });
   });
 });
+
+describe("the LAN listener's front door", () => {
+  it("refuses a request before a byte of its body is read, and lets the rest through to the handler", async () => {
+    let handled = 0;
+    const { port } = await serve({
+      handler: async () => {
+        handled += 1;
+        return new Response("ok");
+      },
+      maxBodyBytes: () => 1 << 20,
+      frontDoor: async (head) =>
+        new URL(head.url).pathname === "/auth/login" ? new Response("refused", { status: 403 }) : {},
+    });
+    // Declares a body it never sends: the answer cannot have waited for it.
+    const refused = await new Promise<number>((resolve, reject) => {
+      const req = http.request({ port, method: "POST", path: "/auth/login", headers: { "content-length": "100000" } }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      req.on("error", reject);
+      req.write("{");
+    });
+    expect(refused).toBe(403);
+    expect(handled).toBe(0);
+    const passed = await raw(port, { method: "POST", path: "/auth/refresh", body: "{}" });
+    expect(passed.status).toBe(200);
+    expect(handled).toBe(1);
+  });
+});

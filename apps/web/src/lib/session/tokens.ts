@@ -72,8 +72,8 @@ export interface TokenResponse {
   return_to?: string;
 }
 
-export async function authPost(path: string, body: Record<string, unknown>): Promise<TokenResponse> {
-  const json = await authRequest<Partial<TokenResponse>>(path, body);
+export async function authPost(path: string, body: Record<string, unknown>, bearer?: string): Promise<TokenResponse> {
+  const json = await authRequest<Partial<TokenResponse>>(path, body, bearer);
   if (!json?.access_token || typeof json.expires_in !== "number") {
     throw new AuthError(200, "The server returned an unusable session.");
   }

@@ -1,6 +1,6 @@
 export { AuthError, extractToken, type Principal } from "./tokens/verify.js";
-export { createVerifier, type TokenVerifier } from "./tokens/verifier.js";
-export type { AuthConfig } from "./tokens/config.js";
+export { audienceFor, createVerifier, type TokenArrival, type TokenVerifier } from "./tokens/verifier.js";
+export { REMOTE_SESSION_DEFAULTS, type AuthConfig } from "./tokens/config.js";
 export { loadOrCreateSigningKey, publicJwks, signAccessToken, type LocalKeys } from "./tokens/keys.js";
 export {
   agentPrincipal,
@@ -21,7 +21,8 @@ export {
   mintConnectorToken,
   type ConnectorTokenKind,
 } from "./credentials/connector-token.js";
-export { hashPassword, verifyPassword } from "./credentials/password.js";
+export { hashPassword, needsRehash, verifyPassword } from "./credentials/password.js";
+export { HashBusy, createHashQueue, type HashLane, type HashQueue, type HashQueueOptions } from "./credentials/hash-queue.js";
 export { hashRefreshToken, mintRefreshToken } from "./credentials/refresh.js";
 export { constantTimeEqual, randomBase64url, randomHex, sha256Hex } from "./crypto.js";
 export { ProviderError, fetchProviderMetadata, type ProviderMetadata } from "./oidc/discovery.js";

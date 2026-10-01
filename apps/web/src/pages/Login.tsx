@@ -36,6 +36,8 @@ import { signUp, signInWithPassword, passwordOk, PASSWORD_RULES } from "../lib/s
 import { AuthError, describeError } from "../lib/session/errors";
 import { usePageRestored } from "../lib/use-page-restored";
 import { AuthErrorBanner } from "../ui/AuthErrorBanner";
+import { PasswordStrengthHint } from "../ui/PasswordStrengthHint";
+import { useRemoteStrength } from "../lib/session/password-strength";
 import { USERNAME_RULE, isValidUsername, normalizeUsername } from "@stuga/protocol/domain/username";
 import { SEARCH_LANGUAGES, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { SearchLanguageList } from "../ui/SearchLanguageList";
@@ -109,6 +111,8 @@ export function Login() {
   const [username, setUsername] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  /** Only while a password is being chosen: signing in scores nothing. */
+  const strength = useRemoteStrength(view === "signin" ? "" : password, { username, displayName: name });
   /** Setup only: what search gets a tokenizer for beyond English; none until chosen. */
   const [searchLanguages, setSearchLanguages] = useState<SearchLanguage[]>([]);
   /** Setup only: the node's setup code, from the link it printed (?setup=) or typed. */
@@ -236,7 +240,7 @@ export function Login() {
       setError(username.trim() ? USERNAME_RULE : "Choose a username.");
       return;
     }
-    if (!passwordOk(password)) {
+    if (!passwordOk(password, strength.strong)) {
       setError("Choose a password that meets all the requirements below.");
       return;
     }
@@ -389,7 +393,8 @@ export function Login() {
                     />
                   </VStack>
 
-                  {showPasswordRules && <PasswordRules password={password} />}
+                  {showPasswordRules && <PasswordRules password={password} strong={strength.strong} />}
+                  {creating && <PasswordStrengthHint password={password} strength={strength} />}
 
                   {view === "setup" && (
                     <SearchLanguageList choices={SEARCH_LANGUAGES} value={searchLanguages} onChange={setSearchLanguages} size="lg" />
@@ -464,11 +469,11 @@ export function Login() {
 }
 
 /** The password policy as a live checklist, shown once the user starts typing. */
-export function PasswordRules({ password }: { password: string }) {
+export function PasswordRules({ password, strong = false }: { password: string; strong?: boolean }) {
   return (
     <VStack gap={1} className="auth-rules">
       {PASSWORD_RULES.map((rule) => {
-        const ok = rule.test(password);
+        const ok = rule.test(password, strong);
         return (
           <HStack key={rule.label} gap={2} vAlign="center">
             <span className={ok ? "auth-rule__ico auth-rule__ico--ok" : "auth-rule__ico"}>

@@ -293,12 +293,17 @@ describe("import ids and upload signatures", () => {
     expect(importExpiry("run_abc")).toBeNull();
   });
 
-  it("verifies only the exact database + import the signature was minted for", () => {
-    const sig = signUpload("secret", "db1", "imp_a_000000000000000000");
-    expect(verifyUpload("secret", "db1", "imp_a_000000000000000000", sig)).toBe(true);
-    expect(verifyUpload("secret", "db2", "imp_a_000000000000000000", sig)).toBe(false);
-    expect(verifyUpload("other", "db1", "imp_a_000000000000000000", sig)).toBe(false);
-    expect(verifyUpload("secret", "db1", "imp_a_000000000000000000", null)).toBe(false);
-    expect(verifyUpload("secret", "db1", "imp_a_000000000000000000", "nothex")).toBe(false);
+  it("verifies only the exact database + import + listener the signature was minted for", () => {
+    const sig = signUpload("secret", "local", "db1", "imp_a_000000000000000000");
+    expect(verifyUpload("secret", "local", "db1", "imp_a_000000000000000000", sig)).toBe(true);
+    expect(verifyUpload("secret", "local", "db2", "imp_a_000000000000000000", sig)).toBe(false);
+    expect(verifyUpload("other", "local", "db1", "imp_a_000000000000000000", sig)).toBe(false);
+    expect(verifyUpload("secret", "local", "db1", "imp_a_000000000000000000", null)).toBe(false);
+    expect(verifyUpload("secret", "local", "db1", "imp_a_000000000000000000", "nothex")).toBe(false);
+    // Staged on the LAN, it is no credential at the remote address, nor the other way round.
+    expect(verifyUpload("secret", "remote", "db1", "imp_a_000000000000000000", sig)).toBe(false);
+    const remote = signUpload("secret", "remote", "db1", "imp_a_000000000000000000");
+    expect(verifyUpload("secret", "remote", "db1", "imp_a_000000000000000000", remote)).toBe(true);
+    expect(verifyUpload("secret", "local", "db1", "imp_a_000000000000000000", remote)).toBe(false);
   });
 });

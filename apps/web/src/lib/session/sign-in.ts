@@ -1,8 +1,10 @@
 /** Sign-in, sign-up and the account's own credentials, against the node's auth routes. */
 import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
+import { atRemoteAddress } from "./auth-config";
 import { authRequest } from "./auth-request";
 import { AuthError } from "./errors";
 import { clearLinkPending, clearSsoHint, markLinkPending, startProviderSignIn } from "./provider";
+import { withConfirmation } from "./reauth";
 import { authPost, ensureFreshToken, type Session, type TokenResponse } from "./tokens";
 
 function toSession(t: TokenResponse): Session {
@@ -102,16 +104,42 @@ async function bearer(): Promise<string> {
   return token;
 }
 
-/** A first password for an account that has none: the session is the only proof it can give. */
+/** A first password for an account that has none: the session is the only proof it can give, confirmed recently. */
 export async function setFirstPassword(newPassword: string): Promise<void> {
-  await authRequest("/auth/password", { new_password: newPassword }, await bearer());
+  await withConfirmation(async () => authRequest("/auth/password", { new_password: newPassword }, await bearer()));
 }
 
-/** Change the password; the node ends every other session and answers with a fresh one for this browser. */
+/** Confirm it's you with your password: the node counts this session as confirmed for five minutes. */
+export async function confirmWithPassword(password: string): Promise<void> {
+  await authRequest("/auth/confirm", { password }, await bearer());
+}
+
+/** Confirm it's you by signing in at the provider again; it comes back to `returnTo` with ?reauth=. */
+export async function confirmWithProvider(returnTo: string): Promise<void> {
+  await startProviderSignIn({ prompt: "login", returnTo, bearer: await bearer() });
+}
+
+/**
+ * Revoke everything: every session at every address ends, and the provider link, apps,
+ * API keys and the links you shared go. `newPassword` becomes the only way back in, and this
+ * browser gets the one new session.
+ */
+export async function revokeEverything(newPassword: string): Promise<Session> {
+  return toSession(await withConfirmation(async () => authPost("/auth/revoke-everything", { new_password: newPassword }, await bearer())));
+}
+
+/**
+ * Change the password; the node ends every other session and answers with a fresh one for this
+ * browser. On the node's own network the current password is the proof. At the remote address the
+ * session is: one confirmed in the last five minutes, which the app asks for first when it is older,
+ * so a password too short to sign in there can still be replaced from there.
+ */
 export async function changePassword(username: string, currentPassword: string, newPassword: string): Promise<Session> {
-  return toSession(
-    await authPost("/auth/password", { username, current_password: currentPassword, new_password: newPassword }),
-  );
+  if (atRemoteAddress()) {
+    return toSession(await withConfirmation(async () => authPost("/auth/password", { new_password: newPassword }, await bearer())));
+  }
+  const body = { username, current_password: currentPassword, new_password: newPassword };
+  return toSession(await authPost("/auth/password", body));
 }
 
 /**
@@ -131,7 +159,7 @@ export async function resetPassword(token: string, newPassword: string): Promise
 export async function linkProvider(returnTo: string): Promise<void> {
   markLinkPending(returnTo);
   try {
-    await startProviderSignIn({ returnTo, bearer: await bearer() });
+    await withConfirmation(async () => startProviderSignIn({ returnTo, bearer: await bearer() }));
   } catch (err) {
     clearLinkPending();
     throw err;
@@ -140,25 +168,32 @@ export async function linkProvider(returnTo: string): Promise<void> {
 
 /** Unlink the provider; the node refuses while the account has no password. */
 export async function unlinkProvider(): Promise<void> {
-  await authRequest("/auth/oidc/unlink", {}, await bearer());
+  await withConfirmation(async () => authRequest("/auth/oidc/unlink", {}, await bearer()));
   // The login page would otherwise try the provider for an account it no longer reaches.
   clearSsoHint();
 }
 
-/** The node's password policy, mirrored for the form; the server stays the authority. */
-export const PASSWORD_RULES: { label: string; test: (pw: string) => boolean }[] = [
+/**
+ * The node's password policy, mirrored for the form; the server stays the authority, and asks only
+ * for the length. A password that meets the remote address's rule (`strong`: 15 characters or more,
+ * hard to guess) needs no letter or number, so a passphrase such as "trumpet walnut ceiling" works.
+ */
+export const PASSWORD_RULES: { label: string; test: (pw: string, strong: boolean) => boolean }[] = [
   { label: "At least 8 characters", test: (pw) => pw.length >= 8 },
-  { label: "A letter", test: (pw) => /[A-Za-z]/.test(pw) },
-  { label: "A number", test: (pw) => /\d/.test(pw) },
+  { label: "A letter", test: (pw, strong) => strong || /[A-Za-z]/.test(pw) },
+  { label: "A number", test: (pw, strong) => strong || /\d/.test(pw) },
 ];
 
-export function passwordOk(pw: string): boolean {
-  return PASSWORD_RULES.every((r) => r.test(pw));
+export function passwordOk(pw: string, strong = false): boolean {
+  return PASSWORD_RULES.every((r) => r.test(pw, strong));
 }
 
-/** The policy in one sentence, for a form without the live checklist: "At least 8 characters, with a letter and a number." */
-export function passwordRulesText(): string {
-  const [first, ...rest] = PASSWORD_RULES.map((r) => r.label);
+/**
+ * The policy in one sentence, for a form without the live checklist: "At least 8 characters, with a
+ * letter and a number." For a password that meets the remote rule (`strong`), only the length.
+ */
+export function passwordRulesText(strong = false): string {
+  const [first, ...rest] = PASSWORD_RULES.filter((r) => !strong || !r.test("", true)).map((r) => r.label);
   if (!first) return "";
   if (rest.length === 0) return `${first}.`;
   const lower = rest.map((label) => label.charAt(0).toLowerCase() + label.slice(1));

@@ -4,7 +4,9 @@
  * registered dynamically (RFC 7591) or known by a metadata document (CIMD),
  * authorization code with PKCE S256, rotating refresh tokens, and revocation
  * (RFC 7009). A consent creates or renews a grant: its person's authorization of
- * one client over the workspaces they chose. Tokens are for /mcp only.
+ * one client over the workspaces they chose. Tokens are for /mcp only, and only
+ * at the listener the person consented at: a code consented on the LAN is no
+ * good at the remote address, nor are the tokens it leads to, and the reverse.
  */
 import { createHash } from "node:crypto";
 import {
@@ -30,6 +32,7 @@ import { REQUEST_HOST_HEADER } from "../platform/http-server.js";
 import { arrivalOf, clientBucket, servedOrigin } from "../http/arrival.js";
 import type { NodeEnv } from "../env.js";
 import { buildAccountContext, Unauthorized } from "../auth/context.js";
+import { recentConfirmationRequired } from "../identity/recency.js";
 import { error, json } from "../http/respond.js";
 import { isIpLiteral, isLocalName, isLoopbackHost, isNonPublicAddress } from "../net/addresses.js";
 import { vetOutboundUrl } from "../net/outbound.js";
@@ -499,6 +502,13 @@ export async function handleConsent(env: NodeEnv, req: Request): Promise<Respons
     workspaceScope = unique;
   }
 
+  // A grant outlives the session that made it, so at the remote address it takes a sign-in confirmed
+  // in the last five minutes, as an API key does: a stolen session there is not a year at /mcp.
+  if (arrivalOf(req) === "remote") {
+    const stale = await recentConfirmationRequired(account);
+    if (stale) return stale;
+  }
+
   const code = randomBase64url(32);
   await insertOauthCode(env.sql, {
     codeHash: sha256Hex(code),
@@ -509,6 +519,8 @@ export async function handleConsent(env: NodeEnv, req: Request): Promise<Respons
     redirectUri,
     codeChallenge,
     expiresAt: new Date(Date.now() + CODE_TTL_MS),
+    // Exchanged only at the listener the person consented at, and its tokens good only there.
+    arrival: arrivalOf(req),
   });
   return back({ code });
 }
@@ -569,6 +581,7 @@ export async function handleToken(env: NodeEnv, req: Request): Promise<Response>
       tokenHash: hashConnectorToken(refreshToken),
       clientId,
       graceSeconds: env.auth.refreshRotationGraceSeconds,
+      arrival: arrivalOf(req),
       next: (startedAt) => (minted = mintTokens(startedAt)).rows,
     });
     return rotated.kind === "rotated" && minted ? (minted as ReturnType<typeof mintTokens>).response : tokenError("invalid_grant");
@@ -587,6 +600,7 @@ export async function handleToken(env: NodeEnv, req: Request): Promise<Response>
     clientId,
     redirectUri,
     codeChallenge: createHash("sha256").update(codeVerifier).digest("base64url"),
+    arrival: arrivalOf(req),
   });
   if (!consumed) return tokenError("invalid_grant");
   // The person may have left every workspace in the five minutes since they consented.
@@ -608,7 +622,9 @@ export async function handleToken(env: NodeEnv, req: Request): Promise<Response>
   const startedAt = new Date();
   const familyId = `fam_${randomBase64url(12)}`;
   const { rows, response } = mintTokens(startedAt);
-  for (const row of rows) await insertOauthToken(env.sql, { ...row, grantId: grant.grant_id, familyId, familyStartedAt: startedAt });
+  for (const row of rows) {
+    await insertOauthToken(env.sql, { ...row, grantId: grant.grant_id, familyId, familyStartedAt: startedAt, arrival: consumed.arrival });
+  }
   return response;
 }
 

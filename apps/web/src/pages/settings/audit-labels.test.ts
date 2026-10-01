@@ -18,4 +18,11 @@ describe("actionLabel", () => {
       "Agent instructions changed",
     ]);
   });
+
+  it("words what is recorded about how a person signs in", () => {
+    expect(["node.sign_in.new_device", "node.account.revoke_everything"].map((a) => actionLabel(row(a)))).toEqual([
+      "Signed in from a new device",
+      "Everything revoked",
+    ]);
+  });
 });

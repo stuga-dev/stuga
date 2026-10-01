@@ -6,20 +6,29 @@ vi.mock("@stuga/db", async (orig) => ({
   getOauthClient: vi.fn(),
   insertOauthCode: vi.fn(async () => {}),
   listWorkspacesForUser: vi.fn(),
+  sessionConfirmedAt: vi.fn(async () => new Date()),
+  findAccountByAlias: vi.fn(async () => ({ alias: "liv", username: "liv", password_hash: "h", oidc_sub: null })),
 }));
 vi.mock("../auth/context.js", async (orig) => ({
   ...(await orig<typeof import("../auth/context.js")>()),
   buildAccountContext: vi.fn(),
 }));
 
-const { getOauthClient, insertOauthCode, listWorkspacesForUser } = await import("@stuga/db");
+const { getOauthClient, insertOauthCode, listWorkspacesForUser, sessionConfirmedAt } = await import("@stuga/db");
+const { ARRIVAL_HEADER } = await import("../platform/http-server.js");
 const { buildAccountContext, Unauthorized } = await import("../auth/context.js");
 const { handleConsent } = await import("./oauth.js");
 import type { NodeEnv } from "../env.js";
 
 const REGISTERED = "https://client.example.test/callback";
 const CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
-const env = { sql: {}, publicOrigin: "https://stuga.test", extraOrigins: [] } as unknown as NodeEnv;
+const env = {
+  sql: {},
+  publicOrigin: "https://stuga.test",
+  extraOrigins: [],
+  settings: { current: () => ({ identityProvider: null }) },
+  remote: { current: () => ({ enabled: true, id: "k7f3q2", hostname: "k7f3q2.stuga.test", origin: "https://k7f3q2.stuga.test" }) },
+} as unknown as NodeEnv;
 
 function consent(body: Record<string, unknown>): Promise<Response> {
   return handleConsent(
@@ -32,7 +41,8 @@ function consent(body: Record<string, unknown>): Promise<Response> {
   );
 }
 
-const person = (alias = "liv") => ({ sql: {}, alias, isAgent: false, displayName: "Liv", surface: "http" }) as never;
+const person = (alias = "liv", arrival = "local") =>
+  ({ sql: {}, alias, isAgent: false, displayName: "Liv", surface: "http", sid: "sess-1", arrival, env }) as never;
 const memberships = (...rows: Array<[string, string]>) =>
   vi.mocked(listWorkspacesForUser).mockResolvedValue(rows.map(([workspace_id, role]) => ({ workspace_id, role })) as never);
 
@@ -100,8 +110,21 @@ describe("POST /oauth/consent", () => {
         access: "propose",
         redirectUri: REGISTERED,
         codeChallenge: CHALLENGE,
+        arrival: "local",
       }),
     );
+  });
+
+  it("binds the code to the listener the person consented at", async () => {
+    await handleConsent(
+      env,
+      new Request("https://k7f3q2.stuga.test/oauth/consent", {
+        method: "POST",
+        headers: { authorization: "Bearer session", "content-type": "application/json", "x-stuga-arrival": "remote" },
+        body: JSON.stringify({ decision: "allow", client_id: "cid_1", redirect_uri: REGISTERED, state: "xyz", code_challenge: CHALLENGE, workspaces: ["ws1"] }),
+      }),
+    );
+    expect(insertOauthCode).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ arrival: "remote" }));
   });
 
   it("returns to a native app's own scheme, as Cursor registers", async () => {
@@ -202,5 +225,41 @@ describe("POST /oauth/consent", () => {
     const res = await handleConsent(env, new Request("https://stuga.test/oauth/consent", { method: "POST", body: "{}" }));
     expect(res.status).toBe(401);
     expect(buildAccountContext).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /oauth/consent at the remote address", () => {
+  const remoteAllow = () =>
+    handleConsent(
+      env,
+      new Request("https://k7f3q2.stuga.test/oauth/consent", {
+        method: "POST",
+        headers: { authorization: "Bearer session", "content-type": "application/json", [ARRIVAL_HEADER]: "remote" },
+        body: JSON.stringify({ decision: "allow", client_id: "cid_1", redirect_uri: REGISTERED, state: "xyz", code_challenge: CHALLENGE, workspaces: ["ws1"] }),
+      }),
+    );
+
+  it("asks for a confirmation first when the session's is older than five minutes, and grants nothing", async () => {
+    vi.mocked(buildAccountContext).mockResolvedValue(person("liv", "remote"));
+    vi.mocked(sessionConfirmedAt).mockResolvedValue(new Date(Date.now() - 6 * 60_000));
+    const res = await remoteAllow();
+    expect(res.status).toBe(401);
+    expect(res.headers.get("x-stuga-reauth")).toBe("1");
+    expect(await res.json()).toEqual({ error: "reauth_required", message: "confirm it's you", methods: ["password"] });
+    expect(insertOauthCode).not.toHaveBeenCalled();
+  });
+
+  it("grants from a session confirmed in the last five minutes", async () => {
+    vi.mocked(buildAccountContext).mockResolvedValue(person("liv", "remote"));
+    vi.mocked(sessionConfirmedAt).mockResolvedValue(new Date(Date.now() - 60_000));
+    const res = await remoteAllow();
+    expect(res.status).toBe(200);
+    expect(insertOauthCode).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ arrival: "remote" }));
+  });
+
+  it("is the remote address's alone: on the node's own network an older session still consents", async () => {
+    vi.mocked(sessionConfirmedAt).mockResolvedValue(new Date(Date.now() - 60 * 60_000));
+    expect((await allow()).status).toBe(200);
+    expect(sessionConfirmedAt).not.toHaveBeenCalled();
   });
 });

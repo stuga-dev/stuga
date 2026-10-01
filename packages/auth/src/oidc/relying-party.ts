@@ -35,15 +35,21 @@ export interface ProviderIdentity {
   preferredUsername: string | null;
   name: string | null;
   email: string | null;
+  /** When the person last proved who they are at the provider (`auth_time`, epoch seconds); null when it does not say. */
+  authTime: number | null;
 }
 
-/** The OpenID Connect `prompt` values a sign-in may send. */
-export type AuthorizationPrompt = "none" | "select_account";
+/**
+ * The OpenID Connect `prompt` values a sign-in may send. "login" asks the provider to have the person
+ * prove who they are again, and is sent with `max_age=0`, so the id_token's `auth_time` says when.
+ */
+export type AuthorizationPrompt = "none" | "select_account" | "login";
 
 export interface RelyingParty {
   /**
    * Build the authorization request. `prompt`: "none" for a silent answer, "select_account" to have the
-   * provider ask which account rather than reuse its session. Throws ProviderError when discovery fails
+   * provider ask which account rather than reuse its session, "login" to have the person sign in there
+   * again whatever session the provider has. Throws ProviderError when discovery fails
    * and no earlier answer is cached.
    */
   start(client: ProviderClient, request: { redirectUri: string; prompt?: AuthorizationPrompt }): Promise<AuthorizationStart>;
@@ -212,6 +218,7 @@ export function createRelyingParty(opts: { timeoutMs?: number; discoveryTtlMs?: 
       url.searchParams.set("code_challenge", codeChallenge(codeVerifier));
       url.searchParams.set("code_challenge_method", "S256");
       if (request.prompt) url.searchParams.set("prompt", request.prompt);
+      if (request.prompt === "login") url.searchParams.set("max_age", "0");
       return { url: url.toString(), state, nonce, codeVerifier };
     },
 
@@ -226,6 +233,7 @@ export function createRelyingParty(opts: { timeoutMs?: number; discoveryTtlMs?: 
         name: text(payload["name"], 200),
         // Unverified contact detail like any other; shape-checked because it can reach an SMTP envelope.
         email: email && isEmailShaped(email) ? email : null,
+        authTime: typeof payload["auth_time"] === "number" && Number.isFinite(payload["auth_time"]) ? payload["auth_time"] : null,
       };
     },
   };

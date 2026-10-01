@@ -48,6 +48,7 @@ function fakeDb(overrides: Partial<JobsDb> = {}): JobsDb {
     purgeAskThreads: vi.fn(async () => 0),
     purgeRefreshSessions: vi.fn(async () => 0),
     purgePasswordResets: vi.fn(async () => 0),
+    purgeKnownDevices: vi.fn(async () => 0),
     purgeOidcSignIns: vi.fn(async () => 0),
   } as unknown as JobsDb;
   return { ...base, ...overrides };

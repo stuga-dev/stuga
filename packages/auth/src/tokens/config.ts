@@ -11,7 +11,16 @@ export interface AuthConfig {
   /** Path of the signing key (JWK, created on first boot if absent). */
   keyFile: string;
   accessTokenTtlSeconds: number;
+  /** How long a session on the node's own network lasts unused; each renewal starts it again. */
   refreshTokenTtlSeconds: number;
+  /**
+   * At the remote address: how long a session lasts unused, and how long it lasts at all from the
+   * sign-in that began it (one through the identity provider has its own, shorter, limit). Renewal
+   * never moves the second. Defaults: REMOTE_SESSION_DEFAULTS.
+   */
+  remoteRefreshTokenTtlSeconds?: number;
+  remoteSessionMaxSeconds?: number;
+  remoteProviderSessionMaxSeconds?: number;
   /**
    * How long a rotated refresh token may still be presented without counting as
    * a replay (which revokes every session). Two tabs renewing at once, or a lost
@@ -20,3 +29,10 @@ export interface AuthConfig {
    */
   refreshRotationGraceSeconds: number;
 }
+
+/** Seven days unused, thirty days in all, twelve hours for a sign-in through the identity provider. */
+export const REMOTE_SESSION_DEFAULTS = {
+  remoteRefreshTokenTtlSeconds: 7 * 24 * 60 * 60,
+  remoteSessionMaxSeconds: 30 * 24 * 60 * 60,
+  remoteProviderSessionMaxSeconds: 12 * 60 * 60,
+} as const;

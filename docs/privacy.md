@@ -60,7 +60,14 @@ resolves to a private or loopback address.
 Stuga does not encrypt data at rest. Documents, the database and keys are stored in plaintext on the
 node's disk, readable by anyone who can read that disk. A backup holds the same, secrets included
 ([Operations](operations.md#backups)). Passwords, API key secrets and apps' tokens are stored only as
-hashes.
+hashes. Recent wrong passwords are counted in memory only. Whether a password is strong enough for
+the remote address is checked on the node itself and in the browser; nothing is sent anywhere.
+
+Each browser that signs in keeps a cookie that recognises it, for 400 days, so a sign-in from a new
+device at the remote address can be reported and wrong passwords typed elsewhere don't pause your
+own browser. The node keeps only a hash of it, with the browser's name from its User-Agent and the
+address of its first sign-in, and forgets a browser not seen for 400 days. It is used for nothing
+else.
 
 **Settings → This node → Storage** sets how long audit history, AI usage records and idle Ask
 threads are kept, and [the event feed](api.md#the-event-feed) says how long events stay. Documents

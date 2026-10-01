@@ -20,12 +20,23 @@ function notificationReachCte(sql: Sql, reach: NotificationReach): Fragment {
 }
 
 /**
- * Which rows the caller's tray reads: those of the workspaces in `reach`, and,
- * for a node administrator (`nodeRows`), those about the node itself, which
+ * Event types about the recipient's own account, such as a sign-in from a new device: they belong to
+ * no workspace, and reach their recipient whether or not they administer the node.
+ */
+export const ACCOUNT_EVENT_PREFIX = "ACCOUNT_";
+
+/** A row of no workspace the recipient reads: about their own account, or with `nodeRows` about the node. */
+function nodeLevel(sql: Sql, column: Fragment, eventType: Fragment, nodeRows: boolean): Fragment {
+  return sql`(${column} IS NULL AND (${nodeRows} OR starts_with(${eventType}, ${ACCOUNT_EVENT_PREFIX})))`;
+}
+
+/**
+ * Which rows the caller's tray reads: those of the workspaces in `reach`, those about the caller's
+ * own account, and, for a node administrator (`nodeRows`), those about the node itself; the last two
  * belong to no workspace.
  */
 function readableWorkspace(sql: Sql, nodeRows: boolean): Fragment {
-  return sql`AND (r.workspace_id IS NOT NULL OR (n.workspace_id IS NULL AND ${nodeRows}))`;
+  return sql`AND (r.workspace_id IS NOT NULL OR ${nodeLevel(sql, sql`n.workspace_id`, sql`n.event_type`, nodeRows)})`;
 }
 
 /**
@@ -89,8 +100,8 @@ export async function unreadNotificationCount(
 }
 
 /**
- * Mark the caller's notifications read in the given workspaces, and with
- * `nodeRows` those about the node itself; no resource gate, since flipping
+ * Mark the caller's notifications read in the given workspaces, those about their own account, and
+ * with `nodeRows` those about the node itself; no resource gate, since flipping
  * `read` discloses nothing. `ids` limits it to rows; `before` (the newest
  * created_at the client holds) bounds a mark-all while still reaching unread
  * rows older than the list window. Returns rows flipped.
@@ -103,11 +114,10 @@ export async function markNotificationsRead(
   before?: string,
   nodeRows = false,
 ): Promise<number> {
-  if (workspaceIds.length === 0 && !nodeRows) return 0;
   const rows = await sql`
     UPDATE notifications SET read = TRUE
     WHERE recipient_alias = ${recipient}
-      AND (workspace_id = ANY(${workspaceIds}) OR (workspace_id IS NULL AND ${nodeRows}))
+      AND (workspace_id = ANY(${workspaceIds}) OR ${nodeLevel(sql, sql`workspace_id`, sql`event_type`, nodeRows)})
       AND read = FALSE
       ${ids ? sql`AND id = ANY(${ids})` : sql``}
       ${

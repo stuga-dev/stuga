@@ -14,9 +14,11 @@ export async function authRequest<T>(path: string, body: Record<string, unknown>
   const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
   if (!res.ok) {
     const text = (key: string) => (typeof json?.[key] === "string" ? (json[key] as string) : undefined);
+    const methods = Array.isArray(json?.methods) ? json.methods.filter((m): m is string => typeof m === "string") : undefined;
     throw new AuthError(res.status, text("error") ?? `${path} → ${res.status}`, {
       detail: text("message"),
       suggestion: text("suggestion"),
+      ...(methods ? { methods } : {}),
     });
   }
   return json as T | null;

@@ -126,7 +126,14 @@ describe("loadAuthConfig", () => {
       nodeLabel: "Acme",
       origin: "https://acme.example",
       branding: { accentColor: "#7c3aed" },
+      remoteOrigin: null,
     });
+  });
+
+  it("reads the remote address while it is on", async () => {
+    fetchMock.mockResolvedValueOnce(json(200, { ...CONFIG, remote_origin: "https://k7f3q2.mystuga.com" }));
+    await loadAuthConfig();
+    expect(authConfig().remoteOrigin).toBe("https://k7f3q2.mystuga.com");
   });
 
   it("keeps the config it has when a reload fails, rather than falling back", async () => {
@@ -160,6 +167,7 @@ describe("loadAuthConfig", () => {
       nodeLabel: null,
       origin: null,
       branding: { accentColor: null },
+      remoteOrigin: null,
     });
     expect(authConfigUnavailable()).toBe(true);
     expect(nodeUnclaimed()).toBe(false);

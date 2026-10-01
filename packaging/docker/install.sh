@@ -75,6 +75,21 @@ fi
 origin="${origin%/}"
 case "$origin" in http://* | https://*) ;; *) fail "--origin must be an http(s) address, got $origin" ;; esac
 
+# Whether an IPv4 address is public: not private, carrier-grade NAT, loopback or link-local.
+public_ipv4() {
+  case "$1" in
+    10.* | 127.* | 192.168.* | 169.254.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].*) return 1 ;;
+    100.6[4-9].* | 100.[7-9][0-9].* | 100.1[01][0-9].* | 100.12[0-7].*) return 1 ;;
+    [0-9]*.[0-9]*.[0-9]*.[0-9]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+host="${origin#*://}" host="${host%%[:/]*}"
+# Over plain http at a public address (a server), a password is taken only from the node's own
+# network: setup goes through an SSH tunnel to this machine (docs/install/docker.md, On a server).
+tunnel=no
+case "$origin" in http://*) if public_ipv4 "$host"; then tunnel=yes; fi ;; esac
+
 # ---- the release's files
 if [ "$version" = latest ]; then base="$RELEASES/latest/download"; else base="$RELEASES/download/v$version"; fi
 say "Installing Stuga into $dir"
@@ -121,7 +136,15 @@ ok "Stuga is running"
 # </dev/null: piped from curl, this script is bash's stdin, and exec would swallow the rest of it.
 code="$(docker compose exec -T node cat /data/setup-code </dev/null 2>/dev/null | tr -d '[:space:]' || true)"
 say ""
-if [ -n "$code" ]; then
+if [ -n "$code" ] && [ "$tunnel" = yes ]; then
+  say "Create the administrator account through an SSH tunnel: passwords over plain http work only"
+  say "from this machine's own network. From your computer:"
+  say ""
+  say "    ssh -L $port:127.0.0.1:$port <this machine>"
+  say ""
+  say "then open http://localhost:$port/login?setup=$code"
+  say ""
+elif [ -n "$code" ]; then
   say "Open this link to create the administrator account:"
   say ""
   say "    $origin/login?setup=$code"

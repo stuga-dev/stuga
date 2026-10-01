@@ -29,9 +29,17 @@ export function inviteRedeemedAudit(tokenHash: string, role: string): AuditInput
   return { action: "invite.redeem", targetKind: "invite", targetId: inviteRef(tokenHash), detail: { role } };
 }
 
-/** Absent or null means no limit; anything else must be a positive number, or a typo would mint a link that never lapses. */
-function positiveOrNone(value: unknown): number | null | undefined {
-  if (value === undefined || value === null) return null;
+/** What a link admits when the request does not say: one person, for seven days, as the dialog offers. */
+export const DEFAULT_INVITE_USES = 1;
+export const DEFAULT_INVITE_DAYS = 7;
+
+/**
+ * Absent takes `fallback`; null means no limit; anything else must be a positive number, or a typo
+ * would mint a link that never lapses.
+ */
+function positiveOrNone(value: unknown, fallback: number): number | null | undefined {
+  if (value === undefined) return fallback;
+  if (value === null) return null;
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
@@ -52,11 +60,19 @@ export async function createInvite({ ctx, req, match }: WorkspaceCall): Promise<
   if (!canGrantRole(callerRole, role)) {
     return error(403, "only a workspace owner can create admin invite links");
   }
-  const days = positiveOrNone(body.expires_in_days);
-  if (days === undefined) return error(400, "expires_in_days must be a positive number, or omitted for a link that does not expire");
-  const uses = positiveOrNone(body.max_uses);
+  const days = positiveOrNone(body.expires_in_days, DEFAULT_INVITE_DAYS);
+  if (days === undefined) return error(400, "expires_in_days must be a positive number, or null for a link that does not expire");
+  const uses = positiveOrNone(body.max_uses, DEFAULT_INVITE_USES);
   if (uses === undefined || (uses !== null && !Number.isInteger(uses))) {
-    return error(400, "max_uses must be a positive whole number, or omitted for no limit");
+    return error(400, "max_uses must be a positive whole number, or null for no limit");
+  }
+  // The link points where its maker is. At the remote address a link with no limit or no expiry would
+  // be an open sign-up for anyone it leaked to, so those are made only on the node's own network.
+  if (ctx.arrival === "remote" && (days === null || uses === null)) {
+    return json(
+      { error: "invite_local_only", message: "A link with no limit or no expiry can be made only on this node's network." },
+      { status: 400 },
+    );
   }
   // Whoever holds a reusable admin link could hand admin to anyone, so an admin link admits one person.
   if (role === "admin" && uses !== 1) return error(400, "an admin invite link admits one person: set max_uses to 1");
@@ -122,8 +138,11 @@ export async function redeemInvite({ ctx, req }: AccountCall): Promise<Response>
   const token = (body.token ?? "").trim();
   if (!token) return error(400, "token required");
   const tokenHash = sha256Hex(token);
-  const result = await redeemWorkspaceInvite(ctx.sql, tokenHash, ctx.alias);
+  const result = await redeemWorkspaceInvite(ctx.sql, tokenHash, ctx.alias, ctx.arrival);
   if (!result.ok) {
+    if (result.reason === "local_only") {
+      return json({ error: "invite_local_only", message: "This invite link works only on this node's network." }, { status: 403 });
+    }
     return error(400, "this invite link is invalid, expired, or fully used");
   }
   recordAudit({ ...ctx, workspaceId: result.workspaceId }, inviteRedeemedAudit(tokenHash, result.role));

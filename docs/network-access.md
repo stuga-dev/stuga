@@ -34,6 +34,34 @@ callback only on `localhost`.
 The node trusts no network. A request from loopback needs the same credentials as one from anywhere
 else, and the same limits apply.
 
+### Passwords over plain http
+
+When the node serves plain http (no `TLS_CERT_DIR`), it takes a password only from its own network:
+a private address (`10/8`, `172.16/12`, `192.168/16`, `100.64/10` as Tailscale uses, loopback,
+link-local, IPv6 unique-local), the IPv6 prefix of one of the node's own network interfaces (a home
+network's global prefix), or a range listed in
+[`LOCAL_PASSWORD_NETWORKS`](configuration.md#network). A machine with a public IPv4 address, such as
+a rented server, trusts no interface prefix: other customers' servers share it. A sign-in, setup,
+password change, reset link, provider link, confirmation or Revoke everything from any other address
+is refused before the password is read:
+`Passwords work here only from this node's network.` A router forwarding the http port to the
+internet is refused this way. From outside, use the [remote address](#remote-access), set up
+[HTTPS](#https), or open the node through an SSH tunnel (`ssh -L 8787:127.0.0.1:8787 <host>`, then
+`http://localhost:8787`). A reverse proxy or Tailscale Funnel reaches the node from loopback or a
+private address, so its passwords are taken.
+
+List a network that uses public addresses in `LOCAL_PASSWORD_NETWORKS`: a campus or office on public
+IPv4, routed IPv6 clients outside the node's own prefix, a site-to-site VPN, a home network's IPv6
+prefix on a machine that also has a public IPv4 address.
+
+The node checks the address of the connection itself, never `X-Forwarded-For`. Some setups show the
+node a private gateway address for everyone, so this check passes every password there: rootless
+Docker and Podman, ports published by docker-proxy or with `iptables: false`, Docker Swarm's ingress,
+Kubernetes, and Docker Desktop. A node installed directly, or in rootful Docker, sees the real
+address. Under Docker the node sees only its container's network, not the host's, so the interface
+subnets do not cover the host's LAN. On a machine with a public address, keep the port on your
+network with `HOST_BIND` ([Docker](install/docker.md#on-a-server)).
+
 ## Claiming the node
 
 The first account created on a node administers it, and needs no invite link. It needs the node's

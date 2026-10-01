@@ -13,6 +13,7 @@ import type { NodeSettingsStore } from "./config/settings/node.js";
 import type { NodeBackups } from "./ops/node-backups.js";
 import type { SearchLanguages } from "./search/languages.js";
 import type { RemoteAccess } from "./remote/service.js";
+import type { SessionSockets } from "./auth/session-sockets.js";
 
 export interface NotifyConfig {
   /** slack | teams | discord | email | webhook | none */
@@ -75,6 +76,8 @@ interface NodeServices {
   searchLanguages: SearchLanguages;
   /** Verifies a bearer session token against the node's own signing key. */
   verifier: TokenVerifier;
+  /** The sync sockets each person's sign-in has open, closed when it ends. */
+  sessionSockets: SessionSockets;
   /** One actor per prose document: the live CRDT session. */
   docs: ActorNamespace;
   /** One actor per structured database. */

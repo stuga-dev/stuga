@@ -314,6 +314,7 @@ function reach(now: { role: "owner" | "admin" | "member" | null; groups: string[
     user: { alias: "u_liv", display_name: "Liv", username: "liv", email: null } as never,
     membership: now.role === null ? null : { workspace_id: now.workspace ?? "ws1", role: now.role },
     groupIds: now.groups,
+    sessionLive: null,
   });
 }
 

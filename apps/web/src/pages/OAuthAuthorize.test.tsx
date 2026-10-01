@@ -73,6 +73,38 @@ describe("answerConsent", () => {
     fetchMock.mockRejectedValueOnce(new TypeError("network down"));
     expect(await answerConsent("allow", REQUEST)).toBeNull();
   });
+
+  it("asks the person to confirm it's them when the node wants a recent confirmation, then sends it once more", async () => {
+    const { setConfirmer } = await import("../lib/session/reauth");
+    const asked: string[][] = [];
+    const remove = setConfirmer(async (methods) => (asked.push(methods), true));
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "reauth_required", message: "confirm it's you", methods: ["password", "provider"] }), {
+          status: 401,
+          headers: { "x-stuga-reauth": "1" },
+        }),
+      )
+      .mockResolvedValueOnce(reply(200, { redirect: "https://client.example.test/callback?code=c&state=xyz" }));
+    const choice = { workspaces: ["ws1"], access: "read" as const };
+    expect(await answerConsent("allow", REQUEST, choice)).toBe("https://client.example.test/callback?code=c&state=xyz");
+    expect(asked).toEqual([["password", "provider"]]);
+    // The same choices, sent again.
+    expect(sentBody(1)).toEqual(sentBody(0));
+    expect(sentBody(1)).toMatchObject({ workspaces: ["ws1"], access: "read" });
+    remove();
+  });
+
+  it("answers nothing when the person does not confirm", async () => {
+    const { setConfirmer } = await import("../lib/session/reauth");
+    const remove = setConfirmer(async () => false);
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "reauth_required", methods: ["password"] }), { status: 401, headers: { "x-stuga-reauth": "1" } }),
+    );
+    expect(await answerConsent("allow", REQUEST, { workspaces: "all", access: "propose" })).toBeNull();
+    expect(fetchMock.mock.calls.filter((c) => c[0] === "/oauth/consent")).toHaveLength(1);
+    remove();
+  });
 });
 
 describe("OAuthAuthorize", () => {

@@ -97,7 +97,7 @@ export function bindingHash(value: string, secure: boolean): string {
 }
 
 /** Every value the request carries under `name`, in the order sent. */
-function readCookies(req: Request, name: string): string[] {
+export function readCookies(req: Request, name: string): string[] {
   const values: string[] = [];
   for (const part of (req.headers.get("cookie") ?? "").split(";")) {
     const eq = part.indexOf("=");

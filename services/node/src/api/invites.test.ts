@@ -22,7 +22,7 @@ const mockRevoke = db.revokeWorkspaceInvite as unknown as ReturnType<typeof vi.f
 
 const send = vi.fn(async () => {});
 
-function ctx(over: { servedOrigin?: string } = {}): Ctx {
+function ctx(over: { servedOrigin?: string; arrival?: "local" | "remote" } = {}): Ctx {
   return personCtx({
     ...over,
     alias: "u_owner",
@@ -42,8 +42,15 @@ async function create(body: unknown, servedOrigin?: string): Promise<Response> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  return createInvite({ ctx: ctx(servedOrigin ? { servedOrigin } : {}), req, url: new URL(req.url), match: [path, "ws1"] });
+  const remote = servedOrigin === REMOTE;
+  return createInvite({
+    ctx: ctx(servedOrigin ? { servedOrigin, arrival: remote ? "remote" : "local" } : {}),
+    req,
+    url: new URL(req.url),
+    match: [path, "ws1"],
+  });
 }
+const REMOTE = "https://k7f3q2.stuga.test";
 
 /** The audit messages sent so far, by action. */
 function audited(action: string) {
@@ -91,10 +98,26 @@ describe("POST /api/workspaces/:id/invites", () => {
     expect(JSON.stringify(row)).not.toContain(body.token);
   });
 
-  it("omitting both limits mints a reusable link that does not lapse", async () => {
+  it("omitting both limits mints what the dialog offers: one person, seven days", async () => {
     const res = await create({ role: "guest" });
     expect(res.status).toBe(201);
-    expect(mockInsert.mock.calls[0]![1]).toMatchObject({ role: "guest", expiresAt: null, maxUses: null });
+    const row = mockInsert.mock.calls[0]![1] as { role: string; expiresAt: string; maxUses: number };
+    expect(row).toMatchObject({ role: "guest", maxUses: 1 });
+    expect(Date.parse(row.expiresAt) - Date.now()).toBeGreaterThan(6.9 * 86400_000);
+  });
+
+  it("mints a link with no limit or no expiry only when asked by null, and only on the node's own network", async () => {
+    expect((await create({ role: "member", max_uses: null, expires_in_days: null })).status).toBe(201);
+    expect(mockInsert.mock.calls[0]![1]).toMatchObject({ expiresAt: null, maxUses: null });
+    mockInsert.mockClear();
+    for (const open of [{ max_uses: null }, { expires_in_days: null }]) {
+      const res = await create({ role: "member", ...open }, REMOTE);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("invite_local_only");
+    }
+    expect(mockInsert).not.toHaveBeenCalled();
+    // At the remote address a link with both limits is fine.
+    expect((await create({ role: "member" }, REMOTE)).status).toBe(201);
   });
 
   it("refuses a malformed limit rather than minting a link that never lapses", async () => {
@@ -106,7 +129,7 @@ describe("POST /api/workspaces/:id/invites", () => {
   });
 
   it("an admin link admits exactly one person", async () => {
-    expect((await create({ role: "admin" })).status).toBe(400);
+    expect((await create({ role: "admin", max_uses: null })).status).toBe(400);
     expect((await create({ role: "admin", max_uses: 2 })).status).toBe(400);
     expect(mockInsert).not.toHaveBeenCalled();
     expect((await create({ role: "admin", max_uses: 1, expires_in_days: 1 })).status).toBe(201);
@@ -169,6 +192,21 @@ describe("revoking and redeeming", () => {
     });
     const res = await redeemInvite({ ctx: ctx() as unknown as AccountCtx, req, url: new URL(req.url), match: ["/api/invites/redeem"] });
     expect(res.status).toBe(400);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("refuses a link with no limit or no expiry at the remote address, saying why", async () => {
+    mockRedeem.mockResolvedValue({ ok: false, reason: "local_only" });
+    const req = new Request("https://k7f3q2.stuga.test/api/invites/redeem", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "inv_open" }),
+    });
+    const remote = personCtx({ alias: "u_owner", arrival: "remote" }) as unknown as AccountCtx;
+    const res = await redeemInvite({ ctx: remote, req, url: new URL(req.url), match: ["/api/invites/redeem"] });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("invite_local_only");
+    expect(mockRedeem).toHaveBeenCalledWith(expect.anything(), sha256Hex("inv_open"), "u_owner", "remote");
     expect(send).not.toHaveBeenCalled();
   });
 });

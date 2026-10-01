@@ -8,9 +8,12 @@ vi.mock("@stuga/db", async (importOriginal) => ({
   getUsers: vi.fn(async () => [{ alias: "human-1", username: "ali", display_name: "Ali", email: "alice@example.test" }]),
   getSignInMethods: vi.fn(async () => ({ hasPassword: false, providerLinked: true })),
   isNodeAdminAlias: vi.fn(async () => false),
+  sessionConfirmedAt: vi.fn(async () => new Date()),
+  findAccountByAlias: vi.fn(async () => ({ alias: "human-1", username: "ali", password_hash: "scrypt$x", oidc_sub: null })),
 }));
 
-const { setDisplayName, setUserEmail } = await import("@stuga/db");
+const { setDisplayName, setUserEmail, sessionConfirmedAt } = await import("@stuga/db");
+const confirmedAt = sessionConfirmedAt as unknown as ReturnType<typeof vi.fn>;
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
 import { personCtx, type CtxOverrides } from "../testing/ctx.js";
@@ -18,7 +21,9 @@ import { personCtx, type CtxOverrides } from "../testing/ctx.js";
 const mockSet = setDisplayName as unknown as ReturnType<typeof vi.fn>;
 const mockSetEmail = setUserEmail as unknown as ReturnType<typeof vi.fn>;
 
-const ctx = (over: CtxOverrides = {}): Ctx => personCtx({ displayName: "Ali", principals: ["user:human-1"], ...over });
+const settings = { current: () => ({ identityProvider: null, notify: { sink: "none" } }) };
+const ctx = (over: CtxOverrides = {}): Ctx =>
+  personCtx({ displayName: "Ali", principals: ["user:human-1"], env: { settings } as CtxOverrides["env"], ...over });
 
 async function route(c: Ctx, method: string, path: string, body?: unknown): Promise<Response> {
   const url = new URL(`https://node.test${path}`);
@@ -32,6 +37,7 @@ async function route(c: Ctx, method: string, path: string, body?: unknown): Prom
 beforeEach(() => {
   vi.clearAllMocks();
   mockSet.mockResolvedValue(undefined);
+  confirmedAt.mockResolvedValue(new Date());
 });
 
 describe("PATCH /api/whoami", () => {
@@ -67,6 +73,19 @@ describe("PATCH /api/whoami", () => {
       expect((await route(ctx(), "PATCH", "/api/whoami", { email: bad })).status).toBe(400);
     }
     expect(mockSetEmail).not.toHaveBeenCalled();
+  });
+
+  it("changes the email, where alerts go, only from a sign-in confirmed in the last five minutes; the name any time", async () => {
+    confirmedAt.mockResolvedValue(new Date(Date.now() - 6 * 60_000));
+    const res = await route(ctx(), "PATCH", "/api/whoami", { email: "ada@example.test" });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("x-stuga-reauth")).toBe("1");
+    expect((await res.json()).methods).toEqual(["password"]);
+    expect(mockSetEmail).not.toHaveBeenCalled();
+    const both = await route(ctx(), "PATCH", "/api/whoami", { display_name: "Ada", email: null });
+    expect(both.status).toBe(401);
+    expect(mockSet).not.toHaveBeenCalled();
+    expect((await route(ctx(), "PATCH", "/api/whoami", { display_name: "Ada" })).status).toBe(200);
   });
 
   it("refuses an agent renaming the human who minted it", async () => {

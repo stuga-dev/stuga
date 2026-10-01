@@ -7,9 +7,10 @@
  */
 import { createHmac, randomBytes } from "node:crypto";
 import { constantTimeEqual } from "@stuga/auth";
-import type { DocRow } from "@stuga/db";
+import type { CredentialArrival, DocRow } from "@stuga/db";
 import type { Ctx } from "../auth/context.js";
 import type { NodeEnv } from "../env.js";
+import { arrivalOf } from "../http/arrival.js";
 import { error, json } from "../http/respond.js";
 import { fileName, imageUploadLimits } from "./media.js";
 
@@ -45,9 +46,17 @@ export function uploadExpiry(uploadId: string): number | null {
 
 const keyOf = (docId: string, uploadId: string, part: "meta" | "body"): string => `${PREFIX}${docId}/${uploadId}.${part}`;
 
-/** The upload URL's credential: domain-separated, scoped to one document and one upload, expiring with the id. */
-function sign(secret: string, docId: string, uploadId: string): string {
-  return createHmac("sha256", secret).update(`media-upload:${docId}:${uploadId}`).digest("hex");
+/**
+ * The upload URL's credential: domain-separated, scoped to one document and one upload and the listener
+ * that staged it, expiring with the id.
+ */
+function sign(secret: string, arrival: CredentialArrival, docId: string, uploadId: string): string {
+  return createHmac("sha256", secret).update(`media-upload/${arrival}:${docId}:${uploadId}`).digest("hex");
+}
+
+/** Whether `sig` is the credential for this upload at the listener it is presented at. */
+export function mediaUploadSigned(secret: string, arrival: CredentialArrival, docId: string, uploadId: string, sig: string | null): boolean {
+  return !!sig && /^[0-9a-f]{64}$/.test(sig) && constantTimeEqual(sign(secret, arrival, docId, uploadId), sig);
 }
 
 /** The largest file the node stores: its upload limit. */
@@ -58,7 +67,7 @@ export async function createMediaUpload(ctx: Ctx, doc: DocRow, name: string): Pr
   const uploadId = newUploadId(Date.now());
   const meta: UploadMeta = { created_by: ctx.alias, name: fileName(name) };
   await ctx.env.snapshots.put(keyOf(doc.doc_id, uploadId, "meta"), JSON.stringify(meta), { httpMetadata: { contentType: "application/json" } });
-  const path = `/api/docs/${encodeURIComponent(doc.doc_id)}/media/uploads/${uploadId}?sig=${sign(ctx.env.internalSecret, doc.doc_id, uploadId)}`;
+  const path = `/api/docs/${encodeURIComponent(doc.doc_id)}/media/uploads/${uploadId}?sig=${sign(ctx.env.internalSecret, ctx.arrival, doc.doc_id, uploadId)}`;
   return {
     upload_id: uploadId,
     upload_url: `${ctx.servedOrigin}${path}`,
@@ -70,9 +79,7 @@ export async function createMediaUpload(ctx: Ctx, doc: DocRow, name: string): Pr
 
 /** `PUT /api/docs/:id/media/uploads/:uploadId?sig=…`, answered without a bearer: the signature grants one write of one file. */
 export async function handleMediaUpload(env: NodeEnv, req: Request, docId: string, uploadId: string, sig: string | null): Promise<Response> {
-  if (!sig || !/^[0-9a-f]{64}$/.test(sig) || !constantTimeEqual(sign(env.internalSecret, docId, uploadId), sig)) {
-    return error(403, "invalid upload signature");
-  }
+  if (!mediaUploadSigned(env.internalSecret, arrivalOf(req), docId, uploadId, sig)) return error(403, "invalid upload signature");
   const expiry = uploadExpiry(uploadId);
   if (expiry === null || expiry < Date.now()) return error(410, "this upload has expired — start a new one");
   if (!(await env.snapshots.head(keyOf(docId, uploadId, "meta")).catch(() => null))) return error(404, "no such upload");

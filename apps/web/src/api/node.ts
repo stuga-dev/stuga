@@ -3,6 +3,7 @@ import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { api } from "../lib/http/client";
 import type { AuditCursor, AuditEvent } from "./audit";
 import type { MemberCandidate } from "./workspaces";
+import type { RevokeEverythingCounts } from "./users";
 
 /** Keys are write-only: no response carries one. */
 interface AiEndpointSettings {
@@ -359,6 +360,16 @@ export const NodeSettings = {
     api<{ url: string; alias: string; username: string; expires_at: string }>("/api/node/password-resets", {
       method: "POST",
       body: JSON.stringify({ username }),
+    }),
+
+  /** What Revoke everything would take from someone. */
+  revokeEverythingCounts: (alias: string) =>
+    api<RevokeEverythingCounts>(`/api/node/users/${encodeURIComponent(alias)}/revoke-everything`),
+  /** Revoke everything for someone: their password goes too, and the answer is a password link to hand them. */
+  revokeEverythingFor: (alias: string) =>
+    api<{ password_link: { url: string; expires_at: string } }>(`/api/node/users/${encodeURIComponent(alias)}/revoke-everything`, {
+      method: "POST",
+      body: "{}",
     }),
 
   /** The node's own ledger, rows with no workspace, newest first. */

@@ -3,7 +3,9 @@
  * visitor's connection to, a PROXY v2 header naming the visitor ahead of it, then TLS the node
  * terminates with its own certificate for its one hostname. Requests then go through the pipeline
  * the LAN listener uses, on the remote origin. A connection is dropped before TLS when its header is
- * late or malformed, or when its source already holds `perSource` of them.
+ * late or malformed, or when its source already holds `perSource` of them. A request is put to the
+ * front door before its body is read (http/front-door.ts), and the bodies of visitors who have not
+ * signed in share `anonymousBodyBudget`, at most `anonymousPerSource` of them from one source.
  */
 import { chmod, chown, lstat, unlink } from "node:fs/promises";
 import http from "node:http";
@@ -12,7 +14,7 @@ import { Duplex } from "node:stream";
 import tls from "node:tls";
 import { perSubnet } from "../net/addresses.js";
 import { RemoteDirError } from "../remote/files.js";
-import { createRequestPipeline, type RequestHandler } from "./http-server.js";
+import { createRequestPipeline, type FrontDoor, type RequestHandler } from "./http-server.js";
 import { parseProxyV2 } from "./proxy-v2.js";
 
 export interface RemoteListenerOptions {
@@ -30,6 +32,8 @@ export interface RemoteListenerOptions {
   gid?: number | undefined;
   maxBodyBytes: () => number;
   readsOwnBody: (method: string, path: string) => boolean;
+  /** What a request may read of its body, decided before any of it is read; its refusals go out as they are. */
+  frontDoor?: FrontDoor;
   /** Defaults below; tests shrink them. */
   limits?: Partial<RemoteListenerLimits>;
   onError?: (e: unknown) => void;
@@ -47,6 +51,12 @@ export interface RemoteListenerLimits {
   bodyMs: number;
   /** Silence allowed in a body its handler reads as a stream (uploads, imports), however long it runs. */
   bodyIdleMs: number;
+  /** Bytes of bodies from visitors who have not signed in, read at once, each reserved at its declared length. */
+  anonymousBodyBudget: number;
+  /** Of those bodies, how many one source (an IPv6 one by its /64) reads at once. */
+  anonymousPerSource: number;
+  /** How long one of those bodies may take. */
+  anonymousBodyMs: number;
 }
 
 export interface RemoteListener {
@@ -66,6 +76,11 @@ const DEFAULT_LIMITS: RemoteListenerLimits = {
   headersMs: 10_000,
   bodyMs: 60_000,
   bodyIdleMs: 120_000,
+  // 64 sign-ins' worth of 16 KiB.
+  anonymousBodyBudget: 1024 * 1024,
+  // A slow sender holds a share, never the budget: 16 sources to fill it, each for 10 s at most.
+  anonymousPerSource: 4,
+  anonymousBodyMs: 10_000,
 };
 
 const KEEP_ALIVE_MS = 5_000;
@@ -96,6 +111,10 @@ export function createRemoteListener(options: RemoteListenerOptions): RemoteList
     hostname,
     bodyMs: limits.bodyMs,
     bodyIdleMs: limits.bodyIdleMs,
+    ...(options.frontDoor ? { frontDoor: options.frontDoor } : {}),
+    anonymousBodyBudget: limits.anonymousBodyBudget,
+    anonymousPerSource: limits.anonymousPerSource,
+    anonymousBodyMs: limits.anonymousBodyMs,
   });
 
   // No limit on a whole request or on a quiet socket: a slow import and a long SSE answer are both

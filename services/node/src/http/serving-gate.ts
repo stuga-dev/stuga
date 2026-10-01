@@ -10,7 +10,8 @@
  * whose body is still being written counts until that is done, when its
  * handler says so (answeredUntil).
  */
-import type { RequestHandler } from "../platform/http-server.js";
+import type { FrontDoor, RequestHandler } from "../platform/http-server.js";
+import { applyRemoteHeaders, applySecurityHeaders } from "./security-headers.js";
 
 export type Pause = "starting" | "backing_up" | "upgrading" | "maintenance";
 
@@ -153,4 +154,15 @@ function page(say: string): string {
 </body>
 </html>
 `;
+}
+
+/**
+ * The front door as the remote listener asks it: while the node is paused the gate answers, and nothing
+ * is looked up; a refusal goes out with the headers every answer there carries.
+ */
+export function behindGate(gate: Pick<ServingGate, "state" | "handler">, frontDoor: FrontDoor): FrontDoor {
+  return async (head) => {
+    const admitted = gate.state() !== null ? await gate.handler(head) : await frontDoor(head);
+    return admitted instanceof Response ? applyRemoteHeaders(applySecurityHeaders(head, admitted)) : admitted;
+  };
 }

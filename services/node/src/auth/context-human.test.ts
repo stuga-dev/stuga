@@ -4,25 +4,35 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import { ARRIVAL_HEADER } from "../platform/http-server.js";
+
 let authRow: {
   user: { display_name: string; username: string; email: string | null } | null;
   membership: { workspace_id: string; role: string } | null;
   groupIds: string[];
+  sessionLive: boolean | null;
 };
+type Session = { sessionId: string; arrival: string };
 const calls = {
-  resolveHumanAuth: [] as Array<{ alias: string; principal: string; requested: string | null }>,
+  resolveHumanAuth: [] as Array<{ alias: string; principal: string; requested: string | null; session?: Session }>,
   getDirectoryRow: [] as string[],
+  isSessionLive: [] as Array<Session & { alias: string }>,
+  verify: [] as unknown[],
 };
 
 vi.mock("@stuga/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@stuga/db")>()),
-  resolveHumanAuth: (_sql: unknown, alias: string, principal: string, requested: string | null) => {
-    calls.resolveHumanAuth.push({ alias, principal, requested });
-    return Promise.resolve(authRow);
+  resolveHumanAuth: (_sql: unknown, alias: string, principal: string, requested: string | null, session?: Session) => {
+    calls.resolveHumanAuth.push({ alias, principal, requested, ...(session ? { session } : {}) });
+    return Promise.resolve(session ? authRow : { ...authRow, sessionLive: null });
   },
   getDirectoryRow: (_sql: unknown, alias: string) => {
     calls.getDirectoryRow.push(alias);
     return Promise.resolve(authRow.user);
+  },
+  isSessionLive: (_sql: unknown, session: Session & { alias: string }) => {
+    calls.isSessionLive.push(session);
+    return Promise.resolve(authRow.sessionLive === true);
   },
 }));
 
@@ -30,23 +40,34 @@ const { buildContext, buildAccountContext, Unauthorized, WorkspaceRequired } = a
 
 const env = {
   sql: {},
-  verifier: { verify: () => Promise.resolve({ alias: "human-1", claims: { name: "Token Name" } }) },
+  verifier: {
+    verify: (_token: string, where: unknown) => {
+      calls.verify.push(where);
+      return Promise.resolve({ alias: "human-1", sid: "sess-1", claims: { name: "Token Name" } });
+    },
+  },
 } as never;
 
-function request(opts: { ws?: string; query?: string } = {}): Request {
-  const url = `https://node.test/api/docs${opts.query ?? ""}`;
+function request(opts: { ws?: string; query?: string; remote?: boolean } = {}): Request {
+  const url = `${opts.remote ? "https://k7f3q2.stuga.test" : "https://node.test"}/api/docs${opts.query ?? ""}`;
   const headers: Record<string, string> = { authorization: "Bearer human-token" };
   if (opts.ws !== undefined) headers["x-stuga-workspace"] = opts.ws;
+  if (opts.remote) headers[ARRIVAL_HEADER] = "remote";
   return new Request(url, { headers });
 }
+
+const LAN_SESSION = { sessionId: "sess-1", arrival: "local" };
 
 beforeEach(() => {
   calls.resolveHumanAuth = [];
   calls.getDirectoryRow = [];
+  calls.isSessionLive = [];
+  calls.verify = [];
   authRow = {
     user: { display_name: "Chosen Name", username: "chosen", email: "a@b.test" },
     membership: { workspace_id: "ws-1", role: "member" },
     groupIds: ["group:eng"],
+    sessionLive: true,
   };
 });
 
@@ -60,8 +81,24 @@ describe("buildContext — human path", () => {
       expect.arrayContaining(["user:human-1", "org:ws-1", "group:eng"]),
     );
     expect(calls.resolveHumanAuth).toEqual([
-      { alias: "human-1", principal: "user:human-1", requested: null },
+      { alias: "human-1", principal: "user:human-1", requested: null, session: LAN_SESSION },
     ]);
+    expect(ctx).toMatchObject({ sid: "sess-1", arrival: "local" });
+  });
+
+  it("refuses a token whose session has ended, in the same query, whatever else it finds", async () => {
+    authRow.sessionLive = false;
+    await expect(buildContext(request(), env)).rejects.toBeInstanceOf(Unauthorized);
+    expect(calls.resolveHumanAuth).toHaveLength(1);
+  });
+
+  it("checks the token for the listener it arrived at, and looks its session up there", async () => {
+    const ctx = await buildContext(request({ remote: true }), env);
+    expect(calls.verify).toEqual([{ arrival: "remote", origin: "https://k7f3q2.stuga.test" }]);
+    expect(calls.resolveHumanAuth[0]!.session).toEqual({ sessionId: "sess-1", arrival: "remote" });
+    expect(ctx.arrival).toBe("remote");
+    await buildContext(request(), env);
+    expect(calls.verify[1]).toEqual({ arrival: "local" });
   });
 
   it("records a session's REST request as the web surface, and /mcp as its own", async () => {
@@ -127,6 +164,12 @@ describe("buildContext — human path", () => {
     expect(account).not.toHaveProperty("email");
     authRow.user = null;
     await expect(buildAccountContext(request(), env)).rejects.toBeInstanceOf(Unauthorized);
+  });
+
+  it("refuses an ended session on the account-level routes too", async () => {
+    authRow.sessionLive = false;
+    await expect(buildAccountContext(request(), env)).rejects.toBeInstanceOf(Unauthorized);
+    expect(calls.isSessionLive).toEqual([{ ...LAN_SESSION, alias: "human-1" }]);
   });
 
   it("demands onboarding when the caller belongs to no workspace", async () => {

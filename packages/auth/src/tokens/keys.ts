@@ -78,6 +78,8 @@ export function publicJwks(keys: LocalKeys): JSONWebKeySet {
 interface AccessTokenClaims {
   /** Becomes `sub`. */
   alias: string;
+  /** The session the token was minted for, which every request looks up (`sid`). */
+  sid: string;
   /** Becomes `preferred_username`. No email is minted: a local account's address is unverified profile data. */
   username: string;
   displayName: string;
@@ -86,12 +88,13 @@ interface AccessTokenClaims {
   ttlSeconds: number;
 }
 
-/** A node-signed access token, whoever signed the person in: sub, preferred_username, name, token_use. */
+/** A node-signed access token, whoever signed the person in: sub, sid, preferred_username, name, token_use. */
 export async function signAccessToken(keys: LocalKeys, claims: AccessTokenClaims): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const payload: Record<string, unknown> = {
     name: claims.displayName,
     preferred_username: claims.username,
+    sid: claims.sid,
     token_use: "access",
   };
   return new SignJWT(payload)

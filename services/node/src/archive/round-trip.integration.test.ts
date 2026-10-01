@@ -48,7 +48,7 @@ let env: NodeEnv;
 /** Every job the node queued: each flush's index job, and the audit rows. */
 const jobs = { send: vi.fn(async (_m: IndexMessage) => {}) };
 
-const liv = (): AccountCtx => ({ sql, surface: "web", alias: "u_liv", displayName: "Liv", isAgent: false, servedOrigin: env.publicOrigin, env });
+const liv = (): AccountCtx => ({ sql, surface: "web", alias: "u_liv", displayName: "Liv", isAgent: false, sid: "sess-1", servedOrigin: env.publicOrigin, arrival: "local", env });
 
 async function inWorkspace(workspaceId: string): Promise<Ctx> {
   const ctx = await workspaceContextFor({ account: liv(), workspaces: null, readOnly: false }, workspaceId);

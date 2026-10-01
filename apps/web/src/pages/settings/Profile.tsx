@@ -2,11 +2,14 @@
  * How the caller appears to collaborators and how to reach them, and how they
  * sign in: the username is fixed, the email is optional and editable, a
  * password can be set or changed, and the node's identity provider, when it
- * has one, can be linked or unlinked.
+ * has one, can be linked or unlinked. Revoke everything takes every way in back
+ * at once; an alert about a sign-in opens it here (?revoke=1).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Avatar } from "@astryxdesign/core/Avatar";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { Button } from "@astryxdesign/core/Button";
 import { Divider } from "@astryxdesign/core/Divider";
 import { Heading, Text } from "@astryxdesign/core/Text";
@@ -20,9 +23,9 @@ import { isEmailShaped } from "@stuga/protocol/domain/username";
 import { LoadFailed } from "../../ui/LoadFailed";
 import { useSettingsScope } from "./SettingsLayout";
 import { PageColumn } from "../../ui/PageColumn";
-import { Me } from "../../api";
+import { Me, type RevokeEverythingCounts } from "../../api";
 import { errorMessage } from "../../lib/http/client";
-import { providerLabel } from "../../lib/session/auth-config";
+import { atRemoteAddress, providerLabel } from "../../lib/session/auth-config";
 import { AuthError, describeError } from "../../lib/session/errors";
 import { clearLinkPending } from "../../lib/session/provider";
 import {
@@ -30,11 +33,14 @@ import {
   linkProvider,
   passwordOk,
   passwordRulesText,
+  revokeEverything,
   setFirstPassword,
   unlinkProvider,
 } from "../../lib/session/sign-in";
 import { setSession } from "../../lib/session/tokens";
 import { usePageRestored } from "../../lib/use-page-restored";
+import { useRemoteStrength } from "../../lib/session/password-strength";
+import { PasswordStrengthHint } from "../../ui/PasswordStrengthHint";
 
 const PROFILE_PATH = "/settings/profile";
 
@@ -205,6 +211,13 @@ export function Profile() {
           </>
         )}
 
+        {username && (
+          <>
+            <Divider />
+            <RevokeEverythingSection username={username} onDone={() => void reloadSignIn().catch(() => {})} />
+          </>
+        )}
+
         {label && (
           <>
             <Divider />
@@ -221,19 +234,24 @@ export function Profile() {
   );
 }
 
-/** Set a first password (the session is the proof), or change one (the current password is). */
+/**
+ * Set a first password (the session is the proof), or change one (the current password is, on the
+ * node's own network; at the remote address a recently confirmed session is, as for a first one).
+ */
 function PasswordSection({ username, hasPassword, onSet }: { username: string; hasPassword: boolean; onSet: () => void }) {
   const toast = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [busy, setBusy] = useState(false);
+  const strength = useRemoteStrength(next, { username });
+  const askCurrent = hasPassword && !atRemoteAddress();
   /** The button's condition, which Enter in either field goes through too. */
-  const filled = next !== "" && (!hasPassword || current !== "");
+  const filled = next !== "" && (!askCurrent || current !== "");
 
   async function submit() {
     if (!filled || busy) return;
-    if (!passwordOk(next)) {
-      toast({ body: `Choose another password. ${passwordRulesText()}`, type: "error" });
+    if (!passwordOk(next, strength.strong)) {
+      toast({ body: `Choose another password. ${passwordRulesText(strength.strong)}`, type: "error" });
       return;
     }
     setBusy(true);
@@ -250,7 +268,7 @@ function PasswordSection({ username, hasPassword, onSet }: { username: string; h
       setCurrent("");
       setNext("");
     } catch (err) {
-      const wrongCurrent = hasPassword && err instanceof AuthError && err.status === 401;
+      const wrongCurrent = askCurrent && err instanceof AuthError && err.message === "invalid_credentials";
       toast({ body: wrongCurrent ? "That isn’t your current password." : describeError(err), type: "error" });
     } finally {
       setBusy(false);
@@ -263,7 +281,7 @@ function PasswordSection({ username, hasPassword, onSet }: { username: string; h
       <Text type="supporting" color="secondary">
         {hasPassword ? "Changing it signs you out everywhere else." : `Lets you sign in with @${username} and a password.`}
       </Text>
-      {hasPassword && (
+      {askCurrent && (
         <TextInput
           label="Current password"
           type="password"
@@ -282,8 +300,9 @@ function PasswordSection({ username, hasPassword, onSet }: { username: string; h
         onEnter={() => void submit()}
         htmlName="new-password"
         autoComplete="new-password"
-        description={passwordRulesText()}
+        description={passwordRulesText(strength.strong)}
       />
+      <PasswordStrengthHint password={next} strength={strength} />
       <HStack justify="end">
         <Button
           label={hasPassword ? "Change password" : "Set password"}
@@ -359,6 +378,123 @@ function ProviderSection({
           <Button label="Link" variant="secondary" isLoading={busy} onClick={() => void link()} />
         )}
       </HStack>
+    </VStack>
+  );
+}
+
+/** "a thing", "{n} things", or nothing for none. */
+function counted(n: number, one: string, many: string): string | null {
+  return n === 0 ? null : n === 1 ? `a ${one}` : `${n} ${many}`;
+}
+
+/** "a, b and c". */
+function listed(parts: string[]): string {
+  return parts.length <= 1 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
+
+/** What the dialog says Revoke everything takes, from the node's count. */
+export function revokeSummary(counts: RevokeEverythingCounts, provider: string | null): string {
+  const parts = [
+    counts.provider ? `${provider ?? "identity provider"} sign-in` : null,
+    counted(counts.apps, "connected app", "connected apps"),
+    counts.api_keys === 1 ? "an API key" : counted(counts.api_keys, "API key", "API keys"),
+    counted(counts.invites + counts.share_links, "link you shared", "links you shared"),
+  ].filter((p): p is string => p !== null);
+  return `Signs you out everywhere${parts.length > 0 ? ` and removes ${listed(parts)}` : ""}. Choose a new password to sign in with.`;
+}
+
+/**
+ * Revoke everything: every session ends, every other way in goes, and the new password chosen here is
+ * the only way back. The node asks for a recent confirmation first.
+ */
+function RevokeEverythingSection({ username, onDone }: { username: string; onDone: () => void }) {
+  const toast = useToast();
+  const nav = useNavigate();
+  const { search } = useLocation();
+  const provider = providerLabel();
+  const [open, setOpen] = useState(false);
+  const [counts, setCounts] = useState<RevokeEverythingCounts | null>(null);
+  const [next, setNext] = useState("");
+  const [busy, setBusy] = useState(false);
+  const strength = useRemoteStrength(next, { username });
+
+  const show = useCallback(() => {
+    setNext("");
+    setCounts(null);
+    setOpen(true);
+    Me.revokeEverythingCounts()
+      .then(setCounts)
+      .catch(() => setCounts(null));
+  }, []);
+
+  // An alert's link lands here with ?revoke=1: open the dialog, once.
+  useEffect(() => {
+    if (new URLSearchParams(search).get("revoke") !== "1") return;
+    nav(PROFILE_PATH, { replace: true });
+    show();
+  }, [search, nav, show]);
+
+  async function submit() {
+    if (!next || busy) return;
+    if (!passwordOk(next, strength.strong)) {
+      toast({ body: `Choose another password. ${passwordRulesText(strength.strong)}`, type: "error" });
+      return;
+    }
+    setBusy(true);
+    try {
+      setSession(await revokeEverything(next));
+      setOpen(false);
+      toast({ body: "Everything was revoked. You’re signed in here with your new password.", type: "info" });
+      onDone();
+    } catch (err) {
+      toast({ body: describeError(err), type: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <VStack gap={3}>
+      <Heading level={2}>Security</Heading>
+      <Text type="supporting" color="secondary">
+        If something looks wrong, sign out everywhere and start again with a new password.
+      </Text>
+      <HStack justify="end">
+        <Button label="Revoke everything" variant="secondary" onClick={show} />
+      </HStack>
+      <Dialog isOpen={open} onOpenChange={(o) => !o && !busy && setOpen(false)} purpose="form" width={440}>
+        <Layout
+          header={<DialogHeader title="Revoke everything" onOpenChange={(o) => !o && !busy && setOpen(false)} />}
+          content={
+            <LayoutContent>
+              <VStack gap={3}>
+                <Text type="supporting" color="secondary">
+                  {counts ? revokeSummary(counts, provider) : "Signs you out everywhere. Choose a new password to sign in with."}
+                </Text>
+                <TextInput
+                  label="New password"
+                  type="password"
+                  value={next}
+                  onChange={setNext}
+                  onEnter={() => void submit()}
+                  htmlName="new-password"
+                  autoComplete="new-password"
+                  description={passwordRulesText(strength.strong)}
+                />
+                <PasswordStrengthHint password={next} strength={strength} />
+              </VStack>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack gap={2} justify="end">
+                <Button label="Cancel" variant="ghost" onClick={() => setOpen(false)} isDisabled={busy} />
+                <Button label="Revoke everything" variant="primary" onClick={() => void submit()} isDisabled={!next} isLoading={busy} />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
+      </Dialog>
     </VStack>
   );
 }

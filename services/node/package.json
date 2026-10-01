@@ -23,6 +23,7 @@
     "@stuga/db": "workspace:*",
     "@stuga/doc-actor": "workspace:*",
     "@stuga/mcp": "workspace:*",
+    "@stuga/password-strength": "workspace:*",
     "@stuga/protocol": "workspace:*",
     "@stuga/runtime": "workspace:*",
     "postgres": "^3.4.9",

@@ -3,7 +3,7 @@
  * client over the workspaces they chose; its agent keeps one identity for life,
  * so a grant is revoked and never deleted. Tokens are stored as sha-256 only.
  */
-import type { ApiKeyAccess, OauthGrantRow } from "./types.js";
+import type { ApiKeyAccess, CredentialArrival, OauthGrantRow } from "./types.js";
 import type { Sql } from "./client.js";
 import type { Queryable } from "./sql.js";
 
@@ -102,7 +102,16 @@ export async function dropWorkspaceFromOwnerGrants(sql: Sql, workspaceId: string
 
 export async function insertOauthToken(
   sql: Sql,
-  input: { tokenHash: string; grantId: string; kind: "access" | "refresh"; familyId: string; familyStartedAt: Date; expiresAt: Date },
+  input: {
+    tokenHash: string;
+    grantId: string;
+    kind: "access" | "refresh";
+    familyId: string;
+    familyStartedAt: Date;
+    expiresAt: Date;
+    /** The listener the code was exchanged at, which is where the person consented: the only one the token is good at. */
+    arrival: CredentialArrival;
+  },
 ): Promise<void> {
   await sql`INSERT INTO oauth_tokens ${sql({
     token_hash: input.tokenHash,
@@ -111,14 +120,33 @@ export async function insertOauthToken(
     family_id: input.familyId,
     family_started_at: input.familyStartedAt,
     expires_at: input.expiresAt,
+    arrival: input.arrival,
   })}`;
 }
 
-/** The live grant behind an unexpired access token, stamping its use at most every five minutes. */
-export async function grantForAccessToken(sql: Sql, tokenHash: string): Promise<OauthGrantRow | null> {
+/**
+ * Whether an access token would authenticate at `arrival`, read only: what the remote address
+ * checks before it reads a request's body. grantForAccessToken decides the request itself.
+ */
+export async function isOauthAccessTokenLive(sql: Sql, tokenHash: string, arrival: CredentialArrival): Promise<boolean> {
+  const rows = await sql<{ live: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM oauth_tokens t JOIN oauth_grants g USING (grant_id)
+      WHERE t.token_hash = ${tokenHash} AND t.kind = 'access' AND t.expires_at > now() AND t.arrival = ${arrival}
+        AND g.revoked_at IS NULL
+    ) AS live`;
+  return rows[0]?.live === true;
+}
+
+/**
+ * The live grant behind an unexpired access token issued at `arrival`, stamping its use at most
+ * every five minutes. A token issued at the other listener has none.
+ */
+export async function grantForAccessToken(sql: Sql, tokenHash: string, arrival: CredentialArrival): Promise<OauthGrantRow | null> {
   const rows = await sql<OauthGrantRow[]>`
     SELECT g.* FROM oauth_tokens t JOIN oauth_grants g USING (grant_id)
-    WHERE t.token_hash = ${tokenHash} AND t.kind = 'access' AND t.expires_at > now() AND g.revoked_at IS NULL`;
+    WHERE t.token_hash = ${tokenHash} AND t.kind = 'access' AND t.expires_at > now() AND t.arrival = ${arrival}
+      AND g.revoked_at IS NULL`;
   const grant = rows[0];
   if (!grant) return null;
   await sql`
@@ -151,15 +179,24 @@ async function lockFamily(tx: Queryable, familyId: string): Promise<void> {
  * again within `graceSeconds` of being spent is one client refreshing twice at
  * once, or a response it lost: it gets a sibling pair. Later, it is a copy in
  * someone else's hands, and the chain ends (RFC 9700). An unknown, expired or
- * revoked token, or one another client presents, is invalid.
+ * revoked token, or one another client presents, is invalid; so is one presented
+ * at another listener than the one that issued it, which neither spends nor ends
+ * anything: a token tried elsewhere says nothing about its chain.
  */
 export async function rotateRefreshToken(
   sql: Sql,
-  input: { tokenHash: string; clientId: string; graceSeconds: number; next: (familyStartedAt: Date) => NewOauthToken[] },
+  input: {
+    tokenHash: string;
+    clientId: string;
+    graceSeconds: number;
+    arrival: CredentialArrival;
+    next: (familyStartedAt: Date) => NewOauthToken[];
+  },
 ): Promise<RotatedRefreshToken> {
   return sql.begin(async (tx) => {
     const [found] = await tx<{ family_id: string }[]>`
-      SELECT family_id FROM oauth_tokens WHERE token_hash = ${input.tokenHash} AND kind = 'refresh'`;
+      SELECT family_id FROM oauth_tokens
+      WHERE token_hash = ${input.tokenHash} AND kind = 'refresh' AND arrival = ${input.arrival}`;
     if (!found) return { kind: "invalid" } as const;
     await lockFamily(tx, found.family_id);
     const rows = await tx<Array<{ family_id: string; family_started_at: string; used_at: string | null; expires_at: string } & OauthGrantRow>>`
@@ -186,6 +223,7 @@ export async function rotateRefreshToken(
         family_id: familyId,
         family_started_at: familyStartedAt,
         expires_at: token.expiresAt,
+        arrival: input.arrival,
       })}`;
     }
     return { kind: "rotated", grant: grant as OauthGrantRow } as const;

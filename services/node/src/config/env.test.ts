@@ -90,6 +90,18 @@ describe("parseConfig", () => {
     expect(cfg({ SIGNUP: "open" })).not.toHaveProperty("signup");
   });
 
+  it("parses LOCAL_PASSWORD_NETWORKS into ranges, none by default, and refuses a malformed one", () => {
+    expect(cfg().localPasswordNetworks).toEqual([]);
+    expect(cfg({ LOCAL_PASSWORD_NETWORKS: " 203.0.113.0/24 , 2001:db8:5::/48, 198.51.100.7 " }).localPasswordNetworks).toEqual([
+      { family: 4, bits: 0xcb007100n, prefix: 24 },
+      { family: 6, bits: 0x20010db8000500000000000000000000n, prefix: 48 },
+      { family: 4, bits: 0xc6336407n, prefix: 32 },
+    ]);
+    for (const bad of ["203.0.113.0/33", "example.com", "10.0.0.0/8/1", "2001:db8::/129", "300.1.1.1"]) {
+      expect(() => cfg({ LOCAL_PASSWORD_NETWORKS: bad }), bad).toThrow(/LOCAL_PASSWORD_NETWORKS/);
+    }
+  });
+
   it("reads no setting the Settings page owns", () => {
     const c = cfg({ AI_ENABLED: "true", AI_CHAT_MODEL: "m", MAX_BODY_BYTES: "1", NOTIFY_SINK: "slack", AUDIT_RETENTION_DAYS: "x" });
     expect(c).not.toHaveProperty("ai");

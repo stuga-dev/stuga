@@ -17,9 +17,14 @@ vi.mock("@stuga/db", async (importOriginal) => ({
   saveNodeSettings: vi.fn(async () => ({ unlinkedAccounts: 0 })),
   resetNodeSettings: vi.fn(async () => ({ identityProvider: null, unlinkedAccounts: 0 })),
   countAccountsWithoutPassword: vi.fn(async () => 0),
+  // The administrator signed in, or confirmed, a moment ago, unless a test says otherwise.
+  sessionConfirmedAt: vi.fn(async () => new Date()),
+  findAccountByAlias: vi.fn(async () => ({ alias: "admin-1", username: "admin", password_hash: "scrypt$x", oidc_sub: null })),
 }));
 
-const { saveNodeSettings, getNodeSettings, resetNodeSettings, countAccountsWithoutPassword, isNodeAdminAlias } = await import("@stuga/db");
+const { saveNodeSettings, getNodeSettings, resetNodeSettings, countAccountsWithoutPassword, isNodeAdminAlias, sessionConfirmedAt } =
+  await import("@stuga/db");
+const confirmedAt = sessionConfirmedAt as unknown as ReturnType<typeof vi.fn>;
 const { routeWorkspaceRequest } = await import("../../http/dispatch.js");
 const { recordAudit } = await import("../../audit/record.js");
 import type { Ctx } from "../../auth/context.js";
@@ -65,10 +70,12 @@ function searchLanguages(languages: string[] = [], error: string | null = null) 
 }
 
 /** A node administrator on a node with nothing saved yet; `nodeName` is the name set, null for none. */
-function ctx(nodeName: string | null = null, search = searchLanguages()): Ctx {
+function ctx(nodeName: string | null = null, search = searchLanguages(), current: Record<string, unknown> = {}): Ctx {
   return {
     sql: {},
     alias: "admin-1",
+    sid: "sid-1",
+    arrival: "local",
     isAgent: false,
     principals: ["user:admin-1"],
     env: {
@@ -98,6 +105,7 @@ function ctx(nodeName: string | null = null, search = searchLanguages()): Ctx {
           backups: { auto: true, hour: 3, weekday: null, keep: 3 },
           timeZone: "UTC",
           identityProvider: null,
+          ...current,
         }),
         refresh: async () => {},
         secrets: () => ({
@@ -671,5 +679,40 @@ describe("the identity provider section", () => {
     const res = await routeWorkspaceRequest(ctx(), req);
     expect(res?.status).toBe(200);
     expect(await res?.json()).toMatchObject({ ok: true });
+  });
+});
+
+describe("a change to who can sign in, or where alerts go", () => {
+  beforeEach(() => {
+    save.mockClear();
+    reset.mockClear();
+    storedRow.mockResolvedValue(null);
+  });
+  afterEach(() => confirmedAt.mockResolvedValue(new Date()));
+
+  const stale = () => confirmedAt.mockResolvedValue(new Date(Date.now() - 6 * 60_000));
+
+  it("takes a sign-in confirmed in the last five minutes: the provider, the sink, and a reset that removes either", async () => {
+    stale();
+    for (const body of [{ identity_provider: null }, { notify: { sink: "none" } }]) {
+      const res = (await put(ctx(), body))!;
+      expect(res.status, JSON.stringify(body)).toBe(401);
+      expect(res.headers.get("x-stuga-reauth")).toBe("1");
+      expect(await res.json()).toEqual({ error: "reauth_required", message: "confirm it's you", methods: ["password"] });
+    }
+    const withSink = ctx(null, searchLanguages(), { notify: { sink: "slack" } });
+    const resetRes = (await routeWorkspaceRequest(withSink, new Request("http://node.test/api/node/settings", { method: "DELETE" })))!;
+    expect(resetRes.status).toBe(401);
+    expect(save).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+
+    confirmedAt.mockResolvedValue(new Date(Date.now() - 4 * 60_000));
+    expect((await put(ctx(), { notify: { sink: "none" } }))!.status).toBe(200);
+  });
+
+  it("leaves every other group, and a reset with neither set, as they were", async () => {
+    stale();
+    expect((await put(ctx(), { node_name: "North" }))!.status).toBe(200);
+    expect((await routeWorkspaceRequest(ctx(), new Request("http://node.test/api/node/settings", { method: "DELETE" })))!.status).toBe(200);
   });
 });

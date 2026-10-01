@@ -4,6 +4,7 @@
  * SPA and the API together.
  */
 import type { DatabaseImportError } from "@stuga/protocol/databases/types";
+import { REAUTH_HEADER, confirmIdentity, reauthMethods } from "../session/reauth";
 import { clearTokens, ensureFreshToken, getToken } from "../session/tokens";
 import { getActiveWorkspace, setActiveWorkspace } from "../session/workspace-pointer";
 
@@ -43,8 +44,9 @@ interface AuthedFetchInit extends RequestInit {
 /**
  * Applied to every authed response, whatever carried it: capture the identity
  * headers; on a 401 drop the credentials before leaving for /login (or the
- * sign-in page reads the dead token and bounces back); on the no-membership
- * marker drop the workspace pointer and go to onboarding.
+ * sign-in page reads the dead token and bounces back), except the one that asks
+ * for a confirmation, whose session is fine; on the no-membership marker drop
+ * the workspace pointer and go to onboarding.
  */
 export function observeResponse(status: number, header: (name: string) => string | null): void {
   const user = header("x-stuga-user");
@@ -57,7 +59,7 @@ export function observeResponse(status: number, header: (name: string) => string
       cachedDisplayName = name;
     }
   }
-  if (status === 401) {
+  if (status === 401 && !header(REAUTH_HEADER)) {
     clearTokens();
     if (!window.location.pathname.startsWith("/login")) window.location.href = "/login";
   }
@@ -105,6 +107,8 @@ export interface ApiError extends Error {
   };
   /** The body's raw `error`: a sentence on most routes, a machine code where one status has several outcomes. */
   code?: string;
+  /** With `reauth_required`: how this person can confirm it is them. */
+  methods?: string[];
 }
 
 /** An Error's own message, else `fallback`. */
@@ -126,16 +130,18 @@ function genericFailure(status: number): string {
   return "That didn’t work. Try again, and tell your administrator if it keeps happening.";
 }
 
-type FailureBody = { error?: string; message?: string; errors?: unknown } | null;
+type FailureBody = { error?: string; message?: string; errors?: unknown; methods?: unknown } | null;
 
 /** The node's JSON `{ error }` (or `{ error: code, message }`) as an ApiError; anything else, such as a proxy's HTML 502, gets generic prose. */
 export function failureFrom(path: string, method: string, status: number, body: FailureBody): ApiError {
   if (import.meta.env.DEV) {
     console.warn(`api ${method} ${path} → ${status}`, body ?? "(no body)");
   }
-  const err = new Error(body?.message ?? body?.error ?? genericFailure(status)) as ApiError;
+  const sentence = body?.error === "reauth_required" ? "Confirm it’s you to continue." : (body?.message ?? body?.error);
+  const err = new Error(sentence ?? genericFailure(status)) as ApiError;
   err.status = status;
   if (body?.error) err.code = body.error;
+  if (Array.isArray(body?.methods)) err.methods = body.methods.filter((m): m is string => typeof m === "string");
   if (body?.error === "import_validation_failed" && Array.isArray(body.errors)) err.report = body as unknown as ApiError["report"];
   return err;
 }
@@ -148,8 +154,15 @@ export async function apiFailure(path: string, method: string, res: Response): P
 export async function api<T>(path: string, init?: AuthedFetchInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
-  const res = await authedFetch(path, { ...init, headers });
-  if (!res.ok) throw await apiFailure(path, (init?.method ?? "GET").toUpperCase(), res);
+  const method = (init?.method ?? "GET").toUpperCase();
+  let res = await authedFetch(path, { ...init, headers });
+  // A change that takes a recent confirmation: confirm, then send it once more.
+  if (res.status === 401 && res.headers.get(REAUTH_HEADER)) {
+    const refused = await apiFailure(path, method, res);
+    if (!(await confirmIdentity(reauthMethods(refused) ?? []))) throw refused;
+    res = await authedFetch(path, { ...init, headers });
+  }
+  if (!res.ok) throw await apiFailure(path, method, res);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }

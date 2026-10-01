@@ -109,7 +109,7 @@ export function silentSignInDue(page: { signedIn: boolean; failedReturn: boolean
  * sign-in that is half done.
  */
 export async function startProviderSignIn(opts: {
-  prompt?: "none" | "select_account";
+  prompt?: "none" | "select_account" | "login";
   returnTo: string;
   bearer?: string;
 }): Promise<void> {

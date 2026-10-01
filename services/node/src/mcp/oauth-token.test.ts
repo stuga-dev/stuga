@@ -98,6 +98,7 @@ beforeEach(() => {
     workspace_scope: ["ws1"],
     access: "propose",
     redirect_uri: REGISTERED,
+    arrival: "local",
   });
   vi.mocked(db.getMemberRole).mockResolvedValue("member");
   vi.mocked(db.upsertOauthGrant).mockImplementation(async (_sql, input) =>
@@ -112,6 +113,43 @@ beforeEach(() => {
       access: input.access,
     }),
   );
+});
+
+describe("which listener a token is good at", () => {
+  const atRemote = (params: Record<string, string>) =>
+    new Request("https://k7f3q2.stuga.test/oauth/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "x-stuga-arrival": "remote" },
+      body: new URLSearchParams(params).toString(),
+    });
+
+  it("exchanges a code only at the listener it was consented at, and gives its tokens that listener", async () => {
+    vi.mocked(db.consumeOauthCode).mockResolvedValue({
+      client_id: "cid_1",
+      user_alias: "liv",
+      workspace_scope: ["ws1"],
+      access: "propose",
+      redirect_uri: REGISTERED,
+      arrival: "remote",
+    });
+    const res = await handleToken(
+      env,
+      atRemote({ grant_type: "authorization_code", code: "c0de", client_id: "cid_1", redirect_uri: REGISTERED, code_verifier: VERIFIER }),
+    );
+    expect(res.status).toBe(200);
+    expect(db.consumeOauthCode).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ arrival: "remote" }));
+    const rows = vi.mocked(db.insertOauthToken).mock.calls.map(([, row]) => row);
+    expect(rows.map((r) => r.arrival)).toEqual(["remote", "remote"]);
+  });
+
+  it("renews a refresh token only at the listener it was issued at", async () => {
+    vi.mocked(db.rotateRefreshToken).mockResolvedValue({ kind: "invalid" });
+    const res = await handleToken(env, atRemote({ grant_type: "refresh_token", refresh_token: "str_x", client_id: "cid_1" }));
+    expect(await res.json()).toEqual({ error: "invalid_grant" });
+    expect(vi.mocked(db.rotateRefreshToken).mock.calls[0]![1]).toMatchObject({ arrival: "remote" });
+    await refresh("str_x");
+    expect(vi.mocked(db.rotateRefreshToken).mock.calls[1]![1]).toMatchObject({ arrival: "local" });
+  });
 });
 
 describe("POST /oauth/token, authorization_code", () => {
@@ -185,6 +223,7 @@ describe("POST /oauth/token, authorization_code", () => {
       workspace_scope: null,
       access: "read",
       redirect_uri: REGISTERED,
+      arrival: "local",
     });
     expect((await exchange()).status).toBe(200);
     // "All" has no list to re-check; the connection's reach is live membership anyway.
@@ -199,6 +238,7 @@ describe("POST /oauth/token, authorization_code", () => {
       workspace_scope: ["ws1", "ws2"],
       access: "propose",
       redirect_uri: REGISTERED,
+      arrival: "local",
     });
     vi.mocked(db.getMemberRole).mockResolvedValue(null);
     const res = await exchange();
@@ -214,6 +254,7 @@ describe("POST /oauth/token, authorization_code", () => {
       workspace_scope: ["ws1", "ws2"],
       access: "propose",
       redirect_uri: REGISTERED,
+      arrival: "local",
     });
     vi.mocked(db.getMemberRole).mockImplementation(async (_sql, ws) => (ws === "ws2" ? "member" : null));
     expect((await exchange()).status).toBe(200);

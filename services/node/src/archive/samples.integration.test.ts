@@ -50,7 +50,7 @@ let namespaces: HostedNamespace[];
 let env: NodeEnv;
 const jobs = new MemoryJobQueue<IndexMessage>();
 
-const liv = (): AccountCtx => ({ sql, surface: "web", alias: "u_liv", displayName: "Liv", isAgent: false, servedOrigin: env.publicOrigin, env });
+const liv = (): AccountCtx => ({ sql, surface: "web", alias: "u_liv", displayName: "Liv", isAgent: false, sid: "sess-1", servedOrigin: env.publicOrigin, arrival: "local", env });
 
 async function actor<T>(ns: HostedNamespace, id: string, path: string, key: "docId" | "dbId"): Promise<T> {
   return (await (await ns.get(id).fetch(`http://actor/${path}?${key}=${encodeURIComponent(id)}`)).json()) as T;

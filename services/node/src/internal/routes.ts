@@ -308,6 +308,7 @@ async function handleInternalProposeDocEdit(req: Request, env: NodeEnv): Promise
     onBehalfOf: alias,
     // Nobody is handed a link from here.
     servedOrigin: env.publicOrigin,
+    arrival: "local",
   };
   const out = await proposeDocEdit(ctx, {
     docId,

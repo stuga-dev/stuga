@@ -308,6 +308,21 @@ TABLE jobs
   INDEX jobs_pkey CREATE UNIQUE INDEX jobs_pkey ON public.jobs USING btree (id)
   INDEX jobs_ready_idx CREATE INDEX jobs_ready_idx ON public.jobs USING btree (available_at, id) WHERE (dead_at IS NULL)
 
+TABLE known_devices
+  alias text NOT NULL
+  arrival text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  first_from text
+  label text NOT NULL
+  last_seen_at timestamp with time zone NOT NULL DEFAULT now()
+  token_hash text NOT NULL
+  CONSTRAINT known_devices_alias_fkey FOREIGN KEY (alias) REFERENCES users(alias) ON DELETE CASCADE
+  CONSTRAINT known_devices_arrival_check CHECK ((arrival = ANY (ARRAY['local'::text, 'remote'::text])))
+  CONSTRAINT known_devices_label_check CHECK ((length(label) <= 64))
+  CONSTRAINT known_devices_pkey PRIMARY KEY (alias, arrival, token_hash)
+  INDEX known_devices_pkey CREATE UNIQUE INDEX known_devices_pkey ON public.known_devices USING btree (alias, arrival, token_hash)
+  INDEX known_devices_seen_idx CREATE INDEX known_devices_seen_idx ON public.known_devices USING btree (last_seen_at)
+
 TABLE local_accounts
   alias text NOT NULL
   created_at timestamp with time zone NOT NULL DEFAULT now()
@@ -497,6 +512,7 @@ TABLE oauth_clients
 
 TABLE oauth_codes
   access text NOT NULL
+  arrival text NOT NULL
   client_id text NOT NULL
   code_challenge text NOT NULL
   code_hash text NOT NULL
@@ -505,6 +521,7 @@ TABLE oauth_codes
   user_alias text NOT NULL
   workspace_scope ARRAY
   CONSTRAINT oauth_codes_access_check CHECK ((access = ANY (ARRAY['read'::text, 'propose'::text])))
+  CONSTRAINT oauth_codes_arrival_check CHECK ((arrival = ANY (ARRAY['local'::text, 'remote'::text])))
   CONSTRAINT oauth_codes_pkey PRIMARY KEY (code_hash)
   INDEX oauth_codes_expiry_idx CREATE INDEX oauth_codes_expiry_idx ON public.oauth_codes USING btree (expires_at)
   INDEX oauth_codes_pkey CREATE UNIQUE INDEX oauth_codes_pkey ON public.oauth_codes USING btree (code_hash)
@@ -532,6 +549,7 @@ TABLE oauth_grants
   INDEX oauth_grants_pkey CREATE UNIQUE INDEX oauth_grants_pkey ON public.oauth_grants USING btree (grant_id)
 
 TABLE oauth_tokens
+  arrival text NOT NULL
   created_at timestamp with time zone NOT NULL DEFAULT now()
   expires_at timestamp with time zone NOT NULL
   family_id text NOT NULL
@@ -540,6 +558,7 @@ TABLE oauth_tokens
   kind text NOT NULL
   token_hash text NOT NULL
   used_at timestamp with time zone
+  CONSTRAINT oauth_tokens_arrival_check CHECK ((arrival = ANY (ARRAY['local'::text, 'remote'::text])))
   CONSTRAINT oauth_tokens_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES oauth_grants(grant_id) ON DELETE CASCADE
   CONSTRAINT oauth_tokens_kind_check CHECK ((kind = ANY (ARRAY['access'::text, 'refresh'::text])))
   CONSTRAINT oauth_tokens_pkey PRIMARY KEY (token_hash)
@@ -551,6 +570,7 @@ TABLE oauth_tokens
 TABLE oidc_flows
   binding_hash text NOT NULL
   code_verifier text NOT NULL
+  confirm_session text
   created_at timestamp with time zone NOT NULL DEFAULT now()
   expires_at timestamp with time zone NOT NULL
   link_alias text
@@ -559,9 +579,10 @@ TABLE oidc_flows
   redirect_uri text NOT NULL
   return_to text NOT NULL
   state text NOT NULL
+  CONSTRAINT oidc_flows_confirm_check CHECK (((confirm_session IS NULL) OR ((link_alias IS NOT NULL) AND (prompt = 'login'::text))))
   CONSTRAINT oidc_flows_link_alias_fkey FOREIGN KEY (link_alias) REFERENCES users(alias) ON DELETE CASCADE
   CONSTRAINT oidc_flows_pkey PRIMARY KEY (state)
-  CONSTRAINT oidc_flows_prompt_check CHECK ((prompt = ANY (ARRAY['none'::text, 'select_account'::text])))
+  CONSTRAINT oidc_flows_prompt_check CHECK ((prompt = ANY (ARRAY['none'::text, 'select_account'::text, 'login'::text])))
   INDEX oidc_flows_expiry_idx CREATE INDEX oidc_flows_expiry_idx ON public.oidc_flows USING btree (expires_at)
   INDEX oidc_flows_pkey CREATE UNIQUE INDEX oidc_flows_pkey ON public.oidc_flows USING btree (state)
 
@@ -599,18 +620,28 @@ TABLE password_resets
   INDEX password_resets_pkey CREATE UNIQUE INDEX password_resets_pkey ON public.password_resets USING btree (token_hash)
 
 TABLE refresh_sessions
+  absolute_expires_at timestamp with time zone
   alias text NOT NULL
+  arrival text NOT NULL
+  confirmed_at timestamp with time zone NOT NULL
   created_at timestamp with time zone NOT NULL DEFAULT now()
   expires_at timestamp with time zone NOT NULL
   id text NOT NULL
   replaced_by text
   revoked_at timestamp with time zone
+  session_id text NOT NULL
+  signed_in_at timestamp with time zone NOT NULL
+  signed_in_with text NOT NULL
   token_hash text NOT NULL
+  CONSTRAINT refresh_sessions_arrival_check CHECK ((arrival = ANY (ARRAY['local'::text, 'remote'::text])))
   CONSTRAINT refresh_sessions_pkey PRIMARY KEY (id)
+  CONSTRAINT refresh_sessions_remote_ends CHECK (((arrival = 'remote'::text) = (absolute_expires_at IS NOT NULL)))
+  CONSTRAINT refresh_sessions_signed_in_with_check CHECK ((signed_in_with = ANY (ARRAY['password'::text, 'provider'::text, 'reset'::text, 'invite'::text, 'setup'::text])))
   CONSTRAINT refresh_sessions_token_hash_key UNIQUE (token_hash)
   INDEX refresh_sessions_alias_idx CREATE INDEX refresh_sessions_alias_idx ON public.refresh_sessions USING btree (alias)
   INDEX refresh_sessions_expiry_idx CREATE INDEX refresh_sessions_expiry_idx ON public.refresh_sessions USING btree (expires_at)
   INDEX refresh_sessions_pkey CREATE UNIQUE INDEX refresh_sessions_pkey ON public.refresh_sessions USING btree (id)
+  INDEX refresh_sessions_session_idx CREATE INDEX refresh_sessions_session_idx ON public.refresh_sessions USING btree (session_id)
   INDEX refresh_sessions_token_hash_key CREATE UNIQUE INDEX refresh_sessions_token_hash_key ON public.refresh_sessions USING btree (token_hash)
 
 TABLE schema_migrations

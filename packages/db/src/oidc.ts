@@ -15,6 +15,8 @@ export async function createOidcFlow(
     redirectUri: string;
     prompt: OidcFlowRow["prompt"];
     linkAlias: string | null;
+    /** The sign-in of `linkAlias` the flow confirms; absent for a sign-in or a link. */
+    confirmSession?: string | null;
     returnTo: string;
     expiresAt: Date;
   },
@@ -27,6 +29,7 @@ export async function createOidcFlow(
     redirect_uri: input.redirectUri,
     prompt: input.prompt,
     link_alias: input.linkAlias,
+    confirm_session: input.confirmSession ?? null,
     return_to: input.returnTo,
     expires_at: input.expiresAt,
   })}`;
