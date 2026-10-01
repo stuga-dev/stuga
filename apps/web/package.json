@@ -15,6 +15,7 @@
   "dependencies": {
     "@astryxdesign/core": "0.6.3",
     "@astryxdesign/theme-neutral": "0.6.3",
+    "@simplewebauthn/browser": "14.0.0",
     "@stuga/crdt-ops": "workspace:*",
     "@stuga/password-strength": "workspace:*",
     "@stuga/protocol": "workspace:*",

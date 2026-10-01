@@ -2,7 +2,16 @@
  * The database the identity routes see, in memory, with the same single-use,
  * expiry and uniqueness rules as the SQL. For the route tests only.
  */
-import type { AccountRow, InviteJoin, OidcFlowRow, OidcTicketRow, PresentedSession, RefreshSessionRow, StillHolds } from "@stuga/db";
+import type {
+  AccountRow,
+  InviteJoin,
+  OidcFlowRow,
+  OidcTicketRow,
+  PasskeyRow,
+  PresentedSession,
+  RefreshSessionRow,
+  StillHolds,
+} from "@stuga/db";
 import type { IdentityDb } from "../db.js";
 
 interface Invite {
@@ -27,6 +36,10 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
   const invites = new Map<string, Invite>();
   const flows = new Map<string, OidcFlowRow>();
   const tickets = new Map<string, OidcTicketRow>();
+  /** By credential id. */
+  const passkeys = new Map<string, PasskeyRow>();
+  /** Accounts that said Not now to the passkey offer. */
+  const offerDismissed = new Set<string>();
   /** `${alias}:${arrival}:${tokenHash}` → the device's label and first address. */
   const devices = new Map<string, { label: string; firstFrom: string | null }>();
   /** The settings row's setup choices: written only by the account that claims the node. */
@@ -66,6 +79,7 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
   const holds = (alias: string, requires: StillHolds | null | undefined): boolean => {
     if (!requires) return true;
     if ("password" in requires) return accounts.get(alias)?.password_hash === requires.password;
+    if ("passkey" in requires) return passkeys.get(requires.passkey)?.alias === alias;
     return requires.session.alias === alias && sessionLive(requires.session);
   };
   const revokeAll = (alias: string) => {
@@ -191,6 +205,7 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
         replaced_by: null,
         arrival: input.arrival,
         signed_in_with: input.signedInWith,
+        passkey_id: input.passkeyId ?? null,
         signed_in_at: now,
         confirmed_at: now,
         absolute_expires_at: absolute,
@@ -276,6 +291,13 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
       }
       const provider = row.oidc_sub !== null;
       row.oidc_sub = null;
+      let passkeyCount = 0;
+      for (const [id, p] of passkeys) {
+        if (p.alias !== alias) continue;
+        passkeys.delete(id);
+        passkeyCount++;
+        for (const [hash, s2] of sessions) if (s2.passkey_id === id) sessions.delete(hash);
+      }
       row.password_hash = passwordHash;
       for (const [state, flow] of flows) if (flow.link_alias === alias) flows.delete(state);
       for (const [hash, t] of tickets) if (t.alias === alias) tickets.delete(hash);
@@ -296,6 +318,7 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
       return {
         sessions: liveIds.size,
         sessionIds: [...ended],
+        passkeys: passkeyCount,
         provider,
         apps: 0,
         api_keys: 0,
@@ -332,6 +355,44 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
       const invite = invites.get(tokenHash);
       if (!invite || invite.usesLeft <= 0) return "invalid";
       return invite.localOnly && arrival === "remote" ? "local_only" : "ok";
+    },
+    async insertPasskey(p, requires) {
+      if (!holds(p.alias, requires)) return "ended";
+      if (passkeys.has(p.credentialId)) return "exists";
+      passkeys.set(p.credentialId, {
+        credential_id: p.credentialId,
+        alias: p.alias,
+        rp_id: p.rpId,
+        public_key: p.publicKey,
+        algorithm: p.algorithm,
+        sign_count: p.signCount,
+        transports: [...p.transports],
+        backup_eligible: p.backupEligible,
+        synced: p.synced,
+        name: p.name,
+        created_at: new Date().toISOString(),
+        last_used_at: null,
+      });
+      return "added";
+    },
+    async findPasskey(credentialId, rpId) {
+      const p = passkeys.get(credentialId);
+      return p && p.rp_id === rpId ? { ...p } : null;
+    },
+    async passkeyDescriptors(alias, rpId) {
+      return [...passkeys.values()].filter((p) => p.alias === alias && p.rp_id === rpId).map((p) => ({ id: p.credential_id, transports: p.transports }));
+    },
+    async recordPasskeyUse({ credentialId, signCount, synced }) {
+      const p = passkeys.get(credentialId);
+      if (!p) return false;
+      if (!(p.sign_count < signCount || (p.sign_count === 0 && signCount === 0))) return false;
+      p.sign_count = signCount;
+      p.synced = synced;
+      p.last_used_at = new Date().toISOString();
+      return true;
+    },
+    async passkeyOfferDue(alias, rpId) {
+      return accounts.has(alias) && !offerDismissed.has(alias) && ![...passkeys.values()].some((p) => p.alias === alias && p.rp_id === rpId);
     },
     async createOidcFlow(input) {
       flows.set(input.state, {
@@ -379,6 +440,13 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
       return t;
     },
   };
-  return { db, accounts, sessions, invites, admins, resets, flows, tickets, names, emails, settings, devices };
+  /** Remove a passkey as the account API does: the sign-ins it made go with it. */
+  const removePasskey = (credentialId: string): string[] => {
+    const ended = [...sessions.values()].filter((row) => row.passkey_id === credentialId).map((row) => row.session_id);
+    passkeys.delete(credentialId);
+    for (const [hash, row] of sessions) if (row.passkey_id === credentialId) sessions.delete(hash);
+    return [...new Set(ended)];
+  };
+  return { db, accounts, sessions, invites, admins, resets, flows, tickets, names, emails, settings, devices, passkeys, offerDismissed, removePasskey };
 }
 

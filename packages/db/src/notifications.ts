@@ -141,14 +141,50 @@ export async function purgeOldNotifications(sql: Sql, days: number): Promise<num
  * True when a new row was written; false when the id already existed or the
  * workspace is gone. Callers queue the sink delivery only on true.
  */
-export async function insertNotification(sql: Queryable, n: Omit<NotificationRow, "read" | "created_at">): Promise<boolean> {
+export async function insertNotification(
+  sql: Queryable,
+  n: Omit<NotificationRow, "read" | "created_at" | "delivery_channel" | "delivered_at" | "delivery_error"> & {
+    /** The sink its delivery is queued for, if one is: shown as "Sending by …" until it is tried. */
+    delivery_channel?: string | null;
+  },
+): Promise<boolean> {
   const rows = await sql`
     INSERT INTO notifications
-      (id, workspace_id, recipient_alias, event_type, resource_id, resource_title, resource_url, actor_alias, payload)
+      (id, workspace_id, recipient_alias, event_type, resource_id, resource_title, resource_url, actor_alias, payload, delivery_channel)
     SELECT ${n.id}, ${n.workspace_id}, ${n.recipient_alias}, ${n.event_type}, ${n.resource_id},
-           ${n.resource_title}, ${n.resource_url}, ${n.actor_alias}, ${jsonb(sql, n.payload)}
+           ${n.resource_title}, ${n.resource_url}, ${n.actor_alias}, ${jsonb(sql, n.payload)}, ${n.delivery_channel ?? null}
     WHERE ${n.workspace_id}::text IS NULL OR EXISTS (SELECT 1 FROM workspaces WHERE workspace_id = ${n.workspace_id})
     ON CONFLICT (id) DO NOTHING
     RETURNING id`;
   return rows.count > 0;
+}
+
+/** The longest delivery error a row keeps. */
+export const DELIVERY_ERROR_MAX = 300;
+
+/**
+ * What one delivery attempt of notification `id` came to: delivered, which clears an earlier
+ * attempt's error, or the error, kept until a later attempt succeeds.
+ */
+export async function recordNotificationDelivery(sql: Sql, id: string, outcome: { delivered: true } | { error: string }): Promise<void> {
+  if ("delivered" in outcome) {
+    await sql`UPDATE notifications SET delivered_at = now(), delivery_error = NULL WHERE id = ${id}`;
+    return;
+  }
+  await sql`
+    UPDATE notifications SET delivery_error = ${outcome.error.slice(0, DELIVERY_ERROR_MAX)}
+    WHERE id = ${id} AND delivered_at IS NULL`;
+}
+
+/**
+ * Rows of `eventType` sent once without a queued job, whose attempt a restart cut short: neither
+ * delivered nor failed, so they would read "Sending by …" for good. They are marked with `error`.
+ */
+export async function failUnfinishedDeliveries(sql: Sql, eventType: string, error: string): Promise<number> {
+  const rows = await sql`
+    UPDATE notifications SET delivery_error = ${error.slice(0, DELIVERY_ERROR_MAX)}
+    WHERE event_type = ${eventType} AND delivery_channel IS NOT NULL AND delivery_channel <> 'none'
+      AND delivered_at IS NULL AND delivery_error IS NULL
+    RETURNING id`;
+  return rows.count;
 }

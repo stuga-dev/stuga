@@ -10,6 +10,12 @@ import { toasts } from "../test/toast";
 import { mountInto, typeInto } from "../test/form-input";
 
 vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
+const webauthn = vi.hoisted(() => ({ startAuthentication: vi.fn(), supported: true }));
+vi.mock("@simplewebauthn/browser", async (orig) => ({
+  ...(await orig<typeof import("@simplewebauthn/browser")>()),
+  browserSupportsWebAuthn: () => webauthn.supported,
+  startAuthentication: webauthn.startAuthentication,
+}));
 
 const { ConfirmIdentity } = await import("./ConfirmIdentity");
 const { api } = await import("../lib/http/client");
@@ -117,6 +123,48 @@ describe("a change that takes a recent confirmation", () => {
     await click("Continue");
     await sent;
     expect(calls()).toEqual(["/auth/password", "/auth/confirm", "/auth/password"]);
+  });
+
+  it("with a passkey at the remote address, for someone who has one there, or the password instead", async () => {
+    setAuthConfigForTest({ provider: null, passkey: true });
+    const options = { challenge: "c", rpId: "k7f3q2.mystuga.com", allowCredentials: [{ id: "cred-1", type: "public-key" }] };
+    webauthn.startAuthentication.mockResolvedValue({ id: "cred-1", rawId: "cred-1", type: "public-key", response: {} });
+    fetchMock
+      .mockResolvedValueOnce(reauth(["passkey", "password"]))
+      .mockResolvedValueOnce(json(200, { publicKey: options }))
+      .mockResolvedValueOnce(json(204))
+      .mockResolvedValueOnce(json(201, { id: "k1" }));
+    const sent = api<{ id: string }>("/api/keys", { method: "POST", body: "{}" });
+    await settle();
+    expect(dialog()?.textContent).toContain("Use your passkey to continue.");
+    expect(passwordField()).toBeNull();
+    await click("Continue");
+    expect(await sent).toEqual({ id: "k1" });
+    expect(calls()).toEqual(["/api/keys", "/auth/passkey/options", "/auth/passkey/sign-in", "/api/keys"]);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]![1]!.body))).toEqual({ purpose: "reauth" });
+    expect(webauthn.startAuthentication).toHaveBeenCalledWith({ optionsJSON: options });
+    expect(JSON.parse(String(fetchMock.mock.calls[2]![1]!.body))).toMatchObject({ credential: { id: "cred-1" } });
+
+    // The prompt closed: said so, and the password is there instead.
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(reauth(["passkey", "password"])).mockResolvedValueOnce(json(200, { publicKey: options }));
+    webauthn.startAuthentication.mockRejectedValueOnce(Object.assign(new Error("closed"), { name: "NotAllowedError" }));
+    void api("/api/keys", { method: "POST", body: "{}" }).catch(() => {});
+    await settle();
+    await click("Continue");
+    expect(dialog()?.textContent).toContain("The passkey prompt closed. Try again.");
+    await click("Use password instead");
+    expect(passwordField()).not.toBeNull();
+  });
+
+  it("offers no passkey where the browser has none", async () => {
+    setAuthConfigForTest({ provider: null, passkey: true });
+    webauthn.supported = false;
+    fetchMock.mockResolvedValueOnce(reauth(["passkey", "password"]));
+    void api("/api/keys", { method: "POST", body: "{}" }).catch(() => {});
+    await settle();
+    expect(dialog()?.textContent).toContain("Enter your password to continue.");
+    webauthn.supported = true;
   });
 
   it("passes any other refusal through untouched", async () => {

@@ -2,10 +2,11 @@
  * Sign in and sign up, one panel so a switch between them keeps what was typed.
  * The password form is always there (sign-up only for a visitor holding an
  * invite link), with "Continue with <label>" under it when the node has an
- * identity provider. A node with no account yet opens on setup instead: there
+ * identity provider, and at the remote address "Sign in with a passkey", which
+ * the username field's autofill offers too. A node with no account yet opens on setup instead: there
  * is nobody to sign in as, and the account made there administers the node.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Card } from "@astryxdesign/core/Card";
 import { Grid } from "@astryxdesign/core/Grid";
@@ -18,7 +19,7 @@ import { Divider } from "@astryxdesign/core/Divider";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { Check, LayoutGrid, LogIn, ShieldCheck, Sparkles, UserPlus, Users, Wand2 } from "lucide-react";
+import { Check, Fingerprint, LayoutGrid, LogIn, ShieldCheck, Sparkles, UserPlus, Users, Wand2 } from "lucide-react";
 import { Brand, PRODUCT_NAME, nodeName } from "../shell/Brand";
 import { authConfigUnavailable, loadAuthConfig, nodeUnclaimed, providerLabel } from "../lib/session/auth-config";
 import {
@@ -36,6 +37,8 @@ import { signUp, signInWithPassword, passwordOk, PASSWORD_RULES } from "../lib/s
 import { AuthError, describeError } from "../lib/session/errors";
 import { usePageRestored } from "../lib/use-page-restored";
 import { AuthErrorBanner } from "../ui/AuthErrorBanner";
+import { PasskeyCancelled, cancelPasskeyAutofill, passkeyAutofillAvailable, passkeysOffered, signInWithPasskey } from "../lib/session/passkey";
+import { notePasskeyOffer } from "../lib/session/passkey-offer";
 import { PasswordStrengthHint } from "../ui/PasswordStrengthHint";
 import { useRemoteStrength } from "../lib/session/password-strength";
 import { USERNAME_RULE, isValidUsername, normalizeUsername } from "@stuga/protocol/domain/username";
@@ -84,6 +87,15 @@ function withFailedOutcome(path: string): string {
   return url.pathname + url.search + url.hash;
 }
 
+
+/**
+ * The autofill's passkey challenge is renewed this often, inside the five minutes the node gives one
+ * (identity/passkey-challenges.ts).
+ */
+const AUTOFILL_RENEW_MS = 4 * 60_000;
+/** After a refusal, the autofill asks again this much later. */
+const AUTOFILL_RETRY_MS = 2_000;
+
 export function Login() {
   const nav = useNavigate();
   const location = useLocation();
@@ -122,6 +134,12 @@ export function Login() {
   const [busy, setBusy] = useState(false);
   /** A sign-in here has sent the visitor on: the live-token redirect below must not send them again. */
   const [entered, setEntered] = useState(false);
+  /** enter() as of the last render, for the autofill sign-in, which outlives the render that started it. */
+  const enterRef = useRef<((session: Session) => void) | null>(null);
+  /** The button's passkey ceremony is under way: the autofill waits for it to end. */
+  const passkeyCeremony = useRef(false);
+  /** Starts the autofill's passkey request again, with a fresh challenge; null where there is none. */
+  const autofill = useRef<(() => void) | null>(null);
   const [error, setError] = useState<string | null>(() =>
     failedReturn && !silentReturn ? `Couldn’t sign in with ${label ?? "the identity provider"}.` : null,
   );
@@ -153,6 +171,56 @@ export function Login() {
       setSilent(false);
     });
   }, [silent]);
+
+  // At the remote address, a passkey among the username field's suggestions signs in when picked.
+  // Its challenge lapses after five minutes, so it is renewed before then, again when the tab comes
+  // back after longer, and after anything ends it short of signing in.
+  const signingIn = view === "signin" && !silent;
+  useEffect(() => {
+    if (!signingIn) return;
+    let live = true;
+    let round = 0;
+    let startedAt = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const wait = (ms: number) => {
+      clearTimeout(timer);
+      timer = setTimeout(renew, ms);
+    };
+    function renew() {
+      if (!live || passkeyCeremony.current) return;
+      const mine = ++round;
+      startedAt = Date.now();
+      wait(AUTOFILL_RENEW_MS);
+      signInWithPasskey({ autofill: true })
+        .then((session) => {
+          if (live) enterRef.current?.(session);
+        })
+        .catch((err: unknown) => {
+          // Renewed meanwhile, or left: this one is over. Cancelled by the button: it renews after.
+          if (!live || mine !== round || err instanceof PasskeyCancelled) return;
+          // A refusal of a challenge older than its renewal is a lapsed challenge, not a wrong passkey.
+          const lapsed = err instanceof AuthError && err.message === "passkey_invalid" && Date.now() - startedAt >= AUTOFILL_RENEW_MS;
+          if (!lapsed) setError(describeError(err));
+          wait(lapsed ? 0 : AUTOFILL_RETRY_MS);
+        });
+    }
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && round > 0 && Date.now() - startedAt >= AUTOFILL_RENEW_MS) renew();
+    };
+    void passkeyAutofillAvailable().then((available) => {
+      if (!available || !live) return;
+      autofill.current = renew;
+      document.addEventListener("visibilitychange", onVisible);
+      renew();
+    });
+    return () => {
+      live = false;
+      clearTimeout(timer);
+      autofill.current = null;
+      document.removeEventListener("visibilitychange", onVisible);
+      cancelPasskeyAutofill();
+    };
+  }, [signingIn]);
 
   // Back from the provider, the page is as it left it: a silent attempt's spinner, a busy button.
   usePageRestored(
@@ -216,9 +284,24 @@ export function Login() {
    */
   function enter(session: Session, to?: string) {
     setSession(session);
+    // "Sign in faster next time", asked on the page the sign-in goes on to.
+    notePasskeyOffer(session);
     setEntered(true);
     const stashed = takeLoginReturn();
     nav(to ?? stashed, { replace: true });
+  }
+  enterRef.current = enter;
+
+  /** The button: the browser asks for a passkey now, ending any autofill wait, which is renewed if it fails. */
+  async function submitPasskey() {
+    passkeyCeremony.current = true;
+    try {
+      await run(async () => enter(await signInWithPasskey()));
+    } catch {
+      /* message already surfaced */
+      passkeyCeremony.current = false;
+      autofill.current?.();
+    }
   }
 
   async function submitSignIn() {
@@ -326,7 +409,8 @@ export function Login() {
                       value={username}
                       onChange={setUsername}
                       htmlName="username"
-                      autoComplete="username"
+                      // A passkey for this address is offered among the username's suggestions.
+                      autoComplete={passkeysOffered() ? "username webauthn" : "username"}
                     />
                     <TextInput
                       label="Password"
@@ -346,6 +430,17 @@ export function Login() {
                     isLoading={busy}
                     onClick={() => void submitSignIn()}
                   />
+                  {passkeysOffered() && (
+                    <Button
+                      label="Sign in with a passkey"
+                      variant="secondary"
+                      size="lg"
+                      width="100%"
+                      icon={<Fingerprint size={16} />}
+                      isDisabled={busy}
+                      onClick={() => void submitPasskey()}
+                    />
+                  )}
                 </VStack>
               )}
 

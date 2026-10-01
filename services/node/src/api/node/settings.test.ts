@@ -34,6 +34,12 @@ vi.mock("../../audit/record.js", async (importOriginal) => ({
   recordAudit: vi.fn(),
 }));
 
+const channelChanged = vi.fn(async () => {});
+vi.mock("../../identity/alerts.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../identity/alerts.js")>()),
+  alertsFor: () => ({ channelChanged }),
+}));
+
 // The real files, with a way to make one write fail after the row has committed.
 vi.mock("../../config/secrets.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../config/secrets.js")>();
@@ -714,5 +720,43 @@ describe("a change to who can sign in, or where alerts go", () => {
     stale();
     expect((await put(ctx(), { node_name: "North" }))!.status).toBe(200);
     expect((await routeWorkspaceRequest(ctx(), new Request("http://node.test/api/node/settings", { method: "DELETE" })))!.status).toBe(200);
+  });
+});
+
+describe("changing where notifications go", () => {
+  /** A node whose sink is `before` until the save's refresh, `after` from then on. */
+  function changing(before: Record<string, unknown>, after: Record<string, unknown>): Ctx {
+    const c = ctx(null, searchLanguages(), { notify: before });
+    const settings = (c.env as unknown as { settings: { current: () => Record<string, unknown>; refresh: () => Promise<void> } }).settings;
+    const first = settings.current;
+    let notify = before;
+    settings.current = () => ({ ...first(), notify });
+    settings.refresh = async () => void (notify = after);
+    return c;
+  }
+
+  beforeEach(() => channelChanged.mockClear());
+
+  it("tells every administrator, through the channel it had, from what to what", async () => {
+    const before = { sink: "slack", webhookUrl: "https://hooks.slack.test/services/a" };
+    const after = { sink: "email", smtpUrl: "smtp://mail.test", emailFrom: "node@x.test" };
+    const res = await put(changing(before, after), { notify: { sink: "email", smtp_url: "smtp://mail.test", email_from: "node@x.test" } });
+    expect(res!.status).toBe(200);
+    expect(channelChanged).toHaveBeenCalledWith(expect.objectContaining({ by: expect.objectContaining({ alias: "admin-1" }), before, after }));
+  });
+
+  it("tells nobody when the channel is as it was, or another group is saved", async () => {
+    const same = { sink: "slack", webhookUrl: "https://hooks.slack.test/services/a" };
+    await put(changing(same, same), { notify: { sink: "slack" } });
+    await put(changing(same, { sink: "none" }), { node_name: "Office" });
+    expect(channelChanged).not.toHaveBeenCalled();
+  });
+
+  it("tells them when a reset removes it", async () => {
+    const before = { sink: "slack", webhookUrl: "https://hooks.slack.test/services/a" };
+    const req = new Request("http://node.test/api/node/settings", { method: "DELETE" });
+    const res = await routeWorkspaceRequest(changing(before, { sink: "none" }), req);
+    expect(res!.status).toBe(200);
+    expect(channelChanged).toHaveBeenCalledWith(expect.objectContaining({ before, after: { sink: "none" } }));
   });
 });

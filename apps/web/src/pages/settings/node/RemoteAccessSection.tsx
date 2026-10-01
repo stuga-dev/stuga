@@ -20,6 +20,7 @@ import { Globe } from "lucide-react";
 import type { ConnectorStatus, RemoteAccessStatus, RemoteError, RemoteErrorCode } from "@stuga/protocol/api/remote-access";
 import { NodeSettings as NodeApi } from "../../../api";
 import { copyText } from "../../../lib/clipboard";
+import { atRemoteAddress, authConfig } from "../../../lib/session/auth-config";
 import { shortDate, timeOfDay, versionLabel } from "../../../lib/format";
 import { errorMessage } from "../../../lib/http/client";
 import { readStored, writeStored } from "../../../lib/storage";
@@ -317,6 +318,7 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
     body = (
       <>
         {status.address && <AddressRow address={status.address} canCopy={running} />}
+        {running && status.address && <ShareLines address={status.address} />}
         {status.state === "starting" && (
           <HStack gap={2} vAlign="center">
             <Spinner size="sm" />
@@ -394,6 +396,22 @@ function errorSentence(error: RemoteError): string {
       // The shared directory or the socket: the node's message names the path and what is wrong with it.
       return error.message;
   }
+}
+
+/** Which address to hand out, and how people sign in there; the node's own stays on its network. */
+function ShareLines({ address }: { address: string }) {
+  // Not named at the remote address, which never shows the network's own.
+  const local = atRemoteAddress() ? null : authConfig().origin;
+  return (
+    <VStack gap={1}>
+      <Text type="supporting" color="secondary">
+        {`Share ${address}. Sign in there with a passkey or a password of 15 characters or more.`}
+      </Text>
+      <Text type="supporting" color="secondary">
+        {`Keep ${local ?? "this node’s own address"} on your network. The remote address is the one to share.`}
+      </Text>
+    </VStack>
+  );
 }
 
 function AddressRow({ address, canCopy }: { address: string; canCopy: boolean }) {

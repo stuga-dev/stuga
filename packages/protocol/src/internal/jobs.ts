@@ -112,7 +112,18 @@ export type NotifyMessage = {
  */
 export type NotifyDeliverMessage = {
   kind: "notify_deliver";
+  /** The sink it was queued for, stamped on its row as where it is being sent. */
+  channel: string;
+  /**
+   * Which setup of that sink (its webhook, server and sender), as a short hash that gives none of
+   * them away: a delivery goes only through the setup it was queued for.
+   */
+  channelKey?: string;
+  /** The row it belongs to, which each attempt marks delivered or failed. Set as it is queued. */
+  notificationId?: string;
   recipient: string;
+  /** An address to email in place of the recipient's own: the old one, when they changed it. */
+  to?: string;
   title: string;
   body: string;
   url: string;

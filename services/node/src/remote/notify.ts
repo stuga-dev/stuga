@@ -6,7 +6,7 @@
  * run of refusals or the move it is about.
  */
 import type { NodeRemoteAccessRow } from "@stuga/db";
-import type { NotifyDeliverMessage } from "@stuga/protocol/internal/jobs";
+import { sinkDelivery } from "../jobs/notify.js";
 import { jobsDb, type JobsDb } from "../jobs/db.js";
 import type { JobsEnv } from "../jobs/deps.js";
 import { BINDING_REJECTED_AFTER_MS } from "./state.js";
@@ -122,10 +122,7 @@ export async function notifyRemoteAccess(
 ): Promise<void> {
   const url = `${env.publicOrigin}${REMOTE_ACCESS_PATH}`;
   for (const admin of await db.listNodeAdmins()) {
-    const delivery: NotifyDeliverMessage | null =
-      env.settings.current().notify.sink === "none"
-        ? null
-        : { kind: "notify_deliver", recipient: admin.alias, title: n.title, body: n.body, url };
+    const delivery = sinkDelivery(env.settings.current().notify, { recipient: admin.alias, title: n.title, body: n.body, url });
     await db.insertNotification(
       {
         id: `${n.event}:${n.key}:${admin.alias}`,

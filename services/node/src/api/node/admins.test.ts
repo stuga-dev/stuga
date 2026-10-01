@@ -93,6 +93,39 @@ describe("appointing an administrator and minting a password link", () => {
   });
 });
 
+describe("where a password link points", () => {
+  const remoteOn = { current: () => ({ enabled: true, id: "k7f3q2", hostname: "k7f3q2.stuga.test", origin: "https://k7f3q2.stuga.test" }) };
+  const remoteOff = { current: () => ({ enabled: false, id: "k7f3q2", hostname: "k7f3q2.stuga.test", origin: "https://k7f3q2.stuga.test" }) };
+  const at = (remote: unknown, over: CtxOverrides = {}) =>
+    admin({ env: { settings, sessionSockets: { closeAccount }, remote } as unknown as CtxOverrides["env"], ...over });
+
+  it("is the address the administrator is using unless they say, and either one when they do", async () => {
+    const mine = (await (await call(at(remoteOn), "POST", "/api/node/password-resets", { username: "bo" })).json()) as { url: string; address: string };
+    expect(mine).toMatchObject({ address: "local", url: expect.stringMatching(/^https:\/\/stuga\.test\/reset\//) });
+    const anywhere = (await (await call(at(remoteOn), "POST", "/api/node/password-resets", { username: "bo", address: "remote" })).json()) as { url: string; address: string };
+    expect(anywhere).toMatchObject({ address: "remote", url: expect.stringMatching(/^https:\/\/k7f3q2\.stuga\.test\/reset\//) });
+    const fromRemote = at(remoteOn, { arrival: "remote", servedOrigin: "https://k7f3q2.stuga.test" });
+    const local = (await (await call(fromRemote, "POST", "/api/node/password-resets", { username: "bo", address: "local" })).json()) as { url: string };
+    expect(local.url).toMatch(/^https:\/\/stuga\.test\/reset\//);
+  });
+
+  it("is refused for the remote address while it is off, before anything is minted or revoked", async () => {
+    const res = await call(at(remoteOff), "POST", "/api/node/password-resets", { username: "bo", address: "remote" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("remote_off");
+    const revoked = await call(at(remoteOff), "POST", "/api/node/users/u_bo/revoke-everything", { address: "remote" });
+    expect(revoked.status).toBe(409);
+    expect(reset).not.toHaveBeenCalled();
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
+  it("is the remote address for Revoke everything's link when asked", async () => {
+    const res = await call(at(remoteOn), "POST", "/api/node/users/u_bo/revoke-everything", { address: "remote" });
+    const body = (await res.json()) as { password_link: { url: string; address: string } };
+    expect(body.password_link).toMatchObject({ address: "remote", url: expect.stringMatching(/^https:\/\/k7f3q2\.stuga\.test\/reset\//) });
+  });
+});
+
 describe("Revoke everything for someone", () => {
   it("counts what it would take first", async () => {
     const res = await call(admin(), "GET", "/api/node/users/u_bo/revoke-everything");

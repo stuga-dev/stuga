@@ -204,6 +204,8 @@ describe("checkForUpdates", () => {
     await checkForUpdates(w.env, w.d, "1.9.0");
     expect(w.notifications[0]?.delivery).toEqual({
       kind: "notify_deliver",
+      channel: "slack",
+      channelKey: expect.stringMatching(/^[0-9a-f]{16}$/),
       recipient: "ada",
       title: "Security update available: Stuga 1.10.0",
       body: "This node runs 1.9.0. Stuga 1.9.1 fixes a security issue.",

@@ -26,6 +26,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
+      # Chromium, at the version playwright-core pins, for the passkey test's virtual authenticator.
+      - run: pnpm --filter @stuga/node exec playwright-core install --with-deps chromium
       - run: pnpm test
       - run: node --test "packaging/**/*.test.mjs"
       - run: bash packaging/check-pins.sh

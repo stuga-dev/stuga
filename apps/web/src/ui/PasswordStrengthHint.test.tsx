@@ -6,6 +6,11 @@ import type { Root } from "react-dom/client";
 import { mountInto } from "../test/form-input";
 
 const loads = vi.hoisted(() => ({ count: 0 }));
+const webauthn = vi.hoisted(() => ({ supported: false }));
+vi.mock("@simplewebauthn/browser", async (orig) => ({
+  ...(await orig<typeof import("@simplewebauthn/browser")>()),
+  browserSupportsWebAuthn: () => webauthn.supported,
+}));
 vi.mock("@stuga/password-strength", async (orig) => {
   loads.count += 1;
   return orig();
@@ -13,9 +18,16 @@ vi.mock("@stuga/password-strength", async (orig) => {
 
 const { setAuthConfigForTest } = await import("../lib/session/auth-config");
 const { useRemoteStrength } = await import("../lib/session/password-strength");
-const { GUESSABLE_HERE, GUESSABLE_HERE_ONLY, PasswordStrengthHint, USE_LONGER_HERE, WORKS_ANYWHERE, WORKS_HERE_ONLY } = await import(
-  "./PasswordStrengthHint"
-);
+const {
+  GUESSABLE_HERE,
+  GUESSABLE_HERE_ONLY,
+  GUESSABLE_OR_PASSKEY,
+  PasswordStrengthHint,
+  USE_LONGER_HERE,
+  USE_LONGER_OR_PASSKEY,
+  WORKS_ANYWHERE,
+  WORKS_HERE_ONLY,
+} = await import("./PasswordStrengthHint");
 const { passwordOk } = await import("../lib/session/sign-in");
 
 const REMOTE = "https://k7f3q2.mystuga.com";
@@ -81,6 +93,22 @@ describe("the password hint", () => {
     expect(text()).toContain(USE_LONGER_HERE);
     await show("qwertyuiopasdfghjkl");
     expect(text()).toContain(GUESSABLE_HERE);
+    expect(text()).not.toContain("passkey");
+  });
+
+  it("offers a passkey there only where this browser can add one", async () => {
+    setAuthConfigForTest({ remoteOrigin: REMOTE, passkey: true });
+    Object.defineProperty(window, "location", { configurable: true, value: { ...originalLocation, origin: REMOTE } });
+    webauthn.supported = true;
+    await show("battery9");
+    expect(text()).toContain(USE_LONGER_OR_PASSKEY);
+    await show("qwertyuiopasdfghjkl");
+    expect(text()).toContain(GUESSABLE_OR_PASSKEY);
+    // An in-app browser with no WebAuthn is told only what it can do.
+    webauthn.supported = false;
+    await show("battery10");
+    expect(text()).toContain(USE_LONGER_HERE);
+    expect(text()).not.toContain("passkey");
   });
 
   it("keeps spaces and pastes as typed: a passphrase is scored whole", async () => {

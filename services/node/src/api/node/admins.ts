@@ -22,6 +22,7 @@ import { alertsFor } from "../../identity/alerts.js";
 import { deviceLabel } from "../../identity/devices.js";
 import { recentConfirmationRequired } from "../../identity/recency.js";
 import { mintPasswordReset, resetUrl } from "../../identity/reset.js";
+import { linkOrigin } from "../../links/address.js";
 
 export async function listNodeAdminsRoute({ ctx }: WorkspaceCall): Promise<Response> {
   const admins = await listNodeAdmins(ctx.sql);
@@ -87,9 +88,11 @@ export async function revokeNodeAdminRoute({ ctx, match }: WorkspaceCall): Promi
 export async function mintPasswordResetRoute({ ctx, req }: WorkspaceCall): Promise<Response> {
   const stale = await recentConfirmationRequired(ctx);
   if (stale) return stale;
-  const body = (await req.json().catch(() => ({}))) as { username?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { username?: unknown; address?: unknown };
   const username = typeof body.username === "string" ? body.username : "";
   if (!username.trim()) return error(400, "username is required");
+  const target = linkOrigin(ctx, body.address);
+  if ("error" in target) return json({ error: target.error, message: target.message }, { status: target.status });
   const account = await findAccountByUsername(ctx.sql, username);
   if (!account) return error(404, "no account with that username on this node");
 
@@ -103,9 +106,15 @@ export async function mintPasswordResetRoute({ ctx, req }: WorkspaceCall): Promi
     targetKind: "node",
     targetId: ctx.env.publicOrigin,
     // Never the token.
-    detail: { alias: account.alias, expires_at: expiresAt.toISOString() },
+    detail: { alias: account.alias, expires_at: expiresAt.toISOString(), address: target.address },
   });
-  return json({ url: resetUrl(ctx.servedOrigin, token), alias: account.alias, username: account.username, expires_at: expiresAt });
+  return json({
+    url: resetUrl(target.origin, token),
+    alias: account.alias,
+    username: account.username,
+    expires_at: expiresAt,
+    address: target.address,
+  });
 }
 
 /** The account `:alias` names, for Revoke everything; not oneself, who does it from Profile with a new password. */
@@ -137,6 +146,9 @@ export async function revokeEverythingForRoute(call: WorkspaceCall): Promise<Res
   if (account instanceof Response) return account;
   const stale = await recentConfirmationRequired(ctx);
   if (stale) return stale;
+  const body = (await req.json().catch(() => ({}))) as { address?: unknown };
+  const target = linkOrigin(ctx, body?.address);
+  if ("error" in target) return json({ error: target.error, message: target.message }, { status: target.status });
 
   const revoked = await revokeEverything(ctx.sql, { alias: account.alias, by: ctx.alias, passwordHash: null });
   if (!revoked) return error(404, "no such account on this node");
@@ -157,5 +169,5 @@ export async function revokeEverythingForRoute(call: WorkspaceCall): Promise<Res
     at: new Date(),
     by: { alias: ctx.alias, name: ctx.displayName },
   });
-  return json({ password_link: { url: resetUrl(ctx.servedOrigin, token), expires_at: expiresAt } });
+  return json({ password_link: { url: resetUrl(target.origin, token), expires_at: expiresAt, address: target.address } });
 }

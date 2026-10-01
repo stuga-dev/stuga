@@ -12,6 +12,9 @@ Releases before 0.1.7 were previews. Their notes are on their
 ### Added
 
 - **Revoke everything**, in **Settings → Profile**: every session ends, and the identity provider link, connected apps, API keys and the links you shared go; a new password is the way back in. Administrators do it for someone under **Account recovery**, which hands back a password link.
+- An alert about your account or the node says whether it also went out through the node's notifications: sending, sent, or not sent and why.
+- Changing your email tells you and the node's administrators; when notifications go by email, yours goes to the address it was. Changing where the node sends notifications tells every administrator through the channel it had, and an alert not yet sent then is not sent through the new one.
+- On a node whose address is `localhost`, invite and password links say they open only on this computer.
 
 ### Changed
 
@@ -25,6 +28,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 - A browser that signed in before keeps signing in while wrong passwords from elsewhere pause the account. Each browser keeps a cookie for this ([Privacy](docs/privacy.md#what-the-node-stores)).
 - A password change, an API key, Revoke everything and an hour-long pause after wrong passwords are notified to the person, in the app and through the node's notifications; Revoke everything to the administrators too.
 - An invite link made through the API without limits admits one person for seven days, as the dialog's does; `null` asks for no limit or no expiry.
+- In Slack, Discord and Teams notifications, a document's or an app's name shows as written, never as a link or a mention.
 
 ### Fixed
 

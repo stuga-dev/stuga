@@ -54,6 +54,8 @@ import { fail, field, json, readJson } from "./http.js";
 import type { SecurityAlerts } from "./alerts.js";
 import { deviceCookie, deviceHash, deviceLabel, newDeviceValue, readDeviceCookie } from "./devices.js";
 import { createPasswordChecks, type PasswordChecks } from "./check-password.js";
+import { createPasskeyChallenges, type PasskeyChallenges } from "./passkey-challenges.js";
+import { createPasskeyRoutes, passkeySite } from "./passkey-routes.js";
 import { createPasswordNetworkCheck, type PasswordNetworkCheck } from "./off-network.js";
 import { MAX_NAME, passwordPolicy } from "./passwords.js";
 import { confirmationMethods, confirmedRecently, reauthRequired } from "./recency.js";
@@ -70,7 +72,8 @@ export interface IdentityEvent {
     | "node.identity.unlink"
     | "node.session.wrong_address"
     | "node.sign_in.new_device"
-    | "node.account.revoke_everything";
+    | "node.account.revoke_everything"
+    | "node.passkey.add";
   detail: Record<string, unknown>;
 }
 
@@ -132,6 +135,8 @@ export interface IdentityDeps {
   hashQueue?: HashQueue;
   /** What people are told about their own sign-ins (./alerts.ts); none when absent. */
   alerts?: SecurityAlerts;
+  /** Passkey challenges, signed with a key that lives only as long as this process; made here when absent. */
+  passkeyChallenges?: PasskeyChallenges;
 }
 
 export interface IdentityRouter {
@@ -152,6 +157,8 @@ export interface TokenPair {
 export interface SignedIn {
   tokens: TokenPair;
   cookie: string;
+  /** "Sign in faster next time" is due: a password sign-in at the remote address by someone with no passkey there. */
+  passkeyOffer: boolean;
 }
 
 /** `res` with each cookie set on it. */
@@ -211,7 +218,11 @@ export interface IdentityCore {
    */
   bearerSession(req: Request): Promise<{ account: AccountRow; token: PersonToken } | Response | null>;
   /** Null when the bearer's sign-in was confirmed in the last five minutes, else the 401 that asks for it. */
-  recentlyConfirmed(account: AccountRow, token: PersonToken): Promise<Response | null>;
+  recentlyConfirmed(req: Request, account: AccountRow, token: PersonToken): Promise<Response | null>;
+  /** A sign-in's answer: the token pair, the device cookie, and `passkey_offer` when it is due. */
+  signedIn(done: SignedIn, status?: number): Response;
+  /** Wrong-password and failed-passkey counts. */
+  limits: SignInLimits;
   /**
    * The throttle for a signed-in person's request that hashes a password, per account: the address
    * bucket alone lets one account spread the priority line's work over many addresses.
@@ -229,12 +240,20 @@ export interface SignInOptions {
   displayName?: string;
   /** An account made by this request, or a sign-in the person just confirmed: its browser is remembered, never reported. */
   quiet?: boolean;
+  /** The passkey a sign-in with one used. */
+  passkeyId?: string;
+  /** Never "Sign in faster next time": the person is where they add passkeys already. */
+  noOffer?: boolean;
 }
+
+/** How a session begun at the remote address with these leads on to the passkey offer. */
+const OFFERED_AFTER: ReadonlySet<SignedInWith> = new Set(["password", "invite", "reset"]);
 
 export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
   const { auth, db, keys } = deps;
+  const signInLimits = deps.signInLimits ?? createSignInLimits();
   const passwords = createPasswordChecks({
-    limits: deps.signInLimits ?? createSignInLimits(),
+    limits: signInLimits,
     queue: deps.hashQueue ?? createHashQueue(),
     network:
       deps.passwordNetwork ??
@@ -307,6 +326,7 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     signedInWith: SignedInWith,
     displayName: string | undefined,
     requires: StillHolds | null,
+    passkeyId?: string,
   ): Promise<TokenPair | null> {
     const arrival = arrivalOf(req);
     const refresh = mintRefreshToken();
@@ -319,6 +339,7 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
       expiresAt: idleExpiry(arrival),
       arrival,
         signedInWith,
+        passkeyId: passkeyId ?? null,
         absoluteExpiresAt: absoluteExpiry(arrival, signedInWith),
       },
       requires,
@@ -384,9 +405,13 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     requires: StillHolds | null,
     opts: SignInOptions = {},
   ): Promise<SignedIn | null> {
-    const tokens = await issueTokens(req, account, signedInWith, opts.displayName, requires);
+    const tokens = await issueTokens(req, account, signedInWith, opts.displayName, requires, opts.passkeyId);
     if (!tokens) return null;
-    return { tokens, cookie: await rememberBrowser(req, account, opts) };
+    const cookie = await rememberBrowser(req, account, opts);
+    // Asked of a person who signed in with a password at the remote address, never after the provider.
+    const offerable = arrivalOf(req) === "remote" && OFFERED_AFTER.has(signedInWith) && !opts.noOffer;
+    const passkeyOffer = offerable && (await db.passkeyOfferDue(account.alias, passkeySite(req, null).rpId).catch(() => false));
+    return { tokens, cookie, passkeyOffer };
   }
 
   async function signIn(
@@ -404,9 +429,9 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     return success ? null : tooMany();
   }
 
-  /** A sign-in's answer: the token pair, and the device cookie. */
+  /** A sign-in's answer: the token pair, and the device cookie. Only a remote one may carry `passkey_offer`. */
   function signedIn(done: SignedIn, status = 200): Response {
-    return withCookies(json(done.tokens, status), [done.cookie]);
+    return withCookies(json(done.passkeyOffer ? { ...done.tokens, passkey_offer: true } : done.tokens, status), [done.cookie]);
   }
 
   async function suggestUsername(raw: string): Promise<string> {
@@ -464,9 +489,10 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     }
   }
 
-  async function recentlyConfirmed(account: AccountRow, token: PersonToken): Promise<Response | null> {
+  async function recentlyConfirmed(req: Request, account: AccountRow, token: PersonToken): Promise<Response | null> {
     if (await confirmedRecently(db, token)) return null;
-    return reauthRequired(confirmationMethods(account, (deps.identityProvider?.() ?? null) !== null));
+    const passkey = arrivalOf(req) === "remote" && (await db.passkeyDescriptors(account.alias, passkeySite(req, null).rpId)).length > 0;
+    return reauthRequired(confirmationMethods(account, (deps.identityProvider?.() ?? null) !== null, passkey));
   }
 
   const core: IdentityCore = {
@@ -486,8 +512,11 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     passwords,
     bearerSession,
     recentlyConfirmed,
+    signedIn,
+    limits: signInLimits,
   };
   const provider = createProviderRoutes(core);
+  const passkeys = createPasskeyRoutes(core, deps.passkeyChallenges ?? createPasskeyChallenges());
 
   async function config(req: Request): Promise<Response> {
     // No account yet: the SPA opens on first-run setup, whose account administers the node.
@@ -515,6 +544,8 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
       origin,
       branding: { accent_color: b.accentColor },
       ...(remoteOrigin ? { remote_origin: remoteOrigin } : {}),
+      // Passkeys are made and used only at the remote address; the node's own network never sees this.
+      ...(remote ? { passkey: true } : {}),
     });
   }
 
@@ -636,7 +667,8 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     const replaced = await db.replaceLocalPassword({ alias: account.alias, passwordHash: hash, requires });
     if (!replaced) return "password" in requires ? wrongPassword() : sessionEnded();
     deps.onSessionsEnded?.(account.alias);
-    const done = await signInIf(req, account, "password", { password: hash });
+    // Changed from Profile, where passkeys are added: no offer here.
+    const done = await signInIf(req, account, "password", { password: hash }, { noOffer: true });
     if (!done) return wrongPassword();
     await passwordAlert(req, account, "changed");
     return signedIn(done);
@@ -664,7 +696,7 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     const weak = passwordPolicy(next);
     if (weak) return weak;
     if (account.password_hash) return addFirstPassword(req, account, token, next);
-    const stale = await recentlyConfirmed(account, token);
+    const stale = await recentlyConfirmed(req, account, token);
     if (stale) return stale;
     const limited = await accountThrottled(req, account.alias);
     if (limited) return limited;
@@ -717,7 +749,7 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
       if (!checked.ok) return checked.response;
       return replacePassword(req, checked.account, next, true, { password: checked.hash });
     }
-    const stale = await recentlyConfirmed(account, token);
+    const stale = await recentlyConfirmed(req, account, token);
     if (stale) return stale;
     if (!account.password_hash) return addFirstPassword(req, account, token, next);
     return replacePassword(req, account, next, true, { session: presentedSession(token) });
@@ -800,7 +832,7 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     const next = field(body, "new_password");
     const weak = passwordPolicy(next);
     if (weak) return weak;
-    const stale = await recentlyConfirmed(account, token);
+    const stale = await recentlyConfirmed(req, account, token);
     if (stale) return stale;
     const limited = await accountThrottled(req, account.alias);
     if (limited) return limited;
@@ -827,7 +859,7 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
       at: new Date(),
     });
     // The person just confirmed it is them: this browser is remembered again, and not reported.
-    const done = await signInIf(req, account, "password", { password: hash }, { displayName: name, quiet: true });
+    const done = await signInIf(req, account, "password", { password: hash }, { displayName: name, quiet: true, noOffer: true });
     return done ? signedIn(done) : sessionEnded();
   }
 
@@ -973,6 +1005,9 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     "/auth/oidc/link",
     "/auth/confirm",
     "/auth/revoke-everything",
+    "/auth/passkey/options",
+    "/auth/passkey/sign-in",
+    "/auth/passkey/add",
   ]);
 
   /**
@@ -990,7 +1025,9 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
         const o = (b ?? {}) as Record<string, unknown>;
         const username = typeof o.username === "string" ? typedUsername(o.username) : "";
         const token = typeof o.token === "string" ? o.token : "";
-        return username || (token ? `token:${sha256Hex(token)}` : "");
+        const credential = (o.credential ?? null) as { id?: unknown } | null;
+        const passkey = typeof credential?.id === "string" ? credential.id.slice(0, 1400) : "";
+        return username || (token ? `token:${sha256Hex(token)}` : passkey ? `passkey:${sha256Hex(passkey)}` : "");
       })
       .catch(() => "");
     if (target) keys.push(`auth:id:${arrivalOf(req)}:${target}`);
@@ -1028,6 +1065,9 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     ...post("/auth/oidc/complete", provider.complete),
     ...post("/auth/oidc/link", provider.link),
     ...post("/auth/oidc/unlink", provider.unlink),
+    ...post("/auth/passkey/options", passkeys.options),
+    ...post("/auth/passkey/sign-in", passkeys.signIn),
+    ...post("/auth/passkey/add", passkeys.add),
   ];
 
   return {

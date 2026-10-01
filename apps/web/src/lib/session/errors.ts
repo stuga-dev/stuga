@@ -52,7 +52,13 @@ const CODE_MESSAGES: Record<string, (err: AuthError) => string> = {
   invalid_token: () => "Your session has ended. Sign in again.",
   password_required: () => "Set a password first.",
   password_set: () => "This account already has a password.",
-  remote_password_weak: () => "From outside this network, sign in with a password of 15 characters or more that is hard to guess.",
+  remote_password_weak: () =>
+    "From outside this network, sign in with a passkey or a password of 15 characters or more that is hard to guess.",
+  passkey_invalid: () => "That passkey didn’t sign in here. Choose another, or use your password.",
+  passkey_not_added: () => "That passkey wasn’t added. Try again.",
+  passkey_exists: () => "That passkey is added already.",
+  no_passkey: () => "You have no passkey for this address.",
+  remote_off: () => "Remote access is off, so the link can only open on this network.",
   // The node's sentence says how long: it is the only part that varies.
   sign_in_paused: (err) => err.detail ?? "Too many wrong passwords. Try again later.",
   busy: () => "Stuga is busy. Try again in a few seconds.",
@@ -65,6 +71,8 @@ const CODE_MESSAGES: Record<string, (err: AuthError) => string> = {
 /** A sign-in failure as one sentence a person can act on. */
 export function describeError(err: unknown): string {
   if (err instanceof StorageBlockedError) return err.message;
+  // The passkey prompt closed (lib/session/passkey.ts): its own sentence.
+  if (err instanceof Error && err.name === "PasskeyCancelled") return err.message;
   if (err instanceof AuthError) {
     const known = CODE_MESSAGES[err.message];
     if (known) return known(err);

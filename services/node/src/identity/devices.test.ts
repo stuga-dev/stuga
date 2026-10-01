@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword, sha256Hex } from "@stuga/auth";
-import { deviceCookie, deviceLabel, readDeviceCookie } from "./devices.js";
+import { deviceCookie, deviceLabel, readDeviceCookie, passkeyName } from "./devices.js";
 import { deviceCookieOf, harness, type Harness } from "./testing/harness.js";
 
 const PASSWORD = "trumpet walnut ceiling";
@@ -149,5 +149,30 @@ describe("a device's name", () => {
     [null, "Unknown browser"],
   ])("%s → %s", (ua, label) => {
     expect(deviceLabel(ua)).toBe(label);
+  });
+});
+
+describe("what a new passkey is called", () => {
+  const ua = {
+    iphone: "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1",
+    macSafari: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Safari/605.1.15",
+    macChrome: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0 Safari/537.36",
+    android: "Mozilla/5.0 (Linux; Android 16; Pixel 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0 Mobile Safari/537.36",
+    edge: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0 Safari/537.36 Edg/150.0",
+    firefox: "Mozilla/5.0 (X11; Linux x86_64; rv:150.0) Gecko/20100101 Firefox/150.0",
+  };
+  it("a synced one by where it lives", () => {
+    expect(passkeyName({ backupEligible: true, transports: ["internal", "hybrid"], userAgent: ua.iphone })).toBe("iCloud Keychain");
+    expect(passkeyName({ backupEligible: true, transports: ["internal"], userAgent: ua.macSafari })).toBe("iCloud Keychain");
+    expect(passkeyName({ backupEligible: true, transports: ["internal"], userAgent: ua.android })).toBe("Google Password Manager");
+    expect(passkeyName({ backupEligible: true, transports: ["internal"], userAgent: ua.macChrome })).toBe("Synced · Chrome");
+    expect(passkeyName({ backupEligible: true, transports: [], userAgent: ua.firefox })).toBe("Synced · Firefox");
+    expect(passkeyName({ backupEligible: true, transports: [], userAgent: null })).toBe("Synced passkey");
+  });
+  it("a device-bound one by the device, or as a security key when only USB or NFC reach it", () => {
+    expect(passkeyName({ backupEligible: false, transports: ["internal"], userAgent: ua.iphone })).toBe("iPhone");
+    expect(passkeyName({ backupEligible: false, transports: ["internal"], userAgent: ua.edge })).toBe("Windows · Edge");
+    expect(passkeyName({ backupEligible: false, transports: ["usb", "nfc"], userAgent: ua.edge })).toBe("Security key");
+    expect(passkeyName({ backupEligible: false, transports: [], userAgent: null })).toBe("Passkey");
   });
 });

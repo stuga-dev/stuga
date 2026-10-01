@@ -20,6 +20,7 @@ import { AuthError, describeError } from "../lib/session/errors";
 import { takeLoginReturn } from "../lib/session/return-path";
 import { passwordOk, resetPassword } from "../lib/session/sign-in";
 import { setSession } from "../lib/session/tokens";
+import { notePasskeyOffer } from "../lib/session/passkey-offer";
 import { useRemoteStrength } from "../lib/session/password-strength";
 import { PasswordStrengthHint } from "../ui/PasswordStrengthHint";
 import { PasswordRules } from "./Login";
@@ -42,7 +43,9 @@ export function ResetPassword() {
     setBusy(true);
     setError(null);
     try {
-      setSession(await resetPassword(token, password));
+      const session = await resetPassword(token, password);
+      setSession(session);
+      notePasskeyOffer(session);
       nav(takeLoginReturn(), { replace: true });
     } catch (err) {
       // Spent, expired or never minted: nothing here can fix it, and the login page says why.

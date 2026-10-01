@@ -13,6 +13,7 @@ export * from "./ask-threads.js";
 export * from "./workspaces.js";
 export * from "./identity.js";
 export * from "./account-security.js";
+export * from "./passkeys.js";
 export type { PresentedSession, StillHolds } from "./session-live.js";
 export * from "./oidc.js";
 export * from "./user-nodes.js";

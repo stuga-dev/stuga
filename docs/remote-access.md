@@ -223,19 +223,37 @@ from the one on `BIND` and `PORT`. The relay reaches it through the connector.
   address. Sessions on the network are unaffected, and turning remote access on or off signs nobody
   out. A session there lasts 7 days unused and 30 days in all however often it renews, 12 hours when
   it began through the identity provider ([Configuration](configuration.md#accounts-and-sign-in)).
-- **Signing in.** A password signs in there when it is 15 characters or more and hard to guess, a
-  check the node runs itself before the password is checked, with the same answer whether it is
-  right or wrong. Any password keeps working on the network. Wrong passwords pause sign-ins for the
-  account at that address, and for a source that sends many; the network's count is its own. Changing
-  a password there needs a session there, signed in or confirmed in the last five minutes, which is
-  how someone whose password is too short for the address sets a longer one.
+- **Signing in.** Sign in with a passkey, or with a password of 15 characters or more that is hard
+  to guess, a check the node runs itself before the password is checked, with the same answer
+  whether it is right or wrong. Any password keeps working on the network. Wrong passwords pause
+  sign-ins for the account at that address, and for a source that sends many; the network's count is
+  its own. Changing a password there needs a session there, signed in or confirmed in the last five
+  minutes, which is how someone whose password is too short for the address sets a longer one.
+- **Passkeys.** Optional, and made and used at the remote address. After a password sign-in there,
+  someone with no passkey is asked once
+  to add one; **Not now** is remembered on the account. **Settings → Profile → Passkeys** adds one
+  (from a session signed in or confirmed in the last five minutes), and lists, renames and removes
+  them at either address. The username field offers a passkey among its suggestions, and **Sign in
+  with a passkey** asks for one directly. A passkey belongs to this address alone, verifies the
+  person (a face, a fingerprint or the screen lock), and is named for where it lives, such as
+  *iCloud Keychain*, or for the device, such as *Security key*. The node keeps its public key, never
+  the private one, and asks nothing about the authenticator. Removing one ends the sessions it
+  signed in. A passkey also confirms it's you there. Every challenge the node hands out is signed
+  with a key that lasts until the node restarts, lapses after five minutes and works once.
 - **New devices.** A sign-in at the remote address from a browser that has not signed in to that
   account there before tells the person and the node's administrators, in the app and through the
   node's notifications when an administrator set them up: the browser, the time and the address it
   came from. Each alert opens Revoke everything. A browser that signed in before keeps signing in
   while wrong passwords from elsewhere pause the account.
-- **Revoke everything.** In **Settings → Profile**, it ends every session at both addresses, unlinks
-  the identity provider, revokes every app and API key, forgets every browser, and closes the
+- **Other alerts.** The person is also told when a passkey is added or removed (with the browser,
+  time and address it was added from), when an app is connected at the remote address (with where
+  the app takes the grant back to), and when their email changes, with the administrators told too;
+  when notifications go by email, the person's own goes to the address it was. Changing where the
+  node sends notifications tells every administrator through the place they went before, and an
+  alert not yet sent then is not sent elsewhere. Each alert says whether it also went out through
+  the node's notifications: sending, sent, not sent and why, or shown in Stuga only.
+- **Revoke everything.** In **Settings → Profile**, it ends every session at both addresses, removes
+  every passkey, unlinks the identity provider, revokes every app and API key, forgets every browser, and closes the
   invite and share links the person made; the new password chosen there is the way back in. An
   administrator does it for someone under **Account recovery**, which removes their password too
   and gives a password link to send them. Both take a session confirmed in the last five minutes.
@@ -245,6 +263,10 @@ from the one on `BIND` and `PORT`. The relay reaches it through the connector.
   again at the remote address, from a session signed in or confirmed in the last five minutes. API
   keys work at both. Every request looks its session up, so
   signing out or a password change ends a session's access tokens at once, on both addresses.
+- **Identity providers.** A session there that began through the identity provider ends after 12
+  hours, and the sign-in page asks the provider again. Removing someone at the provider ends no
+  session, key or passkey they already have, and a passkey or password they added signs in without
+  the provider: to cut someone off at once, an administrator uses Revoke everything.
 - **Before signing in.** A visitor who has not signed in reaches the app's pages, sign-in, OAuth
   discovery and agent installs, and nothing else: every other request needs a credential that works
   there, and is refused before its body is read. Sign-in requests take 16 KiB at most and must be
@@ -252,13 +274,18 @@ from the one on `BIND` and `PORT`. The relay reaches it through the connector.
   at a time at most from one source, and each has 10 seconds to arrive. A client registers over
   OAuth at most 200 times an hour. `/ready` and the issuer documents
   (`/.well-known/jwks.json`, `/.well-known/openid-configuration`) answer 404 there.
-- **No setup.** The node cannot be claimed there: its setup code works only on the network. Invite
-  links work when they have a use limit and an expiry, as the invite dialog makes them there; a link
-  with no limit or no expiry admits people only on the network.
+- **No setup.** The node cannot be claimed there: its setup code works only on the network.
+- **Links you share.** Invite and password links open where their maker is, unless they choose:
+  while remote access is on, the dialogs offer **For someone on this network** and **For someone
+  anywhere**, which opens at the remote address. A link to the network's address says it opens only
+  on this network. Where the node's own address is this computer only (`PUBLIC_ORIGIN` on
+  `localhost`), links are for someone anywhere unless chosen otherwise. A link for someone anywhere
+  has a use limit and an expiry; a link with no limit or no expiry admits people only on the network.
 - **HSTS.** Every answer carries `Strict-Transport-Security: max-age=31536000`, without
   `includeSubDomains`. The network address never sends it.
-- **Links follow the address.** Links the node hands back, such as invite, share and reset links and
-  agents' endpoints, carry the remote address when asked there. Links it sends by itself, in
+- **Links follow the address.** Links the node hands back, such as share links and agents'
+  endpoints, carry the remote address when asked there, and invite and reset links the address their
+  maker chose. Links it sends by itself, in
   notifications for example, carry `PUBLIC_ORIGIN`.
 - **Agents** that connect there sign in there, and the resource they name is `<remote address>/mcp`.
   **Your AI agents** gives hosted clients, such as Claude on the web, the remote address while it is on
@@ -328,6 +355,9 @@ certificate is in place it gets a new credential, and only then asks for the con
   It turns remote access off as **Turn off** does, forgets the address, shows
   *This address moved to another computer.* and notifies its administrators once. It keeps its key
   files and its certificate, and turns on again only with a new code.
+- **Passkeys** are in the node's database, so a node restored from a backup keeps them and they
+  sign in as before. A restore code with a new, empty data directory keeps the address but no
+  passkeys: people sign in with a password and add one again.
 - **Backups** include the binding key and the certificate, so a restored node keeps its address. A
   backup restored on a second computer while the first still runs gives both the same address, and
   both show remote access on; whichever connects to the relay first gets the traffic. To keep the

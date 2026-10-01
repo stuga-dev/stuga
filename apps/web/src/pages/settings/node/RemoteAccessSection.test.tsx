@@ -199,6 +199,9 @@ describe("RemoteAccessSection", () => {
     expect(text()).toContain(`Certificate renews ${shortDate(ON.certificate!.renew_at!)}.`);
     expect(text()).toContain("Run the connector on this machine:");
     expect(text()).toContain(`frpc -c ${CONFIG}`);
+    // Which address to hand out, how people sign in there, and that the node's own stays on its network.
+    expect(text()).toContain(`Share ${ADDRESS}. Sign in there with a passkey or a password of 15 characters or more.`);
+    expect(text()).toContain("on your network. The remote address is the one to share.");
 
     await click(buttons("Turn off")[0]);
     expect(nodeApi.disableRemoteAccess).not.toHaveBeenCalled();

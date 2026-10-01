@@ -16,6 +16,7 @@ import {
   getSearchLanguages,
   initSchema,
   isSessionLive,
+  sessionLiveUntil,
   pgJobQueue,
   recordNodeBoot,
   runBootRepairs,
@@ -41,7 +42,7 @@ import { createSessionSockets } from "../auth/session-sockets.js";
 import { createRateLimiters } from "../http/rate-limit.js";
 import { withSecurityHeaders } from "../http/security-headers.js";
 import { createIdentityRouter, identityDb } from "../identity/index.js";
-import { alertsFor } from "../identity/alerts.js";
+import { alertsFor, settleChannelNotices } from "../identity/alerts.js";
 import { handleInternalRequest } from "../internal/routes.js";
 import { runMaintenanceTick } from "../jobs/maintenance.js";
 import { handleJobBatch } from "../jobs/worker.js";
@@ -227,7 +228,8 @@ async function boot(): Promise<void> {
 
   const keys = await loadOrCreateSigningKey(cfg.auth.keyFile);
   const verifier = createVerifier(cfg.auth, keys);
-  const sessionSockets = createSessionSockets();
+  // Every message a person's socket sends is checked against their sign-in (auth/session-sockets.ts).
+  const sessionSockets = createSessionSockets({ liveUntil: (session) => sessionLiveUntil(sql, session) });
 
   // ---- services ------------------------------------------------------------
   const snapshots = fsBlobStore(join(cfg.dataDir, "blobs", "snapshots"));
@@ -288,6 +290,8 @@ async function boot(): Promise<void> {
 
   // Before serving, so no import this run starts is taken for one the last run left unfinished.
   await purgeUnfinishedImports(env);
+  // Likewise a channel-change notice the last run was still sending.
+  await settleChannelNotices(sql);
 
   // ---- routers -------------------------------------------------------------
   const app = createApp(env);

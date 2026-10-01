@@ -1,9 +1,11 @@
 /** `/api/whoami`: who the caller is, the name they go by, how to reach them, and how a person signs in. */
-import { getSignInMethods, getUsers, revokeEverythingCounts, setDisplayName, setUserEmail } from "@stuga/db";
+import { getSignInMethods, getUserEmail, getUsers, revokeEverythingCounts, setDisplayName, setUserEmail } from "@stuga/db";
 import { isEmailShaped } from "@stuga/protocol/domain/username";
 import { isNodeAdmin } from "../authz/authz.js";
 import { error, json } from "../http/respond.js";
 import type { AccountCall, WorkspaceCall } from "../http/router.js";
+import { alertsFor } from "../identity/alerts.js";
+import { deviceLabel } from "../identity/devices.js";
 import { recentConfirmationRequired } from "../identity/recency.js";
 
 export async function getWhoami({ ctx }: WorkspaceCall): Promise<Response> {
@@ -30,7 +32,8 @@ export async function getWhoami({ ctx }: WorkspaceCall): Promise<Response> {
  * The name other people see, and the optional contact address. Both belong to
  * the person: an identity provider's email only seeds an account made through it.
  * The address is where the node's alerts about their sign-ins go, so changing it
- * takes a sign-in confirmed in the last five minutes.
+ * takes a sign-in confirmed in the last five minutes, and the person is told at the
+ * address it was, and the node's administrators too.
  */
 export async function updateWhoami({ ctx, req }: WorkspaceCall): Promise<Response> {
   const body = (await req.json().catch(() => ({}))) as { display_name?: unknown; email?: unknown };
@@ -60,8 +63,21 @@ export async function updateWhoami({ ctx, req }: WorkspaceCall): Promise<Respons
     out.display_name = name;
   }
   if (email !== undefined) {
+    const before = await getUserEmail(ctx.sql, ctx.alias);
     await setUserEmail(ctx.sql, ctx.alias, email);
     out.email = email;
+    if ((before ?? null) !== email) {
+      const [row] = await getUsers(ctx.sql, [ctx.alias], ctx.workspaceId);
+      await alertsFor(ctx.env).emailChanged({
+        alias: ctx.alias,
+        username: row?.username ?? ctx.alias,
+        name: name ?? ctx.displayName,
+        device: deviceLabel(req.headers.get("user-agent")),
+        at: new Date(),
+        from: before,
+        to: email,
+      });
+    }
   }
   return json(out);
 }

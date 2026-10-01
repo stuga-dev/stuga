@@ -1,7 +1,7 @@
 /**
  * "Confirm it's you": asked when the node wants a recent confirmation before a change that hands out
- * a way in (lib/session/reauth.ts). With a password, the change goes ahead as soon as it is
- * confirmed. Through the identity provider the page leaves and comes back with ?reauth=, and the
+ * a way in (lib/session/reauth.ts). With a passkey (at the remote address, for someone who has one
+ * there) or a password, the change goes ahead as soon as it is confirmed. Through the identity provider the page leaves and comes back with ?reauth=, and the
  * change is made again from there. Mounted once, for the whole app.
  */
 import { useEffect, useState } from "react";
@@ -16,6 +16,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { useToast } from "@astryxdesign/core/Toast";
 import { providerLabel } from "../lib/session/auth-config";
 import { AuthError, describeError } from "../lib/session/errors";
+import { PasskeyCancelled, confirmWithPasskey, passkeysOffered } from "../lib/session/passkey";
 import { setConfirmer, type ConfirmMethod } from "../lib/session/reauth";
 import { confirmWithPassword, confirmWithProvider } from "../lib/session/sign-in";
 
@@ -40,6 +41,8 @@ export function ConfirmIdentity() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Typing the password instead of using the passkey this person has. */
+  const [usePassword, setUsePassword] = useState(false);
 
   useEffect(
     () =>
@@ -48,6 +51,7 @@ export function ConfirmIdentity() {
           new Promise<boolean>((resolve) => {
             setPassword("");
             setError(null);
+            setUsePassword(false);
             setAsking({ methods, resolve });
           }),
       ),
@@ -79,6 +83,19 @@ export function ConfirmIdentity() {
     }
   }
 
+  async function withPasskey() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await confirmWithPasskey();
+      finish(true);
+    } catch (err) {
+      setError(err instanceof PasskeyCancelled ? err.message : describeError(err));
+      setBusy(false);
+    }
+  }
+
   async function withProvider() {
     setBusy(true);
     try {
@@ -91,7 +108,9 @@ export function ConfirmIdentity() {
   }
 
   const methods = asking?.methods ?? [];
-  const byPassword = methods.includes("password");
+  const passkeyOffered = methods.includes("passkey") && passkeysOffered();
+  const byPasskey = passkeyOffered && !usePassword;
+  const byPassword = methods.includes("password") && !byPasskey;
   const label = providerLabel();
   const byProvider = methods.includes("provider") && label !== null;
 
@@ -102,7 +121,11 @@ export function ConfirmIdentity() {
         content={
           <LayoutContent>
             <VStack gap={3}>
-              {byPassword ? (
+              {byPasskey ? (
+                <Text type="supporting" color="secondary">
+                  Use your passkey to continue.
+                </Text>
+              ) : byPassword ? (
                 <>
                   <Text type="supporting" color="secondary">
                     Enter your password to continue.
@@ -126,6 +149,9 @@ export function ConfirmIdentity() {
                 </Text>
               )}
               {!byPassword && error && <Banner status="error" title={error} />}
+              {byPasskey && methods.includes("password") && (
+                <Button label="Use password instead" variant="ghost" size="sm" onClick={() => setUsePassword(true)} isDisabled={busy} />
+              )}
             </VStack>
           </LayoutContent>
         }
@@ -133,10 +159,12 @@ export function ConfirmIdentity() {
           <LayoutFooter>
             <HStack gap={2} justify="end">
               <Button label="Cancel" variant="ghost" onClick={() => finish(false)} isDisabled={busy} />
-              {byPassword && byProvider && (
+              {(byPassword || byPasskey) && byProvider && (
                 <Button label={`Use ${label}`} variant="secondary" onClick={() => void withProvider()} isDisabled={busy} />
               )}
-              {byPassword ? (
+              {byPasskey ? (
+                <Button label="Continue" variant="primary" onClick={() => void withPasskey()} isLoading={busy} />
+              ) : byPassword ? (
                 <Button label="Continue" variant="primary" onClick={() => void withPassword()} isDisabled={!password} isLoading={busy} />
               ) : byProvider ? (
                 <Button label={`Continue with ${label}`} variant="primary" onClick={() => void withProvider()} isLoading={busy} />

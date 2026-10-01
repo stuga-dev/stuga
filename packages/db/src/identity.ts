@@ -583,6 +583,8 @@ export interface NewRefreshSession {
   expiresAt: Date | string;
   arrival: CredentialArrival;
   signedInWith: SignedInWith;
+  /** The passkey a sign-in with one used; set exactly when `signedInWith` is "passkey". */
+  passkeyId?: string | null;
   /** Required at the remote address, absent on the node's own network (a CHECK holds it so). */
   absoluteExpiresAt: Date | string | null;
 }
@@ -605,11 +607,11 @@ export async function createRefreshSessionIf(
     if (requires && !(await stillHolds(tx, input.alias, requires))) return null;
     const rows = await tx<RefreshSessionRow[]>`
       INSERT INTO refresh_sessions
-        (id, session_id, alias, token_hash, expires_at, arrival, signed_in_with, signed_in_at, confirmed_at, absolute_expires_at)
+        (id, session_id, alias, token_hash, expires_at, arrival, signed_in_with, passkey_id, signed_in_at, confirmed_at, absolute_expires_at)
       VALUES (
         ${input.id}, ${input.sessionId}, ${input.alias}, ${input.tokenHash},
         LEAST(${input.expiresAt}::timestamptz, ${input.absoluteExpiresAt}::timestamptz),
-        ${input.arrival}, ${input.signedInWith}, now(), now(), ${input.absoluteExpiresAt}
+        ${input.arrival}, ${input.signedInWith}, ${input.passkeyId ?? null}, now(), now(), ${input.absoluteExpiresAt}
       )
       RETURNING *`;
     return rows[0]!;
@@ -648,10 +650,10 @@ export async function rotateRefreshSession(
     if (!parent) return null;
     const rows = await tx<RefreshSessionRow[]>`
       INSERT INTO refresh_sessions
-        (id, session_id, alias, token_hash, expires_at, arrival, signed_in_with, signed_in_at, confirmed_at, absolute_expires_at)
+        (id, session_id, alias, token_hash, expires_at, arrival, signed_in_with, passkey_id, signed_in_at, confirmed_at, absolute_expires_at)
       SELECT ${input.id}, session_id, alias, ${input.nextTokenHash},
              LEAST(${input.expiresAt}::timestamptz, absolute_expires_at),
-             arrival, signed_in_with, signed_in_at, confirmed_at, absolute_expires_at
+             arrival, signed_in_with, passkey_id, signed_in_at, confirmed_at, absolute_expires_at
       FROM refresh_sessions WHERE id = ${parent}
       RETURNING *`;
     return rows[0] ?? null;
@@ -672,9 +674,9 @@ export async function siblingRefreshSession(
     await lockSignIns(tx, owner.alias, "shared");
     const rows = await tx<RefreshSessionRow[]>`
       INSERT INTO refresh_sessions
-        (id, session_id, alias, token_hash, expires_at, arrival, signed_in_with, signed_in_at, confirmed_at, absolute_expires_at)
+        (id, session_id, alias, token_hash, expires_at, arrival, signed_in_with, passkey_id, signed_in_at, confirmed_at, absolute_expires_at)
       SELECT ${input.id}, session_id, alias, ${input.tokenHash}, expires_at,
-             arrival, signed_in_with, signed_in_at, confirmed_at, absolute_expires_at
+             arrival, signed_in_with, passkey_id, signed_in_at, confirmed_at, absolute_expires_at
       FROM refresh_sessions
       WHERE token_hash = ${input.of} AND revoked_at IS NULL AND expires_at > now()
       RETURNING *`;
@@ -691,6 +693,24 @@ export async function isSessionLive(sql: Sql, input: { sessionId: string; alias:
   const rows = await sql<{ live: boolean }[]>`
     SELECT EXISTS (${liveSessionQuery(sql, input)}) AS live`;
   return rows[0]?.live === true;
+}
+
+/**
+ * Until when the sign-in is on unless something ends it sooner: the latest end, idle or fixed, of its
+ * live rows. Null when it is not live. A renewal moves it; a revocation ends it.
+ */
+export async function sessionLiveUntil(
+  sql: Sql,
+  input: { sessionId: string; alias: string; arrival: CredentialArrival },
+): Promise<Date | null> {
+  const rows = await sql<{ until: Date | null }[]>`
+    SELECT max(LEAST(expires_at, COALESCE(absolute_expires_at, 'infinity'::timestamptz))) AS until
+    FROM refresh_sessions
+    WHERE session_id = ${input.sessionId} AND alias = ${input.alias} AND arrival = ${input.arrival}
+      AND revoked_at IS NULL AND expires_at > now()
+      AND (absolute_expires_at IS NULL OR absolute_expires_at > now())`;
+  const until = rows[0]?.until;
+  return until ? new Date(until) : null;
 }
 
 /**

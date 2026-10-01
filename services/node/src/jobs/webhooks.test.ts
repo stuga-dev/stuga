@@ -36,7 +36,7 @@ function deps(overrides: Partial<JobsDb> = {}, fetchImpl?: typeof fetch): JobDep
   return {
     db,
     embed: vi.fn(async () => ({ embeddings: [], inputTokens: 0 })) as unknown as JobDeps["embed"],
-    deliver: vi.fn(async () => {}),
+    deliver: vi.fn(async () => null),
     fetch: fetchImpl ?? (vi.fn(async () => new Response("", { status: 200 })) as unknown as typeof fetch),
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   };

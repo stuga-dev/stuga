@@ -164,8 +164,13 @@ async function remoteListener(publicOrigin: string) {
   listener.setCertificate(makeTestCert({ dnsNames: [REMOTE_HOST] }));
   await listener.listen();
   cleanups.push(() => listener.close());
-  return async (path: string, headers: Record<string, string> = {}, method = "GET"): Promise<Answer> => {
-    const res = await remoteRequest(await dialRemote(socketPath, { servername: REMOTE_HOST }), { path, method, headers });
+  return async (path: string, headers: Record<string, string> = {}, method = "GET", body?: string): Promise<Answer> => {
+    const res = await remoteRequest(await dialRemote(socketPath, { servername: REMOTE_HOST }), {
+      path,
+      method,
+      headers: body === undefined ? headers : { ...headers, "content-length": String(Buffer.byteLength(body)) },
+      ...(body === undefined ? {} : { body }),
+    });
     return { status: res.status, headers: res.headers, text: res.text };
   };
 }
@@ -203,8 +208,15 @@ describe("the remote address, to a visitor who has not signed in", () => {
     expect((await get("/.well-known/openid-configuration")).status).toBe(404);
     // Nor what only the LAN answers.
     for (const path of ["/.well-known/jwks.json", "/ready"]) expect((await get(path)).status, path).toBe(404);
+    // A passkey sign-in's challenge names this address alone, as the relying party.
+    const passkey = await get("/auth/passkey/options", { "content-type": "application/json" }, "POST", JSON.stringify({ purpose: "sign-in" }));
+    expect(passkey.status).toBe(200);
+    expect(`${JSON.stringify(passkey.headers)}\n${passkey.text}`).not.toContain(LAN_NAME);
+    expect(JSON.parse(passkey.text).publicKey).toMatchObject({ rpId: REMOTE_HOST, userVerification: "required" });
+    expect(JSON.parse((await get("/auth/config")).text).passkey).toBe(true);
     // What needs a credential says only that, without reading on.
     expect((await get("/api/models")).status).toBe(401);
+    expect((await get("/auth/passkey/add", { "content-type": "application/json" }, "POST", "{}")).status).toBe(401);
     expect((await get("/api/no-such-route", {}, "POST")).status).toBe(401);
   });
 });

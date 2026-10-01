@@ -17,6 +17,7 @@ import { PersonPicker, type PersonItem } from "../../../ui/PersonPicker";
 import { NodeAudit } from "./NodeAudit";
 import { IdentityProviderSection } from "./IdentityProviderSection";
 import { SectionStatusBanners, useSectionStatus } from "./status";
+import { LinkAddressSwitch, localOnlyNote, useLinkAddresses, type LinkAddress } from "../../../ui/LinkAddress";
 
 /**
  * Who may reach and administer this node, most used first: administrators,
@@ -36,7 +37,13 @@ export function AccessSection({
   const [newAdmin, setNewAdmin] = useState<PersonItem | null>(null);
   const [resetFor, setResetFor] = useState<PersonItem | null>(null);
   /** The link just minted, shown once: only its hash is kept. */
-  const [reset, setReset] = useState<{ url: string; name: string } | null>(null);
+  const [reset, setReset] = useState<{ url: string; name: string; address: LinkAddress } | null>(null);
+  const addresses = useLinkAddresses(true);
+  /** Where a password link opens, while there is a choice: the administrator's own address until they pick. */
+  const [chosenAddress, setChosenAddress] = useState<LinkAddress | null>(null);
+  const linkAddress: LinkAddress = chosenAddress ?? addresses?.default ?? "local";
+  /** Sent only when there is a choice; otherwise the node points it where the administrator is. */
+  const requested = addresses?.remote ? linkAddress : undefined;
   /** Revoke everything for `resetFor`, once its counts are in. */
   const [revoking, setRevoking] = useState<{ person: PersonItem; counts: RevokeEverythingCounts | null } | null>(null);
   const [revokeBusy, setRevokeBusy] = useState(false);
@@ -67,8 +74,8 @@ export function AccessSection({
     if (!revoking || revokeBusy) return;
     setRevokeBusy(true);
     try {
-      const { password_link } = await NodeApi.revokeEverythingFor(revoking.person.id);
-      setReset({ url: password_link.url, name: revoking.person.label });
+      const { password_link } = await NodeApi.revokeEverythingFor(revoking.person.id, requested);
+      setReset({ url: password_link.url, name: revoking.person.label, address: linkAddress });
       setResetFor(null);
       setRevoking(null);
     } catch (e) {
@@ -154,6 +161,7 @@ export function AccessSection({
         <Text type="supporting" color="secondary">
           Create a one-time password reset link. Copy it now; using it ends the account’s other sessions.
         </Text>
+        <LinkAddressSwitch addresses={addresses} value={linkAddress} onChange={setChosenAddress} />
         <HStack gap={2} vAlign="end">
           <StackItem size="fill">
             <PersonPicker
@@ -179,9 +187,9 @@ export function AccessSection({
               const picked = resetFor;
               const username = picked?.auxiliaryData?.username;
               if (!picked || !username) return;
-              void NodeApi.mintPasswordReset(username)
+              void NodeApi.mintPasswordReset(username, requested)
                 .then((r) => {
-                  setReset({ url: r.url, name: picked.label });
+                  setReset({ url: r.url, name: picked.label, address: linkAddress });
                   setResetFor(null);
                 })
                 .catch(status.fail);
@@ -192,7 +200,12 @@ export function AccessSection({
           <Banner
             status="info"
             title={`Password link for ${reset.name}. Copy it now — it is not shown again`}
-            description={<Text type="supporting">{reset.url}</Text>}
+            description={
+              <VStack gap={1}>
+                <Text type="supporting">{reset.url}</Text>
+                {localOnlyNote(addresses, reset.address) && <Text type="supporting">{localOnlyNote(addresses, reset.address)}</Text>}
+              </VStack>
+            }
           />
         )}
         <Dialog isOpen={revoking !== null} onOpenChange={(o) => !o && !revokeBusy && setRevoking(null)} purpose="form" width={440}>
@@ -266,6 +279,7 @@ export function AccessSection({
 /** What the confirmation says Revoke everything takes from someone, from the node's count. */
 export function memberRevokeSummary(counts: RevokeEverythingCounts | null, provider: string | null): string {
   const parts = ["their password"];
+  if (counts && counts.passkeys > 0) parts.push(counts.passkeys === 1 ? "a passkey" : `${counts.passkeys} passkeys`);
   if (counts?.provider) parts.push(`${provider ?? "identity provider"} sign-in`);
   if (counts && counts.apps > 0) parts.push(counts.apps === 1 ? "a connected app" : `${counts.apps} connected apps`);
   if (counts && counts.api_keys > 0) parts.push(counts.api_keys === 1 ? "an API key" : `${counts.api_keys} API keys`);

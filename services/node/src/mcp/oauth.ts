@@ -32,6 +32,7 @@ import { REQUEST_HOST_HEADER } from "../platform/http-server.js";
 import { arrivalOf, clientBucket, servedOrigin } from "../http/arrival.js";
 import type { NodeEnv } from "../env.js";
 import { buildAccountContext, Unauthorized } from "../auth/context.js";
+import { alertsFor } from "../identity/alerts.js";
 import { recentConfirmationRequired } from "../identity/recency.js";
 import { error, json } from "../http/respond.js";
 import { isIpLiteral, isLocalName, isLoopbackHost, isNonPublicAddress } from "../net/addresses.js";
@@ -344,6 +345,16 @@ async function resolveClient(env: NodeEnv, req: Request, clientId: string): Prom
 }
 
 /** The host that vouches for a client: its metadata document's, or none for one that registered itself. */
+/** Where a grant goes back to, as an alert names it: the redirect's host, or a native app's scheme. */
+function redirectPlace(redirectUri: string): string {
+  try {
+    const u = new URL(redirectUri);
+    return u.host || u.protocol.replace(/:$/, "");
+  } catch {
+    return "an unknown address";
+  }
+}
+
 function verifiedHost(client: Pick<OauthClientRow, "kind" | "client_id">): string | null {
   return client.kind === "cimd" ? new URL(client.client_id).host : null;
 }
@@ -522,6 +533,16 @@ export async function handleConsent(env: NodeEnv, req: Request): Promise<Respons
     // Exchanged only at the listener the person consented at, and its tokens good only there.
     arrival: arrivalOf(req),
   });
+  // An app that can act for someone from anywhere: they hear of it, as of an API key.
+  if (arrivalOf(req) === "remote") {
+    await alertsFor(env).appConnected({
+      alias: account.alias,
+      app: client.client_name,
+      appHost: verifiedHost(client) ?? redirectPlace(redirectUri),
+      grantId: sha256Hex(code).slice(0, 16),
+      remoteHost: new URL(servedOrigin(req)).host,
+    });
+  }
   return back({ code });
 }
 

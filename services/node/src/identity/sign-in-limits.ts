@@ -60,6 +60,10 @@ export interface SignInLimits {
   failed(attempt: Attempt): number | null;
   /** A password the remote rule refused unhashed: never the account's count, the source's. */
   refusedUnhashed(attempt: Attempt): void;
+  /** When a passkey sign-in from this source may be tried again: its source pause only, never an account's. */
+  sourcePausedFor(attempt: Pick<Attempt, "arrival" | "source">): { retryAfterSeconds: number } | null;
+  /** A passkey that did not sign in: counted against its source, at the remote address. */
+  passkeyFailed(attempt: Pick<Attempt, "arrival" | "source">): void;
   /** Whether the remote address's wrong passwords this minute have used up the budget. */
   remoteBudgetSpent(): boolean;
   /** One zxcvbn score at the remote address, if the second's budget has room. */
@@ -144,7 +148,7 @@ export function createSignInLimits(options: SignInLimitsOptions = {}): SignInLim
   }
 
   /** The source buckets an attempt at the remote address counts in: its address or /64, and its /48. */
-  function sourceBuckets(a: Attempt): Array<{ key: string; limit: number }> {
+  function sourceBuckets(a: Pick<Attempt, "arrival" | "source">): Array<{ key: string; limit: number }> {
     if (a.arrival !== "remote") return [];
     const address = unmappedAddress(a.source);
     const buckets = [{ key: `ip:${perSubnet(address)}`, limit: SOURCE_FAILURES_PER_HOUR }];
@@ -231,6 +235,17 @@ export function createSignInLimits(options: SignInLimitsOptions = {}): SignInLim
 
     refusedUnhashed(a) {
       if (a.device) return;
+      for (const { key, limit } of sourceBuckets(a)) hit(windowOf(sources, key), limit, SOURCE_PAUSE_MS);
+    },
+
+    sourcePausedFor(a) {
+      const t = now();
+      let until = 0;
+      for (const { key } of sourceBuckets(a)) until = Math.max(until, windowPausedUntil(sources, key));
+      return until > t ? { retryAfterSeconds: Math.ceil((until - t) / 1000) } : null;
+    },
+
+    passkeyFailed(a) {
       for (const { key, limit } of sourceBuckets(a)) hit(windowOf(sources, key), limit, SOURCE_PAUSE_MS);
     },
 

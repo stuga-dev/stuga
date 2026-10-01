@@ -127,6 +127,7 @@ describe("loadAuthConfig", () => {
       origin: "https://acme.example",
       branding: { accentColor: "#7c3aed" },
       remoteOrigin: null,
+      passkey: false,
     });
   });
 
@@ -168,6 +169,7 @@ describe("loadAuthConfig", () => {
       origin: null,
       branding: { accentColor: null },
       remoteOrigin: null,
+      passkey: false,
     });
     expect(authConfigUnavailable()).toBe(true);
     expect(nodeUnclaimed()).toBe(false);

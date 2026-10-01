@@ -4,6 +4,8 @@
  */
 import { getAcl, setAcl } from "../api/acl.js";
 import { getRevokeEverythingCounts, getWhoami, updateWhoami } from "../api/account.js";
+import { dismissOwnPasskeyOffer, listOwnPasskeys, removeOwnPasskey, renameOwnPasskey } from "../api/passkeys.js";
+import { getLinkAddresses } from "../api/link-addresses.js";
 import {
   ask,
   createAskThreadRoute,
@@ -195,6 +197,10 @@ const CONNECTIONS = { auth: "account", humanOnly: "agents cannot manage connecti
 /** How a person gets in is theirs, and their administrators', to take back; never an agent's. */
 const REVOKE_EVERYTHING = { auth: "account", humanOnly: "agents cannot change how a person signs in" } as const;
 const RECOVERY = { ...NODE, humanOnly: "agents cannot change how a person signs in" };
+/** A person's passkeys are theirs alone. */
+const PASSKEYS = { auth: "account", humanOnly: "agents cannot change how a person signs in" } as const;
+/** Where the links a person makes can point: what the invite and password link dialogs offer. */
+const LINK_ADDRESSES = { auth: "account", humanOnly: "agents do not make links for people" } as const;
 
 const DOC = "/api/docs/([^/]+)";
 const DATABASE = "/api/databases/([^/]+)";
@@ -276,6 +282,12 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: "PATCH", path: /^\/api\/me\/connections\/([^/]+)$/, ...CONNECTIONS, handler: updateConnection },
   { method: "DELETE", path: /^\/api\/me\/connections\/([^/]+)$/, ...CONNECTIONS, handler: revokeConnection },
   { method: "GET", path: "/api/me/revoke-everything", ...REVOKE_EVERYTHING, handler: getRevokeEverythingCounts },
+  { method: "GET", path: "/api/me/passkeys", ...PASSKEYS, handler: listOwnPasskeys },
+  { method: "PATCH", path: /^\/api\/me\/passkeys\/([^/]+)$/, ...PASSKEYS, handler: renameOwnPasskey },
+  { method: "DELETE", path: /^\/api\/me\/passkeys\/([^/]+)$/, ...PASSKEYS, handler: removeOwnPasskey },
+  { method: "*", path: /^\/api\/me\/passkeys(\/.*)?$/, ...PASSKEYS, handler: methodNotAllowed },
+  { method: "POST", path: "/api/me/passkey-offer/dismiss", ...PASSKEYS, handler: dismissOwnPasskeyOffer },
+  { method: "GET", path: "/api/link-addresses", ...LINK_ADDRESSES, handler: getLinkAddresses },
   { method: "GET", path: "/api/me/nodes", ...OTHER_NODES, handler: listOtherNodes },
   { method: "POST", path: "/api/me/nodes", ...OTHER_NODES, handler: addOtherNode },
   { method: "DELETE", path: /^\/api\/me\/nodes\/([^/]+)$/, ...OTHER_NODES, handler: removeOtherNode },

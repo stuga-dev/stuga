@@ -4,7 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, StrictMode } from "react";
 import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+const webauthn = vi.hoisted(() => ({ startAuthentication: vi.fn(), supported: true, autofill: false }));
+vi.mock("@simplewebauthn/browser", async (orig) => ({
+  ...(await orig<typeof import("@simplewebauthn/browser")>()),
+  browserSupportsWebAuthn: () => webauthn.supported,
+  browserSupportsWebAuthnAutofill: async () => webauthn.autofill,
+  startAuthentication: webauthn.startAuthentication,
+}));
 import { Login } from "./Login";
+import { passkeyOfferDue } from "../lib/session/passkey-offer";
 import { setAuthConfigForTest } from "../lib/session/auth-config";
 import {
   hasSsoHint,
@@ -421,5 +429,150 @@ describe("Login with an identity provider", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(button("Sign in")).toBeTruthy();
     expect([...host.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Continue with"))).toBe(false);
+  });
+});
+
+describe("Login with a passkey, at the remote address", () => {
+  const OPTIONS = { challenge: "c", rpId: "k7f3q2.mystuga.com", allowCredentials: [] };
+  const TOKENS = { access_token: "at", refresh_token: "rt", expires_in: 3600, token_type: "Bearer" };
+  const remote = () => setAuthConfigForTest({ provider: null, nodeName: NODE_NAME, passkey: true, remoteOrigin: "https://k7f3q2.mystuga.com" });
+  beforeEach(() => {
+    webauthn.startAuthentication.mockReset();
+    webauthn.supported = true;
+    webauthn.autofill = false;
+  });
+
+  it("offers the button and the username's autofill there, and signs in with what the browser hands back", async () => {
+    remote();
+    webauthn.startAuthentication.mockResolvedValue({ id: "cred-1", rawId: "cred-1", type: "public-key", response: {} });
+    fetchMock.mockResolvedValueOnce(reply(200, { publicKey: OPTIONS })).mockResolvedValueOnce(reply(200, TOKENS));
+    await open();
+    expect(input("Username")?.getAttribute("autocomplete")).toBe("username webauthn");
+    await click("Sign in with a passkey");
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(["/auth/passkey/options", "/auth/passkey/sign-in"]);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]!.body))).toEqual({ purpose: "sign-in" });
+    expect(webauthn.startAuthentication).toHaveBeenCalledWith({ optionsJSON: OPTIONS, useBrowserAutofill: false });
+    expect(host.querySelector("#app")).not.toBeNull();
+  });
+
+  it("waits on the username's suggestions when the browser offers passkeys there", async () => {
+    remote();
+    webauthn.autofill = true;
+    let pick!: (v: unknown) => void;
+    webauthn.startAuthentication.mockReturnValue(new Promise((r) => (pick = r)));
+    fetchMock.mockResolvedValueOnce(reply(200, { publicKey: OPTIONS })).mockResolvedValueOnce(reply(200, TOKENS));
+    await open();
+    await settle();
+    expect(webauthn.startAuthentication).toHaveBeenCalledWith({ optionsJSON: OPTIONS, useBrowserAutofill: true });
+    await act(async () => pick({ id: "cred-1", rawId: "cred-1", type: "public-key", response: {} }));
+    await settle();
+    expect(host.querySelector("#app")).not.toBeNull();
+  });
+
+  describe("the username's autofill, whose challenge lapses after five minutes", () => {
+    const options = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/auth/passkey/options").length;
+    const advance = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      remote();
+      webauthn.autofill = true;
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it("asks for a fresh challenge before the one it holds lapses", async () => {
+      webauthn.startAuthentication.mockReturnValue(new Promise(() => {}));
+      fetchMock.mockImplementation(async () => reply(200, { publicKey: OPTIONS }));
+      await open();
+      await settle();
+      expect(options()).toBe(1);
+      await advance(4 * 60_000);
+      expect(options()).toBe(2);
+      expect(webauthn.startAuthentication).toHaveBeenCalledTimes(2);
+    });
+
+    it("takes a refusal of a lapsed challenge, after the tab slept, for what it is: no error, and a fresh one", async () => {
+      let pick!: (v: unknown) => void;
+      webauthn.startAuthentication.mockReturnValueOnce(new Promise((r) => (pick = r))).mockReturnValue(new Promise(() => {}));
+      fetchMock.mockImplementation(async (url) =>
+        String(url) === "/auth/passkey/sign-in" ? reply(401, { error: "passkey_invalid" }) : reply(200, { publicKey: OPTIONS }),
+      );
+      await open();
+      await settle();
+      // The phone slept: the clock moved, the renewal timer did not run.
+      vi.setSystemTime(Date.now() + 4.5 * 60_000);
+      await act(async () => pick({ id: "cred-1", rawId: "cred-1", type: "public-key", response: {} }));
+      await advance(0);
+      expect(host.textContent).not.toContain("That passkey didn’t sign in here");
+      expect(options()).toBe(2);
+    });
+
+    it("says so when a fresh challenge is refused, and offers the passkey again", async () => {
+      let pick!: (v: unknown) => void;
+      webauthn.startAuthentication.mockReturnValueOnce(new Promise((r) => (pick = r))).mockReturnValue(new Promise(() => {}));
+      fetchMock.mockImplementation(async (url) =>
+        String(url) === "/auth/passkey/sign-in" ? reply(401, { error: "passkey_invalid" }) : reply(200, { publicKey: OPTIONS }),
+      );
+      await open();
+      await settle();
+      await act(async () => pick({ id: "cred-1", rawId: "cred-1", type: "public-key", response: {} }));
+      await settle();
+      expect(host.textContent).toContain("That passkey didn’t sign in here");
+      await advance(2_000);
+      expect(webauthn.startAuthentication).toHaveBeenCalledTimes(2);
+    });
+
+    it("waits while the button's own ceremony runs, and comes back when it ends without signing in", async () => {
+      webauthn.startAuthentication.mockImplementation(async ({ useBrowserAutofill }: { useBrowserAutofill: boolean }) => {
+        if (useBrowserAutofill) return new Promise(() => {});
+        throw Object.assign(new Error("closed"), { name: "NotAllowedError" });
+      });
+      fetchMock.mockImplementation(async () => reply(200, { publicKey: OPTIONS }));
+      await open();
+      await settle();
+      await click("Sign in with a passkey");
+      await settle();
+      const calls = webauthn.startAuthentication.mock.calls.map(([o]) => (o as { useBrowserAutofill: boolean }).useBrowserAutofill);
+      expect(calls).toEqual([true, false, true]);
+    });
+  });
+
+  it("says nothing went wrong when the person closes the prompt", async () => {
+    remote();
+    webauthn.startAuthentication.mockRejectedValue(Object.assign(new Error("closed"), { name: "NotAllowedError" }));
+    fetchMock.mockResolvedValueOnce(reply(200, { publicKey: OPTIONS }));
+    await open();
+    await click("Sign in with a passkey");
+    expect(host.textContent).toContain("The passkey prompt closed. Try again.");
+  });
+
+  it("is not there on the node's own network, or where the browser has no passkeys", async () => {
+    await open();
+    expect(button("Sign in with a passkey")).toBeUndefined();
+    expect(input("Username")?.getAttribute("autocomplete")).toBe("username");
+    remote();
+    webauthn.supported = false;
+    await open();
+    expect(button("Sign in with a passkey")).toBeUndefined();
+  });
+
+  it("notes Sign in faster next time when a password sign-in there brings the offer, and not otherwise", async () => {
+    remote();
+    fetchMock.mockResolvedValueOnce(reply(200, { ...TOKENS, passkey_offer: true }));
+    await open();
+    await type("Username", "bo");
+    await type("Password", "trumpet walnut ceiling");
+    await click("Sign in");
+    expect(passkeyOfferDue()).toBe(true);
+  });
+
+  it("notes no offer when the sign-in brings none", async () => {
+    remote();
+    fetchMock.mockResolvedValueOnce(reply(200, TOKENS));
+    await open();
+    await type("Username", "bo");
+    await type("Password", "trumpet walnut ceiling");
+    await click("Sign in");
+    expect(host.querySelector("#app")).not.toBeNull();
+    expect(passkeyOfferDue()).toBe(false);
   });
 });

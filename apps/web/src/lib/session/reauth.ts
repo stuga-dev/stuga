@@ -10,7 +10,7 @@ import { AuthError } from "./errors";
 /** On a `reauth_required` answer. */
 export const REAUTH_HEADER = "x-stuga-reauth";
 
-export type ConfirmMethod = "password" | "provider";
+export type ConfirmMethod = "passkey" | "password" | "provider";
 
 /** Asks the person to confirm with one of `methods`; true once they have. */
 type Confirmer = (methods: ConfirmMethod[]) => Promise<boolean>;
@@ -26,7 +26,7 @@ export function setConfirmer(fn: Confirmer): () => void {
 }
 
 function asMethods(raw: unknown): ConfirmMethod[] {
-  return Array.isArray(raw) ? raw.filter((m): m is ConfirmMethod => m === "password" || m === "provider") : [];
+  return Array.isArray(raw) ? raw.filter((m): m is ConfirmMethod => m === "passkey" || m === "password" || m === "provider") : [];
 }
 
 /** The methods a refusal asks to confirm with, or null when it asks for nothing of the kind. */

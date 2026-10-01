@@ -769,6 +769,32 @@ describe("sockets", () => {
     expect(env.log).toEqual(["message:hello"]);
   });
 
+  it("passes each message through the socket's gate, which the host set, and never the heartbeat", async () => {
+    const env: Env = { log: [] };
+    const ns = host(tempDir(), env);
+    const res = await ns.get("gated").fetch("http://actor/connect", { headers: { upgrade: "websocket" } });
+    const server = serverSocketOf(res);
+    const held: Array<() => void> = [];
+    server.gate = { admit: (deliver) => void held.push(deliver) };
+    const { ws, listeners, sent } = fakeWs();
+    attachSocket(server, ws as never);
+
+    listeners.get("message")!(Buffer.from("ping"), false);
+    expect(sent).toEqual(["welcome", "pong"]);
+    listeners.get("message")!(Buffer.from("first"), false);
+    listeners.get("message")!(Buffer.from("second"), false);
+    expect(held).toHaveLength(2);
+    expect(env.log).toEqual([]);
+    held[0]!();
+    await until(() => env.log.includes("message:first"));
+    expect(env.log).toEqual(["message:first"]);
+    // Let on only after the socket closed: it goes nowhere.
+    server.close(4401, "signed out");
+    held[1]!();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(env.log).not.toContain("message:second");
+  });
+
   it("refuses a socket that did not come from a SocketPair", async () => {
     let caught: unknown = null;
     class Bad implements Actor {

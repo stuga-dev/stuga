@@ -67,6 +67,8 @@ export async function purgeKnownDevices(sql: Sql, days = 400): Promise<number> {
 export interface RevokeEverythingCounts {
   /** Sign-ins still on, at either address. */
   sessions: number;
+  /** Passkeys, at any host. */
+  passkeys: number;
   /** Whether the account is linked to the identity provider. */
   provider: boolean;
   /** Apps signed in through OAuth, not yet revoked. */
@@ -102,6 +104,7 @@ export async function revokeEverythingCounts(sql: Sql, alias: string): Promise<R
     SELECT
       (u.oidc_sub IS NOT NULL) AS provider,
       (SELECT count(DISTINCT session_id)::int FROM refresh_sessions WHERE alias = ${alias} AND ${LIVE_SESSION(sql)}) AS sessions,
+      (SELECT count(*)::int FROM passkeys WHERE alias = ${alias}) AS passkeys,
       (SELECT count(*)::int FROM oauth_grants WHERE owner = ${alias} AND revoked_at IS NULL) AS apps,
       (SELECT count(*)::int FROM api_keys WHERE owner = ${alias} AND revoked_at IS NULL) AS api_keys,
       (SELECT count(*)::int FROM workspace_invites WHERE created_by = ${alias} AND ${LIVE_INVITE(sql)}) AS invites,
@@ -113,7 +116,7 @@ export async function revokeEverythingCounts(sql: Sql, alias: string): Promise<R
 
 /**
  * Take back every way into `alias`'s account, in one transaction: every sign-in at both addresses
- * ends, the identity provider is unlinked, every app and API key is revoked with its tokens and
+ * ends, every passkey is removed, the identity provider is unlinked, every app and API key is revoked with its tokens and
  * unexchanged codes, every browser is forgotten, unused password links stop working, and the
  * invite and share links they made close. `passwordHash` becomes the account's only way back in;
  * null removes the password, for an administrator who then hands over a password link. Null when
@@ -136,6 +139,8 @@ export async function revokeEverything(
       UPDATE refresh_sessions SET revoked_at = now()
       WHERE alias = ${alias} AND revoked_at IS NULL
       RETURNING session_id, (expires_at > now() AND (absolute_expires_at IS NULL OR absolute_expires_at > now())) AS live`;
+    // Their sign-ins' rows go with them, revoked just above.
+    const passkeys = await tx`DELETE FROM passkeys WHERE alias = ${alias} RETURNING credential_id`;
     await tx`UPDATE users SET oidc_sub = NULL, updated_at = now() WHERE alias = ${alias} AND oidc_sub IS NOT NULL`;
     await tx`DELETE FROM oidc_flows WHERE link_alias = ${alias}`;
     await tx`DELETE FROM oidc_tickets WHERE alias = ${alias}`;
@@ -174,6 +179,7 @@ export async function revokeEverything(
     return {
       sessions: live.size,
       sessionIds: [...new Set(sessions.map((s) => s.session_id))],
+      passkeys: passkeys.length,
       provider: account[0].provider,
       apps: grants.length,
       api_keys: keys.length,

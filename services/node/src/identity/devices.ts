@@ -68,13 +68,42 @@ const SYSTEMS: ReadonlyArray<[RegExp, string]> = [
   [/\bLinux\b/, "Linux"],
 ];
 
+/** The browser and the system a User-Agent names, each null when it names none this knows. */
+export function browserAndSystem(userAgent: string | null): { browser: string | null; system: string | null } {
+  const ua = userAgent ?? "";
+  return {
+    browser: BROWSERS.find(([re]) => re.test(ua))?.[1] ?? null,
+    system: SYSTEMS.find(([re]) => re.test(ua))?.[1] ?? null,
+  };
+}
+
 /** A browser as a person would name it, from its User-Agent: "Safari on iPhone". At most 64 characters. */
 export function deviceLabel(userAgent: string | null): string {
-  const ua = userAgent ?? "";
-  const browser = BROWSERS.find(([re]) => re.test(ua))?.[1] ?? null;
-  const system = SYSTEMS.find(([re]) => re.test(ua))?.[1] ?? null;
+  const { browser, system } = browserAndSystem(userAgent);
   if (browser && system) return `${browser} on ${system}`;
   if (browser) return browser;
   if (system) return `A browser on ${system}`;
   return "Unknown browser";
+}
+
+const APPLE = new Set(["iPhone", "iPad", "Mac"]);
+
+/**
+ * What the node calls a passkey it just added, from the authenticator and the browser (T21): a synced
+ * one by where it lives ("iCloud Keychain", "Google Password Manager", else "Synced · Firefox"), so
+ * someone who lost a phone does not remove a passkey their laptop shares; a device-bound one by the
+ * device ("iPhone", "Windows · Edge"), or "Security key" when only USB or NFC reach it.
+ */
+export function passkeyName(input: { backupEligible: boolean; transports: readonly string[]; userAgent: string | null }): string {
+  const { browser, system } = browserAndSystem(input.userAgent);
+  if (input.backupEligible) {
+    if (system && APPLE.has(system) && (browser === "Safari" || system !== "Mac")) return "iCloud Keychain";
+    if (system === "Android") return "Google Password Manager";
+    return browser ? `Synced · ${browser}` : "Synced passkey";
+  }
+  const reach = new Set(input.transports);
+  if (reach.size > 0 && [...reach].every((t) => t === "usb" || t === "nfc")) return "Security key";
+  if (system === "iPhone" || system === "iPad") return system;
+  if (system && browser) return `${system} · ${browser}`;
+  return system ?? browser ?? "Passkey";
 }

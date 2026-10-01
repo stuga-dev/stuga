@@ -11,6 +11,11 @@ import {
   endRefreshSession,
   findAccountByAlias,
   findAccountBySub,
+  findPasskey,
+  insertPasskey,
+  passkeyDescriptors,
+  passkeyOfferDue,
+  recordPasskeyUse,
   findAccountByUsername,
   findRefreshSession,
   getUserDisplayName,
@@ -39,6 +44,9 @@ import {
   type KnownDeviceKey,
   type LinkOutcome,
   type NewAccount,
+  type NewPasskey,
+  type PasskeyDescriptor,
+  type PasskeyRow,
   type NewRefreshSession,
   type OidcFlowRow,
   type OidcTicketRow,
@@ -133,6 +141,17 @@ export interface IdentityDb {
   /** Take back every way into the account (packages/db account-security.ts); null for no such account. */
   revokeEverything(input: { alias: string; by: string; passwordHash: string | null; requires?: StillHolds }): Promise<RevokedEverything | null>;
 
+  /** A new passkey; `exists` when its credential id is taken, `ended` when `requires` no longer holds. */
+  insertPasskey(p: NewPasskey, requires?: StillHolds | null): Promise<"added" | "exists" | "ended">;
+  /** The passkey `credentialId`, only when it was made at `rpId`. */
+  findPasskey(credentialId: string, rpId: string): Promise<PasskeyRow | null>;
+  /** The account's passkeys made at `rpId`. */
+  passkeyDescriptors(alias: string, rpId: string): Promise<PasskeyDescriptor[]>;
+  /** A sign-in with the passkey worked; false when it was removed meanwhile, or its counter did not rise. */
+  recordPasskeyUse(input: { credentialId: string; signCount: number; synced: boolean }): Promise<boolean>;
+  /** Whether "Sign in faster next time" is still to be offered for `rpId`. */
+  passkeyOfferDue(alias: string, rpId: string): Promise<boolean>;
+
   /**
    * A cheap refusal before a password is hashed; the account's own transaction is what spends the
    * invite. `local_only`: an invite with no limit or no expiry, presented at the remote address.
@@ -187,6 +206,11 @@ export function identityDb(sql: Sql): IdentityDb {
     rememberDevice: (input) => rememberDevice(sql, input),
     revokeEverything: (input) => revokeEverything(sql, input),
     inviteStatus: (tokenHash, arrival) => workspaceInviteStatus(sql, tokenHash, arrival),
+    insertPasskey: (p, requires) => insertPasskey(sql, p, requires),
+    findPasskey: (credentialId, rpId) => findPasskey(sql, credentialId, rpId),
+    passkeyDescriptors: (alias, rpId) => passkeyDescriptors(sql, alias, rpId),
+    recordPasskeyUse: (input) => recordPasskeyUse(sql, input),
+    passkeyOfferDue: (alias, rpId) => passkeyOfferDue(sql, alias, rpId),
     replaceLocalPassword: (input) => replaceLocalPassword(sql, input),
     addLocalPassword: (alias, passwordHash, requires) => addLocalPassword(sql, alias, passwordHash, requires ?? null),
     passwordResetIsLive: (tokenHash) => passwordResetIsLive(sql, tokenHash),

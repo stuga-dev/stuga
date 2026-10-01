@@ -12,7 +12,11 @@ const nodeApi = vi.hoisted(() => ({
   revokeEverythingFor: vi.fn(),
   mintPasswordReset: vi.fn(),
 }));
-vi.mock("../../../api", async (orig) => ({ ...(await orig<typeof import("../../../api")>()), NodeSettings: nodeApi }));
+const linkAddresses = vi.hoisted(() => vi.fn());
+vi.mock("../../../api", async (orig) => {
+  const real = await orig<typeof import("../../../api")>();
+  return { ...real, NodeSettings: nodeApi, Me: { ...real.Me, linkAddresses } };
+});
 vi.mock("./NodeAudit", () => ({ NodeAudit: () => null }));
 const me = vi.hoisted(() => ({ alias: null as string | null }));
 vi.mock("../../../lib/http/client", async (orig) => ({
@@ -38,6 +42,8 @@ beforeEach(() => {
   nodeApi.revokeEverythingCounts.mockResolvedValue({ sessions: 2, provider: true, apps: 1, api_keys: 0, invites: 0, share_links: 2 });
   nodeApi.revokeEverythingFor.mockResolvedValue({ password_link: { url: "http://livs-air.local:8787/reset/abc", expires_at: "2026-10-01T00:00:00Z" } });
   setAuthConfigForTest({ provider: { label: "Okta" } });
+  // Remote access off: no choice of address, as before it existed.
+  linkAddresses.mockResolvedValue({ remote: false, local: "network", default: "local" });
 });
 
 describe("Revoke everything for someone", () => {
@@ -71,9 +77,49 @@ describe("Revoke everything for someone", () => {
     const confirm = [...dialog.querySelectorAll("button")].find((b) => b.textContent === "Revoke everything")!;
     await act(async () => confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await settle();
-    expect(nodeApi.revokeEverythingFor).toHaveBeenCalledWith("u_bo");
+    expect(nodeApi.revokeEverythingFor).toHaveBeenCalledWith("u_bo", undefined);
     expect(host.textContent).toContain("Password link for Bo");
     expect(host.textContent).toContain("http://livs-air.local:8787/reset/abc");
+    expect(host.textContent).not.toContain("Opens only on");
+  });
+
+  it("asks who the link is for while remote access is on, says a local one opens only on this network, and sends the choice", async () => {
+    linkAddresses.mockResolvedValue({ remote: true, local: "network", default: "local" });
+    nodeApi.mintPasswordReset.mockResolvedValue({ url: "http://livs-air.local:8787/reset/def", alias: "u_bo", username: "bo", expires_at: "2026-10-01T00:00:00Z" });
+    const { host, root } = mountInto();
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/settings/node/access?revoke=bo"]}>
+          <Routes>
+            <Route path="/settings/node/access" element={<AccessSection ops={null} onSaved={() => {}} />} />
+          </Routes>
+        </MemoryRouter>,
+      ),
+    );
+    await settle();
+    expect(host.textContent).toContain("For someone on this network");
+    expect(host.textContent).toContain("For someone anywhere");
+    const create = () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Create link")!;
+    await act(async () => create().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+    expect(nodeApi.mintPasswordReset).toHaveBeenCalledWith("bo", "local");
+    expect(host.textContent).toContain("Opens only on this network.");
+  });
+
+  it("calls the node's own side this computer when that is all it reaches", async () => {
+    linkAddresses.mockResolvedValue({ remote: true, local: "computer", default: "remote" });
+    const { host, root } = mountInto();
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/settings/node/access"]}>
+          <Routes>
+            <Route path="/settings/node/access" element={<AccessSection ops={null} onSaved={() => {}} />} />
+          </Routes>
+        </MemoryRouter>,
+      ),
+    );
+    await settle();
+    expect(host.textContent).toContain("For someone on this computer");
   });
 
   it("is not offered for yourself, whose Revoke everything takes a new password in Profile", async () => {
@@ -97,8 +143,11 @@ describe("Revoke everything for someone", () => {
   });
 
   it("says only their password when there is nothing else to take", () => {
-    expect(memberRevokeSummary({ sessions: 0, provider: false, apps: 0, api_keys: 1, invites: 0, share_links: 0 }, null)).toBe(
+    expect(memberRevokeSummary({ sessions: 0, passkeys: 0, provider: false, apps: 0, api_keys: 1, invites: 0, share_links: 0 }, null)).toBe(
       "Signs them out everywhere and removes their password and an API key. You get a password link to send them.",
+    );
+    expect(memberRevokeSummary({ sessions: 0, passkeys: 1, provider: false, apps: 0, api_keys: 0, invites: 0, share_links: 0 }, null)).toBe(
+      "Signs them out everywhere and removes their password and a passkey. You get a password link to send them.",
     );
     expect(memberRevokeSummary(null, null)).toBe("Signs them out everywhere and removes their password. You get a password link to send them.");
   });

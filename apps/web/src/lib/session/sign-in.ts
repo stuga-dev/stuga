@@ -8,7 +8,12 @@ import { withConfirmation } from "./reauth";
 import { authPost, ensureFreshToken, type Session, type TokenResponse } from "./tokens";
 
 function toSession(t: TokenResponse): Session {
-  return { accessToken: t.access_token, refreshToken: t.refresh_token, expiresIn: t.expires_in };
+  return {
+    accessToken: t.access_token,
+    refreshToken: t.refresh_token,
+    expiresIn: t.expires_in,
+    ...(t.passkey_offer ? { passkeyOffer: true } : {}),
+  };
 }
 
 export async function signInWithPassword(username: string, password: string): Promise<Session> {

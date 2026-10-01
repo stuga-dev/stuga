@@ -7,7 +7,7 @@
  * Refused with `401 reauth_required` and the `methods` the person can confirm with, marked by the
  * `x-stuga-reauth` header so a client tells it from an ended session, which is also a 401.
  */
-import { findAccountByAlias, sessionConfirmedAt, type AccountRow } from "@stuga/db";
+import { findAccountByAlias, hasPasskeyAt, sessionConfirmedAt, type AccountRow } from "@stuga/db";
 import type { AccountCtx } from "../auth/context.js";
 import type { PersonToken } from "../auth/person-token.js";
 import type { IdentityDb } from "./db.js";
@@ -24,9 +24,17 @@ export async function confirmedRecently(db: Pick<IdentityDb, "sessionConfirmedAt
   return at !== null && now - at.getTime() < RECENT_CONFIRMATION_MS;
 }
 
-/** The ways this person can confirm: their password, or a fresh sign-in through the provider they are linked to. */
-export function confirmationMethods(account: Pick<AccountRow, "password_hash" | "oidc_sub"> | null, providerOn: boolean): string[] {
+/**
+ * The ways this person can confirm: a passkey (at the remote address, for one made there), their
+ * password, or a fresh sign-in through the provider they are linked to.
+ */
+export function confirmationMethods(
+  account: Pick<AccountRow, "password_hash" | "oidc_sub"> | null,
+  providerOn: boolean,
+  passkey = false,
+): string[] {
   const methods: string[] = [];
+  if (passkey) methods.push("passkey");
   if (account?.password_hash) methods.push("password");
   if (account?.oidc_sub && providerOn) methods.push("provider");
   return methods;
@@ -46,5 +54,7 @@ export async function recentConfirmationRequired(ctx: AccountCtx): Promise<Respo
   const at = await sessionConfirmedAt(ctx.sql, { sessionId: ctx.sid, alias: ctx.alias, arrival: ctx.arrival });
   if (at !== null && Date.now() - at.getTime() < RECENT_CONFIRMATION_MS) return null;
   const account = await findAccountByAlias(ctx.sql, ctx.alias);
-  return reauthRequired(confirmationMethods(account, ctx.env.settings.current().identityProvider !== null));
+  const host = ctx.arrival === "remote" ? URL.parse(ctx.servedOrigin)?.hostname : undefined;
+  const passkey = host !== undefined && (await hasPasskeyAt(ctx.sql, ctx.alias, host));
+  return reauthRequired(confirmationMethods(account, ctx.env.settings.current().identityProvider !== null, passkey));
 }

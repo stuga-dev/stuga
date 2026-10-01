@@ -34,15 +34,20 @@ export async function lockSignIns(tx: TransactionSql, alias: string, mode: "shar
 
 /**
  * What must still hold when a write hands out a way in after a wait (a password hashed in the
- * queue): the account's password is still the one that was checked, or the sign-in that asked is
- * still on. Checked under `lockSignIns`, so a revocation either lands first and refuses the write,
- * or lands after and takes back what it wrote.
+ * queue): the account's password is still the one that was checked, the sign-in that asked is
+ * still on, or the passkey that signed in is still the account's. Checked under `lockSignIns`, so a
+ * revocation either lands first and refuses the write, or lands after and takes back what it wrote.
  */
-export type StillHolds = { password: string } | { session: PresentedSession };
+export type StillHolds = { password: string } | { session: PresentedSession } | { passkey: string };
 
 export async function stillHolds(tx: TransactionSql, alias: string, requires: StillHolds): Promise<boolean> {
   if ("password" in requires) {
     const rows = await tx`SELECT 1 FROM local_accounts WHERE alias = ${alias} AND password_hash = ${requires.password}`;
+    return rows.length > 0;
+  }
+  if ("passkey" in requires) {
+    // Held until the transaction ends, so the passkey cannot be removed under the session it signs in.
+    const rows = await tx`SELECT 1 FROM passkeys WHERE credential_id = ${requires.passkey} AND alias = ${alias} FOR SHARE`;
     return rows.length > 0;
   }
   if (requires.session.alias !== alias) return false;

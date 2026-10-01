@@ -27,6 +27,8 @@ import {
 } from "../../config/settings/node.js";
 import type { NotifyConfig } from "../../env.js";
 import { error, json } from "../../http/respond.js";
+import { alertsFor, sameChannel } from "../../identity/alerts.js";
+import { deviceLabel } from "../../identity/devices.js";
 import { recentConfirmationRequired } from "../../identity/recency.js";
 import type { WorkspaceCall } from "../../http/router.js";
 import { deliver } from "../../jobs/sinks.js";
@@ -48,14 +50,14 @@ async function probeNotify(cfg: NotifyConfig, nodeUrl: string): Promise<NotifyPr
   const incomplete = notifyIncomplete(cfg);
   if (incomplete) return { ok: false, sink: cfg.sink, message: incomplete };
   try {
-    await deliver(cfg, {
+    const unsent = await deliver(cfg, {
       recipient: "node-administrator",
       recipientEmail: cfg.emailFrom ?? null,
       title: "Stuga test notification",
       body: "This is a test from your node's settings page. If you are reading it, the sink works.",
       url: nodeUrl,
     });
-    return { ok: true, sink: cfg.sink };
+    return unsent === null ? { ok: true, sink: cfg.sink } : { ok: false, sink: cfg.sink, message: unsent };
   } catch (e) {
     return { ok: false, sink: cfg.sink, message: e instanceof Error ? e.message : String(e) };
   }
@@ -614,7 +616,23 @@ async function saveNodeSettings(ctx: Ctx, req: Request): Promise<Response> {
   } finally {
     if (committed) auditSave(ctx, parsed, { ...before, searchLanguages: searchBefore }, unlinkedAccounts);
   }
+  if (committed && parsed.sent.notify) await channelAlert(ctx, req, before.notify, ctx.env.settings.current().notify);
   return nodeSettingsResponse(ctx);
+}
+
+/**
+ * Every administrator is told when the node's notification channel changes, through the channel it
+ * had: someone repointing it cannot keep the alerts that follow to themselves unseen.
+ */
+async function channelAlert(ctx: Ctx, req: Request, before: NotifyConfig, after: NotifyConfig): Promise<void> {
+  if (sameChannel(before, after)) return;
+  await alertsFor(ctx.env).channelChanged({
+    by: { alias: ctx.alias, name: ctx.displayName },
+    before,
+    after,
+    device: deviceLabel(req.headers.get("user-agent")),
+    at: new Date(),
+  });
 }
 
 /**
@@ -670,7 +688,8 @@ function auditSave(
   });
 }
 
-async function resetNodeSettings(ctx: Ctx): Promise<Response> {
+async function resetNodeSettings(ctx: Ctx, req: Request): Promise<Response> {
+  const notifyBefore = ctx.env.settings.current().notify;
   // The row, the provider and every link to one go together; the files only once that has committed.
   const { identityProvider, unlinkedAccounts } = await resetSettingsRow(ctx.sql);
   applySecretFiles(ctx, [
@@ -692,6 +711,7 @@ async function resetNodeSettings(ctx: Ctx): Promise<Response> {
       },
     });
   }
+  await channelAlert(ctx, req, notifyBefore, ctx.env.settings.current().notify);
   return nodeSettingsResponse(ctx);
 }
 
@@ -728,11 +748,11 @@ export async function saveNodeSettingsRoute({ ctx, req }: WorkspaceCall): Promis
 }
 
 /** The same holds for a reset that would remove a provider or a sink. */
-export async function resetNodeSettingsRoute({ ctx }: WorkspaceCall): Promise<Response> {
+export async function resetNodeSettingsRoute({ ctx, req }: WorkspaceCall): Promise<Response> {
   const current = ctx.env.settings.current();
   if (current.identityProvider !== null || current.notify.sink !== "none") {
     const stale = await recentConfirmationRequired(ctx);
     if (stale) return stale;
   }
-  return resetNodeSettings(ctx);
+  return resetNodeSettings(ctx, req);
 }

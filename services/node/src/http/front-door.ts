@@ -7,7 +7,8 @@
  *
  *   pages and static files, GET /auth/*, discovery, /oauth/authorize, /oauth/client,
  *     /api/agent-install/*, media reads (their ticket is checked by the route)   open, no body
- *   POST /auth/login, register, reset, oidc/start, handoff, ticket, complete, link   16 KiB
+ *   POST /auth/login, register, reset, oidc/start, handoff, ticket, complete, link,
+ *     passkey/options, passkey/sign-in                                               16 KiB
  *   POST /auth/refresh, /auth/logout (they present a session)                          4 KiB
  *   POST /oauth/register (and at most REGISTRATIONS_PER_HOUR an hour), token, revoke   16 KiB
  *   PUT of a signed upload                          its signature, for this address, first
@@ -54,6 +55,8 @@ const SIGN_IN = new Set([
   "/auth/oidc/ticket",
   "/auth/oidc/complete",
   "/auth/oidc/link",
+  "/auth/passkey/options",
+  "/auth/passkey/sign-in",
 ]);
 const SESSION = new Set(["/auth/refresh", "/auth/logout"]);
 const OAUTH = new Set(["/oauth/register", "/oauth/token", "/oauth/revoke"]);

@@ -45,6 +45,7 @@ import {
   purgeRevokedApiKeys,
   purgeUnusedOauthClients,
   purgeWorkspaceEvents,
+  recordNotificationDelivery,
   recordUpdateCheck,
   recordVersion,
   recordWebhookDelivery,
@@ -75,10 +76,13 @@ export function jobsDb(sql: Sql) {
      */
     insertNotification: (n: Parameters<typeof insertNotification>[1], delivery: NotifyDeliverMessage | null): Promise<boolean> =>
       sql.begin(async (tx) => {
-        const isNew = await insertNotification(tx, n);
-        if (isNew && delivery) await pgJobQueue<IndexMessage>(tx).send(delivery);
+        // Stamped with the channel as it is written, so it reads "Sending by …" until the first attempt.
+        const isNew = await insertNotification(tx, { ...n, delivery_channel: n.delivery_channel ?? delivery?.channel ?? "none" });
+        if (isNew && delivery) await pgJobQueue<IndexMessage>(tx).send({ ...delivery, notificationId: n.id });
         return isNew;
       }) as Promise<boolean>,
+    /** How one delivery attempt of notification `id` went. */
+    recordDelivery: (id: string, outcome: { delivered: true } | { error: string }) => recordNotificationDelivery(sql, id, outcome),
     insertAuditEvents: (batch: AuditEventInsert[]) => insertAuditEvents(sql, batch),
     userEmail: (alias: string) => getUserEmail(sql, alias),
     displayNameOf: (alias: string) => getUserDisplayName(sql, alias),

@@ -91,7 +91,18 @@ describe("what a visitor who has not signed in reaches", () => {
   });
 
   it("is the sign-in endpoints, each with a small body counted as anonymous", async () => {
-    for (const path of ["/auth/login", "/auth/register", "/auth/reset", "/auth/oidc/start", "/auth/oidc/handoff", "/auth/oidc/ticket", "/auth/oidc/complete", "/auth/oidc/link"]) {
+    for (const path of [
+      "/auth/login",
+      "/auth/register",
+      "/auth/reset",
+      "/auth/oidc/start",
+      "/auth/oidc/handoff",
+      "/auth/oidc/ticket",
+      "/auth/oidc/complete",
+      "/auth/oidc/link",
+      "/auth/passkey/options",
+      "/auth/passkey/sign-in",
+    ]) {
       expect(await status(at(path, "POST", json)), path).toEqual({ maxBytes: PUBLIC_BODY_BYTES, anonymous: true });
     }
     for (const path of ["/auth/refresh", "/auth/logout"]) {
@@ -142,6 +153,8 @@ describe("everything else", () => {
       ["/auth/password", "POST"],
       ["/auth/confirm", "POST"],
       ["/auth/revoke-everything", "POST"],
+      ["/auth/passkey/add", "POST"],
+      ["/api/me/passkeys", "GET"],
       ["/auth/oidc/unlink", "POST"],
       ["/auth/no-such-route", "POST"],
       ["/api/docs", "GET"],

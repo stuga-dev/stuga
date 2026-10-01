@@ -32,9 +32,11 @@
     "yjs": "^13.6.33"
   },
   "devDependencies": {
+    "@simplewebauthn/browser": "14.0.0",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.2",
     "jose": "^6.2.12",
+    "playwright-core": "1.63.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"
   }

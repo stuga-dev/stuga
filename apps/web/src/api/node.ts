@@ -356,20 +356,20 @@ export const NodeSettings = {
     api<{ users: MemberCandidate[] }>(`/api/node/users?q=${encodeURIComponent(q)}`, init),
 
   /** A one-time link that sets the account's password, returned once. */
-  mintPasswordReset: (username: string) =>
+  mintPasswordReset: (username: string, address?: "local" | "remote") =>
     api<{ url: string; alias: string; username: string; expires_at: string }>("/api/node/password-resets", {
       method: "POST",
-      body: JSON.stringify({ username }),
+      body: JSON.stringify(address ? { username, address } : { username }),
     }),
 
   /** What Revoke everything would take from someone. */
   revokeEverythingCounts: (alias: string) =>
     api<RevokeEverythingCounts>(`/api/node/users/${encodeURIComponent(alias)}/revoke-everything`),
   /** Revoke everything for someone: their password goes too, and the answer is a password link to hand them. */
-  revokeEverythingFor: (alias: string) =>
+  revokeEverythingFor: (alias: string, address?: "local" | "remote") =>
     api<{ password_link: { url: string; expires_at: string } }>(`/api/node/users/${encodeURIComponent(alias)}/revoke-everything`, {
       method: "POST",
-      body: "{}",
+      body: address ? JSON.stringify({ address }) : "{}",
     }),
 
   /** The node's own ledger, rows with no workspace, newest first. */

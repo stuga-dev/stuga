@@ -13,7 +13,7 @@ import {
   refreshNotificationRows,
   resetNotificationsForTest,
 } from "../state/notifications";
-import { NotificationsBell } from "./NotificationsBell";
+import { NotificationsBell, deliveryLine } from "./NotificationsBell";
 import { mountInto } from "../test/form-input";
 
 const T0 = "2026-08-19T10:00:00.000Z";
@@ -286,6 +286,7 @@ describe("NotificationsBell", () => {
         resource_id: null,
         resource_title: "Security update available: Stuga 1.10.0",
         resource_url: "https://node.example/settings/node/about",
+        delivery_channel: "none",
       }),
     ]);
     await mount();
@@ -297,6 +298,8 @@ describe("NotificationsBell", () => {
     );
     expect(row).toBeTruthy();
     expect(row!.textContent).not.toContain("null");
+    // A row about the node says whether it also went out.
+    expect(row!.textContent).toContain("Shown in Stuga only.");
     const target = row!.querySelector<HTMLElement>("button, [role='button'], a") ?? row!;
     await click(target);
     expect(getActiveWorkspace()).toBe(before);
@@ -316,5 +319,22 @@ describe("NotificationsBell", () => {
     expect(getActiveWorkspace()).toBe("ws2");
     // A switch reloads through window.location, which jsdom ignores.
     expect(document.querySelector("[data-testid='loc']")?.textContent).toBe("/");
+  });
+});
+
+describe("whether an alert also went out", () => {
+  it("says so in each of its states, the channel by name", () => {
+    expect(deliveryLine({ delivery_channel: "none" })).toBe("Shown in Stuga only.");
+    // A row from before this was kept says nothing, rather than claim it was never sent.
+    expect(deliveryLine({ delivery_channel: null })).toBeUndefined();
+    expect(deliveryLine({})).toBeUndefined();
+    expect(deliveryLine({ delivery_channel: "email", delivered_at: null, delivery_error: null })).toBe("Sending by email…");
+    expect(deliveryLine({ delivery_channel: "slack", delivered_at: "2026-09-30T10:00:00Z", delivery_error: null })).toBe("Also sent by Slack.");
+    expect(deliveryLine({ delivery_channel: "email", delivered_at: null, delivery_error: "you have no email address in Stuga" })).toBe(
+      "Not sent by email: you have no email address in Stuga.",
+    );
+    expect(deliveryLine({ delivery_channel: "webhook", delivered_at: null, delivery_error: "notification sink answered 500." })).toBe(
+      "Not sent by webhook: notification sink answered 500.",
+    );
   });
 });

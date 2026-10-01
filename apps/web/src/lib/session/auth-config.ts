@@ -24,6 +24,8 @@ export interface AuthClientConfig {
   branding: BrandingConfig;
   /** The remote address while it is on: a password of 15 characters or more signs in there too. Null otherwise. */
   remoteOrigin: string | null;
+  /** This page is at the remote address, where passkeys sign in; false on the node's own network. */
+  passkey: boolean;
 }
 
 interface AuthConfigResponse {
@@ -34,6 +36,7 @@ interface AuthConfigResponse {
   origin?: string | null;
   branding?: { accent_color?: string | null } | null;
   remote_origin?: string | null;
+  passkey?: boolean;
 }
 
 /**
@@ -48,6 +51,7 @@ const FALLBACK_CONFIG: AuthClientConfig = {
   origin: null,
   branding: { accentColor: null },
   remoteOrigin: null,
+  passkey: false,
 };
 
 let cachedConfig: AuthClientConfig | null = null;
@@ -65,6 +69,7 @@ function parseConfig(raw: AuthConfigResponse): AuthClientConfig {
     origin: text(raw.origin),
     branding: { accentColor: raw.branding?.accent_color ?? null },
     remoteOrigin: text(raw.remote_origin),
+    passkey: raw.passkey === true,
   };
 }
 

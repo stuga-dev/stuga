@@ -210,7 +210,11 @@ and a unix socket the relay's connector reaches, for the remote address alone. A
   `X-Forwarded-For` or `X-Real-IP`, whatever `TRUST_PROXY_HEADERS` says. Sign-in attempts there count
   apart from the network's, an IPv6 address by its `/64`.
 - People sign in once more, because browsers keep sessions per origin. Sessions on the network are
-  unaffected, and turning remote access on or off signs nobody out.
+  unaffected, and turning remote access on or off signs nobody out. There, a passkey signs in too, or
+  a password of 15 characters or more that is hard to guess. Passkeys are optional, and made and
+  used at the remote address.
+- Invite and password links can be made for someone on this network or for someone anywhere, which
+  opens at the remote address. A link to the network's own address opens only on the network.
 - Every answer carries `Strict-Transport-Security: max-age=31536000`.
 - The node cannot be claimed with its setup code.
 

@@ -74,6 +74,11 @@ export async function harness(extra: Partial<IdentityDeps> = {}): Promise<Harnes
     revokedEverything: record("revokedEverything"),
     apiKeyCreated: record("apiKeyCreated"),
     signInsPaused: record("signInsPaused"),
+    passkeyAdded: record("passkeyAdded"),
+    passkeyRemoved: record("passkeyRemoved"),
+    appConnected: record("appConnected"),
+    emailChanged: record("emailChanged"),
+    channelChanged: record("channelChanged"),
   };
   const router = createIdentityRouter({
     auth: config,

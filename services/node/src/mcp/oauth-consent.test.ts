@@ -14,6 +14,12 @@ vi.mock("../auth/context.js", async (orig) => ({
   buildAccountContext: vi.fn(),
 }));
 
+const appConnected = vi.fn(async () => {});
+vi.mock("../identity/alerts.js", async (orig) => ({
+  ...(await orig<typeof import("../identity/alerts.js")>()),
+  alertsFor: () => ({ appConnected }),
+}));
+
 const { getOauthClient, insertOauthCode, listWorkspacesForUser, sessionConfirmedAt } = await import("@stuga/db");
 const { ARRIVAL_HEADER } = await import("../platform/http-server.js");
 const { buildAccountContext, Unauthorized } = await import("../auth/context.js");
@@ -125,6 +131,11 @@ describe("POST /oauth/consent", () => {
       }),
     );
     expect(insertOauthCode).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ arrival: "remote" }));
+    // An app that can act for them from anywhere: the person hears of it, and where it takes the
+    // grant back to, not only the name it gave itself.
+    expect(appConnected).toHaveBeenCalledWith(
+      expect.objectContaining({ alias: "liv", app: "A Client", appHost: "client.example.test", remoteHost: "k7f3q2.stuga.test" }),
+    );
   });
 
   it("returns to a native app's own scheme, as Cursor registers", async () => {
@@ -255,11 +266,18 @@ describe("POST /oauth/consent at the remote address", () => {
     const res = await remoteAllow();
     expect(res.status).toBe(200);
     expect(insertOauthCode).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ arrival: "remote" }));
+    // An app that can act for them from anywhere: the person hears of it, and where it takes the
+    // grant back to, not only the name it gave itself.
+    expect(appConnected).toHaveBeenCalledWith(
+      expect.objectContaining({ alias: "liv", app: "A Client", appHost: "client.example.test", remoteHost: "k7f3q2.stuga.test" }),
+    );
   });
 
   it("is the remote address's alone: on the node's own network an older session still consents", async () => {
     vi.mocked(sessionConfirmedAt).mockResolvedValue(new Date(Date.now() - 60 * 60_000));
     expect((await allow()).status).toBe(200);
     expect(sessionConfirmedAt).not.toHaveBeenCalled();
+    // And an app allowed there is no alert.
+    expect(appConnected).not.toHaveBeenCalled();
   });
 });

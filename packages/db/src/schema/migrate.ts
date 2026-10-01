@@ -23,7 +23,7 @@ export const MIGRATIONS: readonly string[] = ["0001_initial.sql", "0002_remote_s
  */
 export const MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
   "0001_initial.sql": "1a7acca75c129611",
-  "0002_remote_sign_in.sql": "2cf974b6078f280a",
+  "0002_remote_sign_in.sql": "2d52cb9a03c6e524",
 };
 
 /** `0007_foo.sql` → 7. Throws on a filename that is not numbered. */

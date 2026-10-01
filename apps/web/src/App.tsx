@@ -35,6 +35,7 @@ import { CommandPaletteProvider } from "./shell/command-palette/context";
 import { NodeHealthBanner } from "./shell/NodeHealthBanner";
 import { AuthLayout } from "./shell/AuthLayout";
 import { ConfirmIdentity } from "./ui/ConfirmIdentity";
+import { PasskeyOffer } from "./ui/PasskeyOffer";
 import { Workspaces } from "./api";
 import { getActiveWorkspace, setActiveWorkspace } from "./lib/session/workspace-pointer";
 import { rememberWorkspaceReturn } from "./lib/session/return-path";
@@ -143,6 +144,8 @@ export function App() {
         <NodeHealthBanner />
         {/* Outside the router too: a change anywhere may first ask the person to confirm it is them. */}
         <ConfirmIdentity />
+        {/* Once, after a password sign-in at the remote address. */}
+        <PasskeyOffer />
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />

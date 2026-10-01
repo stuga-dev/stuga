@@ -69,6 +69,10 @@ own browser. The node keeps only a hash of it, with the browser's name from its 
 address of its first sign-in, and forgets a browser not seen for 400 days. It is used for nothing
 else.
 
+Passkeys are stored as public keys, with the name the node gave each and when it was last used; the
+node never sees their private keys, or a fingerprint or face. Adding or using one sends nothing
+anywhere but between the browser and the node.
+
 **Settings → This node → Storage** sets how long audit history, AI usage records and idle Ask
 threads are kept, and [the event feed](api.md#the-event-feed) says how long events stay. Documents
 and databases in the trash are deleted after 30 days; the images they showed stay on disk until

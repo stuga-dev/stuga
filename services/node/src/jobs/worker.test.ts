@@ -8,6 +8,7 @@ import type { BlobStore } from "@stuga/runtime";
 import type { JobsDb } from "./db.js";
 import { isTerminal, type JobsEnv } from "./deps.js";
 import { runMaintenanceTick } from "./maintenance.js";
+import { CHANNEL_CHANGED_ERROR, channelKey } from "./notify.js";
 import type { NotificationPayload } from "./sinks.js";
 import { auditRow, dispatchJob, handleJobBatch, type AuditMessage } from "./worker.js";
 
@@ -24,6 +25,7 @@ function fakeDb(overrides: Partial<JobsDb> = {}): JobsDb {
     indexDoc: vi.fn(async () => {}),
     advanceSnapshotSeq: vi.fn(async () => {}),
     insertNotification: vi.fn(async () => true),
+    recordDelivery: vi.fn(async () => {}),
     insertAuditEvents: vi.fn(async () => {}),
     userEmail: vi.fn(async () => null),
     displayNameOf: vi.fn(async () => null),
@@ -265,6 +267,7 @@ describe("notify", () => {
 
   const deliverMsg: IndexMessage = {
     kind: "notify_deliver",
+    channel: "webhook",
     recipient: "u_r",
     title: "Q3 plan",
     body: "Ada shared a document with you",
@@ -273,7 +276,7 @@ describe("notify", () => {
 
   it("stores the notification with its sink delivery queued beside it, delivering nothing itself", async () => {
     const db = fakeDb();
-    const deliver = vi.fn(async () => {});
+    const deliver = vi.fn(async () => null);
     const m = message(notifyMsg);
     await handleJobBatch(fakeEnv({ settings: nodeSettings({ notify: { sink: "webhook", webhookUrl: "http://sink" } }) }), batchOf([m]), {
       db,
@@ -283,7 +286,7 @@ describe("notify", () => {
     expect(db.insertNotification).toHaveBeenCalledTimes(1);
     expect(db.insertNotification).toHaveBeenCalledWith(
       expect.objectContaining({ recipient_alias: "u_r", event_type: "doc_shared", resource_url: "http://localhost:8787/doc/d1" }),
-      deliverMsg,
+      { ...deliverMsg, channelKey: channelKey({ sink: "webhook", webhookUrl: "http://sink" }) },
     );
     expect(deliver).not.toHaveBeenCalled();
     expect(m.acked()).toBe(true);
@@ -291,7 +294,7 @@ describe("notify", () => {
 
   it("queues no delivery when no sink is configured", async () => {
     const db = fakeDb();
-    await handleJobBatch(fakeEnv(), batchOf([message(notifyMsg)]), { db, log: silentLog, deliver: vi.fn(async () => {}) });
+    await handleJobBatch(fakeEnv(), batchOf([message(notifyMsg)]), { db, log: silentLog, deliver: vi.fn(async () => null) });
     expect(db.insertNotification).toHaveBeenCalledWith(expect.objectContaining({ recipient_alias: "u_r" }), null);
   });
 
@@ -300,7 +303,7 @@ describe("notify", () => {
     await handleJobBatch(fakeEnv({ settings: nodeSettings({ notify: { sink: "webhook", webhookUrl: "http://sink" } }) }), batchOf([message(deliverMsg)]), {
       db: fakeDb(),
       log: silentLog,
-      deliver: async (_cfg, n) => void delivered.push(n),
+      deliver: async (_cfg, n) => (delivered.push(n), null),
     });
     expect(delivered).toEqual([{ recipient: "u_r", title: "Q3 plan", body: "Ada shared a document with you", url: "http://localhost:8787/doc/d1" }]);
   });
@@ -308,7 +311,7 @@ describe("notify", () => {
   it("retries a failed delivery on its own, without storing the notification again", async () => {
     const db = fakeDb();
     const m = message(deliverMsg);
-    await handleJobBatch(fakeEnv({ settings: nodeSettings({ notify: { sink: "slack", webhookUrl: "http://sink" } }) }), batchOf([m]), {
+    await handleJobBatch(fakeEnv({ settings: nodeSettings({ notify: { sink: "webhook", webhookUrl: "http://sink" } }) }), batchOf([m]), {
       db,
       log: silentLog,
       deliver: async () => Promise.reject(new Error("notification sink answered 429")),
@@ -323,10 +326,66 @@ describe("notify", () => {
     const delivered: NotificationPayload[] = [];
     await handleJobBatch(
       fakeEnv({ settings: nodeSettings({ notify: { sink: "email", smtpUrl: "smtp://h", emailFrom: "stuga@example.com" } }) }),
-      batchOf([message(deliverMsg)]),
-      { db, log: silentLog, deliver: async (_cfg, n) => void delivered.push(n) },
+      batchOf([message({ ...deliverMsg, channel: "email" } as IndexMessage)]),
+      { db, log: silentLog, deliver: async (_cfg, n) => (delivered.push(n), null) },
     );
     expect(delivered[0]?.recipientEmail).toBe("r@example.com");
+  });
+
+  it("emails the address a message names in place of the recipient's own", async () => {
+    const db = fakeDb({ userEmail: vi.fn(async () => "new@example.com") });
+    const delivered: NotificationPayload[] = [];
+    await handleJobBatch(
+      fakeEnv({ settings: nodeSettings({ notify: { sink: "email", smtpUrl: "smtp://h", emailFrom: "stuga@example.com" } }) }),
+      batchOf([message({ ...deliverMsg, channel: "email", to: "old@example.com" } as IndexMessage)]),
+      { db, log: silentLog, deliver: async (_cfg, n) => (delivered.push(n), null) },
+    );
+    expect(delivered[0]?.recipientEmail).toBe("old@example.com");
+  });
+
+  it("records each attempt on the notification it belongs to", async () => {
+    const recordDelivery = vi.fn(async () => {});
+    const settings = nodeSettings({ notify: { sink: "webhook", webhookUrl: "http://sink" } });
+    const msg = { ...deliverMsg, notificationId: "n1" } as IndexMessage;
+    await handleJobBatch(fakeEnv({ settings }), batchOf([message(msg)]), {
+      db: fakeDb({ recordDelivery }),
+      log: silentLog,
+      deliver: async () => null,
+    });
+    expect(recordDelivery).toHaveBeenLastCalledWith("n1", { delivered: true });
+    const failed = message(msg);
+    await handleJobBatch(fakeEnv({ settings }), batchOf([failed]), {
+      db: fakeDb({ recordDelivery }),
+      log: silentLog,
+      deliver: async () => Promise.reject(new Error("smtp://u:secret@mail.test answered 550")),
+    });
+    expect(recordDelivery).toHaveBeenLastCalledWith("n1", { error: "the configured address answered 550" });
+    expect(failed.retried()).toBe(true);
+  });
+
+  it("goes only through the channel it was queued for: once that changed, it is recorded unsent and goes nowhere", async () => {
+    const queuedFor = { sink: "email", smtpUrl: "smtp://h", emailFrom: "stuga@example.com" };
+    const queued = { ...deliverMsg, channel: "email", channelKey: channelKey(queuedFor), notificationId: "n1" } as IndexMessage;
+    const attempt = async (notify: { sink: string; webhookUrl?: string; smtpUrl?: string; emailFrom?: string }) => {
+      const recordDelivery = vi.fn(async () => {});
+      const deliver = vi.fn(async () => null);
+      const m = message(queued);
+      await handleJobBatch(fakeEnv({ settings: nodeSettings({ notify }) }), batchOf([m]), { db: fakeDb({ recordDelivery }), log: silentLog, deliver });
+      return { recordDelivery, deliver, m };
+    };
+    // Another sink altogether.
+    const moved = await attempt({ sink: "webhook", webhookUrl: "https://elsewhere.test/hook" });
+    expect(moved.deliver).not.toHaveBeenCalled();
+    expect(moved.recordDelivery).toHaveBeenCalledWith("n1", { error: CHANNEL_CHANGED_ERROR });
+    expect(moved.m.acked()).toBe(true);
+    // The same sink, set up to send elsewhere.
+    const repointed = await attempt({ ...queuedFor, smtpUrl: "smtp://elsewhere" });
+    expect(repointed.deliver).not.toHaveBeenCalled();
+    expect(repointed.recordDelivery).toHaveBeenCalledWith("n1", { error: CHANNEL_CHANGED_ERROR });
+    // Unchanged: it goes.
+    const same = await attempt(queuedFor);
+    expect(same.deliver).toHaveBeenCalledOnce();
+    expect(same.recordDelivery).toHaveBeenCalledWith("n1", { delivered: true });
   });
 });
 

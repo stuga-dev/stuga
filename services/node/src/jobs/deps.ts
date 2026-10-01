@@ -12,7 +12,7 @@ export type JobsEnv = Pick<
 export interface JobDeps {
   db: JobsDb;
   embed: (cfg: AiConfig, texts: string[]) => Promise<EmbedResult>;
-  deliver: (cfg: NotifyConfig, n: NotificationPayload, io?: SinkIo) => Promise<void>;
+  deliver: (cfg: NotifyConfig, n: NotificationPayload, io?: SinkIo) => Promise<string | null>;
   /** What webhook deliveries POST with. */
   fetch: typeof globalThis.fetch;
   log: Pick<Console, "info" | "warn" | "error">;

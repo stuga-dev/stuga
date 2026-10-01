@@ -120,6 +120,39 @@ describe("POST /api/workspaces/:id/invites", () => {
     expect((await create({ role: "member" }, REMOTE)).status).toBe(201);
   });
 
+  it("points where its maker asks: the node's own network or the remote address, which must be on", async () => {
+    const remote = { current: () => ({ enabled: true, id: "k7f3q2", hostname: "k7f3q2.stuga.test", origin: REMOTE }) };
+    const make = (body: unknown, over: { arrival?: "local" | "remote"; servedOrigin?: string; remote?: unknown } = {}) => {
+      const path = "/api/workspaces/ws1/invites";
+      const req = new Request(`http://node.test:8787${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const c = personCtx({
+        alias: "u_owner",
+        role: "owner",
+        arrival: over.arrival ?? "local",
+        servedOrigin: over.servedOrigin ?? "http://node.test:8787",
+        env: { publicOrigin: "http://node.test:8787", jobs: { send }, remote: over.remote },
+      });
+      return createInvite({ ctx: c, req, url: new URL(req.url), match: [path, "ws1"] });
+    };
+    const anywhere = (await (await make({ role: "member", address: "remote" }, { remote })).json()) as { join_url: string; address: string };
+    expect(anywhere).toMatchObject({ address: "remote", join_url: expect.stringMatching(/^https:\/\/k7f3q2\.stuga\.test\/join\//) });
+    const here = (await (await make({ role: "member", address: "local" }, { arrival: "remote", servedOrigin: REMOTE, remote })).json()) as {
+      join_url: string;
+      address: string;
+    };
+    expect(here).toMatchObject({ address: "local", join_url: expect.stringMatching(/^http:\/\/node\.test:8787\/join\//) });
+    // A link with no limit is for the node's own network, wherever it is made.
+    expect((await make({ role: "member", max_uses: null, address: "local" }, { arrival: "remote", servedOrigin: REMOTE, remote })).status).toBe(201);
+    const open = await make({ role: "member", max_uses: null, address: "remote" }, { remote });
+    expect(open.status).toBe(400);
+    expect((await open.json()).error).toBe("invite_local_only");
+    // The remote address only while it is on.
+    const off = await make({ role: "member", address: "remote" });
+    expect(off.status).toBe(409);
+    expect((await off.json()).error).toBe("remote_off");
+    expect((await make({ role: "member", address: "elsewhere" })).status).toBe(400);
+  });
+
   it("refuses a malformed limit rather than minting a link that never lapses", async () => {
     for (const bad of [{ expires_in_days: "7" }, { expires_in_days: 0 }, { max_uses: 0 }, { max_uses: 1.5 }, { max_uses: "1" }]) {
       expect((await create({ role: "member", ...bad })).status).toBe(400);

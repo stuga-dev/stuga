@@ -7,7 +7,15 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { toasts } from "../../test/toast";
 import { mountInto, typeInto } from "../../test/form-input";
 
-const me = vi.hoisted(() => ({ whoami: vi.fn(), setDisplayName: vi.fn(), setEmail: vi.fn(), revokeEverythingCounts: vi.fn() }));
+const me = vi.hoisted(() => ({
+  whoami: vi.fn(),
+  setDisplayName: vi.fn(),
+  setEmail: vi.fn(),
+  revokeEverythingCounts: vi.fn(),
+  passkeys: vi.fn(async () => [] as unknown[]),
+  renamePasskey: vi.fn(),
+  removePasskey: vi.fn(),
+}));
 
 vi.mock("../../api", async (orig) => ({
   ...(await orig<typeof import("../../api")>()),
@@ -204,7 +212,7 @@ describe("Profile · password", () => {
     await type("New password", "battery staple 9");
     await click("Change password");
     expect(toasts.shown.at(-1)).toEqual({
-      body: "From outside this network, sign in with a password of 15 characters or more that is hard to guess.",
+      body: "From outside this network, sign in with a passkey or a password of 15 characters or more that is hard to guess.",
       type: "error",
     });
   });
@@ -401,7 +409,7 @@ describe("Profile · identity provider", () => {
 });
 
 describe("Profile · Revoke everything", () => {
-  const COUNTS = { sessions: 3, provider: true, apps: 2, api_keys: 1, invites: 1, share_links: 2 };
+  const COUNTS = { sessions: 3, passkeys: 0, provider: true, apps: 2, api_keys: 1, invites: 1, share_links: 2 };
   const dialog = () => [...host.querySelectorAll("dialog")].find((d) => d.textContent?.includes("Choose a new password"));
   const inDialog = (label: string) =>
     [...(dialog()?.querySelectorAll("input") ?? [])].find((i) => dialog()!.querySelector(`label[for="${i.id}"]`)?.textContent?.startsWith(label));
@@ -447,10 +455,101 @@ describe("Profile · Revoke everything", () => {
   });
 
   it("names only what there is to take", () => {
-    const none = { sessions: 1, provider: false, apps: 0, api_keys: 0, invites: 0, share_links: 0 };
+    const none = { sessions: 1, passkeys: 0, provider: false, apps: 0, api_keys: 0, invites: 0, share_links: 0 };
     expect(revokeSummary(none, null)).toBe("Signs you out everywhere. Choose a new password to sign in with.");
     expect(revokeSummary({ ...none, api_keys: 2, share_links: 1 }, null)).toBe(
       "Signs you out everywhere and removes 2 API keys and a link you shared. Choose a new password to sign in with.",
     );
+    expect(revokeSummary({ ...none, passkeys: 2, provider: true }, "Okta")).toBe(
+      "Signs you out everywhere and removes 2 passkeys and Okta sign-in. Choose a new password to sign in with.",
+    );
+  });
+});
+
+describe("Profile · passkeys", () => {
+  const SYNCED = { id: "cred-1", name: "iCloud Keychain", synced: true, created_at: "2026-09-30T10:00:00.000Z", last_used_at: null };
+  const KEY = { id: "cred-2", name: "Security key", synced: false, created_at: "2026-09-29T10:00:00.000Z", last_used_at: "2026-09-30T09:00:00.000Z" };
+  beforeEach(() => {
+    me.passkeys.mockReset();
+    me.removePasskey.mockReset();
+    me.renamePasskey.mockReset();
+    me.whoami.mockResolvedValue({ ...PERSON, has_password: true, provider_linked: false });
+  });
+
+  it("is not there while remote access is off and there are none", async () => {
+    me.passkeys.mockResolvedValue([]);
+    await open();
+    expect(host.textContent).not.toContain("Passkeys");
+  });
+
+  it("on the node's own network, says where to add one, while remote access is on", async () => {
+    setAuthConfigForTest({ provider: null, remoteOrigin: REMOTE });
+    me.passkeys.mockResolvedValue([]);
+    await open();
+    expect(host.textContent).toContain("Passkeys");
+    expect(host.textContent).toContain("Add one at k7f3q2.mystuga.com.");
+    expect(host.querySelector(`a[href="${REMOTE}/settings/profile"]`)).not.toBeNull();
+    expect(button("Add a passkey")).toBeUndefined();
+  });
+
+  it("lists each, synced or not, and asks before removing one in words that say what else it signs out", async () => {
+    setAuthConfigForTest({ provider: null, remoteOrigin: REMOTE });
+    me.passkeys.mockResolvedValue([SYNCED, KEY]);
+    me.removePasskey.mockResolvedValue({ removed: true, signed_out: false });
+    await open();
+    expect(host.textContent).toContain("iCloud Keychain");
+    expect(host.textContent).toContain("Synced");
+    expect(host.textContent).toContain("Never used");
+    const removes = () => [...host.querySelectorAll("button")].filter((b) => b.textContent === "Remove");
+    await act(async () => removes()[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+    expect(host.textContent).toContain("Remove iCloud Keychain? It is signed out on every device that shares it.");
+    await click("Cancel");
+    await act(async () => removes()[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+    expect(host.textContent).toContain("Remove Security key? Anyone signed in with it at k7f3q2.mystuga.com is signed out.");
+    // The confirming Remove is the destructive one, beside Cancel.
+    const confirm = removes().at(-1)!;
+    await act(async () => confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+    expect(me.removePasskey).toHaveBeenCalledWith("cred-2");
+    expect(toasts.shown.at(-1)).toEqual({ body: "Removed Security key.", type: "info" });
+  });
+
+  it("says a passkey made for an earlier remote address signs in nowhere, and badges a synced one once", async () => {
+    setAuthConfigForTest({ provider: null, remoteOrigin: REMOTE });
+    me.passkeys.mockResolvedValue([{ ...KEY, elsewhere: true }, { ...SYNCED, id: "cred-3", name: "Synced · Chrome" }]);
+    await open();
+    expect(host.textContent).toContain("Made for an earlier remote address. It signs in nowhere now.");
+    expect(button("Remove")).toBeDefined();
+    // "Synced · Chrome" says it already: no badge beside it.
+    expect([...host.querySelectorAll("li")].find((li) => li.textContent?.includes("Synced · Chrome"))!.textContent).not.toMatch(/Chrome.*Synced/);
+  });
+
+  it("signs this browser out when the passkey removed is the one it signed in with", async () => {
+    setAuthConfigForTest({ provider: null, remoteOrigin: REMOTE });
+    me.passkeys.mockResolvedValue([KEY]);
+    me.removePasskey.mockResolvedValue({ removed: true, signed_out: true });
+    fetchMock.mockResolvedValue(reply(204));
+    await open();
+    await click("Remove");
+    const confirm = [...host.querySelectorAll("button")].filter((b) => b.textContent === "Remove").at(-1)!;
+    await act(async () => confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+    expect(getToken()).toBeNull();
+  });
+
+  it("renames one", async () => {
+    setAuthConfigForTest({ provider: null, remoteOrigin: REMOTE });
+    me.passkeys.mockResolvedValue([KEY]);
+    me.renamePasskey.mockResolvedValue({ id: "cred-2", name: "Yubikey" });
+    await open();
+    await click("Rename");
+    await type("Passkey name", "Yubikey");
+    // The row's own Save, after the profile's.
+    const save = [...host.querySelectorAll("button")].filter((b) => b.textContent === "Save").at(-1)!;
+    await act(async () => save.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+    expect(me.renamePasskey).toHaveBeenCalledWith("cred-2", "Yubikey");
   });
 });

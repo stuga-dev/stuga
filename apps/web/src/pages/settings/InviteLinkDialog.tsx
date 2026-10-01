@@ -1,8 +1,9 @@
 /**
- * Create an invite link: who it admits, how many times, and for how long. The
- * link is shown once, in the same dialog, since the node keeps only its hash.
- * Made at the remote address, the link points there, where a link with no
- * limit or no expiry would be an open sign-up: the dialog does not offer those.
+ * Create an invite link: who it admits, how many times, for how long, and, while
+ * the remote address is on, whether it is for someone on this network or anywhere
+ * (ui/LinkAddress.tsx). The link is shown once, in the same dialog, since the
+ * node keeps only its hash. One for anywhere opens at the remote address, where a
+ * link with no limit or no expiry would be an open sign-up: those are not offered.
  */
 import { useEffect, useState } from "react";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
@@ -21,6 +22,7 @@ import type { InviteRole } from "@stuga/protocol/domain/roles";
 import { errorMessage } from "../../lib/http/client";
 import { copyText } from "../../lib/clipboard";
 import { atRemoteAddress } from "../../lib/session/auth-config";
+import { LinkAddressSwitch, LocalOnlyNote, useLinkAddresses, type LinkAddress } from "../../ui/LinkAddress";
 
 /** How long a new link works, in days; "never" keeps it working until someone revokes it. */
 type LinkExpiry = "1" | "7" | "30" | "never";
@@ -71,21 +73,43 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
   const [uses, setUses] = useState<LinkUses>("1");
   const [expiry, setExpiry] = useState<LinkExpiry>("7");
   const [creating, setCreating] = useState(false);
-  const [created, setCreated] = useState<{ url: string; summary: string } | null>(null);
+  const [created, setCreated] = useState<{ url: string; summary: string; address: LinkAddress } | null>(null);
   const [copied, setCopied] = useState(false);
+  const addresses = useLinkAddresses(isOpen);
+  /** Chosen with the switch; the maker's own address until then. */
+  const [picked, setPicked] = useState<LinkAddress | null>(null);
+  const address: LinkAddress = picked ?? addresses?.default ?? (atRemoteAddress() ? "remote" : "local");
 
   useEffect(() => {
     if (!isOpen) return;
     setRole("member");
     setUses("1");
     setExpiry("7");
+    setPicked(null);
     setCreated(null);
     setCopied(false);
   }, [isOpen]);
 
+  /** For someone anywhere: one person and seven days again, the limits that link must have. */
+  function pick(next: LinkAddress) {
+    setPicked(next);
+    if (next === "remote") {
+      setUses("1");
+      setExpiry("7");
+    }
+  }
+
+  // The addresses arrive after the dialog opens: a choice made before then that a link for anywhere
+  // cannot have falls back to the default limits too.
+  useEffect(() => {
+    if (address !== "remote") return;
+    setUses((u) => (u === "unlimited" ? "1" : u));
+    setExpiry((e) => (e === "never" ? "7" : e));
+  }, [address]);
+
   // An admin link admits one person; the node refuses any other.
   const effectiveUses = role === "admin" ? "1" : uses;
-  const remote = atRemoteAddress();
+  const remote = address === "remote";
   const usesOptions = remote ? USES_OPTIONS.filter((o) => o.value !== "unlimited") : USES_OPTIONS;
   const expiryOptions = remote ? EXPIRY_OPTIONS.filter((o) => o.value !== "never") : EXPIRY_OPTIONS;
 
@@ -100,8 +124,10 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
         role,
         max_uses: effectiveUses === "unlimited" ? null : Number(effectiveUses),
         expires_in_days: expiry === "never" ? null : Number(expiry),
+        // Only when there is a choice: otherwise the node points it where its maker is, as it always has.
+        ...(addresses?.remote ? { address } : {}),
       });
-      setCreated({ url: join_url, summary: linkSummary(role, effectiveUses, expiry) });
+      setCreated({ url: join_url, summary: linkSummary(role, effectiveUses, expiry), address });
       onCreated();
       await copy(join_url);
     } catch (e) {
@@ -141,12 +167,14 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
                     onClick={() => void copy(created.url)}
                   />
                 </HStack>
+                <LocalOnlyNote addresses={addresses} address={created.address} />
                 <Text size="sm" color="secondary">
                   This link isn’t shown again once you close this.
                 </Text>
               </VStack>
             ) : (
               <VStack gap={4}>
+                <LinkAddressSwitch addresses={addresses} value={address} onChange={pick} isDisabled={creating} />
                 <Selector
                   label="Joins as"
                   value={role}

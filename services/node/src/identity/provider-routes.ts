@@ -132,7 +132,7 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
         if (prompt !== "login") return fail(409, "already_linked", "this account is already linked to the identity provider");
         confirmSession = found.token.sid;
       } else {
-        const stale = await core.recentlyConfirmed(account, found.token);
+        const stale = await core.recentlyConfirmed(req, account, found.token);
         if (stale) return stale;
       }
     }
@@ -383,7 +383,7 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
     if (!found) return fail(401, "invalid_token", "sign in again");
     const { account } = found;
     if (account.oidc_sub) {
-      const stale = await core.recentlyConfirmed(account, found.token);
+      const stale = await core.recentlyConfirmed(req, account, found.token);
       if (stale) return stale;
     }
     const outcome = await db.unlinkIdentity(account.alias);

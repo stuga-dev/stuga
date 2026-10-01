@@ -108,7 +108,8 @@ provider, and the consent page asks two things:
 - **Access.** **Read and suggest changes**, or **Read only**.
 
 At the [remote address](remote-access.md), allowing an app takes a sign-in from the last five
-minutes, or confirming it is you, as an API key does.
+minutes, or confirming it is you (with a passkey there, if you have one), as an API key does, and
+you are notified that the app is connected.
 
 The page names the app. An app that identifies itself by a metadata document the node fetched is
 shown as **Verified by** that document's host; any other is an **Unverified app**, with the host it

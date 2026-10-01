@@ -4,7 +4,7 @@
  * waiting. The request says nothing about this node, and the comparison happens here.
  */
 import type { NodeStateRow } from "@stuga/db";
-import type { NotifyDeliverMessage } from "@stuga/protocol/internal/jobs";
+import { sinkDelivery } from "../jobs/notify.js";
 import type { JobDeps, JobsEnv } from "../jobs/deps.js";
 import { RELEASES_URL, type PendingUpdate, type Release, isReleaseVersion, parseFeed, pendingUpdate, storedReleases } from "./feed.js";
 
@@ -109,10 +109,7 @@ export async function checkForUpdates(env: JobsEnv, d: JobDeps, version: string)
   const body = `This node runs ${version}. Stuga ${pending.securityVersion} fixes a security issue.`;
   const url = `${env.publicOrigin}${ABOUT_PATH}`;
   for (const admin of await d.db.listNodeAdmins()) {
-    const delivery: NotifyDeliverMessage | null =
-      env.settings.current().notify.sink === "none"
-        ? null
-        : { kind: "notify_deliver", recipient: admin.alias, title, body, url };
+    const delivery = sinkDelivery(env.settings.current().notify, { recipient: admin.alias, title, body, url });
     await d.db.insertNotification(
       {
         id: `${SECURITY_UPDATE_EVENT}:${pending.securityVersion}:${admin.alias}`,

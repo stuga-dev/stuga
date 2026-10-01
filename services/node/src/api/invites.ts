@@ -15,6 +15,7 @@ import { recordAudit, type AuditInput } from "../audit/record.js";
 import { error, json } from "../http/respond.js";
 import type { AccountCall, WorkspaceCall } from "../http/router.js";
 import { newId } from "../ids.js";
+import { linkOrigin } from "../links/address.js";
 
 /**
  * How the ledger names one link: enough to match the people who joined with it
@@ -53,6 +54,7 @@ export async function createInvite({ ctx, req, match }: WorkspaceCall): Promise<
     role?: string;
     expires_in_days?: unknown;
     max_uses?: unknown;
+    address?: unknown;
   };
   // A link never carries ownership; otherwise the direct-grant escalation rule applies.
   const role = body.role ?? "member";
@@ -66,9 +68,12 @@ export async function createInvite({ ctx, req, match }: WorkspaceCall): Promise<
   if (uses === undefined || (uses !== null && !Number.isInteger(uses))) {
     return error(400, "max_uses must be a positive whole number, or null for no limit");
   }
-  // The link points where its maker is. At the remote address a link with no limit or no expiry would
-  // be an open sign-up for anyone it leaked to, so those are made only on the node's own network.
-  if (ctx.arrival === "remote" && (days === null || uses === null)) {
+  // The link points where its maker is unless they say (links/address.ts). A link for the remote
+  // address with no limit or no expiry would be an open sign-up for anyone it leaked to, so those
+  // open only on the node's own network.
+  const target = linkOrigin(ctx, body.address);
+  if ("error" in target) return json({ error: target.error, message: target.message }, { status: target.status });
+  if (target.address === "remote" && (days === null || uses === null)) {
     return json(
       { error: "invite_local_only", message: "A link with no limit or no expiry can be made only on this node's network." },
       { status: 400 },
@@ -97,13 +102,13 @@ export async function createInvite({ ctx, req, match }: WorkspaceCall): Promise<
       action: "invite.create",
       targetKind: "invite",
       targetId: inviteRef(tokenHash),
-      detail: { role, expires_at: expiresAt, max_uses: uses },
+      detail: { role, expires_at: expiresAt, max_uses: uses, address: target.address },
     },
   );
-  const joinUrl = `${ctx.servedOrigin}/join/${token}`;
+  const joinUrl = `${target.origin}/join/${token}`;
   // token_hash names the link for revoking, as the listing does.
   return json(
-    { token, token_hash: tokenHash, join_url: joinUrl, role, expires_at: expiresAt, max_uses: uses },
+    { token, token_hash: tokenHash, join_url: joinUrl, role, expires_at: expiresAt, max_uses: uses, address: target.address },
     { status: 201 },
   );
 }

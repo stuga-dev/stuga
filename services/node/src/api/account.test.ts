@@ -5,11 +5,19 @@ vi.mock("@stuga/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@stuga/db")>()),
   setDisplayName: vi.fn(),
   setUserEmail: vi.fn(),
+  getUserEmail: vi.fn(async () => "alice@example.test"),
+  hasPasskeyAt: vi.fn(async (_sql: unknown, _alias: string, host: string) => host === "k7f3q2.stuga.test"),
   getUsers: vi.fn(async () => [{ alias: "human-1", username: "ali", display_name: "Ali", email: "alice@example.test" }]),
   getSignInMethods: vi.fn(async () => ({ hasPassword: false, providerLinked: true })),
   isNodeAdminAlias: vi.fn(async () => false),
   sessionConfirmedAt: vi.fn(async () => new Date()),
   findAccountByAlias: vi.fn(async () => ({ alias: "human-1", username: "ali", password_hash: "scrypt$x", oidc_sub: null })),
+}));
+
+const emailChanged = vi.fn(async () => {});
+vi.mock("../identity/alerts.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../identity/alerts.js")>()),
+  alertsFor: () => ({ emailChanged }),
 }));
 
 const { setDisplayName, setUserEmail, sessionConfirmedAt } = await import("@stuga/db");
@@ -25,11 +33,12 @@ const settings = { current: () => ({ identityProvider: null, notify: { sink: "no
 const ctx = (over: CtxOverrides = {}): Ctx =>
   personCtx({ displayName: "Ali", principals: ["user:human-1"], env: { settings } as CtxOverrides["env"], ...over });
 
-async function route(c: Ctx, method: string, path: string, body?: unknown): Promise<Response> {
+async function route(c: Ctx, method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
   const url = new URL(`https://node.test${path}`);
   const req = new Request(url, {
     method,
-    ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    headers,
+    ...(body === undefined ? {} : { headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }),
   });
   return routeWorkspaceRequest(c, req);
 }
@@ -75,6 +84,17 @@ describe("PATCH /api/whoami", () => {
     expect(mockSetEmail).not.toHaveBeenCalled();
   });
 
+  it("tells the person at the address it was, and the administrators, when the email changes", async () => {
+    await route(ctx(), "PATCH", "/api/whoami", { email: "ada@example.test" }, { "user-agent": "Mozilla/5.0 (Macintosh) Version/19.0 Safari/605" });
+    expect(emailChanged).toHaveBeenCalledWith(
+      expect.objectContaining({ alias: "human-1", username: "ali", from: "alice@example.test", to: "ada@example.test", device: "Safari on Mac" }),
+    );
+    emailChanged.mockClear();
+    // The same address again changes nothing, and tells nobody.
+    await route(ctx(), "PATCH", "/api/whoami", { email: "alice@example.test" });
+    expect(emailChanged).not.toHaveBeenCalled();
+  });
+
   it("changes the email, where alerts go, only from a sign-in confirmed in the last five minutes; the name any time", async () => {
     confirmedAt.mockResolvedValue(new Date(Date.now() - 6 * 60_000));
     const res = await route(ctx(), "PATCH", "/api/whoami", { email: "ada@example.test" });
@@ -86,6 +106,15 @@ describe("PATCH /api/whoami", () => {
     expect(both.status).toBe(401);
     expect(mockSet).not.toHaveBeenCalled();
     expect((await route(ctx(), "PATCH", "/api/whoami", { display_name: "Ada" })).status).toBe(200);
+  });
+
+  it("offers a passkey to confirm with at the remote address, for one made there", async () => {
+    confirmedAt.mockResolvedValue(new Date(Date.now() - 6 * 60_000));
+    const remote = ctx({ arrival: "remote", servedOrigin: "https://k7f3q2.stuga.test" });
+    const res = await route(remote, "PATCH", "/api/whoami", { email: "ada@example.test" });
+    expect((await res.json()).methods).toEqual(["passkey", "password"]);
+    const elsewhere = ctx({ arrival: "remote", servedOrigin: "https://zz9zz9.stuga.test" });
+    expect((await (await route(elsewhere, "PATCH", "/api/whoami", { email: "ada@example.test" })).json()).methods).toEqual(["password"]);
   });
 
   it("refuses an agent renaming the human who minted it", async () => {

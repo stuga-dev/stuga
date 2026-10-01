@@ -145,7 +145,8 @@ describe("telling the administrators", () => {
       { id: "REMOTE_CERT_EXPIRED:87654321:sam", recipient_alias: "sam" },
     ]);
     expect(rows[0]!.resource_url).toBe("http://livs-air.local:8787/settings/node/remote");
-    expect(deliveries[0]).toEqual({ kind: "notify_deliver", recipient: "liv", title: "t", body: "b", url: "http://livs-air.local:8787/settings/node/remote" });
+    expect(deliveries[0]).toEqual({ kind: "notify_deliver", channel: "slack", channelKey: expect.stringMatching(/^[0-9a-f]{16}$/),
+      recipient: "liv", title: "t", body: "b", url: "http://livs-air.local:8787/settings/node/remote" });
     await send(notice);
     expect(rows).toHaveLength(2);
   });

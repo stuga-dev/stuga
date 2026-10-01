@@ -42,7 +42,7 @@ describe.skipIf(!URL)("notification delivery on the job queue", () => {
   });
 
   /** Run the worker until `done` holds, delivering through `deliver`. */
-  async function drain(deliver: (n: NotificationPayload) => Promise<void>, done: () => Promise<boolean>): Promise<void> {
+  async function drain(deliver: (n: NotificationPayload) => Promise<void | string>, done: () => Promise<boolean>): Promise<void> {
     const env = {
       sql,
       jobs: pgJobQueue<IndexMessage>(sql),
@@ -51,7 +51,7 @@ describe.skipIf(!URL)("notification delivery on the job queue", () => {
     } as unknown as JobsEnv;
     const worker = startJobWorker<IndexMessage>(
       sql,
-      (batch) => handleJobBatch(env, batch, { db: jobsDb(sql), log: silentLog, deliver: (_cfg, n) => deliver(n) }),
+      (batch) => handleJobBatch(env, batch, { db: jobsDb(sql), log: silentLog, deliver: async (_cfg, n) => (await deliver(n)) ?? null }),
       { pollMs: 10, backoffMs: () => 0 },
     );
     try {
@@ -64,6 +64,9 @@ describe.skipIf(!URL)("notification delivery on the job queue", () => {
 
   const queued = async () => Number((await sql<{ n: string }[]>`SELECT count(*) AS n FROM jobs`)[0]!.n);
   const stored = async () => Number((await sql<{ n: string }[]>`SELECT count(*) AS n FROM notifications`)[0]!.n);
+  const delivery = async () =>
+    (await sql<{ delivery_channel: string | null; delivered_at: Date | null; delivery_error: string | null }[]>`
+      SELECT delivery_channel, delivered_at, delivery_error FROM notifications`)[0];
 
   it("retries a failed sink delivery until it lands, keeping one stored notification", async () => {
     const delivered: NotificationPayload[] = [];
@@ -79,6 +82,58 @@ describe.skipIf(!URL)("notification delivery on the job queue", () => {
     expect(delivered).toEqual([{ recipient: "rosa", title: "Q3 plan", body: "Ada shared a document with you", url: "https://node.test/doc/d1" }]);
     expect(await stored()).toBe(1);
     expect(await queued()).toBe(0);
+    // The row says it went, and the failures before it no longer show.
+    expect(await delivery()).toMatchObject({ delivery_channel: "webhook", delivery_error: null });
+    expect((await delivery())!.delivered_at).not.toBeNull();
+  });
+
+  it("shows a failed attempt's error until one lands, never the sink's address", async () => {
+    let attempts = 0;
+    await pgJobQueue<IndexMessage>(sql).send(message);
+    await drain(
+      async () => {
+        attempts++;
+        throw new Error("could not reach https://hooks.slack.com/services/T0/B0/secret");
+      },
+      async () => (await delivery())?.delivery_error != null,
+    );
+    expect(attempts).toBeGreaterThan(0);
+    const row = await delivery();
+    expect(row).toMatchObject({ delivery_channel: "webhook", delivered_at: null });
+    expect(row!.delivery_error).toBe("could not reach the configured address");
+  });
+
+  it("records a delivery that cannot be made, and does not try it again", async () => {
+    let attempts = 0;
+    await pgJobQueue<IndexMessage>(sql).send(message);
+    await drain(
+      async () => {
+        attempts++;
+        return "you have no email address in Stuga";
+      },
+      async () => (await queued()) === 0 && (await delivery())?.delivery_error != null,
+    );
+    expect(attempts).toBe(1);
+    expect(await delivery()).toMatchObject({ delivered_at: null, delivery_error: "you have no email address in Stuga" });
+  });
+
+  it("stamps the channel as the row is written, before any attempt", async () => {
+    const db = jobsDb(sql);
+    const row = {
+      id: "n-stamp",
+      workspace_id: null,
+      recipient_alias: "rosa",
+      event_type: "ACCOUNT_NEW_SIGN_IN",
+      resource_id: null,
+      resource_title: "t",
+      resource_url: "u",
+      actor_alias: null,
+      payload: {},
+    };
+    await db.insertNotification(row, { kind: "notify_deliver", channel: "email", recipient: "rosa", title: "t", body: "b", url: "u" });
+    expect(await delivery()).toMatchObject({ delivery_channel: "email", delivered_at: null, delivery_error: null });
+    const [job] = await sql<{ body: { notificationId?: string } }[]>`SELECT body FROM jobs`;
+    expect(job!.body.notificationId).toBe("n-stamp");
   });
 
   it("stores and delivers a repeat within the hour once", async () => {
@@ -108,9 +163,10 @@ describe.skipIf(!URL)("notification delivery on the job queue", () => {
     };
     expect(await db.insertNotification(row, null)).toBe(true);
     expect(await queued()).toBe(0);
-    expect(await db.insertNotification({ ...row, id: "n-sink" }, { kind: "notify_deliver", recipient: "rosa", title: "t", body: "b", url: "u" })).toBe(true);
+    expect(await delivery()).toMatchObject({ delivery_channel: "none" });
+    expect(await db.insertNotification({ ...row, id: "n-sink" }, { kind: "notify_deliver", channel: "webhook", recipient: "rosa", title: "t", body: "b", url: "u" })).toBe(true);
     expect(await queued()).toBe(1);
-    expect(await db.insertNotification({ ...row, id: "n-sink" }, { kind: "notify_deliver", recipient: "rosa", title: "t", body: "b", url: "u" })).toBe(false);
+    expect(await db.insertNotification({ ...row, id: "n-sink" }, { kind: "notify_deliver", channel: "webhook", recipient: "rosa", title: "t", body: "b", url: "u" })).toBe(false);
     expect(await queued()).toBe(1);
   });
 });

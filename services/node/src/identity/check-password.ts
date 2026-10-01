@@ -34,7 +34,8 @@ import { MAX_PASSWORD } from "./passwords.js";
 import { ACCOUNT_PAUSES_MIN, type SignInLimits } from "./sign-in-limits.js";
 
 /** What a password short of the remote rule is told, right or wrong. */
-export const REMOTE_PASSWORD_WEAK = "From outside this network, sign in with a password of 15 characters or more that is hard to guess.";
+export const REMOTE_PASSWORD_WEAK =
+  "From outside this network, sign in with a passkey or a password of 15 characters or more that is hard to guess.";
 
 export interface PasswordCheckInput {
   /** Normalized: as typed before sign-in, the session's account's after. */
@@ -78,12 +79,13 @@ export function busy(): Response {
   return json({ error: "busy", message: "busy; try again in a few seconds" }, 503, { "retry-after": "5" });
 }
 
-function paused(retryAfterSeconds: number): Response {
+/** The 429 while sign-ins are paused; `what` is what there were too many of. */
+export function paused(retryAfterSeconds: number, what = "wrong passwords"): Response {
   const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
   return json(
     {
       error: "sign_in_paused",
-      message: `Too many wrong passwords. Try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`,
+      message: `Too many ${what}. Try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`,
       retry_after: retryAfterSeconds,
     },
     429,

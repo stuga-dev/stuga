@@ -229,7 +229,7 @@ export const Workspaces = {
   createInvite: (
     workspaceId: string,
     /** Omitted limits are one person and seven days; null is no limit, which works only on the node's own network. */
-    opts: { role?: InviteRole; expires_in_days?: number | null; max_uses?: number | null } = {},
+    opts: { role?: InviteRole; expires_in_days?: number | null; max_uses?: number | null; address?: "local" | "remote" } = {},
   ) =>
     api<{
       token: string;

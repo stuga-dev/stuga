@@ -8,7 +8,7 @@ import { nodeLabel, nodeName } from "../../../shell/Brand";
 import { dropdown, mountInto, toggleOptions, typeInto } from "../../../test/form-input";
 import { SEARCH_LANGUAGES_LABEL } from "../../../ui/SearchLanguageList";
 
-const me = vi.hoisted(() => ({ whoami: vi.fn() }));
+const me = vi.hoisted(() => ({ whoami: vi.fn(), linkAddresses: vi.fn(async () => ({ remote: false, local: "network", default: "local" })) }));
 const nodeApi = vi.hoisted(() => ({
   ai: vi.fn(),
   saveAi: vi.fn(),

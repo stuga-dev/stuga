@@ -41,6 +41,22 @@ function present(n: Notification): { label: string; to: string | null } {
   return { label, to };
 }
 
+const CHANNELS: Record<string, string> = { email: "email", slack: "Slack", teams: "Teams", discord: "Discord", webhook: "webhook" };
+
+/**
+ * Whether a notification about the node or one's own account also went out by the node's channel:
+ * so nobody believes an alert reached their inbox when it did not. Nothing for a row from before
+ * this was recorded.
+ */
+export function deliveryLine(n: Pick<Notification, "delivery_channel" | "delivered_at" | "delivery_error">): string | undefined {
+  if (!n.delivery_channel) return undefined;
+  if (n.delivery_channel === "none") return "Shown in Stuga only.";
+  const channel = CHANNELS[n.delivery_channel] ?? n.delivery_channel;
+  if (n.delivered_at) return `Also sent by ${channel}.`;
+  if (n.delivery_error) return `Not sent by ${channel}: ${n.delivery_error.replace(/\.$/, "")}.`;
+  return `Sending by ${channel}…`;
+}
+
 /** A target in another workspace switches there and reloads, like WorkspaceSwitcher. A row about the node is in none. */
 function openTarget(n: Notification, to: string, nav: (to: string) => void): void {
   if (n.workspace_id === null || n.workspace_id === getActiveWorkspace()) {
@@ -103,7 +119,13 @@ export function NotificationsBell() {
                 as="li"
                 key={n.id}
                 label={label}
-                description={n.workspace_id !== null && n.workspace_id !== active ? (n.workspace_name ?? undefined) : undefined}
+                description={
+                  n.workspace_id === null
+                    ? deliveryLine(n)
+                    : n.workspace_id !== active
+                      ? (n.workspace_name ?? undefined)
+                      : undefined
+                }
                 isHighlighted={fresh.has(n.id) || !n.read}
                 endContent={
                   <Text type="supporting" color="secondary">

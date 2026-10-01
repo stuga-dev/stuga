@@ -37,6 +37,23 @@ describe("deliver", () => {
     expect(JSON.stringify(i.calls[0]?.body)).toContain(n.url);
   });
 
+  it("quotes names as text, never as the channel's markup: no link, no mention", async () => {
+    const named = { ...n, title: "App connected: <https://evil.example|Revoke everything>", body: "[Revoke everything](https://evil.example) @everyone" };
+    const slack = io();
+    await deliver({ sink: "slack", webhookUrl: "https://hooks.example/T" }, named, slack);
+    const text = (slack.calls[0]!.body as { blocks: Array<{ text?: { text: string } }> }).blocks[0]!.text!.text;
+    expect(text).toContain("&lt;https://evil.example|Revoke everything&gt;");
+    expect(text).not.toContain("<https://evil");
+    const discord = io();
+    await deliver({ sink: "discord", webhookUrl: "https://d.example" }, named, discord);
+    const content = discord.calls[0]!.body as { content: string; allowed_mentions: unknown };
+    expect(content.content).toContain("\\[Revoke everything\\](https://evil.example)");
+    expect(content.allowed_mentions).toEqual({ parse: [] });
+    const teams = io();
+    await deliver({ sink: "teams", webhookUrl: "https://t.example" }, named, teams);
+    expect((teams.calls[0]!.body as { text: string }).text).toContain("[Revoke everything] (https://evil.example)");
+  });
+
   it("the generic webhook receives the raw payload", async () => {
     const i = io();
     await deliver({ sink: "webhook", webhookUrl: "https://sink.example" }, n, i);

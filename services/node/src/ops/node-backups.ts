@@ -17,7 +17,7 @@
  * is done.
  */
 import { getNodeState, recordBackupAttempt, type Sql } from "@stuga/db";
-import type { NotifyDeliverMessage } from "@stuga/protocol/internal/jobs";
+import { sinkDelivery } from "../jobs/notify.js";
 import { lastScheduled, nextScheduled } from "../config/time-zone.js";
 import { jobDeps, type JobsEnv } from "../jobs/deps.js";
 import type { WriterLock } from "../writer-lock.js";
@@ -253,10 +253,7 @@ export async function notifyBackupFailed(env: JobsEnv, message: string, at: Date
   const url = `${env.publicOrigin}${BACKUPS_PATH}`;
   const day = at.toISOString().slice(0, 10);
   for (const admin of await db.listNodeAdmins()) {
-    const delivery: NotifyDeliverMessage | null =
-      env.settings.current().notify.sink === "none"
-        ? null
-        : { kind: "notify_deliver", recipient: admin.alias, title, body: message, url };
+    const delivery = sinkDelivery(env.settings.current().notify, { recipient: admin.alias, title, body: message, url });
     await db.insertNotification(
       {
         id: `${BACKUP_FAILED_EVENT}:${day}:${admin.alias}`,

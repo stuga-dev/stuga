@@ -1,9 +1,31 @@
 import { api } from "../lib/http/client";
 
+/** One of your passkeys; never its key. */
+export interface PasskeySummary {
+  id: string;
+  name: string;
+  /** Synced to other devices, so removing it signs those out too. */
+  synced: boolean;
+  created_at: string;
+  last_used_at: string | null;
+  /** Made at a remote address the node no longer has: it signs in nowhere. */
+  elsewhere?: boolean;
+}
+
+/** Where an invite or password link can point (GET /api/link-addresses). */
+export interface LinkAddresses {
+  /** The remote address is on. */
+  remote: boolean;
+  /** Who can open a link to the node's own address: anyone on its network, or this computer only. */
+  local: "network" | "computer";
+  default: "local" | "remote";
+}
+
 /** What Revoke everything takes from an account, counted before it does. */
 export interface RevokeEverythingCounts {
   /** Sign-ins still on, at every address. */
   sessions: number;
+  passkeys: number;
   /** Linked to the node's identity provider. */
   provider: boolean;
   apps: number;
@@ -50,6 +72,17 @@ export const Me = {
     }),
   /** What Revoke everything would take from you. */
   revokeEverythingCounts: () => api<RevokeEverythingCounts>("/api/me/revoke-everything"),
+  /** Your passkeys, newest first; added only at the remote address. */
+  passkeys: () => api<{ passkeys: PasskeySummary[] }>("/api/me/passkeys").then((r) => r.passkeys),
+  renamePasskey: (id: string, name: string) =>
+    api<{ id: string; name: string }>(`/api/me/passkeys/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  /** The sign-ins it made end with it; `signed_out` when this one was among them. */
+  removePasskey: (id: string) =>
+    api<{ removed: true; signed_out: boolean }>(`/api/me/passkeys/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** Not now to "Sign in faster next time", on every device. */
+  dismissPasskeyOffer: () => api<void>("/api/me/passkey-offer/dismiss", { method: "POST" }),
+  /** Where the links you make can point. */
+  linkAddresses: () => api<LinkAddresses>("/api/link-addresses"),
   /** Empty while the node's AI chat is off. */
   models: () => api<AiModel[]>("/api/models"),
 };

@@ -7,16 +7,36 @@ import {
   ACCOUNT_NEW_SIGN_IN,
   ACCOUNT_PASSWORD_CHANGED,
   ACCOUNT_SIGN_INS_PAUSED,
+  ACCOUNT_APP_CONNECTED,
+  ACCOUNT_EMAIL_CHANGED,
+  ACCOUNT_PASSKEY_ADDED,
+  ACCOUNT_PASSKEY_REMOVED,
+  NODE_NOTIFY_CHANNEL_CHANGED,
+  channelChangedTo,
+  channelText,
   createSecurityAlerts,
+  sameChannel,
 } from "./alerts.js";
 
-type Row = { id: string; recipient_alias: string; event_type: string; resource_title: string; resource_url: string; workspace_id: null };
+type Row = {
+  id: string;
+  recipient_alias: string;
+  event_type: string;
+  resource_title: string;
+  resource_url: string;
+  workspace_id: null;
+  delivery_channel?: string | null;
+  payload: { message: string };
+};
 
-function setup(admins = ["u_liv", "u_max"], sink = true) {
+function setup(admins = ["u_liv", "u_max"], sink: boolean | string = true, deliverThrough?: (cfg: unknown, n: unknown) => Promise<string | null>) {
   const rows: Row[] = [];
   const deliveries: unknown[] = [];
+  const recorded: Array<[string, unknown]> = [];
   const ids = new Set<string>();
   const db = {
+    recordDelivery: vi.fn(async (id: string, outcome: unknown) => void recorded.push([id, outcome])),
+    userEmail: vi.fn(async (alias: string) => `${alias}@example.test`),
     listNodeAdmins: vi.fn(async () => admins.map((alias) => ({ alias }))),
     insertNotification: vi.fn(async (row: Row, delivery: unknown) => {
       if (ids.has(row.id)) return false;
@@ -28,10 +48,11 @@ function setup(admins = ["u_liv", "u_max"], sink = true) {
   };
   const alerts = createSecurityAlerts({
     db: db as never,
-    sinkConfigured: () => sink,
+    channel: () => ({ sink: typeof sink === "string" ? sink : sink ? "slack" : "none", webhookUrl: "https://hooks.slack.test/services/T" }),
     publicOrigin: "http://livs-air.local:8787",
+    ...(deliverThrough ? { deliverThrough: deliverThrough as never } : {}),
   });
-  return { alerts, rows, deliveries };
+  return { alerts, rows, deliveries, recorded };
 }
 
 const at = new Date(Date.UTC(2026, 8, 30, 14, 2));
@@ -123,7 +144,17 @@ describe("the other alerts", () => {
   });
 
   it("are the person's own rows, which reach them whether or not they administer the node", () => {
-    for (const type of [ACCOUNT_NEW_SIGN_IN, ACCOUNT_PASSWORD_CHANGED, ACCOUNT_EVERYTHING_REVOKED, ACCOUNT_API_KEY_CREATED, ACCOUNT_SIGN_INS_PAUSED]) {
+    for (const type of [
+      ACCOUNT_NEW_SIGN_IN,
+      ACCOUNT_PASSWORD_CHANGED,
+      ACCOUNT_EVERYTHING_REVOKED,
+      ACCOUNT_API_KEY_CREATED,
+      ACCOUNT_SIGN_INS_PAUSED,
+      ACCOUNT_PASSKEY_ADDED,
+      ACCOUNT_PASSKEY_REMOVED,
+      ACCOUNT_APP_CONNECTED,
+      ACCOUNT_EMAIL_CHANGED,
+    ]) {
       expect(type.startsWith(ACCOUNT_EVENT_PREFIX)).toBe(true);
     }
   });
@@ -132,11 +163,121 @@ describe("the other alerts", () => {
     const onError = vi.fn();
     const alerts = createSecurityAlerts({
       db: { listNodeAdmins: async () => [], insertNotification: async () => Promise.reject(new Error("down")) } as never,
-      sinkConfigured: () => false,
+      channel: () => ({ sink: "none" }),
       publicOrigin: "http://x.test",
       onError,
     });
     await expect(alerts.apiKeyCreated({ alias: "u_bo", keyId: "k1", keyName: "Scout" })).resolves.toBeUndefined();
     expect(onError).toHaveBeenCalledOnce();
+  });
+});
+
+describe("passkeys, apps and email", () => {
+  it("a passkey added or removed, and an app connected at the remote address, reach the person, each its own row", async () => {
+    const { alerts, rows, deliveries } = setup();
+    const added = { alias: "u_bo", name: "iCloud Keychain", remoteHost: "k7f3q2.mystuga.com", device: "Safari on Mac", at, from: "203.0.113.9" };
+    await alerts.passkeyAdded(added);
+    await alerts.passkeyAdded(added);
+    await alerts.passkeyRemoved({ alias: "u_bo", name: "Security key" });
+    await alerts.appConnected({ alias: "u_bo", app: "Claude", appHost: "claude.ai", grantId: "g1", remoteHost: "k7f3q2.mystuga.com" });
+    expect(rows.map((r) => [r.recipient_alias, r.event_type, r.resource_title])).toEqual([
+      ["u_bo", ACCOUNT_PASSKEY_ADDED, "Passkey added at k7f3q2.mystuga.com: iCloud Keychain"],
+      ["u_bo", ACCOUNT_PASSKEY_ADDED, "Passkey added at k7f3q2.mystuga.com: iCloud Keychain"],
+      ["u_bo", ACCOUNT_PASSKEY_REMOVED, "Passkey removed: Security key"],
+      ["u_bo", ACCOUNT_APP_CONNECTED, "App connected at k7f3q2.mystuga.com: Claude (claude.ai)"],
+    ]);
+    // Where and when, which the adding browser does not choose, beside the name it does.
+    expect(rows[0]!.payload.message).toBe(
+      "Passkey added at k7f3q2.mystuga.com: iCloud Keychain · Safari on Mac · 2026-09-30 14:02 UTC · from 203.0.113.9. Not you? Revoke everything.",
+    );
+    expect(new Set(rows.map((r) => r.id)).size).toBe(4);
+    expect(rows.every((r) => r.resource_url.endsWith("/settings/profile?revoke=1"))).toBe(true);
+    expect(deliveries).toHaveLength(4);
+  });
+
+  it("quotes an app's own name as one plain line, beside where it takes the grant back to", async () => {
+    const { alerts, rows } = setup();
+    await alerts.appConnected({ alias: "u_bo", app: "Claude\n\u0007Revoke\teverything", appHost: "evil.example", grantId: "g2", remoteHost: "k7f3q2.mystuga.com" });
+    expect(rows[0]!.resource_title).toBe("App connected at k7f3q2.mystuga.com: Claude Revoke everything (evil.example)");
+  });
+
+  it("an email change reaches the person by email at the address it was, and every other administrator", async () => {
+    const { alerts, rows, deliveries } = setup();
+    await alerts.emailChanged({ ...bo, device: "Safari on Mac", at, from: "bo@old.test", to: "bo@new.test" });
+    expect(rows.map((r) => [r.recipient_alias, r.event_type, r.resource_title])).toEqual([
+      ["u_bo", ACCOUNT_EMAIL_CHANGED, "Your email was changed to bo@new.test"],
+      ["u_liv", "MEMBER_EMAIL_CHANGED", "Bo's email was changed"],
+      ["u_max", "MEMBER_EMAIL_CHANGED", "Bo's email was changed"],
+    ]);
+    // The person's copy goes by email only: on a shared channel its new address would be read by others.
+    expect(deliveries.map((d) => (d as { recipient: string }).recipient)).toEqual(["u_liv", "u_max"]);
+    expect(deliveries[0]).not.toHaveProperty("to");
+    expect(JSON.stringify(deliveries)).not.toContain("bo@new.test");
+    await alerts.emailChanged({ ...bo, device: "Safari on Mac", at, from: null, to: null });
+    expect(rows.at(-3)!.resource_title).toBe("Your email was removed");
+  });
+
+  it("by email, an email added where there was none goes to no address: the new one could be anyone's", async () => {
+    const { alerts, rows, deliveries } = setup(["u_liv"], "email");
+    await alerts.emailChanged({ ...bo, device: "Safari on Mac", at, from: null, to: "someone@new.test" });
+    expect(rows.map((r) => r.recipient_alias)).toEqual(["u_bo", "u_liv"]);
+    // The person's row is shown in Stuga only; the administrator's goes by email as usual.
+    expect(deliveries).toEqual([expect.objectContaining({ recipient: "u_liv", channel: "email" })]);
+    const fromOld = setup(["u_liv"], "email");
+    await fromOld.alerts.emailChanged({ ...bo, device: "Safari on Mac", at, from: "bo@old.test", to: "someone@new.test" });
+    expect(fromOld.deliveries[0]).toMatchObject({ recipient: "u_bo", to: "bo@old.test", channel: "email" });
+  });
+
+  it("a changed channel reaches every administrator through the channel it had, recorded on each row", async () => {
+    const sent: unknown[] = [];
+    const { alerts, rows, deliveries, recorded } = setup(["u_liv", "u_max"], true, async (cfg, n) => {
+      sent.push([cfg, n]);
+      return null;
+    });
+    const before = { sink: "slack", webhookUrl: "https://hooks.slack.test/services/secret" };
+    const after = { sink: "discord", webhookUrl: "https://discord.test/api/webhooks/secret" };
+    await alerts.channelChanged({ by: { alias: "u_liv", name: "Liv" }, before, after, device: "Safari on Mac", at });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(rows.map((r) => [r.recipient_alias, r.event_type, r.delivery_channel])).toEqual([
+      ["u_liv", NODE_NOTIFY_CHANNEL_CHANGED, "slack"],
+      ["u_max", NODE_NOTIFY_CHANNEL_CHANGED, "slack"],
+    ]);
+    expect(rows[0]!.payload.message).toBe(
+      "Liv changed where Stuga sends notifications: Slack (hooks.slack.test) to Discord (discord.test) · Safari on Mac · 2026-09-30 14:02 UTC.",
+    );
+    // Nothing is queued for the channel in force now; the old one is sent to at once.
+    expect(deliveries).toEqual([]);
+    expect(sent.map((s) => (s as [{ sink: string }, unknown])[0].sink)).toEqual(["slack", "slack"]);
+    expect(recorded).toEqual([
+      [rows[0]!.id, { delivered: true }],
+      [rows[1]!.id, { delivered: true }],
+    ]);
+  });
+
+  it("a changed channel from none goes out through nothing, and says it was shown in Stuga only", async () => {
+    const { alerts, rows, recorded } = setup(["u_liv"], true, async () => null);
+    await alerts.channelChanged({ by: { alias: "u_liv", name: "Liv" }, before: { sink: "none" }, after: { sink: "email", emailFrom: "n@x.test" }, device: "Chrome", at });
+    expect(rows[0]).toMatchObject({ delivery_channel: "none" });
+    expect(rows[0]!.payload.message).toContain("Stuga only to email from n@x.test");
+    expect(recorded).toEqual([]);
+  });
+
+  it("says a channel moved when only its webhook or mail server did, which its name alone would not show", () => {
+    const slack = (path: string) => ({ sink: "slack", webhookUrl: `https://hooks.slack.test/services/${path}` });
+    expect(channelChangedTo(slack("a"), slack("b"))).toBe("another Slack webhook (hooks.slack.test)");
+    expect(channelChangedTo({ sink: "webhook", webhookUrl: "https://h.test/a" }, { sink: "webhook", webhookUrl: "https://h.test/b" })).toBe(
+      "another webhook (h.test)",
+    );
+    const mail = (smtpUrl: string) => ({ sink: "email", smtpUrl, emailFrom: "n@x.test" });
+    expect(channelChangedTo(mail("smtp://a"), mail("smtp://b"))).toBe("email from n@x.test, through another mail server");
+    expect(channelChangedTo(slack("a"), { sink: "discord", webhookUrl: "https://discord.test/x" })).toBe("Discord (discord.test)");
+  });
+
+  it("names a channel without its secret, and tells one apart from another", () => {
+    expect(channelText({ sink: "webhook", webhookUrl: "https://hooks.example.test/T/secret" })).toBe("a webhook (hooks.example.test)");
+    expect(channelText({ sink: "none" })).toBe("Stuga only");
+    expect(sameChannel({ sink: "slack", webhookUrl: "a" }, { sink: "slack", webhookUrl: "a" })).toBe(true);
+    expect(sameChannel({ sink: "slack", webhookUrl: "a" }, { sink: "slack", webhookUrl: "b" })).toBe(false);
+    expect(sameChannel({ sink: "email", smtpUrl: "smtp://a", emailFrom: "x" }, { sink: "email", smtpUrl: "smtp://a", emailFrom: "y" })).toBe(false);
   });
 });

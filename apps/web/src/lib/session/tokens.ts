@@ -28,6 +28,8 @@ export interface Session {
   refreshToken?: string;
   /** Seconds until the access token expires. */
   expiresIn: number;
+  /** The node offers to add a passkey now (a password sign-in at the remote address). Never stored. */
+  passkeyOffer?: boolean;
 }
 
 /**
@@ -70,6 +72,8 @@ export interface TokenResponse {
   refresh_token?: string;
   expires_in: number;
   return_to?: string;
+  /** After a password sign-in at the remote address: "Sign in faster next time" is due. */
+  passkey_offer?: boolean;
 }
 
 export async function authPost(path: string, body: Record<string, unknown>, bearer?: string): Promise<TokenResponse> {
@@ -82,6 +86,7 @@ export async function authPost(path: string, body: Record<string, unknown>, bear
     refresh_token: json.refresh_token,
     expires_in: json.expires_in,
     ...(typeof json.return_to === "string" ? { return_to: json.return_to } : {}),
+    ...(json.passkey_offer === true ? { passkey_offer: true } : {}),
   };
 }
 

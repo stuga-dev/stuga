@@ -25,6 +25,15 @@ export interface SocketOwner {
   readonly heartbeat: Heartbeat;
 }
 
+/**
+ * What a message from the client passes before it reaches the actor: the host sets one on a socket
+ * whose credential can end (a person's sign-in), and it calls `deliver` once the message may go on,
+ * in the order messages came, or never when the socket is closed instead.
+ */
+export interface InboundGate {
+  admit(deliver: () => void): void;
+}
+
 /** The wire the server half writes to once the handshake is done. */
 export interface SocketTransport {
   send(data: string | Uint8Array): void;
@@ -45,6 +54,8 @@ export class ServerSocket<Meta = unknown> implements ActorSocket<Meta> {
   owner: SocketOwner | null = null;
   /** Assigned by `acceptWebSocket` before the actor can see the socket. */
   meta!: Meta;
+  /** Set by the host for a socket whose credential can end; every inbound message passes it. */
+  gate: InboundGate | null = null;
 
   #transport: SocketTransport | null = null;
 
@@ -184,6 +195,14 @@ export function attachSocket(server: ServerSocket, ws: WsSocket): void {
     },
   });
 
+  /** Through the socket's gate when it has one, which keeps the order and drops what comes after a close. */
+  const pass = (message: string | ArrayBuffer): void => {
+    const deliver = () => void owner.deliverMessage(server, message);
+    // A gate may let a message on after a wait: by then the socket may have closed, and it goes nowhere.
+    if (server.gate) server.gate.admit(() => (server.closed ? undefined : deliver()));
+    else deliver();
+  };
+
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
       const text = Array.isArray(data) ? Buffer.concat(data).toString() : data.toString();
@@ -191,10 +210,10 @@ export function attachSocket(server: ServerSocket, ws: WsSocket): void {
         if (ws.readyState === ws.OPEN) ws.send(owner.heartbeat.response);
         return;
       }
-      void owner.deliverMessage(server, text);
+      pass(text);
       return;
     }
-    void owner.deliverMessage(server, toArrayBuffer(data));
+    pass(toArrayBuffer(data));
   });
 
   ws.on("error", (err) => {

@@ -230,7 +230,7 @@ export interface UserNodeRow {
 export type CredentialArrival = "local" | "remote";
 
 /** How a session began. */
-export type SignedInWith = "password" | "provider" | "reset" | "invite" | "setup";
+export type SignedInWith = "password" | "provider" | "passkey" | "reset" | "invite" | "setup";
 
 export interface RefreshSessionRow {
   id: string;
@@ -246,6 +246,8 @@ export interface RefreshSessionRow {
   replaced_by: string | null;
   arrival: CredentialArrival;
   signed_in_with: SignedInWith;
+  /** The passkey a sign-in made with one used (`credential_id`); removing it ends the sign-in. */
+  passkey_id: string | null;
   signed_in_at: string;
   confirmed_at: string;
   /** At the remote address, when the session ends however often it renews; null on the node's own network. */
@@ -290,6 +292,15 @@ export interface NotificationRow {
   payload: Record<string, unknown>;
   read: boolean;
   created_at: string;
+  /**
+   * The sink a delivery was queued for when the row was written, "none" when it was shown in Stuga
+   * only; null for a row written before deliveries were recorded.
+   */
+  delivery_channel: string | null;
+  /** When the sink took it. */
+  delivered_at: string | null;
+  /** Why the last attempt failed; cleared once one succeeds. */
+  delivery_error: string | null;
 }
 
 export interface SearchResult {

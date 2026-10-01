@@ -12,6 +12,12 @@ export interface Notification {
   actor_alias: string | null;
   read: boolean;
   created_at: string;
+  /** The sink it was also sent through, as set up when it was written; "none" when shown in Stuga only, null when not recorded. */
+  delivery_channel?: string | null;
+  /** When the sink took it. */
+  delivered_at?: string | null;
+  /** Why the last attempt failed, until one succeeds. */
+  delivery_error?: string | null;
 }
 
 export const Notifications = {

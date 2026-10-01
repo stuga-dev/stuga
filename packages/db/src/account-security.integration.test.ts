@@ -175,7 +175,7 @@ describe.skipIf(!URL)("account security", () => {
     it("counts what it would take, then takes exactly that, in one go", async () => {
       await seedEverything();
       const counts = await revokeEverythingCounts(sql, "u_bo");
-      expect(counts).toEqual({ sessions: 2, provider: true, apps: 1, api_keys: 1, invites: 1, share_links: 1 });
+      expect(counts).toEqual({ sessions: 2, passkeys: 0, provider: true, apps: 1, api_keys: 1, invites: 1, share_links: 1 });
 
       const done = await revokeEverything(sql, { alias: "u_bo", by: "u_bo", passwordHash: "new-hash" });
       expect(done).toMatchObject({ ...counts, devices: 1, password_links: 1 });
@@ -200,7 +200,7 @@ describe.skipIf(!URL)("account security", () => {
         { token_hash: "share-liv" },
       ]);
       // Nothing is left to take.
-      expect(await revokeEverythingCounts(sql, "u_bo")).toEqual({ sessions: 0, provider: false, apps: 0, api_keys: 0, invites: 0, share_links: 0 });
+      expect(await revokeEverythingCounts(sql, "u_bo")).toEqual({ sessions: 0, passkeys: 0, provider: false, apps: 0, api_keys: 0, invites: 0, share_links: 0 });
     });
 
     it("for an administrator to do, removes the password instead of setting one", async () => {
