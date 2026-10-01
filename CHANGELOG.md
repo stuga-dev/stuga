@@ -9,6 +9,11 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-01
+
+Stronger sign-in: wrong-password pauses, a costlier password hash, sessions that end at once, and
+**Revoke everything**.
+
 ### Upgrade notes
 
 - Everyone signs in again after upgrading, and apps connected over OAuth connect again.
