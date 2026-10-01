@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --testTimeout=20000",
     "dev": "tsx watch --env-file-if-exists=.env.dev src/main.ts",
     "start": "node bin/stuga-node.js serve"
   },

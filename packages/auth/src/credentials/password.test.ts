@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { hashPassword, needsRehash, verifyPassword } from "./password.js";
 
-describe("passwords (scrypt)", () => {
+// Each derivation at the real cost takes ~150 ms here and far longer on a busy CI runner.
+describe("passwords (scrypt)", { timeout: 30_000 }, () => {
   it("round-trips and encodes its parameters and salt", async () => {
     const hash = await hashPassword("correct horse battery staple");
     expect(hash).toMatch(/^scrypt\$65536\$8\$2\$[A-Za-z0-9_-]{22}\$[A-Za-z0-9_-]{43}$/);
