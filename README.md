@@ -8,17 +8,13 @@ Self-hosted documents and databases where edits from Claude Code, Codex or any M
 tracked changes and, by default, land only when a person accepts them. Use it on your own or with
 your team.
 
+[Download for Mac](https://github.com/stuga-dev/stuga/releases/latest/download/Stuga.pkg) (Apple silicon,
+macOS 13+) · [Install with Docker](docs/install/docker.md)
+
+Install, then [create your account and workspace](https://stuga.dev/docs/install/create-your-account-and-first-workspace)
+and [connect an agent](docs/agents.md). Help for people using Stuga: [stuga.dev/docs](https://stuga.dev/docs).
+
 ![Claude Code's edits to a document arriving as tracked changes, accepted and rejected one by one](docs/images/review-demo.gif)
-
-[Download for Mac](https://github.com/stuga-dev/stuga/releases/latest/download/Stuga.pkg) ·
-[Install with Docker](docs/install/docker.md) · [Connect an agent](docs/agents.md) ·
-[Documentation](docs/)
-
-With Docker:
-
-```sh
-curl -fsSL https://github.com/stuga-dev/stuga/releases/latest/download/install.sh | bash
-```
 
 ## How agent edits work
 
@@ -83,7 +79,11 @@ turns that off. [docs/privacy.md](docs/privacy.md) lists what the node sends and
   [Stuga.pkg](https://github.com/stuga-dev/stuga/releases/latest/download/Stuga.pkg). It carries its
   own Postgres and Node.js ([docs/install/macos.md](docs/install/macos.md)).
 - **Docker** on x86-64 or arm64, such as a Linux server or a NAS: `install.sh` starts Postgres
-  and the node with Compose ([docs/install/docker.md](docs/install/docker.md)).
+  and the node with Compose ([docs/install/docker.md](docs/install/docker.md)):
+
+  ```sh
+  curl -fsSL https://github.com/stuga-dev/stuga/releases/latest/download/install.sh | bash
+  ```
 
 A node is one Node.js process and Postgres with pgvector and pg_search; people open it in a browser.
 It backs itself up every day by default and before every upgrade
