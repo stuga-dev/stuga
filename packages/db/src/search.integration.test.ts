@@ -3,7 +3,7 @@ import { createClient, closeClients } from "./client.js";
 import { seedWorkspaces } from "./testing/fixtures.js";
 import { initSearchSchema } from "./testing/search-schema.js";
 import { createDoc } from "./docs.js";
-import { indexDoc, searchDocs, askDocs, getEmbeddingHash, getReusableChunkEmbeddings } from "./search.js";
+import { indexDoc, searchDocs, askDocs, semanticScan, getEmbeddingHash, getReusableChunkEmbeddings } from "./search.js";
 import type { Sql } from "./client.js";
 import { EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
 
@@ -132,17 +132,69 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
   // The HNSW scan hands back its nearest ef_search tuples before any WHERE gate
   // runs, so a neighbourhood that belongs to someone else used to leave the
   // semantic leg empty. Real tables plan that scan; this tiny one would sort
-  // exactly instead, so the connection rules the sort out.
-  it("semantic leg finds a visible passage behind hundreds of nearer ones the searcher cannot see", async () => {
+  // exactly instead, so the connection rules the sort out, and exactScanMax 0
+  // keeps the leg on the index.
+  it("semantic leg on the index finds a visible passage behind hundreds of nearer ones the searcher cannot see", async () => {
     await makeDoc("bobs", "Bob's notes", "unrelated", "bob",
       Array.from({ length: 300 }, (_, i) => ({ content: `decoy ${i}`, embedding: towardQuery(0.99 - i * 1e-5) })));
     await makeDoc("alices", "Alice's notes", "unrelated", "alice", [{ content: "the one alice can see", embedding: towardQuery(0.75) }]);
     const indexed = createClient(`${URL!}${URL!.includes("?") ? "&" : "?"}enable_seqscan=off&enable_sort=off`);
+    const input = { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query: "zephyr", queryEmbedding: QUERY, exactScanMax: 0 };
 
-    const docs = await searchDocs(indexed, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query: "zephyr", queryEmbedding: QUERY });
+    expect(await semanticScan(indexed, input)).toBe("index");
+    const docs = await searchDocs(indexed, input);
     expect(docs.map((r) => r.doc_id)).toEqual(["alices"]);
-    const passages = await askDocs(indexed, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query: "zephyr", queryEmbedding: QUERY });
+    const passages = await askDocs(indexed, input);
     expect(passages.map((p) => p.content)).toEqual(["the one alice can see"]);
+  });
+
+  // An HNSW scan stops at its tuple and memory budget, so a searcher who sees a
+  // small slice of the node could get nothing from it however far it walks.
+  it("counts the chunks the searcher may read, embedded or not, when choosing an exact scan", async () => {
+    await seedWorkspaces(sql, "ws-other");
+    await createDoc(sql, { docId: "elsewhere", workspaceId: "ws-other", owner: "user:alice", title: "Elsewhere", aclPrincipals: ALICE });
+    await indexDoc(sql, { embeddingDims: EMBEDDING_DIMS, docId: "elsewhere", snapshotSeq: 1, title: "Elsewhere", searchText: "x", embeddingHash: "h-elsewhere",
+      chunks: Array.from({ length: 20 }, (_, i) => ({ content: `other ${i}`, embedding: towardQuery(0.9), embedHash: `eo-${i}` })) });
+    await makeDoc("bobs", "Bob's notes", "x", "bob", Array.from({ length: 20 }, (_, i) => ({ content: `bob ${i}`, embedding: towardQuery(0.9) })));
+    for (const id of ["trashed", "hidden"]) {
+      await makeDoc(id, id, "x", "alice", Array.from({ length: 20 }, (_, i) => ({ content: `${id} ${i}`, embedding: towardQuery(0.9) })));
+    }
+    await sql`UPDATE docs SET trashed = TRUE WHERE doc_id = 'trashed'`;
+    await sql`UPDATE docs SET search_hidden = TRUE WHERE doc_id = 'hidden'`;
+    await makeDoc("unembedded", "Unembedded", "x", "alice", Array.from({ length: 20 }, (_, i) => ({ content: `raw ${i}`, embedding: null })));
+    await makeDoc("alices", "Alice's notes", "x", "alice", Array.from({ length: 3 }, (_, i) => ({ content: `alice ${i}`, embedding: towardQuery(0.8) })));
+    const input = (exactScanMax: number, scopeDocIds?: string[]) =>
+      ({ embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query: "q", queryEmbedding: QUERY, exactScanMax, scopeDocIds });
+
+    // Alice's 3 embedded chunks and the 20 unembedded ones: the count is an upper bound.
+    expect(await semanticScan(sql, input(23))).toBe("exact");
+    expect(await semanticScan(sql, input(22))).toBe("index");
+    expect(await semanticScan(sql, input(0, ["alices"]))).toBe("index");
+    await makeDoc("small", "Small", "x", "alice", [{ content: "one", embedding: towardQuery(0.8) }]);
+    expect(await semanticScan(sql, input(1, ["small"]))).toBe("exact");
+  });
+
+  it("an exact semantic leg returns the visible passages in distance order, whatever crowds the query", async () => {
+    await seedWorkspaces(sql, "ws-other");
+    await createDoc(sql, { docId: "crowd", workspaceId: "ws-other", owner: "user:alice", title: "Crowd", aclPrincipals: ALICE });
+    await indexDoc(sql, { embeddingDims: EMBEDDING_DIMS, docId: "crowd", snapshotSeq: 1, title: "Crowd", searchText: "x", embeddingHash: "h-crowd",
+      chunks: Array.from({ length: 300 }, (_, i) => ({ content: `crowd ${i}`, embedding: towardQuery(0.99 - i * 1e-5), embedHash: `ec-${i}` })) });
+    await makeDoc("bobs", "Bob's notes", "x", "bob", Array.from({ length: 300 }, (_, i) => ({ content: `bob ${i}`, embedding: towardQuery(0.99 - i * 1e-5) })));
+    const near = [0.9, 0.8, 0.7, 0.3];
+    for (const cos of near) await makeDoc(`a-${cos}`, `Alice ${cos}`, "x", "alice", [{ content: `alice ${cos}`, embedding: towardQuery(cos) }]);
+    const indexed = createClient(`${URL!}${URL!.includes("?") ? "&" : "?"}enable_seqscan=off&enable_sort=off`);
+    // A tuple budget below the crowd: the index gives up before reaching Alice's passages.
+    const input = { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query: "zephyr", queryEmbedding: QUERY, scanTuples: 50 };
+
+    expect(await semanticScan(indexed, { ...input, exactScanMax: 0 })).toBe("index");
+    expect(await askDocs(indexed, { ...input, exactScanMax: 0 })).toEqual([]);
+    expect(await searchDocs(indexed, { ...input, exactScanMax: 0 })).toEqual([]);
+
+    expect(await semanticScan(indexed, input)).toBe("exact");
+    const docs = await searchDocs(indexed, input);
+    expect(docs.map((r) => r.doc_id)).toEqual(["a-0.9", "a-0.8", "a-0.7"]);
+    const passages = await askDocs(indexed, input);
+    expect(passages.map((p) => p.content)).toEqual(["alice 0.9", "alice 0.8", "alice 0.7"]);
   });
 
   it("indexDoc replaces the chunk set on re-index (no stale chunks)", async () => {

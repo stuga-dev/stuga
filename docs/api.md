@@ -108,7 +108,7 @@ read-only key too. Over MCP a read-only key is offered only the reading tools
 | `GET /api/folders[?parent_id=]` | Folders the credential can read. |
 | `POST /api/folders` | `{ title?, parent_id? }`. Guests are refused. |
 | `GET /api/folders/:id/instructions` | `{ own, inherited, can_edit }`, as for a document. |
-| `POST /api/search` | `{ q, collection_id?, limit? }` → `{ query, results, degraded, semantic }`. Documents ranked by keyword and semantic match, filtered by permissions inside the query. Each result has `doc_id`, `title`, `snippet`, `score`, `page_of` and `page_row`. `limit` defaults to 20. `degraded` means embeddings are on but failed, so only keywords matched. |
+| `POST /api/search` | `{ q, collection_id?, limit? }` → `{ query, results, degraded, semantic }`. Documents ranked by keyword and semantic match, filtered by permissions inside the query. Each result has `doc_id`, `title`, `snippet`, `score` (from rank positions), `sem_score` (cosine similarity of the best passage, 0 for a keyword-only match), `page_of` and `page_row`. `limit` defaults to 20. `degraded` means embeddings are on but failed, so only keywords matched. |
 | `POST /api/retrieve` | `{ q, collection_id?, limit? }` → `{ chunks, degraded }`. Passages to answer from, each with `doc_id`, `title`, `chunk_index`, `content` and `heading_path`. `limit` defaults to 8, at most 12. With embeddings off it answers `{ chunks: [], ai_disabled: true }`. |
 
 With `collection_id`, search and retrieval return only documents in that collection

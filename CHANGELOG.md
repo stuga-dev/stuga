@@ -9,6 +9,10 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Fixed
+
+- Search by meaning finds what you can read when many passages you can't read sit closer to the question.
+
 ## [0.1.10] - 2026-10-01
 
 Stronger sign-in: wrong-password pauses, a costlier password hash, sessions that end at once, and

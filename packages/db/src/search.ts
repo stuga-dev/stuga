@@ -6,7 +6,7 @@
 import type { Fragment, TransactionSql } from "postgres";
 import type { AskChunk, SearchResult, WorkspaceRow } from "./types.js";
 import type { SearchLanguage } from "./schema/search-indexes.js";
-import { scopeFragment, vectorLiteral } from "./sql.js";
+import { type Queryable, scopeFragment, vectorLiteral } from "./sql.js";
 import type { Sql } from "./client.js";
 
 /** The width `doc_chunks.embedding` was created with, or null before the schema exists. */
@@ -269,6 +269,10 @@ export interface SearchInput {
    * rebuilt, so this is a getter rather than a value read earlier.
    */
   searchLanguages?: () => readonly SearchLanguage[];
+  /** As many visible chunks as this or fewer are scored exactly; tests lower it to reach the HNSW path. */
+  exactScanMax?: number;
+  /** The HNSW scan's tuple budget; tests lower it below a crowd to show where the index gives up. */
+  scanTuples?: number;
 }
 
 export interface AskInput {
@@ -285,6 +289,10 @@ export interface AskInput {
   scopeFolderIds?: string[] | null;
   /** As in SearchInput. */
   searchLanguages?: () => readonly SearchLanguage[];
+  /** As in SearchInput. */
+  exactScanMax?: number;
+  /** As in SearchInput. */
+  scanTuples?: number;
 }
 
 function normalizeQueryLimit(value: number | undefined, fallback: number): number {
@@ -378,20 +386,67 @@ function chunkKeywordLeg(
 }
 
 /**
- * Runs a hybrid query with pgvector's iterative index scan. An HNSW scan hands
- * back its nearest ef_search tuples before any gate in WHERE runs, so when the
- * query's neighbourhood belongs to documents the searcher cannot see, the
- * semantic leg came back empty; iterating keeps walking the graph until the
- * leg's LIMIT visible rows are found. That is also why each leg applies its
- * distance cutoff outside the ordered scan: inside, a neighbourhood with fewer
- * than LIMIT close passages would walk on to hnsw.max_scan_tuples.
+ * The chunks a searcher may see. The HNSW index spans every workspace on the
+ * node, so these gates are the semantic leg's only isolation. Whether a chunk
+ * has an embedding is checked in the legs, not here: no index covers it, and
+ * while a new model's backfill runs most chunks have none, so a count that
+ * asked would read every visible chunk instead of stopping at its cap.
  */
-function withVectorScan<T>(sql: Sql, limit: number, run: (tx: TransactionSql) => Promise<T>): Promise<T> {
+function visibleChunks(sql: Queryable, input: SearchInput | AskInput, scopeFilter: Fragment): Fragment {
+  return sql`c.workspace_id = ${input.workspaceId}
+        AND d.workspace_id = ${input.workspaceId}
+        AND d.trashed = FALSE
+        AND d.search_hidden = FALSE
+        AND d.acl_principals && ${input.principals}
+        ${scopeFilter}`;
+}
+
+/**
+ * Up to this many visible chunks, the semantic leg is an exact scan. An HNSW
+ * scan stops after hnsw.max_scan_tuples tuples or its scan memory, so when the
+ * searcher sees a small slice of the node (a small workspace, a narrow ACL, a
+ * collection or folder) and other passages crowd the query, it can stop before
+ * reaching any visible one. A small set is cheap to score exactly.
+ */
+const EXACT_SCAN_MAX_CHUNKS = 5000;
+
+/** How the semantic leg will scan for this searcher: exactly over a small visible set, else by the HNSW index. */
+export async function semanticScan(sql: Queryable, input: SearchInput | AskInput): Promise<"exact" | "index"> {
+  const exactMax = input.exactScanMax ?? EXACT_SCAN_MAX_CHUNKS;
+  const scopeFilter = scopeFragment(sql, input.scopeDocIds ?? null, input.scopeFolderIds ?? null);
+  const [probe] = await sql<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM (
+      SELECT 1 FROM doc_chunks c JOIN docs d ON d.doc_id = c.doc_id
+      WHERE ${visibleChunks(sql, input, scopeFilter)}
+      LIMIT ${exactMax + 1}) visible`;
+  return (probe?.n ?? 0) <= exactMax ? "exact" : "index";
+}
+
+/**
+ * Runs a hybrid query with pgvector's iterative index scan, or with an exact
+ * semantic leg when few chunks are visible. An HNSW scan hands back its nearest
+ * ef_search tuples before any gate in WHERE runs, so a neighbourhood that
+ * belongs to documents the searcher cannot see left the semantic leg empty;
+ * iterating walks on toward the leg's LIMIT visible rows, within the scan
+ * budget set here. That is also why each leg applies its distance cutoff
+ * outside the ordered scan: inside, a neighbourhood with fewer than LIMIT close
+ * passages would walk to the end of that budget.
+ */
+function withVectorScan<T>(
+  sql: Sql,
+  input: SearchInput | AskInput,
+  limit: number,
+  run: (tx: TransactionSql, nearest: Fragment) => Promise<T>,
+): Promise<T> {
   const efSearch = Math.min(Math.max(limit, 40), 1000);
   return sql.begin(async (tx) => {
     await tx`SELECT set_config('hnsw.iterative_scan', 'strict_order', true),
-                    set_config('hnsw.ef_search', ${String(efSearch)}, true)`;
-    return run(tx);
+                    set_config('hnsw.ef_search', ${String(efSearch)}, true),
+                    set_config('hnsw.max_scan_tuples', ${String(input.scanTuples ?? 100000)}, true),
+                    set_config('hnsw.scan_mem_multiplier', '8', true)`;
+    const scan = input.queryEmbedding ? await semanticScan(tx, input) : "index";
+    // Arithmetic on the distance keeps the planner off the HNSW index.
+    return run(tx, scan === "exact" ? sql`(c.embedding <=> q.qvec) + 0::float8` : sql`c.embedding <=> q.qvec`);
   }) as Promise<T>;
 }
 
@@ -425,7 +480,7 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
 
   // Reciprocal Rank Fusion: each leg a document appears in adds 1/(60 + its rank
   // there), and a leg it is absent from adds nothing.
-  return withSearchLanguages(input, (languages) => withVectorScan(sql, semLimit, (tx) => tx<SearchResult[]>`
+  return withSearchLanguages(input, (languages) => withVectorScan(sql, input, semLimit, (tx, nearest) => tx<SearchResult[]>`
     WITH q AS (
       SELECT ${qvec}::vector AS qvec
     ),
@@ -442,14 +497,10 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
       FROM doc_chunks c
       JOIN docs d ON d.doc_id = c.doc_id
       , q
-      WHERE d.workspace_id = ${input.workspaceId}
-        AND d.trashed = FALSE
-        AND d.search_hidden = FALSE
-        AND d.acl_principals && ${input.principals}
-        ${scopeFilter}
+      WHERE ${visibleChunks(sql, input, scopeFilter)}
         AND q.qvec IS NOT NULL
         AND c.embedding IS NOT NULL
-      ORDER BY c.embedding <=> q.qvec
+      ORDER BY ${nearest}
       LIMIT ${semLimit}
     ),
     chunk_hits AS (
@@ -496,7 +547,7 @@ export async function askDocs(sql: Sql, input: AskInput): Promise<AskChunk[]> {
   const scopeFilter = scopeFragment(sql, input.scopeDocIds ?? null, input.scopeFolderIds ?? null);
   const qvec = vectorLiteral(input.queryEmbedding, input.embeddingDims);
   // Reciprocal Rank Fusion, as in searchDocs, over passages.
-  return withSearchLanguages(input, (languages) => withVectorScan(sql, candidates, (tx) => tx<AskChunk[]>`
+  return withSearchLanguages(input, (languages) => withVectorScan(sql, input, candidates, (tx, nearest) => tx<AskChunk[]>`
     WITH q AS (
       SELECT ${qvec}::vector AS qvec
     ),
@@ -506,14 +557,10 @@ export async function askDocs(sql: Sql, input: AskInput): Promise<AskChunk[]> {
       FROM doc_chunks c
       JOIN docs d ON d.doc_id = c.doc_id
       , q
-      WHERE d.workspace_id = ${input.workspaceId}
-        AND d.trashed = FALSE
-        AND d.search_hidden = FALSE
-        AND d.acl_principals && ${input.principals}
-        ${scopeFilter}
+      WHERE ${visibleChunks(sql, input, scopeFilter)}
         AND q.qvec IS NOT NULL
         AND c.embedding IS NOT NULL
-      ORDER BY c.embedding <=> q.qvec
+      ORDER BY ${nearest}
       LIMIT ${candidates}
     ),
     chunk_hits AS (
