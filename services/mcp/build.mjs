@@ -43,6 +43,8 @@ const manifest = {
   repository: { type: "git", url: "git+https://github.com/stuga-dev/stuga.git", directory: "services/mcp" },
   engines: { node: ">=18" },
   publishConfig: { access: "public" },
+  // The official MCP Registry lists this package under dev.stuga/stuga only if the name matches.
+  mcpName: "dev.stuga/stuga",
 };
 await writeFile(join(dist, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 // Everything is bundled into stuga-mcp.js, so the lockfile holds the package alone: it tells a
