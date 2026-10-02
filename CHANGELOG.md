@@ -9,6 +9,8 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-10-02
+
 ### Fixed
 
 - Search by meaning finds what you can read when many passages you can't read sit closer to the question.
