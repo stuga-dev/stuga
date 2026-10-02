@@ -919,8 +919,15 @@ describe("where the packaging runs the connector", () => {
     s.kick();
     await until("the new settings asked for", () => request() !== before);
     expect(request()).toBe(on());
-    // The refusal answered other settings.
-    expect(await s.status()).toMatchObject({ state: "starting", last_error: null });
+    // The refusal answered other settings. The request is written before the error is cleared, so
+    // a status read in between still shows the refusal: wait for it.
+    const deadline = Date.now() + 5_000;
+    let status = await s.status();
+    while (status.state !== "starting" && Date.now() < deadline) {
+      await sleep(20);
+      status = await s.status();
+    }
+    expect(status).toMatchObject({ state: "starting", last_error: null });
   });
 
   it("keeps checking the address once the connector has run, and says when it no longer answers", async () => {
