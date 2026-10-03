@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { RUN_IDLE_MS } from "./limits.js";
-import { agentActorOf, clampRunLimit, closedStatus, newRunId, parseReviewMode, runIsIdle, shouldCommit } from "./runs.js";
+import { RUN_FEEDBACK_EXCERPT_CHARS, RUN_FEEDBACK_NOTE_MAX_CHARS, RUN_IDLE_MS } from "./limits.js";
+import {
+  agentActorOf,
+  clampRunLimit,
+  closedStatus,
+  feedbackExcerpt,
+  newFeedbackId,
+  newRunId,
+  parseDecisionNote,
+  parseReviewMode,
+  runIsIdle,
+  shouldCommit,
+} from "./runs.js";
 
 describe("run ledger rules", () => {
   it("mints run ids of one shape", () => {
@@ -43,5 +54,22 @@ describe("run ledger rules", () => {
     expect(shouldCommit("auto", false)).toBe(true);
     expect(shouldCommit("review", false)).toBe(false);
     expect(shouldCommit("auto", true)).toBe(false);
+  });
+
+  it("takes a rejection's note trimmed, refuses one on an accept or past the limit, and reads blank as none", () => {
+    expect(parseDecisionNote("reject", "  Keep it plain. ")).toEqual({ ok: true, note: "Keep it plain." });
+    expect(parseDecisionNote("reject", "   ")).toEqual({ ok: true });
+    expect(parseDecisionNote("accept", undefined)).toEqual({ ok: true });
+    expect(parseDecisionNote("accept", "")).toEqual({ ok: true });
+    expect(parseDecisionNote("accept", "Nice.")).toMatchObject({ ok: false });
+    expect(parseDecisionNote("reject", 7)).toMatchObject({ ok: false });
+    expect(parseDecisionNote("reject", "x".repeat(RUN_FEEDBACK_NOTE_MAX_CHARS))).toMatchObject({ ok: true });
+    expect(parseDecisionNote("reject", "x".repeat(RUN_FEEDBACK_NOTE_MAX_CHARS + 1))).toMatchObject({ ok: false });
+  });
+
+  it("mints feedback ids of one shape and cuts long excerpts", () => {
+    expect(newFeedbackId()).toMatch(/^fb_[0-9a-f]{12}$/);
+    expect(feedbackExcerpt("short")).toBe("short");
+    expect(feedbackExcerpt("x".repeat(RUN_FEEDBACK_EXCERPT_CHARS + 5))).toBe(`${"x".repeat(RUN_FEEDBACK_EXCERPT_CHARS)}…`);
   });
 });

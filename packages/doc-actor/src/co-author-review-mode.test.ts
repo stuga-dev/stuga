@@ -59,8 +59,8 @@ async function markdown(dobj: DocActor): Promise<string> {
   return ((await res.json()) as { markdown: string }).markdown;
 }
 
-function askAi(dobj: DocActor, ws: MemorySocket): Promise<void> {
-  const req: AiRequest = { prompt: "fix the intro", selected_text: null, model: "auto", history: [], collection_id: null };
+function askAi(dobj: DocActor, ws: MemorySocket, extra: Partial<AiRequest> = {}): Promise<void> {
+  const req: AiRequest = { prompt: "fix the intro", selected_text: null, model: "auto", history: [], collection_id: null, ...extra };
   return dobj.webSocketMessage(ws, frameBuffer(encodeJson(Opcode.AI_REQUEST, req)));
 }
 
@@ -152,8 +152,72 @@ describe("a co-author turn follows the document's setting", () => {
 
     // Asked again, told the truth up front, and parked behind the undecided turn.
     expect(h.reviewCalls).toHaveLength(2);
+    expect(mockAgentTurn.mock.calls[1]![1]).toMatchObject({ ownPending: [{ old_string: "Alpha.", new_string: "Alpha, rewritten." }] });
+    expect(mockAgentTurn.mock.calls[0]![1]).toMatchObject({ ownPending: [] });
     expect(mockAgentTurn.mock.calls[1]![1]).toMatchObject({ applyAtOnce: false });
     expect(lastEdits(ws)).toMatchObject({ applied: 0, staged: 2 });
     expect(await markdown(dobj)).not.toContain("renamed");
+  });
+});
+
+describe("a co-author turn hears what the user rejected", () => {
+  it("hands the next turn the rejected edit and the note, once", async () => {
+    const h = aiHarness("review");
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const ws = await connect(dobj, h, { docId: DOC, alias: "alice", workspaceId: WS_ID });
+
+    await askAi(dobj, ws);
+    expect(mockAgentTurn.mock.calls[0]![1]).toMatchObject({ feedback: [] });
+    const runId = lastEdits(ws).run_id!;
+    const decided = await dobj.fetch(
+      new Request(`http://actor/runs/decide?docId=${DOC}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ run_id: runId, decision: "reject", decided_by: "alice", note: "Shorter, please." }),
+      }),
+    );
+    expect(decided.status).toBe(200);
+
+    await askAi(dobj, ws);
+    expect(mockAgentTurn.mock.calls[1]![1]).toMatchObject({
+      feedback: [{ run_id: runId, note: "Shorter, please.", changes: [{ old_string: "Alpha.", new_string: "Alpha, rewritten." }] }],
+    });
+    await askAi(dobj, ws);
+    expect(mockAgentTurn.mock.calls[2]![1]).toMatchObject({ feedback: [] });
+  });
+
+  it("scopes Revise now to that rejection's hunks, and hands feedback over only after a turn that ran", async () => {
+    const h = aiHarness("review");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const ws = await connect(dobj, h, { docId: DOC, alias: "alice", workspaceId: WS_ID });
+
+    await askAi(dobj, ws);
+    const runId = lastEdits(ws).run_id!;
+    const decided = (await (
+      await dobj.fetch(
+        new Request(`http://actor/runs/decide?docId=${DOC}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ run_id: runId, decision: "reject", decided_by: "alice", note: "Shorter." }),
+        }),
+      )
+    ).json()) as { run: { hunks: Array<{ feedback: { id: string } }> } };
+    const feedbackId = decided.run.hunks[0]!.feedback.id;
+
+    // A turn that fails before the model sees anything leaves the feedback for the next one.
+    mockAgentTurn.mockRejectedValueOnce(new Error("model down"));
+    await askAi(dobj, ws);
+    await askAi(dobj, ws, { revise: { run_id: runId, feedback_id: feedbackId } });
+    expect(mockAgentTurn.mock.calls[2]![1]).toMatchObject({
+      feedback: [{ run_id: runId, note: "Shorter." }],
+      revise: { regions: [{ old_string: "Alpha.", new_string: "Alpha, rewritten." }] },
+    });
+    await askAi(dobj, ws);
+    expect(mockAgentTurn.mock.calls[3]![1]).toMatchObject({ feedback: [] });
+    expect(mockAgentTurn.mock.calls[3]![1]).not.toHaveProperty("revise", expect.anything());
+    warn.mockRestore();
   });
 });

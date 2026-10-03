@@ -864,15 +864,63 @@ describe("store version", () => {
     expect(await (await back.get("a").fetch("http://actor/count")).text()).toBe("2");
   });
 
-  it("refuses an older store rather than restamping it, since no step brings one forward yet", async () => {
+  it("refuses an older store rather than restamping it when no step brings it forward", async () => {
     const dir = tempDir();
     const v1 = host(dir, { log: [] });
     await v1.get("a").fetch("http://actor/count");
     await v1.close();
 
-    const v2 = host(dir, { log: [] }, Infinity, { storeVersion: 2 });
-    await expect(v2.get("a").fetch("http://actor/count")).rejects.toThrow(/no step that brings it to 2/);
+    const v3 = host(dir, { log: [] }, Infinity, { storeVersion: 3, storeUpgrades: { 2: () => {} } });
+    await expect(v3.get("a").fetch("http://actor/count")).rejects.toThrow(/no step that brings it to 3/);
     expect(stampOf(dir, "a")).toBe(1);
+  });
+
+  it("brings an older store forward through each step in turn, keeping what it held", async () => {
+    const dir = tempDir();
+    const v1 = host(dir, { log: [] });
+    await v1.get("a").fetch("http://actor/count");
+    await v1.close();
+
+    const ran: number[] = [];
+    const v3 = host(dir, { log: [] }, Infinity, {
+      storeVersion: 3,
+      storeUpgrades: {
+        2: (db) => {
+          ran.push(2);
+          db.exec("CREATE TABLE added (x INTEGER)");
+        },
+        3: (db) => {
+          ran.push(3);
+          db.exec("ALTER TABLE added ADD COLUMN y INTEGER");
+        },
+      },
+    });
+    expect(await (await v3.get("a").fetch("http://actor/count")).text()).toBe("2");
+    expect(ran).toEqual([2, 3]);
+    expect(stampOf(dir, "a")).toBe(3);
+  });
+
+  it("leaves a store as it found it when a step fails", async () => {
+    const dir = tempDir();
+    const v1 = host(dir, { log: [] });
+    await v1.get("a").fetch("http://actor/count");
+    await v1.close();
+
+    const failing = host(dir, { log: [] }, Infinity, {
+      storeVersion: 2,
+      storeUpgrades: {
+        2: (db) => {
+          db.exec("CREATE TABLE added (x INTEGER)");
+          throw new Error("step failed");
+        },
+      },
+    });
+    await expect(failing.get("a").fetch("http://actor/count")).rejects.toThrow(/step failed/);
+    await failing.close();
+    expect(stampOf(dir, "a")).toBe(1);
+
+    const back = host(dir, { log: [] });
+    expect(await (await back.get("a").fetch("http://actor/count")).text()).toBe("2");
   });
 
   it("reports a pending alarm on a store it refuses instead of throwing out of the timer", async () => {

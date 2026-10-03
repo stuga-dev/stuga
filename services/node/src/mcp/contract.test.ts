@@ -114,7 +114,7 @@ describe("the /mcp contract", () => {
       markdown: { arguments: ["action", "doc_id", "workspace_id"], actions: ["read", "status", "provenance"] },
       comments: { arguments: ["doc_id", "workspace_id"], actions: null },
       folders: { arguments: ["workspace_id"], actions: null },
-      events: { arguments: ["after", "limit", "types", "workspace_id"], actions: null },
+      events: { arguments: ["after", "limit", "mine", "types", "workspace_id"], actions: null },
       collections: { arguments: ["action", "collection_id", "workspace_id"], actions: ["list", "open"] },
       retrieve: { arguments: ["collection_id", "limit", "q", "workspace_ids"], actions: null },
       databases: { arguments: ["action", "database_id", "row_id", "table", "workspace_id"], actions: ["list", "schema", "status", "page"] },

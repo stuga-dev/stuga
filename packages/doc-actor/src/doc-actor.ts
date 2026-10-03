@@ -118,10 +118,13 @@ export class DocActor implements Actor<SessionMeta> {
     const agentAlias = url.searchParams.get("agent");
     if (!agentAlias) return Response.json({ markdown: this.store.markdown() });
     const view = await this.ledger.projectionFor(agentAlias);
-    if (view.runId && view.pending.length > 0) {
-      return Response.json({ markdown: view.markdown, run_id: view.runId, pending: view.pending.length });
-    }
-    return Response.json({ markdown: view.markdown });
+    // Repeated on every read until the agent proposes here again, so the reviewer's word is in front of it when it does.
+    const feedback = await this.ledger.feedbackFor(agentAlias);
+    return Response.json({
+      markdown: view.markdown,
+      ...(view.runId && view.pending.length > 0 ? { run_id: view.runId, pending: view.pending.length } : {}),
+      ...(feedback.length > 0 ? { feedback } : {}),
+    });
   }
 
   /**

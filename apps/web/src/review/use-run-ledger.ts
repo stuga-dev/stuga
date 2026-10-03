@@ -41,7 +41,7 @@ interface DecideResult<R> {
 
 export interface LedgerApi<R> {
   list: (limit: number) => Promise<{ runs: R[] }>;
-  decide: (runId: string, decision: Decision, itemIds?: string[]) => Promise<DecideResult<R>>;
+  decide: (runId: string, decision: Decision, itemIds?: string[], note?: string) => Promise<DecideResult<R>>;
   revert: (runId: string) => Promise<{ run: R }>;
   ack: (runId: string) => Promise<unknown>;
 }
@@ -69,7 +69,8 @@ function withKeys(set: ReadonlySet<string>, keys: string[], add: boolean): Reado
 /**
  * Loads, follows and decides one item's runs. Deciding is optimistic: items
  * leave the pending set on click, their keys sit in `inFlight` meanwhile, and a
- * failure puts them back and surfaces a notice (`decide` never rejects).
+ * failure puts them back and surfaces a notice (`decide` never rejects; it
+ * resolves to the run as the server now has it, or null when the decision failed).
  */
 export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
   shape,
@@ -135,7 +136,7 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
   const unseenApplied = useMemo(() => unseenAppliedOf(runs), [runs]);
 
   const decide = useCallback(
-    async (runId: string, decision: Decision, itemIds?: string[]) => {
+    async (runId: string, decision: Decision, itemIds?: string[], note?: string) => {
       const before = stateRef.current.runs.get(runId);
       const targets = itemIds ?? (before ? pendingItems(shape, before).map((i) => i.id) : []);
       const keys = targets.map((id) => itemKey(runId, id));
@@ -143,7 +144,7 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
       if (keys.length > 0) setInFlight((prev) => withKeys(prev, keys, true));
       if (targets.length > 0) dispatch({ type: "optimistic", runId, itemIds: targets, decision });
       try {
-        const res = await apiRef.current.decide(runId, decision, itemIds);
+        const res = await apiRef.current.decide(runId, decision, itemIds, note);
         // The authoritative statuses; a blocked item comes back pending, undoing its guess.
         dispatch({ type: "updated", run: res.run });
         if (res.conflicts > 0) notify("conflict", hooks.current.conflictMessage(res.conflicts));
@@ -152,9 +153,11 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
           notify("error", "Some proposals couldn’t be read just now — they stay pending; try again shortly.");
         }
         hooks.current.onDecided?.(res, runId, decision, notify);
+        return res.run;
       } catch (e) {
         if (targets.length > 0) dispatch({ type: "rollback", runId, itemIds: targets, decision });
         notify("error", errorMessage(e, decision));
+        return null;
       } finally {
         if (keys.length > 0) setInFlight((prev) => withKeys(prev, keys, false));
         setBusy(false);

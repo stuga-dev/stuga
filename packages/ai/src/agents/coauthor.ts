@@ -7,6 +7,7 @@
  */
 import type { AskStopReason } from "@stuga/protocol/api/ask";
 import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
+import type { AgentFeedback } from "@stuga/protocol/domain/runs";
 import type { AiCitation, AiHistoryItem, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
 import { findFuzzyMatch } from "@stuga/protocol/text/fuzzy-match";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -43,6 +44,15 @@ export interface AgentInput {
   attachments?: Array<{ url: string; name: string; bytes?: string; mime?: string }>;
   /** The instructions for agents that apply to the current document, outermost first; appended to the system prompt. */
   instructions?: InstructionLevel[];
+  /** Edits of earlier turns the user rejected since, with any note they left, newest first. */
+  feedback?: AgentFeedback[];
+  /** A revise turn: the current document may change only inside these rejected passages. */
+  revise?: ReviseScope;
+  /**
+   * This document's edits of earlier turns still waiting for the user's review. `docText` already shows
+   * them applied; the user still sees the original text with each change marked.
+   */
+  ownPending?: Array<{ old_string: string; new_string: string }>;
   /** Cancels the turn; edits staged by finished rounds are still returned and must be proposed. */
   signal?: AbortSignal;
 }
@@ -179,6 +189,126 @@ function docPreview(docText: string): string {
   return `${docText.slice(0, PREVIEW_CHARS)}\n---\n[The document is ${docText.length} characters; this is the first ${PREVIEW_CHARS}. Use read_document(offset,length) to read any later part.]`;
 }
 
+/** The full text of the rejected hunks a revise turn may change; an empty old_string is an append. */
+export interface ReviseScope {
+  regions: Array<{ old_string: string; new_string: string }>;
+}
+
+export const FEEDBACK_BLOCK_OPEN = "=== CHANGES THE USER REQUESTED SINCE YOUR LAST TURN (not the document, not this turn's request) ===";
+export const FEEDBACK_BLOCK_CLOSE = "=== END OF CHANGES REQUESTED ===";
+
+/**
+ * Earlier edits the user rejected since the last turn, so a revision starts from what they turned down
+ * and why. The user wrote the notes; they are quoted on one line each, as context, never as this
+ * turn's request.
+ */
+export function feedbackBlock(feedback: AgentFeedback[] | undefined): string {
+  if (!feedback?.length) return "";
+  const lines = [
+    FEEDBACK_BLOCK_OPEN,
+    "Do not propose these again unchanged. When the user asks you to revise, change only the passages listed here, " +
+      "as the note asks, and leave the rest of the document as it is.",
+  ];
+  for (const fb of feedback) {
+    for (const c of fb.changes) {
+      lines.push(
+        "old_string" in c
+          ? `- Rejected: ${JSON.stringify(c.old_string)} → ${JSON.stringify(c.new_string)}`
+          : `- Rejected: ${JSON.stringify(c.summary)}${c.detail ? `: ${c.detail}` : ""}`,
+      );
+    }
+    if (fb.more) lines.push(`- …and ${fb.more} more rejected in the same decision`);
+    if (fb.note) lines.push(`  The user's note on this: ${JSON.stringify(fb.note)}`);
+  }
+  lines.push(FEEDBACK_BLOCK_CLOSE);
+  return `${lines.join("\n")}\n\n`;
+}
+
+export const PENDING_BLOCK_OPEN = "=== YOUR EDITS STILL WAITING FOR THE USER'S REVIEW (not this turn's request) ===";
+export const PENDING_BLOCK_CLOSE = "=== END OF YOUR WAITING EDITS ===";
+/** Waiting edits listed one by one; the rest are counted. */
+const PENDING_LISTED_MAX = 10;
+/** Characters of each side of a waiting edit shown. */
+const PENDING_EXCERPT_CHARS = 300;
+
+const cut = (text: string): string => (text.length > PENDING_EXCERPT_CHARS ? `${text.slice(0, PENDING_EXCERPT_CHARS)}…` : text);
+
+/**
+ * The edits of earlier turns still waiting for review. The preview shows the document with them
+ * applied, which is what a new edit applies to; the user sees the original text with each change
+ * marked, so "the last item" may mean text the model proposed to delete.
+ */
+export function pendingBlock(pending: AgentInput["ownPending"]): string {
+  if (!pending?.length) return "";
+  const lines = [
+    PENDING_BLOCK_OPEN,
+    "The document below already shows these applied, and your edits apply on top of them. The user still sees the " +
+      "original text with each change marked, and has not accepted any of them. When the user points at something " +
+      '("the last item", "that sentence"), they mean what they see, which may be text you proposed to delete or change. ' +
+      "To change a waiting edit, edit the text as the document below shows it: to replace a deletion, insert the new text " +
+      "where the deleted text was.",
+  ];
+  for (const e of pending.slice(0, PENDING_LISTED_MAX)) {
+    if (!e.old_string) lines.push(`- Added: ${JSON.stringify(cut(e.new_string))}`);
+    else if (!e.new_string) lines.push(`- Deleted: ${JSON.stringify(cut(e.old_string))}`);
+    else lines.push(`- Replaced: ${JSON.stringify(cut(e.old_string))} → ${JSON.stringify(cut(e.new_string))}`);
+  }
+  if (pending.length > PENDING_LISTED_MAX) lines.push(`- …and ${pending.length - PENDING_LISTED_MAX} more`);
+  lines.push(PENDING_BLOCK_CLOSE);
+  return `${lines.join("\n")}\n\n`;
+}
+
+/** Said on a revise turn, so the model knows an edit elsewhere will be refused rather than quietly dropped. */
+function reviseNote(scope: ReviseScope | undefined): string {
+  if (!scope) return "";
+  return (
+    "This turn is a revision of the edits the user rejected, as the note asks. Change existing text only inside those " +
+    "passages. You may add new text anywhere, which is how a passage moves: to put it somewhere else, insert it there. " +
+    "A change to any other existing text is refused.\n\n"
+  );
+}
+
+/** Where the rejected passages sit in `doc` now, [start, end) each; an append sits at the end. One not found is dropped. */
+export function revisedSpans(doc: string, regions: ReviseScope["regions"]): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  for (const r of regions) {
+    if (!r.old_string) {
+      spans.push([doc.length, doc.length]);
+      continue;
+    }
+    const m = findFuzzyMatch(doc, r.old_string, { wantUnique: true });
+    if (m) spans.push([m.index, m.index + m.matched.length]);
+  }
+  return spans;
+}
+
+/** The part of `matched` (at `at`) that `replacement` changes, [start, end), with the shared prefix and suffix left out. */
+export function changedSpan(at: number, matched: string, replacement: string): [number, number] {
+  const max = Math.min(matched.length, replacement.length);
+  let prefix = 0;
+  while (prefix < max && matched[prefix] === replacement[prefix]) prefix++;
+  let suffix = 0;
+  while (suffix < max - prefix && matched[matched.length - 1 - suffix] === replacement[replacement.length - 1 - suffix]) suffix++;
+  return [at + prefix, at + matched.length - suffix];
+}
+
+const OUTSIDE_REVISION =
+  "Refused: this edit changes existing text outside the passages the user rejected. Change existing text only inside " +
+  "them; to move something, insert it where it belongs. If other text needs changing, tell the user it needs a separate request.";
+
+/**
+ * A revise turn's guard: an edit that changes existing text must change it inside one rejected
+ * passage as it sits in the document now. A pure insertion, which leaves every existing character
+ * in place, may land anywhere: that is how a revision moves what was rejected. With none of the
+ * passages findable any more, the document moved on and nothing is refused.
+ */
+function assertInsideRevision(doc: string, scope: ReviseScope | undefined, span: [number, number]): void {
+  if (!scope || span[0] === span[1]) return;
+  const spans = revisedSpans(doc, scope.regions);
+  if (spans.length === 0) return;
+  if (!spans.some(([start, end]) => start <= span[0] && span[1] <= end)) throw new Error(OUTSIDE_REVISION);
+}
+
 /** What the agent is doing between prose bursts. */
 export type AgentActivity =
   | { kind: "thinking" }
@@ -241,7 +371,9 @@ export async function runAgentTurn(
           .map((a) => `- ${a.name}: ${a.url}`)
           .join("\n")}\n`
       : "";
-  const contextBlock = `${docBlock}${attachmentBlock}`;
+  const contextBlock = `${feedbackBlock(input.feedback)}${pendingBlock(input.ownPending)}${reviseNote(input.revise)}${docBlock}${attachmentBlock}`;
+  // The revision's scope binds the current document only; another document is not what was rejected.
+  const scopeFor = (docId: string | undefined): ReviseScope | undefined => (!docId || docId === input.currentDocId ? input.revise : undefined);
 
   // One-shot nudges: for an edit described in prose but never staged, and for a
   // round cut off by the output cap before any tool call.
@@ -315,38 +447,55 @@ export async function runAgentTurn(
           missing: "old_string not found in the current document. Read the relevant section and copy the exact text.",
           ambiguous: "old_string is not unique — it appears multiple times. Include more surrounding context to make it unique.",
         });
+        assertInsideRevision(doc, scopeFor(doc_id), changedSpan(m.index, m.matched, new_string));
         target.stage(doc.slice(0, m.index) + new_string + doc.slice(m.index + m.matched.length), { old_string: m.matched, new_string });
         return staged("edit", target);
       },
     ),
     textTool(
       "insert_text",
-      "Add NEW content that isn't replacing anything: append to the end of the document, or insert right after an existing anchor. Use this (not str_replace) for an empty document or to add a new paragraph/section.",
+      "Add NEW content that isn't replacing anything: append to the end of the document, or insert right after or right before an existing anchor (before the first line puts it at the top). Use this (not str_replace) for an empty document or to add a new paragraph/section.",
       docArgs(multiDoc, {
         text: Type.String({ description: "The markdown to insert." }),
         after: Type.Optional(
-          Type.String({ description: "Optional exact, unique anchor to insert AFTER. Omit to append to the end of the document." }),
+          Type.String({ description: "Optional exact, unique anchor to insert AFTER. Omit both anchors to append to the end of the document." }),
+        ),
+        before: Type.Optional(
+          Type.String({ description: "Optional exact, unique anchor to insert BEFORE, instead of `after`. The document's first line puts the text at the top." }),
         ),
       }),
-      async ({ doc_id, text, after }) => {
+      async ({ doc_id, text, after, before }) => {
         onStatus?.({ kind: "editing" });
         if (!text) throw new Error("text is required");
+        if (after && before) throw new Error("pass `after` or `before`, not both");
         const target = await targetFor(doc_id);
         const doc = target.text();
+        if (before) {
+          const m = uniqueMatch(doc, before, {
+            missing: "'before' anchor not found. Read the section and copy exact text.",
+            ambiguous: "'before' anchor is not unique — add more context.",
+          });
+          const sep = text.endsWith("\n") ? "" : "\n\n";
+          target.stage(doc.slice(0, m.index) + text + sep + doc.slice(m.index), { old_string: m.matched, new_string: `${text}${sep}${m.matched}` });
+          return staged("insertion", target, `before ${anchorLabel(m.matched)}`);
+        }
         if (after) {
           const m = uniqueMatch(doc, after, {
             missing: "'after' anchor not found. Read the section and copy exact text, or omit 'after' to append.",
             ambiguous: "'after' anchor is not unique — add more context.",
           });
           const end = m.index + m.matched.length;
+          assertInsideRevision(doc, scopeFor(doc_id), [end, end]);
           const sep = text.startsWith("\n") ? "" : "\n\n";
           target.stage(doc.slice(0, end) + sep + text + doc.slice(end), { old_string: m.matched, new_string: `${m.matched}${sep}${text}` });
+          return staged("insertion", target, `after ${anchorLabel(m.matched)}`);
         } else {
           // An empty old_string means append.
+          assertInsideRevision(doc, scopeFor(doc_id), [doc.length, doc.length]);
           const sep = doc.length && !doc.endsWith("\n") ? "\n\n" : "";
           target.stage(`${doc}${sep}${text}`, { old_string: "", new_string: `${sep}${text}` });
         }
-        return staged("insertion", target);
+        return staged("insertion", target, "at the end of the document");
       },
     ),
   ];
@@ -455,6 +604,12 @@ function soundsLikeIntendedEdit(text: string): boolean {
   return EDIT_VERB.test(t.slice(lead.index));
 }
 
+/** An anchor as an insertion's result names it: its first line, cut short. */
+function anchorLabel(anchor: string): string {
+  const line = anchor.trim().split("\n")[0] ?? "";
+  return JSON.stringify(line.length > 60 ? `${line.slice(0, 60)}…` : line);
+}
+
 /** Where an edit lands: one document's working copy. */
 interface EditTarget {
   /** The edit applies when the turn ends instead of waiting for review. */
@@ -478,8 +633,10 @@ function uniqueMatch(haystack: string, needle: string, refusal: { missing: strin
  * edits it before reading it: an append needs no read, and the note still lets
  * it revise what it staged.
  */
-function staged(what: "edit" | "insertion", target: EditTarget): string {
-  const result = target.atOnce ? `ok: ${what} staged; it applies when your turn ends.` : `ok: ${what} staged for the user's review.`;
+function staged(what: "edit" | "insertion", target: EditTarget, where?: string): string {
+  // Where an insertion landed, so the answer to the user says what happened, not what was meant.
+  const placed = where ? ` ${where}` : "";
+  const result = target.atOnce ? `ok: ${what} staged${placed}; it applies when your turn ends.` : `ok: ${what} staged${placed} for the user's review.`;
   const note = target.instructionsNote();
   return note ? `${result}\n\n${note}` : result;
 }

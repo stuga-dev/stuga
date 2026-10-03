@@ -1,6 +1,7 @@
 /** `/api/databases/:id/...`: every route passes databaseRoute's gate and forwards to the database's actor. */
 import { touchDoc, type DocRow } from "@stuga/db";
 import { selectOnlyViolation } from "@stuga/protocol/databases/sql-guard";
+import { parseDecisionNote } from "@stuga/protocol/domain/runs";
 import type { DatabaseRunSummary } from "@stuga/protocol/databases/types";
 import { recordAudit } from "../audit/record.js";
 import { docInstructionLabelsOrNone } from "../documents/instructions.js";
@@ -360,6 +361,8 @@ export async function decideDatabaseRun({ ctx, match, doc, docId, writeRefusal, 
   if (b.decision !== "accept" && b.decision !== "reject") {
     return error(400, "decision must be accept or reject");
   }
+  const note = parseDecisionNote(b.decision, b.note);
+  if (!note.ok) return error(400, note.message);
   const opIds = Array.isArray(b.op_ids) ? b.op_ids.filter((x): x is string => typeof x === "string") : undefined;
   const res = await callDatabaseActor(ctx, docId, "runs/decide", {
     run_id: match[2]!,
@@ -367,6 +370,7 @@ export async function decideDatabaseRun({ ctx, match, doc, docId, writeRefusal, 
     op_ids: opIds,
     decided_by: ctx.alias,
     manager_override: manages(ctx, doc),
+    ...(note.note ? { note: note.note } : {}),
   });
   if (res.status === 403) return error(403, "only this run's reviewer (or the database's owner) can decide it");
   if (!res.ok) return proxyActor(res, "decision failed");

@@ -186,10 +186,11 @@ export const DatabaseRuns = {
     api<{ run: DatabaseRunSummary }>(
       `/api/databases/${id}/runs/${runId}${opts.full ? "?full=1" : opts.sample !== undefined ? `?sample=${opts.sample}` : ""}`,
     ),
-  decide: (id: string, runId: string, decision: "accept" | "reject", opIds?: string[]) =>
+  /** A rejection may carry a `note` the agent revises from. */
+  decide: (id: string, runId: string, decision: "accept" | "reject", opIds?: string[], note?: string) =>
     api<{ run: DatabaseRunSummary; applied: number; rejected: number; conflicts: number; blocked: number; deferred: number }>(
       `/api/databases/${id}/runs/${runId}/decision`,
-      { method: "POST", body: JSON.stringify({ decision, op_ids: opIds }) },
+      { method: "POST", body: JSON.stringify({ decision, op_ids: opIds, ...(note ? { note } : {}) }) },
     ),
   revert: (id: string, runId: string) =>
     api<{ run: DatabaseRunSummary; reverted: number; skipped: number; restored: number; missing: number }>(

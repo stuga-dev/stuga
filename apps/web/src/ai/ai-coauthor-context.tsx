@@ -5,7 +5,7 @@
  */
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
 import type { StugaProvider } from "../sync/stuga-provider";
-import type { AiAttachment } from "@stuga/protocol/wire/doc-socket";
+import type { AiAttachment, AiRequest } from "@stuga/protocol/wire/doc-socket";
 import { useSharedEditor } from "../editor/editor-context";
 import { Media } from "../api";
 import { citedSources } from "./citations";
@@ -48,6 +48,12 @@ interface AiCoauthorCtx {
   send: (prompt: string) => void;
   /** Ask the server to end the turn; `streaming` clears on its receipt, which still reports what was proposed. */
   stop: () => void;
+  /**
+   * Revise after the user rejected the co-author's edits with `note`: the next turn asks for that
+   * revision, and the server lets it change only the passages that rejection (`scope`) covered.
+   * False while a turn is running; the note then reaches the next turn the user starts.
+   */
+  revise: (note: string, scope: { runId: string; feedbackId: string }) => boolean;
   attachments: PendingAttachment[];
   attachImages: (files: File[]) => void;
   /** Drop one staged image, aborting it if still uploading. */
@@ -146,7 +152,7 @@ export function AiCoauthorProvider({
   );
 
   const runTurn = useCallback(
-    async (prompt: string, selectedText: string | null) => {
+    async (prompt: string, selectedText: string | null, extra?: Pick<AiRequest, "revise">) => {
       if (!provider || !editor) return;
       const history = turns.map((t) => ({ role: t.role, content: t.text }));
       // Only uploaded attachments have a media path the model can reference.
@@ -175,6 +181,7 @@ export function AiCoauthorProvider({
           attachments: ready.map(
             (a): AiAttachment => ({ url: a.path!, name: a.name, mime: a.mime }),
           ),
+          ...extra,
         },
         {
           onChunk: (chunk) =>
@@ -238,6 +245,19 @@ export function AiCoauthorProvider({
     [streaming, editor, runTurn],
   );
 
+  const revise = useCallback(
+    (note: string, scope: { runId: string; feedbackId: string }) => {
+      const text = note.trim();
+      if (!text || streaming || !editor) return false;
+      onRequestOpen();
+      runTurn(`Revise the edits I rejected, as my note says, and change nothing else: ${text}`, null, {
+        revise: { run_id: scope.runId, feedback_id: scope.feedbackId },
+      });
+      return true;
+    },
+    [streaming, editor, onRequestOpen, runTurn],
+  );
+
   // Clearing `streaming` here would race the receipt that reports what the stopped turn proposed.
   const stop = useCallback(() => {
     if (!streaming || !provider) return;
@@ -290,6 +310,7 @@ export function AiCoauthorProvider({
     setCollectionId,
     send,
     stop,
+    revise,
     attachments,
     attachImages,
     removeAttachment,
@@ -300,6 +321,11 @@ export function AiCoauthorProvider({
     cancelSelectionEdit,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+/** The co-author, where the page has one: the review surfaces render with and without it. */
+export function useOptionalAiCoauthor(): AiCoauthorCtx | null {
+  return useContext(Ctx);
 }
 
 export function useAiCoauthor(): AiCoauthorCtx {

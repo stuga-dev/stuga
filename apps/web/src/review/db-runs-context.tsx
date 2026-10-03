@@ -40,7 +40,8 @@ interface DbRunsCtx {
   busy: boolean;
   /** Op keys with a decision in flight. */
   inFlight: ReadonlySet<string>;
-  decide: (runId: string, decision: Decision, opIds?: string[]) => Promise<void>;
+  /** A rejection may carry a `note` the agent revises from. Resolves to the run as decided, or null on failure. */
+  decide: (runId: string, decision: Decision, opIds?: string[], note?: string) => Promise<DatabaseRunSummary | null>;
   revert: (runId: string) => Promise<void>;
   ack: (runId: string) => Promise<void>;
   notices: RunNotice[];
@@ -70,7 +71,7 @@ export function DbRunsProvider({
   const api = useMemo<LedgerApi<DatabaseRunSummary>>(
     () => ({
       list: (limit) => DatabaseRuns.list(docId, limit),
-      decide: (runId, decision, ids) => DatabaseRuns.decide(docId, runId, decision, ids),
+      decide: (runId, decision, ids, note) => DatabaseRuns.decide(docId, runId, decision, ids, note),
       revert: (runId) => DatabaseRuns.revert(docId, runId),
       ack: (runId) => DatabaseRuns.ack(docId, runId),
     }),

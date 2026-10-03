@@ -4,15 +4,39 @@
  * document order and opens the per-hunk list, the only way to decide a hunk
  * with no ghost.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import { Button } from "@astryxdesign/core/Button";
+import { useOptionalAiCoauthor } from "../ai/ai-coauthor-context";
 import { useAgentRuns, pendingHunks } from "./agent-runs-context";
+import { useRejectNote, type NoteAnchor } from "./RejectNoteDialog";
+import { summarizeHunk } from "./hunk-review";
 import { RunChangeList } from "./RunChangeList";
 import { RunBanner, RunNotices } from "./RunBanner";
 import { itemKey } from "./run-ledger";
-import type { HunkKey } from "../editor/run-preview/plan";
+import { RUN_HUNK_EVENT, type HunkKey, type RunHunkDecisionDetail } from "../editor/run-preview/plan";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+
+/** What a Request changes turns down, as its composer quotes it: one change's summary, or how many. */
+function quoteOf(run: AgentRunSummary, hunkIds: string[] | undefined): string {
+  const pending = pendingHunks(run);
+  if (hunkIds?.length === 1) {
+    const hunk = pending.find((h) => h.id === hunkIds[0]);
+    if (hunk) return summarizeHunk(hunk).detail;
+  }
+  const n = hunkIds?.length ?? pending.length;
+  return `All ${n} edit${n === 1 ? "" : "s"} by ${run.agent}`;
+}
+
+/** The feedback the newest rejection of `hunkIds` (every hunk when undefined) minted, or null when nothing was rejected. */
+function rejectedFeedbackId(run: AgentRunSummary, hunkIds?: string[]): string | null {
+  const wanted = hunkIds ? new Set(hunkIds) : null;
+  const newest = run.hunks
+    .filter((h) => h.status === "rejected" && h.feedback && (!wanted || wanted.has(h.id)))
+    .map((h) => h.feedback!)
+    .sort((a, b) => b.decided_at - a.decided_at)[0];
+  return newest?.id ?? null;
+}
 
 export function AgentRunBar() {
   const { openRuns, notices, dismissNotice, revert } = useAgentRuns();
@@ -28,6 +52,41 @@ export function AgentRunBar() {
 
 function AgentRunBanner({ run }: { run: AgentRunSummary }) {
   const { busy, decide, preview } = useAgentRuns();
+  const coauthor = useOptionalAiCoauthor();
+  // Read again when the decision lands: the co-author may have started a turn while the dialog was open.
+  const coauthorRef = useRef(coauthor);
+  coauthorRef.current = coauthor;
+  const { ask, dialog } = useRejectNote();
+  // The co-author's own run, while it is idle: the note becomes its next turn, scoped to what this
+  // decision rejected. Mid-turn the button says what it does, Request changes, and the server hands
+  // the note to the next turn the user starts.
+  const revises = run.source === "panel" && coauthor !== null && !coauthor.streaming;
+  const requestChanges = (hunkIds: string[] | undefined, anchor: NoteAnchor) =>
+    ask({
+      title: "Request changes",
+      submitLabel: revises ? "Revise now" : "Request changes",
+      anchor,
+      quote: quoteOf(run, hunkIds),
+      onSubmit: (note) =>
+        void decide(run.id, "reject", hunkIds, note).then((decided) => {
+          const live = coauthorRef.current;
+          const feedbackId = decided && run.source === "panel" ? rejectedFeedbackId(decided, hunkIds) : null;
+          if (feedbackId && live && !live.streaming) live.revise(note, { runId: run.id, feedbackId });
+        }),
+    });
+  // A ghost's Request changes arrives as the same document event as its Accept/Reject, for this run.
+  const requestRef = useRef(requestChanges);
+  requestRef.current = requestChanges;
+  useEffect(() => {
+    const onHunk = (e: Event) => {
+      const detail = (e as CustomEvent<RunHunkDecisionDetail>).detail;
+      if (detail?.decision === "request_changes" && detail.runId === run.id && detail.hunkId) {
+        requestRef.current([detail.hunkId], detail.anchor ?? { top: window.innerHeight / 3, left: window.innerWidth / 2 - 150 });
+      }
+    };
+    document.addEventListener(RUN_HUNK_EVENT, onHunk);
+    return () => document.removeEventListener(RUN_HUNK_EVENT, onHunk);
+  }, [run.id]);
   /**
    * The navigator's position, held as the hunk's key because a decision drops
    * that hunk from the list under the cursor. `at` is the index it held, so a
@@ -67,28 +126,32 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
   const hasList = n > 1 || run.hunks_truncated === true || unanchoredCount > 0;
 
   return (
-    <RunBanner
-      updatedAt={run.updated_at}
-      title={n > 0 ? `${run.agent} proposes ${n} edit${n === 1 ? "" : "s"}` : `${run.agent} proposes edits`}
-      hint={
-        unanchoredCount > 0
-          ? `${unanchoredCount} can’t be shown in the document — see “Review each”`
-          : "nothing changes until you accept"
-      }
-      busy={busy}
-      onDecide={(decision) => void decide(run.id, decision)}
-      list={hasList ? <RunChangeList run={run} /> : undefined}
-      controls={
-        anchored.length > 0 && (
-          <div className="agent-run-nav" role="group" aria-label="Move between this run's changes">
-            <Button label="Previous change" variant="ghost" size="sm" isIconOnly icon={<ChevronLeft size={15} />} onClick={() => go(-1)} />
-            <span className="agent-run-nav__count" aria-live="polite">
-              {(at ?? 0) + 1} of {anchored.length}
-            </span>
-            <Button label="Next change" variant="ghost" size="sm" isIconOnly icon={<ChevronRight size={15} />} onClick={() => go(1)} />
-          </div>
-        )
-      }
-    />
+    <>
+      <RunBanner
+        updatedAt={run.updated_at}
+        title={n > 0 ? `${run.agent} proposes ${n} edit${n === 1 ? "" : "s"}` : `${run.agent} proposes edits`}
+        hint={
+          unanchoredCount > 0
+            ? `${unanchoredCount} can’t be shown in the document — see “Review each”`
+            : "nothing changes until you accept"
+        }
+        busy={busy}
+        onDecide={(decision) => void decide(run.id, decision)}
+        onRequestChanges={(anchor) => requestChanges(undefined, anchor)}
+        list={hasList ? <RunChangeList run={run} onRequestChanges={(hunkId, anchor) => requestChanges([hunkId], anchor)} /> : undefined}
+        controls={
+          anchored.length > 0 && (
+            <div className="agent-run-nav" role="group" aria-label="Move between this run's changes">
+              <Button label="Previous change" variant="ghost" size="sm" isIconOnly icon={<ChevronLeft size={15} />} onClick={() => go(-1)} />
+              <span className="agent-run-nav__count" aria-live="polite">
+                {(at ?? 0) + 1} of {anchored.length}
+              </span>
+              <Button label="Next change" variant="ghost" size="sm" isIconOnly icon={<ChevronRight size={15} />} onClick={() => go(1)} />
+            </div>
+          )
+        }
+      />
+      {dialog}
+    </>
   );
 }

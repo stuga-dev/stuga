@@ -3,7 +3,7 @@
  * list limits, idle rollover, terminal status and the park-or-commit decision.
  */
 import type { ReviewMode } from "./events.js";
-import { RUN_IDLE_MS } from "./limits.js";
+import { RUN_FEEDBACK_EXCERPT_CHARS, RUN_FEEDBACK_NOTE_MAX_CHARS, RUN_IDLE_MS } from "./limits.js";
 
 /** "run_" + 12 hex chars. */
 export function newRunId(): string {
@@ -55,4 +55,70 @@ export function parseReviewMode(raw: unknown): ReviewMode {
  */
 export function shouldCommit(review: ReviewMode, parkedBehindPending: boolean): boolean {
   return review === "auto" && !parkedBehindPending;
+}
+
+/**
+ * A reviewer's rejection, kept on every item one decision rejected. The note is advice to the agent
+ * that proposed them, never a rule: it decides nothing about what a later write may do.
+ */
+export interface RunFeedback {
+  /** "fb_" + 12 hex chars, shared by the items one decision rejected. */
+  id: string;
+  /** What the reviewer wrote, when they wrote anything. */
+  note?: string;
+  decided_by: string;
+  /** epoch ms */
+  decided_at: number;
+  /**
+   * When the agent was handed it with a later proposal (or the co-author with its next turn). Until
+   * then reads repeat it; afterwards only `status` shows it.
+   */
+  addressed_at?: number;
+  /**
+   * A database op only: what it would have written, column ids named, cut to RUN_FEEDBACK_EXCERPT_CHARS,
+   * so the agent sees which rows and values were turned down and not just the op's one-line summary.
+   */
+  detail?: string;
+}
+
+/** A rejection as the agent that proposed it is told: what was turned down, and the reviewer's note. */
+export interface AgentFeedback {
+  /** The RunFeedback id. */
+  id: string;
+  run_id: string;
+  note?: string;
+  decided_at: number;
+  /** The rejected changes, at most RUN_FEEDBACK_MAX_CHANGES, each side cut to RUN_FEEDBACK_EXCERPT_CHARS. */
+  changes: Array<{ old_string: string; new_string: string } | { summary: string; detail?: string }>;
+  /** How many more changes the same decision rejected. */
+  more?: number;
+}
+
+/** "fb_" + 12 hex chars. */
+export function newFeedbackId(): string {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return `fb_${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * A decision's `note`: trimmed, empty means none. Only a rejection carries one, since it is what the
+ * agent revises from. A note that is not text, or one past RUN_FEEDBACK_NOTE_MAX_CHARS, is refused
+ * rather than cut, so a reviewer never sends half a sentence.
+ */
+export function parseDecisionNote(decision: unknown, raw: unknown): { ok: true; note?: string } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true };
+  if (typeof raw !== "string") return { ok: false, message: "note must be text" };
+  const note = raw.trim();
+  if (!note) return { ok: true };
+  if (decision !== "reject") return { ok: false, message: "only a rejection carries a note" };
+  if (note.length > RUN_FEEDBACK_NOTE_MAX_CHARS) {
+    return { ok: false, message: `note is longer than ${RUN_FEEDBACK_NOTE_MAX_CHARS} characters` };
+  }
+  return { ok: true, note };
+}
+
+/** One side of a rejected change as an agent is shown it. */
+export function feedbackExcerpt(text: string): string {
+  return text.length > RUN_FEEDBACK_EXCERPT_CHARS ? `${text.slice(0, RUN_FEEDBACK_EXCERPT_CHARS)}…` : text;
 }

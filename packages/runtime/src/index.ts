@@ -12,6 +12,6 @@ export type {
   JobQueue,
 } from "./interfaces.js";
 export { createActorNamespace } from "./actor-host.js";
-export type { HostedNamespace } from "./actor-host.js";
+export type { HostedNamespace, StoreUpgrade } from "./actor-host.js";
 export { SocketPair, upgradeResponse, isUpgradeResponse, serverSocketOf, attachSocket, type InboundGate } from "./sockets.js";
 export { fsBlobStore } from "./blob-fs.js";

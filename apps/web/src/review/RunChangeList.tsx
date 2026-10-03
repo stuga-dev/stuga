@@ -9,8 +9,10 @@ import { useAgentRuns, pendingHunks } from "./agent-runs-context";
 import { orderRowsForReview, summarizeHunk } from "./hunk-review";
 import { itemKey } from "./run-ledger";
 import { Button } from "@astryxdesign/core/Button";
+import { MessageSquareReply } from "lucide-react";
+import { anchorOf, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
 
-export function RunChangeList({ run }: { run: AgentRunSummary }) {
+export function RunChangeList({ run, onRequestChanges }: { run: AgentRunSummary; onRequestChanges?: (hunkId: string, anchor: NoteAnchor) => void }) {
   const { preview, inFlight, loadingHunks, decide, loadFullHunks } = useAgentRuns();
 
   // A truncated run arrives without hunks; they are fetched when the list opens.
@@ -92,6 +94,18 @@ export function RunChangeList({ run }: { run: AgentRunSummary }) {
               >
                 Reject
               </Button>
+              {onRequestChanges && (
+                <Button
+                  label={`Request changes to ${position}`}
+                  variant="ghost"
+                  size="sm"
+                  isIconOnly
+                  icon={<MessageSquareReply size={14} />}
+                  isDisabled={posted}
+                  onMouseDown={keepFocus}
+                  onClick={(e) => onRequestChanges(row.hunk.id, anchorOf(e))}
+                />
+              )}
             </span>
           </li>
         );

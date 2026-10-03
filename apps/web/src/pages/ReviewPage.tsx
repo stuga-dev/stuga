@@ -30,6 +30,7 @@ import { PageColumn } from "../ui/PageColumn";
 import { AI_COAUTHOR_LABEL, absoluteTime, relativeTime } from "../lib/format";
 import { DatabaseRuns, INBOX_PAGE_LIMIT, Inbox, Runs, type AgentStats, type InboxFilter, type InboxRun } from "../api";
 import { errorMessage } from "../lib/http/client";
+import { useRejectNote } from "../review/RejectNoteDialog";
 
 const FILTERS: Array<{ value: InboxFilter; label: string }> = [
   { value: "attention", label: "Needs review" },
@@ -134,6 +135,7 @@ function PhoneTitle({ children }: { children: string }) {
 export function ReviewPage() {
   const nav = useNavigate();
   const toast = useToast();
+  const { ask: askNote, dialog: noteDialog } = useRejectNote();
   const [filter, setFilter] = useState<InboxFilter>("attention");
   const [agent, setAgent] = useState("");
   const [runs, setRuns] = useState<InboxRun[] | null>(null);
@@ -188,16 +190,17 @@ export function ReviewPage() {
   async function act(
     row: InboxRun,
     what: "accept" | "reject" | "revert" | "dismiss",
+    note?: string,
   ): Promise<boolean> {
     markBusy(row.run_id, true);
     try {
       let run: AgentRunSummary | DatabaseRunSummary | null = null;
       if (row.doc_kind === "prose") {
-        if (what === "accept" || what === "reject") run = (await Runs.decide(row.doc_id, row.run_id, what)).run;
+        if (what === "accept" || what === "reject") run = (await Runs.decide(row.doc_id, row.run_id, what, undefined, note)).run;
         else if (what === "revert") run = (await Runs.revert(row.doc_id, row.run_id)).run;
         else await Runs.ack(row.doc_id, row.run_id);
       } else {
-        if (what === "accept" || what === "reject") run = (await DatabaseRuns.decide(row.doc_id, row.run_id, what)).run;
+        if (what === "accept" || what === "reject") run = (await DatabaseRuns.decide(row.doc_id, row.run_id, what, undefined, note)).run;
         else if (what === "revert") run = (await DatabaseRuns.revert(row.doc_id, row.run_id)).run;
         else run = (await DatabaseRuns.ack(row.doc_id, row.run_id)).run;
       }
@@ -294,6 +297,11 @@ export function ReviewPage() {
                     ...(actions.decide ? [
                       { label: "Accept all suggestions", onClick: () => void act(row, "accept"), isDisabled: isBusy },
                       { label: "Reject all suggestions", onClick: () => void act(row, "reject"), isDisabled: isBusy },
+                      {
+                        label: "Request changes…",
+                        onClick: () => askNote({ title: "Request changes", onSubmit: (note) => void act(row, "reject", note) }),
+                        isDisabled: isBusy,
+                      },
                     ] : []),
                     ...(actions.revert ? [
                       { label: "Revert these changes", variant: "destructive" as const, onClick: () => openRevert(row), isDisabled: isBusy },
@@ -374,6 +382,7 @@ export function ReviewPage() {
           });
         }}
       />
+      {noteDialog}
     </AppShell>
   );
 }

@@ -21,6 +21,7 @@ import {
   listWorkspaceEvents,
 } from "@stuga/db";
 import { DATABASE_IMPORT_INLINE_MAX_CHARS } from "@stuga/protocol/databases/limits";
+import { RUN_FEEDBACK_LOOKBACK_DAYS } from "@stuga/protocol/domain/limits";
 import type { DatabaseRunSummary, DatabaseSchema } from "@stuga/protocol/databases/types";
 import {
   databaseDocMessage,
@@ -162,6 +163,7 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
         markdown: md.markdown,
         run_id: md.runId ?? null,
         pending: md.pending ?? 0,
+        ...(md.feedback ? { feedback: md.feedback } : {}),
         ...(await docAgentInstructions(ctx, md.doc)),
       };
     },
@@ -264,21 +266,25 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
       return { folders: folders.map(folderSummary) };
     },
 
-    async pollEvents({ after, types, limit }) {
+    async pollEvents({ after, types, limit, mine }) {
       const latest = await latestWorkspaceEventId(ctx.sql, ctx.workspaceId);
-      // No cursor means "from now": the whole retained history does not belong in the agent's context.
-      const start = after ?? latest;
+      // No cursor means "from now": the whole retained history does not belong in the agent's context. An agent
+      // asking after its own decisions gets the recent ones, or it misses what was decided while it was away.
+      const lookback = mine && after === undefined;
+      const start = after ?? (lookback ? 0 : latest);
       const events = await listWorkspaceEvents(ctx.sql, {
         workspaceId: ctx.workspaceId,
         principals: ctx.principals,
         after: start,
-        types,
+        types: mine && !types?.length ? ["run.decided", "run.reverted"] : types,
         scopeFolderIds: scopeFolderIds(ctx),
+        ...(mine ? { agentAlias: ctx.alias } : {}),
+        ...(lookback ? { since: new Date(Date.now() - RUN_FEEDBACK_LOOKBACK_DAYS * 86_400_000) } : {}),
         limit: limit ?? 50,
       });
       return {
         events: events.map((e) => ({ id: Number(e.id), at: e.at, type: e.type, doc_id: e.doc_id, actor: e.actor, actor_kind: e.actor_kind, payload: e.payload })),
-        cursor: events.length > 0 ? Number(events[events.length - 1]!.id) : start,
+        cursor: events.length > 0 ? Number(events[events.length - 1]!.id) : lookback ? latest : start,
         latest,
       };
     },

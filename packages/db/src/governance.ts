@@ -160,6 +160,10 @@ export interface ListWorkspaceEventsInput {
   types?: string[];
   /** A scoped credential's folders, subtrees expanded; null = unscoped. */
   scopeFolderIds?: string[] | null;
+  /** Only events about this agent's own runs. */
+  agentAlias?: string;
+  /** Only events at or after this time. */
+  since?: Date;
   limit?: number;
 }
 
@@ -184,6 +188,8 @@ export async function listWorkspaceEvents(sql: Sql, input: ListWorkspaceEventsIn
             ${scoped ? sql`AND d.parent_id = ANY(${scoped})` : sql``})
       )
       ${input.types && input.types.length > 0 ? sql`AND e.type = ANY(${input.types})` : sql``}
+      ${input.agentAlias ? sql`AND e.payload->>'agent_alias' = ${input.agentAlias}` : sql``}
+      ${input.since ? sql`AND e.at >= ${input.since}` : sql``}
     ORDER BY e.id
     LIMIT ${limit}`;
 }

@@ -471,6 +471,29 @@ block, so surrounding structure and other people's changes survive.
 An agent is never blocked on review. A proposal returns immediately, the agent's later reads include
 its own pending edits, and `markdown` or `databases` action `status` reports what was decided.
 
+## Request changes
+
+**Request changes** rejects with a note saying what should change: from the run bar, from a single
+change in the document or under **Review each**, or from the inbox's **⋯** menu. The note is kept
+with each change it rejected, and it reaches the agent that proposed them where that agent already
+looks:
+
+- **Its reads of that document** (for a database, its schema and query results) open with the
+  reviewer's feedback (what was rejected and the note), until the agent proposes there again, or for
+  14 days.
+- **Its next proposal there** carries the feedback once more, and from then on only `status` shows it.
+- **`markdown` or `databases` action `status`** lists each rejection and its note under its run.
+- **`events` with `mine: true`** lists the decisions on the agent's own proposals across the
+  workspace, the last 14 days of them without a cursor. A `run.decided` event carries the `note`.
+
+The in-app co-author hears its rejections at the start of its next turn. Requesting changes to one of
+its runs offers **Revise now**: a turn that may change existing text only inside the passages that
+rejection covered. It may add text anywhere, so it can move what was rejected. A change it tries to
+other existing text is refused, and it says so instead of making it.
+
+A note is advice to the agent, like an instruction. It decides nothing about what a later write may
+do; review mode and permissions do. Only a rejection carries one.
+
 ## Agent changes: wait for review, or apply at once
 
 Whether an agent's change waits is a setting on each document and database, `agent_mode`:
@@ -521,8 +544,8 @@ Before letting AI edits to a document apply directly, look at that agent's recor
 **Needs review** (waiting for a decision, or applied at once and not yet looked at),
 **In progress** (still collecting changes: something waiting, or active in the last 10 minutes),
 **Finished** and **Everything**, filterable by agent. A run's **⋯** menu acts on
-the whole run: **Accept all suggestions**, **Reject all suggestions**, **Revert these changes** and
-**Mark as reviewed**; open the document to decide change by change. **AI activity**, below the list,
+the whole run: **Accept all suggestions**, **Reject all suggestions**, **Request changes…**,
+**Revert these changes** and **Mark as reviewed**; open the document to decide change by change. **AI activity**, below the list,
 is each agent's record (runs, waiting, kept, skipped, applied automatically, reverted) and is what to
 consult before switching a document to `auto`.
 
@@ -593,8 +616,8 @@ How agents get them:
 
 - **Events.** The `events` tool and `GET /api/events` return what changed in a workspace since a
   cursor, filtered to documents the credential can read. An agent that wants to react to a decision
-  or a comment polls this instead of re-reading everything. Event types:
-  [api.md](api.md#the-event-feed).
+  or a comment polls this instead of re-reading everything. The tool's `mine: true` keeps the
+  decisions on the agent's own proposals. Event types: [api.md](api.md#the-event-feed).
 - **Webhooks.** Workspace owners and admins can send the same events to a URL, signed and retried.
   See [api.md](api.md#webhooks).
 

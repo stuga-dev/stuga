@@ -141,6 +141,20 @@ describe.skipIf(!URL)("agent governance queries", () => {
       const typed = await listWorkspaceEvents(sql, { workspaceId: WS, principals: BOB, after: 0, types: ["comment.added"] });
       expect(typed.map((e) => e.doc_id)).toEqual(["d-bob"]);
     });
+    it("narrows to one agent's own runs, and to a time window", async () => {
+      const mine = await insertWorkspaceEvent(sql, {
+        workspaceId: WS,
+        type: "run.decided",
+        docId: "d-shared",
+        actor: "user:alice",
+        actorKind: "human",
+        payload: { agent_alias: "agent-1", note: "Keep it plain." },
+      });
+      await insertWorkspaceEvent(sql, { workspaceId: WS, type: "run.decided", docId: "d-shared", actor: "user:alice", actorKind: "human", payload: { agent_alias: "agent-2" } });
+      const own = await listWorkspaceEvents(sql, { workspaceId: WS, principals: ALICE, after: 0, agentAlias: "agent-1" });
+      expect(own.map((e) => e.id)).toEqual([mine!.id]);
+      expect(await listWorkspaceEvents(sql, { workspaceId: WS, principals: ALICE, after: 0, since: new Date(Date.now() + 60_000) })).toEqual([]);
+    });
     it("a scoped key sees only document events inside its folders, and no workspace-level ones", async () => {
       await insertWorkspaceEvent(sql, { workspaceId: WS, type: "doc.updated", docId: "d-shared", actor: "agent:x", actorKind: "agent" });
       await insertWorkspaceEvent(sql, { workspaceId: WS, type: "run.decided", docId: null, actor: "user:alice", actorKind: "human" });

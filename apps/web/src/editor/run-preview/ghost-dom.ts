@@ -1,4 +1,4 @@
-/** The ghost DOM a run hunk paints inline: struck/ghosted content plus its Accept/Reject pair. */
+/** The ghost DOM a run hunk paints inline: struck/ghosted content plus its Accept, Reject and Request changes. */
 import type { EditorView } from "@tiptap/pm/view";
 import { DOMSerializer, Fragment, type Node as PMNode } from "@tiptap/pm/model";
 import type { WordOp } from "@stuga/crdt-ops";
@@ -16,22 +16,26 @@ function visibleBlocks(nodes: PMNode[]): PMNode[] {
 }
 
 /**
- * Accept/Reject for one hunk. Clicks go out as RUN_HUNK_EVENT; mousedown is
+ * Accept, Reject and Request changes for one hunk. Clicks go out as RUN_HUNK_EVENT; mousedown is
  * swallowed so ProseMirror doesn't move the selection into the widget. `pending`
- * disables both buttons, which stops a double-click from posting twice.
+ * disables the buttons, which stops a double-click from posting twice.
  */
 function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pending: boolean): HTMLElement {
   const bar = document.createElement("div");
   bar.className = "ai-preview-hunk-actions";
   bar.setAttribute("contenteditable", "false");
-  for (const decision of ["accept", "reject"] as const) {
+  const LABELS = {
+    accept: { text: "Accept", title: "Apply this change", verb: "Accept" },
+    reject: { text: "Reject", title: "Discard this change", verb: "Reject" },
+    request_changes: { text: "Request changes", title: "Discard this change and tell the AI what to change", verb: "Request changes to" },
+  } as const;
+  for (const decision of ["accept", "reject", "request_changes"] as const) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `ai-preview-hunk-btn ai-preview-hunk-btn--${decision}`;
-    btn.textContent = decision === "accept" ? "Accept" : "Reject";
-    btn.title = decision === "accept" ? "Apply this change" : "Discard this change";
-    const verb = decision === "accept" ? "Accept" : "Reject";
-    btn.setAttribute("aria-label", `${verb} change ${ordinal} of ${total}: ${part.summary}`);
+    btn.textContent = LABELS[decision].text;
+    btn.title = LABELS[decision].title;
+    btn.setAttribute("aria-label", `${LABELS[decision].verb} change ${ordinal} of ${total}: ${part.summary}`);
     if (pending) {
       btn.disabled = true;
       btn.setAttribute("aria-disabled", "true");
@@ -43,13 +47,24 @@ function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pend
       if (btn.disabled) return;
       document.dispatchEvent(
         new CustomEvent<RunHunkDecisionDetail>(RUN_HUNK_EVENT, {
-          detail: { runId: part.runId, hunkId: part.hunkId, decision },
+          detail: {
+            runId: part.runId,
+            hunkId: part.hunkId,
+            decision,
+            ...(decision === "request_changes" ? { anchor: anchorBelow(btn) } : {}),
+          },
         }),
       );
     });
     bar.appendChild(btn);
   }
   return bar;
+}
+
+/** Just under `el`, where a composer it opens floats. */
+function anchorBelow(el: HTMLElement): { top: number; left: number } {
+  const r = el.getBoundingClientRect();
+  return { top: r.bottom, left: r.left };
 }
 
 /**

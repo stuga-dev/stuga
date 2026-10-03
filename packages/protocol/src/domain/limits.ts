@@ -41,6 +41,18 @@ export const MAX_TABLE_GROWTH_PER_WINDOW = 60;
 /** How long an open agent run (document or database) may go quiet before the next propose starts a new one. */
 export const RUN_IDLE_MS = 600_000;
 
+/** Longest note a reviewer can leave when rejecting an agent's change. */
+export const RUN_FEEDBACK_NOTE_MAX_CHARS = 2000;
+/** Characters of each side of a rejected change an agent is shown beside the note. */
+export const RUN_FEEDBACK_EXCERPT_CHARS = 300;
+/** Rejected changes listed with one piece of feedback; the rest are counted. */
+export const RUN_FEEDBACK_MAX_CHANGES = 5;
+/**
+ * How far back an agent's own decisions reach when it asks for them without a cursor, and how long
+ * a rejection leads its reads and proposals; past it, only `status` keeps the note.
+ */
+export const RUN_FEEDBACK_LOOKBACK_DAYS = 14;
+
 /** Days a trashed document stays restorable before maintenance deletes it. */
 export const TRASH_RETENTION_DAYS = 30;
 

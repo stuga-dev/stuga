@@ -20,9 +20,9 @@ import { summarizeHunk } from "../../review/hunk-review";
 import { itemKey } from "../../review/run-ledger";
 
 /**
- * Fired on `document` when a ghost's Accept/Reject is clicked. The buttons are
- * widget DOM outside the React tree, so this event is their way to the run
- * ledger provider.
+ * Fired on `document` when a ghost's Accept, Reject or Request changes is clicked. The buttons are
+ * widget DOM outside the React tree, so this event is their way to the run ledger provider (which
+ * decides) and the run's banner (which asks for the note).
  */
 export const RUN_HUNK_EVENT = "stuga-run-hunk";
 
@@ -30,7 +30,10 @@ export interface RunHunkDecisionDetail {
   /** Hunk ids restart at "h1" in every run, so a decision needs both. */
   runId: string;
   hunkId: string;
-  decision: "accept" | "reject";
+  /** `request_changes` rejects with a note the agent revises from; the banner collects the note first. */
+  decision: "accept" | "reject" | "request_changes";
+  /** Request changes only: under the button, where the note composer floats. */
+  anchor?: { top: number; left: number };
 }
 
 /** A pending hunk's identity across runs: `itemKey(runId, hunkId)`. */

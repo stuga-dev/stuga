@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
-import { runAgentTurn, type ToolRunner } from "./coauthor.js";
+import { FEEDBACK_BLOCK_CLOSE, FEEDBACK_BLOCK_OPEN, PENDING_BLOCK_CLOSE, PENDING_BLOCK_OPEN, runAgentTurn, type ReviseScope, type ToolRunner } from "./coauthor.js";
 import { CFG, mockRounds, textRound, toolRound, maxTokensRound, maxTokensEmptyRound, streamOf, openaiTextRound, sentBody } from "../test-helpers.js";
 
 
@@ -976,15 +976,6 @@ describe("another document's instructions", () => {
     openDocument: async (id) => ({ docId: id, title: "NDA", markdown: "Clause 1. Terms.", instructions }),
   });
 
-  /** The text of the latest tool result in the n-th request. */
-  function lastToolResult(n: number): string {
-    // A tool result's content is a string or text blocks; the Messages API takes both.
-    type Block = { type?: string; content?: string | Array<{ text?: string }> };
-    const messages = sentBody<{ messages: Array<{ content: Block[] | string }> }>(n).messages;
-    const results = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.type === "tool_result");
-    const content = results.at(-1)?.content ?? [];
-    return typeof content === "string" ? content : content.map((c) => c.text ?? "").join("");
-  }
 
   it("notes the levels the current document lacks ahead of the first read's text, and only there", async () => {
     mockRounds([
@@ -1021,9 +1012,9 @@ describe("another document's instructions", () => {
     const r = await runAgentTurn(CFG, INPUT, runnerWith([WORKSPACE, LEGAL, NDA]), () => {});
 
     const first = lastToolResult(1);
-    expect(first.startsWith("ok: insertion staged for the user's review.\n\n<<<NOTE about document \"NDA\"")).toBe(true);
+    expect(first.startsWith("ok: insertion staged at the end of the document for the user's review.\n\n<<<NOTE about document \"NDA\"")).toBe(true);
     expect([...first.matchAll(/^<<<INSTRUCTIONS (.*)$/gm)].map((m) => m[1])).toEqual(['Folder "Legal"', 'Document "NDA"']);
-    expect(lastToolResult(2)).toBe("ok: insertion staged for the user's review.");
+    expect(lastToolResult(2)).toBe("ok: insertion staged at the end of the document for the user's review.");
     expect(r.docEdits[0]!.strEdits.map((e) => e.new_string).join("")).not.toContain("NOTE");
   });
 
@@ -1117,5 +1108,150 @@ describe("a document set to apply agent changes at once", () => {
     expect(systemAt(0)).toContain("Edits to the current document apply when your turn ends");
     expect(systemAt(0)).not.toContain("NOT applied until");
     expect(lastMessageAt(1)).toContain("ok: edit staged; it applies when your turn ends.");
+  });
+});
+
+describe("what the user rejected since the last turn", () => {
+  it("leads the turn context with each rejected edit and the user's note", async () => {
+    const read = captureRequest([textRound("done")]);
+    await runAgentTurn(
+      CFG,
+      {
+        prompt: "try again",
+        docText: "# Intro\n\nAlpha.",
+        currentDocId: "doc-A",
+        selectedText: null,
+        model: "sonnet",
+        history: [],
+        collectionEnabled: false,
+        feedback: [
+          { id: "fb_1", run_id: "run_1", note: "Keep it plain.", decided_at: 2, changes: [{ old_string: "Alpha.", new_string: "Alpha, formally." }] },
+        ],
+      },
+      NOOP_RUNNER,
+      () => {},
+    );
+    const seed = (read().messages?.[0]?.content ?? []).map((b) => b.text ?? "").join("\n");
+    expect(seed.startsWith(FEEDBACK_BLOCK_OPEN)).toBe(true);
+    expect(seed).toContain(`${FEEDBACK_BLOCK_CLOSE}\n`);
+    expect(seed).toContain('- Rejected: "Alpha." → "Alpha, formally."');
+    expect(seed).toContain('The user\'s note on this: "Keep it plain."');
+    expect(seed).toContain("Request: try again");
+  });
+
+  it("says nothing when nothing was rejected", async () => {
+    const read = captureRequest([textRound("done")]);
+    await runAgentTurn(
+      CFG,
+      { prompt: "tidy", docText: "# Intro", currentDocId: "doc-A", selectedText: null, model: "sonnet", history: [], collectionEnabled: false, feedback: [] },
+      NOOP_RUNNER,
+      () => {},
+    );
+    const seed = (read().messages?.[0]?.content ?? []).map((b) => b.text ?? "").join("\n");
+    expect(seed).not.toMatch(/rejected/);
+  });
+});
+
+/** The text of the latest tool result in the n-th request. */
+function lastToolResult(n: number): string {
+  // A tool result's content is a string or text blocks; the Messages API takes both.
+  type Block = { type?: string; content?: string | Array<{ text?: string }> };
+  const messages = sentBody<{ messages: Array<{ content: Block[] | string }> }>(n).messages;
+  const results = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.type === "tool_result");
+  const content = results.at(-1)?.content ?? [];
+  return typeof content === "string" ? content : content.map((c) => c.text ?? "").join("");
+}
+
+describe("a revise turn stays inside the rejected passages", () => {
+  const DOC = "# Notes\n\nAlpha paragraph.\n\nBravo paragraph.\n";
+  const SCOPE: ReviseScope = { regions: [{ old_string: "Alpha paragraph.", new_string: "Alpha, formally." }] };
+  const input = (revise: ReviseScope) => ({
+    prompt: "revise",
+    docText: DOC,
+    currentDocId: "doc-A",
+    selectedText: null,
+    model: "sonnet",
+    history: [],
+    collectionEnabled: false,
+    revise,
+  });
+
+  it("stages an edit inside a rejected passage, context around it included", async () => {
+    mockRounds([toolRound("str_replace", { old_string: "\nAlpha paragraph.\n", new_string: "\nAlpha, plainly.\n" }), textRound("Done.")]);
+    const r = await runAgentTurn(CFG, input(SCOPE), NOOP_RUNNER, () => {});
+    expect(r.strEdits).toEqual([{ old_string: "\nAlpha paragraph.\n", new_string: "\nAlpha, plainly.\n" }]);
+  });
+
+  it("refuses a rewrite of the whole document and a change to other existing text", async () => {
+    mockRounds([
+      toolRound("str_replace", { old_string: DOC, new_string: "# Notes\n\nAlpha, plainly.\n\nBravo, plainly.\n" }),
+      toolRound("str_replace", { old_string: "Bravo paragraph.", new_string: "Bravo, plainly." }),
+      textRound("I can only revise the rejected passage."),
+    ]);
+    const r = await runAgentTurn(CFG, input(SCOPE), NOOP_RUNNER, () => {});
+    expect(r.strEdits).toEqual([]);
+  });
+
+  it("lets a rejected append move to the top, by an insertion before the first line or a str_replace that only adds", async () => {
+    const appended = { regions: [{ old_string: "", new_string: "\n\n## Summary\n\nShort." }] };
+    mockRounds([toolRound("insert_text", { text: "## Summary\n\nShort.", before: "# Notes" }), textRound("Moved it to the top.")]);
+    const viaInsert = await runAgentTurn(CFG, input(appended), NOOP_RUNNER, () => {});
+    expect(viaInsert.strEdits).toEqual([{ old_string: "# Notes", new_string: "## Summary\n\nShort.\n\n# Notes" }]);
+    expect(lastToolResult(1)).toBe('ok: insertion staged before "# Notes" for the user\'s review.');
+
+    mockRounds([toolRound("str_replace", { old_string: "# Notes", new_string: "## Summary\n\nShort.\n\n# Notes" }), textRound("Moved.")]);
+    const viaReplace = await runAgentTurn(CFG, input(appended), NOOP_RUNNER, () => {});
+    expect(viaReplace.strEdits).toHaveLength(1);
+  });
+
+  it("lets an append be revised where the rejected edit was one, and binds nothing once the passage is gone", async () => {
+    mockRounds([toolRound("insert_text", { text: "Delta." }), textRound("Done.")]);
+    const appended = await runAgentTurn(CFG, input({ regions: [{ old_string: "", new_string: "Delta, formally." }] }), NOOP_RUNNER, () => {});
+    expect(appended.strEdits).toHaveLength(1);
+
+    mockRounds([toolRound("str_replace", { old_string: "Bravo paragraph.", new_string: "Bravo, plainly." }), textRound("Done.")]);
+    const gone = await runAgentTurn(CFG, input({ regions: [{ old_string: "Gone paragraph.", new_string: "x" }] }), NOOP_RUNNER, () => {});
+    expect(gone.strEdits).toHaveLength(1);
+  });
+});
+
+describe("its own edits still waiting for review", () => {
+  const seedOf = async (ownPending: Array<{ old_string: string; new_string: string }> | undefined) => {
+    const read = captureRequest([textRound("done")]);
+    await runAgentTurn(
+      CFG,
+      {
+        prompt: "change to Chinese",
+        docText: "- One\n- Two",
+        currentDocId: "doc-A",
+        selectedText: null,
+        model: "sonnet",
+        history: [],
+        collectionEnabled: false,
+        ownPending,
+      },
+      NOOP_RUNNER,
+      () => {},
+    );
+    return (read().messages?.[0]?.content ?? []).map((b) => b.text ?? "").join("\n");
+  };
+
+  it("lists each one, so a reference to what the user sees resolves to it", async () => {
+    const seed = await seedOf([
+      { old_string: "\n- Three", new_string: "" },
+      { old_string: "One", new_string: "Uno" },
+      { old_string: "", new_string: "\n- Four" },
+    ]);
+    expect(seed.startsWith(PENDING_BLOCK_OPEN)).toBe(true);
+    expect(seed).toContain('- Deleted: "\\n- Three"');
+    expect(seed).toContain('- Replaced: "One" → "Uno"');
+    expect(seed).toContain('- Added: "\\n- Four"');
+    expect(seed).toContain("they mean what they see");
+    expect(seed.indexOf(PENDING_BLOCK_CLOSE)).toBeLessThan(seed.indexOf("Document preview:"));
+  });
+
+  it("says nothing when none wait", async () => {
+    expect(await seedOf(undefined)).not.toContain(PENDING_BLOCK_OPEN);
+    expect(await seedOf([])).not.toContain(PENDING_BLOCK_OPEN);
   });
 });

@@ -1,4 +1,5 @@
 import type { ReviewMode } from "../domain/events.js";
+import type { RunFeedback } from "../domain/runs.js";
 import type { WriteRejectedKind } from "./opcodes.js";
 
 /** Who sent an AWARENESS frame; the Yjs payload carries what changed. */
@@ -28,6 +29,11 @@ export interface AiRequest {
   collection_id?: string | null;
   /** Images already uploaded to the document's media store for this turn; only paths travel. */
   attachments?: AiAttachment[];
+  /**
+   * Revise now: the turn may change only the passages one rejection covered, in their full text,
+   * and its edits elsewhere are refused. The run must be the co-author's own.
+   */
+  revise?: { run_id: string; feedback_id: string } | null;
 }
 
 export interface AiAttachment {
@@ -126,6 +132,8 @@ export interface AgentRunHunk {
   status: RunHunkStatus;
   /** The mode it was proposed under; a `review` hunk never rides along on a later `auto` proposal. */
   review: ReviewMode;
+  /** Set when a reviewer rejected it, with their note if they left one. */
+  feedback?: RunFeedback;
 }
 
 export type AgentRunStatus = "open" | "applied" | "rejected" | "expired";

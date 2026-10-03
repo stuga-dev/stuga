@@ -295,7 +295,7 @@ describe("AgentRunsProvider decisions", () => {
     await mount();
     const settle = hangingFetch();
 
-    let posted!: Promise<void>;
+    let posted!: Promise<unknown>;
     await act(async () => {
       posted = latest.decide("run_a", "accept", ["h1"]);
     });
@@ -314,7 +314,7 @@ describe("AgentRunsProvider decisions", () => {
     await mount();
     const settle = hangingFetch();
 
-    let posted!: Promise<void>;
+    let posted!: Promise<unknown>;
     await act(async () => {
       posted = latest.decide("run_a", "accept", ["h1"]);
     });
@@ -333,7 +333,7 @@ describe("AgentRunsProvider decisions", () => {
     await mount();
     const settle = hangingFetch();
 
-    let posted!: Promise<void>;
+    let posted!: Promise<unknown>;
     await act(async () => {
       posted = latest.decide("run_a", "accept", ["h1"]);
     });
@@ -385,7 +385,7 @@ describe("AgentRunsProvider decisions", () => {
     responder = () => ({ runs: [run()] });
     await mount();
     const settle = hangingFetch();
-    let posted!: Promise<void>;
+    let posted!: Promise<unknown>;
     await act(async () => {
       posted = latest.decide("run_a", "accept", ["h1"]);
     });

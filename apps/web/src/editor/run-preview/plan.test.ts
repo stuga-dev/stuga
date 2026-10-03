@@ -231,7 +231,7 @@ describe("nested segments", () => {
     expect(el.className).toContain("ai-preview-ghost--removal");
     expect(el.className).not.toContain("ai-preview-insert--block");
     expect(el.querySelector<HTMLElement>("[data-hunk-key]")!.dataset.hunkKey).toBe("run_a:h1");
-    expect(el.querySelectorAll(".ai-preview-hunk-btn")).toHaveLength(2);
+    expect(el.querySelectorAll(".ai-preview-hunk-btn")).toHaveLength(3);
     expect(el.querySelector<HTMLButtonElement>(".ai-preview-hunk-btn--accept")!.disabled).toBe(false);
   });
 
@@ -703,7 +703,7 @@ describe("runGhost", () => {
       "~ swift",
       "~ sleepy",
     ]);
-    expect(el.querySelectorAll(".ai-preview-hunk-btn")).toHaveLength(4);
+    expect(el.querySelectorAll(".ai-preview-hunk-btn")).toHaveLength(6);
   });
 
   it("omits the sub-label on a lone ghost (no chrome to attribute)", () => {
@@ -803,7 +803,7 @@ describe("table-mounted ghosts", () => {
     expect(cell.colSpan).toBe(2);
     expect(cell.querySelector(".ai-preview-ghost")).not.toBeNull();
     expect(el.querySelector<HTMLElement>("[data-hunk-key]")!.dataset.hunkKey).toBe("run_a:h1");
-    expect(el.querySelectorAll(".ai-preview-hunk-btn")).toHaveLength(2);
+    expect(el.querySelectorAll(".ai-preview-hunk-btn")).toHaveLength(3);
   });
 
   it("keeps the plain <div> form when the ghost is NOT table-mounted", () => {

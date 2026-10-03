@@ -601,3 +601,101 @@ describe("run hygiene", () => {
     expect(list.runs[1]!.id).toBe(a.run.id);
   });
 });
+
+describe("a reviewer's feedback on what they rejected", () => {
+  it("keeps the note on each op it rejected and hands it to the agent with its next proposal, once", async () => {
+    const h = makeState();
+    const { actor } = makeActor(h);
+    const starter = await initStarter(actor);
+    const first = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha" }] });
+    await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Beta" }] });
+
+    const decided = await doJson<{ run: DatabaseRunSummary }>(actor, "/runs/decide", {
+      actor: HUMAN,
+      run_id: first.run.id,
+      decision: "reject",
+      decided_by: HUMAN.alias,
+      note: "Use full names.",
+    });
+    const [a, b] = decided.run.ops;
+    expect(a!.feedback).toMatchObject({ note: "Use full names.", decided_by: HUMAN.alias, detail: '[{"Name":"Alpha"}]' });
+    expect(b!.feedback!.id).toBe(a!.feedback!.id);
+
+    const next = await doJson<ProposeOut & { feedback: unknown[] }>(
+      actor,
+      "/runs/propose",
+      proposeBody({ kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha Andersson" }] }),
+    );
+    expect(next.feedback).toEqual([
+      expect.objectContaining({
+        run_id: first.run.id,
+        note: "Use full names.",
+        changes: [
+          { summary: a!.summary, detail: '[{"Name":"Alpha"}]' },
+          { summary: b!.summary, detail: '[{"Name":"Beta"}]' },
+        ],
+      }),
+    ]);
+    const after = await doJson<ProposeOut & { feedback: unknown[] }>(
+      actor,
+      "/runs/propose",
+      proposeBody({ kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Beta Berg" }] }),
+    );
+    expect(after.feedback).toEqual([]);
+  });
+
+  it("rides along on the agent's schema and query reads until it proposes here again", async () => {
+    const h = makeState();
+    const { actor } = makeActor(h);
+    const starter = await initStarter(actor);
+    const first = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha" }] });
+    await doJson(actor, "/runs/decide", { actor: HUMAN, run_id: first.run.id, decision: "reject", decided_by: HUMAN.alias, note: "Use full names." });
+
+    const agentSchema = `/schema?agent=${encodeURIComponent(AGENT.alias)}`;
+    const schema = await doJson<{ feedback?: unknown[] }>(actor, agentSchema);
+    expect(schema.feedback).toEqual([expect.objectContaining({ run_id: first.run.id, note: "Use full names." })]);
+    expect(await doJson<{ feedback?: unknown[] }>(actor, "/schema")).not.toHaveProperty("feedback");
+    const query = await doJson<{ feedback?: unknown[] }>(actor, "/query", { actor: AGENT, sql: "SELECT 1 AS one" });
+    expect(query.feedback).toHaveLength(1);
+    expect(await doJson<{ feedback?: unknown[] }>(actor, "/query", { actor: HUMAN, sql: "SELECT 1 AS one" })).not.toHaveProperty("feedback");
+
+    await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha Andersson" }] });
+    expect(await doJson<{ feedback?: unknown[] }>(actor, agentSchema)).not.toHaveProperty("feedback");
+  });
+
+  it("stays within reach while other agents' runs pile up after it", async () => {
+    const h = makeState();
+    const { actor } = makeActor(h);
+    const starter = await initStarter(actor);
+    const first = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha" }] });
+    await doJson(actor, "/runs/decide", { actor: HUMAN, run_id: first.run.id, decision: "reject", decided_by: HUMAN.alias, note: "Use full names." });
+    for (let i = 0; i < 12; i++) {
+      await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: `Other ${i}` }] }, {
+        actor: { alias: `agent:other${i}`, is_agent: true, on_behalf_of: HUMAN.alias },
+      });
+    }
+
+    const next = await doJson<ProposeOut & { feedback: unknown[] }>(
+      actor,
+      "/runs/propose",
+      proposeBody({ kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha Andersson" }] }),
+    );
+    expect(next.feedback).toEqual([expect.objectContaining({ run_id: first.run.id, note: "Use full names." })]);
+  });
+
+  it("refuses a note on an accept, deciding nothing", async () => {
+    const h = makeState();
+    const { actor } = makeActor(h);
+    const starter = await initStarter(actor);
+    const out = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha" }] });
+    const res = await doFetch(actor, "/runs/decide", {
+      actor: HUMAN,
+      run_id: out.run.id,
+      decision: "accept",
+      decided_by: HUMAN.alias,
+      note: "Nice.",
+    });
+    expect(res.status).toBe(400);
+    expect((await listRows(actor, starter.table_id)).total).toBe(0);
+  });
+});

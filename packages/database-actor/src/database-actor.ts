@@ -15,7 +15,7 @@ import { Database } from "./database.js";
 import type { DatabaseActorEnv } from "./env.js";
 import { handleOpsList, handleOpsRevert, handleRunAck, handleRunDecide, handleRunDetail, handleRunList, handleRunRevert } from "./ledger/decide.js";
 import { handleRunPropose } from "./ledger/propose.js";
-import { openRunOf, outstandingRunsFor, pendingCountOf } from "./ledger/runs.js";
+import { feedbackFor, openRunOf, outstandingRunsFor, pendingCountOf } from "./ledger/runs.js";
 import { commitOp, opDef, type OpPayload } from "./ops/registry.js";
 import { SchemaView } from "./ops/schema-view.js";
 import { isInitialized, schemaInit } from "./ops/tables.js";
@@ -38,7 +38,7 @@ export class DatabaseActor implements Actor<SessionMeta> {
     const mutation = (kind: OpPayload["kind"]): Route => (req) => this.mutate(kind, req);
     this.routes = {
       "GET /connect": (req, url) => this.connect(req, url),
-      "GET /schema": (_req, url) => Response.json(projectSchema(this.db, readSchema(this.db.sql, this.db.dbId), url.searchParams.get("agent"))),
+      "GET /schema": (_req, url) => this.schema(url.searchParams.get("agent")),
       "POST /schema/init": (req) => this.init(req),
       "POST /tables/create": mutation("tables.create"),
       "POST /tables/rename": mutation("tables.rename"),
@@ -122,6 +122,13 @@ export class DatabaseActor implements Actor<SessionMeta> {
     return Response.json({ initialized: true, schema: readSchema(sql, this.db.dbId) });
   }
 
+  /** An agent reads the schema with its own pending ops laid over it, and the rejections here it has not acted on. */
+  private schema(agentAlias: string | null): Response {
+    const schema = projectSchema(this.db, readSchema(this.db.sql, this.db.dbId), agentAlias);
+    const feedback = agentAlias ? feedbackFor(this.db.sql, agentAlias) : [];
+    return Response.json(feedback.length > 0 ? { ...schema, feedback } : schema);
+  }
+
   /** An agent (`agent_alias`, set by the node from the verified credential) reads its own pending row ops laid over the page. */
   private async listRows(req: Request): Promise<Response> {
     const body = await readJson(req);
@@ -163,6 +170,11 @@ export class DatabaseActor implements Actor<SessionMeta> {
     const pending = run ? pendingCountOf(this.db.sql, run.run_id) : 0;
     if (run && pending > 0) {
       result.pending_note = `Results reflect live data only — your ${pending} proposed change(s) (run ${run.run_id}) are awaiting the user's review and are not included.`;
+    }
+    // A read an agent makes before writing: the reviewer's word rides along, as it does on a document read.
+    if (actor.is_agent) {
+      const feedback = feedbackFor(this.db.sql, actor.alias);
+      if (feedback.length > 0) result.feedback = feedback;
     }
     return Response.json(result);
   }

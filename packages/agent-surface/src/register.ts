@@ -44,6 +44,7 @@ import {
   renderDatabaseStatus,
   renderHandOff,
   renderImportCommit,
+  renderDatabaseRead,
   renderOpenPage,
 } from "./render/databases.js";
 import { instructionFields, renderPropose, renderProvenance, renderRead, renderStatus } from "./render/docs.js";
@@ -357,9 +358,12 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
 
   folders: (async (_args: unknown, b: AgentBackend) => answer(b.listFolders(), json)),
 
-  events: (async ({ after, types, limit }: { after?: number; types?: string[]; limit?: number }, b: AgentBackend) => {
+  events: (async (
+    { after, types, limit, mine }: { after?: number; types?: string[]; limit?: number; mine?: boolean },
+    b: AgentBackend,
+  ) => {
     for (const t of types ?? []) if (!isWorkspaceEventType(t)) return err(`unknown event type ${t}`);
-    return answer(b.pollEvents({ after, types, limit }), json);
+    return answer(b.pollEvents({ after, types, limit, ...(mine ? { mine } : {}) }), json);
   }),
 
   collections: (async ({ action, collection_id }: { action: "list" | "open"; collection_id?: string }, b: AgentBackend) => {
@@ -387,7 +391,7 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
   query: (async ({ database_id, sql, params }: { database_id: string; sql: string; params?: Array<string | number | boolean | null> }, b: AgentBackend) => {
     const violation = selectOnlyViolation(sql);
     if (violation) return err(violation);
-    return answer(b.query(database_id, sql, normalizeQueryParams(params)), json);
+    return answer(b.query(database_id, sql, normalizeQueryParams(params)), renderDatabaseRead);
   }),
 };
 
@@ -448,7 +452,7 @@ async function databasesRead(args: DatabasesArgs, b: AgentBackend): Promise<Tool
   }
   const databaseId = args.database_id;
   if (!databaseId) return err(`${action} requires \`database_id\``);
-  if (action === "schema") return answer(b.databaseSchema(databaseId), json);
+  if (action === "schema") return answer(b.databaseSchema(databaseId), renderDatabaseRead);
   if (action === "status") return answer(b.databaseRuns(databaseId), renderDatabaseStatus);
   if (!args.row_id) return err("page requires `row_id` (a row's `_id`, from `query`)");
   const table = await tableOf(b, databaseId, args.table);

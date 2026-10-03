@@ -79,10 +79,17 @@ export function decodeActorName(stem: string): string {
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /**
- * Stamp a store no build has stamped, which is a new file, and refuse one a newer build stamped.
+ * Brings a store stamped one version lower forward to the version it is keyed by, before its actor
+ * opens it. Every existing row must survive it.
+ */
+export type StoreUpgrade = (db: DatabaseSync) => void;
+
+/**
+ * Stamp a store no build has stamped, which is a new file, refuse one a newer build stamped, and bring
+ * an older one forward through each step in `upgrades` in turn, in one transaction with the new stamp.
  * The stamp is SQLite's user_version: it sits in the file header, so deleteAll leaves it alone.
  */
-function claimStoreVersion(db: DatabaseSync, version: number, label: string): void {
+function claimStoreVersion(db: DatabaseSync, version: number, label: string, upgrades: Record<number, StoreUpgrade> = {}): void {
   const { user_version: found } = db.prepare("PRAGMA user_version").get() as { user_version: number };
   if (found === version) return;
   if (found === 0) {
@@ -96,8 +103,19 @@ function claimStoreVersion(db: DatabaseSync, version: number, label: string): vo
         `Start the newer version again, or restore the backup you took before upgrading.`,
     );
   }
-  // The step that brings an older store forward goes here, with the version bump that needs it.
-  throw new Error(`the store of ${label} is at version ${found}, and this build has no step that brings it to ${version}`);
+  for (let v = found + 1; v <= version; v++) {
+    if (!upgrades[v]) throw new Error(`the store of ${label} is at version ${found}, and this build has no step that brings it to ${v}`);
+  }
+  // All or nothing: a step that fails leaves the store as it was found, at its old stamp.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (let v = found + 1; v <= version; v++) upgrades[v]!(db);
+    db.exec(`PRAGMA user_version = ${version}`);
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 class FileActorStorage implements ActorStorage {
@@ -107,13 +125,13 @@ class FileActorStorage implements ActorStorage {
 
   constructor(
     path: string,
-    store: { version: number; label: string },
+    store: { version: number; label: string; upgrades?: Record<number, StoreUpgrade> },
     private readonly onAlarmChange: () => void,
   ) {
     this.db = new DatabaseSync(path);
     try {
       // Before anything is written: a store this build must not touch is left as it was found.
-      claimStoreVersion(this.db, store.version, store.label);
+      claimStoreVersion(this.db, store.version, store.label, store.upgrades);
     } catch (err) {
       this.db.close();
       throw err;
@@ -220,6 +238,8 @@ export interface ActorHostOptions {
    * store is stamped with it, and one stamped higher is refused: a newer build wrote it.
    */
   storeVersion: number;
+  /** The steps that bring an older store forward, keyed by the version each step reaches. */
+  storeUpgrades?: Record<number, StoreUpgrade>;
   /** Receives unhandled actor failures. Defaults to console.error. */
   onError?: (error: unknown, context: { namespace: string; actor: string; entry: string }) => void;
 }
@@ -260,8 +280,10 @@ class HostedActor implements SocketOwner {
     /** Called once an alarm has run and the lock is free again. */
     private readonly afterAlarm: (hosted: HostedActor) => void,
   ) {
-    this.storage = new FileActorStorage(path, { version: opts.storeVersion, label: `${opts.name}/${actorName}` }, () =>
-      this.armAlarm(),
+    this.storage = new FileActorStorage(
+      path,
+      { version: opts.storeVersion, label: `${opts.name}/${actorName}`, upgrades: opts.storeUpgrades },
+      () => this.armAlarm(),
     );
     this.state = {
       storage: this.storage,

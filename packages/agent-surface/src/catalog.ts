@@ -25,6 +25,7 @@ import {
   type RowFilterOp,
 } from "@stuga/protocol/databases/types";
 import { WORKSPACE_EVENT_TYPES } from "@stuga/protocol/domain/events";
+import { RUN_FEEDBACK_LOOKBACK_DAYS } from "@stuga/protocol/domain/limits";
 import { MAX_IMPORT_MARKDOWN_BYTES } from "@stuga/protocol/text/markdown-import";
 
 /**
@@ -410,12 +411,16 @@ const eventsTool: ToolDefinition = {
     "the newest — the reply's `latest` is where to resume next time). " +
     `Types: ${WORKSPACE_EVENT_TYPES.join(", ")}. Pass \`types\` to narrow. Use this to react to decisions on your ` +
     "proposals, new comments, or documents landing in your folders, instead of re-reading everything. Only events on " +
-    "documents you can read are shown.",
+    "documents you can read are shown. `mine: true` keeps only decisions on your own proposals (run.decided, " +
+    `run.reverted, unless \`types\` names others) and, without \`after\`, reaches back ${RUN_FEEDBACK_LOOKBACK_DAYS} days: ` +
+    "call it when you start work or when the user says they reviewed your changes; a `note` in a run.decided payload is " +
+    "what the reviewer wants changed.",
   inputSchema: {
     workspace_id: workspaceId,
     after: z.number().int().min(0).optional(),
     types: z.array(z.string().max(40)).max(20).optional(),
     limit: z.number().int().min(1).max(200).optional(),
+    mine: z.boolean().optional(),
   },
   annotations: READ,
 };

@@ -326,7 +326,7 @@ with nothing to catch up on starts. Events are kept for 30 days.
 | `doc.trashed` | A document was moved to the trash. |
 | `run.proposed` | An agent parked changes for review. |
 | `run.applied` | An agent's changes landed without review, on an `auto` document. |
-| `run.decided` | A person accepted or rejected some or all of a run. |
+| `run.decided` | A person accepted or rejected some or all of a run. A rejection carries `feedback_id`, and `note` when the reviewer wrote one. |
 | `run.reverted` | A person reverted a run that had landed. |
 | `comment.added` | A comment was posted. |
 | `database.changed` | A database's rows or schema changed. |
@@ -368,7 +368,7 @@ These refuse an agent key.
 |---|---|
 | `GET /api/runs?filter=attention\|open\|closed\|all&agent=&limit=` | The review inbox: runs on documents the caller can read. `attention` (the default) is runs with pending changes plus runs applied at once that nobody has looked at. `open` is runs still collecting changes (something waiting, or active in the last 10 minutes); `closed` is the rest. Page with `before_at` and `before_id` from the last run. |
 | `GET /api/agents/stats` | Per agent: runs, pending, accepted, rejected, applied, reverted runs, and `acceptance_rate`. |
-| `POST /api/docs/:id/runs/:run/decision` | `{ decision: "accept" \| "reject", hunk_ids? }`. Every pending hunk when `hunk_ids` is absent. The run's reviewer, the document's owner or a workspace admin decides. |
+| `POST /api/docs/:id/runs/:run/decision` | `{ decision: "accept" \| "reject", hunk_ids?, note? }`. Every pending hunk when `hunk_ids` is absent. `note` (rejections only, up to 2,000 characters) is what the agent revises from; it is handed to the agent with its reads and next proposal there. The run's reviewer, the document's owner or a workspace admin decides. |
 | `POST /api/docs/:id/runs/:run/revert` | Undo a run that landed. |
 | `POST /api/docs/:id/runs/:run/ack` | Dismiss a run's card. |
 | `POST /api/databases/:id/runs/:run/decision`, `/revert`, `/ack` | The same for a database's runs, with `op_ids` in place of `hunk_ids`. |

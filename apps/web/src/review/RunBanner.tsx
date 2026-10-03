@@ -6,6 +6,7 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { useToast } from "@astryxdesign/core/Toast";
 import { ChevronDown, ChevronUp, Sparkles, Zap } from "lucide-react";
 import type { RunNotice } from "./use-run-ledger";
+import { anchorOf, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
 
 /** How long after its last update a run still reads as streaming in. */
 const LIVE_WINDOW_MS = 5_000;
@@ -88,8 +89,8 @@ function UndoButton({ onUndo }: { onUndo: () => Promise<void> }) {
 
 /**
  * One open run as a single-line banner: a count and one muted hint, then the
- * run's controls and Accept all / Reject all. `list` is the expandable
- * per-change drawer under it.
+ * run's controls and Accept all / Reject all, and Request changes (reject all with
+ * a note) when `onRequestChanges` is given. `list` is the expandable per-change drawer under it.
  */
 export function RunBanner({
   updatedAt,
@@ -99,6 +100,7 @@ export function RunBanner({
   list,
   busy,
   onDecide,
+  onRequestChanges,
 }: {
   updatedAt: number;
   title: string;
@@ -107,6 +109,8 @@ export function RunBanner({
   list?: ReactNode;
   busy: boolean;
   onDecide: (decision: "accept" | "reject") => void;
+  /** Gets the button's anchor, so the note composer floats under it. */
+  onRequestChanges?: (anchor: NoteAnchor) => void;
 }) {
   const live = useLiveWindow(updatedAt);
   const [expanded, setExpanded] = useState(false);
@@ -140,6 +144,16 @@ export function RunBanner({
             )}
             <Button label="Accept all" variant="primary" size="sm" isDisabled={busy} onClick={() => onDecide("accept")} />
             <Button label="Reject all" variant="ghost" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
+            {onRequestChanges && (
+              <Button
+                label="Request changes"
+                variant="ghost"
+                size="sm"
+                isDisabled={busy}
+                onMouseDown={keepFocus}
+                onClick={(e) => onRequestChanges(anchorOf(e))}
+              />
+            )}
           </HStack>
         }
       />

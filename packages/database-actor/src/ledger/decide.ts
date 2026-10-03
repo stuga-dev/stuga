@@ -5,14 +5,14 @@
  */
 import { DATABASE_RUN_KEEP, DATABASE_RUN_LIST_DEFAULT } from "@stuga/protocol/databases/limits";
 import type { DatabaseActor as DatabaseActorIdentity, DatabaseRunOpPayload, DatabaseRunSummary } from "@stuga/protocol/databases/types";
-import { clampRunLimit } from "@stuga/protocol/domain/runs";
+import { clampRunLimit, newFeedbackId, parseDecisionNote, type RunFeedback } from "@stuga/protocol/domain/runs";
 import type { DatabaseRunDecidedPayload } from "@stuga/protocol/wire/db-socket";
 import { encodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
 import type { Database } from "../database.js";
 import { commitOp, opDef, proposableDef } from "../ops/registry.js";
 import { OpError, parseActor, parseOpsKeep, readJson } from "../request.js";
-import { newId } from "../schema-ops.js";
+import { getColumns, newId } from "../schema-ops.js";
 import { applyInverse, getOp, isRevertible, listOps, loadInverse, recordOp, type OpRow, type RevertOutcome } from "./ops-ledger.js";
 import { runActor } from "./propose.js";
 import {
@@ -23,6 +23,7 @@ import {
   listRuns,
   loadOpPayload,
   markRunReverted,
+  opDetail,
   pendingCountOf,
   setOpStatus,
   touchRun,
@@ -52,6 +53,13 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
   db.requireUnlocked("this database is locked; unlock it to review changes");
   const decision = body.decision;
   if (decision !== "accept" && decision !== "reject") throw new OpError(400, "bad_request", "decision must be accept or reject");
+  const note = parseDecisionNote(decision, body.note);
+  if (!note.ok) throw new OpError(400, "bad_request", note.message);
+  // One decision, one feedback: the agent is told its rejected ops together, under the reviewer's note.
+  const feedback: RunFeedback | undefined =
+    decision === "reject"
+      ? { id: newFeedbackId(), ...(note.note ? { note: note.note } : {}), decided_by: decidedBy, decided_at: Date.now() }
+      : undefined;
   const requested = Array.isArray(body.op_ids) ? new Set(body.op_ids.filter((x): x is string => typeof x === "string")) : null;
 
   const ops = listRunOps(db.sql, run.run_id);
@@ -64,6 +72,20 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
     for (const id of def ? idsOf(def.proposal.minted(payload)) : []) mintedBy.set(id, op);
   }
   const statusOf = new Map(ops.map((o) => [o.op_id, o.status]));
+  // Column names for a rejection's detail: the schema's, then those this run's own columns.add would mint.
+  const columnNames = new Map<string, string>();
+  for (const op of ops) {
+    const p = payloads.get(op.op_id)!;
+    if (p.kind === "columns.add") columnNames.set(p.column_id, p.display);
+  }
+  const tablesSeen = new Set<string>();
+  const columnName = (tableId: string, columnId: string): string | undefined => {
+    if (!tablesSeen.has(tableId)) {
+      tablesSeen.add(tableId);
+      for (const c of getColumns(db.sql, tableId)) columnNames.set(c.column_id, c.display);
+    }
+    return columnNames.get(columnId);
+  };
 
   let applied = 0;
   let rejected = 0;
@@ -76,7 +98,9 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
     touched.push(op.op_id);
     // Every transition is guarded on `pending`: a racing decider may have won during the payload loads.
     if (decision === "reject") {
-      if (setOpStatus(db.sql, run.run_id, op.op_id, "rejected", { decidedBy })) {
+      const payload = payloads.get(op.op_id)!;
+      const detail = feedback ? opDetail(payload, (id) => columnName(op.table_id, id)) : undefined;
+      if (setOpStatus(db.sql, run.run_id, op.op_id, "rejected", { decidedBy, feedback: feedback && { ...feedback, ...(detail ? { detail } : {}) } })) {
         statusOf.set(op.op_id, "rejected");
         rejected++;
       }
@@ -143,7 +167,16 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
     type: "run.decided",
     actor: `user:${decidedBy}`,
     actorKind: "human",
-    payload: { decision, decided_by: decidedBy, ops: touched.length, applied, rejected, conflicts, pending: remaining },
+    payload: {
+      decision,
+      decided_by: decidedBy,
+      ops: touched.length,
+      applied,
+      rejected,
+      conflicts,
+      pending: remaining,
+      ...(feedback && rejected > 0 ? { feedback_id: feedback.id, ...(feedback.note ? { note: feedback.note } : {}) } : {}),
+    },
   });
   return Response.json({ run: summary, applied, rejected, conflicts, blocked, deferred });
 }

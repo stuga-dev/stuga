@@ -120,6 +120,10 @@ export class CoAuthor {
       // The document as this panel run's own pending hunks leave it, read once: a
       // panel turn proposes only at its end, so no hunk of its own appears mid-turn.
       const projection = await this.ledger.projectionFor(panelAlias);
+      // Handed over below, once the model has seen it: a turn that fails first leaves it for the next.
+      const feedback = await this.ledger.feedbackFor(panelAlias);
+      // Revise now: the turn may change only the passages that rejection covered, in their full text.
+      const revise = req.revise ? { regions: await this.ledger.rejectedHunks(panelAlias, req.revise.run_id, req.revise.feedback_id) } : undefined;
       const ownPending = projection.pending;
       // Per turn, so switching the setting applies to the next message. The run's
       // own undecided hunks hold this turn's edits back even on `auto`.
@@ -149,6 +153,10 @@ export class CoAuthor {
           applyAtOnce,
           // Per turn, so an edited instruction, or a move to another folder, applies to the next message.
           instructions: await fetchInstructionStack(this.env.internal, docId, meta),
+          feedback,
+          revise,
+          // The preview has them applied; the user sees them marked and undecided.
+          ownPending: ownPending.map((h) => ({ old_string: h.old_string, new_string: h.new_string })),
           attachments: await loadAttachmentPixels(this.env.internal, sanitizeAttachments(req.attachments), meta.workspaceId),
           signal: controller.signal,
         },
@@ -158,6 +166,8 @@ export class CoAuthor {
           safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { status: activityLabel(activity), done: false } satisfies AiResponseChunk)),
       );
 
+      // The next turn hears only what the user rejects after this one.
+      if (feedback.length > 0 && result.rounds > 0) await this.ledger.addressFeedback(panelAlias, feedback.map((f) => f.id));
       if (result.failure) console.warn("co-author model call failed", { docId, ...result.failure });
       const reason = failureReason(result.failure);
       // A partial turn (round cap, a later round failing) still proposes what its finished rounds staged.

@@ -19,7 +19,8 @@ import type {
 } from "@stuga/protocol/wire/doc-socket";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { IndexMessage, RunIndexEntry } from "@stuga/protocol/internal/jobs";
-import { closedStatus, runIsIdle } from "@stuga/protocol/domain/runs";
+import { closedStatus, feedbackExcerpt, runIsIdle, type AgentFeedback } from "@stuga/protocol/domain/runs";
+import { RUN_FEEDBACK_LOOKBACK_DAYS, RUN_FEEDBACK_MAX_CHANGES } from "@stuga/protocol/domain/limits";
 import { encodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
 import { applyStrEditsStrict, reconcileFootnotes, type CitationInput } from "@stuga/crdt-ops";
@@ -95,6 +96,11 @@ export function runStorageKey(runId: string): string {
 
 function runActiveKey(agentAlias: string): string {
   return `run-active:${agentAlias}`;
+}
+
+/** The runs of one agent holding a rejection it has not been handed yet, so a read checks one key. */
+function feedbackPendingKey(agentAlias: string): string {
+  return `feedback-pending:${agentAlias}`;
 }
 
 export function runBlobKey(docId: string, runId: string): string {
@@ -337,6 +343,83 @@ export class RunLedger {
     const pending = open ? pendingOf(open.body) : [];
     if (!open || pending.length === 0) return { markdown: live, pending: [], runId: open?.stored.id ?? null };
     return { markdown: applyStrEditsStrict(live, pending).markdown, pending, runId: open.stored.id };
+  }
+
+  /** Remember that `stored` holds a rejection its agent has not been handed yet. */
+  async noteFeedback(stored: StoredRun): Promise<void> {
+    const key = feedbackPendingKey(stored.agent_alias);
+    const runs = (await this.storage.get<string[]>(key)) ?? [];
+    if (!runs.includes(stored.id)) await this.storage.put(key, [...runs, stored.id]);
+  }
+
+  /** Mark the feedback `ids` of `agentAlias` handed over, once the agent has in fact been shown them. */
+  async addressFeedback(agentAlias: string, ids: string[]): Promise<void> {
+    if (ids.length > 0) await this.feedbackFor(agentAlias, { address: new Set(ids) });
+  }
+
+  /** The full text of the hunks one rejection of `agentAlias`'s run covered: a revise turn's scope. [] when gone. */
+  async rejectedHunks(agentAlias: string, runId: string, feedbackId: string): Promise<Array<{ old_string: string; new_string: string }>> {
+    const stored = await this.load(runId);
+    if (!stored || stored.agent_alias !== agentAlias) return [];
+    const body = await this.loadBody(stored);
+    if (this.bodyLost(stored, body)) return [];
+    return body.hunks
+      .filter((h) => h.status === "rejected" && h.feedback?.id === feedbackId)
+      .map((h) => ({ old_string: h.old_string, new_string: h.new_string }));
+  }
+
+  /**
+   * Rejections of `agentAlias`'s proposals here that it has not acted on, newest first: what its reads
+   * repeat and its next proposal hands over. `address` marks them handed over (all, or the ids given),
+   * so from then on only `status` shows them; so does age past RUN_FEEDBACK_LOOKBACK_DAYS. Only the
+   * runs `noteFeedback` listed are read, and one with nothing left to hand over leaves the list; a run
+   * whose body did not load is skipped, never written back.
+   */
+  async feedbackFor(agentAlias: string, opts?: { address?: boolean | ReadonlySet<string> }): Promise<AgentFeedback[]> {
+    const key = feedbackPendingKey(agentAlias);
+    const listed = (await this.storage.get<string[]>(key)) ?? [];
+    if (listed.length === 0) return [];
+    const now = Date.now();
+    const stale = now - RUN_FEEDBACK_LOOKBACK_DAYS * 86_400_000;
+    const out: AgentFeedback[] = [];
+    const keep: string[] = [];
+    for (const runId of listed) {
+      const stored = await this.load(runId);
+      if (!stored || stored.agent_alias !== agentAlias) continue;
+      const body = await this.loadBody(stored);
+      if (this.bodyLost(stored, body)) {
+        keep.push(runId);
+        continue;
+      }
+      const byId = new Map<string, AgentFeedback>();
+      let left = false;
+      let handed = false;
+      for (const h of body.hunks) {
+        const fb = h.status === "rejected" ? h.feedback : undefined;
+        if (!fb || fb.addressed_at !== undefined || fb.decided_at < stale) continue;
+        let item = byId.get(fb.id);
+        if (!item) {
+          item = { id: fb.id, run_id: stored.id, ...(fb.note ? { note: fb.note } : {}), decided_at: fb.decided_at, changes: [] };
+          byId.set(fb.id, item);
+        }
+        if (item.changes.length < RUN_FEEDBACK_MAX_CHANGES) {
+          item.changes.push({ old_string: feedbackExcerpt(h.old_string), new_string: feedbackExcerpt(h.new_string) });
+        } else {
+          item.more = (item.more ?? 0) + 1;
+        }
+        if (opts?.address === true || (opts?.address instanceof Set && opts.address.has(fb.id))) {
+          fb.addressed_at = now;
+          handed = true;
+        } else {
+          left = true;
+        }
+      }
+      if (handed) await this.save(stored, body);
+      if (left) keep.push(runId);
+      out.push(...[...byId.values()].sort((a, b) => b.decided_at - a.decided_at));
+    }
+    if (keep.length !== listed.length) await this.storage.put(key, keep);
+    return out.sort((a, b) => b.decided_at - a.decided_at);
   }
 
   /** Terminal state: freeze the result markdown and release the agent's slot. */

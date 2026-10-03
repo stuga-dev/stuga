@@ -4,6 +4,7 @@
  * structured ops and read-only SQL. No Yjs.
  */
 import type { ReviewMode } from "../domain/events.js";
+import type { RunFeedback } from "../domain/runs.js";
 
 // ---- Column types ------------------------------------------------------------
 
@@ -311,6 +312,8 @@ export interface DatabaseRunOp {
   ledger_op_id?: string;
   /** For status "conflict": why the op could not apply. */
   error?: string;
+  /** Set when a reviewer rejected it, with their note if they left one. */
+  feedback?: RunFeedback;
 }
 
 export type DatabaseRunStatus = "open" | "applied" | "rejected" | "expired";

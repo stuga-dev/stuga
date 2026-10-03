@@ -22,11 +22,12 @@ export const Runs = {
   /**
    * Decide all pending hunks, or `hunkIds`. `blocked` hunks stay pending because
    * an earlier hunk they quote is still undecided; `conflicts` are gone for good.
+   * A rejection may carry a `note` the agent revises from.
    */
-  decide: (docId: string, runId: string, decision: "accept" | "reject", hunkIds?: string[]) =>
+  decide: (docId: string, runId: string, decision: "accept" | "reject", hunkIds?: string[], note?: string) =>
     api<{ run: AgentRunSummary; applied: number; conflicts: number; blocked: number }>(
       `/api/docs/${docId}/runs/${runId}/decision`,
-      { method: "POST", body: JSON.stringify({ decision, hunk_ids: hunkIds }) },
+      { method: "POST", body: JSON.stringify({ decision, hunk_ids: hunkIds, ...(note ? { note } : {}) }) },
     ),
   /** 409 when the document has moved on underneath the run. */
   revert: (docId: string, runId: string) =>

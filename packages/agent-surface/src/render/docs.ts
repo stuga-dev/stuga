@@ -2,6 +2,7 @@
 import { escapeInstructionText, instructionLevelLabel, type AgentInstructions } from "@stuga/protocol/domain/instructions";
 import type { AgentRunSummary, RunHunkStatus } from "@stuga/protocol/wire/doc-socket";
 import type { MarkdownBody, ProposeBody, ProvenanceBody } from "../backend.js";
+import { feedbackOfRun, hunkChange, renderFeedback, statusFeedbackLines, type FeedbackPlace } from "./feedback.js";
 import { instructionsPointer } from "./instructions.js";
 
 /** Only the newest few runs are worth the agent's context. */
@@ -54,10 +55,12 @@ export function instructionFields({ instructions, instructions_cut }: Partial<Ag
 
 /**
  * The document's instructions lead, and a read that includes the caller's own pending edits says so, or the agent
- * concludes they landed.
+ * concludes they landed. Feedback on the caller's rejected proposals comes first of all: it is what its next edit
+ * here answers, and the node writes it, so text planted in the document still never leads.
  */
 export function renderRead(res: MarkdownBody): string {
-  const text = `${instructionsBlock(res)}${res.markdown}`;
+  const feedback = renderFeedback(res.feedback);
+  const text = `${feedback ? `${feedback}\n\n` : ""}${instructionsBlock(res)}${res.markdown}`;
   const pending = res.pending ?? 0;
   if (pending <= 0 || !res.run_id) return text;
   return (
@@ -66,7 +69,10 @@ export function renderRead(res: MarkdownBody): string {
   );
 }
 
-/** "Proposed" is success; an agent told only "pending" retries until the run fills with duplicates. */
+/**
+ * "Proposed" is success; an agent told only "pending" retries until the run fills with duplicates. Rejections it
+ * had not acted on yet follow, once: this is the proposal that hears about them.
+ */
 export function renderPropose(res: ProposeBody): string {
   switch (res.mode) {
     case "proposed":
@@ -75,17 +81,25 @@ export function renderPropose(res: ProposeBody): string {
         `Run ${res.run.id}, ${res.pending} pending. This is SUCCESS: do NOT retry, and do not ` +
         `rewrite the document because the change looks missing. The user has been notified. ` +
         `Later reads include your pending edits; check \`markdown\` action:status for their decision.${mediaNote(res.media_note)}` +
-        instructionsPointer(res.instructions_labels, "`docs` action:metadata")
+        instructionsPointer(res.instructions_labels, "`docs` action:metadata") +
+        feedbackAfter(res.feedback)
       );
     case "auto_applied":
       return (
         `Applied (server seq ${res.seq}) — ${res.reason}, so the edit landed without waiting for review; ` +
         `the user has been notified and can review or revert at ${res.review_url}.${mediaNote(res.media_note)}` +
-        instructionsPointer(res.instructions_labels, "`docs` action:metadata")
+        instructionsPointer(res.instructions_labels, "`docs` action:metadata") +
+        feedbackAfter(res.feedback)
       );
     case "noop":
       return res.message;
   }
+}
+
+/** The feedback block below a write's answer, or "". */
+export function feedbackAfter(feedback: Parameters<typeof renderFeedback>[0], place: FeedbackPlace = "document"): string {
+  const block = renderFeedback(feedback, place);
+  return block ? `\n\n${block}` : "";
 }
 
 /** Images pulled into the workspace on the way in, said once so the agent does not "fix" the rewritten links. */
@@ -100,7 +114,11 @@ export function renderStatus(runs: AgentRunSummary[]): string {
     if (run.hunks_truncated) return `${run.id}: ${run.status} — too many hunks to summarize here`;
     const counts: Record<RunHunkStatus, number> = { pending: 0, accepted: 0, rejected: 0, conflict: 0, auto_applied: 0 };
     for (const h of run.hunks) counts[h.status] += 1;
-    return `${run.id}: ${run.status}${run.reverted ? " (reverted)" : ""} — ${tally(counts)}`;
+    const feedback = feedbackOfRun(
+      run.id,
+      run.hunks.map((h) => ({ status: h.status, feedback: h.feedback, change: hunkChange(h) })),
+    );
+    return [`${run.id}: ${run.status}${run.reverted ? " (reverted)" : ""} — ${tally(counts)}`, ...statusFeedbackLines(feedback)].join("\n");
   });
   if (shown.some((r) => r.hunks.some((h) => h.status === "rejected"))) lines.push(REJECTED_EDITS_NOTE);
   return lines.join("\n");

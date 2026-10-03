@@ -3,7 +3,7 @@
  * the node's gates decide who may propose, and compute `manager_override`.
  */
 import type { AgentRunSource, AgentRunSummary, AiCitation, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
-import { clampRunLimit, parseReviewMode } from "@stuga/protocol/domain/runs";
+import { clampRunLimit, newFeedbackId, parseDecisionNote, parseReviewMode, type RunFeedback } from "@stuga/protocol/domain/runs";
 import { applyStrEditsStrict } from "@stuga/crdt-ops";
 import { proposeRunEdit, type ProposeAction } from "./propose.js";
 import { pendingOf, RUN_LIST_DEFAULT_LIMIT, RUN_ORDER_MAX, type RunLedger, type StoredRun } from "./run-store.js";
@@ -91,9 +91,16 @@ export async function handleRunPropose(ledger: RunLedger, req: Request): Promise
         run: result.run,
         pending: result.pending,
         parked_behind_pending: result.parkedBehindPending,
+        feedback: await ledger.feedbackFor(agentAlias, { address: true }),
       });
     case "auto_applied":
-      return Response.json({ mode: "auto_applied", run: result.run, seq: result.seq, applied: result.applied });
+      return Response.json({
+        mode: "auto_applied",
+        run: result.run,
+        seq: result.seq,
+        applied: result.applied,
+        feedback: await ledger.feedbackFor(agentAlias, { address: true }),
+      });
     case "error":
       return Response.json({ error: result.error, message: result.message, count: result.count }, { status: result.status });
   }
@@ -140,8 +147,11 @@ export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<
     hunk_ids?: string[];
     decided_by?: string;
     manager_override?: boolean;
+    note?: unknown;
   } | null;
   if (!input || !input.run_id || (input.decision !== "accept" && input.decision !== "reject")) return badRequest();
+  const note = parseDecisionNote(input.decision, input.note);
+  if (!note.ok) return Response.json({ error: "bad request", message: note.message }, { status: 400 });
   const stored = await ledger.load(input.run_id);
   if (!stored) return Response.json({ error: "not_found" }, { status: 404 });
   const denied = notReviewer(stored, input.decided_by, input.manager_override);
@@ -157,8 +167,14 @@ export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<
   let conflictCount = 0;
   let blockedCount = 0;
   let decided = targets;
+  let feedback: RunFeedback | null = null;
   if (targets.length > 0 && input.decision === "reject") {
-    for (const h of targets) h.status = "rejected";
+    // One decision, one feedback: the agent is told its rejected hunks together, under the reviewer's note.
+    feedback = { id: newFeedbackId(), ...(note.note ? { note: note.note } : {}), decided_by: decidedBy, decided_at: Date.now() };
+    for (const h of targets) {
+      h.status = "rejected";
+      h.feedback = { ...feedback };
+    }
   } else if (targets.length > 0) {
     const current = store.markdown();
     const result = applyStrEditsStrict(current, targets);
@@ -192,6 +208,7 @@ export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<
   // Only an open run closes; a late duplicate decision must not restamp a committed or reverted one.
   if (stored.status === "open" && pendingOf(body).length === 0) await ledger.close(stored, body);
   else await ledger.save(stored, body);
+  if (feedback) await ledger.noteFeedback(stored);
   ledger.sendDecided(stored, body, input.decision, decided.map((h) => h.id), decidedBy);
   ledger.emitEvent("run.decided", stored, `user:${decidedBy}`, "human", {
     decision: input.decision,
@@ -200,6 +217,7 @@ export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<
     applied: appliedCount,
     conflicts: conflictCount,
     pending: pendingOf(body).length,
+    ...(feedback ? { feedback_id: feedback.id, ...(feedback.note ? { note: feedback.note } : {}) } : {}),
   });
   return Response.json({
     run: ledger.summaryOf(stored, body),

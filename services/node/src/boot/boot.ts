@@ -28,7 +28,7 @@ import {
 import { createRelyingParty, createVerifier, loadOrCreateSigningKey } from "@stuga/auth";
 import { createActorNamespace, fsBlobStore } from "@stuga/runtime";
 import { DOC_STORE_VERSION, DocActor, type DocActorEnv } from "@stuga/doc-actor";
-import { DATABASE_STORE_VERSION, DatabaseActor, type DatabaseActorEnv } from "@stuga/database-actor";
+import { DATABASE_STORE_UPGRADES, DATABASE_STORE_VERSION, DatabaseActor, type DatabaseActorEnv } from "@stuga/database-actor";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { Heartbeat } from "@stuga/protocol/wire/opcodes";
 import { inviteRedeemedAudit } from "../api/invites.js";
@@ -275,6 +275,7 @@ async function boot(): Promise<void> {
     heartbeat,
     dir: join(cfg.dataDir, "actors", "databases"),
     storeVersion: DATABASE_STORE_VERSION,
+    storeUpgrades: DATABASE_STORE_UPGRADES,
   });
 
   const limiters = createRateLimiters();

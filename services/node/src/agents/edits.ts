@@ -9,6 +9,7 @@ import { getDoc, type DocRow } from "@stuga/db";
 import { markdownByteLength, MAX_IMPORT_MARKDOWN_BYTES } from "@stuga/protocol/text/markdown-import";
 import type { AgentRunSource, AgentRunSummary, AiCitation, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
+import type { AgentFeedback } from "@stuga/protocol/domain/runs";
 import type { ProposeBody } from "@stuga/agent-surface/backend";
 import { CITATIONS_MAX, CITED_EDITS_MAX } from "@stuga/agent-surface/catalog";
 import { hostExternalImages, ingestNote, type HostedImage } from "../media/media-ingest.js";
@@ -38,8 +39,28 @@ export type ProposeOutcome =
   // `mediaNote` reports images hosted on the way in, and any that could not be:
   // a failed download is a note on a completed edit, never a failure of it.
   // `doc` is the row the write was authorized against, so an answer can name what applies to it without a re-read.
-  | { kind: "proposed"; run: AgentRunSummary; pending: number; mediaNote?: string; review: ReviewMode; reason: string; doc: DocRow }
-  | { kind: "auto_applied"; run: AgentRunSummary; seq: number; applied: number; mediaNote?: string; review: ReviewMode; reason: string; doc: DocRow }
+  // `feedback` is an agent's own rejections it had not acted on, handed over with this proposal.
+  | {
+      kind: "proposed";
+      run: AgentRunSummary;
+      pending: number;
+      mediaNote?: string;
+      review: ReviewMode;
+      reason: string;
+      doc: DocRow;
+      feedback?: AgentFeedback[];
+    }
+  | {
+      kind: "auto_applied";
+      run: AgentRunSummary;
+      seq: number;
+      applied: number;
+      mediaNote?: string;
+      review: ReviewMode;
+      reason: string;
+      doc: DocRow;
+      feedback?: AgentFeedback[];
+    }
   | { kind: "noop" }
   | { kind: "error"; message: string; retryable?: boolean; status?: number };
 
@@ -114,6 +135,7 @@ interface ProposeResponse {
   applied?: number;
   /** The actor parked an `auto` proposal because the run holds undecided work. */
   parked_behind_pending?: boolean;
+  feedback?: AgentFeedback[];
   error?: string;
   count?: number;
   message?: string;
@@ -242,6 +264,8 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
     }),
   });
   const body = (await res.json().catch(() => null)) as ProposeResponse | null;
+  // An agent's answer only: a person's own proposals carry nothing new.
+  const feedback = ctx.isAgent && body?.feedback?.length ? { feedback: body.feedback } : {};
 
   if (res.ok) {
     if (body?.mode === "proposed" && body.run) {
@@ -256,7 +280,7 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
         targetLabel: doc.title,
         detail: { run_id: body.run.id, mode: "proposed", edit: input.action, pending: body.pending ?? 0, review: mode },
       });
-      return { kind: "proposed", run: body.run, pending: body.pending ?? 0, mediaNote, review: mode, reason, doc };
+      return { kind: "proposed", run: body.run, pending: body.pending ?? 0, mediaNote, review: mode, reason, doc, ...feedback };
     }
     if (body?.mode === "auto_applied" && body.run) {
       recordAudit(ctx, {
@@ -275,6 +299,7 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
         review: review.mode,
         reason: review.reason,
         doc,
+        ...feedback,
       };
     }
     if (body?.mode === "noop") return { kind: "noop" };
@@ -315,7 +340,10 @@ export function proposeBody(
   outcome: Exclude<ProposeOutcome, { kind: "error" }>,
   reviewUrl: string,
 ): ProposeBody & { review?: ReviewMode } {
-  const note = outcome.kind !== "noop" && outcome.mediaNote ? { media_note: outcome.mediaNote } : {};
+  const note = {
+    ...(outcome.kind !== "noop" && outcome.mediaNote ? { media_note: outcome.mediaNote } : {}),
+    ...(outcome.kind !== "noop" && outcome.feedback ? { feedback: outcome.feedback } : {}),
+  };
   switch (outcome.kind) {
     case "proposed":
       return { mode: "proposed", run: outcome.run, pending: outcome.pending, review: outcome.review, reason: outcome.reason, ...note };
@@ -341,6 +369,8 @@ export interface ProjectedMarkdown {
   /** Present when the caller is an agent with an open run carrying pending hunks. */
   runId?: string;
   pending?: number;
+  /** An agent's rejections here it has not acted on yet; repeated on reads until it proposes again. */
+  feedback?: AgentFeedback[];
 }
 
 /**
@@ -364,11 +394,13 @@ export async function readDocMarkdownWithProjection(
     markdown?: string;
     run_id?: string;
     pending?: number;
+    feedback?: AgentFeedback[];
   } | null;
   if (!data) return null;
   const out: ProjectedMarkdown = { markdown: data.markdown ?? "", doc };
   if (data.run_id) out.runId = data.run_id;
   if (data.pending) out.pending = data.pending;
+  if (ctx.isAgent && data.feedback?.length) out.feedback = data.feedback;
   return out;
 }
 

@@ -18,7 +18,7 @@ import {
   type TableSchema,
   type ViewSpec,
 } from "@stuga/protocol/databases/types";
-import type { ActorStorage } from "@stuga/runtime";
+import type { ActorStorage, StoreUpgrade } from "@stuga/runtime";
 import { OpError } from "./request.js";
 
 export type SqlHandle = ActorStorage["sql"];
@@ -43,7 +43,17 @@ export function ident(name: string): string {
  * table is laid out. The host stamps each store with it and refuses one stamped higher. A change
  * to either raises it, together with the step in the host that brings an older store forward.
  */
-export const DATABASE_STORE_VERSION = 1;
+export const DATABASE_STORE_VERSION = 2;
+
+/** The steps that bring an older store forward, keyed by the version each reaches. */
+export const DATABASE_STORE_UPGRADES: Record<number, StoreUpgrade> = {
+  // 2: a reviewer's rejection, with their note, on each op it rejected. A store whose ledger was never
+  // created gets the column when ensureSchema creates the table; one that already has it is left alone.
+  2: (db) => {
+    const columns = db.prepare(`PRAGMA table_info(_run_ops)`).all() as Array<{ name: string }>;
+    if (columns.length > 0 && !columns.some((c) => c.name === "feedback")) db.exec(`ALTER TABLE _run_ops ADD COLUMN feedback TEXT`);
+  },
+};
 
 /**
  * Create every meta table. One statement per exec(): node:sqlite compiles only
@@ -103,7 +113,7 @@ export function ensureSchema(sql: SqlHandle): void {
        run_id TEXT NOT NULL, op_id TEXT NOT NULL, position INTEGER NOT NULL,
        kind TEXT NOT NULL, table_id TEXT NOT NULL, summary TEXT NOT NULL,
        status TEXT NOT NULL, payload TEXT, blob_key TEXT, bytes INTEGER NOT NULL,
-       decided_by TEXT, ledger_op_id TEXT, error TEXT, review TEXT NOT NULL,
+       decided_by TEXT, ledger_op_id TEXT, error TEXT, review TEXT NOT NULL, feedback TEXT,
        PRIMARY KEY (run_id, op_id))`,
   );
 }

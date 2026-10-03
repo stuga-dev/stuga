@@ -13,6 +13,7 @@ import { SchemaView } from "../ops/schema-view.js";
 import { OpError, parseActor, parseOpsKeep, readJson, requireObject } from "../request.js";
 import {
   closeRun,
+  feedbackFor,
   finalizeRunPayload,
   getRun,
   getRunOp,
@@ -132,7 +133,13 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
     if (opRow?.status === "conflict") {
       return Response.json({ error: "conflict", message: opRow.error ?? "the proposal no longer applies" }, { status: 409 });
     }
-    return Response.json({ mode: "applied", run: await db.runSummary(fresh), result: outcome.results.get(opId) ?? null, minted });
+    return Response.json({
+      mode: "applied",
+      run: await db.runSummary(fresh),
+      result: outcome.results.get(opId) ?? null,
+      minted,
+      feedback: feedbackFor(db.sql, actor.alias, { address: true }),
+    });
   }
 
   // Parked. The live frame reaches a tab that has the table open; the
@@ -150,6 +157,7 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
     minted,
     // Said only when it contradicts the word the node sent, so an agent that just read `auto` is told why it waits.
     parked_behind_pending: parkedBehindPending && review === "auto",
+    feedback: feedbackFor(db.sql, actor.alias, { address: true }),
   });
 }
 

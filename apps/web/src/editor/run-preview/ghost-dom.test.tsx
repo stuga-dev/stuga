@@ -102,7 +102,7 @@ describe("a run ghost over a table row", () => {
     expect(cell!.colSpan).toBe(2);
     expect(cell!.parentElement!.children).toHaveLength(1);
     expect(cell!.querySelector(".ai-preview-ghost")).not.toBeNull();
-    expect(cell!.querySelectorAll(".ai-preview-hunk-btn")).toHaveLength(2);
+    expect(cell!.querySelectorAll(".ai-preview-hunk-btn")).toHaveLength(3);
   });
 
   it("keeps a non-table change on the plain div form", async () => {

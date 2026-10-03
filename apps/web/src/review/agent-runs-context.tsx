@@ -60,7 +60,8 @@ export interface AgentRunsCtx {
   inFlight: ReadonlySet<HunkKey>;
   /** Runs whose full hunk list is being fetched. */
   loadingHunks: ReadonlySet<string>;
-  decide: (runId: string, decision: Decision, hunkIds?: string[]) => Promise<void>;
+  /** A rejection may carry a `note` the agent revises from. Resolves to the run as decided, or null on failure. */
+  decide: (runId: string, decision: Decision, hunkIds?: string[], note?: string) => Promise<AgentRunSummary | null>;
   /** Fetch a truncated run's hunks so it can be reviewed hunk by hunk; once per run version. */
   loadFullHunks: (runId: string) => Promise<void>;
   /** Undo an applied run. Rejects with a 409 ApiError when the document moved on. */
@@ -92,7 +93,7 @@ export function AgentRunsProvider({
   const api = useMemo<LedgerApi<AgentRunSummary>>(
     () => ({
       list: (limit) => Runs.list(docId, limit),
-      decide: (runId, decision, ids) => Runs.decide(docId, runId, decision, ids),
+      decide: (runId, decision, ids, note) => Runs.decide(docId, runId, decision, ids, note),
       revert: (runId) => Runs.revert(docId, runId),
       ack: (runId) => Runs.ack(docId, runId),
     }),
@@ -177,14 +178,15 @@ export function AgentRunsProvider({
   );
 
   // Inline Accept/Reject clicks arrive as a document event carrying the (run, hunk) pair.
-  // Only pairs on screen and not already in flight are posted.
+  // Only pairs on screen and not already in flight are posted. Request changes needs a
+  // note first, so the run's banner answers that one.
   const shown = useMemo(() => new Set(pending.map((p) => itemKey(p.runId, p.hunk.id))), [pending]);
   const live = useRef({ shown, inFlight, decide });
   live.current = { shown, inFlight, decide };
   useEffect(() => {
     const onHunk = (e: Event) => {
       const detail = (e as CustomEvent<RunHunkDecisionDetail>).detail;
-      if (!detail?.runId || !detail.hunkId) return;
+      if (!detail?.runId || !detail.hunkId || detail.decision === "request_changes") return;
       const key = itemKey(detail.runId, detail.hunkId);
       if (!live.current.shown.has(key) || live.current.inFlight.has(key)) return;
       void live.current.decide(detail.runId, detail.decision, [detail.hunkId]);

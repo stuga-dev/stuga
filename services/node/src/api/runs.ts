@@ -1,4 +1,5 @@
 /** A document's agent runs: the review ledger humans decide on, and the propose path agents write through. */
+import { parseDecisionNote } from "@stuga/protocol/domain/runs";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import { parseCitedEdits, proposeBody, proposeDocEdit } from "../agents/edits.js";
 import { recordAudit } from "../audit/record.js";
@@ -56,10 +57,12 @@ export async function decideDocRun({ ctx, req, match }: WorkspaceCall): Promise<
   if (!canWriteDoc(ctx, doc)) return error(403, "view-only access");
   const lk = lockedError(doc);
   if (lk) return lk;
-  const body = (await req.json().catch(() => ({}))) as { decision?: string; hunk_ids?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { decision?: string; hunk_ids?: unknown; note?: unknown };
   if (body.decision !== "accept" && body.decision !== "reject") {
     return error(400, "decision must be accept or reject");
   }
+  const note = parseDecisionNote(body.decision, body.note);
+  if (!note.ok) return error(400, note.message);
   const hunkIds = Array.isArray(body.hunk_ids) ? body.hunk_ids.filter((h): h is string => typeof h === "string") : undefined;
   const res = await ctx.env.docs.get(docId).fetch(`http://actor/runs/decide?docId=${encodeURIComponent(docId)}`, {
     method: "POST",
@@ -70,6 +73,7 @@ export async function decideDocRun({ ctx, req, match }: WorkspaceCall): Promise<
       hunk_ids: hunkIds,
       decided_by: ctx.alias,
       manager_override: manages(ctx, doc),
+      ...(note.note ? { note: note.note } : {}),
     }),
   });
   if (!res.ok) return runRefusal(res, "decision failed");

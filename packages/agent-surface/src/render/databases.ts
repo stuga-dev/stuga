@@ -6,8 +6,10 @@ import type {
   DatabaseRunSummary,
   DatabaseSchema,
 } from "@stuga/protocol/databases/types";
-import type { CreatedDoc, DatabaseProposeBody, RowPage } from "../backend.js";
-import { MAX_STATUS_RUNS, instructionFields, tally } from "./docs.js";
+import type { CreatedDoc, DatabaseProposeBody, DatabaseSchemaBody, RowPage } from "../backend.js";
+import type { AgentFeedback } from "@stuga/protocol/domain/runs";
+import { MAX_STATUS_RUNS, feedbackAfter, instructionFields, tally } from "./docs.js";
+import { feedbackOfRun, statusFeedbackLines } from "./feedback.js";
 import { instructionsPointer } from "./instructions.js";
 
 /** Rows in one insert_rows call past which the result steers the agent to import. */
@@ -28,11 +30,18 @@ export function bulkSteer(rowCount: number): string {
   );
 }
 
+/** A read's JSON, then the changes requested that the agent has not acted on, outside the JSON where it cannot pass as data. */
+export function renderDatabaseRead(res: DatabaseSchemaBody | Record<string, unknown>): string {
+  const { feedback, ...rest } = res as Record<string, unknown> & { feedback?: AgentFeedback[] };
+  return JSON.stringify(rest) + feedbackAfter(feedback, "database");
+}
+
 /** A database write's result, with the ids the actor minted so the agent can name them next. */
 export function renderDatabasePropose(res: DatabaseProposeBody, applied: string, note = ""): string {
-  const { mode, run, pending, minted, held, instructions_labels, ...rest } = res;
+  const { mode, run, pending, minted, held, instructions_labels, feedback: handed, ...rest } = res;
   // A write needs no schema read, so the answer names what governs this database; `schema` carries the text.
   const instructions = instructionsPointer(instructions_labels, "`databases` action:schema");
+  const feedback = feedbackAfter(handed, "database");
   if (mode === "proposed") {
     const why = held
       ? " This database lets AI edits apply directly, but your earlier changes in this run are still waiting for the user."
@@ -41,7 +50,7 @@ export function renderDatabasePropose(res: DatabaseProposeBody, applied: string,
       result:
         `Proposed — your change is waiting for the user to accept it (run ${run?.id}, ${pending} pending).${why} ` +
         `This is SUCCESS. Do NOT retry; continue your work. Your schema reads already include this pending change ` +
-        `(query results note what is pending); check \`databases\` action:status for decisions.${note}${instructions}`,
+        `(query results note what is pending); check \`databases\` action:status for decisions.${note}${instructions}${feedback}`,
       ...minted,
     });
   }
@@ -49,7 +58,7 @@ export function renderDatabasePropose(res: DatabaseProposeBody, applied: string,
     return JSON.stringify({
       result:
         `Applied — ${applied} This database is set to let AI edits apply directly, so it landed without waiting for review; the ` +
-        `user has been notified and can review or revert it from the table's Activity panel.${note}${instructions}`,
+        `user has been notified and can review or revert it from the table's Activity panel.${note}${instructions}${feedback}`,
       ...minted,
       ...rest,
     });
@@ -64,7 +73,15 @@ export function renderDatabaseStatus(runs: DatabaseRunSummary[]): string {
   const lines = shown.map((run) => {
     const counts: Record<DatabaseRunOpStatus, number> = { pending: 0, accepted: 0, rejected: 0, conflict: 0, auto_applied: 0 };
     for (const op of run.ops) counts[op.status] += 1;
-    return `${run.id}: ${run.status}${run.reverted ? " (reverted)" : ""} — ${tally(counts)}`;
+    const feedback = feedbackOfRun(
+      run.id,
+      run.ops.map((o) => ({
+        status: o.status,
+        feedback: o.feedback,
+        change: { summary: o.summary, ...(o.feedback?.detail ? { detail: o.feedback.detail } : {}) },
+      })),
+    );
+    return [`${run.id}: ${run.status}${run.reverted ? " (reverted)" : ""} — ${tally(counts)}`, ...statusFeedbackLines(feedback)].join("\n");
   });
   if (shown.some((r) => r.ops.some((o) => o.status === "rejected"))) lines.push(REJECTED_CHANGES_NOTE);
   return lines.join("\n");

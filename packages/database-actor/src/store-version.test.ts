@@ -16,13 +16,14 @@ import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { Heartbeat } from "@stuga/protocol/wire/opcodes";
 import { createActorNamespace, type ActorHandle } from "@stuga/runtime";
 import { MemoryBlobStore, MemoryJobQueue, storeSchema } from "@stuga/runtime/testing";
-import { DATABASE_STORE_VERSION } from "./schema-ops.js";
+import { DATABASE_STORE_UPGRADES, DATABASE_STORE_VERSION } from "./schema-ops.js";
 import { DatabaseActor } from "./database-actor.js";
 import { HUMAN } from "../test/harness.js";
 
 /** The fingerprint of each version's store. A released version's entry never changes. */
 const PINNED: Record<number, string> = {
   1: "20487a4d32855891",
+  2: "8d9ed624efe89b80",
 };
 
 let dir = "";
@@ -83,5 +84,68 @@ describe("a database's store", () => {
         `claimStoreVersion (packages/runtime/src/actor-host.ts) that brings an older store forward, and pin ${fingerprint} ` +
         `under the new version here.`,
     ).toBe(PINNED[DATABASE_STORE_VERSION]);
+  });
+
+  it("brings a version 1 store forward to what a new one holds, keeping its runs", async () => {
+    dir = mkdtempSync(join(tmpdir(), "stuga-db-store-"));
+    const file = join(dir, "db_test.sqlite");
+    const open = () =>
+      createActorNamespace(
+        DatabaseActor,
+        { snapshots: new MemoryBlobStore(), jobs: new MemoryJobQueue<IndexMessage>() },
+        {
+          name: "databases",
+          heartbeat: { request: Heartbeat.PING, response: Heartbeat.PONG },
+          dir,
+          storeVersion: DATABASE_STORE_VERSION,
+          storeUpgrades: DATABASE_STORE_UPGRADES,
+        },
+      );
+    const runOpsSql = () => {
+      const db = new DatabaseSync(file, { readOnly: true });
+      try {
+        return (db.prepare(`SELECT sql FROM sqlite_master WHERE name = '_run_ops'`).get() as { sql: string }).sql.replace(/\s+/g, " ");
+      } finally {
+        db.close();
+      }
+    };
+
+    const fresh = open();
+    try {
+      await post(fresh.get("db_test"), "/schema/init", {});
+    } finally {
+      await fresh.close();
+    }
+    const current = runOpsSql();
+
+    // The ledger as version 1 left it, with one decided op in it.
+    const v1 = new DatabaseSync(file);
+    try {
+      v1.exec(
+        `INSERT INTO _run_ops (run_id, op_id, position, kind, table_id, summary, status, bytes, decided_by, review)
+         VALUES ('run_1', 'o1', 1, 'rows.insert', 't1', 'Insert 1 row', 'rejected', 2, 'alice', 'review')`,
+      );
+      v1.exec(`ALTER TABLE _run_ops DROP COLUMN feedback`);
+      v1.exec(`PRAGMA user_version = 1`);
+    } finally {
+      v1.close();
+    }
+
+    const upgraded = open();
+    try {
+      await post(upgraded.get("db_test"), "/schema/init", {});
+    } finally {
+      await upgraded.close();
+    }
+    expect(runOpsSql()).toBe(current);
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      expect((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(DATABASE_STORE_VERSION);
+      expect(db.prepare(`SELECT op_id, status, decided_by, feedback FROM _run_ops`).all()).toEqual([
+        { op_id: "o1", status: "rejected", decided_by: "alice", feedback: null },
+      ]);
+    } finally {
+      db.close();
+    }
   });
 });

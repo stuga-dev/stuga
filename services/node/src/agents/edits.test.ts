@@ -642,3 +642,25 @@ describe("parseCitedEdits", () => {
     expect(parseCitedEdits(edits, citations)).toEqual({ error: message });
   });
 });
+
+describe("feedback on an agent's rejected proposals", () => {
+  const FEEDBACK = [{ id: "fb_1", run_id: RUN.id, note: "Keep it plain.", decided_at: 2, changes: [{ old_string: "a", new_string: "b" }] }];
+  const PERSON: CtxOverrides = { isAgent: false, alias: "human-1", principals: ["user:human-1"] };
+
+  it("comes back on an agent's read, and never on a person's", async () => {
+    const actor = fakeActor(() => jsonRes({ markdown: "# doc", feedback: FEEDBACK }));
+    await expect(readDocMarkdownWithProjection(makeCtx(actor.fetch), "d1")).resolves.toMatchObject({ feedback: FEEDBACK });
+    await expect(readDocMarkdownWithProjection(makeCtx(actor.fetch, PERSON), "d1")).resolves.not.toHaveProperty("feedback");
+  });
+
+  it("comes back with an agent's proposal and into its answer, and never into a person's", async () => {
+    const actor = fakeActor(() => jsonRes({ mode: "proposed", run: RUN, pending: 1, feedback: FEEDBACK }));
+    const input = { docId: "d1", action: "str_replace" as const, find: "old", replace: "new", source: "connector" as const };
+    const out = await proposeDocEdit(makeCtx(actor.fetch), input);
+    expect(out).toMatchObject({ kind: "proposed", feedback: FEEDBACK });
+    expect(proposeBody(out as Exclude<typeof out, { kind: "error" }>, "u")).toMatchObject({ feedback: FEEDBACK });
+    const person = await proposeDocEdit(makeCtx(actor.fetch, PERSON), input);
+    expect(person).not.toHaveProperty("feedback");
+    expect(proposeBody(person as Exclude<typeof person, { kind: "error" }>, "u")).not.toHaveProperty("feedback");
+  });
+});

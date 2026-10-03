@@ -8,6 +8,7 @@ import {
   type DatabaseRunSource,
   type DatabaseRunSummary,
 } from "@stuga/protocol/databases/types";
+import type { AgentFeedback } from "@stuga/protocol/domain/runs";
 import { recordAudit } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
 import { resolveReviewMode } from "../authz/review-mode.js";
@@ -16,16 +17,31 @@ import { reconcileDocLinks } from "./row-pages.js";
 
 export type DatabaseProposeOutcome =
   // `held`: an `auto` database parked this anyway, because the run still holds undecided ops.
-  | { kind: "proposed"; run: DatabaseRunSummary; pending: number; minted: Record<string, unknown>; held: boolean }
-  | { kind: "applied"; run: DatabaseRunSummary; result: Record<string, unknown> | null; minted: Record<string, unknown> }
+  // `feedback`: an agent's own rejections it had not acted on, handed over with this proposal.
+  | {
+      kind: "proposed";
+      run: DatabaseRunSummary;
+      pending: number;
+      minted: Record<string, unknown>;
+      held: boolean;
+      feedback?: AgentFeedback[];
+    }
+  | {
+      kind: "applied";
+      run: DatabaseRunSummary;
+      result: Record<string, unknown> | null;
+      minted: Record<string, unknown>;
+      feedback?: AgentFeedback[];
+    }
   | { kind: "error"; status: number; message: string };
 
 /** The answer to a proposal that went through, the same over REST and /mcp. */
 export function databaseProposeBody(outcome: Exclude<DatabaseProposeOutcome, { kind: "error" }>) {
+  const feedback = outcome.feedback ? { feedback: outcome.feedback } : {};
   if (outcome.kind === "proposed") {
-    return { mode: "proposed" as const, run: outcome.run, pending: outcome.pending, minted: outcome.minted, held: outcome.held };
+    return { mode: "proposed" as const, run: outcome.run, pending: outcome.pending, minted: outcome.minted, held: outcome.held, ...feedback };
   }
-  return { mode: "applied" as const, run: outcome.run, minted: outcome.minted, ...outcome.result };
+  return { mode: "applied" as const, run: outcome.run, minted: outcome.minted, ...outcome.result, ...feedback };
 }
 
 /**
@@ -59,11 +75,14 @@ export async function proposeDatabaseOp(
   }
   const run = body.run as DatabaseRunSummary;
   const minted = (body.minted ?? {}) as Record<string, unknown>;
+  // An agent's answer only: a person's own proposals carry nothing new.
+  const handed = body.feedback as AgentFeedback[] | undefined;
+  const feedback = ctx.isAgent && handed?.length ? { feedback: handed } : {};
   if (body.mode === "applied") {
     await afterDatabaseMutation(ctx, doc, summarizeApplied(run));
     // An applied op may have deleted rows that had pages.
     await reconcileDocLinks(ctx, doc);
-    return { kind: "applied", run, result: (body.result ?? null) as Record<string, unknown> | null, minted };
+    return { kind: "applied", run, result: (body.result ?? null) as Record<string, unknown> | null, minted, ...feedback };
   }
   await touchDoc(ctx.sql, doc.doc_id).catch(() => {});
   recordAudit(ctx, {
@@ -84,6 +103,7 @@ export async function proposeDatabaseOp(
     pending: Number(body.pending ?? 0),
     minted,
     held: body.parked_behind_pending === true,
+    ...feedback,
   };
 }
 
@@ -180,7 +200,9 @@ export async function proposeTableWithColumns(
     last = outcome;
   }
   const minted = { table_id: tableId, column_ids: columnIds };
+  // The first proposal took the feedback; the columns' found none left.
+  const feedback = first.feedback ? { feedback: first.feedback } : {};
   return last.kind === "proposed"
-    ? { kind: "proposed", run: last.run, pending: last.pending, minted, held: last.held }
-    : { kind: "applied", run: last.run, result: { table_id: tableId, column_ids: columnIds }, minted };
+    ? { kind: "proposed", run: last.run, pending: last.pending, minted, held: last.held, ...feedback }
+    : { kind: "applied", run: last.run, result: { table_id: tableId, column_ids: columnIds }, minted, ...feedback };
 }

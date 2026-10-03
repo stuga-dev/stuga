@@ -10,7 +10,7 @@ import type { AgentRunSummary, RunDecidedPayload, RunUpdatedPayload } from "@stu
 import { encodeBinary, decodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
 import { DocActor } from "./doc-actor.js";
-import { RUN_IDLE_MS } from "@stuga/protocol/domain/limits";
+import { RUN_FEEDBACK_NOTE_MAX_CHARS, RUN_IDLE_MS } from "@stuga/protocol/domain/limits";
 import {
   RUN_LIST_DEFAULT_LIMIT,
   RUN_ORDER_KEY,
@@ -1656,5 +1656,87 @@ describe("panel run footnotes", () => {
     // THE POINT: source two's definition must not appear while its marker is
     // still an un-accepted proposal.
     expect(md).not.toContain("Source Two");
+  });
+});
+
+describe("a reviewer's feedback on what they rejected", () => {
+  async function proposeTwo(dobj: DocActor): Promise<string> {
+    await propose(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha, formally." });
+    const second = await propose(dobj, { action: "str_replace", find: "Bravo paragraph.", replace: "Bravo, formally." });
+    return runOf(second.json).id;
+  }
+
+  it("keeps the note on every hunk one rejection covered, and tells the feed", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const runId = await proposeTwo(dobj);
+
+    const res = await post(dobj, "decide", { run_id: runId, decision: "reject", decided_by: "alice", note: "  Too formal.  " });
+    const [a, b] = runOf(res.json).hunks;
+    expect(a!.feedback).toMatchObject({ note: "Too formal.", decided_by: "alice" });
+    expect(a!.feedback!.id).toMatch(/^fb_[0-9a-f]{12}$/);
+    expect(b!.feedback!.id).toBe(a!.feedback!.id);
+    const decided = h.queued.find((m) => m.kind === "event" && m.type === "run.decided");
+    expect(decided).toMatchObject({ payload: { decision: "reject", note: "Too formal.", feedback_id: a!.feedback!.id, agent_alias: "agent1" } });
+  });
+
+  it("stays within reach while other agents' runs pile up after it", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const runId = await proposeTwo(dobj);
+    await post(dobj, "decide", { run_id: runId, decision: "reject", decided_by: "alice", note: "Too formal." });
+    for (let i = 0; i < 12; i++) {
+      expect((await propose(dobj, { action: "str_replace", find: "# Notes", replace: `# Notes ${i}`, agent_alias: `other${i}` })).status).toBe(200);
+    }
+    expect((await listRuns(dobj, 50)).length).toBe(13);
+
+    const feedback = (await readMarkdown(dobj, "agent1")).feedback as Array<Record<string, unknown>>;
+    expect(feedback).toEqual([expect.objectContaining({ run_id: runId, note: "Too formal." })]);
+  });
+
+  it("refuses a note on an accept, and one past the limit, deciding nothing", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const runId = await proposeTwo(dobj);
+
+    expect((await post(dobj, "decide", { run_id: runId, decision: "accept", decided_by: "alice", note: "Nice." })).status).toBe(400);
+    const long = "x".repeat(RUN_FEEDBACK_NOTE_MAX_CHARS + 1);
+    expect((await post(dobj, "decide", { run_id: runId, decision: "reject", decided_by: "alice", note: long })).status).toBe(400);
+    expect((await listRuns(dobj))[0]!.hunks.map((x) => x.status)).toEqual(["pending", "pending"]);
+  });
+
+  it("repeats on the agent's own reads until it proposes here again, then stays in status alone", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const runId = await proposeTwo(dobj);
+    await post(dobj, "decide", { run_id: runId, decision: "reject", hunk_ids: ["h1"], decided_by: "alice", note: "Keep it plain." });
+    await post(dobj, "decide", { run_id: runId, decision: "reject", hunk_ids: ["h2"], decided_by: "alice" });
+
+    const read = await readMarkdown(dobj, "agent1");
+    const feedback = read.feedback as Array<Record<string, unknown>>;
+    expect(feedback).toHaveLength(2);
+    expect(feedback).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ run_id: runId, note: "Keep it plain.", changes: [{ old_string: "Alpha paragraph.", new_string: "Alpha, formally." }] }),
+      ]),
+    );
+    const silent = feedback.find((f) => f.note === undefined)!;
+    expect(silent.changes).toEqual([{ old_string: "Bravo paragraph.", new_string: "Bravo, formally." }]);
+    expect((await readMarkdown(dobj, "agent1")).feedback).toHaveLength(2);
+    // Another agent, and a person, hear nothing of it.
+    expect(await readMarkdown(dobj, "agent2")).not.toHaveProperty("feedback");
+    expect(await readMarkdown(dobj)).not.toHaveProperty("feedback");
+
+    const revised = await propose(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha, plainly." });
+    expect(revised.json.feedback).toHaveLength(2);
+    expect(await readMarkdown(dobj, "agent1")).not.toHaveProperty("feedback");
+    const again = await propose(dobj, { action: "str_replace", find: "Bravo paragraph.", replace: "Bravo, plainly." });
+    expect(again.json.feedback).toEqual([]);
+    const rejected = (await listRuns(dobj)).find((r) => r.id === runId)!.hunks;
+    expect(rejected[0]!.feedback).toMatchObject({ note: "Keep it plain.", addressed_at: expect.any(Number) });
   });
 });

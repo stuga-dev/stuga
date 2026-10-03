@@ -20,7 +20,8 @@ import type {
   DatabaseRunSummary,
 } from "@stuga/protocol/databases/types";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
-import { closedStatus } from "@stuga/protocol/domain/runs";
+import { closedStatus, feedbackExcerpt, type AgentFeedback, type RunFeedback } from "@stuga/protocol/domain/runs";
+import { RUN_FEEDBACK_LOOKBACK_DAYS, RUN_FEEDBACK_MAX_CHANGES } from "@stuga/protocol/domain/limits";
 import type { RunIndexEntry } from "@stuga/protocol/internal/jobs";
 import type { BlobStore } from "@stuga/runtime";
 import { OpError } from "../request.js";
@@ -64,6 +65,8 @@ export interface RunOpRow {
   error: string | null;
   /** The review mode the op was proposed under. */
   review: ReviewMode;
+  /** Set when a reviewer rejected it. */
+  feedback: RunFeedback | null;
 }
 
 const nullable = (v: unknown): string | null => (v == null ? null : String(v));
@@ -105,6 +108,7 @@ function asRunOpRow(row: Record<string, unknown>): RunOpRow {
     ledger_op_id: nullable(row.ledger_op_id),
     error: nullable(row.error),
     review: String(row.review) as ReviewMode,
+    feedback: row.feedback == null ? null : (JSON.parse(String(row.feedback)) as RunFeedback),
   };
 }
 
@@ -316,19 +320,94 @@ export function setOpStatus(
   runId: string,
   opId: string,
   status: Exclude<DatabaseRunOpStatus, "pending">,
-  opts: { decidedBy: string; ledgerOpId?: string; error?: string },
+  opts: { decidedBy: string; ledgerOpId?: string; error?: string; feedback?: RunFeedback },
 ): boolean {
   const won = sql.exec(
-    `UPDATE _run_ops SET status = ?, decided_by = ?, ledger_op_id = ?, error = ?
+    `UPDATE _run_ops SET status = ?, decided_by = ?, ledger_op_id = ?, error = ?, feedback = ?
      WHERE run_id = ? AND op_id = ? AND status = 'pending' RETURNING op_id`,
     status,
     opts.decidedBy,
     opts.ledgerOpId ?? null,
     opts.error ?? null,
+    opts.feedback ? JSON.stringify(opts.feedback) : null,
     runId,
     opId,
   );
   return won.toArray().length > 0;
+}
+
+/**
+ * What a rejected op would have written, as its agent is shown it: cells keyed by column name where
+ * `columnName` knows the id, cut to RUN_FEEDBACK_EXCERPT_CHARS. Undefined where the summary already
+ * says it all (a new table).
+ */
+export function opDetail(payload: DatabaseRunOpPayload, columnName: (columnId: string) => string | undefined): string | undefined {
+  const named = (cells: Record<string, unknown>): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(cells).map(([id, v]) => [columnName(id) ?? id, v]));
+  let shown: unknown;
+  switch (payload.kind) {
+    case "tables.create":
+      return undefined;
+    case "columns.add":
+      shown = { type: payload.type, ...(payload.options ? { options: payload.options } : {}), ...(payload.description ? { description: payload.description } : {}) };
+      break;
+    case "rows.insert":
+      shown = payload.rows.map(named);
+      break;
+    case "rows.update":
+      shown = payload.updates.map((u) => ({ _id: u._id, ...named(u.values) }));
+      break;
+    case "rows.delete":
+      shown = { row_ids: payload.row_ids };
+      break;
+    case "views.create":
+      shown = payload.view;
+      break;
+    case "views.update":
+      shown = payload.changes;
+      break;
+  }
+  return feedbackExcerpt(JSON.stringify(shown));
+}
+
+/**
+ * Rejections of `agentAlias`'s proposals here that it has not acted on and that are newer than
+ * RUN_FEEDBACK_LOOKBACK_DAYS, newest first; the documents' RunLedger.feedbackFor. The ledger holds
+ * at most DATABASE_RUN_KEEP runs, so the scan is bounded. `address` marks them handed over.
+ */
+export function feedbackFor(sql: SqlHandle, agentAlias: string, opts?: { address?: boolean }): AgentFeedback[] {
+  const now = Date.now();
+  const rows = sql
+    .exec(
+      `SELECT o.* FROM _run_ops o JOIN _runs r USING (run_id)
+       WHERE r.agent_alias = ? AND o.status = 'rejected' AND o.feedback IS NOT NULL
+         AND json_extract(o.feedback, '$.addressed_at') IS NULL AND json_extract(o.feedback, '$.decided_at') >= ?
+       ORDER BY r.created_at DESC, o.position`,
+      agentAlias,
+      now - RUN_FEEDBACK_LOOKBACK_DAYS * 86_400_000,
+    )
+    .toArray()
+    .map(asRunOpRow);
+  const byId = new Map<string, AgentFeedback>();
+  for (const r of rows) {
+    const fb = r.feedback!;
+    let item = byId.get(fb.id);
+    if (!item) {
+      item = { id: fb.id, run_id: r.run_id, ...(fb.note ? { note: fb.note } : {}), decided_at: fb.decided_at, changes: [] };
+      byId.set(fb.id, item);
+    }
+    if (item.changes.length < RUN_FEEDBACK_MAX_CHANGES) item.changes.push({ summary: r.summary, ...(fb.detail ? { detail: fb.detail } : {}) });
+    else item.more = (item.more ?? 0) + 1;
+    if (opts?.address) {
+      sql.exec(
+        `UPDATE _run_ops SET feedback = ? WHERE run_id = ? AND op_id = ?`,
+        JSON.stringify({ ...fb, addressed_at: now }),
+        r.run_id,
+        r.op_id,
+      );
+    }
+  }
+  return [...byId.values()].sort((a, b) => b.decided_at - a.decided_at);
 }
 
 /**
@@ -413,6 +492,7 @@ export async function toRunSummary(
     if (r.decided_by !== null) op.decided_by = r.decided_by;
     if (r.ledger_op_id !== null) op.ledger_op_id = r.ledger_op_id;
     if (r.error !== null) op.error = r.error;
+    if (r.feedback !== null) op.feedback = r.feedback;
     ops.push(op);
   }
   const summary: DatabaseRunSummary = {

@@ -219,7 +219,7 @@ export async function getMarkdown({ ctx, match }: WorkspaceCall): Promise<Respon
   if (md === "database") return error(400, databaseDocMessage(docId));
   const body = { markdown: md.markdown, run_id: md.runId, pending: md.pending };
   if (!ctx.isAgent) return json(body);
-  return json({ ...body, ...(await docAgentInstructions(ctx, md.doc)) });
+  return json({ ...body, ...(md.feedback ? { feedback: md.feedback } : {}), ...(await docAgentInstructions(ctx, md.doc)) });
 }
 
 /**

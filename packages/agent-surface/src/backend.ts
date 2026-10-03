@@ -12,6 +12,7 @@ import type {
   RowInputValue,
 } from "@stuga/protocol/databases/types";
 import type { AgentInstructions } from "@stuga/protocol/domain/instructions";
+import type { AgentFeedback } from "@stuga/protocol/domain/runs";
 import type { AgentRunSummary, AiCitation, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
 
 /** A refusal, in words the agent can act on. */
@@ -109,6 +110,8 @@ export interface MarkdownBody extends Partial<AgentInstructions> {
   markdown: string;
   run_id?: string | null;
   pending?: number;
+  /** The reader's rejections here it has not acted on; repeated until it proposes to the document again. */
+  feedback?: AgentFeedback[];
 }
 
 export interface ProposeInput {
@@ -130,9 +133,16 @@ export interface ProposeInstructionLabels {
   instructions_labels?: string[];
 }
 
+/** The agent's rejections here it had not acted on, handed over once with its next proposal. */
+export interface ProposeFeedback {
+  feedback?: AgentFeedback[];
+}
+
 export type ProposeBody =
-  | ({ mode: "proposed"; run: AgentRunSummary; pending: number; reason: string; media_note?: string } & ProposeInstructionLabels)
-  | ({ mode: "auto_applied"; run: AgentRunSummary; seq: number; reason: string; review_url: string; media_note?: string } & ProposeInstructionLabels)
+  | ({ mode: "proposed"; run: AgentRunSummary; pending: number; reason: string; media_note?: string } & ProposeInstructionLabels &
+      ProposeFeedback)
+  | ({ mode: "auto_applied"; run: AgentRunSummary; seq: number; reason: string; review_url: string; media_note?: string } & ProposeInstructionLabels &
+      ProposeFeedback)
   | { mode: "noop"; message: string };
 
 export interface ProvenancePassage {
@@ -179,10 +189,12 @@ export interface MediaUpload {
 }
 
 export interface EventsQuery {
-  /** Omitted: start from the newest event. */
+  /** Omitted: start from the newest event, or with `mine`, from RUN_FEEDBACK_LOOKBACK_DAYS ago. */
   after?: number;
   types?: string[];
   limit?: number;
+  /** Only events about the caller's own runs: decisions on its proposals, unless `types` names others. */
+  mine?: boolean;
 }
 
 export interface CollectionListing {
@@ -246,11 +258,14 @@ export type DatabaseProposeBody = ProposeInstructionLabels & {
   minted?: Record<string, unknown>;
   /** An `auto` database parked this anyway: the run still holds undecided ops. */
   held?: boolean;
+  /** The agent's rejections here it had not acted on, handed over once with this proposal. */
+  feedback?: AgentFeedback[];
   [key: string]: unknown;
 };
 
 /** The caller's projection of a database, with the instructions stack that applies to it. */
-export type DatabaseSchemaBody = DatabaseSchema & Partial<AgentInstructions>;
+/** `feedback`: the reader's rejections here it has not acted on, as a document read carries them. */
+export type DatabaseSchemaBody = DatabaseSchema & Partial<AgentInstructions> & { feedback?: AgentFeedback[] };
 
 export interface DatabaseSchemaOptions {
   /** Default true. A backend may still carry them (REST adds them for any agent); none has to. */
