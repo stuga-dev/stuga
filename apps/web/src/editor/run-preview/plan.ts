@@ -32,8 +32,8 @@ export interface RunHunkDecisionDetail {
   hunkId: string;
   /** `request_changes` rejects with a note the agent revises from; the banner collects the note first. */
   decision: "accept" | "reject" | "request_changes";
-  /** Request changes only: under the button, where the note composer floats. */
-  anchor?: { top: number; left: number };
+  /** Request changes only: the button's viewport box, which the note composer floats beside. */
+  anchor?: { top: number; bottom: number; left: number; right: number };
 }
 
 /** A pending hunk's identity across runs: `itemKey(runId, hunkId)`. */

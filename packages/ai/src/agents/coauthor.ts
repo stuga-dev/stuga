@@ -454,14 +454,14 @@ export async function runAgentTurn(
     ),
     textTool(
       "insert_text",
-      "Add NEW content that isn't replacing anything: append to the end of the document, or insert right after or right before an existing anchor (before the first line puts it at the top). Use this (not str_replace) for an empty document or to add a new paragraph/section.",
+      "Add NEW content that isn't replacing anything: append to the end of the document, or insert right after or right before an existing anchor. For the top of a document that opens with a title heading, insert after the title; otherwise before the first line. Use this (not str_replace) for an empty document or to add a new paragraph/section.",
       docArgs(multiDoc, {
         text: Type.String({ description: "The markdown to insert." }),
         after: Type.Optional(
           Type.String({ description: "Optional exact, unique anchor to insert AFTER. Omit both anchors to append to the end of the document." }),
         ),
         before: Type.Optional(
-          Type.String({ description: "Optional exact, unique anchor to insert BEFORE, instead of `after`. The document's first line puts the text at the top." }),
+          Type.String({ description: "Optional exact, unique anchor to insert BEFORE, instead of `after`." }),
         ),
       }),
       async ({ doc_id, text, after, before }) => {

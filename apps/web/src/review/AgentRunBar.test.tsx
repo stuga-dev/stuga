@@ -317,12 +317,14 @@ describe("AgentRunBar", () => {
       await mount();
       await act(async () => {
         document.dispatchEvent(
-          new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId: "h1", decision: "request_changes", anchor: { top: 100, left: 40 } } }),
+          new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId: "h1", decision: "request_changes", anchor: { top: 100, bottom: 120, left: 40, right: 140 } } }),
         );
       });
       expect(document.body.querySelector("dialog")).toBeNull();
       const composer = document.body.querySelector<HTMLElement>(".ai-edit-composer")!;
-      expect(composer.style.top).toBe("106px");
+      // Beside the button, so the next change's buttons under it stay in reach.
+      expect([composer.style.top, composer.style.left]).toEqual(["96px", "148px"]);
+      expect(composer.querySelector("textarea")!.placeholder).toBe("");
       expect(composer.textContent).toContain("as written → rewritten for h1");
       const area = composer.querySelector("textarea")!;
       await act(async () => {
@@ -333,10 +335,24 @@ describe("AgentRunBar", () => {
 
       await act(async () => {
         document.dispatchEvent(
-          new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId: "h1", decision: "request_changes", anchor: { top: 100, left: 40 } } }),
+          new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId: "h1", decision: "request_changes", anchor: { top: 100, bottom: 120, left: 40, right: 140 } } }),
+        );
+      });
+      // A press elsewhere closes it while the note is empty, and keeps it once something is written.
+      await act(async () => {
+        document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      });
+      expect(dialog()).toBeNull();
+      await act(async () => {
+        document.dispatchEvent(
+          new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId: "h1", decision: "request_changes", anchor: { top: 100, bottom: 120, left: 40, right: 140 } } }),
         );
       });
       await typeInto(dialog()?.querySelector("textarea"), "Plainer.");
+      await act(async () => {
+        document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      });
+      expect(dialog()).not.toBeNull();
       await act(async () => {
         dialog()!.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
       });
@@ -363,7 +379,7 @@ describe("AgentRunBar", () => {
       await mount();
       await act(async () => {
         document.dispatchEvent(
-          new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId: "h2", decision: "request_changes", anchor: { top: 100, left: 40 } } }),
+          new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId: "h2", decision: "request_changes", anchor: { top: 100, bottom: 120, left: 40, right: 140 } } }),
         );
       });
       expect(calls.find((c) => c.method === "POST")).toBeUndefined();

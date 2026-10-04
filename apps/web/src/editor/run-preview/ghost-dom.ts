@@ -51,7 +51,7 @@ function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pend
             runId: part.runId,
             hunkId: part.hunkId,
             decision,
-            ...(decision === "request_changes" ? { anchor: anchorBelow(btn) } : {}),
+            ...(decision === "request_changes" ? { anchor: anchorClearOf(boxOf(btn), otherButtonBoxes(btn)) } : {}),
           },
         }),
       );
@@ -61,10 +61,30 @@ function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pend
   return bar;
 }
 
-/** Just under `el`, where a composer it opens floats. */
-function anchorBelow(el: HTMLElement): { top: number; left: number } {
+type Box = { top: number; bottom: number; left: number; right: number };
+
+/** `el`'s viewport box. */
+function boxOf(el: Element): Box {
   const r = el.getBoundingClientRect();
-  return { top: r.bottom, left: r.left };
+  return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+}
+
+/** The other changes' buttons on screen: a nested change's row sits further right than this one's. */
+function otherButtonBoxes(btn: HTMLElement): Box[] {
+  return Array.from(document.querySelectorAll(".ai-preview-hunk-btn"), (b) => (b === btn ? null : boxOf(b))).filter((b): b is Box => b !== null);
+}
+
+/** How far down the note composer reaches from the top of the button that opened it. */
+const COMPOSER_REACH = 200;
+
+/**
+ * The composer's anchor: `own`, widened to the right edge of every other button in the rows the
+ * composer will cover, so it floats beside all of them and hides none.
+ */
+export function anchorClearOf(own: Box, others: Box[]): Box {
+  let right = own.right;
+  for (const o of others) if (o.bottom > own.top && o.top < own.top + COMPOSER_REACH) right = Math.max(right, o.right);
+  return { ...own, right };
 }
 
 /**

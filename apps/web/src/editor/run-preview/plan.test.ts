@@ -31,7 +31,7 @@ import {
   type RunHunkDecisionDetail,
   type RunPreviewHunk,
 } from "./plan";
-import { runGhost } from "./ghost-dom";
+import { anchorClearOf, runGhost } from "./ghost-dom";
 import { itemKey } from "../../review/run-ledger";
 
 const schema = getStugaSchema();
@@ -810,5 +810,20 @@ describe("table-mounted ghosts", () => {
     const { seg } = rowEdit();
     const p = seg.hunks[0]!;
     expect(runGhost([p], new Map([[p.key, 1]]), sameTotal(1, p.key), new Set()).tagName).toBe("DIV");
+  });
+});
+
+describe("the Request changes composer's anchor", () => {
+  const own = { top: 484, bottom: 512, left: 485, right: 627 };
+
+  it("clears a more indented change's buttons in the rows it covers", () => {
+    const nested = { top: 557, bottom: 585, left: 493, right: 635.6 };
+    expect(anchorClearOf(own, [nested]).right).toBe(635.6);
+  });
+
+  it("ignores buttons above it, and below its reach", () => {
+    const above = { top: 390, bottom: 418, left: 485, right: 700 };
+    const farBelow = { top: 700, bottom: 728, left: 485, right: 700 };
+    expect(anchorClearOf(own, [above, farBelow])).toEqual(own);
   });
 });

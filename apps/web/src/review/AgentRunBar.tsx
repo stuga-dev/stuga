@@ -81,7 +81,8 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
     const onHunk = (e: Event) => {
       const detail = (e as CustomEvent<RunHunkDecisionDetail>).detail;
       if (detail?.decision === "request_changes" && detail.runId === run.id && detail.hunkId) {
-        requestRef.current([detail.hunkId], detail.anchor ?? { top: window.innerHeight / 3, left: window.innerWidth / 2 - 150 });
+        const mid = { top: window.innerHeight / 3, bottom: window.innerHeight / 3, left: window.innerWidth / 2, right: window.innerWidth / 2 };
+        requestRef.current([detail.hunkId], detail.anchor ?? mid);
       }
     };
     document.addEventListener(RUN_HUNK_EVENT, onHunk);

@@ -2,7 +2,7 @@
  * Request changes: a rejection with a note saying what should change. The agent that proposed it is
  * handed the note with its next read or proposal here; the in-app co-author takes it as its next turn.
  */
-import { useCallback, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@astryxdesign/core/Button";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
@@ -11,16 +11,23 @@ import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { RUN_FEEDBACK_NOTE_MAX_CHARS } from "@stuga/protocol/domain/limits";
 
-/** Where a floating composer opens: just under this viewport point. */
+/** The viewport box of the control that opened a floating composer. */
 export interface NoteAnchor {
   top: number;
+  bottom: number;
   left: number;
+  right: number;
 }
 
-/** The anchor under the control a click came from. */
+/** The box of an element, as a composer's anchor. */
+export function anchorRect(el: Element): NoteAnchor {
+  const r = el.getBoundingClientRect();
+  return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+}
+
+/** The anchor of the control a click came from. */
 export function anchorOf(e: ReactMouseEvent<HTMLElement>): NoteAnchor {
-  const r = e.currentTarget.getBoundingClientRect();
-  return { top: r.bottom, left: r.left };
+  return anchorRect(e.currentTarget);
 }
 
 /** Pressing a control that opens the composer leaves focus, and the editor's caret, where they were. */
@@ -40,15 +47,37 @@ export interface RejectNoteRequest {
   onSubmit: (note: string) => void;
 }
 
-/** Composer width and the room kept below it, as Edit with AI's composer has. */
+/** Composer width, as Edit with AI's composer has, and the room kept below its top. */
 const COMPOSER_WIDTH = 300;
 const COMPOSER_ROOM = 200;
+const GAP = 8;
+
+/**
+ * Beside the control when there is room, so the rows under it (the next change and its buttons) stay
+ * in reach; under it, kept on screen, when there is not (a control at the window's right edge).
+ */
+export function composerPosition(anchor: NoteAnchor, viewport: { width: number; height: number }): { top: number; left: number } {
+  const beside = anchor.right + GAP;
+  const fits = beside + COMPOSER_WIDTH + GAP <= viewport.width;
+  const top = fits ? anchor.top - 4 : anchor.bottom + 6;
+  const left = fits ? beside : Math.min(anchor.left, viewport.width - COMPOSER_WIDTH - GAP);
+  return { top: Math.max(GAP, Math.min(top, viewport.height - COMPOSER_ROOM)), left: Math.max(GAP, left) };
+}
 
 /**
  * The floating composer: the change quoted, one note field, Enter sends, Shift+Enter breaks a line,
- * Escape closes. No backdrop, so the document stays in view and in reach.
+ * Escape closes, and so does a press outside it while the note is empty. No backdrop, so the
+ * document stays in view and in reach.
  */
-function RequestChangesComposer({ request, anchor, onClose }: { request: RejectNoteRequest; anchor: NoteAnchor; onClose: () => void }) {
+function RequestChangesComposer({
+  request,
+  anchor,
+  onClose,
+}: {
+  request: RejectNoteRequest;
+  anchor: NoteAnchor;
+  onClose: (restoreFocus?: boolean) => void;
+}) {
   const [note, setNote] = useState("");
   const text = note.trim();
   const tooLong = text.length > RUN_FEEDBACK_NOTE_MAX_CHARS;
@@ -57,11 +86,22 @@ function RequestChangesComposer({ request, anchor, onClose }: { request: RejectN
     request.onSubmit(text);
     onClose();
   };
-  const top = Math.max(8, Math.min(anchor.top + 6, window.innerHeight - COMPOSER_ROOM));
-  const left = Math.max(8, Math.min(anchor.left, window.innerWidth - COMPOSER_WIDTH - 8));
+  const box = useRef<HTMLDivElement>(null);
+  const empty = useRef(true);
+  empty.current = !text;
+  // A press elsewhere goes where it was aimed (focus stays there); a note already written is kept open.
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      if (empty.current && box.current && !box.current.contains(e.target as Node)) onClose(false);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [onClose]);
+  const { top, left } = composerPosition(anchor, { width: window.innerWidth, height: window.innerHeight });
 
   return createPortal(
     <div
+      ref={box}
       className="ai-edit-composer"
       style={{ top, left }}
       role="dialog"
@@ -81,12 +121,11 @@ function RequestChangesComposer({ request, anchor, onClose }: { request: RejectN
       )}
       <TextArea
         label="What should change?"
-        isLabelHidden
         hasAutoFocus
         value={note}
-        placeholder="What should change? The AI revises from this."
         rows={2}
-        maxLength={RUN_FEEDBACK_NOTE_MAX_CHARS}
+        size="sm"
+        status={tooLong ? { type: "error", message: `Keep it under ${RUN_FEEDBACK_NOTE_MAX_CHARS} characters.` } : undefined}
         onChange={setNote}
         onKeyDown={(e: React.KeyboardEvent) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -96,7 +135,7 @@ function RequestChangesComposer({ request, anchor, onClose }: { request: RejectN
         }}
       />
       <HStack gap={2} justify="end">
-        <Button label="Cancel" variant="ghost" size="sm" onMouseDown={keepFocus} onClick={onClose} />
+        <Button label="Cancel" variant="ghost" size="sm" onMouseDown={keepFocus} onClick={() => onClose()} />
         <Button
           label={request.submitLabel ?? "Request changes"}
           variant="primary"
@@ -165,18 +204,18 @@ export function useRejectNote(): { ask: (request: RejectNoteRequest) => void; di
     returnTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setRequest(r);
   }, []);
-  const close = useCallback(() => {
+  const close = useCallback((restoreFocus = true) => {
     setRequest(null);
     const el = returnTo.current;
     returnTo.current = null;
-    if (el?.isConnected) requestAnimationFrame(() => el.focus({ preventScroll: true }));
+    if (restoreFocus && el?.isConnected) requestAnimationFrame(() => el.focus({ preventScroll: true }));
   }, []);
   const dialog =
     request &&
     (request.anchor ? (
       <RequestChangesComposer request={request} anchor={request.anchor} onClose={close} />
     ) : (
-      <RejectNoteDialog request={request} onClose={close} />
+      <RejectNoteDialog request={request} onClose={() => close()} />
     ));
   return { ask, dialog };
 }
