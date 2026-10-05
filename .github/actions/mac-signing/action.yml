@@ -45,7 +45,7 @@ runs:
         security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
         app="$(security find-identity -v "$keychain" | sed -n 's/.*"\(Developer ID Application: .*\)"$/\1/p' | head -1)"
         installer="$(security find-identity -v "$keychain" | sed -n 's/.*"\(Developer ID Installer: .*\)"$/\1/p' | head -1)"
-        team="$(sed -n 's/.*STUGA_TEAM_ID:-\([A-Z0-9]*\)}.*/\1/p' packaging/macos/runtime/bin/helper.sh)"
+        team="$(sed -n 's/.*STUGA_TEAM_ID:-\([A-Z0-9]*\)}.*/\1/p' packaging/macos/runtime/bin/release.sh)"
         for id in "$app" "$installer"; do
           case "$id" in
             *" ($team)") ;;

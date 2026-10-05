@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareVersions, isReleaseVersion, parseFeed, pendingUpdate, sourceUrl, storedReleases } from "./feed.js";
+import { parseFeed, pendingUpdate, sourceUrl, storedReleases } from "./feed.js";
 
 const RELEASES = [
   { version: "1.10.0", date: "2026-12-01", security: false },
@@ -7,24 +7,6 @@ const RELEASES = [
   { version: "1.9.0", date: "2026-11-03", security: false },
   { version: "1.2.0", date: "2026-10-01", security: true },
 ];
-
-describe("isReleaseVersion", () => {
-  it("is true only for a plain version, which is what a release carries", () => {
-    expect(isReleaseVersion("1.2.3")).toBe(true);
-    for (const v of ["0.0.0-dev", "0.0.0-ci", "1.2", "v1.2.3", "1.2.3-rc.1", "01.2.3", ""]) {
-      expect(isReleaseVersion(v)).toBe(false);
-    }
-  });
-});
-
-describe("compareVersions", () => {
-  it("orders by number, not by text", () => {
-    expect(compareVersions("1.10.0", "1.9.0")).toBeGreaterThan(0);
-    expect(compareVersions("1.9.0", "1.10.0")).toBeLessThan(0);
-    expect(compareVersions("2.0.0", "1.99.99")).toBeGreaterThan(0);
-    expect(compareVersions("1.2.3", "1.2.3")).toBe(0);
-  });
-});
 
 describe("sourceUrl", () => {
   it("points a release at its tag and a build from source at the repository", () => {

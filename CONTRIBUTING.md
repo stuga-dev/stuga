@@ -158,12 +158,15 @@ Scope a turbo-driven command to one package with a filter: `pnpm --filter @stuga
   everything came back.
   - On Docker, `pnpm test:drill` builds the three images and installs them in a temporary directory
     the way an operator does.
-  - On a Mac, build a runtime and run the smoke test and the drill against it:
+  - On a Mac, build a runtime and run the smoke test and the drills against it. The go-back drill
+    serves data with one copy of the runtime, upgrades it with a second, and goes back to the first
+    with a restore:
 
     ```sh
     packaging/macos/build/build-runtime.sh --out /tmp/stuga-macos --version 0.0.0-ci
     packaging/macos/test/smoke.sh /tmp/stuga-macos/runtime/0.0.0-ci
     packaging/macos/test/restore-drill.sh /tmp/stuga-macos/runtime/0.0.0-ci
+    packaging/macos/test/go-back-drill.sh /tmp/stuga-macos/runtime/0.0.0-ci
     ```
 
 - **The database password on Docker** (`packaging/docker/test/db-password.sh`, `--no-build` to use
@@ -171,10 +174,18 @@ Scope a turbo-driven command to one package with a filter: `pnpm --filter @stuga
   upgrades from a stack on the default password that finish, cannot fetch their images, or fail
   between changing the role and writing `.env`, and a restore back to the older release.
 
+- **Going back on Docker** (`packaging/docker/test/going-back.sh`, `--no-build` as above): an
+  earlier release started on data a later one served refuses it and changes nothing; `./stuga
+  upgrade` refuses an older release, downloaded or put there by hand; `./stuga restore` goes back
+  with the whole stack, also when the node's container is gone; an upgrade whose node never starts
+  keeps the stack on the previous release, and `./stuga upgrade` to the release that served the
+  data takes that out again; `install.sh` over a newer volume stops at once.
+
 - **Packaging checks:** `bash packaging/check-pins.sh`, and `node --test "packaging/**/*.test.mjs"`
-  for the image's health check, the Mac log rotation, the launchd plists, the helper and the
-  connector's wrapper (these three macOS only) and the developer tools lookup. CI also runs
-  shellcheck over every script in `packaging/` and `scripts/`.
+  for the image's health check, `./stuga`'s version, backup, restore and upgrade handling, the
+  developer tools lookup, the Mac log rotation and the package's postinstall, and, on macOS only,
+  the launchd plists, the helper, `bin/stuga restore`, the hold mark and the connector's wrapper.
+  CI also runs shellcheck over every script in `packaging/` and `scripts/`.
 
 CI (`.github/workflows/ci.yml`) runs all of these on every pull request and every push to `main`,
 on Linux and on macOS.
@@ -189,6 +200,10 @@ in `MIGRATION_CHECKSUMS` beside it: the unit test that checks the pins prints it
 Once a release ships a migration, the file and its pin never change. Every database that ran it
 recorded its checksum, and the node refuses to start when the file no longer matches. A migration
 no release has shipped yet may still change, with its pin; recreate your dev database afterwards.
+
+Every older build reads `schema_migrations(id)` and `node_state(id, app_version, last_boot_at)`
+before it writes, to refuse data a newer one changed, and the packagings' `stuga` scripts read
+`node_state.app_version` to decide how to go back. No migration may rename, drop or retype them.
 
 Then regenerate `packages/db/schema.snapshot.txt`, with `TEST_DATABASE_URL` pointing at a database
 you can lose, and check that its diff holds only the change you meant. The integration suites fail

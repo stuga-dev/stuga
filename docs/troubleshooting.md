@@ -17,10 +17,11 @@ $ curl -s http://127.0.0.1:8787/ready
 
 `{"ok":true}` means the node serves and its database answers. `{"ok":false}`, with status 503, means
 the node runs but cannot reach its database. With a `status` such as `"starting"`, `"backing_up"` or
-`"upgrading"`, it is on its way: wait, and a browser shows a page that says so. A refused connection
-means nothing listens on that port: the node is stopped, still starting, or on another port. `/ready`
-needs no sign-in, and `curl` sends no `Origin` header, so it answers even when `PUBLIC_ORIGIN` is
-wrong.
+`"upgrading"`, it is on its way: wait, and a browser shows a page that says so. `"refused"` lasts:
+the node refuses data a newer version served, and its page and log say what to do
+([Going back](operations.md#going-back)). A refused connection means nothing listens on that port:
+the node is stopped, still starting, or on another port. `/ready` needs no sign-in, and `curl` sends
+no `Origin` header, so it answers even when `PUBLIC_ORIGIN` is wrong.
 
 **2. Does it open from a phone on the same network?** Open the node's network address. A phone
 shares the network but none of your computer's settings.
@@ -39,14 +40,17 @@ shares the network but none of your computer's settings.
 When the node refuses to start, its log has a line starting `[node] configuration error:` that says
 what is wrong and what to do. Any other failure logs `[node] failed to start` and the error, most
 often a database it cannot reach at `DATABASE_URL`. Docker restarts the container and hits the same
-error each time, so the container keeps restarting until the cause is fixed.
+error each time, so the container keeps restarting until the cause is fixed. A node that refuses
+data a newer version served keeps running instead, changes nothing, and logs a line starting
+`[node] refusing this database:`.
 
 | The message | What to do |
 |---|---|
 | `another Stuga node is already running against this database` | Stop the other node. One node runs per database. |
 | `a backup or restore of this database is in progress` | Wait for it to finish, then start the node. |
 | `AI_EMBED_DIMS is … but this database stores doc_chunks.embedding as vector(…)` | Set `AI_EMBED_DIMS` to the database's width, or [change the width](operations.md#change-the-embedding-width). |
-| `this database is at schema …, but this build of Stuga only knows schema …` | An older version is running against data a newer one wrote: [Upgrades](operations.md#upgrades). |
+| `refusing this database: Stuga … served it last` | An earlier release was started on data a later one served, and changed nothing. Start the later one again, or restore the backup the line names: [Going back](operations.md#going-back). |
+| `refusing this database: it is at schema …` | The same, for a schema newer than this build knows. |
 | `the backup this node takes before upgrading a database did not complete` | Nothing was upgraded, and the data is as the previous version left it. The message ends with why. For lack of disk space, free some or set `BACKUP_DIR` to a larger disk, then start the node again. |
 | `this node is built for Postgres …, but the server it connected to is Postgres …` | Follow the message. A newer Postgres needs a Stuga built for it. Data in an older one has to move to the major Stuga is built for. |
 | `does not offer the pg_search extension`, or `pg_search is missing from shared_preload_libraries` | Install pg_search for that Postgres, list it in `shared_preload_libraries`, and restart Postgres. |
@@ -221,9 +225,11 @@ mounted late, the call answers that there is nothing to recover and changes noth
 
 | What you see | What it is |
 |---|---|
-| `the node is running against database "…"; stop it first. Nothing was changed.` | `backup` and `restore` need the node stopped. `./stuga` does that on Docker. On a Mac, stop the node as [install/macos.md](install/macos.md#stuga-node-commands) shows. **Back up now** under **Settings → This node → Backups** backs up a running node. |
+| `the node is running against database "…"; stop it first. Nothing was changed.` | `backup` and `restore` need the node stopped. `./stuga` does that on Docker, and `bin/stuga restore` on a Mac ([install/macos.md](install/macos.md#operator-commands)). **Back up now** under **Settings → This node → Backups** backs up a running node. |
 | `not enough disk at …` | Free space, or set `BACKUP_DIR` to a larger disk. |
 | `this backup came from Postgres … and this runtime is built for Postgres …` | Restore it with a Stuga built for the backup's Postgres major. |
 | `this backup is at schema …` | The backup is newer than this Stuga. Restore it with the version that took it. |
+| `this backup holds data Stuga … served, and this is Stuga …` | A newer release served the backup's data. Restore it with that release or a later one. |
+| `going back across … is not supported` | The backup's release runs another pg_search, pgvector or Postgres major than the data here. Going back stops at such an update, and nothing was changed. |
 | `this backup stores embeddings of width …` | Set `AI_EMBED_DIMS` to the width the message names, then restore. |
 | A command exits 4 | Something changed before it failed. Read the message before doing anything else: it says what changed and how to put it back. |

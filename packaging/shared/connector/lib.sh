@@ -12,7 +12,7 @@ go_for_target() {
   esac
 }
 
-# pinned_team <helper.sh>: the team whose Developer ID the upgrade helper trusts (STUGA_TEAM_ID).
+# pinned_team <release.sh>: the team whose Developer ID the helper and bin/stuga trust (STUGA_TEAM_ID).
 pinned_team() { sed -n 's/.*STUGA_TEAM_ID:-\([A-Z0-9]*\)}.*/\1/p' "$1"; }
 
 # connector_requirement <team>: what the helper requires of frpc's signature before it installs it.

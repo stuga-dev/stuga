@@ -4,7 +4,7 @@
   Stuga's Postgres. Rendered by packaging/macos/build/render-launchd.sh; every @-delimited placeholder is
   filled, and agent mode drops UserName and GroupName.
 
-  - It runs through `current`, so an update or rollback is a symlink change and a restart.
+  - It runs through `current`, so an update is a symlink change and a restart.
   - ExitTimeOut gives the fast shutdown and its checkpoint minutes instead of launchd's 20 s.
   - KeepAlive restarts a crash, not a stop.
   - The file limit is raised for pg_search, whose index segments are many small files.

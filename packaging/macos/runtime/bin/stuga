@@ -1,0 +1,616 @@
+#!/bin/bash
+# Stuga's operator commands on a Mac, run as root:
+#
+#   sudo "/Library/Application Support/Stuga/current/bin/stuga" restore [--yes] [--pkg <file>] <backup>
+#   sudo "/Library/Application Support/Stuga/current/bin/stuga" list | verify <backup>
+#   sudo "/Library/Application Support/Stuga/current/bin/stuga" reset-password <username> | media-scan [...]
+#
+# Every command but restore is stuga-node's own, run as launchd runs the node: as _stuga, from data/,
+# with the node plist's environment. A backup is a path, or a name in the backup directory.
+#
+# restore puts a backup back with the version that served it: MANIFEST.json's stuga_version, else
+# its runtime_version. The version installed here: stop the node, restore, start it. An earlier
+# release, from GO_BACK_FLOOR on: that release's package, downloaded or given with --pkg, checked as
+# the helper checks an upgrade (release.sh) and for the same Postgres and extension pins, then
+# installed; its own runtime restores. It takes the hold mark (hold.sh) before anything else, so
+# neither the node nor an upgrade starts under it, and checks everything before it stops anything,
+# last that no upgrade begun before the mark has replaced Stuga meanwhile. It runs from a copy of
+# itself in a directory only root can enter: going back removes this runtime.
+#
+# Exit codes are stuga-node's: 0 done, 2 refused with nothing changed, 3 failed with nothing
+# changed, 4 failed after a change, with what to do next. Written for /bin/bash 3.2.
+set -euo pipefail
+
+# Root runs this: the system's programs, whatever the caller's PATH holds. STUGA_TEST_PATH puts a
+# test's stubs first; STUGA_ROOT and STUGA_NODE_PLIST are for tests too.
+export PATH="${STUGA_TEST_PATH:+$STUGA_TEST_PATH:}/usr/bin:/bin:/usr/sbin:/sbin"
+caller="$(pwd -P 2> /dev/null || pwd)"
+# The real directory, now: going back replaces `current`.
+here="$(cd "$(dirname "$0")" && pwd -P)"
+# shellcheck source=release.sh
+. "$here/release.sh"
+# shellcheck source=hold.sh
+. "$here/hold.sh"
+
+# The first release that carries this command, the hold mark, and a Stuga.app that installs over a
+# newer one. build-pkg.sh builds no release before it.
+GO_BACK_FLOOR=0.1.12
+
+root="${STUGA_ROOT:-/Library/Application Support/Stuga}"
+node_plist="${STUGA_NODE_PLIST:-/Library/LaunchDaemons/dev.stuga.node.plist}"
+mark="$root/status/restoring"
+
+# Not local: the EXIT trap runs after main has returned. gone_back and forward_to: the older release
+# is installed and the restore has not ended.
+work="" mark_text="" mark_held=no node_stopped_by_us=no interrupted="" node_bin="" gone_back="" forward_to=""
+
+usage() {
+  cat >&2 << 'EOF'
+usage: stuga restore [--yes] [--pkg <file>] <backup>
+       stuga list | verify <backup> | reset-password <username> | media-scan [...]
+EOF
+  exit 2
+}
+
+say() { printf '%s\n' "$*"; }
+# fail <exit code> <message>
+fail() {
+  local code="$1"
+  shift
+  printf 'error: %s\n' "$*" >&2
+  exit "$code"
+}
+
+main() {
+  [ "$(id -u)" -eq 0 ] || fail 2 "run this with sudo"
+  [ -f "$node_plist" ] || fail 2 "no Stuga service on this Mac ($node_plist)"
+  local command="${1:-}"
+  [ $# -eq 0 ] || shift
+  case "$command" in
+    restore) restore "$@" ;;
+    verify)
+      [ $# -ge 1 ] || usage
+      local backup
+      backup="$(backup_path "$1")"
+      shift
+      as_node "$root/current" verify "$backup" "$@"
+      ;;
+    list | reset-password | media-scan) as_node "$root/current" "$command" "$@" ;;
+    *) usage ;;
+  esac
+}
+
+# plist_value <key>: one of the node's environment variables, or nothing.
+plist_value() { plutil -extract "EnvironmentVariables.$1" raw -o - "$node_plist" 2> /dev/null || true; }
+
+# plist_env <runtime>: the node's environment, NUL-separated KEY=value, read anew each time:
+# postinstall renders the plist again.
+plist_env() {
+  # shellcheck disable=SC2016 # JavaScript, not shell
+  plutil -extract EnvironmentVariables json -o - "$node_plist" | "$1/node/bin/node" -e '
+    const env = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+    process.stdout.write(Object.entries(env).map(([k, v]) => `${k}=${v}\0`).join(""));'
+}
+
+# as_stuga <program> [arguments…]: as _stuga, from data/, with launchd's PATH and nothing else.
+as_stuga() {
+  (cd "$root/data" && umask 077 && exec sudo -u _stuga /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/empty "$@")
+}
+
+# as_node <runtime> <stuga-node arguments…>: stuga-node of that runtime, as launchd runs the node.
+as_node() {
+  local runtime="$1" item vars=()
+  shift
+  while IFS= read -r -d '' item; do vars+=("$item"); done < <(plist_env "$runtime")
+  as_stuga ${vars[@]+"${vars[@]}"} PG_BIN="$runtime/postgres/bin" \
+    "$runtime/node/bin/node" "$runtime/app/services/node/bin/stuga-node.js" "$@"
+}
+
+# backup_path <backup>: a bare name in the backup directory, else a path from where this was run.
+backup_path() {
+  local path="${1%/}" dir
+  case "$(basename "$path")" in . | .. | '') fail 2 "$1 does not name a backup. Nothing was changed." ;; esac
+  case "$path" in
+    /*) ;;
+    */*) path="$caller/$path" ;;
+    *)
+      dir="$(plist_value BACKUP_DIR)"
+      case "$dir" in /*) ;; *) dir="$root/data/backups" ;; esac
+      path="$dir/$path"
+      ;;
+  esac
+  printf '%s\n' "$path"
+}
+
+# ---- restore
+
+restore() {
+  local yes=no pkg="" backup=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes) yes=yes; shift ;;
+      --pkg) [ $# -ge 2 ] || usage; pkg="$2"; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$backup" ] || usage; backup="$1"; shift ;;
+    esac
+  done
+  [ -n "$backup" ] || usage
+
+  trap on_exit EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+
+  # From a copy, so nothing below reads the runtime an older package's install removes.
+  local copy=no
+  case "$here" in /private/var/tmp/stuga-restore.*) [ "${STUGA_RESTORE_WORK:-}" != "$here" ] || copy=yes ;; esac
+  if [ "$copy" = no ]; then
+    backup="$(backup_path "$backup")"
+    case "$pkg" in '' | /*) ;; *) pkg="$caller/$pkg" ;; esac
+    work="$(package_workdir stuga-restore)" || fail 3 "could not make a working directory. Nothing was changed."
+    cp "$here/stuga" "$here/release.sh" "$here/hold.sh" "$work/"
+    local again=(restore)
+    [ "$yes" = no ] || again+=(--yes)
+    [ -z "$pkg" ] || again+=(--pkg "$pkg")
+    exec /usr/bin/env STUGA_RESTORE_WORK="$work" /bin/bash "$work/stuga" "${again[@]}" "$backup"
+  fi
+  work="$here"
+
+  take_mark || fail 2 "another restore is under way. Nothing was changed."
+
+  # ---- 1. Checks, under the mark; nothing is stopped.
+  local name installed_dir installed fields target db_bytes dir_bytes install=no
+  name="$(basename "$backup")"
+  [ -d "$backup" ] || fail 2 "there is no backup at $backup. Nothing was changed."
+  installed_dir="$(cd "$root/current" && pwd -P)" || fail 2 "no Stuga runtime at $root/current. Nothing was changed."
+  node_bin="$installed_dir/node/bin/node"
+  installed="$(tr -d '[:space:]' < "$installed_dir/app/VERSION" 2> /dev/null || true)"
+  fields="$(manifest_fields "$backup/MANIFEST.json")" ||
+    fail 2 "$name has no MANIFEST.json this Stuga can read: it is not a backup. Nothing was changed."
+  read -r target db_bytes dir_bytes <<< "$fields"
+
+  if is_release "$target" && is_release "$installed" && newer "$target" "$installed"; then
+    fail 2 "$name holds Stuga $target's data, newer than this Stuga $installed. Update first, then run this again. Nothing was changed."
+  fi
+  if [ "$target" != "$installed" ]; then
+    if ! is_release "$target" || ! is_release "$installed"; then
+      fail 2 "$name holds Stuga $target's data and this is Stuga ${installed:-of no version}: only a release goes back to another. Nothing was changed."
+    fi
+    ! newer "$GO_BACK_FLOOR" "$target" ||
+      fail 2 "going back is possible to Stuga $GO_BACK_FLOOR and later; $name holds Stuga $target's data. Nothing was changed."
+    install=yes
+  fi
+  if installing; then fail 2 "an install is under way; run this when it has finished. Nothing was changed."; fi
+
+  local url
+  url="$(plist_value DATABASE_URL)"
+  as_stuga "$installed_dir/postgres/bin/pg_isready" -q -d "$url" ||
+    fail 2 "Stuga's database is not running; restart Stuga, then run this again. Nothing was changed."
+
+  # Going back is decided by what served the live data, not by what is installed: a run again after
+  # a go-back that stopped short finds the older release installed and the newer one's data.
+  local served going_back=no forward="$installed"
+  if served="$(served_version "$installed_dir" "$url")"; then
+    if is_release "$served" && is_release "$target" && newer "$served" "$target"; then going_back=yes; fi
+    if is_release "$served" && is_release "$installed" && newer "$served" "$installed"; then forward="$served"; fi
+  elif [ "$install" = yes ]; then
+    fail 2 "could not read which Stuga served the data last. Nothing was changed."
+  else
+    # Unknown: the extensions are compared as well.
+    going_back=yes
+  fi
+  [ "$install" = no ] || going_back=yes
+  # A run again after a go-back that stopped short has the older release in place already.
+  if [ -n "$pkg" ] && [ "$install" = no ]; then
+    [ "$forward" != "$installed" ] || fail 2 "--pkg is for going back. Nothing was changed."
+    say "note: Stuga $target is installed already; --pkg is not needed." >&2
+    pkg=""
+  fi
+
+  say "Checking $name…"
+  local verify=(verify "$backup" --json)
+  [ "$going_back" = no ] || verify+=(--going-back)
+  node_step "$installed_dir" "${verify[@]}"
+  case "$step_code" in
+    0) grep 'note:' "$work/said" >&2 || true ;;
+    2) fail 2 "$(step_message)" ;;
+    *) fail 3 "$(step_message)" ;;
+  esac
+
+  local free need
+  free="$(df -Pk "$root/data" | awk 'NR == 2 { print $4 }')"
+  case "$free" in '' | *[!0-9]*) free=0 ;; esac
+  need=$(((db_bytes + dir_bytes) * 12 / 10 / 1024))
+  [ "$install" = no ] || need=$((need + 1048576))
+  [ "$free" -ge "$need" ] ||
+    fail 2 "not enough disk: about $((need / 1024)) MiB needed, $((free / 1024)) MiB free. Nothing was changed."
+
+  local package="$work/Stuga-$target.pkg"
+  if [ "$install" = yes ]; then
+    if [ -n "$pkg" ]; then
+      [ -f "$pkg" ] && [ ! -L "$pkg" ] || fail 2 "$pkg is not a package file. Nothing was changed."
+      cp "$pkg" "$package" || fail 3 "could not copy $pkg. Nothing was changed."
+    else
+      say "Downloading Stuga $target…"
+      fetch_package "$target" "$package" ||
+        fail 3 "could not download Stuga $target. Nothing was changed. Without a connection, download Stuga-$target.pkg elsewhere and pass --pkg."
+    fi
+    check_package "$package" "$target" || fail 2 "$package_problem. Nothing was changed."
+    same_pins "$package" "$target" "$installed_dir" || fail 2 "$pins_problem. Nothing was changed."
+  fi
+
+  if [ "$yes" = no ]; then
+    local answer="" change=""
+    [ "$install" = no ] || change=", and goes back from Stuga $installed to Stuga $target"
+    printf "This replaces Stuga's data with %s%s. Type the backup name to confirm: " "$name" "$change" >&2
+    read -r answer || true
+    [ "$answer" = "$name" ] || fail 2 "not confirmed. Nothing was changed."
+  fi
+
+  # ---- 2. The change.
+  helper_idle || fail 2 "the helper is busy; try again in a minute. Nothing was changed."
+  # An upgrade the helper began before the mark, or a package opened meanwhile, has replaced what
+  # the checks were made against.
+  if installing || [ "$(cd "$root/current" 2> /dev/null && pwd -P)" != "$installed_dir" ]; then
+    fail 2 "Stuga was updated meanwhile; run this again. Nothing was changed."
+  fi
+  # From here an interrupt is noted, and acted on where nothing is half done; stuga-node keeps its own.
+  trap 'interrupted=INT' INT
+  trap 'interrupted=TERM' TERM
+  trap 'interrupted=HUP' HUP
+
+  local runtime stopped=no
+  if [ "$install" = no ]; then
+    runtime="$installed_dir"
+    if job_loaded dev.stuga.node; then
+      say "Stopping Stuga…"
+      stopped=yes
+      node_stopped_by_us=yes
+      stop_job dev.stuga.node 120 || fail 3 "the node did not stop within 2 minutes. Nothing was changed."
+    fi
+  else
+    runtime="$root/runtime/$target"
+    install_package "$package" "$installed" "$target" "$forward"
+    node_bin="$runtime/node/bin/node"
+    gone_back="$target" forward_to="$forward"
+  fi
+  checkpoint "$install" "$target" "$forward"
+
+  # A Ctrl-C reaches the whole process group: an interrupted sleep or pg_isready only ends a wait.
+  local waited=0
+  until as_stuga "$runtime/postgres/bin/pg_isready" -q -d "$url"; do
+    checkpoint "$install" "$target" "$forward"
+    if [ "$waited" -ge 300 ]; then
+      [ "$install" = no ] || stopped_after_install "$target" "$forward" "its database did not start."
+      fail 3 "Stuga's database did not answer. Nothing was changed."
+    fi
+    sleep 1 || true
+    waited=$((waited + 1))
+  done
+  checkpoint "$install" "$target" "$forward"
+
+  say "Restoring $name…"
+  node_stopped_by_us=no
+  node_step "$runtime" restore "$backup" --yes --json
+  gone_back=""
+  case "$step_code" in
+    0) ;;
+    2 | 3)
+      if [ "$install" = yes ]; then stopped_after_install "$target" "$forward" "$(step_message)"; fi
+      local message
+      message="$(step_message)" || message="stuga-node exited with status $step_code"
+      release_mark
+      if [ "$stopped" = yes ]; then
+        start_node > /dev/null || true
+        fail "$step_code" "$message Stuga was started again."
+      fi
+      fail "$step_code" "$message"
+      ;;
+    *)
+      disable_node
+      fail 4 "$(step_message) The node was left stopped; once both halves are in place: sudo launchctl enable system/dev.stuga.node && sudo launchctl bootstrap system $node_plist"
+      ;;
+  esac
+
+  # ---- 3. Serving again.
+  local replaced_db replaced_dir kept
+  replaced_db="$(json_value replacedDatabase < "$work/answer")" || replaced_db=""
+  replaced_dir="$(json_value replacedDataDir < "$work/answer")" || replaced_dir=""
+  kept=""
+  if [ -n "$replaced_db$replaced_dir" ]; then
+    kept="What it replaced is kept:${replaced_db:+ database \"$replaced_db\"}${replaced_db:+${replaced_dir:+,}}${replaced_dir:+ $replaced_dir}."
+  fi
+  # The swap made data/node anew, without the exclusion Time Machine keeps on the directory. Set as
+  # _stuga, its owner: root follows no link _stuga put there.
+  as_stuga /usr/bin/tmutil addexclusion "$root/data/node" > /dev/null 2>&1 || true
+  # The older node would read the newer one's last upgrade as its own.
+  [ "$install" = no ] || rm -f "$root/status/upgrade.json"
+  release_mark
+
+  say "Starting Stuga…"
+  local out
+  out="$(start_node 2>&1)" ||
+    fail 4 "restored, but launchd did not start the node: $out. Start it with: sudo launchctl enable system/dev.stuga.node && sudo launchctl bootstrap system $node_plist.${kept:+ $kept}"
+  local port answer="" i idle=0 starting=yes
+  port="$(plist_value PORT)" || port=""
+  for i in $(seq 1 300); do
+    answer="$(ready_status "${port:-8787}")" || answer=""
+    case "$answer" in
+      200*) starting=no; break ;;
+      "503 refused") fail 4 "restored, but Stuga refuses this data: open Stuga to see why.${kept:+ $kept}" ;;
+    esac
+    if job_running dev.stuga.node; then idle=0; else idle=$((idle + 2)); fi
+    [ "$idle" -lt 30 ] ||
+      fail 4 "restored, but the node did not start. Its log: $(plist_value STUGA_LOG_DIR).${kept:+ $kept}"
+    [ -z "$interrupted" ] || break
+    [ "$i" -eq 300 ] || sleep 2 || true
+  done
+
+  local runs=""
+  [ "$install" = no ] || runs="; Stuga $target runs"
+  say "Restored $name$runs.${kept:+ $kept}"
+  [ "$starting" = no ] || say "Stuga is still starting; the menu bar shows when it is ready."
+  if [ -n "$replaced_db$replaced_dir" ]; then
+    say "Once you are satisfied, remove them:"
+    [ -z "$replaced_db" ] ||
+      say "  sudo -u _stuga \"$root/current/postgres/bin/psql\" -h \"$root/data/run\" -U stuga -d postgres -c 'DROP DATABASE \"$replaced_db\"'"
+    [ -z "$replaced_dir" ] || say "  sudo rm -rf \"$replaced_dir\""
+  fi
+}
+
+# manifest_fields <MANIFEST.json>: the version that served the backup's data, and the bytes of its
+# two halves. Anything but a plain version reads as `?`, so it reaches no path or address.
+manifest_fields() {
+  # shellcheck disable=SC2016 # JavaScript, not shell
+  "$node_bin" -e '
+    const m = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+    const v = typeof m.stuga_version === "string" ? m.stuga_version : m.runtime_version;
+    const bytes = (n) => (Number.isSafeInteger(n) && n >= 0 ? n : 0);
+    console.log(typeof v === "string" && /^[0-9A-Za-z.+-]{1,64}$/.test(v) ? v : "?", bytes(m.database_bytes), bytes(m.data_dir_bytes));
+  ' "$1" 2> /dev/null
+}
+
+# installing: a package's preinstall marked it in the last half hour, and its postinstall has not cleared it.
+installing() {
+  local at
+  at="$(stat -f %m "$root/status/installing" 2> /dev/null)" || return 1
+  [ $(($(date +%s) - at)) -lt 1800 ]
+}
+
+# served_version <runtime> <database url>: node_state.app_version, the newest build that wrote the
+# live database; nothing when no node has, and 1 when it cannot be read.
+served_version() {
+  local psql="$1/postgres/bin/psql" out
+  if ! out="$(as_stuga "$psql" -X -q -A -t -d "$2" -c "SELECT to_regclass('public.node_state') IS NOT NULL" 2>&1)"; then
+    case "$out" in *"database \""*"\" does not exist"*) return 0 ;; esac
+    return 1
+  fi
+  [ "$out" = t ] || return 0
+  as_stuga "$psql" -X -q -A -t -d "$2" -c "SELECT app_version FROM node_state WHERE id" 2> /dev/null
+}
+
+# same_pins <pkg> <v> <runtime>: release v's Postgres major and extensions are this runtime's. Else
+# 1, with pins_problem saying why: an older extension must never open indexes a newer one wrote.
+same_pins() {
+  local expanded="$work/expanded" theirs="" ours="$3/conf/versions.env" file key a b
+  pins_problem=""
+  rm -rf "$expanded"
+  if ! pkgutil --expand-full "$1" "$expanded" > /dev/null 2>&1; then
+    rm -rf "$expanded"
+    pins_problem="Stuga $2's package could not be unpacked"
+    return 1
+  fi
+  for file in "$expanded"/*/Payload/"Library/Application Support/Stuga/runtime/$2/conf/versions.env"; do
+    if [ -f "$file" ]; then theirs="$file"; fi
+  done
+  for key in PG_MAJOR PG_SEARCH_VERSION PGVECTOR_VERSION; do
+    a="$(sed -n "/^$key=/{s/^$key=//p;q;}" "$ours" 2> /dev/null)" || a=""
+    b=""
+    [ -z "$theirs" ] || b="$(sed -n "/^$key=/{s/^$key=//p;q;}" "$theirs")" || b=""
+    if [ -z "$a" ] || [ "$a" != "$b" ]; then
+      rm -rf "$expanded"
+      pins_problem="Stuga $2 has $key ${b:-unknown} and this Stuga ${a:-unknown}: going back across it is not supported"
+      return 1
+    fi
+  done
+  rm -rf "$expanded"
+}
+
+# take_mark: status/restoring, made only where none is, or where the one there names a process that
+# has ended. A hard link puts it in place whole, and fails when a mark is there.
+take_mark() {
+  local tmp stale inode
+  mkdir -p "$root/status"
+  mark_text="$(printf '%s\n%s' "$$" "$(process_started $$)")"
+  tmp="$(mktemp "$root/status/.restoring.XXXXXX")"
+  printf '%s\n' "$mark_text" > "$tmp"
+  chmod 0644 "$tmp"
+  if ! ln "$tmp" "$mark" 2> /dev/null; then
+    if restore_under_way "$root" || ! inode="$(stat -f %i "$mark" 2> /dev/null)"; then
+      rm -f "$tmp"
+      return 1
+    fi
+    # Moved aside, then put back if another restore took the place meanwhile.
+    stale="$root/status/.restoring.ended.$$"
+    if ! mv "$mark" "$stale" 2> /dev/null; then
+      rm -f "$tmp"
+      return 1
+    fi
+    if [ "$(stat -f %i "$stale")" != "$inode" ]; then
+      ln "$stale" "$mark" 2> /dev/null || true
+      rm -f "$stale" "$tmp"
+      return 1
+    fi
+    rm -f "$stale"
+    if ! ln "$tmp" "$mark" 2> /dev/null; then
+      rm -f "$tmp"
+      return 1
+    fi
+  fi
+  rm -f "$tmp"
+  mark_held=yes
+}
+
+# release_mark: the mark goes, while it is still this run's.
+release_mark() {
+  [ "$mark_held" = yes ] || return 0
+  mark_held=no
+  if [ "$(cat "$mark" 2> /dev/null)" = "$mark_text" ]; then rm -f "$mark"; fi
+}
+
+# node_step <runtime> <stuga-node arguments…>: its JSON in $work/answer, its stderr in $work/said,
+# its exit status in step_code.
+node_step() {
+  step_code=0
+  as_node "$@" > "$work/answer" 2> "$work/said" || step_code=$?
+}
+
+# step_message: what the last stuga-node step said went wrong.
+step_message() {
+  local message
+  message="$(json_value error < "$work/answer")"
+  [ -n "$message" ] || message="$(grep -v 'note:' "$work/said" | tail -1)"
+  printf '%s' "${message:-stuga-node exited with status $step_code}"
+}
+
+# json_value <key>: a string field of the JSON object on stdin, or nothing.
+json_value() {
+  # shellcheck disable=SC2016 # JavaScript, not shell
+  "$node_bin" -e '
+    let v;
+    try { v = JSON.parse(require("node:fs").readFileSync(0, "utf8"))[process.argv[1]]; } catch {}
+    if (typeof v === "string") process.stdout.write(v);
+  ' "$1" 2> /dev/null || true
+}
+
+# ready_status <port>: /ready's code, and a 503's status; nothing while it does not answer.
+ready_status() {
+  local scheme code
+  for scheme in http https; do
+    code="$(curl -sk --max-time 5 -o "$work/ready" -w '%{http_code}' "$scheme://127.0.0.1:$1/ready" 2> /dev/null)" || code=""
+    case "$code" in '' | 000) continue ;; esac
+    printf '%s %s' "$code" "$(json_value status < "$work/ready")"
+    return 0
+  done
+}
+
+# ---- launchd
+
+job_loaded() { launchctl print "system/$1" > /dev/null 2>&1; }
+# The job's own pid is one tab in; nested ones are deeper. Read whole first: a reader that stops at
+# the line it wants cuts launchctl off, which pipefail counts as a failure.
+job_running() {
+  local out
+  out="$(launchctl print "system/$1" 2> /dev/null)" || return 1
+  [[ "$out" == *$'\n\tpid = '[0-9]* ]]
+}
+
+# stop_job <label> <seconds>: booted out and gone, or 1.
+stop_job() {
+  local i
+  launchctl bootout "system/$1" > /dev/null 2>&1 || true
+  for i in $(seq 1 "$2"); do
+    job_loaded "$1" || return 0
+    [ "$i" -eq "$2" ] || sleep 1
+  done
+  return 1
+}
+
+# start_node: enabled, and loaded anew, so launchd reads the plist and runs the wrapper again.
+start_node() {
+  launchctl enable system/dev.stuga.node
+  stop_job dev.stuga.node 30 || true
+  launchctl bootstrap system "$node_plist"
+}
+
+# disable_node: stopped, and kept stopped until someone enables it: the data is not what it should be.
+disable_node() {
+  launchctl bootout system/dev.stuga.node > /dev/null 2>&1 || true
+  launchctl disable system/dev.stuga.node > /dev/null 2>&1 || true
+}
+
+# helper_idle: the helper is not running, so an install it began has ended.
+helper_idle() {
+  local i
+  for i in $(seq 1 60); do
+    job_running dev.stuga.helper || return 0
+    [ "$i" -eq 60 ] || sleep 1
+  done
+  return 1
+}
+
+# install_package <pkg> <installed> <target> <forward>: the older release in place. Its preinstall
+# stops both jobs; its postinstall starts them, the node's wrapper exits under the mark, and it
+# removes every other runtime, this one's included.
+install_package() {
+  local pkg="$1" installed="$2" target="$3" forward="$4" last
+  say "Installing Stuga $target…"
+  if ! installer -pkg "$pkg" -target / > "$work/installer.log" 2>&1; then
+    last="$(tail -1 "$work/installer.log")"
+    last="${last%.}"
+    if [ "$(readlink "$root/current" 2> /dev/null)" = "runtime/$installed" ] && [ -d "$root/runtime/$installed" ]; then
+      release_mark
+      local label
+      for label in dev.stuga.postgres dev.stuga.node; do
+        launchctl enable "system/$label" > /dev/null 2>&1 || true
+        launchctl bootstrap system "$(dirname "$node_plist")/$label.plist" > /dev/null 2>&1 || true
+      done
+      # Its preinstall may have run: its mark goes, as its postinstall would take it.
+      rm -f "$root/status/installing"
+      fail 3 "the installer stopped: $last. Stuga $installed was started again; nothing was changed."
+    fi
+    disable_node
+    fail 4 "the installer stopped after it replaced Stuga $installed: $last. Your data was not changed. Open Stuga-$forward.pkg ($(package_url "$forward")) to go forward."
+  fi
+  if [ "$(readlink "$root/current" 2> /dev/null)" != "runtime/$target" ] ||
+    [ "$(tr -d '[:space:]' < "$root/runtime/$target/app/VERSION" 2> /dev/null)" != "$target" ]; then
+    disable_node
+    fail 4 "the installer finished, but Stuga $target is not what runs. Your data was not changed. Open Stuga-$forward.pkg ($(package_url "$forward")) to go forward."
+  fi
+}
+
+# stopped_after_install <target> <forward> <why>: the older release is in place and the data is not
+# its yet. The node stays stopped; this is run again, or the newer package opened.
+stopped_after_install() {
+  gone_back=""
+  disable_node
+  fail 4 "Stuga $1 is installed and stopped; your data is still Stuga $2's and was not changed: $3 Fix that and run this again, or open Stuga-$2.pkg ($(package_url "$2")) to go forward."
+}
+
+# checkpoint <install> <target> <forward>: an interrupt before the restore ends it here.
+checkpoint() {
+  [ -n "$interrupted" ] || return 0
+  [ "$1" = no ] || stopped_after_install "$2" "$3" "interrupted."
+  fail 3 "interrupted. Nothing was changed."
+}
+
+# shellcheck disable=SC2329 # the EXIT trap runs it
+# The mark goes while it is still this run's, before the node may start again. A node this run
+# stopped, with nothing changed under it, starts again; one whose wrapper the mark stopped is woken.
+# Gone back, and ended before the restore did, by anything else than stopped_after_install: as that,
+# the older node stays stopped.
+on_exit() {
+  local code=$? held="$mark_held"
+  if [ -n "$gone_back" ]; then
+    disable_node
+    printf 'error: %s\n' "Stuga $gone_back is installed and stopped; your data is still Stuga $forward_to's and was not changed. Run this again, or open Stuga-$forward_to.pkg ($(package_url "$forward_to")) to go forward." >&2
+    code=4
+  fi
+  release_mark
+  if [ "$node_stopped_by_us" = yes ]; then
+    node_stopped_by_us=no
+    if start_node > /dev/null 2>&1; then
+      printf '%s\n' "Stuga was started again." >&2
+    else
+      printf '%s\n' "Stuga did not start again: sudo launchctl enable system/dev.stuga.node && sudo launchctl bootstrap system $node_plist" >&2
+    fi
+  elif [ "$held" = yes ] && job_loaded dev.stuga.node && ! job_running dev.stuga.node; then
+    launchctl kickstart system/dev.stuga.node > /dev/null 2>&1 || true
+  fi
+  if [ -n "$work" ]; then rm -rf "$work"; fi
+  exit "$code"
+}
+
+# One function, called on the last line, so bash has read the whole file before the copy goes.
+# shellcheck disable=SC2317 # exit is reached only if main returns
+{ main "$@"; exit; }

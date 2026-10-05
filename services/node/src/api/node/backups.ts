@@ -1,6 +1,7 @@
 /** `/api/node/backups`: the node's backups, the schedule they follow, and a backup now. */
 import { getNodeState } from "@stuga/db";
 import { nodeAuditCtx, recordAudit } from "../../audit/record.js";
+import { restoreCommandFor } from "../../boot/data-version.js";
 import { error, json } from "../../http/respond.js";
 import type { WorkspaceCall } from "../../http/router.js";
 
@@ -27,8 +28,12 @@ export async function getNodeBackups({ ctx }: WorkspaceCall): Promise<Response> 
       created_at: b.createdAt,
       bytes: b.bytes,
       stuga_version: b.stugaVersion,
-      // Taken by a newer version before it upgraded this data; kept beyond `keep` while it is the newest such.
+      // Taken by a newer build, or a build from source, of data an older one served, before it upgraded it;
+      // kept beyond `keep` while it is the newest such.
       before_upgrade: b.beforeUpgrade,
+      // What to run on the machine to restore it; null when the packaging names no command. Only shown:
+      // nothing here runs it, and the command checks that its packaging can go back to that version.
+      restore_command: restoreCommandFor(ctx.env.restoreCommand, b.name),
     })),
   });
 }

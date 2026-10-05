@@ -5,6 +5,10 @@
  * refused connection; `/ready` answers 503, so supervisors keep waiting; every
  * other request gets a 503 it can retry.
  *
+ * A node that refused its database (boot/data-version.ts) stays here until it
+ * is stopped: `/ready` says `refused` with nothing to retry, and the page says
+ * which version to start or which backup to restore.
+ *
  * Once open, requests go to the live handlers, and the gate counts the ones
  * still being answered, so a pause can wait for them to finish. A response
  * whose body is still being written counts until that is done, when its
@@ -13,10 +17,12 @@
 import type { FrontDoor, RequestHandler } from "../platform/http-server.js";
 import { applyRemoteHeaders, applySecurityHeaders } from "./security-headers.js";
 
-export type Pause = "starting" | "backing_up" | "upgrading" | "maintenance";
+/** Why the node does not serve for now. */
+type Waiting = "starting" | "backing_up" | "upgrading" | "maintenance";
+export type Pause = Waiting | "refused";
 
 /** What a person reads while the node does not serve. */
-const SAY: Record<Pause, string> = {
+const SAY: Record<Waiting, string> = {
   starting: "Stuga is starting.",
   backing_up: "Stuga is backing up before an upgrade.",
   upgrading: "Stuga is upgrading.",
@@ -24,6 +30,16 @@ const SAY: Record<Pause, string> = {
 };
 
 const RETRY_SECONDS = 5;
+/** A refusal lasts until someone acts on the machine; the page only looks again now and then. */
+const REFUSED_RELOAD_SECONDS = 30;
+
+/** Why the node refused its database, for the page that says so. */
+export interface Refusal {
+  title: string;
+  body: string;
+  /** What to run on the machine; null when the packaging names no way to run it. */
+  command: string | null;
+}
 
 export interface Live {
   handler: RequestHandler;
@@ -38,9 +54,11 @@ export interface ServingGate {
   /** What the node is doing; null while it serves. */
   state(): Pause | null;
   /** Stop serving and say why. Requests already being answered finish. */
-  pause(why: Pause): void;
+  pause(why: Waiting): void;
   /** Serve through `live`, or through the handlers already given when there is none. */
   open(live?: Live): void;
+  /** Stop for good: the node refused its database. Nothing serves, pauses or opens again until it stops. */
+  refuse(text: Refusal): void;
   /** Wait until no request that reached the live handlers is being answered; false when `timeoutMs` passes first. */
   drain(timeoutMs: number): Promise<boolean>;
 }
@@ -60,7 +78,8 @@ export function answeredUntil(response: Response, done: Promise<unknown>): Respo
 
 export function createServingGate(): ServingGate {
   let live: Live | null = null;
-  let paused: Pause | null = "starting";
+  let paused: Waiting | null = "starting";
+  let refusal: Refusal | null = null;
   let inFlight = 0;
   let idle: (() => void)[] = [];
 
@@ -74,6 +93,7 @@ export function createServingGate(): ServingGate {
 
   const through = (pick: (l: Live) => RequestHandler): RequestHandler => {
     return async (req) => {
+      if (refusal) return refused(req, refusal);
       if (paused || !live) return notServing(req, paused ?? "starting");
       inFlight += 1;
       let res: Response;
@@ -93,14 +113,19 @@ export function createServingGate(): ServingGate {
   return {
     handler: through((l) => l.handler),
     upgrade: through((l) => l.upgrade),
-    state: () => paused,
+    state: () => (refusal ? "refused" : paused),
     pause(why) {
+      if (refusal) throw new Error("the node refused its database");
       paused = why;
     },
     open(next) {
+      if (refusal) throw new Error("the node refused its database");
       if (next) live = next;
       if (!live) throw new Error("the serving gate has nothing to serve through");
       paused = null;
+    },
+    refuse(text) {
+      refusal = text;
     },
     drain(timeoutMs) {
       if (inFlight === 0) return Promise.resolve(true);
@@ -119,36 +144,61 @@ export function createServingGate(): ServingGate {
   };
 }
 
-function notServing(req: Request, why: Pause): Response {
+function notServing(req: Request, why: Waiting): Response {
   const headers = { "retry-after": String(RETRY_SECONDS), "cache-control": "no-store" };
   const path = new URL(req.url).pathname;
   if (path === "/ready") return Response.json({ ok: false, status: why }, { status: 503, headers });
   const wantsPage = req.method === "GET" && (req.headers.get("accept") ?? "").includes("text/html");
   if (wantsPage) {
-    return new Response(page(SAY[why]), { status: 503, headers: { ...headers, "content-type": "text/html; charset=utf-8" } });
+    return new Response(page(`<p>${SAY[why]}</p>`, RETRY_SECONDS), {
+      status: 503,
+      headers: { ...headers, "content-type": "text/html; charset=utf-8" },
+    });
   }
   return Response.json({ error: "unavailable", status: why, message: SAY[why] }, { status: 503, headers });
 }
 
-function page(say: string): string {
+/** No retry-after: waiting does not end a refusal. */
+function refused(req: Request, text: Refusal): Response {
+  const headers = { "cache-control": "no-store" };
+  const path = new URL(req.url).pathname;
+  if (path === "/ready") return Response.json({ ok: false, status: "refused" }, { status: 503, headers });
+  const wantsPage = req.method === "GET" && (req.headers.get("accept") ?? "").includes("text/html");
+  if (wantsPage) {
+    const command = text.command === null ? "" : `\n<pre><code>${escapeHtml(text.command)}</code></pre>`;
+    const body = `<p><strong>${escapeHtml(text.title)}</strong></p>\n<p>${escapeHtml(text.body)}</p>${command}`;
+    return new Response(page(body, REFUSED_RELOAD_SECONDS), {
+      status: 503,
+      headers: { ...headers, "content-type": "text/html; charset=utf-8" },
+    });
+  }
+  return Response.json({ error: "refused", status: "refused", message: text.title }, { status: 503, headers });
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+function page(content: string, reloadSeconds: number): string {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="${RETRY_SECONDS}">
+<meta http-equiv="refresh" content="${reloadSeconds}">
 <title>Stuga</title>
 <style>
   :root { color-scheme: light dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
-  main { text-align: center; padding: 16px; }
+  main { text-align: center; padding: 16px; max-width: 40em; }
   p { margin: 0 0 8px; }
+  pre { text-align: left; white-space: pre-wrap; word-break: break-all; padding: 8px 12px; border: 1px solid currentColor; border-radius: 6px; }
   .quiet { opacity: 0.6; font-size: 0.9em; }
 </style>
 </head>
 <body>
 <main>
-<p>${say}</p>
+${content}
 <p class="quiet">This page reloads by itself.</p>
 </main>
 </body>

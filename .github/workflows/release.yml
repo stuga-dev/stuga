@@ -383,11 +383,16 @@ jobs:
           name: macos-pkg
           path: ${{ runner.temp }}/pkg/Stuga-*.pkg
 
-  # The floating tags point at the digest smoke booted; imagetools re-tags, it never rebuilds.
+  # The floating tags point at the digest smoke booted; imagetools re-tags, it never rebuilds. A
+  # release moves only the tags it is the newest of: a patch to an older line leaves :MAJOR alone.
   promote:
     needs: [docker-smoke, macos-pkg]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -399,12 +404,21 @@ jobs:
           V="${GITHUB_REF_NAME#v}"
           MINOR="${V%.*}"
           MAJOR="${V%%.*}"
+          newest() { git tag -l "$1" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1; }
+          tags=()
+          if [ "$(newest "v$MINOR.*")" = "$GITHUB_REF_NAME" ]; then tags+=("$MINOR"); fi
+          if [ "$(newest "v$MAJOR.*.*")" = "$GITHUB_REF_NAME" ]; then tags+=("$MAJOR"); fi
+          if [ "${#tags[@]}" -eq 0 ]; then
+            echo "::notice::newer releases hold :$MINOR and :$MAJOR, so neither moves"
+            exit 0
+          fi
           for img in stuga-node stuga-postgres stuga-remote; do
             SRC="ghcr.io/${{ github.repository_owner }}/$img:$V"
-            docker buildx imagetools create --tag "ghcr.io/${{ github.repository_owner }}/$img:$MINOR" "$SRC"
-            docker buildx imagetools create --tag "ghcr.io/${{ github.repository_owner }}/$img:$MAJOR" "$SRC"
+            for t in "${tags[@]}"; do
+              docker buildx imagetools create --tag "ghcr.io/${{ github.repository_owner }}/$img:$t" "$SRC"
+            done
             want="$(docker buildx imagetools inspect "$SRC" --format '{{.Manifest.Digest}}')"
-            for t in "$MINOR" "$MAJOR"; do
+            for t in "${tags[@]}"; do
               got="$(docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/$img:$t" --format '{{.Manifest.Digest}}')"
               [ "$got" = "$want" ] || { echo "::error::$img:$t is $got, not the tested $want"; exit 1; }
             done

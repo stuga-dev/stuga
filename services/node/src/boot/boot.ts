@@ -1,11 +1,13 @@
 /**
  * Boot, in order: config → Postgres checks and writer lock → listener, which
- * says the node is starting until it serves → a backup when another version
- * served this database last → schema → settings and signing key → actor hosts,
- * stores and queue → workspaces an unfinished import left, deleted → routers →
- * serving → background workers. The actors call back in through `env.internal`,
- * whose handler needs the finished env, so it delegates through a slot filled
- * last.
+ * says the node is starting until it serves → a refusal of data a newer version
+ * served, which parks the node before it writes anything → the embedding width →
+ * a backup when an older version, or a build from source, served this database
+ * last → schema → this version recorded → repairs, settings and signing key →
+ * actor hosts, stores and queue → workspaces an unfinished import left, deleted →
+ * routers → serving → background workers. The actors call back in through
+ * `env.internal`, whose handler needs the finished env, so it delegates through
+ * a slot filled last.
  */
 import { join } from "node:path";
 import {
@@ -20,6 +22,7 @@ import {
   pgJobQueue,
   recordNodeBoot,
   runBootRepairs,
+  SCHEMA_VERSION,
   startJobWorker,
 } from "@stuga/db";
 import { createRelyingParty, createVerifier, loadOrCreateSigningKey } from "@stuga/auth";
@@ -59,6 +62,7 @@ import { holdWriterLock } from "../writer-lock.js";
 import { assertDatabaseLocale, assertPgSearch, assertPostgresVersion } from "./preflight.js";
 import { runShutdown, SHUTDOWN_DEADLINE_MS } from "./shutdown.js";
 import { backupBeforeUpgrade } from "./upgrade-backup.js";
+import { dataRefusal, goBackTo, readServedData, refusalText } from "./data-version.js";
 import { createNodeBackups, notifyBackupFailed } from "../ops/node-backups.js";
 import { archiveWorkUnderWay, holdArchiveWork } from "../archive/under-way.js";
 import { createExclusive } from "../platform/exclusive.js";
@@ -146,9 +150,35 @@ async function boot(): Promise<void> {
   };
   process.on("SIGTERM", stopWhileStarting);
   process.on("SIGINT", stopWhileStarting);
+  const backupEnv = parseBackupEnv(process.env);
+
+  // ---- data a newer version served -----------------------------------------
+  // Before any write or backup. Parked rather than exited: a supervisor would restart it forever, and
+  // the page tells someone with only a browser what to do. It keeps the listener and the writer lock
+  // (a session of its own), so a backup or restore waits until it is stopped; SIGTERM exits 0.
+  const refusal = dataRefusal({ version: VERSION, schema: SCHEMA_VERSION }, await readServedData(sql));
+  if (refusal) {
+    const backup = await goBackTo(backupEnv, VERSION).catch(() => null);
+    const text = refusalText(refusal, backup?.name ?? null, cfg.restoreCommand);
+    console.error(`[node] ${text.log}`);
+    gate.refuse(text);
+    await closeClients();
+    return;
+  }
+
+  // The column's width is fixed when the database is created; embeddings at any other width would be
+  // refused by it. Before the backup, so a node that cannot start takes none.
+  const columnDims = await embeddingColumnDims(sql);
+  if (columnDims !== null && columnDims !== cfg.embeddingDims) {
+    throw new ConfigError(
+      `AI_EMBED_DIMS is ${cfg.embeddingDims} but this database stores doc_chunks.embedding as vector(${columnDims}). ` +
+        `The column's width is fixed when the database is created and cannot be changed by configuration. ` +
+        `Either set AI_EMBED_DIMS=${columnDims}, or re-create the column and re-embed — see docs/operations.md.`,
+    );
+  }
+  cfg.embeddingDims = columnDims ?? cfg.embeddingDims;
 
   // ---- a backup before an upgrade ------------------------------------------
-  const backupEnv = parseBackupEnv(process.env);
   const upgrade = await backupBeforeUpgrade({
     sql,
     env: backupEnv,
@@ -179,6 +209,11 @@ async function boot(): Promise<void> {
     throw err instanceof ConfigError ? err : new ConfigError(err instanceof Error ? err.message : String(err));
   });
 
+  // As soon as the migrations commit and before any other write, so an older build always sees that
+  // this one changed the data, even when it stops before serving.
+  const { nodeId, previousVersion } = await recordNodeBoot(sql, VERSION);
+  console.info(`[node] ${bootSummary({ version: VERSION, previousVersion, schema })}`);
+
   // The indexes are reconciled to the node's search languages; none until setup chooses.
   const bootLanguages = (await getSearchLanguages(sql)) ?? [];
   const repairs = await runBootRepairs(sql, { searchLanguages: bootLanguages });
@@ -200,22 +235,6 @@ async function boot(): Promise<void> {
   // Only whoever holds the setup code may make the first account, which administers the node.
   const setupCodeAt = setupCodeFile(cfg.dataDir, cfg.setupCodeFile);
   let setupCode = (await countAccounts(sql)) === 0 ? await loadOrCreateSetupCode(setupCodeAt) : null;
-
-  // The column's width is fixed when the database is created; embeddings at any
-  // other width would be refused by it.
-  const columnDims = await embeddingColumnDims(sql);
-  if (columnDims !== null && columnDims !== cfg.embeddingDims) {
-    throw new ConfigError(
-      `AI_EMBED_DIMS is ${cfg.embeddingDims} but this database stores doc_chunks.embedding as vector(${columnDims}). ` +
-        `The column's width is fixed when the database is created and cannot be changed by configuration. ` +
-        `Either set AI_EMBED_DIMS=${columnDims}, or re-create the column and re-embed — see docs/operations.md.`,
-    );
-  }
-  cfg.embeddingDims = columnDims ?? cfg.embeddingDims;
-
-  // Stamped only after every refusal above, so a build that did not start is never recorded.
-  const { nodeId, previousVersion } = await recordNodeBoot(sql, VERSION);
-  console.info(`[node] ${bootSummary({ version: VERSION, previousVersion, schema })}`);
 
   const aiSettings = await createAiSettingsStore({
     sql,

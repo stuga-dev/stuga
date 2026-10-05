@@ -35,7 +35,7 @@ jobs:
         run: |
           find packaging scripts -type f -name '*.sh' -print0 | sort -z \
             | xargs -0 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 -x -P SCRIPTDIR packaging/docker/stuga \
-              packaging/macos/pkg/scripts/preinstall packaging/macos/pkg/scripts/postinstall
+              packaging/macos/runtime/bin/stuga packaging/macos/pkg/scripts/preinstall packaging/macos/pkg/scripts/postinstall
 
   db-integration:
     runs-on: ubuntu-latest
@@ -66,6 +66,7 @@ jobs:
       - uses: actions/checkout@v7
       - run: bash packaging/docker/test/restore-drill.sh
       - run: bash packaging/docker/test/db-password.sh --no-build
+      - run: bash packaging/docker/test/going-back.sh --no-build
       - run: bash packaging/docker/test/backup-suite-in-image.sh ghcr.io/stuga-dev/stuga-node:0.0.0-drill
       # The shared remote-access directory with real owners, as root: skipped by `pnpm test`.
       - run: bash packaging/docker/test/remote-dir-in-image.sh
@@ -109,3 +110,4 @@ jobs:
           [ "$(cat "$RUNNER_TEMP/stuga-macos/runtime/0.0.0-ci/conf/connector.sha256")" = "$sha" ]
       - run: bash packaging/macos/test/smoke.sh "$RUNNER_TEMP/stuga-macos/runtime/0.0.0-ci"
       - run: bash packaging/macos/test/restore-drill.sh "$RUNNER_TEMP/stuga-macos/runtime/0.0.0-ci"
+      - run: bash packaging/macos/test/go-back-drill.sh "$RUNNER_TEMP/stuga-macos/runtime/0.0.0-ci"

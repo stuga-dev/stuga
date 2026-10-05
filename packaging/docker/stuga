@@ -6,9 +6,9 @@
 #   ./stuga db-password
 #
 # The work is the node's own `stuga-node`, run in a one-off container of the image that wrote
-# the data; this shell stops and starts the compose node around it. Exit codes are stuga-node's:
-# 0 done, 2 refused with nothing changed, 3 failed with nothing changed, 4 failed after a change.
-# Written for bash 3.2.
+# the data (for a restore, the backup's release); this shell stops and starts the compose node
+# around it. Exit codes are stuga-node's: 0 done, 2 refused with nothing changed, 3 failed with
+# nothing changed, 4 failed after a change. Written for bash 3.2.
 set -euo pipefail
 
 # A relative backup path the operator types is relative to where they ran this from.
@@ -31,9 +31,10 @@ env_value() {
   sed -n "s/^[[:space:]]*$1=//p" .env | tail -1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
 }
 
-# Keeps the node on an older release than compose.yml names, after a restore or a failed upgrade
-# goes back to it. compose.yml itself stays: it carries this node's database password. It is added
-# to COMPOSE_FILE in .env, so a plain `docker compose up -d` keeps the node on that release too.
+# Keeps the stack (node, postgres and remote) on another release than compose.yml names, after a
+# restore or a failed upgrade goes to it. compose.yml itself stays: it carries this node's database
+# password. It is added to COMPOSE_FILE in .env, so a plain `docker compose up -d` keeps the stack on
+# that release too.
 ROLLBACK_FILE="compose.rollback.yml"
 COMPOSE_SEP="${COMPOSE_PATH_SEPARATOR:-$(env_value COMPOSE_PATH_SEPARATOR)}"
 COMPOSE_SEP="${COMPOSE_SEP:-:}"
@@ -106,14 +107,16 @@ require_node() {
   node_running || fail 2 "the node is not running — start it first: $SHOWN up -d"
 }
 
-# The image the node's container was created from: the build that wrote the data, even after a
-# new compose.yml has been downloaded for an upgrade.
-created_node_image() {
+# created_image <service>: the image its container was created from, or empty when it has none. For
+# the node, the build that wrote the data, even after a new compose.yml has been downloaded for an
+# upgrade.
+created_image() {
   local id
-  id="$(compose ps -a -q node 2>/dev/null | head -1)"
+  id="$(compose ps -a -q "$1" 2>/dev/null | head -1 || true)"
   [ -n "$id" ] || return 0
   docker inspect --format '{{.Config.Image}}' "$id" 2>/dev/null || true
 }
+created_node_image() { created_image node; }
 
 # pin_image <image>: run the node service on <image>, whatever compose.yml names.
 PIN=""
@@ -180,14 +183,37 @@ rollback_in_env() {
 set_compose_file() {
   local drop="/^[[:space:]]*COMPOSE_FILE=/d; /^#.*compose\\.rollback\\.yml/d"
   if [ -z "$1" ]; then rewrite_env "$drop"; return; fi
-  rewrite_env "$drop" "# $ROLLBACK_FILE keeps the node on an older release; the next upgrade takes it out." "COMPOSE_FILE=$1"
+  rewrite_env "$drop" "# $ROLLBACK_FILE keeps the stack on another release than compose.yml names; the next upgrade takes it out." "COMPOSE_FILE=$1"
 }
 
-# write_rollback <image>: keep the node on <image> until the next upgrade.
+# rollback_images <node image> [<postgres image> <remote image>]: sets RB_NODE, RB_POSTGRES and
+# RB_REMOTE. One not given is the node's release of it, or empty when the node image names no release.
+RB_NODE="" RB_POSTGRES="" RB_REMOTE=""
+rollback_images() {
+  RB_NODE="$1" RB_POSTGRES="${2:-}" RB_REMOTE="${3:-}"
+  case "$1" in
+    *stuga-node:*)
+      [ -n "$RB_POSTGRES" ] || RB_POSTGRES="${1%stuga-node:*}stuga-postgres:${1##*stuga-node:}"
+      [ -n "$RB_REMOTE" ] || RB_REMOTE="${1%stuga-node:*}stuga-remote:${1##*stuga-node:}"
+      ;;
+  esac
+}
+
+# write_rollback <node image> [<postgres image> <remote image>]: keep the stack on these until the
+# next upgrade.
 write_rollback() {
   local tmp
+  [ -n "${1:-}" ] || return 1
+  rollback_images "$@"
   tmp="$(mktemp .stuga-pin.XXXXXX)" || return 1
-  if ! { printf 'services:\n  node:\n    image: "%s"\n' "$1" > "$tmp" && mv -f "$tmp" "$ROLLBACK_FILE"; }; then
+  if ! {
+    {
+      printf 'services:\n'
+      if [ -n "$RB_POSTGRES" ]; then printf '  postgres:\n    image: "%s"\n' "$RB_POSTGRES"; fi
+      printf '  node:\n    image: "%s"\n' "$RB_NODE"
+      if [ -n "$RB_REMOTE" ]; then printf '  remote:\n    image: "%s"\n' "$RB_REMOTE"; fi
+    } > "$tmp" && mv -f "$tmp" "$ROLLBACK_FILE"
+  }; then
     rm -f "$tmp"
     return 1
   fi
@@ -264,8 +290,8 @@ node_cli() {
     --entrypoint node node bin/stuga-node.js "$@"
 }
 
-# One string field out of stuga-node's one-line JSON result.
-json_field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" | head -1; }
+# One string field out of stuga-node's one-line JSON result, or a manifest's indented one.
+json_field() { sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1; }
 
 canonical() {
   local dir
@@ -308,6 +334,57 @@ node_version() {
   if [ -n "$v" ]; then printf '%s' "$v"; else printf '0.0.0-dev (built from source)'; fi
 }
 
+# The newest build that has written to the database; empty for a new database, or when Postgres
+# does not answer.
+served_version() { psql_value "SELECT app_version FROM node_state WHERE id"; }
+
+# image_version <image>: the VERSION a node image carries, 0.0.0-dev for a source build, or empty
+# when the image is not on this machine. The file, never the label: test images keep 0.0.0-drill's.
+image_version() {
+  local v
+  { [ -n "${1:-}" ] && docker image inspect "$1" >/dev/null 2>&1; } || return 0
+  v="$(docker run --rm --network none --entrypoint cat "$1" /app/VERSION 2>/dev/null | tr -d '\r' | head -1 || true)"
+  printf '%s' "${v:-0.0.0-dev}"
+}
+
+# A plain 1.2.3, as the node's version.ts has it: a source or CI build has nothing to compare with.
+is_release() {
+  local plain='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+  [[ ${1:-} =~ $plain ]]
+}
+
+# version_lt A B: true when release A comes before release B (both 1.2.3).
+version_lt() {
+  local a1 a2 a3 b1 b2 b3
+  IFS=. read -r a1 a2 a3 <<EOF_A
+$1
+EOF_A
+  IFS=. read -r b1 b2 b3 <<EOF_B
+$2
+EOF_B
+  [ "$a1" -lt "$b1" ] && return 0; [ "$a1" -gt "$b1" ] && return 1
+  [ "$a2" -lt "$b2" ] && return 0; [ "$a2" -gt "$b2" ] && return 1
+  [ "$a3" -lt "$b3" ]
+}
+
+# older_release A B: true when A and B are both releases and A is the older.
+older_release() { is_release "$1" && is_release "$2" && version_lt "$1" "$2"; }
+
+# backup_rows: stuga-node list --json on stdin, one line per backup, newest first: name, database,
+# stuga_version, runtime_version and before_upgrade, tab-separated; a null or missing field is empty.
+backup_rows() {
+  sed -n 's/.*"backups":\[{\([^]]*\)}\].*/\1/p' | sed 's/},{/\
+/g' | awk '
+    function field(key,   at, v) {
+      if (!match($0, "\"" key "\":(\"[^\"]*\"|[A-Za-z0-9.]+)")) return ""
+      at = length(key) + 3
+      v = substr($0, RSTART + at, RLENGTH - at)
+      gsub(/"/, "", v)
+      return v == "null" ? "" : v
+    }
+    { printf "%s\t%s\t%s\t%s\t%s\n", field("name"), field("database"), field("stuga_version"), field("runtime_version"), field("before_upgrade") }'
+}
+
 # The address people use, as the node is told it.
 public_origin() {
   local origin
@@ -340,6 +417,19 @@ ready_probe() {
   return 1
 }
 
+# The status /ready answers with, or empty: "refused" is a node that will not serve this data.
+ready_status() {
+  local at body
+  at="$(ready_url)"
+  body="$(curl -sS --max-time 5 "http://$at" 2>/dev/null || curl -sS --max-time 5 -k "https://$at" 2>/dev/null || true)"
+  printf '%s\n' "$body" | json_field status
+}
+
+# Why the node refuses its data, from the last such line in its log.
+refusal_line() {
+  compose logs --no-log-prefix --tail 50 node 2>/dev/null | sed -n 's/.*refusing this database: //p' | tail -1 || true
+}
+
 # A first boot can migrate and build search indexes before it listens, so this waits while the
 # container stays up and shows progress (a new log line, or an unblocked statement in Postgres),
 # and gives up when it exits, restarts, goes quiet for READY_QUIET_SECONDS or passes READY_MAX_SECONDS.
@@ -350,6 +440,10 @@ wait_node_ready() {
   first="$(docker inspect -f '{{.RestartCount}}' "$id" 2>/dev/null || echo 0)"
   while :; do
     if ready_probe; then return 0; fi
+    if [ "$(ready_status)" = refused ]; then
+      say "  the node refuses this data: $(refusal_line)"
+      return 1
+    fi
     status="$(docker inspect -f '{{.State.Status}}' "$id" 2>/dev/null || echo missing)"
     restarts="$(docker inspect -f '{{.RestartCount}}' "$id" 2>/dev/null || echo 0)"
     case "$status" in exited | dead | missing | restarting) return 1 ;; esac
@@ -508,17 +602,73 @@ cmd_backup() {
 
 # ---------------------------------------------------------------- verify
 
-cmd_verify() {
-  local src="${1:-}" cpath code
-  [ -n "$src" ] || fail 2 "usage: $SELF verify <backup>"
-  cpath="$(container_path "$src")"
-  pin_image "$(created_node_image)"
+# manifest_versions <container path>: sets MANIFEST_STUGA and MANIFEST_RUNTIME from the backup's
+# MANIFEST.json, read with the pinned node image; empty when it cannot be read (verify says why).
+MANIFEST_STUGA="" MANIFEST_RUNTIME=""
+manifest_versions() {
+  local manifest
+  manifest="$(pinned run --rm -T --no-deps -v "$BACKUP_DIR:/backups" --entrypoint cat node "$1/MANIFEST.json" 2>/dev/null || true)"
+  MANIFEST_STUGA="$(printf '%s\n' "$manifest" | json_field stuga_version)"
+  MANIFEST_RUNTIME="$(printf '%s\n' "$manifest" | json_field runtime_version)"
+}
+
+# resolve_backup <container path> <node image>: what restores the backup, read before anything stops.
+#   RUNTIME     the release that last served its data: stuga_version, else the build that took it
+#   TARGET      that release's node image, when <node image> is a released one; else <node image>
+#   VERIFIER    the newer of <node image> and TARGET: a node refuses a backup of a newer release's data
+#   GOING_BACK  --going-back when the data here is a newer release's, so the extensions are compared too
+RUNTIME="" TARGET="" VERIFIER="" GOING_BACK=""
+resolve_backup() {
+  local created="$2"
+  pin_image "$created"
+  manifest_versions "$1"
+  RUNTIME="${MANIFEST_STUGA:-$MANIFEST_RUNTIME}"
+  TARGET="$created"
+  if is_release "$RUNTIME"; then
+    case "$created" in *stuga-node:*) TARGET="${created%:*}:$RUNTIME" ;; esac
+  fi
+  VERIFIER="$created"
+  if older_release "${created##*:}" "$RUNTIME"; then VERIFIER="$TARGET"; fi
+  GOING_BACK=""
+  if older_release "$RUNTIME" "$(served_version)"; then GOING_BACK=--going-back; fi
+}
+
+# pull_missing <image>…: each one not on this machine, before anything stops.
+pull_missing() {
+  local image
+  for image in "$@"; do
+    docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image" >/dev/null 2>&1 \
+      || fail 3 "could not pull $image, which the backup's release runs on; nothing was changed"
+  done
+}
+
+# verify_backup <container path>: with VERIFIER, while the node still runs.
+verify_backup() {
+  local code
+  pin_image "$VERIFIER"
   set +e
-  node_cli verify "$cpath" --json >/dev/null
+  node_cli verify "$1" ${GOING_BACK:+"$GOING_BACK"} --json >/dev/null
   code=$?
   set -e
   if [ "$code" -ne 0 ]; then cli_failed "$code" || code=3; exit "$code"; fi
-  ok "$(host_path "$cpath") is whole, and restorable by this runtime"
+}
+
+# The node image that wrote the data, or compose.yml's when its container is gone.
+data_node_image() {
+  local image
+  image="$(created_node_image)"
+  printf '%s' "${image:-$(compose_node_image)}"
+}
+
+cmd_verify() {
+  local src="${1:-}" cpath created
+  [ -n "$src" ] || fail 2 "usage: $SELF verify <backup>"
+  cpath="$(container_path "$src")"
+  created="$(data_node_image)"
+  resolve_backup "$cpath" "$created"
+  if [ "$VERIFIER" != "$created" ]; then pull_missing "$VERIFIER"; fi
+  verify_backup "$cpath"
+  ok "$(host_path "$cpath") is whole, and restorable here"
 }
 
 # ---------------------------------------------------------------- restore
@@ -529,28 +679,24 @@ cmd_restore() {
     case "$arg" in --yes) assume_yes=yes ;; *) src="$arg" ;; esac
   done
   [ -n "$src" ] || fail 2 "usage: $SELF restore [--yes] <backup>"
-  local cpath out code runtime created target was_running=no replaced_db replaced_dir answer start_it
+  local cpath out code created pin was_running=no replaced_db replaced_dir answer start_it need=()
   cpath="$(container_path "$src")"
   require_postgres
 
-  # Verified with the node still running: a damaged or incompatible backup stops nothing.
-  created="$(created_node_image)"
-  pin_image "$created"
-  set +e
-  out="$(node_cli verify "$cpath" --json)"
-  code=$?
-  set -e
-  if [ "$code" -ne 0 ]; then cli_failed "$code" || code=3; exit "$code"; fi
+  # The stack comes back on the release that last served the backup's data: the one that took it, or
+  # the one a newer release backed up before upgrading it, with that release's postgres and remote.
+  # A source build has no tag to go back to.
+  created="$(data_node_image)"
+  resolve_backup "$cpath" "$created"
+  if [ "$TARGET" != "$created" ]; then need+=("$TARGET"); fi
+  if [ "$TARGET" != "$(compose_node_image)" ]; then
+    rollback_images "$TARGET"
+    if [ -n "$RB_POSTGRES" ]; then need+=("$RB_POSTGRES" "$RB_REMOTE"); fi
+  fi
+  pull_missing ${need[@]+"${need[@]}"}
 
-  # The node comes back on the release that last served the data: the one that took a backup, or the
-  # one a newer release backed up before upgrading it. A source build has no tag to go back to.
-  runtime="$(printf '%s' "$out" | json_field stuga_version)"
-  [ -n "$runtime" ] || runtime="$(printf '%s' "$out" | json_field runtime_version)"
-  target="$created"
-  case "$runtime" in
-    "" | 0.0.0-*) ;;
-    *) case "$created" in *stuga-node:*) target="${created%:*}:$runtime" ;; esac ;;
-  esac
+  # Verified with the node still running: a damaged or incompatible backup stops nothing.
+  verify_backup "$cpath"
 
   if [ "$assume_yes" = no ]; then
     printf 'This REPLACES the current database and data directory. Type the backup name to confirm: '
@@ -558,11 +704,7 @@ cmd_restore() {
     [ "$answer" = "$(basename "${src%/}")" ] || fail 2 "not confirmed — nothing has been changed"
   fi
 
-  # Pulled before the node stops, so a failed pull leaves it serving.
-  if [ "$target" != "$created" ] && ! docker image inspect "$target" >/dev/null 2>&1; then
-    docker pull "$target" >/dev/null 2>&1 || fail 3 "the backup was taken by $target, which could not be pulled; nothing was changed"
-  fi
-  pin_image "$target"
+  pin_image "$TARGET"
   if node_running; then
     was_running=yes
     NODE_STOPPED_BY_US=yes
@@ -591,19 +733,20 @@ cmd_restore() {
   replaced_dir="${replaced_dir#/parent/}"
   ok "database and data directory restored"
 
-  # A plain `up -d` would start the image compose.yml names, which after a failed upgrade is the
-  # release that failed, and it would migrate the restored data forward. So an older build is kept
-  # in the rollback file, beside compose.yml rather than in place of it.
-  if [ "$target" = "$(compose_node_image)" ]; then
+  # A plain `up -d` would start the images compose.yml names, which after a failed upgrade is the
+  # release that failed, and it would migrate the restored data forward. So another release is kept
+  # in the rollback file, the whole stack, beside compose.yml rather than in place of it.
+  if [ "$TARGET" = "$(compose_node_image)" ]; then
     remove_rollback || fail 4 "restored, but could not take $ROLLBACK_FILE out of COMPOSE_FILE in .env, so the node was left stopped.
        What the restore replaced is kept: database \"$replaced_db\", $DATA_PARENT/$replaced_dir"
-    start_it="Start it with: $SHOWN up -d node"
+    start_it="Start it with: $SHOWN up -d"
   else
-    write_rollback "$target" || fail 4 "restored, but could not write $ROLLBACK_FILE, so the node was left stopped.
+    write_rollback "$TARGET" || fail 4 "restored, but could not write $ROLLBACK_FILE, so the node was left stopped.
        What the restore replaced is kept: database \"$replaced_db\", $DATA_PARENT/$replaced_dir"
-    start_it="Start it on the build that took the backup ($target) with: $SHOWN up -d node"
+    start_it="Start it on the backup's release ($TARGET) with: $SHOWN up -d"
   fi
-  compose up -d node >/dev/null 2>&1 \
+  # The whole stack, so postgres and remote switch release with the node.
+  compose up -d >/dev/null 2>&1 \
     || fail 4 "restored, but the node did not start. $start_it
        What the restore replaced is kept: database \"$replaced_db\", $DATA_PARENT/$replaced_dir"
   if ! wait_node_ready; then
@@ -619,44 +762,56 @@ cmd_restore() {
   if [ -n "$replaced_dir" ]; then say "The data directory it replaced is kept at $DATA_PARENT/$replaced_dir."; fi
   say "Delete them once you are satisfied."
   if [ -f "$ROLLBACK_FILE" ]; then
-    warn "the node now runs $target, and compose.yml names a newer release. Keep compose.yml: $ROLLBACK_FILE keeps the node on $target until the next upgrade. Start the stack with: $SHOWN up -d"
+    pin="$(pinned_node_tag)"
+    if older_release "$pin" "$RUNTIME"; then
+      warn "the stack now runs stuga $RUNTIME, and compose.yml names stuga $pin; get matching files with: $SELF upgrade $RUNTIME"
+    else
+      warn "the stack now runs $TARGET, and compose.yml names another release. Keep compose.yml: $ROLLBACK_FILE keeps the stack on $TARGET's release until the next upgrade. Start the stack with: $SHOWN up -d"
+    fi
   fi
 }
 
 # ---------------------------------------------------------------- upgrade
 
-# The backup a new version took of $1's data before upgrading it: the newest backup whose data
-# $1 served last. Empty when there is none.
+# upgrade_backup <from> <to>: sets UPGRADE_BACKUP to the newest backup stuga <to> took of stuga
+# <from>'s data before upgrading it, or empty when there is none.
+UPGRADE_BACKUP=""
 upgrade_backup() {
-  local out
+  local name
+  UPGRADE_BACKUP=""
+  if [ -z "$1" ] || [ -z "$2" ]; then return 0; fi
   pin_image "$(created_node_image)"
-  out="$(node_cli list --json 2>/dev/null || true)"
-  # A last line with no newline is one `read` never returns.
-  printf '%s\n' "$out" | sed -n 's/.*"backups":\[{"name":"\([^"]*\)","path":"[^"]*","database":"[^"]*","created_at":"[^"]*","stuga_version":"\([^"]*\)".*/\1 \2/p' \
-    | while read -r name version; do
-      if [ "$version" = "$1" ]; then printf '%s/%s' "$BACKUP_DIR" "$name"; fi
-    done
+  # Newest first. awk reads to the end, so nothing before it in the pipe is cut off.
+  name="$(node_cli list --json 2>/dev/null | backup_rows | awk -F '\t' -v from="$1" -v to="$2" \
+    '!found && $2 == "stuga" && $3 == from && $4 == to && $5 == "true" { found = $1 } END { print found }' || true)"
+  if [ -n "$name" ]; then UPGRADE_BACKUP="$BACKUP_DIR/$name"; fi
+}
+
+# serve_again <version> <exit code>: compose.yml names the release that served the data last, and the
+# stack goes back to it with the rollback file out. <exit code> is for when that file stays.
+serve_again() {
+  remove_rollback || fail "$2" "could not take $ROLLBACK_FILE out of COMPOSE_FILE in .env, so the stack stays on another release than stuga $1.
+       Take it out of COMPOSE_FILE, delete $ROLLBACK_FILE, then run: docker compose up -d"
+  compose up -d >/dev/null 2>&1 || fail 4 "compose.yml names stuga $1 again, but the stack did not start. Its log: $SHOWN logs --tail 50 node"
+  wait_node_ready || fail 4 "compose.yml names stuga $1 again, but the node did not become ready. Its log: $SHOWN logs --tail 50 node"
+  ok "compose.yml names stuga $1 again; it serves."
+  exit 0
 }
 
 RELEASES="https://github.com/stuga-dev/stuga/releases"
 
-# version_lt A B: true when release A comes before release B (both 1.2.3).
-version_lt() {
-  local a1 a2 a3 b1 b2 b3
-  IFS=. read -r a1 a2 a3 <<EOF_A
-$1
-EOF_A
-  IFS=. read -r b1 b2 b3 <<EOF_B
-$2
-EOF_B
-  [ "$a1" -lt "$b1" ] && return 0; [ "$a1" -gt "$b1" ] && return 1
-  [ "$a2" -lt "$b2" ] && return 0; [ "$a2" -gt "$b2" ] && return 1
-  [ "$a3" -lt "$b3" ]
+# install_release <dir>: a release's three files from <dir> in place of these. The script moves in on
+# a new inode: bash reads a running script as it goes.
+install_release() {
+  cp "$1/compose.yml" "$ROOT/compose.yml"
+  cp "$1/env.example" "$ROOT/env.example"
+  chmod +x "$1/stuga"
+  mv "$1/stuga" "$ROOT/stuga"
+  rm -rf "$1"
 }
-is_release() { printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; }
 
-# fetch_release <version|latest> <running version>: put that release's three files here and run its
-# own stuga to carry on. The script moves in on a new inode: bash reads a running script as it goes.
+# fetch_release <version|latest> <served version>: put that release's three files here and run its
+# own stuga to carry on.
 fetch_release() {
   local base tmp f next
   case "$1" in latest) base="$RELEASES/latest/download" ;; *) base="$RELEASES/download/v$1" ;; esac
@@ -669,49 +824,57 @@ fetch_release() {
     fi
   done
   next="$(sed -n 's|^    image: .*/stuga-node:||p' "$tmp/compose.yml" | head -1)"
-  if [ "$next" = "$2" ]; then
+  if [ "$next" = "$2" ] && [ "$(pinned_node_tag)" = "$next" ] && [ ! -f "$ROLLBACK_FILE" ]; then
     rm -rf "$tmp"
-    say "stuga $2 is running, and it is the newest release. Nothing to do."
+    if [ "$1" = latest ]; then say "stuga $2 is running, and it is the newest release. Nothing to do."; else say "stuga $2 is running. Nothing to do."; fi
     exit 0
   fi
-  if is_release "$next" && is_release "$2" && version_lt "$next" "$2"; then
+  if older_release "$next" "$2"; then
     rm -rf "$tmp"
-    fail 2 "stuga $next is older than the running $2; nothing was changed. Going back is a restore: $SELF list"
+    fail 2 "stuga $next is older than stuga $2, which last served this data; nothing was changed. Going back is a restore: $SELF list"
   fi
-  cp "$tmp/compose.yml" "$ROOT/compose.yml"
-  cp "$tmp/env.example" "$ROOT/env.example"
-  chmod +x "$tmp/stuga"
-  mv "$tmp/stuga" "$ROOT/stuga"
-  rm -rf "$tmp"
+  install_release "$tmp"
+  # compose.yml, or the rollback file beside it, named another release than the one that served the
+  # data: that one comes back as it was.
+  if [ "$next" = "$2" ]; then serve_again "$next" 4; fi
   ok "downloaded stuga $next's files (your .env is untouched)"
   exec "$ROOT/stuga" upgrade --fetched
 }
 
 # ./stuga upgrade [<version>]: to the newest release, or the one named. A compose.yml already
-# naming another version than the running one (put there by hand, as for an upgrade without a
-# connection) is used as it is. A release's node backs up the data another version served before
-# it changes anything, so this fetches the images and starts them. A build from source keeps its
-# version, so there this takes the backup itself, first.
+# naming another version than the one that served the data (put there by hand, as for an upgrade
+# without a connection) is used as it is, unless it names an older release. A release's node backs
+# up the data another version served before it changes anything, so this fetches the images and
+# starts them. A build from source keeps its version, so there this takes the backup itself, first.
 cmd_upgrade() {
   refuse_shell_password
   require_postgres
-  local before after pin backup="" wanted="" fetched=no arg old_image
+  local before after pin backup="" wanted="" fetched=no arg served_before old_node old_postgres old_remote next stopped=no why
   for arg in "$@"; do
     case "$arg" in
       --fetched) fetched=yes ;;
       *) is_release "$arg" || fail 2 "usage: $SELF upgrade [<version such as 1.2.3>]"; wanted="$arg" ;;
     esac
   done
-  before="$(node_version_raw)"
+  # The data's version, not the running node's: the node may be stopped, or refusing it.
+  before="$(served_version)"
+  [ -n "$before" ] || before="$(node_version_raw)"
   before="${before:-0.0.0-dev}"
 
   pin="$(pinned_node_tag)"
   if ! buildable && [ "$fetched" = no ] && { [ -n "$wanted" ] || [ "$pin" = "$before" ]; }; then
     fetch_release "${wanted:-latest}" "$before"
   fi
-  # An image-only compose.yml that still pins the running version would pull nothing and report success.
+  if older_release "$pin" "$before"; then
+    fail 2 "compose.yml names stuga $pin, older than stuga $before, which last served this data. Nothing was changed.
+       Put $before's files back with: $SELF upgrade $before
+       To go back to $pin, restore a backup of its data: $SELF list"
+  fi
+  # An image-only compose.yml that still pins the data's version would pull nothing and report success.
+  # With the rollback file keeping the stack on another release, that one comes back.
   if [ -n "$pin" ] && [ "$pin" = "$before" ] && ! buildable; then
-    say "compose.yml pins stuga $pin, which is already running."
+    if [ -f "$ROLLBACK_FILE" ]; then serve_again "$pin" 3; fi
+    say "compose.yml pins stuga $pin, which last served this data."
     fail 2 "nothing to upgrade to; nothing was changed"
   fi
 
@@ -727,7 +890,7 @@ cmd_upgrade() {
   local fetched=yes
   if buildable; then
     base_compose build --pull || fetched=no
-  elif printf '%s' "$pin" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' && images_present; then
+  elif is_release "$pin" && images_present; then
     # A published version's images never change, so the ones here are the ones a pull would bring.
     # This is how a node with no way to the registry upgrades: from images loaded by hand.
     ok "already on this machine"
@@ -755,32 +918,57 @@ cmd_upgrade() {
 
   # From here the new version may migrate the database: never restart the old one behind it.
   NODE_STOPPED_BY_US=no
-  old_image="$(created_node_image)"
+  # What a way back needs: the stack as it was, and whether the new version wrote to the data.
+  old_node="$(created_node_image)"
+  old_postgres="$(created_image postgres)"
+  old_remote="$(created_image remote)"
+  served_before="$(served_version)"
   say "Starting the new version; it backs up stuga $before's data before it changes anything"
   if ! compose up -d; then
     fail 4 "the new version did not start. Look at its log: $SHOWN logs --tail 50 node
        Then $SELF list shows the backup it took before changing anything, if it got that far."
   fi
   if ! wait_node_ready; then
-    [ -n "$backup" ] || backup="$(upgrade_backup "$before")"
+    if [ -z "$backup" ]; then
+      next="$(image_version "$(compose_node_image)")"
+      upgrade_backup "${served_before:-$before}" "$next"
+      # None yet. The new node restarts until it can back up, and would then upgrade the data under the
+      # old stack a rollback puts back: it is stopped first, and the backups are read again.
+      if [ -z "$UPGRADE_BACKUP" ] && [ -n "$old_node" ] && [ "$old_node" != "$(compose_node_image)" ] \
+        && compose stop node >/dev/null 2>&1; then
+        stopped=yes
+        upgrade_backup "${served_before:-$before}" "$next"
+      fi
+      backup="$UPGRADE_BACKUP"
+    fi
     if [ -n "$backup" ]; then
       fail 4 "the node did not become ready after the upgrade.
        Look at the log first:   $SHOWN logs --tail 50 node
        A verified backup of stuga $before's data, taken before the upgrade changed anything: $backup
        To go back:              $SELF restore $backup"
     fi
-    if [ -n "$old_image" ] && [ "$old_image" != "$(compose_node_image)" ] && write_rollback "$old_image"; then
-      fail 4 "the node did not become ready after the upgrade, and it took no backup, so it changed nothing:
-       it backs up before it upgrades, and stops if it cannot. Look at the log: $SHOWN logs --tail 50 node
-       To go back to stuga $before, keep compose.yml and run: $SHOWN up -d ($ROLLBACK_FILE keeps the node on it)"
+    # Only data no newer version has written to goes back to the old stack as it is.
+    if [ "$(served_version)" != "$served_before" ]; then
+      fail 4 "the node did not become ready after the upgrade. Look at its log: $SHOWN logs --tail 50 node
+       $SELF list shows the backups there are."
     fi
-    fail 4 "the node did not become ready after the upgrade, and it took no backup, so it changed nothing:
+    why="the node did not become ready after the upgrade, and it took no backup, so it changed nothing:
        it backs up before it upgrades, and stops if it cannot. Look at the log: $SHOWN logs --tail 50 node"
+    [ "$stopped" = yes ] || fail 4 "$why"
+    if write_rollback "$old_node" "$old_postgres" "$old_remote"; then
+      fail 4 "$why
+       It is stopped now. To go back to stuga $before, keep compose.yml and run: $SHOWN up -d ($ROLLBACK_FILE keeps the stack on it)"
+    fi
+    fail 4 "$why
+       It is stopped now; once that is fixed, run: $SELF upgrade"
   fi
 
   after="$(node_version_raw)"
   after="${after:-0.0.0-dev}"
-  [ -n "$backup" ] || backup="$(upgrade_backup "$before")"
+  if [ -z "$backup" ]; then
+    upgrade_backup "${served_before:-$before}" "$after"
+    backup="$UPGRADE_BACKUP"
+  fi
   ok "node is ready"
   say ""
   if [ "$before" = "$after" ]; then
@@ -798,9 +986,11 @@ cmd_upgrade() {
 # ---------------------------------------------------------------- status
 
 cmd_status() {
-  local out last
+  local out last served="" image="" why
   say "stuga        $(node_version)"
   if compose_running | grep -qx postgres; then
+    served="$(served_version)"
+    if [ -n "$served" ]; then say "data         last served by stuga $served"; fi
     say "schema       $(psql_value 'SELECT max(id) FROM schema_migrations' || true)"
     say "postgres     $(psql_value 'SHOW server_version' || true)"
   else
@@ -809,7 +999,13 @@ cmd_status() {
   if ready_probe; then
     say "ready        yes"
   else
-    say "ready        NO — the node is not serving requests"
+    image="$(image_version "$(created_node_image)")"
+    if [ "$(ready_status)" = refused ] || older_release "$image" "$served"; then
+      why="$(refusal_line)"
+      say "ready        NO — refused: ${why:-stuga $served served this data last}"
+    else
+      say "ready        NO — the node is not serving requests"
+    fi
   fi
   local code
   code="$(compose exec -T node cat /data/setup-code 2>/dev/null | tr -d '[:space:]' || true)"
@@ -833,7 +1029,10 @@ cmd_status() {
     warn "a restore kept what it replaced — run: $SELF list"
   fi
   if [ -f "$ROLLBACK_FILE" ]; then
-    warn "$ROLLBACK_FILE keeps the node on an older release than compose.yml until the next upgrade: start the stack with $SHOWN up -d"
+    warn "$ROLLBACK_FILE keeps the stack on another release than compose.yml names, until the next upgrade: start the stack with $SHOWN up -d"
+  fi
+  if older_release "$image" "$served"; then
+    warn "the node refuses this data: stuga $served served it last and the node is $image. Start $served again ($SELF upgrade $served), or restore a backup of $image's data ($SELF list)"
   fi
 
   # The connector's own report; its message is safe between JSON quotes, so sed can take it out.
@@ -921,7 +1120,8 @@ Stuga operator commands.
   $SELF upgrade [<version>]  to the newest release (or the one named): fetch its files, pull, restart
                              (the node backs up first), wait for ready; prints how to undo
   $SELF restore [--yes] <backup>
-                             put a backup back after checking it; what it replaces is kept
+                             put a backup back after checking it, on the release that served it;
+                             what it replaces is kept
   $SELF reset-password <username>
                              mint a link that sets the account's password, without signing in
   $SELF media-scan           report images no document points at any more

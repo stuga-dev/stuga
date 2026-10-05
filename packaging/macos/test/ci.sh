@@ -39,10 +39,11 @@ tree="$(cached_postgres_tree)"
 echo "==> cluster"
 "$here/../runtime/bin/init-cluster.sh" --pgbin "$tree/bin" --data "$pgdata" --socket "$socket"
 # Socket-only, so the port only names the socket file. fsync is off for a cluster that is thrown
-# away: with fsync_writethrough every checkpoint behind a test's DROP DATABASE takes seconds.
+# away: with fsync_writethrough every checkpoint behind a test's DROP DATABASE takes seconds. The
+# suites run in parallel, some with nodes of their own, past the shipped max_connections.
 export PGHOST="$socket" PGPORT=55450 PGUSER=stuga
 unset PGDATABASE PGPASSWORD
-"$tree/bin/pg_ctl" -D "$pgdata" -l "$work/postgres.log" -o "-p $PGPORT -c fsync=off" -w -t 60 start
+"$tree/bin/pg_ctl" -D "$pgdata" -l "$work/postgres.log" -o "-p $PGPORT -c fsync=off -c max_connections=100" -w -t 60 start
 "$tree/bin/createdb" stuga_test
 
 echo "==> integration suites"

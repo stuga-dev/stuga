@@ -139,23 +139,32 @@ final class Services: JobControl {
         return Look(ready: Ready(status: answer?.status, body: answer?.body), node: job(config.nodeLabel), postgres: job(config.postgresLabel))
     }
 
-    /// What the logs add to a stopped node: why it stopped, when they say.
+    /// What the logs add to a stopped node, or one refusing its data: why, when they say.
     func detail(_ fault: Fault) -> String? {
+        if fault == .refused {
+            let prefix = "[node] refusing this database: "
+            guard let newest = newestNodeLog(), let line = tail(newest).last(where: { $0.hasPrefix(prefix) }) else { return nil }
+            return String(line.dropFirst(prefix.count))
+        }
         guard fault == .nodeStopped else { return nil }
         // The wrapper's last word is the latest try: still waiting for Postgres, or given up on it.
         if let wrapper = tail(config.logs + "/node-wrapper.log").last,
            wrapper.contains("Postgres has not accepted connections") || wrapper.contains("waiting for Postgres") {
             return "Postgres is not accepting connections."
         }
-        // Else the node's own log, one per weekday: its last word, when that is why it stopped.
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: config.logs)) ?? []
-        let newest = names.filter { $0.hasPrefix("node-") && $0.hasSuffix(".log") && $0 != "node-wrapper.log" }
-            .map { config.logs + "/" + $0 }
-            .max { modified($0) < modified($1) }
-        guard let newest, let last = tail(newest).last(where: { $0.hasPrefix("[node] ") }),
+        // Else the node's own log: its last word, when that is why it stopped.
+        guard let newest = newestNodeLog(), let last = tail(newest).last(where: { $0.hasPrefix("[node] ") }),
               last.hasPrefix("[node] configuration error: ") || last.hasPrefix("[node] failed to start")
         else { return nil }
         return String(last.dropFirst("[node] ".count))
+    }
+
+    /// The node's own log, one per weekday: the one written last.
+    func newestNodeLog() -> String? {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: config.logs)) ?? []
+        return names.filter { $0.hasPrefix("node-") && $0.hasSuffix(".log") && $0 != "node-wrapper.log" }
+            .map { config.logs + "/" + $0 }
+            .max { modified($0) < modified($1) }
     }
 
     /// Is something already listening on the port?
@@ -424,7 +433,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     switch services.watch.observe(services.look(), at: Date()).health {
                     case .serving: break waiting
                     case .down(let fault): throw Failure(fault, detail: services.detail(fault))
-                    case .starting, .installing: Thread.sleep(forTimeInterval: 1)
+                    case .starting, .installing, .restoring: Thread.sleep(forTimeInterval: 1)
                     }
                 }
                 update {
@@ -464,7 +473,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 switch health {
                 case .serving: self.phase = .running
                 // launchd is (re)starting it: KeepAlive after a crash, or waiting for Postgres.
-                case .starting, .installing: self.phase = .starting
+                case .starting, .installing, .restoring: self.phase = .starting
                 case .down(let fault): self.phase = .failed(heading: fault.title, detail: detail)
                 case nil: self.phase = .stopped
                 }

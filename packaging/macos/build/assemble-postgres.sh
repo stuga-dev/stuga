@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Assemble the Postgres tree the Mac node runs: Postgres.app's Contents/Versions/<major>,
-# pruned, with ParadeDB's pg_search added. Nothing is compiled.
+# pruned, with ParadeDB's pg_search added, its local symbols stripped and signed ad hoc.
+# Nothing is compiled.
 #
 #   packaging/macos/build/assemble-postgres.sh <out-dir>
 #
@@ -13,6 +14,8 @@ here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/../../versions.env"
 # shellcheck source=lib/fetch.sh
 . "$here/lib/fetch.sh"
+# shellcheck source=lib/devtools.sh
+. "$here/lib/devtools.sh"
 
 out="${1:-}"
 [ -n "$out" ] || { echo "usage: $0 <out-dir>" >&2; exit 2; }
@@ -55,5 +58,9 @@ payload="$(find "$work/pg_search" -type d -name Payload -path "*pg_search-$PG_MA
 [ -f "$payload/lib/postgresql/pg_search.dylib" ] || { echo "error: no pg_search.dylib in $pkg" >&2; exit 1; }
 ditto "$payload/lib/postgresql/pg_search.dylib" "$out/lib/postgresql/pg_search.dylib"
 ditto "$payload/share/postgresql/extension" "$out/share/postgresql/extension"
+# About 18 MB smaller. Postgres.app's postgres disables library validation, so it loads the ad-hoc
+# signature; a release signs the whole tree again (sign.sh).
+use_working_developer_tools
+strip_local_symbols "$out/lib/postgresql/pg_search.dylib"
 
 "$here/check-tree.sh" "$out"

@@ -8,7 +8,7 @@ import { after, test } from "node:test";
 
 const lib = new URL("../connector/lib.sh", import.meta.url).pathname;
 const build = new URL("../connector/build.sh", import.meta.url).pathname;
-const helper = new URL("../../macos/runtime/bin/helper.sh", import.meta.url).pathname;
+const release = new URL("../../macos/runtime/bin/release.sh", import.meta.url).pathname;
 const roots = [];
 after(() => roots.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
 
@@ -66,8 +66,8 @@ test("build.sh signs only the Mac's connector, and builds only natively", () => 
   assert.match(cross.stderr, new RegExp(`build ${foreign} on ${foreign}, not on `));
 });
 
-test("the requirement is the helper's, of the team helper.sh pins", () => {
-  const team = run('pinned_team "$1"', [helper]).trim();
+test("the requirement is the helper's, of the team release.sh pins", () => {
+  const team = run('pinned_team "$1"', [release]).trim();
   assert.equal(team, "8W9F4LY7AP");
   assert.equal(
     run('connector_requirement "$1"', [team]),
@@ -75,8 +75,8 @@ test("the requirement is the helper's, of the team helper.sh pins", () => {
   );
 });
 
-test("a helper that pins no team gives none", () => {
-  const file = join(scratch(), "helper.sh");
+test("a release.sh that pins no team gives none", () => {
+  const file = join(scratch(), "release.sh");
   writeFileSync(file, 'local team="${STUGA_TEAM:-X}"\n');
   assert.equal(run('pinned_team "$1"', [file]), "");
 });

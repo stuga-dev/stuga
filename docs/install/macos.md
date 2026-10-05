@@ -28,7 +28,7 @@ its Postgres test suites against this exact build before every release.
 
 | Item | |
 |---|---|
-| The status line | `Running at <address>`, `Ready to set up at <address>`, `Starting…`, `Installing an update…`, or what is wrong once Stuga has been failing for a minute, such as `Stuga is not responding`. |
+| The status line | `Running at <address>`, `Ready to set up at <address>`, `Starting…`, `Installing an update…`, `Restoring a backup…`, `Stuga is older than its data`, or what is wrong once Stuga has been failing for a minute, such as `Stuga is not responding`. |
 | **Open Stuga** | Opens the node in your browser. While nobody has claimed it, **Set Up Stuga…** opens the setup page with the setup code filled in; someone who is not an administrator of the Mac is asked for an administrator's password. The menu also opens that page itself whenever it starts, at login included, until the node is claimed. |
 | **Copy Address** | Copies the address other devices use. While nobody has claimed the node it is **Copy Setup Link**, which copies the setup page's link with the code in it, for setting up from another browser. |
 | **Show Address as QR Code…** | Shows that address for a phone's camera; while nobody has claimed the node, **Show Setup Link as QR Code…** shows the setup link instead. |
@@ -41,7 +41,9 @@ Double-clicking Stuga in Applications opens the node too.
 
 When Stuga stops, cannot reach its database or stops responding, and is still failing a minute
 later, the menu says so once, in an alert with **Restart Stuga…** and **Show Logs**. Starting,
-however slowly, backing up and installing an update do not count.
+however slowly, backing up, installing an update and restoring a backup do not count. When Stuga is
+older than its data ([Go back to an earlier version](#go-back-to-an-earlier-version)), the alert
+comes at once, with **Open Stuga**, which the menu offers too: its page says what to do.
 
 ### Network
 
@@ -81,16 +83,43 @@ keeping the newest three; **Settings → This node → Backups** changes both
 of those, and older ones after the node removes them; the live database is excluded from Time
 Machine on purpose.
 
+### Go back to an earlier version
+
+Going back restores a backup with the version that served it, in one command:
+
+```sh
+sudo "/Library/Application Support/Stuga/current/bin/stuga" restore <backup>
+```
+
+**Settings → This node → Backups** shows that command under **Restore…** beside each backup. The one
+marked **Before upgrading from <version>** holds the data as it was before the update.
+
+The command checks everything before it stops anything: the backup, the disk space, and that
+version's package, which it downloads from the version's
+[release](https://github.com/stuga-dev/stuga/releases) and checks as **Update now** does. It asks
+you to type the backup's name, then installs that version, restores the backup with it and starts
+Stuga; the menu says `Restoring a backup…` meanwhile. Without a connection, download
+`Stuga-<version>.pkg` elsewhere and pass it with `--pkg Stuga-<version>.pkg`. What the restore
+replaced is kept, and the command ends with how to remove it. If it stops after installing the
+earlier version, Stuga stays stopped with the data unchanged, and the message says how to finish or
+go forward.
+
+Going back reaches 0.1.12 and later releases that run the same Postgres major, pg_search and
+pgvector as the version running; a release that changes one says so in its upgrade notes. To
+restore a backup of a newer version's data, update first. Opening an earlier `Stuga.pkg` instead
+changes no data: from 0.1.12 on, an earlier Stuga refuses data a newer one served, and the menu says
+`Stuga is older than its data`.
+
 ### Where things live
 
 | Path | Holds |
 |---|---|
 | `/Applications/Stuga.app` | The menu-bar app. |
-| `/Library/Application Support/Stuga/runtime/<version>/` | The runtime: Postgres, Node.js, Stuga, and the scripts launchd runs. `THIRD-PARTY-NOTICES.txt` there lists the licenses of what it redistributes. `current` points at the one in use; the one before it is kept. |
+| `/Library/Application Support/Stuga/runtime/<version>/` | The runtime: Postgres, Node.js, Stuga, the scripts launchd runs, and `bin/stuga`, the [operator commands](#operator-commands). `THIRD-PARTY-NOTICES.txt` there lists the licenses of what it redistributes. `current` points at it; an update replaces it. |
 | `/Library/Application Support/Stuga/data/` | The Postgres cluster (`pgdata`), the node's data directory (`node`, `DATA_DIR`) and the backups (`backups`), owned by `_stuga`. |
 | `/Library/Application Support/Stuga/setup/` | The setup code (`SETUP_CODE_FILE`) until someone claims the node, readable by the node and the Mac's administrators. |
 | `/Library/Application Support/Stuga/remote/` | What the node shares with the connector (`STUGA_REMOTE_DIR`): its settings, its credential and the node's socket. |
-| `/Library/Application Support/Stuga/connector/` | The connector, one directory per build; `current` points at the one in use, and the one before it is kept. Only `_stugaremote` can run it. |
+| `/Library/Application Support/Stuga/connector/` | The connector this version names, in a directory named by its checksum; `current` points at it. Only `_stugaremote` can run it. |
 | `/Library/LaunchDaemons/dev.stuga.{postgres,node,helper,remote}.plist` | The services' definitions. `helper` installs a newer package, and starts and stops the connector, when the node asks. `remote` runs the connector, and is off until remote access is turned on. |
 | `/Library/Logs/Stuga/` | The node's log, one file per weekday, and the services' own; the connector's are in `remote/`. |
 
@@ -106,30 +135,33 @@ sudo launchctl bootstrap system /Library/LaunchDaemons/dev.stuga.node.plist
 An upgrade keeps the variables you added. The ones the package sets itself go back to its values,
 except `PUBLIC_ORIGIN`, which it keeps.
 
-### stuga-node commands
+### Operator commands
 
-The operator commands in [Operations](../operations.md) run as `_stuga`, with the node's
-environment. This shell function reads it from the node's definition. Add it to `~/.zshrc`:
+The operator commands in [Operations](../operations.md) run through `bin/stuga`, as root. It runs
+each one as the node runs: as `_stuga`, with the node's environment.
 
 ```sh
-stuga-node() (
-  plist=/Library/LaunchDaemons/dev.stuga.node.plist
-  root="/Library/Application Support/Stuga"
-  vars=()
-  for key in $(plutil -extract EnvironmentVariables raw -o - "$plist"); do
-    vars+=("$key=$(plutil -extract "EnvironmentVariables.$key" raw -o - "$plist")")
-  done
-  cd "$root/data" && sudo -u _stuga env "${vars[@]}" "$root/current/node/bin/node" "$root/current/app/services/node/bin/stuga-node.js" "$@"
-)
+stuga="/Library/Application Support/Stuga/current/bin/stuga"
+sudo "$stuga" list
+sudo "$stuga" verify <backup>
+sudo "$stuga" restore [--yes] [--pkg <file>] <backup>
+sudo "$stuga" reset-password <username>
+sudo "$stuga" media-scan [--reclaim] [--empty-trash[=<days>]] [--grace-hours=<hours>]
 ```
 
-`reset-password`, `media-scan`, `verify` and `list` run beside a running node. `restore` needs the
-node stopped, and Postgres running:
+A `<backup>` is a name in the backup directory, or a path. `restore` stops the node, restores and
+starts it again, going back to an earlier version when the backup is one
+([above](#go-back-to-an-earlier-version)); the others run beside a running node. **Back up now**
+under **Settings → This node → Backups** takes a backup.
+
+A restore keeps what it replaced. Once you are satisfied, remove both copies. `restore` prints the
+commands, and `list` names them:
 
 ```sh
-sudo launchctl bootout system/dev.stuga.node
-stuga-node restore <backup>
-sudo launchctl bootstrap system /Library/LaunchDaemons/dev.stuga.node.plist
+root="/Library/Application Support/Stuga"
+sudo -u _stuga "$root/current/postgres/bin/psql" -h "$root/data/run" -U stuga -d postgres \
+  -c 'DROP DATABASE "stuga_replaced_<stamp>"'
+sudo rm -rf "$root/data/node.replaced-<stamp>"
 ```
 
 ### Uninstall
@@ -184,7 +216,7 @@ Switching branches or rebuilding the web app in it changes what Stuga runs.
 | `--origin <url>` | The address other devices use, such as `http://192.168.1.50:8787`. By default the address follows the Mac's local host name. |
 | `--local-only` | Serve this Mac only. |
 | `--app-dir <dir>` | Where Stuga.app goes. Default `~/Applications`. |
-| `--identity <name>` | Sign the Postgres tree and the app with this code-signing identity, which turns on library validation. Without it the app is signed ad hoc. |
+| `--identity <name>` | Sign the Postgres tree, Node and the app with this code-signing identity, which turns on library validation. Without it, Node, pg_search and the app are signed ad hoc, and the rest of the Postgres tree keeps its upstream signatures. |
 | `--postgres-tree <dir>` | Copy this Postgres tree instead of the pinned one. |
 | `--skip-web-build` | Use the checkout's web app and MCP server builds as they are. |
 | `--uninstall` | Remove the app and the runtime, and keep the data. |
@@ -259,7 +291,7 @@ file said, and prints a `replaced` line for each one whose value it changes: `PU
 `EXTRA_ORIGINS`, `BIND`, `PORT`, `DATA_DIR`, `DATABASE_URL`, `PG_BIN`, `NODE_ENV`, `STUGA_ROOT`,
 `STUGA_LOG_DIR` and `STUGA_RESTART_HINT`. `--uninstall` removes the file.
 
-### stuga-node commands
+### Operator commands
 
 The operator commands are the node's own `stuga-node` commands, described in
 [Operations](../operations.md). They need the node's environment. This shell function reads it from

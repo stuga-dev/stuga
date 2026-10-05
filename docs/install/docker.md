@@ -48,7 +48,7 @@ Until the node serves, it answers with a page that says it is starting. `./stuga
 | `compose.yml` | The stack, with its three images pinned to one release. An upgrade replaces it, so do not edit it. |
 | `.env` | Your settings and the database password, readable only by you. Compose reads it, and passes it to the node. |
 | `stuga` | The operator commands. |
-| `compose.rollback.yml` | Only after going back to an older release: keeps the node on it until the next upgrade, through `COMPOSE_FILE` in `.env`. See [Roll back](#roll-back). |
+| `compose.rollback.yml` | Only while the stack runs another release than `compose.yml` names, after a restore or a failed upgrade: keeps the node, Postgres and remote access on it until the next upgrade, through `COMPOSE_FILE` in `.env`. See [Roll back](#roll-back). |
 | `data/node/` | The node's data directory (`DATA_DIR`): document snapshots, media, per-actor SQLite stores, the signing key and secrets. |
 | the `stuga_pgdata` volume | The Postgres cluster. `docker volume inspect stuga_pgdata` shows where Docker keeps it. |
 | the `stuga_remote` volume | What the node and the remote access connector share: its settings, credential and socket. The node writes it again, so it is not backed up. |
@@ -88,8 +88,8 @@ out. To change it, delete the line and run `docker compose stop node`, `./stuga 
 
 To add to the stack, for example another volume, put the change in `compose.override.yml` and set
 `COMPOSE_FILE=compose.yml:compose.override.yml` in `.env`, so that `./stuga` uses the same files
-as `docker compose`. After a [roll back](#roll-back), `COMPOSE_FILE` also names
-`compose.rollback.yml`: leave it there.
+as `docker compose`. While the stack runs another release than `compose.yml` names
+([Roll back](#roll-back)), `COMPOSE_FILE` also names `compose.rollback.yml`: leave it there.
 
 ### Reaching the node from other devices
 
@@ -127,16 +127,17 @@ check and `./stuga` then reach the node over https.
 ## Operator commands
 
 `./stuga` runs the node's own `stuga-node` commands in a one-off container of the image that
-created the node's container, and stops and starts the node around the commands that need that.
+created the node's container (for a restore, the backup's release), and stops and starts the node
+around the commands that need that.
 What each command does, and its exit codes, are described in [Operations](../operations.md).
 
 | Command | |
 |---|---|
-| `./stuga status` | Version, schema, whether the node is serving, the last backup, the remote access connector's state, and the setup link while nobody has claimed the node. |
+| `./stuga status` | Version, the release that last served the data, schema, whether the node is serving or why it refuses the data, the last backup, the remote access connector's state, and the setup link while nobody has claimed the node. |
 | `./stuga backup` | Stops the node, takes a verified backup, and starts the node again. |
-| `./stuga verify <backup>` | Checks that a backup is whole and that this release can restore it. |
+| `./stuga verify <backup>` | Checks that a backup is whole and restorable here. |
 | `./stuga list` | Backups, and what restores kept beside the data. |
-| `./stuga restore [--yes] <backup>` | Verifies the backup while the node still serves, asks you to type its name, restores it, and starts the node on the release that took the backup. |
+| `./stuga restore [--yes] <backup>` | Pulls the images of the release that served the backup's data, verifies the backup while the node still serves, asks you to type its name, restores it, and starts the stack on that release. |
 | `./stuga upgrade [<version>]` | Fetches the newest release's files (or the named one's), pulls its images unless they are already on the machine, starts them and waits until the node serves. The node backs up before it upgrades. |
 | `./stuga reset-password <username>` | Prints a password reset link. The node must be running. |
 | `./stuga media-scan [--reclaim] [--empty-trash[=<days>]] [--grace-hours=<hours>]` | Reports or reclaims media no document uses. The node must be running. |
@@ -172,14 +173,17 @@ It downloads that release's `compose.yml`, `env.example` and `stuga` over the on
 `.env` is not touched), pulls the new images, starts them and waits until the node serves. The new
 version backs up the database before it changes anything, and answers with a page that says so
 meanwhile. `./stuga upgrade` ends by printing the version change and the restore command that
-undoes it; if the new version does not serve, it prints the command for the node's log and the same
-restore command, or, when the new version stopped before its backup and changed nothing, keeps the
-node on the previous release as [Roll back](#roll-back) describes. It refuses an older release than the running one: going back is a restore. Compare
-the new `env.example` with your `.env` for settings the release adds. When `.env` has no
-`POSTGRES_PASSWORD`, the upgrade stops the node and gives the database a random one first.
+undoes it; if the new version does not serve, it prints the command for the node's log and the
+restore command for the backup that version took, or, when it stopped before that backup and
+changed nothing, stops it and keeps the stack on the previous release as [Roll back](#roll-back)
+describes. It refuses a release older than the one that last served the data, downloaded or put
+there by hand, with the node running or stopped: going back is a restore. Compare the new
+`env.example` with your `.env` for settings the release adds. When `.env` has no `POSTGRES_PASSWORD`, the upgrade stops the
+node and gives the database a random one first.
 
 A NAS app store that updates the images does the same without `./stuga`: the node backs up before it
-upgrades, whatever started it.
+upgrades, whatever started it. A NAS app or an image set to an older release than the one that
+served the data refuses it and changes nothing.
 
 ### Without a connection to the registry
 
@@ -200,8 +204,8 @@ docker save -o "stuga-$V-images.tar" "ghcr.io/stuga-dev/stuga-node:$V" \
 ```
 
 Carry the three files and the archive to the node. There, load the images, put the three files over
-the ones in the Stuga directory, and upgrade as usual. With a `compose.yml` naming another version
-than the running one, `./stuga upgrade` uses it as it is and downloads nothing:
+the ones in the Stuga directory, and upgrade as usual. With a `compose.yml` naming a newer version
+than the one that served the data, `./stuga upgrade` uses it as it is and downloads nothing:
 
 ```sh
 docker load -i stuga-1.2.3-images.tar
@@ -210,25 +214,32 @@ chmod +x stuga
 ```
 
 The backup, the wait and the way back are the same as with a connection. Keep the previous version's
-images until you are satisfied with the new one: a roll back starts the node on them, and
+images until you are satisfied with the new one: a roll back starts the stack on them, and
 `docker image prune -a` would remove them. A first install works the same way, with
 `./stuga db-password` and `docker compose up -d` in place of `./stuga upgrade`.
 
 ## Roll back
 
-Restore the backup the new version took before it upgraded, which `./stuga upgrade` names:
+Restore the backup the new version took before it upgraded, which `./stuga upgrade` names and
+**Settings → This node → Backups** shows with its command:
 
 ```sh
 ./stuga restore <backup>
 ```
 
-The node comes back on the release whose data the backup holds. Keep `compose.yml`: it names the
+The stack comes back on the release whose data the backup holds: the node, Postgres and remote
+access, whose images the restore pulls before it stops anything. Keep `compose.yml`: it names the
 newer images, but an older release's `compose.yml` does not know the database password. The
-restore writes `compose.rollback.yml`, which keeps the node on the older release, and adds it to
-`COMPOSE_FILE` in `.env`, so `docker compose up -d` keeps the node there too.
+restore writes `compose.rollback.yml`, which pins all three images to the older release, and adds
+it to `COMPOSE_FILE` in `.env`, so `docker compose up -d` keeps the stack there too.
 
 The next `./stuga upgrade` takes `compose.rollback.yml` out of `.env` and deletes it before it
 starts the newer release.
+
+A node started on an older release than the one that served its data, by hand, by a NAS app or by
+`install.sh --version`, refuses the data and changes nothing: its page and log say what to do, and
+`./stuga status` says why. `./stuga upgrade <version>`, with the version that served the data,
+puts that release back.
 
 ## Uninstall
 

@@ -3,8 +3,11 @@
  * Whole: the manifest parses, each half matches its recorded size and sha256,
  * the dump reads back through pg_restore and the archive through tar.
  * Restorable here: the Postgres major matches this runtime and the server, the
- * schema is not newer than this runtime's, and the embedding width matches the
- * node's. Verify only reads; a restore runs all of it first.
+ * schema is not newer than this runtime's, no newer release served the data,
+ * and the embedding width matches the node's. Going back (--going-back), an
+ * extension both hold must also be at the backup's version: an older extension
+ * must never open indexes a newer one wrote. Verify only reads; a restore runs
+ * all of it but the extension check first.
  */
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,6 +18,7 @@ import { sessionConnection } from "../writer-lock.js";
 import { ARCHIVE_NAME, DUMP_NAME, readManifest, type Manifest } from "./manifest.js";
 import { messageOf, refused, throwIfInterrupted } from "./outcome.js";
 import { listArchive, pgTool, run, sha256File } from "./tools.js";
+import { versionChange } from "../version.js";
 
 export interface VerifyResult {
   path: string;
@@ -85,6 +89,13 @@ export function checkCompatibility(env: BackupEnv, manifest: Manifest, serverVer
         `this runtime only knows schema ${SCHEMA_VERSION}. Restore it with the runtime that took it. Nothing was changed.`,
     );
   }
+  const served = manifest.stuga_version;
+  if (served && versionChange(served, env.version) === "downgrade") {
+    throw refused(
+      `this backup holds data Stuga ${served} served, and this is Stuga ${env.version}, which would refuse it. ` +
+        `Restore it with Stuga ${served} or newer. Nothing was changed.`,
+    );
+  }
   if (manifest.schema_version < SCHEMA_VERSION) {
     notes.push(`the backup is at schema ${manifest.schema_version}; the node migrates it to schema ${SCHEMA_VERSION} when it starts`);
   }
@@ -103,7 +114,7 @@ export function checkCompatibility(env: BackupEnv, manifest: Manifest, serverVer
   return notes;
 }
 
-export async function runVerify(env: BackupEnv, dir: string): Promise<VerifyResult> {
+export async function runVerify(env: BackupEnv, dir: string, opts: { goingBack?: boolean } = {}): Promise<VerifyResult> {
   const manifest = await verifyIntegrity(env, dir);
   // Everything else is still checked when the server does not answer.
   const sql = sessionConnection(env.databaseUrl, "postgres");
@@ -113,5 +124,38 @@ export async function runVerify(env: BackupEnv, dir: string): Promise<VerifyResu
     .finally(() => sql.end({ timeout: 5 }).catch(() => {}));
   const notes = checkCompatibility(env, manifest, serverVersionNum);
   if (serverVersionNum === null) notes.push("the server did not answer; its major was not compared");
+  if (opts.goingBack) {
+    const live = await liveExtensions(env.databaseUrl);
+    if (live === null) notes.push("the current database did not answer; its extensions were not compared");
+    else checkSameExtensions(live, manifest.extensions);
+  }
   return { path: dir, manifest, notes };
+}
+
+/** The current database's extensions and their versions; null when it does not answer or does not exist. */
+async function liveExtensions(databaseUrl: string): Promise<Map<string, string> | null> {
+  const sql = sessionConnection(databaseUrl);
+  try {
+    const rows = await sql<{ extname: string; extversion: string }[]>`SELECT extname, extversion FROM pg_extension`;
+    return new Map(rows.map((r) => [r.extname, r.extversion]));
+  } catch {
+    return null;
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+/**
+ * Only an extension both hold: one the older build does not ship has no older files to open newer
+ * indexes, and one the newer build dropped comes back from the dump.
+ */
+export function checkSameExtensions(live: Map<string, string>, recorded: Record<string, string>): void {
+  const name = Object.keys(recorded)
+    .sort()
+    .find((n) => live.has(n) && live.get(n) !== recorded[n]);
+  if (name === undefined) return;
+  throw refused(
+    `the current data has ${name} ${live.get(name)} and this backup ${name} ${recorded[name]}: ` +
+      `going back across an extension update is not supported. Nothing was changed.`,
+  );
 }

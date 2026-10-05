@@ -4,10 +4,11 @@
 import Foundation
 
 /// What /ready answered. The node answers once it owns its database: 200 when it serves, 503 with a
-/// `status` while it starts, backs up, upgrades or makes a backup, and a bare 503 when its database
-/// does not answer. Silent is no answer within the caller's timeout.
+/// `status` while it starts, backs up, upgrades or makes a backup, 503 `refused` while it refuses
+/// data a newer version served, until it is stopped, and a bare 503 when its database does not
+/// answer. Silent is no answer within the caller's timeout.
 enum Ready: Equatable {
-    case serving, busy, databaseUnreachable, silent
+    case serving, busy, refused, databaseUnreachable, silent
 
     init(status: Int?, body: Data?) {
         guard let status else {
@@ -15,7 +16,13 @@ enum Ready: Equatable {
             return
         }
         let json = body.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
-        self = status == 200 ? .serving : json?["status"] is String ? .busy : .databaseUnreachable
+        if status == 200 {
+            self = .serving
+        } else if status == 503, json?["status"] as? String == "refused" {
+            self = .refused
+        } else {
+            self = json?["status"] is String ? .busy : .databaseUnreachable
+        }
     }
 }
 
@@ -56,7 +63,7 @@ struct Job: Equatable {
 
 /// What a failure looks like from outside.
 enum Fault: Equatable {
-    case nodeStopped, postgresStopped, databaseUnreachable, notResponding
+    case nodeStopped, postgresStopped, databaseUnreachable, notResponding, refused
 
     var title: String {
         switch self {
@@ -64,16 +71,19 @@ enum Fault: Equatable {
         case .postgresStopped: return "Stuga's database stopped and has not started again"
         case .databaseUnreachable: return "Stuga cannot reach its database"
         case .notResponding: return "Stuga is not responding"
+        case .refused: return "Stuga is older than its data"
         }
     }
 }
 
-/// One look at the node: /ready's answer, both jobs, and whether a package is being installed.
+/// One look at the node: /ready's answer, both jobs, and whether a package is being installed or a
+/// backup restored.
 struct Look {
     var ready: Ready
     var node: Job
     var postgres: Job
     var installing = false
+    var restoring = false
 }
 
 enum Health: Equatable {
@@ -82,8 +92,13 @@ enum Health: Equatable {
     case starting
     /// A package is being installed, which stops Stuga on purpose.
     case installing
-    /// Failing for a minute. It stays until the node serves again.
+    /// A backup is being restored (bin/stuga's hold mark), which stops Stuga on purpose.
+    case restoring
+    /// Failing for a minute, or refusing its data at once. It stays until the node serves again.
     case down(Fault)
+
+    /// Restarting is for a failure; it would cut into an install or a restore.
+    var mayRestart: Bool { self != .installing && self != .restoring }
 }
 
 /// Tells a slow start from a failure, across looks a few seconds apart.
@@ -94,7 +109,8 @@ enum Health: Equatable {
 /// or the very process that served no longer answering. Down is still failing a minute after the
 /// first failure without serving since. A job that keeps failing to start runs for a moment on every
 /// try, so a try does not restart the minute; a crash launchd recovers from passes quietly, however
-/// slowly the new process starts.
+/// slowly the new process starts. A node that refuses its data says so itself, and waiting will not
+/// change it: that is down at once, and announced once.
 struct Watch {
     static let patience: TimeInterval = 60
     /// An install that stopped before its postinstall leaves its mark; after this it no longer counts.
@@ -122,11 +138,24 @@ struct Watch {
             servedBy = look.node.pid
             return (.serving, nil)
         }
+        if look.restoring {
+            forget()
+            servedBy = nil
+            return (.restoring, nil)
+        }
         if look.installing {
             forget()
             servedBy = nil
             return (.installing, nil)
         }
+        if look.ready == .refused {
+            let first = fault != .refused
+            failedAt = failedAt ?? now
+            fault = .refused
+            announced = true
+            return (.down(.refused), first ? .refused : nil)
+        }
+        if fault == .refused { forget() }
         if let seen = evidence(look, since: earlier) {
             let since = failedAt ?? now
             failedAt = since

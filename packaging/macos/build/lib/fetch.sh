@@ -53,11 +53,13 @@ go_url() {
 }
 
 # cached_postgres_tree: prints the path of an assembled Postgres tree for the current pins,
-# assembling it on first use. Keyed by the input checksums, so a re-pinned asset rebuilds.
+# assembling it on first use. Keyed by the input checksums and the scripts that assemble it, so a
+# re-pinned asset or a changed step rebuilds. Older trees stay: a dev cluster may run from one.
 cached_postgres_tree() {
   local lib key tree
   lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-  key="$(printf '%s %s' "$POSTGRES_APP_DMG_SHA256" "$PG_SEARCH_POSTGRESAPP_PKG_SHA256" | shasum -a 256 | cut -c1-12)"
+  key="$( { printf '%s %s\n' "$POSTGRES_APP_DMG_SHA256" "$PG_SEARCH_POSTGRESAPP_PKG_SHA256" &&
+    cat "$lib/../assemble-postgres.sh" "$lib/../prune.sh" "$lib/devtools.sh"; } | shasum -a 256 | cut -c1-12)" || return 1
   tree="$STUGA_MACOS_CACHE/postgres-$PG_MAJOR-$key"
   if [ ! -x "$tree/bin/postgres" ]; then
     rm -rf "$tree" "$tree.partial" || return 1

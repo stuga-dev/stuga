@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
+import { CodeBlock } from "@astryxdesign/core/CodeBlock";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { HStack } from "@astryxdesign/core/HStack";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Switch } from "@astryxdesign/core/Switch";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
-import { NodeSettings as NodeApi, type NodeBackups, type NodeOperationalSettings } from "../../../api";
+import { Check, Copy } from "lucide-react";
+import { NodeSettings as NodeApi, type NodeBackup, type NodeBackups, type NodeOperationalSettings } from "../../../api";
+import { copyText } from "../../../lib/clipboard";
 import { byteSize, relativeTime, versionLabel } from "../../../lib/format";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 
@@ -58,6 +63,9 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
   /** Waiting for a backup this page started: the node pauses for it, so a failed read means "not yet". */
   const [waiting, setWaiting] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The backup whose restore command is shown; kept while the dialog closes. */
+  const [restoring, setRestoring] = useState<NodeBackup | null>(null);
+  const [restoreOpen, setRestoreOpen] = useState(false);
 
   const load = useCallback(async () => {
     const next = await NodeApi.backups();
@@ -116,7 +124,7 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
   const zone = ops.time_zone;
   const { auto, hour, weekday, keep } = ops.backups;
   const newest = state?.backups[0] ?? null;
-  /** Kept beyond `keep`, as the node's retention keeps it: what a downgrade restores. */
+  /** Kept beyond `keep`, as the node's retention keeps it: what going back restores. */
   const lastUpgrade = state?.backups.find((b) => b.before_upgrade) ?? null;
   const total = state?.backups.reduce((sum, b) => sum + b.bytes, 0) ?? 0;
 
@@ -244,9 +252,22 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
                   label={versionLabel(b.created_at)}
                   description={note || undefined}
                   endContent={
-                    <Text type="supporting" color="secondary">
-                      {byteSize(b.bytes)}
-                    </Text>
+                    <HStack gap={2} vAlign="center">
+                      <Text type="supporting" color="secondary">
+                        {byteSize(b.bytes)}
+                      </Text>
+                      {b.restore_command && (
+                        <Button
+                          label="Restore…"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setRestoring(b);
+                            setRestoreOpen(true);
+                          }}
+                        />
+                      )}
+                    </HStack>
                   }
                 />
               );
@@ -254,6 +275,51 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
           </List>
         )}
       </VStack>
+      <RestoreDialog backup={restoring} isOpen={restoreOpen} onClose={() => setRestoreOpen(false)} />
     </VStack>
+  );
+}
+
+/**
+ * The command that restores a backup on the node's machine. The page only shows it: going back is done there,
+ * and whether that packaging can go back to the backup's version is the command's to say, before it changes anything.
+ */
+function RestoreDialog({ backup, isOpen, onClose }: { backup: NodeBackup | null; isOpen: boolean; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) setCopied(false);
+  }, [isOpen, backup]);
+
+  const command = backup?.restore_command ?? "";
+  return (
+    <Dialog isOpen={isOpen} onOpenChange={(o) => !o && onClose()} width={520}>
+      <Layout
+        header={<DialogHeader title="Restore this backup" onOpenChange={(o) => !o && onClose()} />}
+        content={
+          <LayoutContent>
+            <VStack gap={3}>
+              <Text type="supporting" color="secondary">
+                Run this on the machine that runs Stuga. It checks the backup first, and asks before it changes anything.
+              </Text>
+              <CodeBlock code={command} language="bash" width="100%" isWrapped size="sm" hasCopyButton={false} />
+            </VStack>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <HStack gap={2} justify="end">
+              <Button
+                label={copied ? "Copied" : "Copy"}
+                variant="secondary"
+                icon={copied ? <Check size={15} /> : <Copy size={15} />}
+                onClick={() => void copyText(command).then(setCopied)}
+              />
+              <Button label="Done" variant="primary" onClick={onClose} />
+            </HStack>
+          </LayoutFooter>
+        }
+      />
+    </Dialog>
   );
 }

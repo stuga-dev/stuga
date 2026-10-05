@@ -2,10 +2,12 @@
  * stuga-node serve|backup|verify|restore|list|reset-password|media-scan|archive.
  *
  * backup, verify, restore, list and archive check take --json for one JSON object on stdout; with
- * it only notes and errors go to stderr. Operator command exit codes: 0 done, 2 refused with
- * nothing changed, 3 failed with nothing changed, 4 failed after a change; serve exits 1 when it
- * cannot start. Operator commands never boot a node, so none is a second writer beside a running
- * one.
+ * it only notes and errors go to stderr. verify --going-back also compares the version of each
+ * extension the current database and the backup both hold. Operator command exit codes: 0 done,
+ * 2 refused with nothing changed, 3 failed with nothing changed, 4 failed after a change; serve
+ * exits 1 when it cannot start. Operator commands never boot a node, so none is a second writer
+ * beside a running one; reset-password and media-scan refuse data a newer version served, as the
+ * node does.
  */
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -18,13 +20,14 @@ import { runList } from "./ops/list.js";
 import { exitCodeOf, messageOf, refused, type ExitCode } from "./ops/outcome.js";
 import { runRestore } from "./ops/restore.js";
 import { runVerify } from "./ops/verify.js";
+import { refuseNewerData } from "./boot/data-version.js";
 import { RESET_PASSWORD_USAGE, runResetPassword } from "./identity/reset-command.js";
 import { MEDIA_SCAN_USAGE, parseMediaScanArgs, runMediaScan } from "./media/scan-command.js";
 
 const USAGE = `usage:
   stuga-node serve
   stuga-node backup [--json]
-  stuga-node verify <backup> [--json]
+  stuga-node verify <backup> [--going-back] [--json]
   stuga-node restore <backup> [--yes] [--json]
   stuga-node list [--json]
   ${RESET_PASSWORD_USAGE}
@@ -74,6 +77,7 @@ async function interruptible<T>(work: (signal: AbortSignal) => Promise<T>): Prom
 async function mediaScan(argv: string[]): Promise<ExitCode> {
   const opts = parseMediaScanArgs(argv);
   const ops = parseOpsConfig(process.env);
+  await refuseNewerData(ops.databaseUrl);
   const env = {
     sql: createClient(ops.databaseUrl),
     media: fsBlobStore(join(ops.dataDir, "blobs", "media")),
@@ -106,7 +110,12 @@ async function run(argv: string[]): Promise<ExitCode> {
   const [target] = args;
   try {
     if (command === "reset-password") {
-      return await runResetPassword(target, () => parseOpsConfig(process.env), (text) => void process.stdout.write(text));
+      const config = async () => {
+        const ops = parseOpsConfig(process.env);
+        await refuseNewerData(ops.databaseUrl);
+        return ops;
+      };
+      return await runResetPassword(target, config, (text) => void process.stdout.write(text));
     }
     if (command === "media-scan") return await mediaScan(rest);
     if (command === "archive") {
@@ -126,7 +135,7 @@ async function run(argv: string[]): Promise<ExitCode> {
       return 0;
     }
     if (command === "verify") {
-      const result = await runVerify(env, backupPath(env, target));
+      const result = await runVerify(env, backupPath(env, target), { goingBack: flags.has("--going-back") });
       say(`${result.path} is whole and restorable by this runtime`);
       for (const note of result.notes) tell(`  note: ${note}`);
       out({ ok: true, path: result.path, manifest: result.manifest, notes: result.notes });
@@ -146,7 +155,10 @@ async function run(argv: string[]): Promise<ExitCode> {
     }
     const result = await runList(env);
     if (!json) {
-      for (const b of result.backups) say(`${b.name}  stuga ${b.stuga_version ?? "?"}, schema ${b.schema_version}, ${b.bytes} bytes`);
+      for (const b of result.backups) {
+        const upgrade = b.before_upgrade ? `, taken before upgrading from ${b.stuga_version} to ${b.runtime_version}` : "";
+        say(`${b.name}  stuga ${b.stuga_version ?? "?"}, schema ${b.schema_version}, ${b.bytes} bytes${upgrade}`);
+      }
       for (const p of result.partial) say(`unfinished: ${p}`);
       for (const d of result.replacedDataDirs) say(`replaced data directory: ${d}`);
       for (const d of result.replacedDatabases ?? []) say(`replaced database: ${d}`);

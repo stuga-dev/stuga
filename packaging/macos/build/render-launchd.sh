@@ -59,6 +59,9 @@ case "$mode" in
     # launchd reads a job's environment only at bootstrap, so a kickstart keeps the old one.
     restart_hint="Edit /Library/LaunchDaemons/dev.stuga.node.plist, then reload the job (sudo launchctl bootout system/dev.stuga.node; sudo launchctl bootstrap system /Library/LaunchDaemons/dev.stuga.node.plist): a restart alone keeps the old environment."
     upgrade_hint="Choose Update now: the Mac that runs this node installs the release and backs up first. Or install the newer Stuga package on that Mac yourself."
+    # What the web shows beside each backup, to run on the Mac: bin/stuga restores it, and goes back
+    # to the version that served it.
+    restore_command="sudo \"$root/current/bin/stuga\" restore {backup}"
     ;;
   agent)
     label_prefix=dev.stuga.local
@@ -68,6 +71,7 @@ case "$mode" in
     # Stuga.app's Stop and Start boot the job out and in again, which is when launchd reads the plist.
     restart_hint="A rebuild sets the address, port, extra origins, data directory and database again, whatever the plist says: to change the address or port, rebuild with packaging/macos/local-trial/build.sh (--origin, --port, --local-only). To change anything else, edit $out/$label_prefix.node.plist, then choose Stop and Start in the menu bar."
     upgrade_hint="Take a backup, update the checkout, and run packaging/macos/local-trial/build.sh again with the flags you used before."
+    restore_command=""
     ;;
   *) usage ;;
 esac
@@ -115,6 +119,7 @@ render() { # render <template> <label>
       -e "s|@PORT@|$port|g" \
       -e "s|@RESTART_HINT@|$(replacement "$restart_hint")|g" \
       -e "s|@UPGRADE_HINT@|$(replacement "$upgrade_hint")|g" \
+      -e "s|@RESTORE_COMMAND@|$(replacement "$restore_command")|g" \
       -e "s|@REMOTE_SERVICE@|$(replacement "$remote_service")|g" \
       "$templates/$1" > "$target.tmp"
   if grep -n '@[A-Z_]*@' "$target.tmp" >&2; then
@@ -126,10 +131,11 @@ render() { # render <template> <label>
     plutil -remove UserName "$target.tmp" > /dev/null
     plutil -remove GroupName "$target.tmp" > /dev/null
     # No helper runs beside a local trial, so the node offers no install, and the connector is
-    # run by hand. Its setup code stays in the data directory, which its own user reads, and it
-    # advertises nothing over Bonjour, which macOS asks a launchd agent's user to allow.
+    # run by hand. It has no bin/stuga to restore with. Its setup code stays in the data directory,
+    # which its own user reads, and it advertises nothing over Bonjour, which macOS asks a launchd
+    # agent's user to allow.
     local key
-    for key in STUGA_UPGRADE_REQUESTS STUGA_UPGRADE_STATUS STUGA_CONNECTOR_REQUEST STUGA_CONNECTOR_STATUS SETUP_CODE_FILE STUGA_BONJOUR_NAME; do
+    for key in STUGA_UPGRADE_REQUESTS STUGA_UPGRADE_STATUS STUGA_CONNECTOR_REQUEST STUGA_CONNECTOR_STATUS SETUP_CODE_FILE STUGA_BONJOUR_NAME STUGA_RESTORE_COMMAND; do
       plutil -remove "EnvironmentVariables.$key" "$target.tmp" > /dev/null 2>&1 || true
     done
   fi

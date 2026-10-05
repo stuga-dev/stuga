@@ -10,8 +10,9 @@
 # web UI, and its build info is checked. go-licenses writes the notices, which must name every module
 # the binary links; the modules' NOTICE files go in too. With --identity frpc is signed as
 # dev.stuga.remote with the hardened runtime; with --notary-profile too, it must meet the helper's
-# requirement, a Developer ID of the team helper.sh pins, and the zip is notarized (a bare binary
-# cannot be stapled). Without either it keeps the linker's ad hoc signature: fine for CI, not to ship.
+# requirement, a Developer ID of the team runtime/bin/release.sh pins, and the zip is notarized (a
+# bare binary cannot be stapled). Without either it keeps the linker's ad hoc signature: fine for CI,
+# not to ship.
 #
 # Each target builds natively, on its own OS and architecture; the Linux ones are never signed.
 set -euo pipefail
@@ -232,9 +233,9 @@ if [ -n "$identity" ]; then
   printf '%s\n' "$signature" | grep -qx 'Identifier=dev.stuga.remote' || fail "frpc is not signed as dev.stuga.remote"
   printf '%s\n' "$signature" | grep -q '^CodeDirectory .*flags=.*runtime' || fail "frpc has no hardened runtime"
   if [ -n "$notary" ]; then
-    # What the helper requires before it installs the download, of the team it pins.
-    team="$(pinned_team "$macos/runtime/bin/helper.sh")"
-    [ -n "$team" ] || fail "runtime/bin/helper.sh pins no team"
+    # What the helper requires before it installs the download, of the team release.sh pins.
+    team="$(pinned_team "$macos/runtime/bin/release.sh")"
+    [ -n "$team" ] || fail "runtime/bin/release.sh pins no team"
     signed_by="$(printf '%s\n' "$signature" | sed -n 's/^TeamIdentifier=//p')"
     [ "$signed_by" = "$team" ] || fail "frpc is signed by team ${signed_by:-none}; the helper trusts only $team"
     codesign --verify --strict -R "$(connector_requirement "$team")" "$stage/frpc" \

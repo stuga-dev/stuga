@@ -125,8 +125,27 @@ if grep -q 'POSTGRES_PASSWORD:-' compose.yml; then
   ./stuga db-password </dev/null || fail "could not give the database a password"
 fi
 docker compose up -d
+# A node that refuses the data here, or stops, will not serve however long this waits.
+node_id="$(docker compose ps -a -q node </dev/null 2>/dev/null | head -1 || true)"
+restarts="$(docker inspect -f '{{.RestartCount}}' "$node_id" 2>/dev/null || echo 0)"
 waited=0
 until curl -fsS --max-time 5 -o /dev/null "http://127.0.0.1:$port/ready" 2>/dev/null; do
+  status="$(curl -sS --max-time 5 "http://127.0.0.1:$port/ready" 2>/dev/null | sed -n 's/.*"status":"\([^"]*\)".*/\1/p' || true)"
+  if [ "$status" = refused ]; then
+    why="$(docker compose logs --no-log-prefix --tail 50 node </dev/null 2>/dev/null | sed -n 's/.*refusing this database: //p' | tail -1 || true)"
+    fail "Stuga refuses the data here: ${why:-a newer Stuga served it last.}
+       See Roll back in docs/install/docker.md."
+  fi
+  state="$(docker inspect -f '{{.State.Status}} {{.RestartCount}}' "$node_id" 2>/dev/null || true)"
+  case "$state" in
+    exited\ * | dead\ * | restarting\ *) stopped=yes ;;
+    *\ *) if [ "${state#* }" -gt "$restarts" ]; then stopped=yes; else stopped=no; fi ;;
+    *) stopped=no ;;
+  esac
+  if [ "$stopped" = yes ]; then
+    docker compose logs --tail 20 node </dev/null >&2 || true
+    fail "Stuga stopped while starting; the end of its log is above. All of it: cd $dir && docker compose logs node"
+  fi
   if [ "$waited" -ge 900 ]; then fail "Stuga did not start within 15 minutes. Its log: cd $dir && docker compose logs node"; fi
   sleep 3
   waited=$((waited + 3))

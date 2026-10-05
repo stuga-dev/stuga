@@ -57,6 +57,7 @@ ENV NODE_ENV=production \
     STUGA_STDIO_ENTRY="" \
     STUGA_RESTART_HINT="Run docker compose up -d in your Stuga directory to apply it." \
     STUGA_UPGRADE_HINT="Run ./stuga upgrade in your Stuga directory: it downloads the release and installs it." \
+    STUGA_RESTORE_COMMAND="./stuga restore {backup}" \
     AI_OLLAMA_DEFAULT_URL=http://host.docker.internal:11434
 VOLUME /data
 EXPOSE 8787

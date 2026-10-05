@@ -14,8 +14,8 @@
 # Application certificate can be notarized. Only a Postgres tree is accepted: Node needs
 # allow-jit under hardened runtime, which this script never adds.
 #
-# Universal files are signed in every slice. Thin them (lipo -thin) before signing, if at
-# all: that invalidates a signature.
+# prune.sh has thinned the tree to arm64; each slice carries its own signature, so thinning
+# keeps it. A strip breaks it: strip before signing, never after.
 set -euo pipefail
 
 identity=""

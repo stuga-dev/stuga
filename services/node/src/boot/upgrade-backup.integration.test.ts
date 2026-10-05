@@ -1,7 +1,8 @@
 /**
- * The backup a node takes of a database another version served, against a real
- * Postgres, pg_dump and tar. Needs TEST_DATABASE_URL (Postgres 18 preloading
- * pg_search) and client tools of major 18+ from PG_BIN or PATH; skips without the URL.
+ * The backup a node takes of a database an older version, or a build from source,
+ * served, against a real Postgres, pg_dump and tar. Needs TEST_DATABASE_URL
+ * (Postgres 18 preloading pg_search) and client tools of major 18+ from PG_BIN or
+ * PATH; skips without the URL.
  */
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -121,5 +122,27 @@ describe.skipIf(!URL)("the backup before an upgrade", { timeout: 60_000 }, () =>
     expect(err).toBeInstanceOf(OpsError);
     expect((err as OpsError).exitCode).toBe(2);
     expect((err as OpsError).message).toMatch(/no longer holds/);
+  });
+
+  it("takes nothing of data a newer release served, which the node refuses before it gets here", async () => {
+    await recordNodeBoot(app as never, "1.1.0");
+    expect(await backupBeforeUpgrade({ sql: app as never, env: envAt("1.0.0"), writer })).toEqual({
+      taken: false,
+      reason: "downgrade",
+      from: "1.1.0",
+    });
+    expect(await backups()).toEqual([]);
+  });
+
+  it("backs up a release's data before a build from source serves it", async () => {
+    await recordNodeBoot(app as never, "1.0.0");
+    expect(await backupBeforeUpgrade({ sql: app as never, env: envAt("0.0.0-dev"), writer })).toMatchObject({ taken: true, from: "1.0.0" });
+    expect(await backups()).toHaveLength(1);
+  });
+
+  it("backs up a build from source's data before a release serves it", async () => {
+    await recordNodeBoot(app as never, "0.0.0-dev");
+    expect(await backupBeforeUpgrade({ sql: app as never, env: envAt("1.0.0"), writer })).toMatchObject({ taken: true, from: "0.0.0-dev" });
+    expect(await backups()).toHaveLength(1);
   });
 });

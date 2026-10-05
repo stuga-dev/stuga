@@ -32,6 +32,8 @@ vi.mock("../../../api", async (orig) => ({
   NodeSettings: nodeApi,
 }));
 vi.mock("./NodeAudit", () => ({ NodeAudit: () => null }));
+const clipboard = vi.hoisted(() => ({ copyText: vi.fn(async () => true) }));
+vi.mock("../../../lib/clipboard", async (orig) => ({ ...(await orig<typeof import("../../../lib/clipboard")>()), ...clipboard }));
 // A saved identity provider reloads the sign-in config.
 vi.mock("../../../lib/session/auth-config", async (orig) => ({
   ...(await orig<typeof import("../../../lib/session/auth-config")>()),
@@ -90,8 +92,22 @@ const BACKUPS: NodeBackups = {
   dir: "/backups",
   keep: 3,
   backups: [
-    { name: "2026-09-23T030001Z", created_at: "2026-09-23T03:00:01Z", bytes: 12 * 1024 * 1024, stuga_version: "1.9.0", before_upgrade: false },
-    { name: "2026-09-22T101500Z", created_at: "2026-09-22T10:15:00Z", bytes: 11 * 1024 * 1024, stuga_version: "1.8.0", before_upgrade: true },
+    {
+      name: "2026-09-23T030001Z",
+      created_at: "2026-09-23T03:00:01Z",
+      bytes: 12 * 1024 * 1024,
+      stuga_version: "1.9.0",
+      before_upgrade: false,
+      restore_command: "./stuga restore 2026-09-23T030001Z",
+    },
+    {
+      name: "2026-09-22T101500Z",
+      created_at: "2026-09-22T10:15:00Z",
+      bytes: 11 * 1024 * 1024,
+      stuga_version: "1.8.0",
+      before_upgrade: true,
+      restore_command: "./stuga restore 2026-09-22T101500Z",
+    },
   ],
 };
 
@@ -831,6 +847,27 @@ describe("NodeSettingsPage", () => {
     expect(host.textContent).toContain("12 MB");
     expect(host.textContent).toContain("Before upgrading from 1.8.0");
     expect(host.textContent).toContain("Next: ");
+  });
+
+  it("shows the command that restores a backup on the node's machine, and copies it", async () => {
+    await mount("backups");
+    await clickNth("Restore…", 1);
+    const dialog = document.querySelector("dialog[open]");
+    expect(dialog?.textContent).toContain("Restore this backup");
+    expect(dialog?.textContent).toContain("Run this on the machine that runs Stuga. It checks the backup first, and asks before it changes anything.");
+    // The packaging decides whether it can go back to that version; the page promises none.
+    expect(dialog?.textContent).not.toContain("1.8.0");
+    expect(dialog?.textContent).toContain("./stuga restore 2026-09-22T101500Z");
+    await confirmIn("Copy");
+    expect(clipboard.copyText).toHaveBeenCalledWith("./stuga restore 2026-09-22T101500Z");
+    expect(dialog?.textContent).toContain("Copied");
+  });
+
+  it("offers no restore where the packaging names no command", async () => {
+    nodeApi.backups.mockResolvedValue({ ...BACKUPS, backups: BACKUPS.backups.map((b) => ({ ...b, restore_command: null })) });
+    await mount("backups");
+    expect(host.textContent).toContain("Before upgrading from 1.8.0");
+    expect(visibleButtons("Restore…")).toHaveLength(0);
   });
 
   it("turns the scheduled backup off, and moves its hour", async () => {

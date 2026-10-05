@@ -4,6 +4,8 @@
 #   packaging/macos/build/check-tree.sh <tree>
 #
 # Fails when:
+#   - a Mach-O file has a slice other than arm64 (prune.sh thins them), or a signature
+#     `codesign --verify --strict` rejects: an arm64 file with a broken one is killed at load.
 #   - an arm64 LC_LOAD_DYLIB / LC_LOAD_WEAK_DYLIB / LC_REEXPORT_DYLIB is not /usr/lib/…,
 #     /System/Library/…, or @loader_path/… resolving (every symlink followed) to an arm64
 #     Mach-O inside the tree. @rpath fails too: its answer depends on who loads the library.
@@ -46,7 +48,7 @@ ids_absolute=0
 is_macho() {
   [ -f "$1" ] || return 1
   case "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" in
-    cafebabe | cffaedfe | cefaedfe | bebafeca) return 0 ;;
+    cafebabe | cafebabf | cffaedfe | cefaedfe | bebafeca) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -90,10 +92,15 @@ while IFS= read -r -d '' f; do
   machos=$((machos + 1))
   rel="${f#"$tree"/}"
 
-  if ! has_arm64 "$f"; then
-    echo "FAIL $rel: no arm64 slice"
+  archs="$(lipo -archs "$f" 2>/dev/null || true)"
+  if [ "$archs" != arm64 ]; then
+    echo "FAIL $rel: slices ${archs:-unreadable}, not arm64 alone"
     fail=1
     continue
+  fi
+  if ! codesign --verify --strict "$f" 2>/dev/null; then
+    echo "FAIL $rel: its code signature does not verify"
+    fail=1
   fi
 
   otool -arch arm64 -l "$f" | awk '

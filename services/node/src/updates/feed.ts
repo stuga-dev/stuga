@@ -1,3 +1,5 @@
+import { compareVersions, isReleaseVersion } from "../version.js";
+
 /** Where Stuga's source lives: its releases, and the code of every tagged version. */
 export const REPOSITORY = "https://github.com/stuga-dev/stuga";
 
@@ -28,23 +30,10 @@ export interface PendingUpdate {
   notesUrl: string;
 }
 
-const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** More entries than any changelog will hold; the rest of an absurd feed is dropped. */
 const MAX_RELEASES = 5000;
-
-/** A plain 1.2.3. A source build (0.0.0-dev) or a CI build (0.0.0-ci) has nothing to compare with. */
-export function isReleaseVersion(version: string): boolean {
-  return VERSION.test(version);
-}
-
-/** Negative when `a` is the older one. Both are plain versions. */
-export function compareVersions(a: string, b: string): number {
-  const x = a.split(".").map(Number);
-  const y = b.split(".").map(Number);
-  return x[0]! - y[0]! || x[1]! - y[1]! || x[2]! - y[2]!;
-}
 
 /** Every release, for someone whose node cannot look but whose browser can. */
 export const RELEASES_PAGE = `${REPOSITORY}/releases`;
@@ -68,7 +57,7 @@ export function parseFeed(doc: unknown): Release[] {
   const releases: Release[] = [];
   for (const entry of list.slice(0, MAX_RELEASES)) {
     const { version, date, security } = (entry ?? {}) as Record<string, unknown>;
-    if (typeof version !== "string" || !VERSION.test(version)) continue;
+    if (typeof version !== "string" || !isReleaseVersion(version)) continue;
     if (typeof date !== "string" || !DATE.test(date)) continue;
     releases.push({ version, date, security: security === true });
   }

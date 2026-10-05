@@ -923,7 +923,7 @@ describe("where the packaging runs the connector", () => {
     // a status read in between still shows the refusal: wait for it.
     const deadline = Date.now() + 5_000;
     let status = await s.status();
-    while (status.state !== "starting" && Date.now() < deadline) {
+    while (!("state" in status && status.state === "starting") && Date.now() < deadline) {
       await sleep(20);
       status = await s.status();
     }

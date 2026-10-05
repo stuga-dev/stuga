@@ -9,6 +9,26 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Added
+
+- One command goes back to an earlier version on a Mac: `sudo "/Library/Application Support/Stuga/current/bin/stuga" restore <backup>` ([macOS](docs/install/macos.md#go-back-to-an-earlier-version)). **Settings → This node → Backups** shows it for each backup.
+- `stuga-node list` marks backups taken before an upgrade.
+
+### Changed
+
+- Stuga on a Mac takes about 330 MB instead of 480 MB.
+- An earlier release started on a later one's data changes nothing and says which backup to restore.
+- `./stuga restore` going back pins the whole stack to the backup's release.
+
+### Fixed
+
+- `./stuga upgrade` refuses a `compose.yml` older than the data.
+- `./stuga restore` works without a node container.
+- After a failed upgrade, `./stuga` offers the backup the new version took.
+- `install.sh` stops at once when the node refuses its data.
+- The menu bar runs the new Stuga.app after an update.
+- A patch to an older release line leaves the `:<major>` image tags alone.
+
 ## [0.1.11] - 2026-10-02
 
 ### Fixed

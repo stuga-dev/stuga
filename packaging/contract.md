@@ -52,17 +52,26 @@ node <out>/services/node/bin/stuga-node.js <command>
 `<app>/RELEASED` holds one line, the day the version was released as `YYYY-MM-DD`, taken from the
 version's entry in `CHANGELOG.md`. A build of a version the changelog does not list has none.
 
-Only a plain `1.2.3` is compared with the published releases. A node on any other version, a source
-build or a CI build, never looks for a newer one.
+Versions are compared only when both are a plain `1.2.3`, numerically. A node on any other version,
+a source build or a CI build, never looks for a newer one, and is neither older nor newer than
+another: builds from source are unordered.
+
+Before it writes or backs anything up, a node refuses a database that a newer plain version served
+last, and, whatever its own version, one whose schema is newer than it knows
+([Lifecycle](#lifecycle)). `verify` and `restore` refuse a backup of data a newer plain version
+served, and `reset-password` and `media-scan` refuse such a database; each exits 2.
 
 The version appears in these places:
 
 - **Settings → This node → About**, with the day it was released.
 - The boot line, `stuga <version>, schema <n>`.
+- `node_state.app_version` in the database: the newest build that has written to it, recorded as
+  soon as its migrations commit.
 - The backup manifest: `runtime_version` is the build that took the backup, `stuga_version` the one
   that last served the data, which differ for the backup a new version takes before it upgrades.
-- A Docker restore, which uses `stuga_version` to pick the image to go back to. A restore does not
-  change image when that is a `0.0.0-*` build.
+- A restore by the packaging, which uses `stuga_version`, else `runtime_version`, to pick the
+  release to go back to. When that is not a plain version, a Docker restore keeps the node's image,
+  and a Mac restore refuses unless it is the version installed.
 
 ## Commands
 
@@ -70,16 +79,18 @@ The version appears in these places:
 |---|---|
 | `serve` | Run the node. |
 | `backup [--json]` | Back up the database and the data directory into `BACKUP_DIR`, verified, pruned to the number the node's settings keep. |
-| `verify <backup> [--json]` | Check that a backup is whole and that this build can restore it. |
+| `verify <backup> [--going-back] [--json]` | Check that a backup is whole and that this build can restore it. With `--going-back`, also refuse when an extension both the current database and the backup hold is at another version. Builds before 0.1.12 ignore the flag. |
 | `restore <backup> [--yes] [--json]` | Replace the database and the data directory. The current ones are kept beside the restored ones. |
-| `list [--json]` | List backups, unfinished work, and what restores kept. |
+| `list [--json]` | List backups, marking those taken before an upgrade, unfinished work, and what restores kept. |
 | `reset-password <username>` | Print a password reset link. |
 | `media-scan [--reclaim] [--empty-trash[=<days>]] [--grace-hours=<hours>]` | Report or reclaim media that no document references. |
 | `archive check <directory> [--json]` | Check an unzipped workspace archive against format version 1, `docs/workspace-archive.md`. Exits 2 when it does not pass. |
 
 A `<backup>` is a path, or a bare name under `BACKUP_DIR`. With `--json`, a command writes one JSON
 object to stdout and writes notes and errors to stderr. Without it, `backup` prints
-`Backup complete: <path>`.
+`Backup complete: <path>`. In `list --json`, each backup's keys come in this order, and later ones
+are only ever appended: `name`, `path`, `database`, `created_at`, `stuga_version`,
+`schema_version`, `bytes`, `runtime_version`, `before_upgrade`.
 
 Exit codes of every command but `serve`:
 
@@ -92,7 +103,8 @@ Exit codes of every command but `serve`:
 
 `serve` exits 0 when SIGTERM or SIGINT stopped it cleanly. It exits 1 when it cannot start, for a
 configuration error too, when it loses the writer lock, and when its shutdown fails or runs out of
-time.
+time. A node that refuses its database does not exit: it holds the writer lock until SIGTERM or
+SIGINT, then exits 0.
 
 `backup` and `restore` refuse to run while a node holds the database's writer lock. Stop the node
 first and start it again afterwards. The operator commands never start a node.
@@ -132,6 +144,7 @@ These are optional. The app has a neutral default for each.
 | `STUGA_STDIO_ENTRY` | unset: the bundled `stuga-mcp.js` | `""`: no local path an agent outside the container can open | unset |
 | `AI_OLLAMA_DEFAULT_URL` | `http://127.0.0.1:11434` | `http://host.docker.internal:11434` (compose maps the host) | unset |
 | `STUGA_UPGRADE_REQUESTS`, `STUGA_UPGRADE_STATUS` | unset: the node offers no install | unset | the package's helper: `<root>/requests` and `<root>/status/upgrade.json` |
+| `STUGA_RESTORE_COMMAND` | unset: the node shows no command | `./stuga restore {backup}` | `sudo "<root>/current/bin/stuga" restore {backup}`; unset in the local trial |
 | `STUGA_REMOTE_SERVICE`, `STUGA_REMOTE_DIR` | unset: the node offers no remote access | `/run/stuga-remote`, only when `.env` sets `STUGA_REMOTE_SERVICE` | `<root>/remote`, only when the render has `STUGA_REMOTE_SERVICE` in its environment |
 | `STUGA_CONNECTOR_REQUEST`, `STUGA_CONNECTOR_STATUS` | unset: the administrator runs the connector | the `stuga-remote` container: `/run/stuga-remote/control/request` and `/run/stuga-remote/status/status.json` | the package's helper: `<root>/requests/remote` and `<root>/status/remote.json`; unset in the local trial |
 | `STUGA_REMOTE_GID`, `STUGA_REMOTE_CONNECTOR_UID` | unset: the node checks the shared directory, and arranges nothing | `65532` and `65532` | unset |
@@ -145,6 +158,13 @@ with more privilege than it: the node writes one line, a release version it know
 `<requests>/upgrade`, and reads `{version, state, message, at}` back from the status file. Only
 with both set does **About** offer **Update now**. The helper must install nothing but that
 release's own package, verified.
+`STUGA_RESTORE_COMMAND` is the command that restores a backup on the node's machine, with
+`{backup}` where the backup's name goes; a value without it is a configuration error. The node fills
+it in for each backup whose name is safe as one shell word (a letter or digit, then up to 127
+letters, digits, `.`, `_` or `-`): **Settings → This node → Backups** shows it, and so does the page
+of a node that refuses its database, for the backup to restore. The node never runs it. The command
+restores with the release that served the backup's data, and stops and starts the node around it.
+Where the packaging cannot go back to that release, it refuses before it changes anything.
 `STUGA_STDIO_ENTRY` names the stdio MCP server that agent setup offers. When it is empty, agent
 setup offers none.
 `STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR` offer remote access
@@ -204,11 +224,20 @@ count only beside `STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR`.
   answers 503 with a `status` (`starting`, `backing_up`, `upgrading`) and every other request gets
   a 503, a browser a page that says why. A boot can back up, migrate and build search indexes first,
   so a supervisor should wait for progress rather than use a short timeout. A running node also
-  answers 503 (`maintenance`) for the moment it pauses to back itself up.
+  answers 503 (`maintenance`) for the moment it pauses to back itself up. `refused`, with no
+  `retry-after`, is a node that refuses its database ([Version](#version)): it changes nothing and
+  keeps running until it is stopped, so a supervisor should stop waiting, and not restart it.
 - **Backups the node takes.** A node backs itself up on a schedule, daily unless changed, and before it upgrades a database
-  another version served, into `BACKUP_DIR` with the pruning `backup` does. A packaging that mounts
-  the data directory must mount `BACKUP_DIR` too, or those backups are lost with the container, and
-  must give the node `PG_BIN`. The packaging's own upgrade needs no backup step of its own.
+  an older version, or a build from source, served, into `BACKUP_DIR` with the pruning `backup`
+  does. A packaging that mounts the data directory must mount `BACKUP_DIR` too, or those backups are
+  lost with the container, and must give the node `PG_BIN`. The packaging's own upgrade needs no
+  backup step of its own.
+- **Going back.** An earlier release goes back by restoring a backup of its data with its own
+  `restore`, after the newer build's `verify --going-back`. No older node runs on the newer data
+  first. Docker's
+  `./stuga restore` pins the node, Postgres and remote images to the backup's release; the Mac's
+  `bin/stuga restore` installs that release's package while a hold mark, `status/restoring`, keeps
+  its node from starting until the restore is done.
 - **Stopping.** On SIGTERM or SIGINT the node stops its workers and closes its actors, and it
   gives up after 25 s. A supervisor must allow at least 30 s before it kills the node. Docker sets
   `stop_grace_period: 30s`, and launchd sets `ExitTimeOut` 60.

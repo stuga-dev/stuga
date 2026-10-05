@@ -84,12 +84,13 @@ build step. A checkout runs the node's source through tsx; a release bundles it
 | `writer-lock.ts` | The Postgres advisory locks that allow one node per database and keep a node and a backup or restore apart. |
 
 Boot runs in order: parse the environment; check the Postgres major, pg_search and the database
-collation; take the writer lock; listen, answering that the node is starting; back up the database
-when another version served it last; apply migrations and boot repairs; load the settings and the
-signing key; create the actor namespaces, blob stores and job queue; delete any workspace an
-unfinished import left; build the routers; serve; start the job worker and the maintenance tick,
-which runs every two minutes. On SIGTERM the node stops the same pieces in reverse and gives up
-after 25 seconds.
+collation; take the writer lock; listen, answering that the node is starting; refuse data a newer
+version served, staying up with a page that says so and writing nothing; check the embedding width;
+back up the database when an older version, or a build from source, served it last; apply
+migrations; record this version; run the boot repairs; load the settings and the signing key;
+create the actor namespaces, blob stores and job queue; delete any workspace an unfinished import
+left; build the routers; serve; start the job worker and the maintenance tick, which runs every two
+minutes. On SIGTERM the node stops the same pieces in reverse and gives up after 25 seconds.
 
 ## Requests
 

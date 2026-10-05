@@ -24,6 +24,11 @@ manifest, and under **Settings → This node → About**. A build without the fi
 A version is a plain `1.2.3`. There are no pre-releases: the workflow refuses a tag such as
 `v1.2.3-rc.1`, and a running node compares itself only with plain versions.
 
+`GO_BACK_FLOOR` in `packaging/macos/runtime/bin/stuga` is the earliest release a Mac goes back to:
+the first that carries `bin/stuga`, its hold mark and the node's refusal of newer data, 0.1.12. If
+that work ships in another release, set it to that release before tagging, and every 0.1.12 in
+`docs/` and `packaging/contract.md` with it. `build-pkg.sh` refuses to build a release below it.
+
 ## The changelog
 
 [CHANGELOG.md](CHANGELOG.md) is what a release says about itself, and the release workflow reads it
@@ -54,7 +59,9 @@ Turn `## [Unreleased]` in CHANGELOG.md into the version's entry, `## [1.2.3] - 2
 an empty `## [Unreleased]` above it. Give it a **Security** section if it fixes a vulnerability, and
 an **Upgrade notes** section if the version needs a decision or an action from someone running a
 node. `node packaging/release/feed.mjs check 1.2.3` passes once the entry is the newest one, and
-`node packaging/release/feed.mjs notes 1.2.3` prints the notes the Release will carry.
+`node packaging/release/feed.mjs notes 1.2.3` prints the notes the Release will carry. A release
+that changes `PG_MAJOR`, `PG_SEARCH_VERSION` or `PGVECTOR_VERSION` says in its **Upgrade notes** that
+going back from it to an earlier release is refused.
 
 A tag freezes what it ships: the migrations and their checksums in `MIGRATION_CHECKSUMS`, and each
 actor store version's pin in `store-version.test.ts`. A later schema change is a new migration or a
@@ -75,14 +82,14 @@ runtime have both been built at the tag's version and booted.
 | Job | Runs after | Checks |
 |---|---|---|
 | `changelog` | | The tag's version is the newest entry in CHANGELOG.md. Writes `releases.json` and the Release notes from it. |
-| `verify` | | All of CI (`ci.yml`): lint, typecheck, unit tests, the packaging checks, the integration suites, the Docker restore drill, the database password test and the backup suite inside the node image, and the macOS job (integration suites on the Mac Postgres tree, a runtime build, its smoke test and restore drill, and an unsigned connector build). |
+| `verify` | | All of CI (`ci.yml`): lint, typecheck, unit tests, the packaging checks, the integration suites, the Docker restore drill, the database password test, the going-back test and the backup suite inside the node image, and the macOS job (integration suites on the Mac Postgres tree, a runtime build, its smoke test, restore drill and go-back drill, and an unsigned connector build). |
 | `docker-images` | `verify`, `changelog` | Refuses a version whose images already exist. Builds `stuga-node` and `stuga-postgres` for `linux/amd64` and `linux/arm64` with the build arguments in `packaging/versions.env`, and pushes only the exact version tag, with provenance and an SBOM. Builds `stuga-remote` natively on an amd64 and an arm64 runner, `frpc` with `packaging/shared/connector/build.sh --target linux/<arch>` (the checks of `connector` below, unsigned), and pushes each by digest, with provenance and an SBOM. |
 | `docker-remote` | `docker-images` | Tags the two `stuga-remote` digests together as the exact version. |
 | `docker-package` | `docker-images`, `docker-remote` | Lays out the Docker release assets with `package.sh` (`compose.yml` pinned to the version, `env.example`, `stuga`), checks that `compose.yml` names the three images at the version, and checks that both architectures of each were published. |
 | `docker-smoke` | `docker-package` | On an amd64 and an arm64 runner, boots the stamped `compose.yml` against the published images. Checks that remote access is off with the default `.env`, then names `STUGA_REMOTE_SERVICE` there and checks the connector. Checks that `/ready` answers, `/` serves the web app, the image's `/app/VERSION` is the version, and the boot line names it; that `frpc --version` in `stuga-remote` is `FRP_VERSION`, and the `remote` service is healthy, runs no `frpc` and reports the node's `off` as `stopped`. |
 | `connector` | `verify`, `changelog` | On macOS, builds the remote-access connector with `packaging/shared/connector/build.sh --target darwin/arm64`: `frpc` from frp's pinned commit (`FRP_VERSION`, `FRP_COMMIT`) with the pinned Go (`GO_VERSION`, its sha256 checked), without the web UI, and refuses it unless `go version -m` shows that commit, an unmodified tree and the `frpc,noweb` tags. Writes `THIRD-PARTY-NOTICES.txt` with the pinned `go-licenses` and refuses it unless it names every module `frpc` links, at the version linked, with a known license, and adds the modules' NOTICE files. Signs `frpc` as `dev.stuga.remote` with the hardened runtime, refuses it unless it meets the requirement the helper checks (a Developer ID of `STUGA_TEAM_ID`), and notarizes `stuga-connector-darwin-arm64.zip` (`frpc`, frp's `LICENSE`, the notices), failing unless Apple accepts it with no issues. Its output is the zip's sha256. Needs the same secrets as `macos-pkg`. |
-| `macos-pkg` | `verify`, `changelog`, `connector` | On macOS, builds `Stuga-<version>.pkg` with `packaging/macos/pkg/build-pkg.sh`: the runtime at the version, Stuga.app and the install scripts, every binary signed with the Developer ID Application identity (Node with only `allow-jit`), the package signed with the Developer ID Installer identity, notarized and stapled. The runtime's `conf/connector.sha256` names the `connector` job's zip, the only connector its helper installs, and the job checks that it does. Then boots the runtime the package carries with `packaging/macos/test/smoke.sh`, which checks `/ready`, the web app, the boot line, a clean stop, `backup` and `verify`, and a clean Postgres shutdown. Needs the secrets `MACOS_CERTS_P12` (one p12 with both identities, base64, of the team the upgrade helper trusts: `STUGA_TEAM_ID` in `packaging/macos/runtime/bin/helper.sh`), `MACOS_CERTS_PASSWORD`, and an App Store Connect API key for notarytool: `NOTARY_KEY` (the .p8, base64), `NOTARY_KEY_ID`, `NOTARY_ISSUER`. |
-| `promote` | `docker-smoke`, `macos-pkg` | Points the `:1.2` and `:1` tags of the three images at the digests the smoke test booted, and reads them back to confirm. `latest` is never published. |
+| `macos-pkg` | `verify`, `changelog`, `connector` | On macOS, builds `Stuga-<version>.pkg` with `packaging/macos/pkg/build-pkg.sh`: the runtime at the version, Stuga.app and the install scripts, every binary signed with the Developer ID Application identity (Node with only `allow-jit`), the package signed with the Developer ID Installer identity, notarized and stapled. The runtime's `conf/connector.sha256` names the `connector` job's zip, the only connector its helper installs, and the job checks that it does. Then boots the runtime the package carries with `packaging/macos/test/smoke.sh`, which checks `/ready`, the web app, the boot line, a clean stop, `backup` and `verify`, and a clean Postgres shutdown. Needs the secrets `MACOS_CERTS_P12` (one p12 with both identities, base64, of the team the upgrade helper trusts: `STUGA_TEAM_ID` in `packaging/macos/runtime/bin/release.sh`), `MACOS_CERTS_PASSWORD`, and an App Store Connect API key for notarytool: `NOTARY_KEY` (the .p8, base64), `NOTARY_KEY_ID`, `NOTARY_ISSUER`. |
+| `promote` | `docker-smoke`, `macos-pkg` | Points the `:1.2` and `:1` tags of the three images at the digests the smoke test booted, each only when the tag is the newest release of that line, and reads them back to confirm. `latest` is never published. |
 | `release` | `docker-smoke`, `connector`, `macos-pkg`, `promote` | Creates the GitHub Release, with the notes from the changelog and `compose.yml`, `env.example`, `stuga`, `install.sh`, `releases.json`, `Stuga-<version>.pkg`, the same package as `Stuga.pkg`, which `releases/latest/download/` always names, and `stuga-connector-darwin-arm64.zip`. A Mac node's **Update now** downloads the versioned name, and its helper downloads the connector from the version it runs. First checks the zip against the sha256 the package carries, and attests each asset's build provenance, and that of the `frpc` in the zip, so `gh attestation verify <file> --repo stuga-dev/stuga` names the commit and run that built it. The repository has immutable releases on: once published, a release's assets and tag never change, so the job uploads to a draft and publishes last, marking it Latest only when its tag is the newest `v*.*.*`. |
 | `npm` | `release` | Builds `services/mcp` stamped with the version and publishes `services/mcp/dist` as `@stuga/mcp` through npm trusted publishing, from the `release` environment, unless npm has the version already. The package's provenance names this run. |
 | `plugin` | `npm` | For the newest version only, and once npm serves `@stuga/mcp` at it: stamps `integrations/` with the version and the `@stuga/mcp@<version>` pin (`packaging/release/plugin.mjs`), and pushes it to [stuga-dev/stuga-plugin](https://github.com/stuga-dev/stuga-plugin) as one commit and the tag `v<version>`, as the Stuga Release app. Anthropic's plugin directory and every marketplace read that repository. Needs `STUGA_RELEASE_APP_CLIENT_ID` (a variable) and `STUGA_RELEASE_APP_KEY` (a secret) in the `release` environment, of an app installed on stuga-plugin alone. |
@@ -98,6 +105,12 @@ pushed, that version's images exist with no Release or floating tag pointing at 
 In an empty directory, follow [docs/install/docker.md](docs/install/docker.md) exactly as written and
 reach `/ready`. On a Mac, check out the tag, follow [docs/install/macos.md](docs/install/macos.md),
 and reach `/ready`. The workflow does not test the instructions themselves.
+
+On the test Mac, with the previous release installed, choose **Update now**, then go back with the
+command **Restore…** shows beside the backup marked **Before upgrading from <previous>**: once
+online, and once offline with `--pkg`. Check that the previous release serves the data, Stuga.app is
+the previous one, remote access comes back if it was on, and **Update now** brings the new release
+back. This needs a previous release at `GO_BACK_FLOOR` or later.
 
 Each commit the `plugin` job pushes is a new version of the listing in Anthropic's plugin
 directory, which follows stuga-plugin's `main`: it learns of the commit from the push webhook, or
@@ -131,6 +144,11 @@ Then set the Release before it as the latest (`gh release edit v<previous> --lat
 `releases/latest/download/` follows, so new installs get the previous version's files, and running
 nodes read the previous `releases.json`, which does not list the retracted version. Mark the entry
 `## [1.2.3] - 2026-01-31 [YANKED]` in CHANGELOG.md too, so the next release's list leaves it out.
+
+Nodes already on the retracted version stay on it: the previous release refuses data it served, and
+`./stuga upgrade` and **Update now** only go forward. The retracted Release's notes say to wait for
+the next patch, or to go back by restoring the backup taken before the upgrade
+([Going back](docs/operations.md#going-back)).
 
 ## Pins
 

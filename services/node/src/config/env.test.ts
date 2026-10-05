@@ -134,6 +134,13 @@ describe("the platform hints packaging may set", () => {
     expect(cfg({ STUGA_UPGRADE_HINT: "Run ./stuga upgrade." }).upgradeHint).toBe("Run ./stuga upgrade.");
   });
 
+  it("takes the packaging's restore command only with a place for the backup's name", () => {
+    expect(cfg().restoreCommand).toBeNull();
+    expect(cfg({ STUGA_RESTORE_COMMAND: "./stuga restore {backup}" }).restoreCommand).toBe("./stuga restore {backup}");
+    expect(() => cfg({ STUGA_RESTORE_COMMAND: "./stuga restore" })).toThrow(ConfigError);
+    expect(() => cfg({ STUGA_RESTORE_COMMAND: "./stuga restore" })).toThrow(/must contain \{backup\}/);
+  });
+
   it("keeps an empty STUGA_STDIO_ENTRY distinct from an unset one", () => {
     expect(cfg().stdioEntry).toBeUndefined();
     expect(cfg({ STUGA_STDIO_ENTRY: "" }).stdioEntry).toBe("");

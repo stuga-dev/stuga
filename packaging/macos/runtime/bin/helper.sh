@@ -9,10 +9,12 @@
 #   status/remote.json    written here: {"state","message","at","connector_sha","config_sha"}
 #
 # The upgrade request names a version and nothing else: the package comes from that release's URL,
-# built here from a checked version, and is installed only when Gatekeeper accepts it as notarized
-# and signed by Stuga's team, and it is newer than the runtime in place. So the node, which runs as
-# _stuga and cannot change the software it runs, can ask for an official upgrade and nothing more.
-# The package's own scripts take it from there, and the new node backs up before it upgrades.
+# built here from a checked version, and is installed only when it is newer than the runtime in
+# place, no restore is under way (hold.sh) before or after the download, and it passes release.sh's
+# checks: notarized, signed by Stuga's team, and that release's. So the node, which runs as _stuga
+# and cannot change the software it runs, can ask for an official upgrade and nothing more. The
+# policy is here, the trust in release.sh, which bin/stuga shares. The package's own scripts take it
+# from there, and the new node backs up before it upgrades.
 #
 # The remote request is what the node wants now, and stays: every run compares it with what runs
 # and brings the two together, so a run that failed or never happened is made good by the next.
@@ -25,6 +27,11 @@
 # short line; status is written into a directory only root can write. A request that changes while
 # this runs is taken in another round, and a pending `off` goes before any long step.
 set -euo pipefail
+# $0 is this script's path: stuga-job runs it with /bin/bash.
+# shellcheck source=release.sh
+. "$(dirname "$0")/release.sh"
+# shellcheck source=hold.sh
+. "$(dirname "$0")/hold.sh"
 
 label=dev.stuga.remote
 plist=/Library/LaunchDaemons/dev.stuga.remote.plist
@@ -34,8 +41,6 @@ trap 'if [ -n "$work" ]; then rm -rf "$work"; fi' EXIT
 
 main() {
   root="${STUGA_ROOT:-/Library/Application Support/Stuga}"
-  team="${STUGA_TEAM_ID:-8W9F4LY7AP}"
-  releases="${STUGA_RELEASES_URL:-https://github.com/stuga-dev/stuga/releases/download}"
   requests="$root/requests"
   status_dir="$root/status"
 
@@ -99,35 +104,37 @@ upgrade() {
     upgrade_status refused "Stuga $wanted is not newer than the $current in place"
     return 0
   fi
+  # bin/stuga is replacing the data, or going back to an earlier version: the next request comes after.
+  if restore_under_way "$root"; then
+    upgrade_status refused "a restore is under way"
+    return 0
+  fi
 
   local pkg
-  work="$(mktemp -d /private/var/tmp/stuga-upgrade.XXXXXX)"
-  chmod 0700 "$work"
+  work="$(package_workdir stuga-upgrade)"
   pkg="$work/Stuga-$wanted.pkg"
 
   stop_if_off
   upgrade_status downloading "downloading Stuga $wanted"
-  if ! curl -fsSL --max-time 1800 -o "$pkg" "$releases/v$wanted/Stuga-$wanted.pkg"; then
+  if ! fetch_package "$wanted" "$pkg"; then
     upgrade_status failed "could not download Stuga $wanted"
     return 0
   fi
 
   upgrade_status verifying "checking the package's signature"
-  local verdict
-  verdict="$(spctl --assess --type install -vv "$pkg" 2>&1 || true)"
-  if ! printf '%s\n' "$verdict" | grep -q '^source=Notarized Developer ID$' ||
-    ! printf '%s\n' "$verdict" | grep -Eq "^origin=Developer ID Installer: .* \\($team\\)$"; then
-    upgrade_status failed "the package is not notarized and signed by Stuga ($team)"
-    return 0
-  fi
-  local shipped
-  shipped="$(cd "$work" && xar -xf "$pkg" Distribution && sed -n 's/.*<product[^>]* version="\([0-9.]*\)".*/\1/p' Distribution | head -1)"
-  if [ "$shipped" != "$wanted" ]; then
-    upgrade_status failed "the package is Stuga ${shipped:-of no version}, not $wanted"
+  if ! check_package "$pkg" "$wanted"; then
+    upgrade_status failed "$package_problem"
     return 0
   fi
 
   stop_if_off
+  # Again, after the download: a restore that began meanwhile goes first.
+  if restore_under_way "$root"; then
+    upgrade_status refused "a restore is under way"
+    rm -rf "$work"
+    work=""
+    return 0
+  fi
   upgrade_status installing "installing Stuga $wanted"
   if installer -pkg "$pkg" -target / > "$work/installer.log" 2>&1; then
     upgrade_status 'done' "installed Stuga $wanted"
@@ -142,18 +149,6 @@ upgrade() {
 upgrade_status() {
   write_status upgrade.json "$(printf '{"version":"%s","state":"%s","message":"%s","at":"%s"}' \
     "$wanted" "$1" "$(json_text "$2")" "$(now)")"
-}
-
-# newer A B: release A comes after release B.
-newer() {
-  local a b i
-  IFS=. read -r -a a <<< "$1"
-  IFS=. read -r -a b <<< "$2"
-  for i in 0 1 2; do
-    if [ "${a[i]:-0}" -gt "${b[i]:-0}" ]; then return 0; fi
-    if [ "${a[i]:-0}" -lt "${b[i]:-0}" ]; then return 1; fi
-  done
-  return 1
 }
 
 # ---- remote access
@@ -248,13 +243,13 @@ remote_on() {
   fi
   [ "$installed" = yes ] || return 0
 
-  local previous
-  previous="$(readlink "$root/connector/current" 2> /dev/null || true)"
-  if [ "$previous" != "$connector" ]; then
+  if [ "$(readlink "$root/connector/current" 2> /dev/null || true)" != "$connector" ]; then
     ln -s "$connector" "$root/connector/.current.$$"
     mv -h -f "$root/connector/.current.$$" "$root/connector/current"
-    prune_connectors "$connector" "$previous"
   fi
+  # On every pass, not only when `current` moves: an Update now runs the older helper's code, which
+  # kept the connector before, so the next pass removes it.
+  prune_connectors "$connector"
 
   local started
   started="$(cat "$root/connector/.started" 2> /dev/null || true)"
@@ -342,14 +337,15 @@ install_connector() {
   installed=yes
 }
 
-# prune_connectors <current> <previous>: keep those two, and nothing an earlier run left.
+# prune_connectors <current>: keep that one, and nothing an earlier run left. An frpc still running
+# from a removed directory runs on; the job is restarted on `current`.
 prune_connectors() {
   local dir name
   for dir in "$root"/connector/* "$root"/connector/.install.*; do
     [ -e "$dir" ] || continue
     name="$(basename "$dir")"
     case "$name" in
-      current | "$1" | "$2") ;;
+      current | "$1") ;;
       *) if [ -d "$dir" ] && [ ! -L "$dir" ]; then rm -rf "$dir"; fi ;;
     esac
   done

@@ -15,8 +15,8 @@ enum HealthTests {
     static let postgres = Job(loaded: true, pid: 50, runs: 1)
     static let node = Job(loaded: true, pid: 100, runs: 1)
 
-    static func look(_ ready: Ready, node: Job = node, postgres: Job = postgres, installing: Bool = false) -> Look {
-        Look(ready: ready, node: node, postgres: postgres, installing: installing)
+    static func look(_ ready: Ready, node: Job = node, postgres: Job = postgres, installing: Bool = false, restoring: Bool = false) -> Look {
+        Look(ready: ready, node: node, postgres: postgres, installing: installing, restoring: restoring)
     }
 
     /// Looks `every` seconds apart for `seconds`; what each showed, and every announcement.
@@ -52,6 +52,8 @@ enum HealthTests {
         crashes()
         database()
         restartsAndInstalls()
+        refusals()
+        restores()
         exit(failed == 0 ? 0 : 1)
     }
 
@@ -62,6 +64,7 @@ enum HealthTests {
             check("503 saying \(status) is busy", Ready(status: 503, body: body(#"{"ok":false,"status":"\#(status)"}"#)) == .busy)
         }
         check("a bare 503 is the database", Ready(status: 503, body: body(#"{"ok":false}"#)) == .databaseUnreachable)
+        check("503 saying refused is a refusal, not busy", Ready(status: 503, body: body(#"{"ok":false,"status":"refused"}"#)) == .refused)
         check("no answer is silent", Ready(status: nil, body: nil) == .silent)
     }
 
@@ -221,5 +224,42 @@ enum HealthTests {
         var serving = Run()
         serving.see(look(.serving, installing: true))
         check("a node serving is serving, whatever a mark says", serving.last == .serving)
+    }
+
+    static func refusals() {
+        var run = Run()
+        run.see(look(.refused))
+        check("a node refusing its data is down at once", run.last == .down(.refused))
+        check("and announced on the first look", run.announced == [.refused])
+        run.see(look(.refused), for: 10 * 60)
+        check("once, however long it refuses", run.announced == [.refused] && run.last == .down(.refused))
+        run.see(look(.silent, node: Job(loaded: true, pid: nil, runs: 1)))
+        check("stopped, it is no longer a refusal", run.watch.fault != .refused)
+        run.see(look(.serving))
+        check("and serving clears it", run.last == .serving && run.watch.fault == nil)
+
+        var served = Run()
+        served.see(look(.serving))
+        served.see(look(.silent), for: 65)
+        served.see(look(.refused))
+        check("a refusal after another failure is announced too", served.announced == [.notResponding, .refused], "\(served.announced)")
+        check("the refusal's title says what it is", Fault.refused.title == "Stuga is older than its data")
+    }
+
+    static func restores() {
+        var run = Run()
+        run.see(look(.serving))
+        run.see(look(.silent, node: Job(), postgres: Job(), restoring: true), for: 10 * 60)
+        check("a restore under way is restoring and never announced",
+              run.announced.isEmpty && run.health.dropFirst().allSatisfy { $0 == .restoring }, "\(run.health.suffix(2))")
+        run.see(look(.silent, node: Job(), installing: true, restoring: true), for: 5 * 60)
+        check("going back installs a package under it, still restoring", run.announced.isEmpty && run.last == .restoring)
+        run.see(look(.busy, node: Job(loaded: true, pid: 500, runs: 1)), for: 2 * 60)
+        check("the node starting after it is starting", run.announced.isEmpty && run.last == .starting && run.watch.failedAt == nil)
+        var serving = Run()
+        serving.see(look(.serving, restoring: true))
+        check("a node serving before the restore stops it is serving", serving.last == .serving)
+        check("Restart is not offered while restoring or installing",
+              !Health.restoring.mayRestart && !Health.installing.mayRestart && Health.down(.nodeStopped).mayRestart && Health.starting.mayRestart)
     }
 }

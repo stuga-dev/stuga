@@ -6,7 +6,8 @@
 import type { NodeStateRow } from "@stuga/db";
 import { sinkDelivery } from "../jobs/notify.js";
 import type { JobDeps, JobsEnv } from "../jobs/deps.js";
-import { RELEASES_URL, type PendingUpdate, type Release, isReleaseVersion, parseFeed, pendingUpdate, storedReleases } from "./feed.js";
+import { isReleaseVersion } from "../version.js";
+import { RELEASES_URL, type PendingUpdate, type Release, parseFeed, pendingUpdate, storedReleases } from "./feed.js";
 
 /** "Once a day" is what the Settings page promises, so a failed look waits as long as a good one. */
 const CHECK_INTERVAL_MS = 24 * 60 * 60_000;

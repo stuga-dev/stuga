@@ -8,11 +8,22 @@ import { basename, dirname, join } from "node:path";
 import { PARTIAL_SUFFIX } from "./backup.js";
 import type { BackupEnv } from "./env.js";
 import { databaseName, sessionConnection } from "../writer-lock.js";
-import { readManifest } from "./manifest.js";
+import { readManifest, takenBeforeUpgrade } from "./manifest.js";
 import { STAMP } from "./restore.js";
 
 export interface ListResult {
-  backups: { name: string; path: string; database: string; created_at: string; stuga_version: string | null; schema_version: number; bytes: number }[];
+  /** Fields are only ever appended: packaging reads them in this order. */
+  backups: {
+    name: string;
+    path: string;
+    database: string;
+    created_at: string;
+    stuga_version: string | null;
+    schema_version: number;
+    bytes: number;
+    runtime_version: string;
+    before_upgrade: boolean;
+  }[];
   partial: string[];
   replacedDataDirs: string[];
   /** Null when the server did not answer. */
@@ -49,6 +60,8 @@ export async function runList(env: BackupEnv): Promise<ListResult> {
       stuga_version: m.stuga_version,
       schema_version: m.schema_version,
       bytes: m.files["postgres.dump"].bytes + m.files["data.tar.gz"].bytes,
+      runtime_version: m.runtime_version,
+      before_upgrade: takenBeforeUpgrade(m),
     });
   }
   backups.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));

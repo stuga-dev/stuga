@@ -1,8 +1,9 @@
 // node --test packaging/macos/test/helper.test.mjs (macOS: BSD stat and mv, ditto, zipinfo)
 //
-// helper.sh against a temporary root, with launchctl, curl, codesign and sleep stubbed on PATH:
-// launchctl keeps one job's state in files, curl serves files from a directory, codesign passes
-// unless told not to, and sleep returns at once.
+// helper.sh against a temporary root, with launchctl, curl, codesign, spctl, xar, installer and sleep
+// stubbed on PATH: launchctl keeps one job's state in files, curl serves files from a directory,
+// codesign passes unless told not to, spctl gives a canned verdict, xar reads a package's version
+// from the package, installer records what it was given, and sleep returns at once.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -89,6 +90,20 @@ printf 'codesign' >> "$STUB_DIR/calls"
 printf ' [%s]' "$@" >> "$STUB_DIR/calls"
 echo >> "$STUB_DIR/calls"
 [ ! -f "$STUB_DIR/unsigned" ]
+`,
+  spctl: String.raw`#!/bin/bash
+echo "spctl $*" >> "$STUB_DIR/calls"
+if [ -f "$STUB_DIR/spctl" ]; then cat "$STUB_DIR/spctl" >&2; else printf 'source=Notarized Developer ID\norigin=Developer ID Installer: Stuga AB (8W9F4LY7AP)\n' >&2; fi
+exit "$(cat "$STUB_DIR/spctl-status" 2> /dev/null || echo 0)"
+`,
+  xar: String.raw`#!/bin/bash
+# xar -xf <pkg> Distribution: the product version the package's text names.
+echo "xar $*" >> "$STUB_DIR/calls"
+printf '<product id="dev.stuga" version="%s"/>
+' "$(sed -n 's/^version=//p' "$2")" > Distribution
+`,
+  installer: String.raw`#!/bin/bash
+echo "installer $* (directory $(stat -f %Lp "$(dirname "$2")"))" >> "$STUB_DIR/calls"
 `,
   sleep: "#!/bin/bash\nexit 0\n",
 };
@@ -312,7 +327,7 @@ test("a job that stopped is started again", { skip }, () => {
   assert.equal(bootstraps(h), 1);
 });
 
-test("after an upgrade: the new connector, `current` moved, the job restarted once, one old connector kept", { skip }, () => {
+test("after an upgrade: the new connector, `current` moved, the job restarted once, no old connector kept", { skip }, () => {
   const h = setup();
   h.request(on());
   h.run();
@@ -331,8 +346,26 @@ test("after an upgrade: the new connector, `current` moved, the job restarted on
   assert.equal(bootstraps(h), 1);
   assert.equal(readlinkSync(join(h.root, "connector", "current")), third);
   const kept = readdirSync(join(h.root, "connector")).filter((n) => /^[0-9a-f]{64}$/.test(n));
-  assert.deepEqual(kept.sort(), [second, third].sort());
-  assert.ok(!kept.includes(first));
+  assert.deepEqual(kept, [third]);
+  assert.ok(!kept.includes(first) && !kept.includes(second));
+});
+
+test("a connector an earlier helper kept goes on the next pass, with `current` already in place", { skip }, () => {
+  const h = setup();
+  h.request(on());
+  h.run();
+  const stray = join(h.root, "connector", "0".repeat(64));
+  mkdirSync(stray);
+  writeFileSync(join(stray, "frpc"), "#!/bin/sh\n");
+  h.clearCalls();
+
+  h.request(on(OTHER_CONFIG_SHA));
+  h.run();
+
+  assertStatus(h.status(), "running", h.connectorSha, OTHER_CONFIG_SHA);
+  assert.equal(downloads(h), 0);
+  assert.ok(!existsSync(stray));
+  assert.ok(existsSync(join(h.root, "connector", h.connectorSha, "frpc")));
 });
 
 test("off: stops and disables the job, and keeps the connector", { skip }, () => {
@@ -532,4 +565,80 @@ test("upgrade: a request that names no newer version is refused", { skip }, () =
   assert.deepEqual(h.status("upgrade.json").version, "");
   assert.equal(h.status("upgrade.json").state, "refused");
   assert.equal(downloads(h), 0);
+});
+
+/** A package release `version` serves, whose text names `names`. */
+const servePackage = (h, version, names = version) => writeFileSync(join(h.stub, "serve", `Stuga-${version}.pkg`), `version=${names}\n`);
+const installs = (h) => h.calls().filter((c) => c.startsWith("installer"));
+
+test("upgrade: a newer release, notarized, Stuga's and that version, is installed from a directory only root can enter", { skip }, () => {
+  const h = setup();
+  servePackage(h, "1.3.0");
+  writeFileSync(join(h.root, "requests", "upgrade"), "1.3.0\n");
+  h.run();
+
+  const status = h.status("upgrade.json");
+  assert.equal(status.state, "done", status.message);
+  assert.equal(status.version, "1.3.0");
+  const calls = h.calls();
+  const [install] = installs(h);
+  assert.match(install, /^installer -pkg \/private\/var\/tmp\/stuga-upgrade\.[A-Za-z0-9]+\/Stuga-1\.3\.0\.pkg -target \/ \(directory 700\)$/);
+  const order = ["curl", "spctl", "xar", "installer"].map((tool) => calls.findIndex((c) => c.startsWith(tool)));
+  assert.deepEqual([...order].sort((a, b) => a - b), order, calls.join("\n"));
+  assert.ok(!existsSync(install.split(" ")[2]), "the package's directory goes");
+});
+
+for (const [what, why, change] of [
+  ["not notarized", /not notarized and signed by Stuga \(8W9F4LY7AP\)/, (h) => writeFileSync(join(h.stub, "spctl"), "source=Developer ID\norigin=Developer ID Installer: Stuga AB (8W9F4LY7AP)\n")],
+  ["of another team", /not notarized and signed by Stuga \(8W9F4LY7AP\)/, (h) => writeFileSync(join(h.stub, "spctl"), "source=Notarized Developer ID\norigin=Developer ID Installer: Someone (ABCDE12345)\n")],
+  ["rejected by Gatekeeper", /not notarized and signed by Stuga \(8W9F4LY7AP\)/, (h) => writeFileSync(join(h.stub, "spctl-status"), "3")],
+  ["of another version", /^the package is Stuga 1\.3\.1, not 1\.3\.0$/, (h) => servePackage(h, "1.3.0", "1.3.1")],
+]) {
+  test(`upgrade: a package ${what} is not installed`, { skip }, () => {
+    const h = setup();
+    servePackage(h, "1.3.0");
+    change(h);
+    writeFileSync(join(h.root, "requests", "upgrade"), "1.3.0\n");
+    h.run();
+    const status = h.status("upgrade.json");
+    assert.equal(status.state, "failed");
+    assert.match(status.message, why);
+    assert.deepEqual(installs(h), []);
+  });
+}
+
+/** bin/stuga's hold mark, naming this test's process as hold.sh writes it. */
+const restoreMark = () =>
+  `${process.pid}\n${spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "lstart="], { env: { LC_ALL: "C", TZ: "UTC0" }, encoding: "utf8" }).stdout.trim()}\n`;
+
+test("upgrade: refused while a restore is under way", { skip }, () => {
+  const h = setup();
+  servePackage(h, "1.3.0");
+  writeFileSync(join(h.root, "status", "restoring"), restoreMark());
+  writeFileSync(join(h.root, "requests", "upgrade"), "1.3.0\n");
+  h.run();
+  const status = h.status("upgrade.json");
+  assert.equal(status.state, "refused");
+  assert.equal(status.message, "a restore is under way");
+  assert.equal(downloads(h), 0);
+  assert.deepEqual(installs(h), []);
+  assert.ok(!existsSync(join(h.root, "requests", "upgrade")), "the request is taken");
+});
+
+test("upgrade: a restore that began during the download goes first", { skip }, () => {
+  const h = setup();
+  servePackage(h, "1.3.0");
+  writeFileSync(join(h.stub, "mark"), restoreMark());
+  const script = join(h.stub, "on-download");
+  writeFileSync(script, `#!/bin/bash\ncp "$STUB_DIR/mark" "$STUGA_ROOT/status/restoring"\n`);
+  chmodSync(script, 0o755);
+  writeFileSync(join(h.root, "requests", "upgrade"), "1.3.0\n");
+  h.run();
+  const status = h.status("upgrade.json");
+  assert.equal(status.state, "refused");
+  assert.equal(status.message, "a restore is under way");
+  assert.equal(downloads(h), 1);
+  assert.deepEqual(installs(h), []);
+  const pkg = /-o (\S+)/.exec(h.calls().find((c) => c.startsWith("curl")))[1];
+  assert.ok(!existsSync(pkg), "the package's directory goes");
 });

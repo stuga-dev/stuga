@@ -6,7 +6,7 @@
  *
  *   created_at            the instant the node was proven stopped; orders retention.
  *   database              the source database; retention only touches its own.
- *   stuga_version         the last build that booted on this data.
+ *   stuga_version         the newest build that wrote to this data; what going back restores with.
  *   runtime_version       the build that took the backup.
  *   schema_version        a restore refuses a backup newer than its runtime.
  *   postgres_version_num  a custom-format dump restores only into its own major.
@@ -17,6 +17,7 @@
  */
 import { open, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
+import { versionChange } from "../version.js";
 import { refused } from "./outcome.js";
 
 export const MANIFEST_FORMAT = 1;
@@ -46,9 +47,11 @@ export interface Manifest {
   files: { [DUMP_NAME]: FileEntry; [ARCHIVE_NAME]: FileEntry };
 }
 
-/** Taken by another build than the one that last served this data, before it upgraded it: what a downgrade restores. */
+/** Taken by a newer build (or a build from source) of data an older one served, before it upgraded it: what going back restores. */
 export function takenBeforeUpgrade(m: Pick<Manifest, "stuga_version" | "runtime_version">): boolean {
-  return m.stuga_version !== null && m.stuga_version !== m.runtime_version;
+  if (m.stuga_version === null) return false;
+  const change = versionChange(m.stuga_version, m.runtime_version);
+  return change === "upgrade" || change === "unordered";
 }
 
 const isInt = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;

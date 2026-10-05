@@ -6,11 +6,13 @@
 #
 #   postgres   an assembled Postgres tree (cached in $STUGA_MACOS_CACHE), or a copy of
 #              --postgres-tree, pruned and checked
-#   node       the pinned official Node for darwin-arm64, without npm, corepack or headers
+#   node       the pinned official Node for darwin-arm64, without npm, corepack or headers, its local
+#              symbols stripped and signed ad hoc (build-pkg.sh signs it again)
 #   app        packaging/shared/build-app.sh --version <v>, or with --app-link a symlink to a
 #              built checkout (no VERSION file: the node reports a source build)
 #   bin        stuga-job, the launchd wrappers it runs (the connector's too, with its check-toml.sh),
-#              init-cluster.sh, rotate-log.mjs and the helper
+#              init-cluster.sh, rotate-log.mjs, the helper with release.sh and hold.sh, and stuga,
+#              the operator's commands
 #   conf       the Postgres configuration templates and versions.env, and with --connector-sha256
 #              connector.sha256: the one stuga-connector-darwin-arm64.zip the helper installs
 #   THIRD-PARTY-NOTICES.txt   the licenses of everything the runtime redistributes
@@ -24,6 +26,8 @@ macos="$(cd "$here/.." && pwd)"
 . "$macos/../versions.env"
 # shellcheck source=lib/fetch.sh
 . "$here/lib/fetch.sh"
+# shellcheck source=lib/devtools.sh
+. "$here/lib/devtools.sh"
 
 usage() { sed -n '4,5p' "$0" | sed 's/^# \{0,3\}//' >&2; exit 2; }
 
@@ -48,6 +52,7 @@ if [ -n "$connector_sha256" ] && ! printf '%s' "$connector_sha256" | grep -Eq '^
   exit 2
 fi
 [ "$(uname -m)" = arm64 ] || { echo "error: the Mac runtime is built for Apple silicon only" >&2; exit 1; }
+use_working_developer_tools
 
 say() { printf '==> %s\n' "$*"; }
 
@@ -74,6 +79,7 @@ mkdir -p "$staging/node"
 tar -xzf "$tarball" -C "$staging/node" --strip-components 1
 rm -rf "$staging/node/include" "$staging/node/share" "$staging/node/lib" "$staging/node/CHANGELOG.md" \
   "$staging/node/README.md" "$staging/node/bin/npm" "$staging/node/bin/npx" "$staging/node/bin/corepack"
+strip_local_symbols "$staging/node/bin/node"
 [ "$("$staging/node/bin/node" --version)" = "v$NODE_VERSION" ] || { echo "error: the unpacked node is not v$NODE_VERSION" >&2; exit 1; }
 
 if [ -n "$app_link" ]; then
@@ -91,7 +97,9 @@ fi
 cp "$macos/runtime/bin/postgres-wrapper.sh" "$macos/runtime/bin/node-wrapper.sh" \
   "$macos/runtime/bin/remote-wrapper.sh" "$macos/runtime/bin/init-cluster.sh" \
   "$macos/runtime/bin/rotate-log.mjs" "$macos/runtime/bin/helper.sh" \
+  "$macos/runtime/bin/release.sh" "$macos/runtime/bin/hold.sh" "$macos/runtime/bin/stuga" \
   "$macos/runtime/bin/uninstall.sh" "$macos/../shared/connector/check-toml.sh" "$staging/bin/"
+chmod 0755 "$staging/bin/stuga"
 cc -O2 -Wall -Werror -arch arm64 -mmacosx-version-min=13.0 -o "$staging/bin/stuga-job" "$macos/runtime/bin/stuga-job.c"
 cp "$macos/runtime/conf/postgresql.conf" "$macos/runtime/conf/pg_hba.conf" \
   "$macos/runtime/conf/pg_ident.conf" "$macos/../versions.env" "$staging/conf/"

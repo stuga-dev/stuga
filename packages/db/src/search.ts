@@ -9,13 +9,13 @@ import type { SearchLanguage } from "./schema/search-indexes.js";
 import { type Queryable, scopeFragment, vectorLiteral } from "./sql.js";
 import type { Sql } from "./client.js";
 
-/** The width `doc_chunks.embedding` was created with, or null before the schema exists. */
+/** The width `doc_chunks.embedding` was created with, or null before the schema exists. Reads only, before migrations too. */
 export async function embeddingColumnDims(sql: Sql): Promise<number | null> {
   // pgvector stores the dimension in atttypmod directly.
   const rows = await sql<{ dims: number | null }[]>`
     SELECT a.atttypmod AS dims
     FROM pg_attribute a
-    WHERE a.attrelid = 'doc_chunks'::regclass
+    WHERE a.attrelid = to_regclass('public.doc_chunks')
       AND a.attname = 'embedding'
       AND a.attnum > 0
       AND NOT a.attisdropped`;

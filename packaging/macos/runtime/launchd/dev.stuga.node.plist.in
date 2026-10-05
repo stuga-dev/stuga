@@ -3,13 +3,14 @@
 <!--
   The Stuga node. Rendered by packaging/macos/build/render-launchd.sh; every @-delimited placeholder is
   filled, and agent mode drops UserName, GroupName, the helper's four paths (the upgrade's two
-  and the connector's two, so a local trial runs the connector by hand), SETUP_CODE_FILE and
-  STUGA_BONJOUR_NAME.
+  and the connector's two, so a local trial runs the connector by hand), SETUP_CODE_FILE,
+  STUGA_BONJOUR_NAME and STUGA_RESTORE_COMMAND.
 
   - Every job's program is stuga-job, which runs its script with /bin/bash: signed by Stuga's team,
     it lets Login Items list the job under Stuga.app rather than as "bash" (stuga-job.c).
   - node-wrapper.sh waits for Postgres, then execs the node, so launchd's SIGTERM starts its
-    graceful shutdown; ExitTimeOut is the backstop behind the node's own 25 s limit.
+    graceful shutdown; ExitTimeOut is the backstop behind the node's own 25 s limit. While bin/stuga
+    holds status/restoring it exits 0 instead, which KeepAlive does not restart.
   - The database is reached over the unix socket in DATABASE_URL's host=, with peer
     authentication: there is no password.
   - AbandonProcessGroup lets rotate-log.mjs copy the node's last lines after the node exits.
@@ -55,6 +56,8 @@
     <string>@RESTART_HINT@</string>
     <key>STUGA_UPGRADE_HINT</key>
     <string>@UPGRADE_HINT@</string>
+    <key>STUGA_RESTORE_COMMAND</key>
+    <string>@RESTORE_COMMAND@</string>
     <key>STUGA_UPGRADE_REQUESTS</key>
     <string>@ROOT@/requests</string>
     <key>STUGA_UPGRADE_STATUS</key>

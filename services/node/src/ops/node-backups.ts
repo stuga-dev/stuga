@@ -76,8 +76,9 @@ export interface BackupSummary {
   bytes: number;
   /** The version whose data it holds. */
   stugaVersion: string | null;
-  /** The version that took it; another than `stugaVersion` when it was taken before an upgrade. */
+  /** The version that took it. */
   runtimeVersion: string;
+  /** Taken by a newer build, or a build from source, before it upgraded the data: what going back restores. */
   beforeUpgrade: boolean;
 }
 

@@ -321,6 +321,28 @@ describe.skipIf(!URL)("stuga-node backup, verify and restore", { timeout: 60_000
       }
     });
 
+    it("keeps the backup taken before an upgrade when an older release backs up data a newer one served", async () => {
+      await keepBackups(1);
+      const at = (s: string) => () => new Date(s);
+      await app`INSERT INTO node_state (id, node_id, app_version) VALUES (TRUE, 'abcdefghijklmnop', '1.0.0')`;
+      try {
+        const real = await runBackup({ ...envFor(), version: "1.1.0" }, { now: at("2026-01-01T00:00:00Z") });
+        expect(real.manifest).toMatchObject({ stuga_version: "1.0.0", runtime_version: "1.1.0" });
+        await app`UPDATE node_state SET app_version = '1.1.0'`;
+        const older = await runBackup({ ...envFor(), version: "1.0.0" }, { now: at("2026-01-02T00:00:00Z") });
+        expect(older.pruned).toEqual([]);
+        expect((await readdir(join(root, "backups"))).sort()).toEqual(["2026-01-01T000000Z", "2026-01-02T000000Z"]);
+
+        const list = await runList(envFor());
+        expect(list.backups.map((b) => [b.name, b.stuga_version, b.runtime_version, b.before_upgrade])).toEqual([
+          ["2026-01-02T000000Z", "1.1.0", "1.0.0", false],
+          ["2026-01-01T000000Z", "1.0.0", "1.1.0", true],
+        ]);
+      } finally {
+        await app`DELETE FROM node_state`;
+      }
+    });
+
     it("keeps the default number when the settings name none", async () => {
       const env = envFor();
       await keepBackups(null);
@@ -419,6 +441,37 @@ describe.skipIf(!URL)("stuga-node backup, verify and restore", { timeout: 60_000
       await expectExit(runVerify(envFor(), backup), 2, /format 2/);
       await rm(join(backup, MANIFEST_NAME));
       await expectExit(runVerify(envFor(), backup), 2, /no MANIFEST/);
+    });
+
+    it("refuses a backup of data a newer release served, which this version would refuse to serve", async () => {
+      await rehash(backup, (m) => void (m.stuga_version = "9.9.9"));
+      const older = { ...envFor(), version: "1.0.0" };
+      await expectExit(runVerify(older, backup), 2, /holds data Stuga 9\.9\.9 served, and this is Stuga 1\.0\.0/);
+      const before = await snapshot();
+      await expectExit(runRestore(older, backup, { confirmed: true }), 2, /Restore it with Stuga 9\.9\.9 or newer\. Nothing was changed/);
+      expect(await snapshot()).toEqual(before);
+      await expect(runVerify({ ...envFor(), version: "9.9.9" }, backup)).resolves.toMatchObject({ path: backup });
+    });
+
+    it("going back, refuses a backup with an extension both hold at another version", async () => {
+      await expect(runVerify(envFor(), backup, { goingBack: true })).resolves.toMatchObject({ notes: [] });
+      // One only the backup holds, or only the current data, is no update under the older build's files.
+      await rehash(backup, (m) => {
+        m.extensions.unaccent = "1.1";
+        delete m.extensions.btree_gin;
+      });
+      await expect(runVerify(envFor(), backup, { goingBack: true })).resolves.toMatchObject({ notes: [] });
+      await rehash(backup, (m) => void (m.extensions.vector = "0.0.1"));
+      await expectExit(
+        runVerify(envFor(), backup, { goingBack: true }),
+        2,
+        /the current data has vector \S+ and this backup vector 0\.0\.1: going back across an extension update is not supported/,
+      );
+      await expect(runVerify(envFor(), backup)).resolves.toMatchObject({ path: backup });
+      const elsewhere = envFor({ DATABASE_URL: withDatabase(URL!, `${DB}_none`) });
+      expect((await runVerify(elsewhere, backup, { goingBack: true })).notes).toContain(
+        "the current database did not answer; its extensions were not compared",
+      );
     });
 
     it("says an older schema will migrate forward rather than refusing it", async () => {

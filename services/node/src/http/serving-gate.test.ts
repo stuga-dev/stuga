@@ -40,6 +40,54 @@ describe("the serving gate", () => {
     expect(await (await gate.handler(get("/", "text/html"))).text()).toContain("Stuga is upgrading.");
   });
 
+  it("refuses for good once the node refused its database: a page that says why, readiness that says so, nothing to retry", async () => {
+    const gate = createServingGate();
+    gate.refuse({
+      title: "Stuga 1.1.0 last served this data",
+      body: "This is <b>Stuga</b> 1.0.0 & it changed nothing.",
+      command: `sudo "/Library/Application Support/Stuga/current/bin/stuga" restore '2026-10-04T030000Z'`,
+    });
+    expect(gate.state()).toBe("refused");
+
+    const ready = await gate.handler(get("/ready"));
+    expect(ready.status).toBe(503);
+    expect(ready.headers.get("retry-after")).toBeNull();
+    expect(ready.headers.get("cache-control")).toBe("no-store");
+    expect(await ready.json()).toEqual({ ok: false, status: "refused" });
+
+    const page = await gate.handler(get("/", "text/html"));
+    expect(page.status).toBe(503);
+    expect(page.headers.get("retry-after")).toBeNull();
+    expect(page.headers.get("content-type")).toMatch(/^text\/html/);
+    const html = await page.text();
+    expect(html).toContain("<strong>Stuga 1.1.0 last served this data</strong>");
+    expect(html).toContain("This is &#60;b&#62;Stuga&#60;/b&#62; 1.0.0 &#38; it changed nothing.");
+    expect(html).not.toContain("<b>");
+    expect(html).toContain(
+      "<pre><code>sudo &#34;/Library/Application Support/Stuga/current/bin/stuga&#34; restore &#39;2026-10-04T030000Z&#39;</code></pre>",
+    );
+    expect(html).toContain('<meta http-equiv="refresh" content="30">');
+    expect(html).toContain("This page reloads by itself.");
+
+    const api = await gate.handler(new Request(ORIGIN + "/api/docs", { method: "POST" }));
+    expect(api.status).toBe(503);
+    expect(api.headers.get("retry-after")).toBeNull();
+    expect(await api.json()).toEqual({ error: "refused", status: "refused", message: "Stuga 1.1.0 last served this data" });
+
+    expect((await gate.upgrade(get("/ws/d1"))).status).toBe(503);
+    expect(() => gate.open(live)).toThrow(/refused its database/);
+    expect(() => gate.pause("maintenance")).toThrow(/refused its database/);
+    expect(gate.state()).toBe("refused");
+  });
+
+  it("leaves the code block out of a refusal with no command to run", async () => {
+    const gate = createServingGate();
+    gate.refuse({ title: "A newer Stuga changed this data", body: "This build changed nothing.", command: null });
+    const html = await (await gate.handler(get("/", "text/html"))).text();
+    expect(html).toContain("<strong>A newer Stuga changed this data</strong>");
+    expect(html).not.toContain("<pre>");
+  });
+
   it("serves through the live handlers once open, and stops again on a pause", async () => {
     const gate = createServingGate();
     gate.open(live);

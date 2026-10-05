@@ -16,3 +16,21 @@ use_working_developer_tools() {
   fi
   return 0
 }
+
+# strip_local_symbols <Mach-O file>: strip -x, which keeps every exported symbol, then an ad-hoc
+# signature: the strip breaks the file's signature, and an arm64 file with a broken one is killed
+# before it runs. Ad hoc, without hardened runtime or entitlements, until a release signs it
+# (build-pkg.sh). A file with nothing left to strip is not touched, so it keeps its signature.
+strip_local_symbols() {
+  local file="$1" out
+  # strip warns that it invalidates the signature, which the ad-hoc one replaces.
+  out="$(strip -x -o "$file.stripped" "$file" 2>&1)" || { printf '%s\n' "$out" >&2; rm -f "$file.stripped"; return 1; }
+  if cmp -s "$file" "$file.stripped"; then
+    rm -f "$file.stripped"
+    return 0
+  fi
+  chmod "$(stat -f %Lp "$file")" "$file.stripped" || return 1
+  mv -f "$file.stripped" "$file" || return 1
+  codesign --force --sign - "$file" 2> /dev/null || return 1
+  codesign --verify --strict "$file"
+}

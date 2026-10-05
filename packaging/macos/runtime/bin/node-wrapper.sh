@@ -4,7 +4,8 @@
 # launchd starts both jobs at once with no ordering, and the socket file exists before
 # recovery finishes, so this polls pg_isready. The node is exec'd so launchd's SIGTERM
 # reaches its graceful shutdown. Not ready within 300 s: exit 75 and launchd retries. A missing
-# runtime or setting exits 0: retrying cannot fix it.
+# runtime or setting exits 0: retrying cannot fix it. So does a restore under way (hold.sh): the
+# node must not start on data bin/stuga is replacing, and bin/stuga starts it again when it is done.
 #
 # The node's output goes through rotate-log.mjs into $STUGA_LOG_DIR/node-<Day>.log: launchd
 # never rotates a plist's log file, and the node runs for months. The plist's own log keeps
@@ -41,12 +42,19 @@ main() {
       exit 0
     fi
   done
-  for need in "$app/bin/stuga-node.js" "$rotate"; do
+  for need in "$app/bin/stuga-node.js" "$rotate" "$runtime/bin/hold.sh"; do
     if [ ! -f "$need" ]; then
       say "missing $need; is $runtime a runtime? Not starting."
       exit 0
     fi
   done
+
+  # shellcheck source=hold.sh
+  . "$runtime/bin/hold.sh"
+  if restore_under_way "$STUGA_ROOT"; then
+    say "a restore is under way; not starting"
+    exit 0
+  fi
 
   local waited=0
   until "$pg_isready" -q -d "$DATABASE_URL"; do

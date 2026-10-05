@@ -166,6 +166,14 @@ function pathBase(env: Env, name: string, fallback: string): string {
 
 // ---- parsers ---------------------------------------------------------------
 
+/** The packaging's command template for restoring one backup on its machine; `{backup}` is where the name goes. */
+function restoreCommand(env: Env): string | null {
+  const template = str(env, "STUGA_RESTORE_COMMAND");
+  if (template === undefined) return null;
+  if (!template.includes("{backup}")) throw new ConfigError("STUGA_RESTORE_COMMAND must contain {backup}, where the backup's name goes");
+  return template;
+}
+
 /** Comma-separated CIDR ranges; a malformed one stops the node from starting. */
 function cidrList(env: Env, name: string): Cidr[] {
   const out: Cidr[] = [];
@@ -337,6 +345,7 @@ export function parseConfig(env: Env = process.env, opts: { internalSecret?: str
     webDistDir: resolve(str(env, "WEB_DIST_DIR") ?? join(APP_ROOT, "apps", "web", "dist")),
     restartHint: str(env, "STUGA_RESTART_HINT") ?? DEFAULT_RESTART_HINT,
     upgradeHint: str(env, "STUGA_UPGRADE_HINT") ?? DEFAULT_UPGRADE_HINT,
+    restoreCommand: restoreCommand(env),
     stdioEntry: env.STUGA_STDIO_ENTRY,
     aiProviderBaseUrls: providerBaseUrls(baseUrl(env, "AI_OLLAMA_DEFAULT_URL", DEFAULT_OLLAMA_URL)),
     samplesUrl: pathBase(env, "SAMPLES_URL", DEFAULT_SAMPLES_URL),

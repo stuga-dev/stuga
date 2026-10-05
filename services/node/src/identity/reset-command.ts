@@ -64,13 +64,14 @@ export function resetLinkText(input: {
 
 export async function runResetPassword(
   usernameArg: string | undefined,
-  config: () => Pick<OpsConfig, "databaseUrl" | "publicOrigin">,
+  /** Read only once the username is known to be one, so a mistyped command touches nothing. */
+  config: () => Pick<OpsConfig, "databaseUrl" | "publicOrigin"> | Promise<Pick<OpsConfig, "databaseUrl" | "publicOrigin">>,
   out: (text: string) => void,
   listener: ResetListener = resetListener(process.env),
 ): Promise<ExitCode> {
   const username = usernameArg?.trim().replace(/^@/, "").toLowerCase();
   if (!username || username.startsWith("-")) throw refused(`usage: ${RESET_PASSWORD_USAGE}`);
-  const ops = config();
+  const ops = await config();
 
   const sql = createClient(ops.databaseUrl);
   try {

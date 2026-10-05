@@ -18,6 +18,8 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 macos="$(cd "$here/.." && pwd)"
 repo="$(cd "$macos/../.." && pwd)"
+# shellcheck source=../runtime/bin/release.sh
+. "$macos/runtime/bin/release.sh"
 
 usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
@@ -37,6 +39,13 @@ while [ $# -gt 0 ]; do
 done
 if [ -z "$version" ] || [ -z "$out" ]; then usage; fi
 printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "error: --version takes a release such as 1.2.3" >&2; exit 2; }
+# bin/stuga goes back only as far as the first release that carries it, so none is built before it.
+floor="$(sed -n 's/^GO_BACK_FLOOR=//p' "$macos/runtime/bin/stuga")"
+is_release "$floor" || { echo "error: runtime/bin/stuga sets no GO_BACK_FLOOR" >&2; exit 1; }
+if is_release "$version" && newer "$floor" "$version"; then
+  echo "error: $version is older than GO_BACK_FLOOR ($floor in runtime/bin/stuga)" >&2
+  exit 2
+fi
 if [ -n "$notary" ] && { [ -z "$app_identity" ] || [ -z "$installer_identity" ]; }; then
   echo "error: notarizing needs both Developer ID identities" >&2
   exit 2
@@ -134,11 +143,23 @@ mkdir -p "$work/scripts"
 mv "$work/postinstall" "$work/scripts/postinstall"
 cp "$here/scripts/preinstall" "$work/scripts/preinstall"
 chmod 0755 "$work/scripts/preinstall" "$work/scripts/postinstall"
-# Stuga.app stays where the package puts it, even if a copy exists elsewhere.
+# Every bundle stays where the package puts it, even if a copy exists elsewhere, and replaces the one
+# there whatever its version: going back installs an older package, Stuga.app included.
 pkgbuild --analyze --root "$payload" "$work/components.plist" > /dev/null
-plutil -replace 0.BundleIsRelocatable -bool false "$work/components.plist"
-# --compression latest picks a better codec for the macOS 13 floor distribution.xml already sets:
-# about a quarter smaller than the default.
+i=0 bundles=""
+while plutil -extract "$i.RootRelativeBundlePath" raw "$work/components.plist" > /dev/null 2>&1; do
+  bundles="$bundles$(plutil -extract "$i.RootRelativeBundlePath" raw "$work/components.plist") "
+  plutil -replace "$i.BundleIsRelocatable" -bool false "$work/components.plist"
+  plutil -replace "$i.BundleIsVersionChecked" -bool false "$work/components.plist"
+  i=$((i + 1))
+done
+case " $bundles" in *" Applications/Stuga.app "*) ;; *) echo "error: pkgbuild found no Applications/Stuga.app (found: ${bundles:-none})" >&2; exit 1 ;; esac
+for ((n = 0; n < i; n++)); do
+  [ "$(plutil -extract "$n.BundleIsVersionChecked" raw "$work/components.plist")" = false ] ||
+    { echo "error: a bundle in the package is still version-checked" >&2; exit 1; }
+done
+# --compression latest writes a pbzx (XZ) payload instead of gzip, about a quarter smaller; pkgbuild
+# offers nothing denser. --min-os-version is required with it and matches distribution.xml.
 pkgbuild --root "$payload" --component-plist "$work/components.plist" --scripts "$work/scripts" \
   --compression latest --min-os-version 13.0 \
   --identifier dev.stuga.node --version "$version" --install-location / "$work/stuga-node.pkg" > /dev/null

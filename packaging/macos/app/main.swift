@@ -4,7 +4,8 @@
 // node's job definition, which anyone may read, and asks for an administrator's password for what
 // changes the system: restarting Stuga and uninstalling it. Until someone sets Stuga up, it opens the
 // setup page once Stuga serves, each time it starts. Health.swift decides when Stuga has stopped
-// rather than started slowly; this app then says so, once.
+// rather than started slowly; this app then says so, once. When a package replaces it, an update or
+// a go-back, it opens the new copy and quits.
 import AppKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
@@ -59,7 +60,7 @@ func asAdministrator(_ command: String, prompt: String) -> String? {
 }
 
 enum State: Equatable {
-    case missing, starting, running, unclaimed, installing, uninstalling
+    case missing, starting, running, unclaimed, installing, restoring, uninstalling
     case down(Fault)
 }
 
@@ -83,6 +84,28 @@ func job(_ label: String) -> Job {
 func installing() -> Bool {
     let mark = (try? FileManager.default.attributesOfItem(atPath: root + "/status/installing"))?[.modificationDate] as? Date
     return Watch.installing(markedAt: mark, now: Date())
+}
+
+/// bin/stuga's hold mark, as hold.sh reads it: a plain file naming a process by its id and its start
+/// time in UTC, which holds only while that process runs.
+func restoring() -> Bool {
+    let path = root + "/status/restoring"
+    guard (try? FileManager.default.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeRegular,
+          let text = try? String(contentsOfFile: path, encoding: .utf8)
+    else { return false }
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    guard lines.count >= 2, let pid = Int32(lines[0]), pid > 0, !lines[1].isEmpty else { return false }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/ps")
+    process.arguments = ["-p", String(pid), "-o", "lstart="]
+    process.environment = ["LC_ALL": "C", "TZ": "UTC0"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return false }
+    let started = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    process.waitUntilExit()
+    return started.trimmingCharacters(in: .whitespacesAndNewlines) == lines[1].trimmingCharacters(in: .whitespaces)
 }
 
 /// Stuga's mark, the web app's path as a template image the menu bar tints. The drawing sits low in
@@ -118,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let openItem = NSMenuItem(title: "Open Stuga", action: #selector(openStuga), keyEquivalent: "o")
     let copyItem = NSMenuItem(title: "Copy Address", action: #selector(copyAddress), keyEquivalent: "c")
     let qrItem = NSMenuItem(title: "Show Address as QR Code…", action: #selector(showQRCode), keyEquivalent: "")
+    let restartItem = NSMenuItem(title: "Restart Stuga…", action: #selector(restart), keyEquivalent: "")
     var state: State = .starting {
         didSet {
             // Claimed, stopped or reinstalled: whatever code was read is no longer this node's.
@@ -131,6 +155,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Open the setup page when Stuga first serves after this app starts, if nobody has set it up.
     var greeting = true
     var watch = Watch()
+    /// What the watch last said, for what Restart may cut into.
+    var health: Health = .starting
+    /// A newer or older copy of this app is opening; this one quits once it has.
+    var relaunching = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Back at every login, so the menu is there whenever someone is.
@@ -146,8 +174,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        for (title, action) in [("Show Logs", #selector(showLogs)), ("Restart Stuga…", #selector(restart)), ("Uninstall Stuga…", #selector(uninstall))] {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        for item in [NSMenuItem(title: "Show Logs", action: #selector(showLogs), keyEquivalent: ""), restartItem,
+                     NSMenuItem(title: "Uninstall Stuga…", action: #selector(uninstall), keyEquivalent: "")] {
             item.target = self
             menu.addItem(item)
         }
@@ -177,7 +205,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     ready: Ready(status: ready?.status, body: ready?.body),
                     node: job("dev.stuga.node"),
                     postgres: job("dev.stuga.postgres"),
-                    installing: installing()
+                    installing: installing(),
+                    restoring: restoring()
                 )
                 if look?.ready == .serving, let config = fetch(node.local.appendingPathComponent("auth/config")),
                    let json = try? JSONSerialization.jsonObject(with: config.body) as? [String: Any] {
@@ -196,12 +225,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 let (health, announce) = self.watch.observe(look, at: Date())
+                self.health = health
                 switch health {
                 case .serving: self.state = unclaimed ? .unclaimed : .running
                 case .starting: self.state = .starting
                 case .installing: self.state = .installing
+                case .restoring: self.state = .restoring
                 case .down(let fault): self.state = .down(fault)
                 }
+                self.relaunchIfReplaced()
                 if self.greeting && health == .serving {
                     self.greeting = false
                     // No password asked for here: it is not what someone who just logged in expects.
@@ -215,18 +247,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The menu shows the state; this makes sure someone sees it, once per failure.
     @objc func announce(_ title: String) {
+        // A restart changes nothing for a node refusing its data; its page says what does.
+        let refused = title == Fault.refused.title
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = title
-        alert.informativeText = "Restarting Stuga often fixes this. The logs say what happened."
-        alert.addButton(withTitle: "Restart Stuga…")
+        alert.informativeText = refused ? "Open Stuga to see what to do." : "Restarting Stuga often fixes this. The logs say what happened."
+        alert.addButton(withTitle: refused ? "Open Stuga" : "Restart Stuga…")
         alert.addButton(withTitle: "Show Logs")
         alert.addButton(withTitle: "OK")
         NSApp.activate(ignoringOtherApps: true)
         switch alert.runModal() {
-        case .alertFirstButtonReturn: restart()
+        case .alertFirstButtonReturn: if refused { openStuga() } else { restart() }
         case .alertSecondButtonReturn: showLogs()
         default: break
+        }
+    }
+
+    /// An update or a go-back replaced this app on disk: open the copy there and quit, unless an
+    /// install or a restore is still under way.
+    func relaunchIfReplaced() {
+        guard !relaunching, state != .installing, state != .restoring, state != .uninstalling,
+              let data = FileManager.default.contents(atPath: Bundle.main.bundlePath + "/Contents/Info.plist"),
+              let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
+              let onDisk = plist["CFBundleShortVersionString"] as? String,
+              let running = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+              onDisk != running
+        else { return }
+        relaunching = true
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        configuration.activates = false
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
+            DispatchQueue.main.async {
+                if error == nil { NSApp.terminate(nil) } else { self.relaunching = false }
+            }
         }
     }
 
@@ -239,6 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .running: statusLine.title = "Running at \(address)"
         case .unclaimed: statusLine.title = "Ready to set up at \(address)"
         case .installing: statusLine.title = "Installing an update…"
+        case .restoring: statusLine.title = "Restoring a backup…"
         case .uninstalling: statusLine.title = "Uninstalling…"
         case .down(let fault): statusLine.title = fault.title
         }
@@ -253,9 +309,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Before setup the plain address only asks for the code, so both hand out the setup link instead.
         copyItem.title = state == .unclaimed ? "Copy Setup Link" : "Copy Address"
         qrItem.title = state == .unclaimed ? "Show Setup Link as QR Code…" : "Show Address as QR Code…"
-        openItem.isEnabled = state == .running || state == .unclaimed
+        // A node refusing its data serves the page that says what to do.
+        openItem.isEnabled = state == .running || state == .unclaimed || state == .down(.refused)
         copyItem.isEnabled = node != nil && state != .uninstalling
         qrItem.isEnabled = node != nil && state != .uninstalling
+        restartItem.isEnabled = state != .uninstalling && health.mayRestart
     }
 
     // MARK: actions
@@ -331,7 +389,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func restart() {
-        guard state != .uninstalling else { return }
+        // An install or a restore stops Stuga on purpose, and starts it again when it is done.
+        guard state != .uninstalling, health.mayRestart, !installing(), !restoring() else { return }
         state = .starting
         DispatchQueue.global().async {
             let restarted = asAdministrator("launchctl kickstart -k system/dev.stuga.postgres; launchctl kickstart -k system/dev.stuga.node", prompt: "Stuga needs your password to restart.") != nil

@@ -1,10 +1,12 @@
 /**
- * The backup a node takes before it changes a database that another version
- * served. Migrations, extension updates and search index rebuilds all run at
- * boot and none of them has a way back but a restore, so the node takes the
- * backup itself: every way a new version arrives (an upgrade command, a package,
- * a NAS app store, an image pulled by hand) passes through here, and only some
- * of them would run a backup of their own.
+ * The backup a node takes before it changes a database that an older version,
+ * or a build from source on either side, served. Data a newer release served
+ * never gets here: the node refuses it first (data-version.ts). Migrations,
+ * extension updates and search index rebuilds all run at boot and none of them
+ * has a way back but a restore, so the node takes the backup itself: every way
+ * a new version arrives (an upgrade command, a package, a NAS app store, an
+ * image pulled by hand) passes through here, and only some of them would run a
+ * backup of their own.
  *
  * Taken before any actor opens, while the node holds its writer lock, so the
  * two halves describe one instant as a stopped node's would. The manifest's
@@ -12,9 +14,9 @@
  * back to; `runtime_version` is this build.
  *
  * Once per upgrade: a backup this build already took of this data, after the
- * last successful boot, is still the data as the old version left it, so a new
- * version that fails to start and is restarted does not take another one and
- * push older backups out of retention.
+ * old version last booted, is still the data as the old version left it, so a
+ * new version that fails before its migrations commit and is restarted does
+ * not take another one and push older backups out of retention.
  */
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,11 +24,13 @@ import { lastNodeBoot, type Sql } from "@stuga/db";
 import { runBackup, PARTIAL_SUFFIX } from "../ops/backup.js";
 import type { BackupEnv } from "../ops/env.js";
 import { readManifest } from "../ops/manifest.js";
+import { versionChange } from "../version.js";
 import { databaseName, type WriterLock } from "../writer-lock.js";
 
 export type UpgradeBackup =
   | { taken: true; path: string; from: string }
   | { taken: false; reason: "new-database" | "same-version" }
+  | { taken: false; reason: "downgrade"; from: string }
   | { taken: false; reason: "already-taken"; path: string; from: string };
 
 /** `env.version` is this build's: the version the data is about to be upgraded to. */
@@ -40,7 +44,9 @@ export async function backupBeforeUpgrade(opts: {
 }): Promise<UpgradeBackup> {
   const last = await lastNodeBoot(opts.sql);
   if (!last) return { taken: false, reason: "new-database" };
-  if (last.version === opts.env.version) return { taken: false, reason: "same-version" };
+  const change = versionChange(last.version, opts.env.version);
+  if (change === "same") return { taken: false, reason: "same-version" };
+  if (change === "downgrade") return { taken: false, reason: "downgrade", from: last.version };
 
   const earlier = await findUpgradeBackup(opts.env, last.version, last.at);
   if (earlier) return { taken: false, reason: "already-taken", path: earlier, from: last.version };

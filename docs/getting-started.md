@@ -154,8 +154,9 @@ workspace.
 Take a backup, then restore it, while nothing is at stake:
 
 - Docker: `./stuga backup`, then `./stuga restore <backup>`.
-- macOS: **Back up now** under **Settings → This node → Backups**, then stop the node and run
-  `stuga-node restore <backup>`, as [install/macos.md](install/macos.md#stuga-node-commands) shows.
+- macOS: **Back up now** under **Settings → This node → Backups**, then run the command its
+  **Restore…** shows on the Mac, `sudo "/Library/Application Support/Stuga/current/bin/stuga" restore <backup>`
+  ([install/macos.md](install/macos.md#operator-commands)).
 
 A restore keeps what it replaced, so the drill loses nothing. [Operations](operations.md) describes
 backups and restores in full, including why a backup is secret.

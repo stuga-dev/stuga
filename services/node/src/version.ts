@@ -8,6 +8,9 @@ import { APP_ROOT } from "./app-root.js";
 
 export const DEV_VERSION = "0.0.0-dev";
 
+/** What a release carries: a plain 1.2.3, no leading zeros. */
+const RELEASE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
 type BuildKind = "release" | "source";
 
 /** One line of a file at the app root, or "" when there is no such file. */
@@ -49,4 +52,30 @@ export function bootSummary(input: {
         ? `schema ${schema.to}`
         : `schema ${schema.from} → ${schema.to}`;
   return `${build}, ${db}`;
+}
+
+/** A plain 1.2.3. A source build (0.0.0-dev) or a CI build (0.0.0-ci) has nothing to compare with. */
+export function isReleaseVersion(version: string): boolean {
+  return RELEASE.test(version);
+}
+
+/** Negative when `a` is the older one. Both are plain versions. */
+export function compareVersions(a: string, b: string): number {
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
+  return x[0]! - y[0]! || x[1]! - y[1]! || x[2]! - y[2]!;
+}
+
+export type VersionChange = "same" | "upgrade" | "downgrade" | "unordered";
+
+/**
+ * `from` served the data and `to` is about to. Only two plain releases are ordered: a build from
+ * source on either side is unordered by design, with no marker of the newest release kept, so an
+ * older release after a release and then a build from source is not refused for its version. The
+ * schema refusal still covers it.
+ */
+export function versionChange(from: string, to: string): VersionChange {
+  if (from === to) return "same";
+  if (!isReleaseVersion(from) || !isReleaseVersion(to)) return "unordered";
+  return compareVersions(from, to) < 0 ? "upgrade" : "downgrade";
 }

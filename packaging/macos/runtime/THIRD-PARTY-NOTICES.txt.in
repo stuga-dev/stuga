@@ -6,9 +6,9 @@ AGPL-3.0-only: app/LICENSE and app/NOTICE beside this file, and https://github.c
 postgres/
   PostgreSQL @PG_MAJOR@, as built by Postgres.app @POSTGRES_APP_VERSION@ (https://postgresapp.com, source
   https://github.com/PostgresApp/PostgresApp/tree/v@POSTGRES_APP_VERSION@), cut down to the server,
-  its client tools, the contrib modules and the libraries and extensions listed here. Postgres.app
-  is developed by Jakob Egger, Tobias Bussmann, Chris Pastl, Mattt Thompson and contributors,
-  under the PostgreSQL License.
+  its client tools, the contrib modules and the libraries and extensions listed here, and to the
+  arm64 slices of its universal files. Postgres.app is developed by Jakob Egger, Tobias Bussmann,
+  Chris Pastl, Mattt Thompson and contributors, under the PostgreSQL License.
 
   PostgreSQL, Postgres.app, pgvector ........ PostgreSQL License (A)
   pg_search (ParadeDB) ...................... AGPL-3.0 (B)
@@ -22,7 +22,8 @@ postgres/
   libxslt, libexslt ......................... MIT (I)
 
 node/
-  Node.js @NODE_VERSION@, MIT, with the licenses of the components it bundles in node/LICENSE.
+  Node.js @NODE_VERSION@, MIT, with the licenses of the components it bundles in node/LICENSE. The
+  official darwin-arm64 build, with its local symbols removed (strip -x).
 
 app/services/node/dist/stuga-node.mjs
   The node's npm dependencies, bundled; their licenses in app/services/node/dist/third-party-licenses.txt.
@@ -68,7 +69,8 @@ PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 (B) pg_search (ParadeDB) @PG_SEARCH_VERSION@: AGPL-3.0
 ================================================================================
 
-Installed from ParadeDB's package pg_search-pg@PG_MAJOR@-@PG_SEARCH_VERSION@.pkg, unmodified.
+Installed from ParadeDB's package pg_search-pg@PG_MAJOR@-@PG_SEARCH_VERSION@.pkg, with its local
+symbols removed (strip -x) and signed again; the code is unmodified.
 Corresponding source: https://github.com/paradedb/paradedb/tree/v@PG_SEARCH_VERSION@
 The license is the GNU Affero General Public License version 3, the same text as app/LICENSE.
 

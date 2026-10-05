@@ -340,9 +340,11 @@ function newNodeId(): string {
 }
 
 /**
- * The version that last booted on this database and when, read before migrations
- * run, so on a database whose schema this build has not yet touched. Null when no
- * node has booted on it: a new database, or one migrations have not reached.
+ * The newest build that has written to this database, and when it booted, read
+ * before migrations run, so on a database whose schema this build has not yet
+ * touched. Null when no node has booted on it: a new database, or one migrations
+ * have not reached. Every older build reads it before it writes, so no migration
+ * may rename, drop or retype `app_version` or `last_boot_at`.
  */
 export async function lastNodeBoot(sql: Sql): Promise<{ version: string; at: Date } | null> {
   const [table] = await sql<{ present: boolean }[]>`SELECT to_regclass('public.node_state') IS NOT NULL AS present`;
@@ -353,9 +355,11 @@ export async function lastNodeBoot(sql: Sql): Promise<{ version: string; at: Dat
 }
 
 /**
- * Stamp this boot, once the node has decided it can run. The first boot on a
- * database also picks the node's id, which later boots keep. Returns that id and
- * the version the previous boot recorded (null on a fresh database).
+ * Stamp this build as the newest that has written to this database: right after
+ * the migrations commit, before any other write, so an older build can tell its
+ * data was changed. The first boot on a database also picks the node's id, which
+ * later boots keep. Returns that id and the version the previous boot recorded
+ * (null on a fresh database).
  */
 export async function recordNodeBoot(sql: Sql, appVersion: string): Promise<{ nodeId: string; previousVersion: string | null }> {
   const previousVersion = (await getNodeState(sql))?.app_version ?? null;

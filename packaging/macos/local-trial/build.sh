@@ -5,9 +5,9 @@
 #   packaging/macos/local-trial/build.sh --uninstall     # remove the app and runtime, keep the data
 #
 # Options:
-#   --identity <name|sha1>   re-sign the Postgres tree (library validation on) and the app with
-#                            it; without one the tree keeps its upstream signatures and the app
-#                            is signed ad hoc
+#   --identity <name|sha1>   re-sign the Postgres tree (library validation on), Node and the app
+#                            with it; without one Node, pg_search and the app are signed ad hoc
+#                            and the rest of the tree keeps its upstream signatures
 #   --postgres-tree <dir>    copy this Postgres tree instead of the pinned assembled one
 #   --app-dir <dir>          where Stuga.app goes (default ~/Applications)
 #   --port <n>               the node's port (default 8787)
@@ -143,8 +143,18 @@ if [ -n "$identity" ]; then
   fi
   # So Login Items lists the jobs under Stuga.app, signed by the same team.
   codesign --force --options runtime --timestamp --sign "$identity" "$ROOT/runtime/$version/bin/stuga-job"
+  # As the package signs it: hardened runtime needs allow-jit for V8.
+  entitlements="$(mktemp)"
+  cat > "$entitlements" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>com.apple.security.cs.allow-jit</key><true/></dict></plist>
+PLIST
+  codesign --force --options runtime --timestamp --entitlements "$entitlements" --sign "$identity" \
+    "$ROOT/runtime/$version/node/bin/node"
+  rm -f "$entitlements"
 else
-  echo "no --identity: the Postgres tree keeps its upstream signatures, so library validation stays off"
+  echo "no --identity: Node and pg_search are signed ad hoc, and library validation stays off"
 fi
 ln -sfn "runtime/$version" "$ROOT/current"
 
@@ -204,7 +214,9 @@ echo "    address:       $origin   (the menu-bar mark opens and copies it)"
 if [ "$reach" = lan ]; then
   echo "    fallback:      http://127.0.0.1:$port   (no network needed, secure context)"
   fw=/usr/libexec/ApplicationFirewall/socketfilterfw
-  if "$fw" --getglobalstate 2> /dev/null | grep -q 'State = 1' && ! "$fw" --getallowsigned 2> /dev/null | grep -q 'downloaded signed software ENABLED'; then
-    echo "    the macOS firewall is on and does not auto-allow signed software: allow 'node' when it asks, or other devices get no answer"
+  # Without --identity, node is signed ad hoc, which the firewall never allows by itself.
+  if "$fw" --getglobalstate 2> /dev/null | grep -q 'State = 1' &&
+    { [ -z "$identity" ] || ! "$fw" --getallowsigned 2> /dev/null | grep -q 'downloaded signed software ENABLED'; }; then
+    echo "    the macOS firewall is on: allow 'node' when it asks, or other devices get no answer"
   fi
 fi

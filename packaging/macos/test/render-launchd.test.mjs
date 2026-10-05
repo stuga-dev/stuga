@@ -154,6 +154,13 @@ test("daemon mode points the node at the helper for upgrades and the connector",
   assert.deepEqual(plist(join(out, "dev.stuga.helper.plist")).WatchPaths, ["/tmp/stuga root/requests"]);
 });
 
+test("daemon mode gives the web the command that restores a backup on this Mac", { skip }, () => {
+  const out = scratch();
+  renderDaemon(out);
+  const command = plist(join(out, "dev.stuga.node.plist")).EnvironmentVariables.STUGA_RESTORE_COMMAND;
+  assert.equal(command, 'sudo "/tmp/stuga root/current/bin/stuga" restore {backup}');
+});
+
 test("agent mode keeps remote access and the setup code in the data directory, and drops the helper's paths", { skip }, () => {
   const out = scratch();
   renderAgentWith(true, out, "--public-origin", "http://127.0.0.1:8787");
@@ -161,7 +168,7 @@ test("agent mode keeps remote access and the setup code in the data directory, a
   const env = environment(join(out, "dev.stuga.local.node.plist"));
   assert.equal(env.STUGA_REMOTE_DIR, "/tmp/stuga root/remote");
   assert.equal(env.STUGA_REMOTE_SERVICE, "https://api.stuga.dev");
-  for (const key of ["STUGA_CONNECTOR_REQUEST", "STUGA_CONNECTOR_STATUS", "STUGA_UPGRADE_REQUESTS", "STUGA_UPGRADE_STATUS", "SETUP_CODE_FILE", "STUGA_BONJOUR_NAME"]) {
+  for (const key of ["STUGA_CONNECTOR_REQUEST", "STUGA_CONNECTOR_STATUS", "STUGA_UPGRADE_REQUESTS", "STUGA_UPGRADE_STATUS", "SETUP_CODE_FILE", "STUGA_BONJOUR_NAME", "STUGA_RESTORE_COMMAND"]) {
     assert.equal(env[key], undefined, key);
   }
 });

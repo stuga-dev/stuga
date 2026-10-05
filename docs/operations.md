@@ -5,7 +5,9 @@ How to run them depends on the platform:
 
 - Docker: the `./stuga` script beside `compose.yml`
   ([install/docker.md](install/docker.md#operator-commands)).
-- macOS: the `stuga-node` shell function ([install/macos.md](install/macos.md#stuga-node-commands)).
+- macOS: `sudo "/Library/Application Support/Stuga/current/bin/stuga"`, for every command but
+  `backup`: **Back up now** under **Settings → This node → Backups** takes a backup
+  ([install/macos.md](install/macos.md#operator-commands)).
 
 The commands never start a node. `backup`, `verify`, `restore` and `list` take `--json`, which
 writes one JSON object to standard output and keeps notes and errors on standard error.
@@ -23,7 +25,8 @@ A node's data is in two halves that only mean something together: the Postgres d
 directory (`DATA_DIR`). A backup takes both while nothing writes to either, so they describe the same
 instant. The node takes backups of itself ([below](#the-nodes-own-backups)): every day, and before
 an upgrade. `stuga-node backup` backs up a stopped node. It refuses while a node holds the database,
-and `./stuga backup` stops and restarts the node around it.
+and `./stuga backup` stops and restarts the node around it. On a Mac, **Back up now** backs up the
+running node.
 
 `backup`:
 
@@ -72,11 +75,12 @@ in the app and through the [notification sink](configuration.md#settings-in-the-
 The next one is tried at the next scheduled hour.
 
 Before an upgrade changes anything, the new version backs up the data the previous one left: when it
-starts on a database another version served last, it takes a backup before it migrates. It takes
-that backup once per upgrade, so a new version that fails to start and is started again does not
-take another. If it cannot take the backup, for example for lack of disk space, it stops and changes
-nothing. The backup's manifest names the version that served the data, and a restore goes back to
-that version.
+starts on a database an older version, or a build from source, served last, it takes a backup
+before it migrates. It takes that backup once per upgrade, so a new version that fails to start and
+is started again does not take another. If it cannot take the backup, for example for lack of disk
+space, it stops and changes nothing. The backup's manifest names the version that served the data:
+the one to run after restoring it. An older release takes no such backup: it refuses data a newer
+one served before it backs anything up ([Upgrades](#upgrades)).
 
 The node's backups go to `BACKUP_DIR` beside the operator commands' own, and the number kept counts
 them all. `backup` reads it from the database it backs up.
@@ -86,14 +90,22 @@ them all. `backup` reads it from the database it backs up.
 `verify <backup>` checks that a backup is whole: the manifest parses, both files match their
 recorded size and checksum, `pg_restore` reads the whole dump, and `tar` reads the whole archive. It
 also checks that this build can restore it. It refuses a backup from another Postgres major, a
-schema newer than this build knows, or an embedding width other than the node's `AI_EMBED_DIMS`. It
-notes a schema older than this build's, which the node migrates when it starts, and a backup taken
-at another `PUBLIC_ORIGIN`, after which everyone signs in again. `verify` only reads.
+schema newer than this build knows, data a newer release served, or an embedding width other than
+the node's `AI_EMBED_DIMS`. It notes a schema older than this build's, which the node migrates when
+it starts, and a backup taken at another `PUBLIC_ORIGIN`, after which everyone signs in again.
+`verify` only reads.
+
+`verify --going-back` also compares the current database's extensions with the backup's, and
+refuses when one both hold is at another version: an older pg_search or pgvector never opens indexes
+a newer one wrote. The packagings' restore commands pass it when they go back.
 
 ### list
 
-`list` shows complete backups, newest first, with the Stuga version and schema of each. It also
-shows unfinished backups, which the next backup removes, and what restores left beside the data.
+`list` shows complete backups, newest first, with the Stuga version and schema of each. A backup a
+newer version, or a build from source, took before it upgraded the data reads `taken before
+upgrading from <old> to <new>`. It also shows unfinished backups, which the next backup removes,
+and what restores left beside the data. With `--json`, each backup also carries `runtime_version`,
+the build that took it, and `before_upgrade`.
 
 ## Restore
 
@@ -121,10 +133,11 @@ Within minutes of starting on restored data, the node's maintenance runs against
 older than 30 days and audit rows past their retention are removed for good.
 
 A backup restores onto another machine that runs the same Postgres major, with the same
-`AI_EMBED_DIMS`, and a Stuga that knows the backup's schema. The archive carries the signing key, so
-sessions from the time of the backup keep working when `PUBLIC_ORIGIN` is unchanged. The node's ID,
-and a name set in Settings, are in the database, so the restored node keeps them. A node that was
-never named goes by the host of the restored node's `PUBLIC_ORIGIN`.
+`AI_EMBED_DIMS`, and a Stuga that knows the backup's schema and is no older than the release that
+served it. The archive carries the signing key, so sessions from the time of the backup keep working
+when `PUBLIC_ORIGIN` is unchanged. The node's ID, and a name set in Settings, are in the database, so
+the restored node keeps them. A node that was never named goes by the host of the restored node's
+`PUBLIC_ORIGIN`.
 
 Practise a restore once, before the node holds anything you would miss.
 
@@ -275,25 +288,43 @@ install docs have the commands for [Docker](install/docker.md#upgrade) and
 Any release upgrades straight to the newest one. There are no versions you have to stop at on the
 way, however many you skip.
 
-On its first start, a new version backs up, then migrates the database in one transaction, and only
-then serves. Until then it answers with a page that says it is upgrading. An upgrade that stops
-halfway leaves the schema as it was. The node's log names both versions:
+On its first start, a new version backs up, then migrates the database in one transaction, records
+its version in the database, and only then serves. Until then it answers with a page that says it is
+upgrading. An upgrade that stops halfway leaves the schema as it was. As soon as the migrations
+commit, before anything else writes, the node's log names both versions:
 
 ```
 [node] stuga <old> → <new>, schema <n> → <m>
 ```
 
-There is no downgrade. A node refuses to start on a database that a newer version wrote, because the
-newer version may have changed what its tables mean:
+### Going back
+
+From 0.1.12 on, an earlier release never changes data a later one served, because the later one may
+have changed what it means. Before it writes or backs anything up, a node refuses a database whose
+schema is newer than it knows, or which a newer release served last. It keeps running and changes
+nothing until it is stopped: `/ready` answers `refused`, and a browser gets a page that names the
+version to start again when the node knows it, with the command that restores the backup where the
+packaging names one (`STUGA_RESTORE_COMMAND`). Its log names the backup too:
 
 ```
-this database is at schema <m>, but this build of Stuga only knows schema <n>. …
+[node] refusing this database: Stuga <new> served it last, and this is Stuga <old>. Nothing was changed. Start Stuga <new> again, or restore <backup> with this version: <command>
 ```
+
+For a newer schema the line starts `refusing this database: it is at schema <m>, and this build knows
+schema <n>`. Versions are compared only when both are a plain `1.2.3`, so a build from source is
+refused only for a newer schema. `reset-password` and `media-scan` refuse such data too.
 
 Each document's and each database's own store under `DATA_DIR/actors` is stamped the same way. A
 build refuses to open one that a newer version stamped, that document or database answers with an
 error, and the node's log says which store and which versions.
 
-Start the newer version again, or restore the backup taken before the upgrade and run the earlier
-version on it. The other reasons a node refuses to start are listed in
+Going back restores the backup taken before the upgrade with the version that served it, and puts
+that version back: `./stuga restore <backup>` on [Docker](install/docker.md#roll-back),
+`sudo "/Library/Application Support/Stuga/current/bin/stuga" restore <backup>` on a
+[Mac](install/macos.md#go-back-to-an-earlier-version). **Settings → This node → Backups** shows the
+command beside each backup. That backup holds the data as it was before the upgrade. Going back
+stops at a release that changed pg_search or pgvector: `verify --going-back` refuses to cross it,
+and its upgrade notes say so.
+
+The other reasons a node refuses to start are listed in
 [Troubleshooting](troubleshooting.md#the-node-does-not-start).

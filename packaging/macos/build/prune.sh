@@ -3,7 +3,8 @@
 #
 #   packaging/macos/build/prune.sh <tree>
 #
-# Re-runnable: a path already gone is not an error. check-tree.sh proves the result.
+# Re-runnable: a path already gone, or a file already thin, is not an error. check-tree.sh
+# proves the result.
 #
 # What goes:
 #   PostGIS (with pgRouting, which requires it), GDAL, PROJ, GEOS, pljs, and plpython
@@ -15,10 +16,17 @@
 #   copy in the tree is never used.
 #   Headers, static archives and PGXS: nothing is compiled against this tree, and a
 #   static archive cannot carry a code signature.
+#   Documentation and man pages.
+#   Every slice but arm64: Stuga installs on Apple silicon only (distribution.xml). Each
+#   slice carries its own signature, so the arm64 one stays signed by its publisher.
 #
 # What stays although it looks unused: libxslt/libexslt (pgxml links them), ecpg,
 # pldbgapi and wal2json. Removing a library by guessing is how a server stops starting.
 set -euo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/devtools.sh
+. "$here/lib/devtools.sh"
 
 tree="${1:-}"
 [ -n "$tree" ] || { echo "usage: $0 <tree>" >&2; exit 2; }
@@ -68,20 +76,7 @@ share/postgresql/extension/hstore_plpython3u* share/postgresql/extension/jsonb_p
 share/postgresql/extension/ltree_plpython3u*
 
 share/gdal share/proj share/bash-completion share/info
-share/doc/postgis share/doc/proj share/doc/mpfr
-share/man/man1/cct.1 share/man/man1/cs2cs.1 share/man/man1/geod.1 share/man/man1/gie.1
-share/man/man1/proj.1 share/man/man1/projinfo.1 share/man/man1/projsync.1
-share/man/man1/gdal* share/man/man1/ogr* share/man/man1/gnm* share/man/man1/nearblack.1
-share/man/man1/pct2rgb.1 share/man/man1/rgb2pct.1 share/man/man1/sozip.1
-share/man/man1/postgis.1 share/man/man1/postgis_restore.1 share/man/man1/pgsql2shp.1
-share/man/man1/shp2pgsql.1 share/man/man1/pgtopo_export.1 share/man/man1/pgtopo_import.1
-share/man/man1/cjpeg.1 share/man/man1/djpeg.1 share/man/man1/jpegtran.1
-share/man/man1/rdjpgcom.1 share/man/man1/wrjpgcom.1
-share/man/man5/png.5
-share/man/man1/derb.1 share/man/man1/genbrk.1 share/man/man1/gencfu.1 share/man/man1/gencnval.1
-share/man/man1/gendict.1 share/man/man1/genrb.1 share/man/man1/icu-config.1
-share/man/man1/icuexportdata.1 share/man/man1/makeconv.1 share/man/man1/pkgdata.1
-share/man/man1/uconv.1
+share/doc share/man share/gtk-doc
 
 include lib/*.a lib/postgresql/pgxs
 '
@@ -97,4 +92,18 @@ for pattern in $PRUNE; do
   done
 done
 
-echo "pruned $removed paths from $tree"
+# lipo is a developer-tool shim; one that cannot run fails the prune rather than skipping files.
+use_working_developer_tools
+thinned=0
+while IFS= read -r -d '' file; do
+  case "$(head -c 4 "$file" | od -An -tx1 | tr -d ' \n')" in
+    cafebabe | cafebabf) ;;
+    *) continue ;;
+  esac
+  lipo "$file" -thin arm64 -output "$file.arm64"
+  chmod "$(stat -f %Lp "$file")" "$file.arm64"
+  mv -f "$file.arm64" "$file"
+  thinned=$((thinned + 1))
+done < <(find bin lib -type f -print0)
+
+echo "pruned $removed paths and thinned $thinned files to arm64 in $tree"

@@ -3,7 +3,9 @@
 # `current`, the four jobs, the database cluster once, and a start. Before the jobs it opens the
 # menu-bar app for whoever is at the Mac, which opens the setup page once Stuga serves, until someone
 # has set it up; an upgrade starts the new version, which backs up the data before it changes
-# anything. build-pkg.sh fills in the version.
+# anything. Each job is enabled before it starts, since a go-back that stopped short leaves the node
+# disabled; while bin/stuga holds status/restoring, the node's wrapper does not start it.
+# build-pkg.sh fills in the version.
 set -euo pipefail
 
 # preinstall's mark that Stuga is stopped on purpose goes however this ends: Stuga runs again, or
@@ -33,16 +35,15 @@ main() {
   install -d -o root -g _stugaremote -m 0750 "$root/connector"
   # The setup code, until someone sets Stuga up: the node writes it, the Mac's administrators read it.
   install -d -o _stuga -g admin -m 0750 "$root/setup"
-  # Where 0.1.7 kept it, which only _stuga could read.
+  # Where 0.1.7 kept it, which only _stuga could read. The copy takes setup/'s group.
   if [ -f "$root/data/node/setup-code" ]; then
-    install -o _stuga -g admin -m 0640 "$root/data/node/setup-code" "$root/setup/setup-code"
-    rm -f "$root/data/node/setup-code"
+    # shellcheck disable=SC2016 # sh's own $1 and $2
+    as_stuga /bin/sh -c 'cp "$1" "$2" && chmod 0640 "$2" && rm -f "$1"' sh \
+      "$root/data/node/setup-code" "$root/setup/setup-code" || true
   fi
   # Passable, not listable: _stugaremote reaches its own logs and cannot write _stuga's.
   install -d -o _stuga -g admin -m 0751 "$logs"
   install -d -o _stugaremote -g admin -m 0750 "$logs/remote"
-  local previous
-  previous="$(basename "$(readlink "$root/current" 2> /dev/null || true)")"
   ln -sfn "runtime/$version" "$root/current"
 
   # The address: kept from an earlier install, else this Mac's local name.
@@ -66,11 +67,12 @@ main() {
       --socket "$root/data/run" --os-user _stuga
   fi
   # The live halves are copied mid-write; Time Machine keeps backups/, which the node fills daily.
-  tmutil addexclusion "$root/data/pgdata" "$root/data/node" > /dev/null 2>&1 || true
+  as_stuga /usr/bin/tmutil addexclusion "$root/data/pgdata" "$root/data/node" > /dev/null 2>&1 || true
 
   local label
   for label in dev.stuga.postgres dev.stuga.node; do
     launchctl bootout "system/$label" > /dev/null 2>&1 || true
+    launchctl enable "system/$label"
     launchctl bootstrap system "/Library/LaunchDaemons/$label.plist"
   done
   rm -f "$root/status/installing"
@@ -78,8 +80,12 @@ main() {
   launchctl print system/dev.stuga.helper > /dev/null 2>&1 ||
     launchctl bootstrap system /Library/LaunchDaemons/dev.stuga.helper.plist
 
-  prune_runtimes "$root" "$version" "$previous"
+  prune_runtimes "$root" "$version"
 }
+
+# as_stuga <program> [arguments…]: as _stuga, for paths _stuga can change, so root follows no link
+# it put there.
+as_stuga() { (cd / && exec sudo -u _stuga "$@"); }
 
 # ensure_account <name> <real name>: a user and a group of that name, hidden, with no shell and no
 # home, at an unused id. The group is the user's only one.
@@ -125,12 +131,13 @@ free_id() {
   exit 1
 }
 
-# Keep this runtime and the one it replaced, for a roll back; older ones go.
+# prune_runtimes <root> <version>: keep only this runtime. Going back is the older release's package
+# and the backup taken before the upgrade, not a runtime kept here. Each package prunes in its own
+# postinstall, so a release that still needs the one it replaces keeps it there.
 prune_runtimes() {
-  local dir name
+  local dir
   for dir in "$1"/runtime/*; do
-    name="$(basename "$dir")"
-    [ "$name" = "$2" ] || [ "$name" = "$3" ] || rm -rf "$dir"
+    [ "$(basename "$dir")" = "$2" ] || rm -rf "$dir"
   done
 }
 

@@ -46,6 +46,8 @@ export interface NodeConfig {
   restartHint: string;
   /** One sentence telling an operator how this packaging moves to a newer version. */
   upgradeHint: string;
+  /** How this packaging restores a backup on its machine, with `{backup}` for its name (STUGA_RESTORE_COMMAND); null when it names none. */
+  restoreCommand: string | null;
   /**
    * The packaging's upgrade helper, where it has one (the Mac package): the directory the node
    * drops a request into, and the file the helper reports on (STUGA_UPGRADE_REQUESTS, STUGA_UPGRADE_STATUS).

@@ -302,7 +302,19 @@ export interface NodeBackups {
   dir: string;
   keep: number;
   /** Newest first. */
-  backups: Array<{ name: string; created_at: string; bytes: number; stuga_version: string | null; before_upgrade: boolean }>;
+  backups: NodeBackup[];
+}
+
+export interface NodeBackup {
+  name: string;
+  created_at: string;
+  bytes: number;
+  /** The version whose data it holds. */
+  stuga_version: string | null;
+  /** Taken before an upgrade from `stuga_version`: what going back to it restores. */
+  before_upgrade: boolean;
+  /** What to run on the node's machine to restore it, which checks first that it can; null when the packaging names none. */
+  restore_command: string | null;
 }
 
 /** What the node takes on disk, in bytes. */

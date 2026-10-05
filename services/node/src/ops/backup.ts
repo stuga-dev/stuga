@@ -254,7 +254,7 @@ export async function runBackup(env: BackupEnv, deps: BackupDeps = {}): Promise<
 
 /**
  * Keep the newest `keep` complete backups of `database`, and beyond them the
- * newest one taken before an upgrade, which is what a downgrade restores. Under
+ * newest one taken before an upgrade, which is what going back restores. Under
  * its ops lock, a `.partial` directory of the same database is abandoned and
  * goes too. Only directories whose manifest or owner file names this database
  * are removed.
