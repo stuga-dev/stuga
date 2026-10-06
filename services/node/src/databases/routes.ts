@@ -400,14 +400,17 @@ export async function decideDatabaseRun({ ctx, match, doc, docId, writeRefusal, 
   return json(decided);
 }
 
-export async function revertDatabaseRun({ ctx, match, doc, docId, writeRefusal }: DatabaseCall): Promise<Response> {
+export async function revertDatabaseRun({ ctx, match, doc, docId, writeRefusal, body }: DatabaseCall): Promise<Response> {
   if (ctx.isAgent) return error(403, "agents cannot revert agent edits");
   const r = writeRefusal();
   if (r) return r;
+  const note = parseDecisionNote("revert", (await body()).note);
+  if (!note.ok) return error(400, note.message);
   const res = await callDatabaseActor(ctx, docId, "runs/revert", {
     run_id: match[2]!,
     requested_by: ctx.alias,
     manager_override: manages(ctx, doc),
+    ...(note.note ? { note: note.note } : {}),
   });
   if (res.status === 403) return error(403, "only this run's reviewer (or the database's owner) can revert it");
   if (!res.ok) return proxyActor(res, "revert failed");

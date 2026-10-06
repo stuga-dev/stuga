@@ -1731,6 +1731,38 @@ describe("a reviewer's feedback on what they rejected", () => {
     expect(feedback).toEqual([expect.objectContaining({ run_id: runId, note: "Too formal." })]);
   });
 
+  it("rides on a revert with a note, naming what landed and was taken back", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const applied = await proposeAuto(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha revised." });
+    const runId = runOf(applied.json).id;
+    expect((await post(dobj, "revert", { run_id: runId, requested_by: "alice", note: 7 })).status).toBe(400);
+
+    const res = await post(dobj, "revert", { run_id: runId, requested_by: "alice", note: "  Not in this document.  " });
+    expect(res.status).toBe(200);
+    const hunk = runOf(res.json).hunks[0]!;
+    expect(hunk.status).toBe("auto_applied");
+    expect(hunk.feedback).toMatchObject({ reverted: true, note: "Not in this document.", decided_by: "alice" });
+    const reverted = h.queued.find((m) => m.kind === "event" && m.type === "run.reverted") as { payload: Record<string, unknown> };
+    expect(reverted.payload).toMatchObject({ feedback_id: hunk.feedback!.id });
+    expect(reverted.payload).not.toHaveProperty("note");
+
+    const feedback = (await readMarkdown(dobj, "agent1")).feedback as Array<Record<string, unknown>>;
+    expect(feedback).toEqual([
+      expect.objectContaining({
+        run_id: runId,
+        reverted: true,
+        note: "Not in this document.",
+        changes: [{ old_string: "Alpha paragraph.", new_string: "Alpha revised." }],
+      }),
+    ]);
+    // A bare revert asks nothing of the agent.
+    const quiet = await proposeAuto(dobj, { action: "str_replace", find: "Bravo paragraph.", replace: "Bravo revised.", agent_alias: "agent2" });
+    expect((await post(dobj, "revert", { run_id: runOf(quiet.json).id, requested_by: "alice" })).status).toBe(200);
+    expect(await readMarkdown(dobj, "agent2")).not.toHaveProperty("feedback");
+  });
+
   it("refuses a note on an accept, and one past the limit, deciding nothing", async () => {
     const h = harness();
     const dobj = makeActor(h);

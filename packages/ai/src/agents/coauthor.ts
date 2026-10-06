@@ -211,10 +211,11 @@ export function feedbackBlock(feedback: AgentFeedback[] | undefined): string {
   ];
   for (const fb of feedback) {
     for (const c of fb.changes) {
+      const verb = fb.reverted ? "Reverted after it landed" : "Rejected";
       lines.push(
         "old_string" in c
-          ? `- Rejected: ${JSON.stringify(c.old_string)} → ${JSON.stringify(c.new_string)}`
-          : `- Rejected: ${JSON.stringify(c.summary)}${c.detail ? `: ${c.detail}` : ""}`,
+          ? `- ${verb}: ${JSON.stringify(c.old_string)} → ${JSON.stringify(c.new_string)}`
+          : `- ${verb}: ${JSON.stringify(c.summary)}${c.detail ? `: ${c.detail}` : ""}`,
       );
     }
     if (fb.more) lines.push(`- …and ${fb.more} more rejected in the same decision`);

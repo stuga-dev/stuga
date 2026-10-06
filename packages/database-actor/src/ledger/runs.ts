@@ -397,7 +397,14 @@ export function feedbackFor(sql: SqlHandle, agentAlias: string): AgentFeedback[]
     const fb = r.feedback!;
     let item = byId.get(fb.id);
     if (!item) {
-      item = { id: fb.id, run_id: r.run_id, ...(fb.note ? { note: fb.note } : {}), decided_at: fb.decided_at, changes: [] };
+      item = {
+        id: fb.id,
+        run_id: r.run_id,
+        ...(fb.reverted ? { reverted: true as const } : {}),
+        ...(fb.note ? { note: fb.note } : {}),
+        decided_at: fb.decided_at,
+        changes: [],
+      };
       byId.set(fb.id, item);
     }
     if (item.changes.length < RUN_FEEDBACK_MAX_CHANGES) item.changes.push({ summary: r.summary, ...(fb.detail ? { detail: fb.detail } : {}) });
@@ -423,6 +430,11 @@ export function answerFeedback(sql: SqlHandle, agentAlias: string, ids: readonly
     answered.add(fb.id);
   }
   return [...answered];
+}
+
+/** Attach a reviewer's feedback to an op that already has its status, as a revert with a note does. */
+export function setOpFeedback(sql: SqlHandle, runId: string, opId: string, feedback: RunFeedback): void {
+  sql.exec(`UPDATE _run_ops SET feedback = ? WHERE run_id = ? AND op_id = ?`, JSON.stringify(feedback), runId, opId);
 }
 
 /** The reviewer withdraws what they requested on a run (Mark as reviewed): its open feedback is marked answered. */

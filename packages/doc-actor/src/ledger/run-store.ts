@@ -459,7 +459,14 @@ export class RunLedger {
         left = true;
         let item = byId.get(fb.id);
         if (!item) {
-          item = { id: fb.id, run_id: stored.id, ...(fb.note ? { note: fb.note } : {}), decided_at: fb.decided_at, changes: [] };
+          item = {
+            id: fb.id,
+            run_id: stored.id,
+            ...(fb.reverted ? { reverted: true as const } : {}),
+            ...(fb.note ? { note: fb.note } : {}),
+            decided_at: fb.decided_at,
+            changes: [],
+          };
           byId.set(fb.id, item);
         }
         if (item.changes.length < RUN_FEEDBACK_MAX_CHANGES) {

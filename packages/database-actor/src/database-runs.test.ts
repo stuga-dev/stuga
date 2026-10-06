@@ -659,6 +659,29 @@ describe("a reviewer's feedback on what they rejected", () => {
     expect(after.feedback).toEqual([]);
   });
 
+  it("rides on a revert with a note, on the ops taken back and the ones still pending", async () => {
+    const h = makeState();
+    const { actor } = makeActor(h);
+    const starter = await initStarter(actor);
+    const a = await proposeAuto(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "one" }] });
+    expect((await listRows(actor, starter.table_id)).total).toBe(1);
+    const out = await doJson<{ run: DatabaseRunSummary; reverted: number }>(actor, "/runs/revert", {
+      actor: HUMAN,
+      run_id: a.run.id,
+      requested_by: HUMAN.alias,
+      note: "Wrong table.",
+    });
+    expect(out.reverted).toBe(1);
+    expect(out.run.ops[0]!.feedback).toMatchObject({ reverted: true, note: "Wrong table.", detail: '[{"Name":"one"}]' });
+    const agentSchema = `/schema?agent=${encodeURIComponent(AGENT.alias)}`;
+    expect((await doJson<{ feedback?: unknown[] }>(actor, agentSchema)).feedback).toEqual([
+      expect.objectContaining({ run_id: a.run.id, reverted: true, note: "Wrong table.", changes: [{ summary: out.run.ops[0]!.summary, detail: '[{"Name":"one"}]' }] }),
+    ]);
+    const reverted = h.jobs.sent.find((m) => m.kind === "event" && m.type === "run.reverted") as { payload: Record<string, unknown> };
+    expect(reverted.payload).toMatchObject({ feedback_id: out.run.ops[0]!.feedback!.id });
+    expect(reverted.payload).not.toHaveProperty("note");
+  });
+
   it("is withdrawn when the reviewer marks the run reviewed", async () => {
     const h = makeState();
     const { actor } = makeActor(h);

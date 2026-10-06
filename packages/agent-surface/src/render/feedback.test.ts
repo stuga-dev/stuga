@@ -75,6 +75,19 @@ describe("changes requested, as an agent reads them", () => {
     expect(renderPropose({ mode: "proposed", run: RUN, pending: 1, reason: "r" })).not.toContain(FEEDBACK_OPEN);
   });
 
+  it("names a revert with a note as such, on a hunk that had landed", () => {
+    const reverted: AgentRunSummary = {
+      ...RUN,
+      status: "expired",
+      reverted: true,
+      hunks: [{ ...RUN.hunks[0]!, status: "auto_applied", feedback: { ...RUN.hunks[0]!.feedback!, reverted: true, note: "Wrong doc." } }],
+    };
+    const out = renderStatus([reverted]);
+    expect(out).toContain("the reviewer reverted, after it had landed,");
+    expect(out).toContain('Their note: "Wrong doc."');
+    expect(renderFeedback([{ ...NOTED, reverted: true }])).toContain("reverted, after it had landed");
+  });
+
   it("lists each rejection under its run in status", () => {
     const out = renderStatus([RUN]);
     expect(out.split("\n")[0]).toMatch(/^run_0123456789ab: rejected — /);

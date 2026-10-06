@@ -235,8 +235,11 @@ export async function handleRunRevert(ledger: RunLedger, req: Request): Promise<
     run_id?: string;
     requested_by?: string;
     manager_override?: boolean;
+    note?: unknown;
   } | null;
   if (!input || !input.run_id) return badRequest();
+  const note = parseDecisionNote("revert", input.note);
+  if (!note.ok) return Response.json({ error: "bad request", message: note.message }, { status: 400 });
   const stored = await ledger.load(input.run_id);
   if (!stored) return Response.json({ error: "not_found" }, { status: 404 });
   const denied = notReviewer(stored, input.requested_by, input.manager_override);
@@ -269,6 +272,12 @@ export async function handleRunRevert(ledger: RunLedger, req: Request): Promise<
   // Reverting ends the run, so hunks still pending in it are rejected rather than stranded.
   const orphaned = pendingOf(body);
   for (const h of orphaned) h.status = "rejected";
+  // A revert with a note is a request for changes on what landed: the agent is told, as after a rejection.
+  let feedback: RunFeedback | null = null;
+  if (note.note) {
+    feedback = { id: newFeedbackId(), reverted: true, note: note.note, decided_by: requestedBy, decided_at: Date.now() };
+    for (const h of [...landed, ...orphaned]) h.feedback = { ...feedback };
+  }
   stored.status = "expired";
   stored.reverted = true;
   stored.acknowledged = true;
@@ -276,12 +285,14 @@ export async function handleRunRevert(ledger: RunLedger, req: Request): Promise<
   stored.seq_at_commit = store.seq;
   body.final_markdown = store.markdown();
   await ledger.save(stored, body);
+  if (feedback) await ledger.noteFeedback(stored);
   await ledger.clearActive(stored.agent_alias);
   ledger.sendDecided(stored, body, "reject", [...landed, ...orphaned].map((h) => h.id), requestedBy);
   ledger.emitEvent("run.reverted", stored, `user:${requestedBy}`, "human", {
     decided_by: requestedBy,
     reverted: landed.length,
     rejected: orphaned.length,
+    ...(feedback ? { feedback_id: feedback.id } : {}),
   });
   return Response.json({ run: ledger.summaryOf(stored, body), reverted: landed.length, rejected: orphaned.length });
 }

@@ -38,7 +38,7 @@ export function revisedNote(revised: string[] | undefined): string {
 
 /** One piece of feedback as lines: what was rejected, then the note. */
 function feedbackLines(fb: AgentFeedback): string[] {
-  const lines = [`- ${fb.id} (run ${fb.run_id}): the reviewer rejected`];
+  const lines = [`- ${fb.id} (run ${fb.run_id}): the reviewer ${fb.reverted ? "reverted, after it had landed," : "rejected"}`];
   for (const c of fb.changes) {
     if (!("summary" in c)) lines.push(`    ${JSON.stringify(c.old_string)} → ${JSON.stringify(c.new_string)}`);
     else lines.push(c.detail ? `    ${JSON.stringify(c.summary)}: ${c.detail}` : `    ${JSON.stringify(c.summary)}`);
@@ -54,18 +54,25 @@ export function renderFeedback(items: AgentFeedback[] | undefined, place: Feedba
   return [FEEDBACK_OPEN, ...items.flatMap(feedbackLines), FEEDBACK_ADVICE[place], FEEDBACK_CLOSE].join("\n");
 }
 
-/** A run's rejections grouped by the decision that made them, newest first, as `status` lists them. */
+/** A run's feedback (rejections, and reverts with a note) grouped by the decision that made it, newest first, as `status` lists it. */
 export function feedbackOfRun(
   runId: string,
   items: Array<{ status: string; feedback?: RunFeedback; change: AgentFeedback["changes"][number] }>,
 ): AgentFeedback[] {
   const byId = new Map<string, AgentFeedback>();
   for (const item of items) {
-    const fb = item.status === "rejected" ? item.feedback : undefined;
+    const fb = item.feedback;
     if (!fb) continue;
     let out = byId.get(fb.id);
     if (!out) {
-      out = { id: fb.id, run_id: runId, ...(fb.note ? { note: fb.note } : {}), decided_at: fb.decided_at, changes: [] };
+      out = {
+        id: fb.id,
+        run_id: runId,
+        ...(fb.reverted ? { reverted: true as const } : {}),
+        ...(fb.note ? { note: fb.note } : {}),
+        decided_at: fb.decided_at,
+        changes: [],
+      };
       byId.set(fb.id, out);
     }
     if (out.changes.length < RUN_FEEDBACK_MAX_CHANGES) out.changes.push(item.change);

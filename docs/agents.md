@@ -497,7 +497,9 @@ so instead of making it. When the document has changed so that the rejected pass
 be found, every change to existing text is refused and it asks you to request changes again.
 
 A note is advice to the agent, like an instruction. It decides nothing about what a later write may
-do; review mode and permissions do. Only a rejection carries one.
+do; review mode and permissions do. A rejection carries one, and so does a revert: **Revert and
+request changes…** in the inbox takes back a run that landed, on an `auto` document for instance,
+and tells the agent why, the same way.
 
 ## Agent changes: wait for review, or apply at once
 

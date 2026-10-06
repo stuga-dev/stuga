@@ -197,11 +197,11 @@ export function ReviewPage() {
       let run: AgentRunSummary | DatabaseRunSummary | null = null;
       if (row.doc_kind === "prose") {
         if (what === "accept" || what === "reject") run = (await Runs.decide(row.doc_id, row.run_id, what, undefined, note)).run;
-        else if (what === "revert") run = (await Runs.revert(row.doc_id, row.run_id)).run;
+        else if (what === "revert") run = (await Runs.revert(row.doc_id, row.run_id, note)).run;
         else await Runs.ack(row.doc_id, row.run_id);
       } else {
         if (what === "accept" || what === "reject") run = (await DatabaseRuns.decide(row.doc_id, row.run_id, what, undefined, note)).run;
-        else if (what === "revert") run = (await DatabaseRuns.revert(row.doc_id, row.run_id)).run;
+        else if (what === "revert") run = (await DatabaseRuns.revert(row.doc_id, row.run_id, note)).run;
         else run = (await DatabaseRuns.ack(row.doc_id, row.run_id)).run;
       }
       setRuns((prev) => {
@@ -305,6 +305,18 @@ export function ReviewPage() {
                     ] : []),
                     ...(actions.revert ? [
                       { label: "Revert these changes", variant: "destructive" as const, onClick: () => openRevert(row), isDisabled: isBusy },
+                      {
+                        label: "Revert and request changes…",
+                        variant: "destructive" as const,
+                        onClick: () =>
+                          askNote({
+                            title: "Revert and request changes",
+                            submitLabel: "Revert",
+                            quote: `The changes in “${title}” are taken back, and the agent is told why.`,
+                            onSubmit: (note) => void act(row, "revert", note),
+                          }),
+                        isDisabled: isBusy,
+                      },
                     ] : []),
                     ...(actions.dismiss ? [
                       { label: "Mark as reviewed", onClick: () => void act(row, "dismiss"), isDisabled: isBusy },

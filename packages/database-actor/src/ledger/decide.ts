@@ -18,6 +18,7 @@ import { runActor } from "./propose.js";
 import {
   acknowledgeRun,
   dismissFeedback,
+  setOpFeedback,
   closeRun,
   getRun,
   listRunOps,
@@ -73,20 +74,7 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
     for (const id of def ? idsOf(def.proposal.minted(payload)) : []) mintedBy.set(id, op);
   }
   const statusOf = new Map(ops.map((o) => [o.op_id, o.status]));
-  // Column names for a rejection's detail: the schema's, then those this run's own columns.add would mint.
-  const columnNames = new Map<string, string>();
-  for (const op of ops) {
-    const p = payloads.get(op.op_id)!;
-    if (p.kind === "columns.add") columnNames.set(p.column_id, p.display);
-  }
-  const tablesSeen = new Set<string>();
-  const columnName = (tableId: string, columnId: string): string | undefined => {
-    if (!tablesSeen.has(tableId)) {
-      tablesSeen.add(tableId);
-      for (const c of getColumns(db.sql, tableId)) columnNames.set(c.column_id, c.display);
-    }
-    return columnNames.get(columnId);
-  };
+  const columnName = columnNamer(db, [...payloads.values()]);
 
   let applied = 0;
   let rejected = 0;
@@ -205,14 +193,29 @@ export async function handleRunRevert(db: Database, req: Request): Promise<Respo
   const { run, by: requestedBy } = reviewerOf(db, body, "requested_by");
   db.requireUnlocked("this database is locked; unlock it to revert changes");
   if (run.reverted) throw new OpError(409, "already_reverted", "this run was already reverted");
+  const note = parseDecisionNote("revert", body.note);
+  if (!note.ok) throw new OpError(400, "bad_request", note.message);
   const actor: DatabaseActorIdentity = { alias: requestedBy, is_agent: false };
 
   const ops = listRunOps(db.sql, run.run_id);
   // Refused before anything changes, as a document's run is: pending ops stay decidable.
   if (!ops.some((o) => o.ledger_op_id !== null)) throw new OpError(409, "nothing_to_revert", "nothing in this run was applied");
+  // A revert with a note is a request for changes on what landed: the agent is told, as after a rejection.
+  const feedback: RunFeedback | undefined = note.note
+    ? { id: newFeedbackId(), reverted: true, note: note.note, decided_by: requestedBy, decided_at: Date.now() }
+    : undefined;
+  const payloads = new Map<string, DatabaseRunOpPayload>();
+  if (feedback) for (const op of ops) payloads.set(op.op_id, await loadOpPayload(db.bucket, op));
+  const columnName = columnNamer(db, [...payloads.values()]);
+  const feedbackFor = (op: RunOpRow): RunFeedback | undefined => {
+    if (!feedback) return undefined;
+    const detail = opDetail(payloads.get(op.op_id)!, (id) => columnName(op.table_id, id));
+    return { ...feedback, ...(detail ? { detail } : {}) };
+  };
   for (const op of ops) {
-    if (op.status === "pending") setOpStatus(db.sql, run.run_id, op.op_id, "rejected", { decidedBy: requestedBy });
+    if (op.status === "pending") setOpStatus(db.sql, run.run_id, op.op_id, "rejected", { decidedBy: requestedBy, feedback: feedbackFor(op) });
   }
+  const byLedgerOp = new Map(ops.flatMap((o) => (o.ledger_op_id === null ? [] : [[o.ledger_op_id, o] as const])));
   const ledgerOps = ops
     .flatMap((o) => (o.ledger_op_id === null ? [] : [getOp(db.sql, o.ledger_op_id)]))
     .filter((op): op is OpRow => op !== null)
@@ -231,6 +234,9 @@ export async function handleRunRevert(db: Database, req: Request): Promise<Respo
       restored += outcome.restored;
       missing += outcome.missing;
       reverted++;
+      const runOp = byLedgerOp.get(op.op_id);
+      const fb = runOp && feedbackFor(runOp);
+      if (runOp && fb) setOpFeedback(db.sql, run.run_id, runOp.op_id, fb);
     } catch (e) {
       if (!(e instanceof OpError)) throw e;
       skipped++;
@@ -246,7 +252,7 @@ export async function handleRunRevert(db: Database, req: Request): Promise<Respo
     type: "run.reverted",
     actor: `user:${requestedBy}`,
     actorKind: "human",
-    payload: { decided_by: requestedBy, reverted, skipped },
+    payload: { decided_by: requestedBy, reverted, skipped, ...(feedback ? { feedback_id: feedback.id } : {}) },
   });
   return Response.json({ run: await db.runSummary(fresh), reverted, skipped, restored, missing });
 }
@@ -296,6 +302,20 @@ export async function handleOpsRevert(db: Database, req: Request): Promise<Respo
 }
 
 /** Apply an op's inverse and record the revert. The blob read is the only await, so the op is re-checked inside the transaction. */
+/** Column names for a feedback's detail: the schema's, then those the run's own columns.add ops would mint. */
+function columnNamer(db: Database, payloads: DatabaseRunOpPayload[]): (tableId: string, columnId: string) => string | undefined {
+  const columnNames = new Map<string, string>();
+  for (const p of payloads) if (p.kind === "columns.add") columnNames.set(p.column_id, p.display);
+  const tablesSeen = new Set<string>();
+  return (tableId, columnId) => {
+    if (!tablesSeen.has(tableId)) {
+      tablesSeen.add(tableId);
+      for (const c of getColumns(db.sql, tableId)) columnNames.set(c.column_id, c.display);
+    }
+    return columnNames.get(columnId);
+  };
+}
+
 async function revertOp(db: Database, op: OpRow, actor: DatabaseActorIdentity, keep: number): Promise<RevertOutcome> {
   const inverse = await loadInverse(db.bucket, op);
   const revertId = newId("op_");

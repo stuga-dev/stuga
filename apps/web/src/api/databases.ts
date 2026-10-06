@@ -192,10 +192,11 @@ export const DatabaseRuns = {
       `/api/databases/${id}/runs/${runId}/decision`,
       { method: "POST", body: JSON.stringify({ decision, op_ids: opIds, ...(note ? { note } : {}) }) },
     ),
-  revert: (id: string, runId: string) =>
+  /** A `note` asks the agent for changes on what it took back. */
+  revert: (id: string, runId: string, note?: string) =>
     api<{ run: DatabaseRunSummary; reverted: number; skipped: number; restored: number; missing: number }>(
       `/api/databases/${id}/runs/${runId}/revert`,
-      { method: "POST" },
+      { method: "POST", ...(note ? { body: JSON.stringify({ note }) } : {}) },
     ),
   ack: (id: string, runId: string) =>
     api<{ run: DatabaseRunSummary }>(`/api/databases/${id}/runs/${runId}/ack`, { method: "POST" }),

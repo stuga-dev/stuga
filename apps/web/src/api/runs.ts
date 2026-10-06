@@ -29,10 +29,11 @@ export const Runs = {
       `/api/docs/${docId}/runs/${runId}/decision`,
       { method: "POST", body: JSON.stringify({ decision, hunk_ids: hunkIds, ...(note ? { note } : {}) }) },
     ),
-  /** 409 when the document has moved on underneath the run. */
-  revert: (docId: string, runId: string) =>
+  /** 409 when the document has moved on underneath the run. A `note` asks the agent for changes on what it took back. */
+  revert: (docId: string, runId: string, note?: string) =>
     api<{ run: AgentRunSummary; reverted: number }>(`/api/docs/${docId}/runs/${runId}/revert`, {
       method: "POST",
+      ...(note ? { body: JSON.stringify({ note }) } : {}),
     }),
   /** Dismiss the catch-up card everywhere. */
   ack: (docId: string, runId: string) =>

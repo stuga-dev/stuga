@@ -97,7 +97,7 @@ export async function decideDocRun({ ctx, req, match }: WorkspaceCall): Promise<
   return json(decided);
 }
 
-export async function revertDocRun({ ctx, match }: WorkspaceCall): Promise<Response> {
+export async function revertDocRun({ ctx, req, match }: WorkspaceCall): Promise<Response> {
   const docId = match[1]!;
   if (ctx.isAgent) return error(403, "agents cannot revert agent edits");
   const doc = proseOnly(await authorizedDoc(ctx, docId));
@@ -105,6 +105,10 @@ export async function revertDocRun({ ctx, match }: WorkspaceCall): Promise<Respo
   if (!canWriteDoc(ctx, doc)) return error(403, "view-only access");
   const lk = lockedError(doc);
   if (lk) return lk;
+  // The body is optional: a bare revert takes none.
+  const body = (await req.json().catch(() => ({}))) as { note?: unknown };
+  const note = parseDecisionNote("revert", body.note);
+  if (!note.ok) return error(400, note.message);
   const res = await ctx.env.docs.get(docId).fetch(`http://actor/runs/revert?docId=${encodeURIComponent(docId)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -112,6 +116,7 @@ export async function revertDocRun({ ctx, match }: WorkspaceCall): Promise<Respo
       run_id: match[2]!,
       requested_by: ctx.alias,
       manager_override: manages(ctx, doc),
+      ...(note.note ? { note: note.note } : {}),
     }),
   });
   // 409: the document moved on and nothing was reverted; passed through so the client can offer history.

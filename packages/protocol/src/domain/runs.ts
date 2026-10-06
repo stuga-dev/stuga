@@ -58,12 +58,15 @@ export function shouldCommit(review: ReviewMode, parkedBehindPending: boolean): 
 }
 
 /**
- * A reviewer's rejection, kept on every item one decision rejected. The note is advice to the agent
- * that proposed them, never a rule: it decides nothing about what a later write may do.
+ * A reviewer's rejection, or a revert with a note, kept on every item one decision covered. The note
+ * is advice to the agent that proposed them, never a rule: it decides nothing about what a later
+ * write may do.
  */
 export interface RunFeedback {
-  /** "fb_" + 12 hex chars, shared by the items one decision rejected. */
+  /** "fb_" + 12 hex chars, shared by the items one decision covered. */
   id: string;
+  /** The items had landed and were taken back, rather than refused. */
+  reverted?: true;
   /** What the reviewer wrote, when they wrote anything. */
   note?: string;
   decided_by: string;
@@ -86,6 +89,8 @@ export interface AgentFeedback {
   /** The RunFeedback id. */
   id: string;
   run_id: string;
+  /** The changes had landed and were taken back, rather than refused. */
+  reverted?: true;
   note?: string;
   decided_at: number;
   /** The rejected changes, at most RUN_FEEDBACK_MAX_CHANGES, each side cut to RUN_FEEDBACK_EXCERPT_CHARS. */
@@ -102,16 +107,16 @@ export function newFeedbackId(): string {
 }
 
 /**
- * A decision's `note`: trimmed, empty means none. Only a rejection carries one, since it is what the
- * agent revises from. A note that is not text, or one past RUN_FEEDBACK_NOTE_MAX_CHARS, is refused
- * rather than cut, so a reviewer never sends half a sentence.
+ * A decision's `note`: trimmed, empty means none. A rejection or a revert carries one, since it is
+ * what the agent revises from; an accept does not. A note that is not text, or one past
+ * RUN_FEEDBACK_NOTE_MAX_CHARS, is refused rather than cut, so a reviewer never sends half a sentence.
  */
 export function parseDecisionNote(decision: unknown, raw: unknown): { ok: true; note?: string } | { ok: false; message: string } {
   if (raw === undefined || raw === null) return { ok: true };
   if (typeof raw !== "string") return { ok: false, message: "note must be text" };
   const note = raw.trim();
   if (!note) return { ok: true };
-  if (decision !== "reject") return { ok: false, message: "only a rejection carries a note" };
+  if (decision !== "reject" && decision !== "revert") return { ok: false, message: "only a rejection or a revert carries a note" };
   if (note.length > RUN_FEEDBACK_NOTE_MAX_CHARS) {
     return { ok: false, message: `note is longer than ${RUN_FEEDBACK_NOTE_MAX_CHARS} characters` };
   }

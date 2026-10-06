@@ -373,7 +373,7 @@ These refuse an agent key.
 | `GET /api/runs?filter=attention\|open\|closed\|all&agent=&limit=` | The review inbox: runs on documents the caller can read. `attention` (the default) is runs with pending changes plus runs applied at once that nobody has looked at. `open` is runs still collecting changes (something waiting, or active in the last 10 minutes); `closed` is the rest. Page with `before_at` and `before_id` from the last run. |
 | `GET /api/agents/stats` | Per agent: runs, pending, accepted, rejected, applied, reverted runs, and `acceptance_rate`. |
 | `POST /api/docs/:id/runs/:run/decision` | `{ decision: "accept" \| "reject", hunk_ids?, note? }`. Every pending hunk when `hunk_ids` is absent. `note` (rejections only, up to 2,000 characters) is what the agent revises from; it is handed to the agent with its reads and next proposal there. The run's reviewer, the document's owner or a workspace admin decides. |
-| `POST /api/docs/:id/runs/:run/revert` | Undo a run that landed. |
+| `POST /api/docs/:id/runs/:run/revert` | Undo a run that landed. An optional `{ note }` asks the agent for changes on what was taken back, as a rejection's does. |
 | `POST /api/docs/:id/runs/:run/ack` | Dismiss a run's card, and withdraw any changes requested on it. |
 | `POST /api/databases/:id/runs/:run/decision`, `/revert`, `/ack` | The same for a database's runs, with `op_ids` in place of `hunk_ids`. |
 | `PATCH /api/docs/:id/state` | `{ locked?, search_hidden?, agent_mode?, agent_instructions? }`. The owner or a workspace admin. `agent_mode` is `review` or `auto`. `agent_instructions` is text of at most 20,000 characters, stored as given. Every field is checked before anything is written. Answers the document's summary, without the instructions. |

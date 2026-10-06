@@ -62,6 +62,7 @@ describe("run ledger rules", () => {
     expect(parseDecisionNote("accept", undefined)).toEqual({ ok: true });
     expect(parseDecisionNote("accept", "")).toEqual({ ok: true });
     expect(parseDecisionNote("accept", "Nice.")).toMatchObject({ ok: false });
+    expect(parseDecisionNote("revert", "Not this.")).toEqual({ ok: true, note: "Not this." });
     expect(parseDecisionNote("reject", 7)).toMatchObject({ ok: false });
     expect(parseDecisionNote("reject", "x".repeat(RUN_FEEDBACK_NOTE_MAX_CHARS))).toMatchObject({ ok: true });
     expect(parseDecisionNote("reject", "x".repeat(RUN_FEEDBACK_NOTE_MAX_CHARS + 1))).toMatchObject({ ok: false });

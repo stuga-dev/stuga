@@ -17,7 +17,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 - One command goes back to an earlier version on a Mac: `sudo "/Library/Application Support/Stuga/current/bin/stuga" restore <backup>` ([macOS](docs/install/macos.md#go-back-to-an-earlier-version)). **Settings → This node → Backups** shows it for each backup.
 - `stuga-node list` marks backups taken before an upgrade.
-- **Request changes** on an AI edit: reject it with a note saying what should change. The agent that proposed it is handed the note with its next read or proposal there, and the co-author offers **Revise now** ([Agents](docs/agents.md#request-changes)).
+- **Request changes** on an AI edit: reject it with a note saying what should change, or revert what landed with one. The agent that proposed it is handed the note with its reads and proposals there until it answers, and the co-author offers **Revise now** ([Agents](docs/agents.md#request-changes)).
 - The `events` tool's `mine: true` lists the decisions on an agent's own proposals.
 
 ### Changed
