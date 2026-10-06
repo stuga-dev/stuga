@@ -389,7 +389,7 @@ function openFeedbackRows(sql: SqlHandle, agentAlias: string, now: number): RunO
  * Rejections of `agentAlias`'s proposals here that it has not answered and that are newer than
  * RUN_FEEDBACK_LOOKBACK_DAYS, newest first; the documents' RunLedger.feedbackFor. They stay until a
  * proposal names them in `revises`, the reviewer marks the run reviewed, or they age out. The ledger
- * holds at most DATABASE_RUN_KEEP runs, so the scan is bounded.
+ * holds DATABASE_RUN_KEEP runs plus those pruning keeps for their open feedback, so the scan is bounded.
  */
 export function feedbackFor(sql: SqlHandle, agentAlias: string): AgentFeedback[] {
   const byId = new Map<string, AgentFeedback>();

@@ -1264,12 +1264,20 @@ describe("RevisionGuard follows the rejected passages through a turn's edits", (
     { old_string: "Bravo paragraph.", new_string: "y" },
   ];
 
-  it("locates them once, in order", () => {
+  it("locates them once, in order, and merges passages that overlap", () => {
     const g = new RevisionGuard(DOC, regions);
     expect(g.regions).toEqual([
       [9, 25],
       [27, 43],
     ]);
+    const overlapping = new RevisionGuard("abcdef", [
+      { old_string: "abcd", new_string: "x" },
+      { old_string: "cdef", new_string: "y" },
+    ]);
+    expect(overlapping.regions).toEqual([[0, 6]]);
+    overlapping.applied(3, 0, 2);
+    expect(overlapping.regions).toEqual([[0, 8]]);
+    expect(() => overlapping.check([7, 8])).not.toThrow();
   });
 
   it("shifts later passages by what an edit added or removed, and grows the one that holds it", () => {

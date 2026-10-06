@@ -154,6 +154,21 @@ describe("selectOnlyViolation", () => {
     expect(selectOnlyViolation("SELECT value FROM t, json_each(t.tags)")).toBeNull();
   });
 
+  it("refuses the review ledger's tables, however the name is quoted, and leaves _id, the schema registry and data tables alone", () => {
+    for (const sql of [
+      "SELECT feedback FROM _run_ops",
+      'SELECT r.agent_alias, o.feedback FROM "_run_ops" o JOIN _runs r USING (run_id)',
+      "SELECT * FROM [_runs]",
+      "SELECT * FROM `_run_ops`",
+      "WITH x AS (SELECT payload FROM _run_ops) SELECT * FROM x",
+    ]) {
+      expect(selectOnlyViolation(sql), sql).toMatch(/review ledger/);
+    }
+    expect(selectOnlyViolation('SELECT _id, "Name" FROM "t_abc" WHERE "Notes" = \'_runs\'')).toBeNull();
+    expect(selectOnlyViolation("SELECT * FROM my_runs")).toBeNull();
+    expect(selectOnlyViolation("SELECT name, display FROM _tables")).toBeNull();
+  });
+
   it("rejects empty and oversized queries", () => {
     expect(selectOnlyViolation("")).toMatch(/empty/);
     expect(selectOnlyViolation("   ")).toMatch(/empty/);

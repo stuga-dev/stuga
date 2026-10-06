@@ -304,6 +304,8 @@ export type ImportSource =
   | { kind: "import_id"; import_id: string };
 
 export interface ImportOptions {
+  /** Feedback ids this import answers. */
+  revises?: string[];
   column_map?: Record<string, string | null>;
   on_error?: "abort" | "skip_bad_rows";
   max_bad_rows?: number;

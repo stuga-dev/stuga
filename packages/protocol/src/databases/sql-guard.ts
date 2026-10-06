@@ -63,6 +63,14 @@ export function stripCommentsAndStrings(sql: string, keepIdentifiers = false): s
 }
 
 /** Write/DDL verbs refused anywhere. `replace(...)` is a string function; only `REPLACE INTO` is a write. */
+/**
+ * The run ledger's tables hold other agents' pending payloads and the reviewer's notes to them, which
+ * their own reads filter to the caller; a query must not read around that filter. The schema
+ * registry (_tables, _columns, _views) stays queryable: it is what the agent's own reads show it
+ * anyway. Identifier bodies are kept for this check, so quoting is no way around it.
+ */
+const INTERNAL_TABLE_RE = /(^|[^A-Za-z0-9_])(_runs|_run_ops)(?![A-Za-z0-9_])/i;
+
 const BANNED_TOKEN_RE =
   /\b(insert|update|delete|create|drop|alter|attach|detach|pragma|vacuum|reindex|analyze|begin|commit|rollback|savepoint|release)\b|\breplace\s+into\b/i;
 
@@ -210,6 +218,8 @@ export function selectOnlyViolation(raw: string): string | null {
   if (!/^(select|with)\b/i.test(stripped)) return "only SELECT queries are allowed";
   const m = BANNED_TOKEN_RE.exec(stripped);
   if (m) return `disallowed keyword: ${(m[1] ?? "REPLACE INTO").toUpperCase()}`;
+  const internal = INTERNAL_TABLE_RE.exec(stripCommentsAndStrings(raw, true));
+  if (internal) return `${internal[2]} is the review ledger, not a data table; \`databases\` action:status reports your own runs`;
   for (const fn of stripped.match(PRAGMA_FN_RE) ?? []) {
     if (!PRAGMA_FN_ALLOWED.has(fn.toLowerCase())) {
       return `${fn}() is not available: only the table, index and foreign-key introspection pragmas can be queried`;

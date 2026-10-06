@@ -205,10 +205,11 @@ export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<
   }
 
   stored.updated_at = Date.now();
+  // Listed before it is saved: a listed run with nothing open is pruned, a saved note on an unlisted run is never shown.
+  if (feedback) await ledger.noteFeedback(stored);
   // Only an open run closes; a late duplicate decision must not restamp a committed or reverted one.
   if (stored.status === "open" && pendingOf(body).length === 0) await ledger.close(stored, body);
   else await ledger.save(stored, body);
-  if (feedback) await ledger.noteFeedback(stored);
   ledger.sendDecided(stored, body, input.decision, decided.map((h) => h.id), decidedBy);
   ledger.emitEvent("run.decided", stored, `user:${decidedBy}`, "human", {
     decision: input.decision,
@@ -284,8 +285,8 @@ export async function handleRunRevert(ledger: RunLedger, req: Request): Promise<
   stored.updated_at = Date.now();
   stored.seq_at_commit = store.seq;
   body.final_markdown = store.markdown();
-  await ledger.save(stored, body);
   if (feedback) await ledger.noteFeedback(stored);
+  await ledger.save(stored, body);
   await ledger.clearActive(stored.agent_alias);
   ledger.sendDecided(stored, body, "reject", [...landed, ...orphaned].map((h) => h.id), requestedBy);
   ledger.emitEvent("run.reverted", stored, `user:${requestedBy}`, "human", {
@@ -313,8 +314,9 @@ export async function handleRunAck(ledger: RunLedger, req: Request): Promise<Res
   if (ledger.bodyLost(stored, body)) return runUnavailable();
   stored.acknowledged = true;
   stored.updated_at = Date.now();
-  // Marking a run reviewed also withdraws what the reviewer requested on it.
-  const dismissed = await ledger.dismissFeedback(stored, body);
+  // Marking a run reviewed also withdraws what the reviewer requested on it: saved first, unlisted after.
+  const dismissed = ledger.dismissFeedback(body);
   await ledger.save(stored, body);
+  if (dismissed > 0) await ledger.unlistFeedback(stored);
   return Response.json({ ok: true, feedback_dismissed: dismissed });
 }

@@ -7,6 +7,8 @@
  *   db-imports/<docId>/<importId>.done   the result, so a replayed commit is a no-op
  */
 import type { DocRow } from "@stuga/db";
+import { RUN_FEEDBACK_REVISES_MAX } from "@stuga/protocol/domain/limits";
+import type { AgentFeedback } from "@stuga/protocol/domain/runs";
 import {
   DATABASE_IMPORT_INLINE_MAX_CHARS,
   DATABASE_IMPORT_MAX_BYTES,
@@ -104,6 +106,8 @@ interface CommitImportOptions {
   dateOrder?: DateOrder;
   /** Validate and report only; write nothing, keep the staging. */
   dryRun?: boolean;
+  /** Feedback ids the import answers. */
+  revises?: string[];
 }
 
 /** Shape-check a commit body; every field is optional. */
@@ -127,7 +131,18 @@ export function parseCommitOptions(b: Record<string, unknown>): CommitImportOpti
   const dateOrder = b.date_order;
   if (dateOrder !== undefined && dateOrder !== "mdy" && dateOrder !== "dmy") return { error: "date_order must be mdy or dmy" };
   if (b.dry_run !== undefined && typeof b.dry_run !== "boolean") return { error: "dry_run must be true or false" };
-  return { columnMap, onError, maxBadRows, ...(dateOrder ? { dateOrder } : {}), ...(b.dry_run === true ? { dryRun: true } : {}) };
+  if (b.revises !== undefined && (!Array.isArray(b.revises) || b.revises.some((id) => typeof id !== "string"))) {
+    return { error: "revises must be a list of feedback ids" };
+  }
+  const revises = Array.isArray(b.revises) ? (b.revises as string[]).slice(0, RUN_FEEDBACK_REVISES_MAX) : [];
+  return {
+    columnMap,
+    onError,
+    maxBadRows,
+    ...(dateOrder ? { dateOrder } : {}),
+    ...(b.dry_run === true ? { dryRun: true } : {}),
+    ...(revises.length > 0 ? { revises } : {}),
+  };
 }
 
 /** The web app's Import dialog for one table. The table is always named, so the link keeps its meaning when a second one appears. */
@@ -333,12 +348,15 @@ export async function commitDatabaseImport(
   let mode: "proposed" | "applied";
   let run: DatabaseRunSummary | undefined;
   let pending: number | undefined;
+  // An agent's answer carries its open feedback here and the ids this import answered, as any proposal's does.
+  let feedback: { feedback?: AgentFeedback[]; revised?: string[] } = {};
   if (ctx.isAgent) {
-    const outcome = await proposeDatabaseOp(ctx, doc, { kind: "rows.insert", table: table.table_id, rows, import: true }, source);
+    const outcome = await proposeDatabaseOp(ctx, doc, { kind: "rows.insert", table: table.table_id, rows, import: true }, source, { revises: opts.revises });
     if (outcome.kind === "error") return refuse(outcome.status, outcome.message);
     mode = outcome.kind;
     run = outcome.run;
     if (outcome.kind === "proposed") pending = outcome.pending;
+    feedback = { ...(outcome.feedback ? { feedback: outcome.feedback } : {}), ...(outcome.revised ? { revised: outcome.revised } : {}) };
   } else {
     const inserted = await insertImportedRows(ctx, doc, table, rows);
     if (!inserted.ok) return refuse(inserted.status, inserted.message);
@@ -368,6 +386,7 @@ export async function commitDatabaseImport(
     ...(validated.guessedDateOrder ? { guessed_date_order: validated.guessedDateOrder } : {}),
     ...(run ? { run } : {}),
     ...(pending !== undefined ? { pending } : {}),
+    ...feedback,
   };
   return { status: 200, body: result as unknown as Record<string, unknown> };
 }

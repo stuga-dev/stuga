@@ -117,13 +117,14 @@ describe("changes requested, as an agent reads them", () => {
     expect(proposed).not.toHaveProperty("feedback");
   });
 
-  it("follows a database read's JSON, outside it, with the rejected values and database words", () => {
+  it("rides a database read as one more JSON field, with the rejected values and database words", () => {
     const out = renderDatabaseRead({ tables: [], feedback: [{ ...NOTED, changes: [{ summary: "Insert 1 row", detail: '[{"Name":"Alpha"}]' }] }] });
-    expect(out.startsWith('{"tables":[]}\n\n')).toBe(true);
-    expect(out).toContain(FEEDBACK_OPEN);
-    expect(out).toContain('    "Insert 1 row": [{"Name":"Alpha"}]');
-    expect(out).toContain("leave the rest of the database as it is");
-    expect(out).not.toContain("rest of the document");
-    expect(renderDatabaseRead({ tables: [] })).toBe('{"tables":[]}');
+    const parsed = JSON.parse(out) as { tables: unknown[]; changes_requested: string; feedback?: unknown };
+    expect(parsed.tables).toEqual([]);
+    expect(parsed).not.toHaveProperty("feedback");
+    expect(parsed.changes_requested.startsWith(FEEDBACK_OPEN)).toBe(true);
+    expect(parsed.changes_requested).toContain('    "Insert 1 row": [{"Name":"Alpha"}]');
+    expect(parsed.changes_requested).toContain("leave the rest of the database as it is");
+    expect(JSON.parse(renderDatabaseRead({ tables: [] }))).toEqual({ tables: [] });
   });
 });

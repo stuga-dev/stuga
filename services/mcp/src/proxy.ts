@@ -250,7 +250,7 @@ export function buildProxy({
     const bytes = await local(path, "pass the file's text in `content`");
     if (!(bytes instanceof Uint8Array)) return bytes;
 
-    const { action: _action, column_map, on_error, max_bad_rows, date_order, dry_run, ...where } = rest;
+    const { action: _action, column_map, on_error, max_bad_rows, date_order, dry_run, revises, ...where } = rest;
     const staged = (await client.callTool({ name: "databases_add", arguments: { ...where, action: "start_import", format } })) as CallToolResult;
     if (staged.isError) return staged;
     const ticket = JSON.parse(firstText(staged)) as { import_id: string; upload_path: string; max_bytes: number; import_page_url: string };
@@ -258,7 +258,7 @@ export function buildProxy({
     if (bytes.byteLength > ticket.max_bytes) return handOff(`That file is ${bytes.byteLength} bytes; this node accepts imports up to ${ticket.max_bytes}.`);
     const sent = await put(ticket.upload_path, bytes);
     if (!sent.ok) return handOff(`The upload was refused (${sent.status}): ${(await sent.text().catch(() => "")).slice(0, 300)}.`);
-    const options = Object.fromEntries(Object.entries({ column_map, on_error, max_bad_rows, date_order, dry_run }).filter(([, v]) => v !== undefined));
+    const options = Object.fromEntries(Object.entries({ column_map, on_error, max_bad_rows, date_order, dry_run, revises }).filter(([, v]) => v !== undefined));
     return (await client.callTool({
       name: "databases_add",
       arguments: { workspace_id: where.workspace_id, database_id: where.database_id, action: "import", import_id: ticket.import_id, ...options },

@@ -311,7 +311,14 @@ export class RevisionGuard {
       if (m) spans.push([m.index, m.index + m.matched.length]);
       else lost++;
     }
-    this.spans = spans.sort((a, b) => a[0] - b[0]);
+    // Two rejected hunks may cover overlapping text; one passage per stretch keeps the bookkeeping exact.
+    const merged: Array<[number, number]> = [];
+    for (const span of spans.sort((a, b) => a[0] - b[0])) {
+      const last = merged[merged.length - 1];
+      if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+      else merged.push([span[0], span[1]]);
+    }
+    this.spans = merged;
     this.lost = lost;
   }
 

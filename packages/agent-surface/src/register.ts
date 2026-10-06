@@ -516,6 +516,7 @@ async function databasesAdd(args: DatabasesArgs, b: AgentBackend): Promise<ToolT
       tableId = table.table_id;
     }
     const out = await b.importRows(databaseId, tableId, source, {
+      revises: args.revises,
       column_map: args.column_map,
       on_error: args.on_error,
       max_bad_rows: args.max_bad_rows,

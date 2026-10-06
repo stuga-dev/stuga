@@ -9,7 +9,7 @@ import type {
 import type { CreatedDoc, DatabaseProposeBody, DatabaseSchemaBody, RowPage } from "../backend.js";
 import type { AgentFeedback } from "@stuga/protocol/domain/runs";
 import { MAX_STATUS_RUNS, feedbackAfter, instructionFields, tally } from "./docs.js";
-import { feedbackOfRun, revisedNote, statusFeedbackLines } from "./feedback.js";
+import { feedbackOfRun, renderFeedback, revisedNote, statusFeedbackLines } from "./feedback.js";
 import { instructionsPointer } from "./instructions.js";
 
 /** Rows in one insert_rows call past which the result steers the agent to import. */
@@ -30,10 +30,15 @@ export function bulkSteer(rowCount: number): string {
   );
 }
 
-/** A read's JSON, then the changes requested that the agent has not acted on, outside the JSON where it cannot pass as data. */
+/**
+ * A read's JSON, with the changes requested that the agent has not acted on as one more field, so the
+ * answer stays the JSON a caller of contract 2 parses. The block is a quoted string inside it, so
+ * nothing a row holds can open or close it.
+ */
 export function renderDatabaseRead(res: DatabaseSchemaBody | Record<string, unknown>): string {
   const { feedback, ...rest } = res as Record<string, unknown> & { feedback?: AgentFeedback[] };
-  return JSON.stringify(rest) + feedbackAfter(feedback, "database");
+  const block = renderFeedback(feedback, "database");
+  return JSON.stringify(block ? { ...rest, changes_requested: block } : rest);
 }
 
 /** A database write's result, with the ids the actor minted so the agent can name them next. */
@@ -191,6 +196,7 @@ export function renderImportCommit(status: number, body: Record<string, unknown>
         `query results already reflect the pending rows; check \`databases\` action:status for the decision.${skippedNote}${replay}${guessed}`
       : `Applied — imported ${n} row${n === 1 ? "" : "s"}. The user was notified and can revert the whole import from the ` +
         `table's Activity panel.${skippedNote}${replay}${guessed}`;
-  const { run: _run, ...rest } = body;
-  return { isError: false, text: JSON.stringify({ result, ...rest, ...(run ? { run_id: run.id } : {}) }) };
+  const { run: _run, feedback, revised, ...rest } = body as typeof body & { feedback?: AgentFeedback[]; revised?: string[] };
+  const answered = revisedNote(revised) + feedbackAfter(feedback, "database");
+  return { isError: false, text: JSON.stringify({ result: `${result}${answered}`, ...rest, ...(run ? { run_id: run.id } : {}) }) };
 }

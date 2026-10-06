@@ -75,14 +75,14 @@ describe("the proxy", () => {
     const fetch = vi.fn(async () => new Response(null, { status: 204 }));
     const readFile = vi.fn(async () => new TextEncoder().encode("a,b\n1,2\n"));
     const { call } = await connect({ upstream: upstreamOf(async () => up.client), fetch, readFile });
-    const res = await call("databases_add", { workspace_id: "ws1", database_id: "db1", table: "Tasks", action: "import", file: "/Users/liv/data.jsonl", on_error: "skip_bad_rows" });
+    const res = await call("databases_add", { workspace_id: "ws1", database_id: "db1", table: "Tasks", action: "import", file: "/Users/liv/data.jsonl", on_error: "skip_bad_rows", revises: ["fb_1"] });
     expect(res).toEqual({ text: "Proposed — the import of 2 rows", isError: false });
     expect(readFile).toHaveBeenCalledWith("/Users/liv/data.jsonl");
     expect(up.calls[0]).toEqual({ name: "databases_add", arguments: { workspace_id: "ws1", database_id: "db1", table: "Tasks", action: "start_import", format: "jsonl" } });
     expect(fetch).toHaveBeenCalledWith(new URL("http://127.0.0.1:8787/api/databases/db1/imports/imp_1/upload?sig=s"), expect.objectContaining({ method: "PUT" }));
     expect(up.calls[1]).toEqual({
       name: "databases_add",
-      arguments: { workspace_id: "ws1", database_id: "db1", action: "import", import_id: "imp_1", on_error: "skip_bad_rows" },
+      arguments: { workspace_id: "ws1", database_id: "db1", action: "import", import_id: "imp_1", on_error: "skip_bad_rows", revises: ["fb_1"] },
     });
   });
 

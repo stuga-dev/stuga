@@ -204,16 +204,17 @@ export async function handleRunRevert(db: Database, req: Request): Promise<Respo
   const feedback: RunFeedback | undefined = note.note
     ? { id: newFeedbackId(), reverted: true, note: note.note, decided_by: requestedBy, decided_at: Date.now() }
     : undefined;
-  const payloads = new Map<string, DatabaseRunOpPayload>();
-  if (feedback) for (const op of ops) payloads.set(op.op_id, await loadOpPayload(db.bucket, op));
-  const columnName = columnNamer(db, [...payloads.values()]);
-  const feedbackFor = (op: RunOpRow): RunFeedback | undefined => {
+  // The detail (what the op would have written) is optional enrichment: only the ops the note covers are
+  // read, and one whose payload cannot be loaded gets the note without it rather than blocking the revert.
+  const columnName = columnNamer(db, []);
+  const feedbackFor = async (op: RunOpRow): Promise<RunFeedback | undefined> => {
     if (!feedback) return undefined;
-    const detail = opDetail(payloads.get(op.op_id)!, (id) => columnName(op.table_id, id));
+    const payload = await loadOpPayload(db.bucket, op).catch(() => null);
+    const detail = payload ? opDetail(payload, (id) => columnName(op.table_id, id)) : undefined;
     return { ...feedback, ...(detail ? { detail } : {}) };
   };
   for (const op of ops) {
-    if (op.status === "pending") setOpStatus(db.sql, run.run_id, op.op_id, "rejected", { decidedBy: requestedBy, feedback: feedbackFor(op) });
+    if (op.status === "pending") setOpStatus(db.sql, run.run_id, op.op_id, "rejected", { decidedBy: requestedBy, feedback: await feedbackFor(op) });
   }
   const byLedgerOp = new Map(ops.flatMap((o) => (o.ledger_op_id === null ? [] : [[o.ledger_op_id, o] as const])));
   const ledgerOps = ops
@@ -235,7 +236,7 @@ export async function handleRunRevert(db: Database, req: Request): Promise<Respo
       missing += outcome.missing;
       reverted++;
       const runOp = byLedgerOp.get(op.op_id);
-      const fb = runOp && feedbackFor(runOp);
+      const fb = runOp && (await feedbackFor(runOp));
       if (runOp && fb) setOpFeedback(db.sql, run.run_id, runOp.op_id, fb);
     } catch (e) {
       if (!(e instanceof OpError)) throw e;

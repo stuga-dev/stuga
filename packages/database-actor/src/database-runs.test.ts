@@ -682,6 +682,21 @@ describe("a reviewer's feedback on what they rejected", () => {
     expect(reverted.payload).not.toHaveProperty("note");
   });
 
+  it("cannot be read around through SQL: the run ledger's tables are off limits to a query", async () => {
+    const h = makeState();
+    const { actor } = makeActor(h);
+    const starter = await initStarter(actor);
+    const first = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha" }] });
+    await doJson(actor, "/runs/decide", { actor: HUMAN, run_id: first.run.id, decision: "reject", decided_by: HUMAN.alias, note: "Use full names." });
+    const other = { alias: "agent:other", is_agent: true, on_behalf_of: HUMAN.alias };
+    for (const sql of ["SELECT o.feedback FROM _run_ops o JOIN _runs r USING (run_id)", 'SELECT payload FROM "_run_ops"']) {
+      const res = await doFetch(actor, "/query", { actor: other, sql });
+      expect(res.status, sql).toBe(400);
+      expect(await res.json()).toMatchObject({ error: "select_only" });
+    }
+    expect((await doFetch(actor, "/query", { actor: other, sql: "SELECT name FROM _tables" })).status).toBe(200);
+  });
+
   it("is withdrawn when the reviewer marks the run reviewed", async () => {
     const h = makeState();
     const { actor } = makeActor(h);

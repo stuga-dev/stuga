@@ -370,7 +370,11 @@ export class RunLedger {
     return { markdown: applyStrEditsStrict(live, pending).markdown, pending, runId: open.stored.id };
   }
 
-  /** Remember that `stored` holds a rejection its agent has not been handed yet. */
+  /**
+   * Remember that `stored` holds feedback its agent has not answered yet. Called BEFORE the run is
+   * saved with it: a listed run without open feedback is pruned on the next scan, while a saved note
+   * on an unlisted run would never lead a read.
+   */
   async noteFeedback(stored: StoredRun): Promise<void> {
     const key = feedbackPendingKey(stored.agent_alias);
     const runs = (await this.storage.get<string[]>(key)) ?? [];
@@ -389,9 +393,11 @@ export class RunLedger {
 
   /**
    * The reviewer withdraws what they requested on `stored` (Mark as reviewed): its open feedback is
-   * marked answered and the run leaves its agent's list, so it is history like any other run.
+   * marked answered on the hunks, which the caller saves; `unlistFeedback` then takes the run off its
+   * agent's list. In that order a failed save leaves a listed run with open feedback, which reads
+   * still show, never an unlisted run whose note nobody sees.
    */
-  async dismissFeedback(stored: StoredRun, body: RunBody): Promise<number> {
+  dismissFeedback(body: RunBody): number {
     const now = Date.now();
     let dismissed = 0;
     for (const h of body.hunks) {
@@ -400,10 +406,14 @@ export class RunLedger {
         dismissed++;
       }
     }
+    return dismissed;
+  }
+
+  /** Take `stored` off its agent's feedback list, once nothing on it is open any more. */
+  async unlistFeedback(stored: StoredRun): Promise<void> {
     const key = feedbackPendingKey(stored.agent_alias);
     const listed = (await this.storage.get<string[]>(key)) ?? [];
     if (listed.includes(stored.id)) await this.storage.put(key, listed.filter((id) => id !== stored.id));
-    return dismissed;
   }
 
   /** The full text of the hunks one rejection of `agentAlias`'s run covered: a revise turn's scope. [] when gone. */
