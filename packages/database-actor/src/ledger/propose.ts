@@ -4,6 +4,7 @@
  * `auto` commits it with the run as the receipt.
  */
 import { DATABASE_RUN_OPS_MAX } from "@stuga/protocol/databases/limits";
+import { RUN_FEEDBACK_REVISES_MAX } from "@stuga/protocol/domain/limits";
 import type { DatabaseActor as DatabaseActorIdentity, DatabaseRunSource } from "@stuga/protocol/databases/types";
 import { stricterReviewMode } from "@stuga/protocol/domain/events";
 import { agentActorOf, newRunId, parseReviewMode, runIsIdle, shouldCommit } from "@stuga/protocol/domain/runs";
@@ -12,6 +13,7 @@ import { commitOp, opDef, proposableDef } from "../ops/registry.js";
 import { SchemaView } from "../ops/schema-view.js";
 import { OpError, parseActor, parseOpsKeep, readJson, requireObject } from "../request.js";
 import {
+  answerFeedback,
   closeRun,
   feedbackFor,
   finalizeRunPayload,
@@ -63,6 +65,8 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
   const docTitle = requiredString(body.doc_title, "doc_title");
   const op = requireObject(body.op, "op must be an object", "bad_request");
   const review = parseReviewMode(body.review);
+  // Feedback ids this proposal answers; nothing is answered by proposing alone.
+  const revises = Array.isArray(body.revises) ? body.revises.filter((id): id is string => typeof id === "string").slice(0, RUN_FEEDBACK_REVISES_MAX) : [];
   const now = Date.now();
 
   let run = openRunOf(db.sql, actor.alias);
@@ -138,7 +142,8 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
       run: await db.runSummary(fresh),
       result: outcome.results.get(opId) ?? null,
       minted,
-      feedback: feedbackFor(db.sql, actor.alias, { address: true }),
+      revised: answerFeedback(db.sql, actor.alias, revises),
+      feedback: feedbackFor(db.sql, actor.alias),
     });
   }
 
@@ -157,7 +162,8 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
     minted,
     // Said only when it contradicts the word the node sent, so an agent that just read `auto` is told why it waits.
     parked_behind_pending: parkedBehindPending && review === "auto",
-    feedback: feedbackFor(db.sql, actor.alias, { address: true }),
+    revised: answerFeedback(db.sql, actor.alias, revises),
+    feedback: feedbackFor(db.sql, actor.alias),
   });
 }
 

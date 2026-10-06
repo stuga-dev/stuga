@@ -17,7 +17,7 @@ import { reconcileDocLinks } from "./row-pages.js";
 
 export type DatabaseProposeOutcome =
   // `held`: an `auto` database parked this anyway, because the run still holds undecided ops.
-  // `feedback`: an agent's own rejections it had not acted on, handed over with this proposal.
+  // `feedback`: an agent's own open feedback here; `revised`: the ids this proposal answered.
   | {
       kind: "proposed";
       run: DatabaseRunSummary;
@@ -25,6 +25,7 @@ export type DatabaseProposeOutcome =
       minted: Record<string, unknown>;
       held: boolean;
       feedback?: AgentFeedback[];
+      revised?: string[];
     }
   | {
       kind: "applied";
@@ -32,12 +33,13 @@ export type DatabaseProposeOutcome =
       result: Record<string, unknown> | null;
       minted: Record<string, unknown>;
       feedback?: AgentFeedback[];
+      revised?: string[];
     }
   | { kind: "error"; status: number; message: string };
 
 /** The answer to a proposal that went through, the same over REST and /mcp. */
 export function databaseProposeBody(outcome: Exclude<DatabaseProposeOutcome, { kind: "error" }>) {
-  const feedback = outcome.feedback ? { feedback: outcome.feedback } : {};
+  const feedback = { ...(outcome.feedback ? { feedback: outcome.feedback } : {}), ...(outcome.revised ? { revised: outcome.revised } : {}) };
   if (outcome.kind === "proposed") {
     return { mode: "proposed" as const, run: outcome.run, pending: outcome.pending, minted: outcome.minted, held: outcome.held, ...feedback };
   }
@@ -55,11 +57,13 @@ export async function proposeDatabaseOp(
   doc: DocRow,
   op: Record<string, unknown>,
   source: DatabaseRunSource,
+  opts: { revises?: string[] } = {},
 ): Promise<DatabaseProposeOutcome> {
   const review = resolveReviewMode(ctx, doc);
   const res = await callDatabaseActor(ctx, doc.doc_id, "runs/propose", {
     op,
     source,
+    revises: opts.revises ?? [],
     review: review.mode,
     agent: ctx.displayName || ctx.alias,
     client: ctx.client ?? null,
@@ -77,7 +81,8 @@ export async function proposeDatabaseOp(
   const minted = (body.minted ?? {}) as Record<string, unknown>;
   // An agent's answer only: a person's own proposals carry nothing new.
   const handed = body.feedback as AgentFeedback[] | undefined;
-  const feedback = ctx.isAgent && handed?.length ? { feedback: handed } : {};
+  const revised = body.revised as string[] | undefined;
+  const feedback = { ...(ctx.isAgent && handed?.length ? { feedback: handed } : {}), ...(ctx.isAgent && revised?.length ? { revised } : {}) };
   if (body.mode === "applied") {
     await afterDatabaseMutation(ctx, doc, summarizeApplied(run));
     // An applied op may have deleted rows that had pages.
@@ -174,8 +179,10 @@ export async function proposeTableWithColumns(
   display: string,
   columns: ColumnSpecInput[],
   source: DatabaseRunSource,
+  opts: { revises?: string[] } = {},
 ): Promise<DatabaseProposeOutcome> {
-  const first = await proposeDatabaseOp(ctx, doc, { kind: "tables.create", display }, source);
+  // The table's proposal answers the feedback; the columns' find it answered already.
+  const first = await proposeDatabaseOp(ctx, doc, { kind: "tables.create", display }, source, opts);
   if (first.kind === "error") return first;
   const tableId = String(first.minted.table_id ?? "");
   const columnIds: string[] = [];
@@ -200,8 +207,8 @@ export async function proposeTableWithColumns(
     last = outcome;
   }
   const minted = { table_id: tableId, column_ids: columnIds };
-  // The first proposal took the feedback; the columns' found none left.
-  const feedback = first.feedback ? { feedback: first.feedback } : {};
+  // What the last proposal still saw open, and what the first answered.
+  const feedback = { ...(last.feedback ? { feedback: last.feedback } : {}), ...(first.revised ? { revised: first.revised } : {}) };
   return last.kind === "proposed"
     ? { kind: "proposed", run: last.run, pending: last.pending, minted, held: last.held, ...feedback }
     : { kind: "applied", run: last.run, result: { table_id: tableId, column_ids: columnIds }, minted, ...feedback };

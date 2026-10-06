@@ -17,7 +17,7 @@ import {
   isRefusal,
   type AgentBackend,
   type ColumnSpecInput,
-  type DatabaseMutation,
+  type DatabaseProposal,
   type ImportSource,
   type ProposeInput,
   type Refusal,
@@ -268,6 +268,8 @@ interface DatabasesArgs {
   group_by?: string | null;
   hidden_columns?: string[];
   kind?: DatabaseViewKind;
+  /** Feedback ids this write answers. */
+  revises?: string[];
 }
 
 interface CollectionsEditArgs {
@@ -304,10 +306,10 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
     return answer(b.provenance(doc_id), renderProvenance);
   }),
 
-  markdown_append: (async ({ doc_id, text, heading }: { doc_id: string; text: string; heading?: string }, b: AgentBackend) =>
-    answer(b.propose(doc_id, { action: "append", text, heading }), renderPropose)),
+  markdown_append: (async ({ doc_id, text, heading, revises }: { doc_id: string; text: string; heading?: string; revises?: string[] }, b: AgentBackend) =>
+    answer(b.propose(doc_id, { action: "append", text, heading, revises }), renderPropose)),
 
-  markdown_edit: (async ({ doc_id, action, text, find, replace, replace_all, edits, citations }: MarkdownEditArgs, b: AgentBackend) => {
+  markdown_edit: (async ({ doc_id, action, text, find, replace, replace_all, edits, citations, revises }: MarkdownEditArgs, b: AgentBackend) => {
     if (action === "write" && text == null) return err("write requires `text`");
     if (action === "str_replace" && !find) return err("str_replace requires a non-empty `find`");
     if (action === "cited_edits" && !edits?.length) return err("cited_edits requires a non-empty `edits` array");
@@ -320,6 +322,7 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
         replace_all,
         edits,
         citations: citations?.map((c) => ({ ...c, heading_path: c.heading_path ?? null, content: c.content ?? "" })),
+        revises,
       }),
       renderPropose,
     );
@@ -492,7 +495,7 @@ async function databasesAdd(args: DatabasesArgs, b: AgentBackend): Promise<ToolT
     return propose(
       b,
       databaseId,
-      { action: "create_table", display, ...(columns.length > 0 ? { columns } : {}) },
+      { revises: args.revises, action: "create_table", display, ...(columns.length > 0 ? { columns } : {}) },
       `created table "${display}"${columns.length > 0 ? ` with ${plural(columns.length, "column")}` : ""}.`,
     );
   }
@@ -545,6 +548,7 @@ async function databasesAdd(args: DatabasesArgs, b: AgentBackend): Promise<ToolT
         b,
         databaseId,
         {
+          revises: args.revises,
           action: "add_column",
           table_id: id,
           display: args.name,
@@ -556,10 +560,10 @@ async function databasesAdd(args: DatabasesArgs, b: AgentBackend): Promise<ToolT
       );
     case "insert_rows":
       if (!args.rows?.length) return err("insert_rows requires `rows` — for a whole file use action:import");
-      return propose(b, databaseId, { action: "insert_rows", table_id: id, rows: args.rows }, `inserted ${args.rows.length} row(s) into ${table.name}.`, bulkSteer(args.rows.length));
+      return propose(b, databaseId, { revises: args.revises, action: "insert_rows", table_id: id, rows: args.rows }, `inserted ${args.rows.length} row(s) into ${table.name}.`, bulkSteer(args.rows.length));
     case "create_view":
       if (!args.name) return err("create_view requires `name`");
-      return propose(b, databaseId, { action: "create_view", table_id: id, view: { name: args.name, ...viewShape(args) } }, `created view "${args.name}" on ${table.name}.`);
+      return propose(b, databaseId, { revises: args.revises, action: "create_view", table_id: id, view: { name: args.name, ...viewShape(args) } }, `created view "${args.name}" on ${table.name}.`);
     case "open_page":
       if (!args.row_id) return err("open_page requires `row_id` (a row's `_id`, from `query`)");
       return answer(b.openRowPage(databaseId, id, args.row_id), renderOpenPage);
@@ -576,22 +580,22 @@ async function databasesChange(args: DatabasesArgs, b: AgentBackend): Promise<To
   switch (args.action) {
     case "update_rows":
       if (!args.updates?.length) return err("update_rows requires `updates`");
-      return propose(b, databaseId, { action: "update_rows", table_id: id, updates: args.updates }, `updated ${args.updates.length} row(s) in ${table.name}.`);
+      return propose(b, databaseId, { revises: args.revises, action: "update_rows", table_id: id, updates: args.updates }, `updated ${args.updates.length} row(s) in ${table.name}.`);
     case "delete_rows":
       if (!args.row_ids?.length) return err("delete_rows requires `row_ids`");
-      return propose(b, databaseId, { action: "delete_rows", table_id: id, row_ids: args.row_ids }, `deleted ${args.row_ids.length} row(s) from ${table.name}.`);
+      return propose(b, databaseId, { revises: args.revises, action: "delete_rows", table_id: id, row_ids: args.row_ids }, `deleted ${args.row_ids.length} row(s) from ${table.name}.`);
     case "update_view": {
       const hit = resolveView(table, args.view);
       if ("error" in hit) return err(hit.error);
       const changes = { ...(args.name ? { name: args.name } : {}), ...viewShape(args) };
       if (Object.keys(changes).length === 0) return err("update_view needs something to change: name, filter, sorts, group_by or hidden_columns");
-      return propose(b, databaseId, { action: "update_view", table_id: id, view_id: hit.view.view_id, changes }, `changed view "${hit.view.name}" on ${table.name}.`);
+      return propose(b, databaseId, { revises: args.revises, action: "update_view", table_id: id, view_id: hit.view.view_id, changes }, `changed view "${hit.view.name}" on ${table.name}.`);
     }
     default:
       return err(`unknown action ${args.action}`);
   }
 }
 
-function propose(b: AgentBackend, databaseId: string, mutation: DatabaseMutation, applied: string, note = ""): Promise<ToolText> {
+function propose(b: AgentBackend, databaseId: string, mutation: DatabaseProposal, applied: string, note = ""): Promise<ToolText> {
   return answer(b.mutateDatabase(databaseId, mutation), (res) => renderDatabasePropose(res, applied, note));
 }

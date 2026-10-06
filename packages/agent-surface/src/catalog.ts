@@ -25,7 +25,7 @@ import {
   type RowFilterOp,
 } from "@stuga/protocol/databases/types";
 import { WORKSPACE_EVENT_TYPES } from "@stuga/protocol/domain/events";
-import { RUN_FEEDBACK_LOOKBACK_DAYS } from "@stuga/protocol/domain/limits";
+import { RUN_FEEDBACK_LOOKBACK_DAYS, RUN_FEEDBACK_REVISES_MAX } from "@stuga/protocol/domain/limits";
 import { MAX_IMPORT_MARKDOWN_BYTES } from "@stuga/protocol/text/markdown-import";
 
 /**
@@ -299,6 +299,12 @@ const markdownTool: ToolDefinition = {
   annotations: READ,
 };
 
+/** The ids of the CHANGES REQUESTED a proposal answers. */
+const revisesArg = z.array(z.string().max(40)).max(RUN_FEEDBACK_REVISES_MAX).optional();
+const REVISES =
+  "`revises`: the ids of the CHANGES REQUESTED this proposal answers (from the block your reads open with); until a " +
+  "proposal names them, they keep leading your reads.";
+
 const IMAGES_IN_MARKDOWN =
   "Images written as ![alt](https://…) or as a data: URI are downloaded and stored with the document, so it never " +
   "hotlinks; the Markdown title slot is the image's visible caption.";
@@ -307,12 +313,13 @@ const markdownAppendTool: ToolDefinition = {
   title: "Append to a document",
   description:
     "Add `text` at the end of a document, or at the end of the section under `heading`. It touches nothing else, so " +
-    `prefer it for notes, logs and memory. ${PROPOSED} ${IMAGES_IN_MARKDOWN}`,
+    `prefer it for notes, logs and memory. ${PROPOSED} ${REVISES} ${IMAGES_IN_MARKDOWN}`,
   inputSchema: {
     workspace_id: workspaceId,
     doc_id: z.string(),
     text: z.string().max(MAX_IMPORT_MARKDOWN_BYTES),
     heading: z.string().max(500).optional(),
+    revises: revisesArg,
   },
   annotations: { ...ADDITIVE, ...FETCHES_IMAGES },
 };
@@ -327,7 +334,7 @@ const markdownEditTool: ToolDefinition = {
     "heading_path?, content?}]) that become footnotes when the edits land — the shape for grounded edits drawn from " +
     `\`retrieve\`. ${PROPOSED} Never rewrite the document because your change looks missing: your reads include it, ` +
     "and `markdown` action:status reports what the user decided. Edits 3-way merge with concurrent human edits. " +
-    IMAGES_IN_MARKDOWN,
+    `${REVISES} ${IMAGES_IN_MARKDOWN}`,
   inputSchema: {
     workspace_id: workspaceId,
     doc_id: z.string(),
@@ -336,6 +343,7 @@ const markdownEditTool: ToolDefinition = {
     find: z.string().max(1_000_000).optional(),
     replace: z.string().max(MAX_IMPORT_MARKDOWN_BYTES).optional(),
     replace_all: z.boolean().optional(),
+    revises: revisesArg,
     edits: z
       .array(z.object({ old_string: z.string().min(1).max(1_000_000), new_string: z.string().max(MAX_IMPORT_MARKDOWN_BYTES) }))
       .max(CITED_EDITS_MAX)
@@ -546,10 +554,11 @@ const databasesAddTool: ToolDefinition = {
     "`column_map` {file header → column, or null to skip}, `on_error` abort|skip_bad_rows, `max_bad_rows`, " +
     "`date_order` mdy|dmy, `dry_run` to check without loading. Cells are read the way people write them (1/4/26, 4 " +
     `Jan 2026, $1,234.50, yes/no); row-level errors come back with hints. ${COLUMN_TYPES} ${VIEW_SHAPE} ${PROPOSED} ` +
-    "Your own schema reads include your pending changes, and query results carry a note while changes are pending.",
+    `Your own schema reads include your pending changes, and query results carry a note while changes are pending. ${REVISES}`,
   inputSchema: {
     workspace_id: workspaceId,
     action: z.enum(DATABASES_ADD_ACTIONS),
+    revises: revisesArg,
     database_id: z.string().optional(),
     title: z.string().max(DATABASE_MAX_DISPLAY_LENGTH).optional(),
     /** A table_id, physical name or display name; for create_database, the starter table's name. */
@@ -582,10 +591,11 @@ const databasesChangeTool: ToolDefinition = {
     "Change what a structured database already holds. action: update_rows (`database_id`, `table`, `updates`: " +
     "[{_id, values}] — get _id values from `query`) | delete_rows (`database_id`, `table`, `row_ids`) | update_view " +
     "(`database_id`, `table`, `view` = view_id or name, plus the view fields to change; `name` renames it). " +
-    `${COLUMN_TYPES} ${VIEW_SHAPE} ${PROPOSED}`,
+    `${COLUMN_TYPES} ${VIEW_SHAPE} ${PROPOSED} ${REVISES}`,
   inputSchema: {
     workspace_id: workspaceId,
     action: z.enum(DATABASES_CHANGE_ACTIONS),
+    revises: revisesArg,
     database_id: z.string(),
     table: z.string().max(DATABASE_MAX_DISPLAY_LENGTH),
     updates: z

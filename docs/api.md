@@ -129,6 +129,10 @@ POST /api/docs/:id/propose
 | `append` | `text`, `heading?` | Add text at the end of the document, or at the end of the section under `heading`. Touches nothing else. |
 | `cited_edits` | `edits: [{ old_string, new_string }]`, `citations?: [{ n, doc_id, title, heading_path?, content? }]` | Up to 200 exact edits in one proposal, each `old_string` matching once, and up to 50 citations. A `[^n]` in a `new_string` becomes a footnote to citation `n` when the edit lands. For grounded edits drawn from `/api/retrieve`. |
 
+Every action takes `revises?`, the ids of the feedback this proposal answers
+([Request changes](agents.md#request-changes)); the reply's `revised` lists the ones it did, and
+`feedback` what is still open.
+
 Images in the new text (`![alt](https://…)` or a `data:` URI) are downloaded, stored in the
 workspace and relinked before the proposal is made. `media_note` in the reply says what was stored or
 could not be.
@@ -370,7 +374,7 @@ These refuse an agent key.
 | `GET /api/agents/stats` | Per agent: runs, pending, accepted, rejected, applied, reverted runs, and `acceptance_rate`. |
 | `POST /api/docs/:id/runs/:run/decision` | `{ decision: "accept" \| "reject", hunk_ids?, note? }`. Every pending hunk when `hunk_ids` is absent. `note` (rejections only, up to 2,000 characters) is what the agent revises from; it is handed to the agent with its reads and next proposal there. The run's reviewer, the document's owner or a workspace admin decides. |
 | `POST /api/docs/:id/runs/:run/revert` | Undo a run that landed. |
-| `POST /api/docs/:id/runs/:run/ack` | Dismiss a run's card. |
+| `POST /api/docs/:id/runs/:run/ack` | Dismiss a run's card, and withdraw any changes requested on it. |
 | `POST /api/databases/:id/runs/:run/decision`, `/revert`, `/ack` | The same for a database's runs, with `op_ids` in place of `hunk_ids`. |
 | `PATCH /api/docs/:id/state` | `{ locked?, search_hidden?, agent_mode?, agent_instructions? }`. The owner or a workspace admin. `agent_mode` is `review` or `auto`. `agent_instructions` is text of at most 20,000 characters, stored as given. Every field is checked before anything is written. Answers the document's summary, without the instructions. |
 | `PATCH /api/workspaces/:id` | `{ name?, default_doc_access?, agent_instructions? }`. A workspace owner or admin. `agent_instructions` is checked as on a document's state. |

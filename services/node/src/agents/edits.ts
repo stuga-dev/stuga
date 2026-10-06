@@ -32,6 +32,8 @@ export interface ProposeInput {
   /** cited_edits: surgical edits plus the citations the actor materializes as footnotes at commit time. */
   edits?: AiStrEdit[];
   citations?: AiCitation[];
+  /** Feedback ids this proposal answers. */
+  revises?: string[];
   source: AgentRunSource;
 }
 
@@ -39,7 +41,7 @@ export type ProposeOutcome =
   // `mediaNote` reports images hosted on the way in, and any that could not be:
   // a failed download is a note on a completed edit, never a failure of it.
   // `doc` is the row the write was authorized against, so an answer can name what applies to it without a re-read.
-  // `feedback` is an agent's own rejections it had not acted on, handed over with this proposal.
+  // `feedback` is an agent's own open feedback here, and `revised` the ids this proposal answered.
   | {
       kind: "proposed";
       run: AgentRunSummary;
@@ -49,6 +51,7 @@ export type ProposeOutcome =
       reason: string;
       doc: DocRow;
       feedback?: AgentFeedback[];
+      revised?: string[];
     }
   | {
       kind: "auto_applied";
@@ -60,6 +63,7 @@ export type ProposeOutcome =
       reason: string;
       doc: DocRow;
       feedback?: AgentFeedback[];
+      revised?: string[];
     }
   | { kind: "noop" }
   | { kind: "error"; message: string; retryable?: boolean; status?: number };
@@ -136,6 +140,7 @@ interface ProposeResponse {
   /** The actor parked an `auto` proposal because the run holds undecided work. */
   parked_behind_pending?: boolean;
   feedback?: AgentFeedback[];
+  revised?: string[];
   error?: string;
   count?: number;
   message?: string;
@@ -251,6 +256,7 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
       replace_all: input.replaceAll,
       edits,
       citations: input.citations,
+      revises: input.revises ?? [],
       source: input.source,
       review: review.mode,
       agent: ctx.displayName || ctx.alias,
@@ -265,7 +271,10 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
   });
   const body = (await res.json().catch(() => null)) as ProposeResponse | null;
   // An agent's answer only: a person's own proposals carry nothing new.
-  const feedback = ctx.isAgent && body?.feedback?.length ? { feedback: body.feedback } : {};
+  const feedback = {
+    ...(ctx.isAgent && body?.feedback?.length ? { feedback: body.feedback } : {}),
+    ...(ctx.isAgent && body?.revised?.length ? { revised: body.revised } : {}),
+  };
 
   if (res.ok) {
     if (body?.mode === "proposed" && body.run) {
@@ -343,6 +352,7 @@ export function proposeBody(
   const note = {
     ...(outcome.kind !== "noop" && outcome.mediaNote ? { media_note: outcome.mediaNote } : {}),
     ...(outcome.kind !== "noop" && outcome.feedback ? { feedback: outcome.feedback } : {}),
+    ...(outcome.kind !== "noop" && outcome.revised ? { revised: outcome.revised } : {}),
   };
   switch (outcome.kind) {
     case "proposed":

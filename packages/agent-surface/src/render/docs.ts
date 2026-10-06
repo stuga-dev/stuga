@@ -2,7 +2,7 @@
 import { escapeInstructionText, instructionLevelLabel, type AgentInstructions } from "@stuga/protocol/domain/instructions";
 import type { AgentRunSummary, RunHunkStatus } from "@stuga/protocol/wire/doc-socket";
 import type { MarkdownBody, ProposeBody, ProvenanceBody } from "../backend.js";
-import { feedbackOfRun, hunkChange, renderFeedback, statusFeedbackLines, type FeedbackPlace } from "./feedback.js";
+import { feedbackOfRun, hunkChange, renderFeedback, revisedNote, statusFeedbackLines, type FeedbackPlace } from "./feedback.js";
 import { instructionsPointer } from "./instructions.js";
 
 /** Only the newest few runs are worth the agent's context. */
@@ -70,8 +70,8 @@ export function renderRead(res: MarkdownBody): string {
 }
 
 /**
- * "Proposed" is success; an agent told only "pending" retries until the run fills with duplicates. Rejections it
- * had not acted on yet follow, once: this is the proposal that hears about them.
+ * "Proposed" is success; an agent told only "pending" retries until the run fills with duplicates. The feedback it
+ * named is answered, and what is still open follows, so the proposal that ignored it hears about it again.
  */
 export function renderPropose(res: ProposeBody): string {
   switch (res.mode) {
@@ -82,6 +82,7 @@ export function renderPropose(res: ProposeBody): string {
         `rewrite the document because the change looks missing. The user has been notified. ` +
         `Later reads include your pending edits; check \`markdown\` action:status for their decision.${mediaNote(res.media_note)}` +
         instructionsPointer(res.instructions_labels, "`docs` action:metadata") +
+        revisedNote(res.revised) +
         feedbackAfter(res.feedback)
       );
     case "auto_applied":
@@ -89,6 +90,7 @@ export function renderPropose(res: ProposeBody): string {
         `Applied (server seq ${res.seq}) — ${res.reason}, so the edit landed without waiting for review; ` +
         `the user has been notified and can review or revert at ${res.review_url}.${mediaNote(res.media_note)}` +
         instructionsPointer(res.instructions_labels, "`docs` action:metadata") +
+        revisedNote(res.revised) +
         feedbackAfter(res.feedback)
       );
     case "noop":

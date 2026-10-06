@@ -17,14 +17,24 @@ const NOT_UNCHANGED =
   "Do not resend a rejected change unchanged. A rejection without a note means the change was not wanted; if it is " +
   "unclear why, ask the user";
 
+const ANSWER_WITH_REVISES =
+  "Name the ids above in `revises` on the proposal that answers them; until a proposal does, this block keeps " +
+  "leading your reads here (the user can also withdraw it by marking the run reviewed).";
+
 const FEEDBACK_ADVICE: Record<FeedbackPlace, string> = {
   document:
     "Revise from it: re-read the current text, then propose a new version of those passages only, one that answers " +
-    `the note, and leave the rest of the document as it is. ${NOT_UNCHANGED} with a comment.`,
+    `the note, and leave the rest of the document as it is. ${ANSWER_WITH_REVISES} ${NOT_UNCHANGED} with a comment.`,
   database:
     "Revise from it: re-read the schema or the rows concerned, then propose those changes again only as the note asks, " +
-    `and leave the rest of the database as it is. ${NOT_UNCHANGED}.`,
+    `and leave the rest of the database as it is. ${ANSWER_WITH_REVISES} ${NOT_UNCHANGED}.`,
 };
+
+/** What a proposal's answer says about the feedback it named, or "". */
+export function revisedNote(revised: string[] | undefined): string {
+  if (!revised?.length) return "";
+  return ` Answers the changes requested ${revised.join(", ")}: they no longer lead your reads.`;
+}
 
 /** One piece of feedback as lines: what was rejected, then the note. */
 function feedbackLines(fb: AgentFeedback): string[] {

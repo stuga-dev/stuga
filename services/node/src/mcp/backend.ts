@@ -193,6 +193,7 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
         replaceAll: input.replace_all,
         edits: input.edits,
         citations: input.citations,
+        revises: input.revises,
         source: "connector",
       });
       if (outcome.kind === "error") return { error: outcome.message };
@@ -326,9 +327,9 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
       if (mutation.action === "create_table" && mutation.columns?.length) {
         const specs = parseColumnSpecs(mutation.columns);
         if (!specs.ok) return { error: specs.message };
-        return proposeAnswer(await proposeTableWithColumns(ctx, doc, mutation.display, specs.columns, "connector"), await labels());
+        return proposeAnswer(await proposeTableWithColumns(ctx, doc, mutation.display, specs.columns, "connector", { revises: mutation.revises }), await labels());
       }
-      return proposeAnswer(await proposeDatabaseOp(ctx, doc, databaseOp(mutation), "connector"), await labels());
+      return proposeAnswer(await proposeDatabaseOp(ctx, doc, databaseOp(mutation), "connector", { revises: mutation.revises }), await labels());
     },
 
     async openRowPage(databaseId, tableId, rowId) {

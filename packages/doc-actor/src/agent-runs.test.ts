@@ -65,6 +65,7 @@ interface ProposeBody {
   replace_all?: boolean;
   edits?: { old_string: string; new_string: string }[];
   citations?: { n: number; doc_id: string; title: string; heading_path?: string | null; content?: string }[];
+  revises?: string[];
   source?: "connector" | "stdio" | "panel";
   agent?: string;
   agent_alias?: string;
@@ -1742,7 +1743,7 @@ describe("a reviewer's feedback on what they rejected", () => {
     expect((await listRuns(dobj))[0]!.hunks.map((x) => x.status)).toEqual(["pending", "pending"]);
   });
 
-  it("repeats on the agent's own reads until it proposes here again, then stays in status alone", async () => {
+  it("repeats on the agent's reads and proposals until one names it in `revises`, then stays in status alone", async () => {
     const h = harness();
     const dobj = makeActor(h);
     await seed(dobj);
@@ -1765,12 +1766,26 @@ describe("a reviewer's feedback on what they rejected", () => {
     expect(await readMarkdown(dobj, "agent2")).not.toHaveProperty("feedback");
     expect(await readMarkdown(dobj)).not.toHaveProperty("feedback");
 
-    const revised = await propose(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha, plainly." });
-    expect(revised.json.feedback).toHaveLength(2);
-    expect(await readMarkdown(dobj, "agent1")).not.toHaveProperty("feedback");
-    const again = await propose(dobj, { action: "str_replace", find: "Bravo paragraph.", replace: "Bravo, plainly." });
-    expect(again.json.feedback).toEqual([]);
+    // Proposing something else answers nothing: the block stays, on the answer and on the next read.
+    const unrelated = await propose(dobj, { action: "str_replace", find: "# Notes", replace: "# Notes, revised" });
+    expect(unrelated.json.feedback).toHaveLength(2);
+    expect(unrelated.json.revised).toEqual([]);
+    expect((await readMarkdown(dobj, "agent1")).feedback).toHaveLength(2);
+
+    // The proposal that names it is the revision; the other rejection stays open.
+    const noted = feedback.find((f) => f.note === "Keep it plain.")!.id as string;
+    const revised = await propose(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha, plainly.", revises: [noted, "fb_notmine00000"] });
+    expect(revised.json.revised).toEqual([noted]);
+    expect(revised.json.feedback).toEqual([expect.objectContaining({ id: silent.id })]);
+    expect((await readMarkdown(dobj, "agent1")).feedback).toEqual([expect.objectContaining({ id: silent.id })]);
     const rejected = (await listRuns(dobj)).find((r) => r.id === runId)!.hunks;
     expect(rejected[0]!.feedback).toMatchObject({ note: "Keep it plain.", addressed_at: expect.any(Number) });
+    expect(rejected[1]!.feedback).not.toHaveProperty("addressed_at");
+
+    // Mark as reviewed withdraws the rest.
+    const acked = await post(dobj, "ack", { run_id: runId, acked_by: "alice" });
+    expect(acked.json).toMatchObject({ feedback_dismissed: 1 });
+    expect(await readMarkdown(dobj, "agent1")).not.toHaveProperty("feedback");
+    expect(h.state.storage.map.get("feedback-pending:agent1")).toEqual([]);
   });
 });

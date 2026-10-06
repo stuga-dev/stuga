@@ -479,9 +479,10 @@ with each change it rejected, and it reaches the agent that proposed them where 
 looks:
 
 - **Its reads of that document** (for a database, its schema and query results) open with the
-  reviewer's feedback (what was rejected and the note), until the agent proposes there again, or for
-  14 days.
-- **Its next proposal there** carries the feedback once more, and from then on only `status` shows it.
+  reviewer's feedback (what was rejected and the note), and **every proposal it makes there** carries
+  it again, until the agent answers it: a proposal that names the feedback's ids in `revises` is the
+  revision, and from then on only `status` shows it. Proposing something else answers nothing. You
+  can withdraw it with **Mark as reviewed** on the run, and it stops leading reads after 14 days.
 - **`markdown` or `databases` action `status`** lists each rejection and its note under its run.
 - **`events` with `mine: true`** lists the decisions on the agent's own proposals across the
   workspace, the last 14 days of them without a cursor. A `run.decided` event with a `feedback_id` is a
@@ -549,7 +550,7 @@ Before letting AI edits to a document apply directly, look at that agent's recor
 **In progress** (still collecting changes: something waiting, or active in the last 10 minutes),
 **Finished** and **Everything**, filterable by agent. A run's **⋯** menu acts on
 the whole run: **Accept all suggestions**, **Reject all suggestions**, **Request changes…**,
-**Revert these changes** and **Mark as reviewed**; open the document to decide change by change. **AI activity**, below the list,
+**Revert these changes** and **Mark as reviewed** (which also withdraws changes you requested on it); open the document to decide change by change. **AI activity**, below the list,
 is each agent's record (runs, waiting, kept, skipped, applied automatically, reverted) and is what to
 consult before switching a document to `auto`.
 

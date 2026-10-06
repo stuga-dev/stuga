@@ -9,7 +9,7 @@ import type {
 import type { CreatedDoc, DatabaseProposeBody, DatabaseSchemaBody, RowPage } from "../backend.js";
 import type { AgentFeedback } from "@stuga/protocol/domain/runs";
 import { MAX_STATUS_RUNS, feedbackAfter, instructionFields, tally } from "./docs.js";
-import { feedbackOfRun, statusFeedbackLines } from "./feedback.js";
+import { feedbackOfRun, revisedNote, statusFeedbackLines } from "./feedback.js";
 import { instructionsPointer } from "./instructions.js";
 
 /** Rows in one insert_rows call past which the result steers the agent to import. */
@@ -38,10 +38,10 @@ export function renderDatabaseRead(res: DatabaseSchemaBody | Record<string, unkn
 
 /** A database write's result, with the ids the actor minted so the agent can name them next. */
 export function renderDatabasePropose(res: DatabaseProposeBody, applied: string, note = ""): string {
-  const { mode, run, pending, minted, held, instructions_labels, feedback: handed, ...rest } = res;
+  const { mode, run, pending, minted, held, instructions_labels, feedback: handed, revised, ...rest } = res;
   // A write needs no schema read, so the answer names what governs this database; `schema` carries the text.
   const instructions = instructionsPointer(instructions_labels, "`databases` action:schema");
-  const feedback = feedbackAfter(handed, "database");
+  const feedback = revisedNote(revised) + feedbackAfter(handed, "database");
   if (mode === "proposed") {
     const why = held
       ? " This database lets AI edits apply directly, but your earlier changes in this run are still waiting for the user."

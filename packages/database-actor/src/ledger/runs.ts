@@ -370,17 +370,12 @@ export function opDetail(payload: DatabaseRunOpPayload, columnName: (columnId: s
   return feedbackExcerpt(JSON.stringify(shown));
 }
 
-/**
- * Rejections of `agentAlias`'s proposals here that it has not acted on and that are newer than
- * RUN_FEEDBACK_LOOKBACK_DAYS, newest first; the documents' RunLedger.feedbackFor. The ledger holds
- * at most DATABASE_RUN_KEEP runs, so the scan is bounded. `address` marks them handed over.
- */
-export function feedbackFor(sql: SqlHandle, agentAlias: string, opts?: { address?: boolean }): AgentFeedback[] {
-  const now = Date.now();
-  const rows = sql
+/** Rows of `agentAlias`'s rejected ops carrying feedback it has not answered and newer than the lookback, newest run first. */
+function openFeedbackRows(sql: SqlHandle, agentAlias: string, now: number): RunOpRow[] {
+  return sql
     .exec(
       `SELECT o.* FROM _run_ops o JOIN _runs r USING (run_id)
-       WHERE r.agent_alias = ? AND o.status = 'rejected' AND o.feedback IS NOT NULL
+       WHERE r.agent_alias = ? AND o.feedback IS NOT NULL
          AND json_extract(o.feedback, '$.addressed_at') IS NULL AND json_extract(o.feedback, '$.decided_at') >= ?
        ORDER BY r.created_at DESC, o.position`,
       agentAlias,
@@ -388,8 +383,17 @@ export function feedbackFor(sql: SqlHandle, agentAlias: string, opts?: { address
     )
     .toArray()
     .map(asRunOpRow);
+}
+
+/**
+ * Rejections of `agentAlias`'s proposals here that it has not answered and that are newer than
+ * RUN_FEEDBACK_LOOKBACK_DAYS, newest first; the documents' RunLedger.feedbackFor. They stay until a
+ * proposal names them in `revises`, the reviewer marks the run reviewed, or they age out. The ledger
+ * holds at most DATABASE_RUN_KEEP runs, so the scan is bounded.
+ */
+export function feedbackFor(sql: SqlHandle, agentAlias: string): AgentFeedback[] {
   const byId = new Map<string, AgentFeedback>();
-  for (const r of rows) {
+  for (const r of openFeedbackRows(sql, agentAlias, Date.now())) {
     const fb = r.feedback!;
     let item = byId.get(fb.id);
     if (!item) {
@@ -398,29 +402,57 @@ export function feedbackFor(sql: SqlHandle, agentAlias: string, opts?: { address
     }
     if (item.changes.length < RUN_FEEDBACK_MAX_CHANGES) item.changes.push({ summary: r.summary, ...(fb.detail ? { detail: fb.detail } : {}) });
     else item.more = (item.more ?? 0) + 1;
-    if (opts?.address) {
-      sql.exec(
-        `UPDATE _run_ops SET feedback = ? WHERE run_id = ? AND op_id = ?`,
-        JSON.stringify({ ...fb, addressed_at: now }),
-        r.run_id,
-        r.op_id,
-      );
-    }
   }
   return [...byId.values()].sort((a, b) => b.decided_at - a.decided_at);
 }
 
 /**
+ * Mark the feedback `ids` of `agentAlias` answered by the proposal that named them. Ids that are not
+ * open feedback on this agent's runs here are ignored, so a feedback id grants nothing. Returns the
+ * ids it marked.
+ */
+export function answerFeedback(sql: SqlHandle, agentAlias: string, ids: readonly string[]): string[] {
+  if (ids.length === 0) return [];
+  const now = Date.now();
+  const wanted = new Set(ids);
+  const answered = new Set<string>();
+  for (const r of openFeedbackRows(sql, agentAlias, now)) {
+    const fb = r.feedback!;
+    if (!wanted.has(fb.id)) continue;
+    sql.exec(`UPDATE _run_ops SET feedback = ? WHERE run_id = ? AND op_id = ?`, JSON.stringify({ ...fb, addressed_at: now }), r.run_id, r.op_id);
+    answered.add(fb.id);
+  }
+  return [...answered];
+}
+
+/** The reviewer withdraws what they requested on a run (Mark as reviewed): its open feedback is marked answered. */
+export function dismissFeedback(sql: SqlHandle, runId: string, now: number): number {
+  return sql
+    .exec(
+      `UPDATE _run_ops SET feedback = json_set(feedback, '$.addressed_at', ?)
+       WHERE run_id = ? AND feedback IS NOT NULL AND json_extract(feedback, '$.addressed_at') IS NULL RETURNING op_id`,
+      now,
+      runId,
+    )
+    .toArray().length;
+}
+
+/**
  * Drop runs beyond DATABASE_RUN_KEEP, oldest first. Open runs are never pruned:
- * they may hold proposals nobody has decided. Returns spill keys to delete after
- * the write.
+ * they may hold proposals nobody has decided; nor is a run whose reviewer's note
+ * its agent has not answered yet. Returns spill keys to delete after the write.
  */
 export function pruneRuns(sql: SqlHandle): string[] {
+  // A run holding feedback its agent has not answered stays while reads would still show it.
   const doomed = sql
     .exec(
       `SELECT run_id FROM _runs WHERE status <> 'open'
-       AND run_id NOT IN (SELECT run_id FROM _runs ORDER BY created_at DESC LIMIT ?)`,
+       AND run_id NOT IN (SELECT run_id FROM _runs ORDER BY created_at DESC LIMIT ?)
+       AND run_id NOT IN (
+         SELECT run_id FROM _run_ops WHERE feedback IS NOT NULL
+           AND json_extract(feedback, '$.addressed_at') IS NULL AND json_extract(feedback, '$.decided_at') >= ?)`,
       DATABASE_RUN_KEEP,
+      Date.now() - RUN_FEEDBACK_LOOKBACK_DAYS * 86_400_000,
     )
     .toArray()
     .map((r) => String(r.run_id));

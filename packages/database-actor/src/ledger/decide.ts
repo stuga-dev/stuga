@@ -17,6 +17,7 @@ import { applyInverse, getOp, isRevertible, listOps, loadInverse, recordOp, type
 import { runActor } from "./propose.js";
 import {
   acknowledgeRun,
+  dismissFeedback,
   closeRun,
   getRun,
   listRunOps,
@@ -184,10 +185,13 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
 
 export async function handleRunAck(db: Database, req: Request): Promise<Response> {
   const { run } = reviewerOf(db, await readJson(req), "acked_by");
-  acknowledgeRun(db.sql, run.run_id, Date.now());
+  const now = Date.now();
+  acknowledgeRun(db.sql, run.run_id, now);
+  // Marking a run reviewed also withdraws what the reviewer requested on it.
+  const dismissed = dismissFeedback(db.sql, run.run_id, now);
   const fresh = getRun(db.sql, run.run_id)!;
   db.publishRun(fresh);
-  return Response.json({ run: await db.runSummary(fresh) });
+  return Response.json({ run: await db.runSummary(fresh), feedback_dismissed: dismissed });
 }
 
 /**

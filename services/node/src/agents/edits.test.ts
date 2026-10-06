@@ -154,6 +154,7 @@ describe("proposeDocEdit outcome mapping", () => {
       find: "old",
       replace: "new",
       replace_all: true,
+      revises: [],
       source: "connector",
       review: "review",
       agent: "Scout (Connector)",

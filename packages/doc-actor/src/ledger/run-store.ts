@@ -377,9 +377,33 @@ export class RunLedger {
     if (!runs.includes(stored.id)) await this.storage.put(key, [...runs, stored.id]);
   }
 
-  /** Mark the feedback `ids` of `agentAlias` handed over, once the agent has in fact been shown them. */
-  async addressFeedback(agentAlias: string, ids: string[]): Promise<void> {
-    if (ids.length > 0) await this.feedbackFor(agentAlias, { address: new Set(ids) });
+  /**
+   * Mark the feedback `ids` of `agentAlias` answered: a proposal named them as the revision, or the
+   * co-author's turn was shown them. Ids that are not open feedback on this agent's runs here are
+   * ignored, so a feedback id grants nothing. Returns the ids it marked.
+   */
+  async answerFeedback(agentAlias: string, ids: string[]): Promise<string[]> {
+    if (ids.length === 0) return [];
+    return (await this.scanFeedback(agentAlias, new Set(ids))).answered;
+  }
+
+  /**
+   * The reviewer withdraws what they requested on `stored` (Mark as reviewed): its open feedback is
+   * marked answered and the run leaves its agent's list, so it is history like any other run.
+   */
+  async dismissFeedback(stored: StoredRun, body: RunBody): Promise<number> {
+    const now = Date.now();
+    let dismissed = 0;
+    for (const h of body.hunks) {
+      if (h.feedback && h.feedback.addressed_at === undefined) {
+        h.feedback.addressed_at = now;
+        dismissed++;
+      }
+    }
+    const key = feedbackPendingKey(stored.agent_alias);
+    const listed = (await this.storage.get<string[]>(key)) ?? [];
+    if (listed.includes(stored.id)) await this.storage.put(key, listed.filter((id) => id !== stored.id));
+    return dismissed;
   }
 
   /** The full text of the hunks one rejection of `agentAlias`'s run covered: a revise turn's scope. [] when gone. */
@@ -388,25 +412,29 @@ export class RunLedger {
     if (!stored || stored.agent_alias !== agentAlias) return [];
     const body = await this.loadBody(stored);
     if (this.bodyLost(stored, body)) return [];
-    return body.hunks
-      .filter((h) => h.status === "rejected" && h.feedback?.id === feedbackId)
-      .map((h) => ({ old_string: h.old_string, new_string: h.new_string }));
+    return body.hunks.filter((h) => h.feedback?.id === feedbackId).map((h) => ({ old_string: h.old_string, new_string: h.new_string }));
   }
 
   /**
-   * Rejections of `agentAlias`'s proposals here that it has not acted on, newest first: what its reads
-   * repeat and its next proposal hands over. `address` marks them handed over (all, or the ids given),
-   * so from then on only `status` shows them; so does age past RUN_FEEDBACK_LOOKBACK_DAYS. Only the
-   * runs `noteFeedback` listed are read, and one with nothing left to hand over leaves the list; a run
-   * whose body did not load is skipped, never written back.
+   * Rejections of `agentAlias`'s proposals here that it has not answered, newest first: what its reads
+   * repeat and its proposals carry. They stay until a proposal names them in `revises`, the reviewer
+   * marks the run reviewed, or they age past RUN_FEEDBACK_LOOKBACK_DAYS; from then on only `status`
+   * shows them. Only the runs `noteFeedback` listed are read, and one with nothing left to show
+   * leaves the list; a run whose body did not load is skipped, never written back.
    */
-  async feedbackFor(agentAlias: string, opts?: { address?: boolean | ReadonlySet<string> }): Promise<AgentFeedback[]> {
+  async feedbackFor(agentAlias: string): Promise<AgentFeedback[]> {
+    return (await this.scanFeedback(agentAlias)).open;
+  }
+
+  /** One pass over the agent's listed runs: what is open, and what `answer` marked answered on the way. */
+  private async scanFeedback(agentAlias: string, answer?: ReadonlySet<string>): Promise<{ open: AgentFeedback[]; answered: string[] }> {
     const key = feedbackPendingKey(agentAlias);
     const listed = (await this.storage.get<string[]>(key)) ?? [];
-    if (listed.length === 0) return [];
+    if (listed.length === 0) return { open: [], answered: [] };
     const now = Date.now();
     const stale = now - RUN_FEEDBACK_LOOKBACK_DAYS * 86_400_000;
-    const out: AgentFeedback[] = [];
+    const open: AgentFeedback[] = [];
+    const answered = new Set<string>();
     const keep: string[] = [];
     for (const runId of listed) {
       const stored = await this.load(runId);
@@ -418,10 +446,17 @@ export class RunLedger {
       }
       const byId = new Map<string, AgentFeedback>();
       let left = false;
-      let handed = false;
+      let changed = false;
       for (const h of body.hunks) {
-        const fb = h.status === "rejected" ? h.feedback : undefined;
+        const fb = h.feedback;
         if (!fb || fb.addressed_at !== undefined || fb.decided_at < stale) continue;
+        if (answer?.has(fb.id)) {
+          fb.addressed_at = now;
+          answered.add(fb.id);
+          changed = true;
+          continue;
+        }
+        left = true;
         let item = byId.get(fb.id);
         if (!item) {
           item = { id: fb.id, run_id: stored.id, ...(fb.note ? { note: fb.note } : {}), decided_at: fb.decided_at, changes: [] };
@@ -432,19 +467,13 @@ export class RunLedger {
         } else {
           item.more = (item.more ?? 0) + 1;
         }
-        if (opts?.address === true || (opts?.address instanceof Set && opts.address.has(fb.id))) {
-          fb.addressed_at = now;
-          handed = true;
-        } else {
-          left = true;
-        }
       }
-      if (handed) await this.save(stored, body);
+      if (changed) await this.save(stored, body);
       if (left) keep.push(runId);
-      out.push(...[...byId.values()].sort((a, b) => b.decided_at - a.decided_at));
+      open.push(...[...byId.values()].sort((a, b) => b.decided_at - a.decided_at));
     }
     if (keep.length !== listed.length) await this.storage.put(key, keep);
-    return out.sort((a, b) => b.decided_at - a.decided_at);
+    return { open: open.sort((a, b) => b.decided_at - a.decided_at), answered: [...answered] };
   }
 
   /** Terminal state: freeze the result markdown and release the agent's slot. */

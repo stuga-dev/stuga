@@ -4,6 +4,7 @@
  */
 import type { AgentRunSource, AgentRunSummary, AiCitation, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
 import { clampRunLimit, newFeedbackId, parseDecisionNote, parseReviewMode, type RunFeedback } from "@stuga/protocol/domain/runs";
+import { RUN_FEEDBACK_REVISES_MAX } from "@stuga/protocol/domain/limits";
 import { applyStrEditsStrict } from "@stuga/crdt-ops";
 import { proposeRunEdit, type ProposeAction } from "./propose.js";
 import { pendingOf, RUN_LIST_DEFAULT_LIMIT, RUN_ORDER_MAX, type RunLedger, type StoredRun } from "./run-store.js";
@@ -47,6 +48,8 @@ export async function handleRunPropose(ledger: RunLedger, req: Request): Promise
     review?: string;
     client?: string | null;
     model?: string | null;
+    /** Feedback ids this proposal answers. */
+    revises?: unknown;
   } | null;
   const agentAlias = body?.agent_alias ?? "";
   const reviewer = body?.reviewer ?? "";
@@ -82,27 +85,24 @@ export async function handleRunPropose(ledger: RunLedger, req: Request): Promise
     model: typeof body.model === "string" ? body.model : null,
   });
 
+  if (result.mode === "noop") return Response.json({ mode: "noop" });
+  if (result.mode === "error") return Response.json({ error: result.error, message: result.message, count: result.count }, { status: result.status });
+  // The proposal answers the feedback it names, and carries what is still open; nothing is answered by proposing alone.
+  const revises = Array.isArray(body.revises) ? body.revises.filter((id): id is string => typeof id === "string").slice(0, RUN_FEEDBACK_REVISES_MAX) : [];
+  const revised = await ledger.answerFeedback(agentAlias, revises);
+  const feedback = await ledger.feedbackFor(agentAlias);
   switch (result.mode) {
-    case "noop":
-      return Response.json({ mode: "noop" });
     case "proposed":
       return Response.json({
         mode: "proposed",
         run: result.run,
         pending: result.pending,
         parked_behind_pending: result.parkedBehindPending,
-        feedback: await ledger.feedbackFor(agentAlias, { address: true }),
+        feedback,
+        revised,
       });
     case "auto_applied":
-      return Response.json({
-        mode: "auto_applied",
-        run: result.run,
-        seq: result.seq,
-        applied: result.applied,
-        feedback: await ledger.feedbackFor(agentAlias, { address: true }),
-      });
-    case "error":
-      return Response.json({ error: result.error, message: result.message, count: result.count }, { status: result.status });
+      return Response.json({ mode: "auto_applied", run: result.run, seq: result.seq, applied: result.applied, feedback, revised });
   }
 }
 
@@ -302,6 +302,8 @@ export async function handleRunAck(ledger: RunLedger, req: Request): Promise<Res
   if (ledger.bodyLost(stored, body)) return runUnavailable();
   stored.acknowledged = true;
   stored.updated_at = Date.now();
+  // Marking a run reviewed also withdraws what the reviewer requested on it.
+  const dismissed = await ledger.dismissFeedback(stored, body);
   await ledger.save(stored, body);
-  return Response.json({ ok: true });
+  return Response.json({ ok: true, feedback_dismissed: dismissed });
 }

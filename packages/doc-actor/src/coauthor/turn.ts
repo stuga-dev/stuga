@@ -167,7 +167,7 @@ export class CoAuthor {
       );
 
       // The next turn hears only what the user rejects after this one.
-      if (feedback.length > 0 && result.rounds > 0) await this.ledger.addressFeedback(panelAlias, feedback.map((f) => f.id));
+      if (feedback.length > 0 && result.rounds > 0) await this.ledger.answerFeedback(panelAlias, feedback.map((f) => f.id));
       if (result.failure) console.warn("co-author model call failed", { docId, ...result.failure });
       const reason = failureReason(result.failure);
       // A partial turn (round cap, a later round failing) still proposes what its finished rounds staged.

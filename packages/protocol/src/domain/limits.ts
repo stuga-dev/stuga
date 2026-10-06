@@ -52,6 +52,8 @@ export const RUN_FEEDBACK_MAX_CHANGES = 5;
  * a rejection leads its reads and proposals; past it, only `status` keeps the note.
  */
 export const RUN_FEEDBACK_LOOKBACK_DAYS = 14;
+/** Feedback ids one proposal may name as answered. */
+export const RUN_FEEDBACK_REVISES_MAX = 10;
 
 /** Days a trashed document stays restorable before maintenance deletes it. */
 export const TRASH_RETENTION_DAYS = 30;

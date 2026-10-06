@@ -603,7 +603,7 @@ describe("run hygiene", () => {
 });
 
 describe("a reviewer's feedback on what they rejected", () => {
-  it("keeps the note on each op it rejected and hands it to the agent with its next proposal, once", async () => {
+  it("keeps the note on each op it rejected, and carries it with every proposal until one names it in `revises`", async () => {
     const h = makeState();
     const { actor } = makeActor(h);
     const starter = await initStarter(actor);
@@ -621,7 +621,7 @@ describe("a reviewer's feedback on what they rejected", () => {
     expect(a!.feedback).toMatchObject({ note: "Use full names.", decided_by: HUMAN.alias, detail: '[{"Name":"Alpha"}]' });
     expect(b!.feedback!.id).toBe(a!.feedback!.id);
 
-    const next = await doJson<ProposeOut & { feedback: unknown[] }>(
+    const next = await doJson<ProposeOut & { feedback: unknown[]; revised: string[] }>(
       actor,
       "/runs/propose",
       proposeBody({ kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha Andersson" }] }),
@@ -636,15 +636,43 @@ describe("a reviewer's feedback on what they rejected", () => {
         ],
       }),
     ]);
-    const after = await doJson<ProposeOut & { feedback: unknown[] }>(
+    expect(next.revised).toEqual([]);
+    // Still open: proposing something else answered nothing.
+    const again = await doJson<ProposeOut & { feedback: unknown[]; revised: string[] }>(
       actor,
       "/runs/propose",
       proposeBody({ kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Beta Berg" }] }),
     );
+    expect(again.feedback).toHaveLength(1);
+    const revision = await doJson<ProposeOut & { feedback: unknown[]; revised: string[] }>(
+      actor,
+      "/runs/propose",
+      proposeBody({ kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Gamma Grön" }] }, { revises: [a!.feedback!.id, "fb_notmine00000"] }),
+    );
+    expect(revision.revised).toEqual([a!.feedback!.id]);
+    expect(revision.feedback).toEqual([]);
+    const after = await doJson<ProposeOut & { feedback: unknown[] }>(
+      actor,
+      "/runs/propose",
+      proposeBody({ kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Delta Dahl" }] }),
+    );
     expect(after.feedback).toEqual([]);
   });
 
-  it("rides along on the agent's schema and query reads until it proposes here again", async () => {
+  it("is withdrawn when the reviewer marks the run reviewed", async () => {
+    const h = makeState();
+    const { actor } = makeActor(h);
+    const starter = await initStarter(actor);
+    const first = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha" }] });
+    await doJson(actor, "/runs/decide", { actor: HUMAN, run_id: first.run.id, decision: "reject", decided_by: HUMAN.alias, note: "Use full names." });
+    const agentSchema = `/schema?agent=${encodeURIComponent(AGENT.alias)}`;
+    expect((await doJson<{ feedback?: unknown[] }>(actor, agentSchema)).feedback).toHaveLength(1);
+    const ack = await doJson<{ feedback_dismissed: number }>(actor, "/runs/ack", { actor: HUMAN, run_id: first.run.id, acked_by: HUMAN.alias });
+    expect(ack.feedback_dismissed).toBe(1);
+    expect(await doJson<{ feedback?: unknown[] }>(actor, agentSchema)).not.toHaveProperty("feedback");
+  });
+
+  it("rides along on the agent's schema and query reads until a proposal names it", async () => {
     const h = makeState();
     const { actor } = makeActor(h);
     const starter = await initStarter(actor);
@@ -659,7 +687,10 @@ describe("a reviewer's feedback on what they rejected", () => {
     expect(query.feedback).toHaveLength(1);
     expect(await doJson<{ feedback?: unknown[] }>(actor, "/query", { actor: HUMAN, sql: "SELECT 1 AS one" })).not.toHaveProperty("feedback");
 
-    await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha Andersson" }] });
+    await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Other" }] });
+    expect((await doJson<{ feedback?: unknown[] }>(actor, agentSchema)).feedback).toHaveLength(1);
+    const id = (schema.feedback![0] as { id: string }).id;
+    await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "Alpha Andersson" }] }, { revises: [id] });
     expect(await doJson<{ feedback?: unknown[] }>(actor, agentSchema)).not.toHaveProperty("feedback");
   });
 

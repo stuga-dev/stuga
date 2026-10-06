@@ -123,6 +123,8 @@ export interface ProposeInput {
   replace_all?: boolean;
   edits?: AiStrEdit[];
   citations?: AiCitation[];
+  /** Feedback ids this proposal answers. */
+  revises?: string[];
 }
 
 /**
@@ -133,9 +135,10 @@ export interface ProposeInstructionLabels {
   instructions_labels?: string[];
 }
 
-/** The agent's rejections here it had not acted on, handed over once with its next proposal. */
+/** The agent's open feedback here, carried with every proposal, and the ids this one answered. */
 export interface ProposeFeedback {
   feedback?: AgentFeedback[];
+  revised?: string[];
 }
 
 export type ProposeBody =
@@ -246,6 +249,9 @@ export type DatabaseMutation =
   | { action: "create_view"; table_id: string; view: ViewShape & { name: string } }
   | { action: "update_view"; table_id: string; view_id: string; changes: ViewShape };
 
+/** A database write, with the feedback ids it answers. */
+export type DatabaseProposal = DatabaseMutation & { revises?: string[] };
+
 /**
  * A database write's envelope: `proposed` waits for review, `applied` landed at
  * once; a body with neither is a human credential's direct write.
@@ -258,8 +264,9 @@ export type DatabaseProposeBody = ProposeInstructionLabels & {
   minted?: Record<string, unknown>;
   /** An `auto` database parked this anyway: the run still holds undecided ops. */
   held?: boolean;
-  /** The agent's rejections here it had not acted on, handed over once with this proposal. */
+  /** The agent's open feedback here, and the ids this proposal answered. */
   feedback?: AgentFeedback[];
+  revised?: string[];
   [key: string]: unknown;
 };
 
@@ -341,7 +348,7 @@ export interface AgentBackend {
   databaseSchema(databaseId: string, opts?: DatabaseSchemaOptions): Answer<DatabaseSchemaBody>;
   /** This caller's own runs on the database, newest first. */
   databaseRuns(databaseId: string): Answer<DatabaseRunSummary[]>;
-  mutateDatabase(databaseId: string, mutation: DatabaseMutation): Answer<DatabaseProposeBody>;
+  mutateDatabase(databaseId: string, mutation: DatabaseProposal): Answer<DatabaseProposeBody>;
   openRowPage(databaseId: string, tableId: string, rowId: string): Answer<RowPage>;
   /** The live page a row already has, or null: a read, which never restores or creates one. */
   findRowPage(databaseId: string, tableId: string, rowId: string): Answer<{ doc_id: string | null }>;

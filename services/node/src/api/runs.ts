@@ -1,5 +1,6 @@
 /** A document's agent runs: the review ledger humans decide on, and the propose path agents write through. */
 import { parseDecisionNote } from "@stuga/protocol/domain/runs";
+import { RUN_FEEDBACK_REVISES_MAX } from "@stuga/protocol/domain/limits";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import { parseCitedEdits, proposeBody, proposeDocEdit } from "../agents/edits.js";
 import { recordAudit } from "../audit/record.js";
@@ -172,6 +173,7 @@ export async function proposeEdit({ ctx, req, match }: WorkspaceCall): Promise<R
     replace_all?: boolean;
     edits?: unknown;
     citations?: unknown;
+    revises?: unknown;
   };
   if (
     body.action !== "write" &&
@@ -198,6 +200,7 @@ export async function proposeEdit({ ctx, req, match }: WorkspaceCall): Promise<R
     replaceAll: body.replace_all,
     edits: cited?.edits,
     citations: cited?.citations,
+    revises: Array.isArray(body.revises) ? body.revises.filter((id): id is string => typeof id === "string").slice(0, RUN_FEEDBACK_REVISES_MAX) : undefined,
     source: "stdio",
   });
   if (outcome.kind === "error") return error(outcome.retryable ? 409 : (outcome.status ?? 400), outcome.message);
