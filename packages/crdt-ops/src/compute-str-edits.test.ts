@@ -176,6 +176,16 @@ describe("computeStrEdits round-trip identity", () => {
     expect(roundTrip(base, next)).toHaveLength(1);
   });
 
+  it("a deletion BETWEEN two edits merges with a neighbour instead of the whole document", () => {
+    // The deleted block has no unchanged neighbour to anchor its separator on. It
+    // used to ship bare, leave "\n\n\n\n" behind, fail the round-trip check and
+    // collapse a page of separate edits into one hunk no reviewer can split.
+    const base = "# T\n\nIntro.\n\nA one.\n\nB two.\n\nC three.";
+    const edits = roundTrip(base, "# T\n\nIntro.\n\nA one, edited.\n\nC three, edited.");
+    expect(edits.length).toBeGreaterThan(1);
+    for (const e of edits) expect(e.old_string).not.toContain("Intro.");
+  });
+
   it("deletion of everything", () => {
     roundTrip("Only paragraph.", "");
     roundTrip("# H\n\nBody one.\n\nBody two.", "");

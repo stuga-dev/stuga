@@ -272,6 +272,9 @@ function buildEdits(base: string, parts: DiffPart[], mdOf: (nodes: PMNode[]) => 
         const ctxA = eqAfter.slice(0, a);
         const oldStr = mdOf([...ctxB, ...part.dels, ...ctxA]);
         const newStr = mdOf([...ctxB, ...part.ins, ...ctxA]);
+        // A bare deletion between two hunks leaves both separators behind; it
+        // fails here so the escalation merges it with a neighbour instead.
+        if (newStr === "" && oldStr !== working) continue;
         if (oldStr === "") {
           // Only valid in an empty document; elsewhere "" appends instead of replacing.
           if (working === "" && base === "") {
