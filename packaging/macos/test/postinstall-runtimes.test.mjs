@@ -54,10 +54,10 @@ test("each job is enabled before it is started: a go-back that stopped short lea
 });
 
 test("what _stuga can change, root changes only as _stuga: Time Machine's exclusions and the old setup code", () => {
-  const code = script.replace(/^\s*#.*$/gm, "");
-  const tmutil = code.split("\n").filter((line) => /\btmutil\b/.test(line));
-  assert.deepEqual(tmutil.map((line) => line.trim().split(" ").slice(0, 3).join(" ")), ["as_stuga /usr/bin/tmutil addexclusion"]);
-  assert.match(tmutil[0], /addexclusion "\$root\/data\/pgdata" "\$root\/data\/node"/);
+  const code = script.replace(/^\s*#.*$/gm, "").replace(/\\\n\s*/g, "");
+  const exclude = code.split("\n").filter((line) => /\b(xattr|tmutil)\b/.test(line));
+  assert.deepEqual(exclude.map((line) => line.trim().split(" ").slice(0, 3).join(" ")), ["as_stuga /usr/bin/xattr -wx"]);
+  assert.match(exclude[0], /-wx "\$TM_EXCLUDE_ATTR" "\$TM_EXCLUDE_VALUE" "\$root\/data\/pgdata" "\$root\/data\/node"/);
 
   const asStuga = /^as_stuga\(\) \{.*\}$/m.exec(script);
   const move = /^  if \[ -f "\$root\/data\/node\/setup-code" \]; then\n[\s\S]*?^  fi$/m.exec(script);
@@ -81,4 +81,13 @@ test("what _stuga can change, root changes only as _stuga: Time Machine's exclus
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("Time Machine's exclusion is the mark tmutil addexclusion leaves", { skip: process.platform !== "darwin" && "needs plutil" }, () => {
+  const lib = readFileSync(new URL("../runtime/bin/timemachine.sh", import.meta.url), "utf8");
+  assert.match(lib, /^TM_EXCLUDE_ATTR=com\.apple\.metadata:com_apple_backup_excludeItem$/m);
+  const hex = /^TM_EXCLUDE_VALUE=([0-9a-f]+)$/m.exec(lib);
+  assert.ok(hex, "timemachine.sh defines TM_EXCLUDE_VALUE");
+  const xml = execFileSync("plutil", ["-convert", "xml1", "-o", "-", "-"], { input: Buffer.from(hex[1], "hex"), encoding: "utf8" });
+  assert.match(xml, /<plist version="1\.0">\n<string>com\.apple\.backupd<\/string>\n<\/plist>/);
 });

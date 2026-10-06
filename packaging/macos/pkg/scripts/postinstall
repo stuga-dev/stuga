@@ -67,7 +67,10 @@ main() {
       --socket "$root/data/run" --os-user _stuga
   fi
   # The live halves are copied mid-write; Time Machine keeps backups/, which the node fills daily.
-  as_stuga /usr/bin/tmutil addexclusion "$root/data/pgdata" "$root/data/node" > /dev/null 2>&1 || true
+  # shellcheck source=../../runtime/bin/timemachine.sh
+  . "$runtime/bin/timemachine.sh"
+  as_stuga /usr/bin/xattr -wx "$TM_EXCLUDE_ATTR" "$TM_EXCLUDE_VALUE" "$root/data/pgdata" "$root/data/node" \
+    > /dev/null 2>&1 || true
 
   local label
   for label in dev.stuga.postgres dev.stuga.node; do
@@ -144,13 +147,14 @@ prune_runtimes() {
 # For whoever is at the Mac: the menu-bar app, and a few seconds for Login Items to learn of it. It
 # files a job under the app its AssociatedBundleIdentifiers names only if the app has run by the time
 # it first sees the job, and under the developer otherwise, for good. Nothing waits for Stuga.
+# The wait is by the clock: one sfltool dumpbtm takes seconds.
 open_app() {
-  local user uid
+  local user uid deadline=$((SECONDS + 10))
   user="$(stat -f %Su /dev/console 2> /dev/null || true)"
   uid="$(stat -f %u /dev/console 2> /dev/null || true)"
   [ -n "$uid" ] && [ "$user" != root ] || return 0
   launchctl asuser "$uid" sudo -u "$user" open -a /Applications/Stuga.app > /dev/null 2>&1 || return 0
-  for _ in $(seq 1 10); do
+  while [ "$SECONDS" -lt "$deadline" ]; do
     case "$(sfltool dumpbtm 2> /dev/null)" in *"Identifier: 2.dev.stuga.app"*) return 0 ;; esac
     sleep 1
   done

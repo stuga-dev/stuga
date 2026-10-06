@@ -7,7 +7,7 @@
 // does what a package's scripts do (the runtime that ran bin/stuga included, which it removes), and
 // sleep returns at once unless the test makes it sleep. Each runtime's stuga-node records how it was
 // run, runs what the test gives it, and answers what the test says; its psql and pg_isready answer
-// for the live database. tmutil is recorded, run as root or, through sudo, as _stuga.
+// for the live database. xattr, run through sudo as _stuga, is recorded, not run.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
@@ -30,6 +30,7 @@ import { after, test } from "node:test";
 
 const bin = new URL("../runtime/bin/", import.meta.url).pathname;
 const skip = process.platform !== "darwin" && "needs macOS's plutil, stat, ps and df";
+const TM_EXCLUDE_VALUE = /^TM_EXCLUDE_VALUE=(\S+)$/m.exec(readFileSync(join(bin, "timemachine.sh"), "utf8"))[1];
 const roots = [];
 after(() => roots.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
 
@@ -46,9 +47,9 @@ case "$*" in *%u*) /usr/bin/stat "$@" | sed "s/^$(/usr/bin/id -u) /0 /" ;; *) ex
   sudo: String.raw`#!/bin/bash
 if [ "$1" != -u ] || [ "$2" != _stuga ]; then echo "sudo $*" >> "$STUB_DIR/misuse"; exit 1; fi
 shift 2
-# tmutil is recorded, not run.
-if [[ " $* " == *" /usr/bin/tmutil "* ]]; then
-  echo "tmutil $(printf '%s' "$*" | sed 's|.* /usr/bin/tmutil ||') [as _stuga]" >> "$STUB_DIR/calls"
+# xattr is recorded, not run.
+if [[ " $* " == *" /usr/bin/xattr "* ]]; then
+  echo "xattr $(printf '%s' "$*" | sed 's|.* /usr/bin/xattr ||') [as _stuga]" >> "$STUB_DIR/calls"
   exit 0
 fi
 exec "$@"
@@ -142,7 +143,6 @@ rm -f "$STUGA_ROOT/status/installing"
 for dir in "$STUGA_ROOT"/runtime/*; do [ "$(basename "$dir")" = "$version" ] || rm -rf "$dir"; done
 if [ -f "$STUB_DIR/installer-fails-after" ]; then echo "installer: The install failed late."; exit 1; fi
 `,
-  tmutil: '#!/bin/bash\necho "root tmutil $*" >> "$STUB_DIR/calls"\n',
   sleep: '#!/bin/bash\n[ ! -f "$STUB_DIR/sleep-real" ] || exec /bin/sleep "$@"\n',
 };
 
@@ -201,7 +201,7 @@ function setup({ installed = "0.1.14", served = installed, backup = installed, o
     writeFileSync(join(dir, "app/VERSION"), `${version}\n`);
     writeFileSync(join(dir, "app/services/node/bin/stuga-node.js"), STUGA_NODE);
     symlinkSync(process.execPath, join(dir, "node/bin/node"));
-    for (const file of ["stuga", "release.sh", "hold.sh"]) copyFileSync(join(bin, file), join(dir, "bin", file));
+    for (const file of ["stuga", "release.sh", "hold.sh", "timemachine.sh"]) copyFileSync(join(bin, file), join(dir, "bin", file));
     writeFileSync(join(dir, "conf/versions.env"), `# pins\n${pins}`);
     const tool = (name, body) => {
       writeFileSync(join(dir, "postgres/bin", name), `#!/bin/bash\n${body}`);
@@ -337,15 +337,15 @@ test("the same version: checked under the mark, then the node stopped, restored 
       "stuga-node verify",
       "launchctl bootout system/dev.stuga.node",
       "stuga-node restore",
-      "tmutil addexclusion",
+      "xattr -wx",
       "launchctl enable system/dev.stuga.node",
       `launchctl bootstrap system ${h.nodePlist}`,
     ]),
     "in order",
   );
   // By its owner: root follows no link _stuga put there.
-  assert.ok(h.calls().includes(`tmutil addexclusion ${join(h.root, "data", "node")} [as _stuga]`), h.calls().join("\n"));
-  assert.ok(!h.calls().some((c) => c.startsWith("root tmutil")), "root runs no tmutil");
+  const exclude = h.calls().filter((c) => c.startsWith("xattr "));
+  assert.deepEqual(exclude, [`xattr -wx com.apple.metadata:com_apple_backup_excludeItem ${TM_EXCLUDE_VALUE} ${join(h.root, "data", "node")} [as _stuga]`]);
   assert.ok(!h.marked(), "the mark is gone");
   assert.ok(h.job("dev.stuga.node").running);
   assert.ok(existsSync(join(h.root, "status", "upgrade.json")), "a same-version restore keeps the upgrade status");

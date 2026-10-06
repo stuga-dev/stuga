@@ -31,6 +31,8 @@ here="$(cd "$(dirname "$0")" && pwd -P)"
 . "$here/release.sh"
 # shellcheck source=hold.sh
 . "$here/hold.sh"
+# shellcheck source=timemachine.sh
+. "$here/timemachine.sh"
 
 # The first release that carries this command, the hold mark, and a Stuga.app that installs over a
 # newer one. build-pkg.sh builds no release before it.
@@ -148,7 +150,7 @@ restore() {
     backup="$(backup_path "$backup")"
     case "$pkg" in '' | /*) ;; *) pkg="$caller/$pkg" ;; esac
     work="$(package_workdir stuga-restore)" || fail 3 "could not make a working directory. Nothing was changed."
-    cp "$here/stuga" "$here/release.sh" "$here/hold.sh" "$work/"
+    cp "$here/stuga" "$here/release.sh" "$here/hold.sh" "$here/timemachine.sh" "$work/"
     local again=(restore)
     [ "$yes" = no ] || again+=(--yes)
     [ -z "$pkg" ] || again+=(--pkg "$pkg")
@@ -322,7 +324,7 @@ restore() {
   fi
   # The swap made data/node anew, without the exclusion Time Machine keeps on the directory. Set as
   # _stuga, its owner: root follows no link _stuga put there.
-  as_stuga /usr/bin/tmutil addexclusion "$root/data/node" > /dev/null 2>&1 || true
+  as_stuga /usr/bin/xattr -wx "$TM_EXCLUDE_ATTR" "$TM_EXCLUDE_VALUE" "$root/data/node" > /dev/null 2>&1 || true
   # The older node would read the newer one's last upgrade as its own.
   [ "$install" = no ] || rm -f "$root/status/upgrade.json"
   release_mark

@@ -11,8 +11,8 @@
 #   app        packaging/shared/build-app.sh --version <v>, or with --app-link a symlink to a
 #              built checkout (no VERSION file: the node reports a source build)
 #   bin        stuga-job, the launchd wrappers it runs (the connector's too, with its check-toml.sh),
-#              init-cluster.sh, rotate-log.mjs, the helper with release.sh and hold.sh, and stuga,
-#              the operator's commands
+#              init-cluster.sh, rotate-log.mjs, the helper with release.sh and hold.sh, stuga, the
+#              operator's commands, and timemachine.sh, which it shares with postinstall
 #   conf       the Postgres configuration templates and versions.env, and with --connector-sha256
 #              connector.sha256: the one stuga-connector-darwin-arm64.zip the helper installs
 #   THIRD-PARTY-NOTICES.txt   the licenses of everything the runtime redistributes
@@ -98,6 +98,7 @@ cp "$macos/runtime/bin/postgres-wrapper.sh" "$macos/runtime/bin/node-wrapper.sh"
   "$macos/runtime/bin/remote-wrapper.sh" "$macos/runtime/bin/init-cluster.sh" \
   "$macos/runtime/bin/rotate-log.mjs" "$macos/runtime/bin/helper.sh" \
   "$macos/runtime/bin/release.sh" "$macos/runtime/bin/hold.sh" "$macos/runtime/bin/stuga" \
+  "$macos/runtime/bin/timemachine.sh" \
   "$macos/runtime/bin/uninstall.sh" "$macos/../shared/connector/check-toml.sh" "$staging/bin/"
 chmod 0755 "$staging/bin/stuga"
 cc -O2 -Wall -Werror -arch arm64 -mmacosx-version-min=13.0 -o "$staging/bin/stuga-job" "$macos/runtime/bin/stuga-job.c"
