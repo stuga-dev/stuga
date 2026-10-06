@@ -15,14 +15,14 @@
   },
   "dependencies": {
     "@stuga/protocol": "workspace:*",
-    "@tiptap/core": "3.31.3",
-    "@tiptap/extension-code": "3.31.3",
-    "@tiptap/extension-image": "3.31.3",
-    "@tiptap/extension-table": "3.31.3",
-    "@tiptap/extension-table-cell": "3.31.3",
-    "@tiptap/extension-table-header": "3.31.3",
-    "@tiptap/extension-table-row": "3.31.3",
-    "@tiptap/starter-kit": "3.31.3",
+    "@tiptap/core": "3.31.4",
+    "@tiptap/extension-code": "3.31.4",
+    "@tiptap/extension-image": "3.31.4",
+    "@tiptap/extension-table": "3.31.4",
+    "@tiptap/extension-table-cell": "3.31.4",
+    "@tiptap/extension-table-header": "3.31.4",
+    "@tiptap/extension-table-row": "3.31.4",
+    "@tiptap/starter-kit": "3.31.4",
     "@tiptap/y-tiptap": "3.0.9",
     "markdown-it": "^15.0.2",
     "markdown-it-footnote": "^4.0.0",
@@ -31,8 +31,8 @@
     "yjs": "^13.6.33"
   },
   "devDependencies": {
-    "@tiptap/extension-code-block": "3.31.3",
+    "@tiptap/extension-code-block": "3.31.4",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.3"
   }
 }
