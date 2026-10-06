@@ -1678,7 +1678,9 @@ describe("a reviewer's feedback on what they rejected", () => {
     expect(a!.feedback!.id).toMatch(/^fb_[0-9a-f]{12}$/);
     expect(b!.feedback!.id).toBe(a!.feedback!.id);
     const decided = h.queued.find((m) => m.kind === "event" && m.type === "run.decided");
-    expect(decided).toMatchObject({ payload: { decision: "reject", note: "Too formal.", feedback_id: a!.feedback!.id, agent_alias: "agent1" } });
+    // The id only: the feed reaches every agent that can read the document.
+    expect(decided).toMatchObject({ payload: { decision: "reject", feedback_id: a!.feedback!.id, agent_alias: "agent1" } });
+    expect((decided as { payload: Record<string, unknown> }).payload).not.toHaveProperty("note");
   });
 
   it("stays within reach while other agents' runs pile up after it", async () => {

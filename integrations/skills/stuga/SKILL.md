@@ -43,6 +43,6 @@ A workspace can carry conventions its owners wrote for how content is written an
 
 A `Proposed` result is success: the change waits for a person to accept it. Never retry it.
 
-A reviewer can request changes: a rejection with a note. Reads of that document then open with a `=== CHANGES REQUESTED … ===` block until you propose there again: revise from the note, never resend the rejected change unchanged. `events` with `mine: true` lists the decisions on your own proposals, with their notes.
+A reviewer can request changes: a rejection with a note. Reads of that document then open with a `=== CHANGES REQUESTED … ===` block until you propose there again: revise from the note, never resend the rejected change unchanged. `events` with `mine: true` lists the decisions on your own proposals; `markdown` or `databases` action `status` has the notes.
 
 Where your access is `read`, only reading tools are offered: tell the user what you would change.

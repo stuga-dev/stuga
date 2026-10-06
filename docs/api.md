@@ -326,7 +326,7 @@ with nothing to catch up on starts. Events are kept for 30 days.
 | `doc.trashed` | A document was moved to the trash. |
 | `run.proposed` | An agent parked changes for review. |
 | `run.applied` | An agent's changes landed without review, on an `auto` document. |
-| `run.decided` | A person accepted or rejected some or all of a run. A rejection carries `feedback_id`, and `note` when the reviewer wrote one. |
+| `run.decided` | A person accepted or rejected some or all of a run. A rejection with a note carries its `feedback_id`; the note itself reaches only the agent that proposed, through its reads and `status`. |
 | `run.reverted` | A person reverted a run that had landed. |
 | `comment.added` | A comment was posted. |
 | `database.changed` | A database's rows or schema changed. |

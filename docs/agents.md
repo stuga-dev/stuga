@@ -484,7 +484,9 @@ looks:
 - **Its next proposal there** carries the feedback once more, and from then on only `status` shows it.
 - **`markdown` or `databases` action `status`** lists each rejection and its note under its run.
 - **`events` with `mine: true`** lists the decisions on the agent's own proposals across the
-  workspace, the last 14 days of them without a cursor. A `run.decided` event carries the `note`.
+  workspace, the last 14 days of them without a cursor. A `run.decided` event with a `feedback_id` is a
+  rejection with a note; the note itself is in `status`, since the feed reaches every agent that can
+  read the document.
 
 The in-app co-author hears its rejections at the start of its next turn. Requesting changes to one of
 its runs offers **Revise now**: a turn that may change existing text only inside the passages that

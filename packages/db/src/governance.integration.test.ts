@@ -148,7 +148,7 @@ describe.skipIf(!URL)("agent governance queries", () => {
         docId: "d-shared",
         actor: "user:alice",
         actorKind: "human",
-        payload: { agent_alias: "agent-1", note: "Keep it plain." },
+        payload: { agent_alias: "agent-1", feedback_id: "fb_1" },
       });
       await insertWorkspaceEvent(sql, { workspaceId: WS, type: "run.decided", docId: "d-shared", actor: "user:alice", actorKind: "human", payload: { agent_alias: "agent-2" } });
       const own = await listWorkspaceEvents(sql, { workspaceId: WS, principals: ALICE, after: 0, agentAlias: "agent-1" });

@@ -413,8 +413,9 @@ const eventsTool: ToolDefinition = {
     "proposals, new comments, or documents landing in your folders, instead of re-reading everything. Only events on " +
     "documents you can read are shown. `mine: true` keeps only decisions on your own proposals (run.decided, " +
     `run.reverted, unless \`types\` names others) and, without \`after\`, reaches back ${RUN_FEEDBACK_LOOKBACK_DAYS} days: ` +
-    "call it when you start work or when the user says they reviewed your changes; a `note` in a run.decided payload is " +
-    "what the reviewer wants changed.",
+    "call it when you start work or when the user says they reviewed your changes. A run.decided event with a " +
+    "`feedback_id` is a rejection the reviewer wrote a note on: `markdown` or `databases` action:status on that " +
+    "document has the note.",
   inputSchema: {
     workspace_id: workspaceId,
     after: z.number().int().min(0).optional(),

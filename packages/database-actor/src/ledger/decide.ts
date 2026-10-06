@@ -175,7 +175,8 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
       rejected,
       conflicts,
       pending: remaining,
-      ...(feedback && rejected > 0 ? { feedback_id: feedback.id, ...(feedback.note ? { note: feedback.note } : {}) } : {}),
+      // The id only: the feed reaches every agent that can read the database, and the note is for the one that proposed.
+      ...(feedback && rejected > 0 ? { feedback_id: feedback.id } : {}),
     },
   });
   return Response.json({ run: summary, applied, rejected, conflicts, blocked, deferred });

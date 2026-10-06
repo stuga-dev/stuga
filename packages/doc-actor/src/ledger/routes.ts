@@ -217,7 +217,8 @@ export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<
     applied: appliedCount,
     conflicts: conflictCount,
     pending: pendingOf(body).length,
-    ...(feedback ? { feedback_id: feedback.id, ...(feedback.note ? { note: feedback.note } : {}) } : {}),
+    // The id only: the feed reaches every agent that can read the document, and the note is for the one that proposed.
+    ...(feedback ? { feedback_id: feedback.id } : {}),
   });
   return Response.json({
     run: ledger.summaryOf(stored, body),
