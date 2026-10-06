@@ -11,7 +11,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ### Upgrade notes
 
-- Each database is brought forward when it first opens, keeping everything in it; an older version can't open it afterwards, so go back only with the backup taken before upgrading.
+- Each document and database is brought forward when it first opens, keeping everything in it; an older version can't open it afterwards, so go back only with the backup taken before upgrading.
 
 ### Added
 

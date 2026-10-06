@@ -15,7 +15,7 @@ import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { encodeBinary, encodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode, type PersistDegradedPayload } from "@stuga/protocol/wire/opcodes";
 import { applyMarkdownToYXmlFragment, yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
-import type { ActorStorage, BlobStore, JobQueue } from "@stuga/runtime";
+import type { ActorStorage, BlobStore, JobQueue, StoreUpgrade } from "@stuga/runtime";
 import type { Peers } from "../session.js";
 import { deriveTitle, extractText } from "../text-extract.js";
 import { pruneUnretained, versionHash, VersionRing, type RingState } from "./retention.js";
@@ -37,7 +37,14 @@ interface Hashed {
  * The host stamps each store with it and refuses one stamped higher. A change to a stored shape
  * raises it, together with the step in the host that brings an older store forward.
  */
-export const DOC_STORE_VERSION = 1;
+export const DOC_STORE_VERSION = 2;
+
+/** The steps that bring an older store forward, keyed by the version each reaches. */
+export const DOC_STORE_UPGRADES: Record<number, StoreUpgrade> = {
+  // 2: the run ledger's `feedback-pending:<agent>` key, and a reviewer's rejection with its note on each
+  // hunk it covered (in the run's blob). Both are new and optional, so a version 1 store is read as it is.
+  2: () => {},
+};
 
 const FLUSH_THRESHOLD = 100; // updates
 const PERSIST_THRESHOLD = 10; // updates

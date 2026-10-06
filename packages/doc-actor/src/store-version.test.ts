@@ -15,7 +15,7 @@ import { storeSchema } from "@stuga/runtime/testing";
 import { DocActor } from "./doc-actor.js";
 import type { StoredRun } from "./ledger/run-store.js";
 import type { RingState } from "./store/retention.js";
-import { DOC_STORE_VERSION, type StoredMeta } from "./store/doc-store.js";
+import { DOC_STORE_UPGRADES, DOC_STORE_VERSION, type StoredMeta } from "./store/doc-store.js";
 import { harness } from "../test/harness.js";
 
 /**
@@ -24,6 +24,7 @@ import { harness } from "../test/harness.js";
  */
 const PINNED: Record<number, { keys: string[]; schema: string }> = {
   1: { keys: ["locked", "meta", "pending", "run-active:*", "run-order", "run:*"], schema: "f5c5bd82901d11de" },
+  2: { keys: ["feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"], schema: "d0ecfe622f413eda" },
 };
 
 const RAISE =
@@ -65,37 +66,47 @@ describe("a document's store", () => {
     dir = "";
   });
 
-  async function call(doc: ActorHandle, path: string, body?: unknown): Promise<void> {
+  async function call(doc: ActorHandle, path: string, body?: unknown): Promise<Record<string, unknown>> {
     const res = await doc.fetch(`http://actor${path}${path.includes("?") ? "&" : "?"}docId=doc1`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (res.status !== 200) throw new Error(`${path}: ${res.status} ${await res.text()}`);
+    return (await res.json().catch(() => ({}))) as Record<string, unknown>;
   }
 
-  it("holds the keys and the SQL schema DOC_STORE_VERSION pins", async () => {
-    dir = mkdtempSync(join(tmpdir(), "stuga-doc-store-"));
-    const ns = createActorNamespace(DocActor, harness().env, {
+  const PROPOSAL = {
+    action: "str_replace",
+    find: "Alpha.",
+    replace: "Bravo.",
+    source: "stdio",
+    agent: "Claude",
+    agent_alias: "agent1",
+    reviewer: "alice",
+    workspace_id: "ws1",
+    doc_title: "Notes",
+  };
+
+  const namespace = (version: number, upgrades?: Record<number, (db: DatabaseSync) => void>, env = harness().env) =>
+    createActorNamespace(DocActor, env, {
       name: "docs",
       heartbeat: { request: Heartbeat.PING, response: Heartbeat.PONG },
       dir,
-      storeVersion: DOC_STORE_VERSION,
+      storeVersion: version,
+      ...(upgrades ? { storeUpgrades: upgrades } : {}),
     });
+
+  it("holds the keys and the SQL schema DOC_STORE_VERSION pins", async () => {
+    dir = mkdtempSync(join(tmpdir(), "stuga-doc-store-"));
+    const ns = namespace(DOC_STORE_VERSION, DOC_STORE_UPGRADES);
     try {
       const doc = ns.get("doc1");
       await call(doc, "/apply-edits", { str_edits: [{ old_string: "", new_string: "# Notes\n\nAlpha.\n" }], agent: "seed" });
-      await call(doc, "/runs/propose", {
-        action: "str_replace",
-        find: "Alpha.",
-        replace: "Bravo.",
-        source: "stdio",
-        agent: "Claude",
-        agent_alias: "agent1",
-        reviewer: "alice",
-        workspace_id: "ws1",
-        doc_title: "Notes",
-      });
+      const proposed = (await call(doc, "/runs/propose", PROPOSAL)).run as { id: string };
+      // A rejection with a note lists the run for its agent, under a key of its own.
+      await call(doc, "/runs/decide", { run_id: proposed.id, decision: "reject", decided_by: "alice", note: "Keep Alpha." });
+      await call(doc, "/runs/propose", { ...PROPOSAL, find: "# Notes", replace: "# Notes 2" });
       await call(doc, "/set-locked?locked=1");
     } finally {
       await ns.close();
@@ -112,8 +123,48 @@ describe("a document's store", () => {
     const pinned = PINNED[DOC_STORE_VERSION]!;
     const unknown = [...new Set(keys)].filter((k) => !pinned.keys.includes(k)).sort();
     expect(unknown, `a document's store holds keys it did not: ${unknown.join(", ")}. ${RAISE}`).toEqual([]);
-    expect(keys).toEqual(expect.arrayContaining(["meta", "run-order", "run:*", "run-active:*", "locked"]));
+    expect(keys).toEqual(expect.arrayContaining(["meta", "run-order", "run:*", "run-active:*", "locked", "feedback-pending:*"]));
     const { schema, fingerprint } = storeSchema(file);
     expect(fingerprint, `a document's store has another SQL schema, ${fingerprint}:\n${schema}\n${RAISE}`).toBe(pinned.schema);
+  });
+
+  it("brings a version 1 store forward, keeping its runs, and a rejection with a note works in it", async () => {
+    dir = mkdtempSync(join(tmpdir(), "stuga-doc-store-"));
+    const file = join(dir, "doc1.sqlite");
+    const stamp = () => {
+      const db = new DatabaseSync(file, { readOnly: true });
+      try {
+        return (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+      } finally {
+        db.close();
+      }
+    };
+
+    // Written by a version 1 build: a document with one proposal waiting. The run's body lives in the
+    // blob store, which the upgraded build shares.
+    const env = harness().env;
+    const v1 = namespace(1, undefined, env);
+    let runId = "";
+    try {
+      const doc = v1.get("doc1");
+      await call(doc, "/apply-edits", { str_edits: [{ old_string: "", new_string: "# Notes\n\nAlpha.\n" }], agent: "seed" });
+      runId = ((await call(doc, "/runs/propose", PROPOSAL)).run as { id: string }).id;
+    } finally {
+      await v1.close();
+    }
+    expect(stamp()).toBe(1);
+
+    const upgraded = namespace(DOC_STORE_VERSION, DOC_STORE_UPGRADES, env);
+    try {
+      const doc = upgraded.get("doc1");
+      const listed = (await doc.fetch("http://actor/runs?docId=doc1").then((r) => r.json())) as { runs: Array<{ id: string; status: string }> };
+      expect(listed.runs.map((r) => [r.id, r.status])).toEqual([[runId, "open"]]);
+      await call(doc, "/runs/decide", { run_id: runId, decision: "reject", decided_by: "alice", note: "Keep Alpha." });
+      const read = (await doc.fetch("http://actor/markdown?docId=doc1&agent=agent1").then((r) => r.json())) as { feedback?: Array<{ note: string }> };
+      expect(read.feedback).toEqual([expect.objectContaining({ note: "Keep Alpha." })]);
+    } finally {
+      await upgraded.close();
+    }
+    expect(stamp()).toBe(DOC_STORE_VERSION);
   });
 });

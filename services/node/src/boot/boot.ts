@@ -27,7 +27,7 @@ import {
 } from "@stuga/db";
 import { createRelyingParty, createVerifier, loadOrCreateSigningKey } from "@stuga/auth";
 import { createActorNamespace, fsBlobStore } from "@stuga/runtime";
-import { DOC_STORE_VERSION, DocActor, type DocActorEnv } from "@stuga/doc-actor";
+import { DOC_STORE_UPGRADES, DOC_STORE_VERSION, DocActor, type DocActorEnv } from "@stuga/doc-actor";
 import { DATABASE_STORE_UPGRADES, DATABASE_STORE_VERSION, DatabaseActor, type DatabaseActorEnv } from "@stuga/database-actor";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { Heartbeat } from "@stuga/protocol/wire/opcodes";
@@ -268,6 +268,7 @@ async function boot(): Promise<void> {
     heartbeat,
     dir: join(cfg.dataDir, "actors", "docs"),
     storeVersion: DOC_STORE_VERSION,
+    storeUpgrades: DOC_STORE_UPGRADES,
   });
   const databaseEnv: DatabaseActorEnv = { snapshots, jobs };
   const databases = createActorNamespace(DatabaseActor, databaseEnv, {
