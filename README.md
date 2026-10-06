@@ -9,7 +9,7 @@ tracked changes and, by default, land only when a person accepts them. Use it on
 your team.
 
 [Download for Mac](https://github.com/stuga-dev/stuga/releases/latest/download/Stuga.pkg) (Apple silicon,
-macOS 13+) · [Install with Docker](docs/install/docker.md)
+macOS 15+) · [Install with Docker](docs/install/docker.md)
 
 Install, then [create your account and workspace](https://stuga.dev/docs/install/create-your-account-and-first-workspace)
 and [connect an agent](docs/agents.md). Help for people using Stuga: [stuga.dev/docs](https://stuga.dev/docs).
@@ -75,7 +75,7 @@ turns that off. [docs/privacy.md](docs/privacy.md) lists what the node sends and
 
 ## Install
 
-- **A Mac with Apple silicon**, on macOS 13 or later: open
+- **A Mac with Apple silicon**, on macOS 15 or later: open
   [Stuga.pkg](https://github.com/stuga-dev/stuga/releases/latest/download/Stuga.pkg). It carries its
   own Postgres and Node.js ([docs/install/macos.md](docs/install/macos.md)).
 - **Docker** on x86-64 or arm64, such as a Linux server or a NAS: `install.sh` starts Postgres

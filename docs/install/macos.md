@@ -1,6 +1,6 @@
 # Install on macOS
 
-Stuga runs on a Mac with Apple silicon, on macOS 13 or later. There are two ways to install it:
+Stuga runs on a Mac with Apple silicon, on macOS 15 or later. There are two ways to install it:
 
 - **The package**, for running Stuga: download it, open it, and your browser opens the setup page.
 - **A build from a checkout** of this repository, for working on Stuga itself
@@ -185,7 +185,7 @@ package.
 
 ### Requirements
 
-- A Mac with Apple silicon, on macOS 13 or later.
+- A Mac with Apple silicon, on macOS 15 or later.
 - The Xcode Command Line Tools, for `git` and `swiftc`: `xcode-select --install`.
 - Node.js 26 and pnpm 12, to build the web app.
 - Internet access during the build. The Postgres and Node.js downloads are checked against the

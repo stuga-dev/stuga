@@ -16,12 +16,14 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ### Changed
 
+- Stuga on a Mac needs macOS 15 or later, the versions Apple still updates.
 - Stuga on a Mac takes about 330 MB instead of 480 MB.
 - An earlier release started on a later one's data changes nothing and says which backup to restore.
 - `./stuga restore` going back pins the whole stack to the backup's release.
 
 ### Fixed
 
+- Installing on a Mac takes about 20 seconds less.
 - `./stuga upgrade` refuses a `compose.yml` older than the data.
 - `./stuga restore` works without a node container.
 - After a failed upgrade, `./stuga` offers the backup the new version took.

@@ -179,7 +179,7 @@ cat > "$info" <<'PLIST'
   <key>CFBundleName</key><string>Stuga</string>
   <key>CFBundleDisplayName</key><string>Stuga</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
 </dict>

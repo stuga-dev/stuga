@@ -80,7 +80,7 @@ cp "$macos/runtime/launchd/"*.plist.in "$runtime/share/launchd/templates/"
 say "Stuga.app"
 app="$payload/Applications/Stuga.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-swiftc -swift-version 5 -O -target arm64-apple-macos13.0 -o "$app/Contents/MacOS/Stuga" "$macos/app/main.swift" "$macos/app/Health.swift"
+swiftc -swift-version 5 -O -target arm64-apple-macos15.0 -o "$app/Contents/MacOS/Stuga" "$macos/app/main.swift" "$macos/app/Health.swift"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -94,7 +94,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$version</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
@@ -161,7 +161,7 @@ done
 # --compression latest writes a pbzx (XZ) payload instead of gzip, about a quarter smaller; pkgbuild
 # offers nothing denser. --min-os-version is required with it and matches distribution.xml.
 pkgbuild --root "$payload" --component-plist "$work/components.plist" --scripts "$work/scripts" \
-  --compression latest --min-os-version 13.0 \
+  --compression latest --min-os-version 15.0 \
   --identifier dev.stuga.node --version "$version" --install-location / "$work/stuga-node.pkg" > /dev/null
 sed "s/@VERSION@/$version/g" "$here/distribution.xml.in" > "$work/distribution.xml"
 mkdir -p "$work/resources"

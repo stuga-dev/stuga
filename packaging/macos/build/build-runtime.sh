@@ -101,7 +101,7 @@ cp "$macos/runtime/bin/postgres-wrapper.sh" "$macos/runtime/bin/node-wrapper.sh"
   "$macos/runtime/bin/timemachine.sh" \
   "$macos/runtime/bin/uninstall.sh" "$macos/../shared/connector/check-toml.sh" "$staging/bin/"
 chmod 0755 "$staging/bin/stuga"
-cc -O2 -Wall -Werror -arch arm64 -mmacosx-version-min=13.0 -o "$staging/bin/stuga-job" "$macos/runtime/bin/stuga-job.c"
+cc -O2 -Wall -Werror -arch arm64 -mmacosx-version-min=15.0 -o "$staging/bin/stuga-job" "$macos/runtime/bin/stuga-job.c"
 cp "$macos/runtime/conf/postgresql.conf" "$macos/runtime/conf/pg_hba.conf" \
   "$macos/runtime/conf/pg_ident.conf" "$macos/../versions.env" "$staging/conf/"
 [ -z "$connector_sha256" ] || printf '%s\n' "$connector_sha256" > "$staging/conf/connector.sha256"

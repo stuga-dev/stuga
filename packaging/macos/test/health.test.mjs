@@ -40,7 +40,7 @@ test("the local trial restarts a failed Stuga by stopping it first", { skip }, (
 
 test("both menu-bar apps build with it, as their build scripts compile them", { skip }, () => {
   const apps = [
-    { script: "pkg/build-pkg.sh", files: ["app/main.swift", "app/Health.swift"], flags: ["-target", "arm64-apple-macos13.0"] },
+    { script: "pkg/build-pkg.sh", files: ["app/main.swift", "app/Health.swift"], flags: ["-target", "arm64-apple-macos15.0"] },
     { script: "local-trial/build.sh", files: ["local-trial/main.swift", "local-trial/Lifecycle.swift", "app/Health.swift"], flags: [] },
   ];
   for (const { script, files, flags } of apps) {

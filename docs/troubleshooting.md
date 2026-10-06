@@ -93,8 +93,7 @@ The node answers on its own machine, but not from other devices.
 ### The browser says the site can't be reached
 
 The address opens on your phone, but a browser on your Mac reports `ERR_ADDRESS_UNREACHABLE`, a
-timeout or a reset. On macOS 15 and later, that browser has lost its permission to reach devices on
-your local network.
+timeout or a reset. That browser has lost its permission to reach devices on your local network.
 
 1. Open **System Settings → Privacy & Security → Local Network** and turn the browser on. A browser
    can be listed more than once.
