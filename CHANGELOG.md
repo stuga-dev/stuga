@@ -9,15 +9,27 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-06
+
+**Request changes** on an AI edit, so the agent revises from your note; one command to go back to an
+earlier version on a Mac; and a security fix that keeps agents' pending changes out of database
+queries.
+
 ### Upgrade notes
 
 - Each document and database is brought forward when it first opens, keeping everything in it; an older version can't open it afterwards, so go back only with the backup taken before upgrading.
+
+### Security
+
+- A database query no longer reads the review ledger. Before, anyone who could read a database could select agents' pending changes from it.
 
 ### Added
 
 - One command goes back to an earlier version on a Mac: `sudo "/Library/Application Support/Stuga/current/bin/stuga" restore <backup>` ([macOS](docs/install/macos.md#go-back-to-an-earlier-version)). **Settings → This node → Backups** shows it for each backup.
 - `stuga-node list` marks backups taken before an upgrade.
-- **Request changes** on an AI edit: reject it with a note saying what should change, or revert what landed with one. The agent that proposed it is handed the note with its reads and proposals there until it answers, and the co-author offers **Revise now** ([Agents](docs/agents.md#request-changes)).
+- **Request changes** rejects an AI edit, or reverts one that landed, with a note for the agent that made it ([Agents](docs/agents.md#request-changes)).
+- The note leads the agent's reads and proposals there until it answers it, you mark the run reviewed, or 14 days pass.
+- The co-author offers **Revise now**, changing only the passages you turned down.
 - The `events` tool's `mine: true` lists the decisions on an agent's own proposals.
 
 ### Changed
