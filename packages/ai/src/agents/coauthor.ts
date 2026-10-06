@@ -264,22 +264,8 @@ function reviseNote(scope: ReviseScope | undefined): string {
   return (
     "This turn is a revision of the edits the user rejected, as the note asks. Change existing text only inside those " +
     "passages. You may add new text anywhere, which is how a passage moves: to put it somewhere else, insert it there. " +
-    "A change to any other existing text is refused.\n\n"
+    "A change to any other existing text, or to another document, is refused.\n\n"
   );
-}
-
-/** Where the rejected passages sit in `doc` now, [start, end) each; an append sits at the end. One not found is dropped. */
-export function revisedSpans(doc: string, regions: ReviseScope["regions"]): Array<[number, number]> {
-  const spans: Array<[number, number]> = [];
-  for (const r of regions) {
-    if (!r.old_string) {
-      spans.push([doc.length, doc.length]);
-      continue;
-    }
-    const m = findFuzzyMatch(doc, r.old_string, { wantUnique: true });
-    if (m) spans.push([m.index, m.index + m.matched.length]);
-  }
-  return spans;
 }
 
 /** The part of `matched` (at `at`) that `replacement` changes, [start, end), with the shared prefix and suffix left out. */
@@ -295,18 +281,72 @@ export function changedSpan(at: number, matched: string, replacement: string): [
 const OUTSIDE_REVISION =
   "Refused: this edit changes existing text outside the passages the user rejected. Change existing text only inside " +
   "them; to move something, insert it where it belongs. If other text needs changing, tell the user it needs a separate request.";
+const PASSAGES_GONE =
+  "Refused: the passages the user rejected are no longer in the document as they were, so this revision cannot be made " +
+  "safely. You may still add new text. Tell the user the text has changed since, and ask them to request changes again.";
+const OTHER_DOCUMENT_IN_REVISION = "Refused: a revision changes only the document whose edits the user rejected.";
 
 /**
- * A revise turn's guard: an edit that changes existing text must change it inside one rejected
- * passage as it sits in the document now. A pure insertion, which leaves every existing character
- * in place, may land anywhere: that is how a revision moves what was rejected. With none of the
- * passages findable any more, the document moved on and nothing is refused.
+ * A revise turn's guard over the current document. The rejected passages are located once, in the
+ * document as the turn starts, and then followed by offset through the turn's own edits: finding
+ * them again by their text would fail the moment the first revision replaced one, and a guard that
+ * then stood down would let the rest of the turn rewrite anything. An edit that changes existing
+ * text must change it inside one passage; a pure insertion leaves every existing character in
+ * place and may land anywhere, which is how a revision moves what was rejected. A passage the
+ * document no longer holds cannot be revised safely: with none findable, every change to existing
+ * text is refused and the model is told to say so, never waved through.
  */
-function assertInsideRevision(doc: string, scope: ReviseScope | undefined, span: [number, number]): void {
-  if (!scope || span[0] === span[1]) return;
-  const spans = revisedSpans(doc, scope.regions);
-  if (spans.length === 0) return;
-  if (!spans.some(([start, end]) => start <= span[0] && span[1] <= end)) throw new Error(OUTSIDE_REVISION);
+export class RevisionGuard {
+  private spans: Array<[number, number]>;
+  private readonly lost: number;
+
+  constructor(doc: string, regions: ReviseScope["regions"]) {
+    const spans: Array<[number, number]> = [];
+    let lost = 0;
+    for (const r of regions) {
+      // A rejected append left nothing in the document to revise in place; insertions are free anyway.
+      if (!r.old_string) continue;
+      const m = findFuzzyMatch(doc, r.old_string, { wantUnique: true });
+      if (m) spans.push([m.index, m.index + m.matched.length]);
+      else lost++;
+    }
+    this.spans = spans.sort((a, b) => a[0] - b[0]);
+    this.lost = lost;
+  }
+
+  /** Where the passages sit in the document now, [start, end) each. */
+  get regions(): Array<[number, number]> {
+    return this.spans.map(([s, e]) => [s, e]);
+  }
+
+  /** Refuse an edit whose changed characters, [start, end), fall outside every passage; an empty span is an insertion. */
+  check(span: [number, number]): void {
+    if (span[0] === span[1]) return;
+    if (this.spans.length === 0) throw new Error(this.lost > 0 ? PASSAGES_GONE : OUTSIDE_REVISION);
+    if (!this.spans.some(([start, end]) => start <= span[0] && span[1] <= end)) throw new Error(OUTSIDE_REVISION);
+  }
+
+  /** Follow an edit that replaced the `removed` characters at `at` with `inserted` ones. Call after `check`. */
+  applied(at: number, removed: number, inserted: number): void {
+    const delta = inserted - removed;
+    if (delta === 0) return;
+    const end = at + removed;
+    let grown = false;
+    this.spans = this.spans.map(([s, e]) => {
+      if (removed === 0) {
+        // An insertion at a passage's edge belongs to it, so a revision may keep extending its own passage.
+        if (!grown && s <= at && at <= e) {
+          grown = true;
+          return [s, e + delta];
+        }
+        return s >= at ? [s + delta, e + delta] : [s, e];
+      }
+      if (e <= at) return [s, e];
+      if (s >= end) return [s + delta, e + delta];
+      // The passage holding the edit, since check() passed.
+      return [s, e + delta];
+    });
+  }
 }
 
 /** What the agent is doing between prose bursts. */
@@ -372,8 +412,14 @@ export async function runAgentTurn(
           .join("\n")}\n`
       : "";
   const contextBlock = `${feedbackBlock(input.feedback)}${pendingBlock(input.ownPending)}${reviseNote(input.revise)}${docBlock}${attachmentBlock}`;
-  // The revision's scope binds the current document only; another document is not what was rejected.
-  const scopeFor = (docId: string | undefined): ReviseScope | undefined => (!docId || docId === input.currentDocId ? input.revise : undefined);
+  // The revision's scope binds the current document, located once in the text the turn starts from.
+  const guard = input.revise ? new RevisionGuard(input.docText, input.revise.regions) : null;
+  /** A revise turn edits the current document only: another document is not what was rejected. */
+  const guardFor = (docId: string | undefined): RevisionGuard | null => {
+    if (!guard) return null;
+    if (docId && docId !== input.currentDocId) throw new Error(OTHER_DOCUMENT_IN_REVISION);
+    return guard;
+  };
 
   // One-shot nudges: for an edit described in prose but never staged, and for a
   // round cut off by the output cap before any tool call.
@@ -447,7 +493,14 @@ export async function runAgentTurn(
           missing: "old_string not found in the current document. Read the relevant section and copy the exact text.",
           ambiguous: "old_string is not unique — it appears multiple times. Include more surrounding context to make it unique.",
         });
-        assertInsideRevision(doc, scopeFor(doc_id), changedSpan(m.index, m.matched, new_string));
+        const g = guardFor(doc_id);
+        if (g) {
+          const changed = changedSpan(m.index, m.matched, new_string);
+          g.check(changed);
+          // Only the changed characters move the passages: the shared prefix and suffix stay as they were.
+          const removed = changed[1] - changed[0];
+          g.applied(changed[0], removed, new_string.length - (m.matched.length - removed));
+        }
         target.stage(doc.slice(0, m.index) + new_string + doc.slice(m.index + m.matched.length), { old_string: m.matched, new_string });
         return staged("edit", target);
       },
@@ -476,6 +529,7 @@ export async function runAgentTurn(
             ambiguous: "'before' anchor is not unique — add more context.",
           });
           const sep = text.endsWith("\n") ? "" : "\n\n";
+          guardFor(doc_id)?.applied(m.index, 0, text.length + sep.length);
           target.stage(doc.slice(0, m.index) + text + sep + doc.slice(m.index), { old_string: m.matched, new_string: `${text}${sep}${m.matched}` });
           return staged("insertion", target, `before ${anchorLabel(m.matched)}`);
         }
@@ -485,14 +539,14 @@ export async function runAgentTurn(
             ambiguous: "'after' anchor is not unique — add more context.",
           });
           const end = m.index + m.matched.length;
-          assertInsideRevision(doc, scopeFor(doc_id), [end, end]);
           const sep = text.startsWith("\n") ? "" : "\n\n";
+          guardFor(doc_id)?.applied(end, 0, sep.length + text.length);
           target.stage(doc.slice(0, end) + sep + text + doc.slice(end), { old_string: m.matched, new_string: `${m.matched}${sep}${text}` });
           return staged("insertion", target, `after ${anchorLabel(m.matched)}`);
         } else {
           // An empty old_string means append.
-          assertInsideRevision(doc, scopeFor(doc_id), [doc.length, doc.length]);
           const sep = doc.length && !doc.endsWith("\n") ? "\n\n" : "";
+          guardFor(doc_id)?.applied(doc.length, 0, sep.length + text.length);
           target.stage(`${doc}${sep}${text}`, { old_string: "", new_string: `${sep}${text}` });
         }
         return staged("insertion", target, "at the end of the document");

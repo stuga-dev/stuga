@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
-import { FEEDBACK_BLOCK_CLOSE, FEEDBACK_BLOCK_OPEN, PENDING_BLOCK_CLOSE, PENDING_BLOCK_OPEN, runAgentTurn, type ReviseScope, type ToolRunner } from "./coauthor.js";
+import { FEEDBACK_BLOCK_CLOSE, FEEDBACK_BLOCK_OPEN, PENDING_BLOCK_CLOSE, PENDING_BLOCK_OPEN, RevisionGuard, runAgentTurn, type ReviseScope, type ToolRunner } from "./coauthor.js";
 import { CFG, mockRounds, textRound, toolRound, maxTokensRound, maxTokensEmptyRound, streamOf, openaiTextRound, sentBody } from "../test-helpers.js";
 
 
@@ -1204,14 +1204,111 @@ describe("a revise turn stays inside the rejected passages", () => {
     expect(viaReplace.strEdits).toHaveLength(1);
   });
 
-  it("lets an append be revised where the rejected edit was one, and binds nothing once the passage is gone", async () => {
+  it("lets an append be revised where the rejected edit was one", async () => {
     mockRounds([toolRound("insert_text", { text: "Delta." }), textRound("Done.")]);
     const appended = await runAgentTurn(CFG, input({ regions: [{ old_string: "", new_string: "Delta, formally." }] }), NOOP_RUNNER, () => {});
     expect(appended.strEdits).toHaveLength(1);
+  });
 
+  it("keeps guarding after the first revision replaced the passage, by following it through the edit", async () => {
+    // THE POINT: once "Alpha paragraph." is revised it is gone from the working text, so a guard that
+    // found the passages again by text would find nothing and stand down for the rest of the turn.
+    mockRounds([
+      toolRound("str_replace", { old_string: "Alpha paragraph.", new_string: "Alpha, plainly." }),
+      toolRound("str_replace", { old_string: "Bravo paragraph.", new_string: "Bravo, plainly." }),
+      toolRound("str_replace", { old_string: "Alpha, plainly.", new_string: "Alpha, very plainly indeed." }),
+      textRound("Done."),
+    ]);
+    const r = await runAgentTurn(CFG, input(SCOPE), NOOP_RUNNER, () => {});
+    expect(r.strEdits).toEqual([
+      { old_string: "Alpha paragraph.", new_string: "Alpha, plainly." },
+      { old_string: "Alpha, plainly.", new_string: "Alpha, very plainly indeed." },
+    ]);
+    expect(lastToolResult(2)).toContain("Refused: this edit changes existing text outside");
+  });
+
+  it("refuses a change to existing text once the rejected passage is gone, and says what to tell the user", async () => {
     mockRounds([toolRound("str_replace", { old_string: "Bravo paragraph.", new_string: "Bravo, plainly." }), textRound("Done.")]);
     const gone = await runAgentTurn(CFG, input({ regions: [{ old_string: "Gone paragraph.", new_string: "x" }] }), NOOP_RUNNER, () => {});
-    expect(gone.strEdits).toHaveLength(1);
+    expect(gone.strEdits).toEqual([]);
+    expect(lastToolResult(1)).toContain("no longer in the document");
+
+    // New text may still land anywhere.
+    mockRounds([toolRound("insert_text", { text: "Delta.", after: "Bravo paragraph." }), textRound("Done.")]);
+    const added = await runAgentTurn(CFG, input({ regions: [{ old_string: "Gone paragraph.", new_string: "x" }] }), NOOP_RUNNER, () => {});
+    expect(added.strEdits).toHaveLength(1);
+  });
+
+  it("refuses an edit to another document during a revision", async () => {
+    const other: ToolRunner = {
+      ...NOOP_RUNNER,
+      listDocuments: async () => [{ doc_id: "doc-B", title: "B" }],
+      openDocument: async (id) => ({ docId: id, title: "B", markdown: "# B\n\nstale wording here" }),
+    };
+    mockRounds([
+      toolRound("str_replace", { doc_id: "doc-B", old_string: "stale wording", new_string: "new wording" }),
+      toolRound("str_replace", { old_string: "Alpha paragraph.", new_string: "Alpha, plainly." }),
+      textRound("Done."),
+    ]);
+    const r = await runAgentTurn(CFG, { ...input(SCOPE), collectionEnabled: true }, other, () => {});
+    expect(r.docEdits).toHaveLength(0);
+    expect(r.strEdits).toHaveLength(1);
+    expect(lastToolResult(1)).toContain("Refused: a revision changes only the document");
+  });
+});
+
+describe("RevisionGuard follows the rejected passages through a turn's edits", () => {
+  const DOC = "# Notes\n\nAlpha paragraph.\n\nBravo paragraph.\n";
+  const regions = [
+    { old_string: "Alpha paragraph.", new_string: "x" },
+    { old_string: "Bravo paragraph.", new_string: "y" },
+  ];
+
+  it("locates them once, in order", () => {
+    const g = new RevisionGuard(DOC, regions);
+    expect(g.regions).toEqual([
+      [9, 25],
+      [27, 43],
+    ]);
+  });
+
+  it("shifts later passages by what an edit added or removed, and grows the one that holds it", () => {
+    const g = new RevisionGuard(DOC, regions);
+    g.check([9, 25]);
+    g.applied(9, 16, 30);
+    expect(g.regions).toEqual([
+      [9, 39],
+      [41, 57],
+    ]);
+    // An insertion before the first passage moves both; one at a passage's end extends it.
+    g.applied(0, 0, 5);
+    expect(g.regions).toEqual([
+      [14, 44],
+      [46, 62],
+    ]);
+    g.applied(44, 0, 3);
+    expect(g.regions).toEqual([
+      [14, 47],
+      [49, 65],
+    ]);
+  });
+
+  it("allows an insertion anywhere, and refuses a change outside or across the passages", () => {
+    const g = new RevisionGuard(DOC, regions);
+    expect(() => g.check([0, 0])).not.toThrow();
+    expect(() => g.check([9, 12])).not.toThrow();
+    expect(() => g.check([0, 3])).toThrow(/outside the passages/);
+    expect(() => g.check([20, 30])).toThrow(/outside the passages/);
+  });
+
+  it("refuses every change to existing text when no passage can be found, with a different reason", () => {
+    const g = new RevisionGuard(DOC, [{ old_string: "Gone paragraph.", new_string: "x" }]);
+    expect(g.regions).toEqual([]);
+    expect(() => g.check([9, 12])).toThrow(/no longer in the document/);
+    expect(() => g.check([9, 9])).not.toThrow();
+    // Rejected appends alone leave nothing to revise in place, which is the ordinary refusal.
+    const appends = new RevisionGuard(DOC, [{ old_string: "", new_string: "x" }]);
+    expect(() => appends.check([9, 12])).toThrow(/outside the passages/);
   });
 });
 

@@ -490,8 +490,10 @@ looks:
 
 The in-app co-author hears its rejections at the start of its next turn. Requesting changes to one of
 its runs offers **Revise now**: a turn that may change existing text only inside the passages that
-rejection covered. It may add text anywhere, so it can move what was rejected. A change it tries to
-other existing text is refused, and it says so instead of making it.
+rejection covered, followed through its own edits. It may add text anywhere, so it can move what was
+rejected. A change it tries to other existing text, or to another document, is refused, and it says
+so instead of making it. When the document has changed so that the rejected passages can no longer
+be found, every change to existing text is refused and it asks you to request changes again.
 
 A note is advice to the agent, like an instruction. It decides nothing about what a later write may
 do; review mode and permissions do. Only a rejection carries one.
