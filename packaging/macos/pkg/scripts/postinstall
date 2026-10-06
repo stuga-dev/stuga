@@ -46,9 +46,11 @@ main() {
   install -d -o _stugaremote -g admin -m 0750 "$logs/remote"
   ln -sfn "runtime/$version" "$root/current"
 
-  # The address: kept from an earlier install, else this Mac's local name.
+  # The address: kept from an earlier install, else this Mac's local name. Only a success is one:
+  # macOS 15's plutil writes a missing key's error to stdout.
   local origin
-  origin="$(plutil -extract EnvironmentVariables.PUBLIC_ORIGIN raw /Library/LaunchDaemons/dev.stuga.node.plist 2> /dev/null || true)"
+  origin="$(plutil -extract EnvironmentVariables.PUBLIC_ORIGIN raw /Library/LaunchDaemons/dev.stuga.node.plist 2> /dev/null)" ||
+    origin=""
   [ -n "$origin" ] || origin="http://$(scutil --get LocalHostName | tr '[:upper:]' '[:lower:]').local:$port"
   open_app
   local remote_plist=/Library/LaunchDaemons/dev.stuga.remote.plist first_remote=no

@@ -82,8 +82,13 @@ main() {
   esac
 }
 
-# plist_value <key>: one of the node's environment variables, or nothing.
-plist_value() { plutil -extract "EnvironmentVariables.$1" raw -o - "$node_plist" 2> /dev/null || true; }
+# plist_value <key>: one of the node's environment variables, or nothing. Only a success is a value:
+# macOS 15's plutil writes a missing key's error to stdout.
+plist_value() {
+  local value
+  value="$(plutil -extract "EnvironmentVariables.$1" raw -o - "$node_plist" 2> /dev/null)" || return 0
+  printf '%s\n' "$value"
+}
 
 # plist_env <runtime>: the node's environment, NUL-separated KEY=value, read anew each time:
 # postinstall renders the plist again.
