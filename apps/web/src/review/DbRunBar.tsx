@@ -6,7 +6,6 @@
 import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
-import { Check, MessageSquareReply, X } from "lucide-react";
 import type { DatabaseRunSummary, TableSchema } from "@stuga/protocol/databases/types";
 import { pendingOps, useDbRuns } from "./db-runs-context";
 import { anchorOf, keepFocus, useRejectNote, type NoteAnchor } from "./RejectNoteDialog";
@@ -75,32 +74,32 @@ function DbRunBanner({
                     <HStack gap={1}>
                       <Button
                         label="Accept this change"
-                        variant="primary"
+                        variant="secondary"
                         size="sm"
-                        isIconOnly
-                        icon={<Check size={14} />}
                         isDisabled={flying}
                         onClick={() => void decide(run.id, "accept", [op.id])}
-                      />
+                      >
+                        Accept
+                      </Button>
                       <Button
                         label="Reject this change"
                         variant="ghost"
                         size="sm"
-                        isIconOnly
-                        icon={<X size={14} />}
                         isDisabled={flying}
                         onClick={() => void decide(run.id, "reject", [op.id])}
-                      />
+                      >
+                        Reject
+                      </Button>
                       <Button
                         label="Request changes to this change"
                         variant="ghost"
                         size="sm"
-                        isIconOnly
-                        icon={<MessageSquareReply size={14} />}
                         isDisabled={flying}
                         onMouseDown={keepFocus}
                         onClick={(e) => requestChanges([op.id], anchorOf(e), op.summary)}
-                      />
+                      >
+                        Request changes
+                      </Button>
                     </HStack>
                   </li>
                 );

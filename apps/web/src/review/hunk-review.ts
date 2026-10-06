@@ -1,6 +1,6 @@
 /** One-line summaries of run hunks for the change list, as plain text. */
 import type { AgentRunHunk } from "@stuga/protocol/wire/doc-socket";
-import type { HunkKey } from "../editor/run-preview/plan";
+import type { HunkKey, UnpaintableReason } from "../editor/run-preview/plan";
 
 type HunkKind = "add" | "remove" | "change";
 
@@ -89,6 +89,16 @@ export function summarizeHunk(hunk: { old_string: string; new_string: string }):
     ...within(next || old, after),
   };
 }
+
+/** Why a change has no ghost in the document, as the banner and the change list word it. */
+export const UNSHOWN_REASON: Record<UnpaintableReason, string> = {
+  missing: "its text is no longer there",
+  ambiguous: "its text appears in more than one place",
+  chained: "it edits text an earlier change adds; accept that one first",
+  invisible: "it changes only the Markdown, not how the page looks",
+  unmatched: "the preview would mark more than this change touches",
+  moved: "the text it changes was just edited",
+};
 
 interface ReviewRow {
   hunk: AgentRunHunk;

@@ -223,6 +223,7 @@ const PINNED = [
   "GET /api/docs/:id/runs/:id: allowed",
   "POST /api/docs/:id/runs/:id/decision: refused",
   "POST /api/docs/:id/runs/:id/revert: refused",
+  "POST /api/docs/:id/runs/:id/undo: refused",
   "POST /api/docs/:id/runs/:id/ack: refused",
   "POST /api/docs/:id/propose: refused",
   "GET /api/docs/:id/markdown: allowed",

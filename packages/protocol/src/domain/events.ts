@@ -14,6 +14,8 @@ export const WORKSPACE_EVENT_TYPES = [
   "run.decided",
   /** A human reverted a landed run. */
   "run.reverted",
+  /** A human undid a decision: some of a run's changes wait for review again. */
+  "run.reopened",
   /** A comment was added to a document. */
   "comment.added",
   /** A database's rows or schema changed. */

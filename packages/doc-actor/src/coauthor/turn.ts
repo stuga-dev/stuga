@@ -17,7 +17,7 @@ import type { RunLedger } from "../ledger/run-store.js";
 import { safeSend, type DocSocket } from "../session.js";
 import type { RateLimiter } from "../sync/gates.js";
 import { crossDocTools, fetchInstructionStack, fetchReviewMode, hostAgentImages, proposeCrossDoc } from "./cross-doc.js";
-import { clampAiRequest, loadAttachmentPixels, sanitizeAttachments } from "./inputs.js";
+import { clampAiRequest, loadAttachmentPixels, revisionScopes, sanitizeAttachments } from "./inputs.js";
 
 /** Display name of the co-author on its run bar (matches the tables' panel). */
 const PANEL_AGENT = "AI co-author";
@@ -122,8 +122,12 @@ export class CoAuthor {
       const projection = await this.ledger.projectionFor(panelAlias);
       // Handed over below, once the model has seen it: a turn that fails first leaves it for the next.
       const feedback = await this.ledger.feedbackFor(panelAlias);
-      // Revise now: the turn may change only the passages that rejection covered, in their full text.
-      const revise = req.revise ? { regions: await this.ledger.rejectedHunks(panelAlias, req.revise.run_id, req.revise.feedback_id) } : undefined;
+      // Reject and revise: the turn may change only the passages those rejections covered, in their full text.
+      const scopes = revisionScopes(req.revise);
+      const revise =
+        scopes.length > 0
+          ? { regions: (await Promise.all(scopes.map((s) => this.ledger.rejectedHunks(panelAlias, s.run_id, s.feedback_id)))).flat() }
+          : undefined;
       const ownPending = projection.pending;
       // Per turn, so switching the setting applies to the next message. The run's
       // own undecided hunks hold this turn's edits back even on `auto`.

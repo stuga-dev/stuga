@@ -33,6 +33,7 @@ import {
   Paperclip,
 } from "lucide-react";
 import { useEditorTick } from "../use-editor-tick";
+import { historyCan, historyRedo, historyUndo } from "../run-preview/extension";
 import { BlockTypeMenu } from "./BlockTypeMenu";
 import { TableSizePicker } from "./TableSizePicker";
 
@@ -156,8 +157,9 @@ export function EditorToolbar({
           />
           {sep}
 
-          <Action onRun={() => chain().undo().run()} disabled={!editor.can().undo()} title="Undo (⌘Z)" icon={<Undo2 size={16} />} />
-          <Action onRun={() => chain().redo().run()} disabled={!editor.can().redo()} title="Redo (⌘⇧Z)" icon={<Redo2 size={16} />} />
+          {/* Through the review history, so an accept or reject undoes in turn with typing. */}
+          <Action onRun={() => historyUndo(editor)} disabled={!historyCan(editor, "undo")} title="Undo (⌘Z)" icon={<Undo2 size={16} />} />
+          <Action onRun={() => historyRedo(editor)} disabled={!historyCan(editor, "redo")} title="Redo (⌘⇧Z)" icon={<Redo2 size={16} />} />
           <input ref={imageRef} type="file" accept="image/*" multiple hidden onChange={onPick} />
           <input ref={fileRef} type="file" multiple hidden onChange={onPick} />
 

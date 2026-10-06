@@ -6,10 +6,9 @@
 import { useEffect, type KeyboardEvent } from "react";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import { useAgentRuns, pendingHunks } from "./agent-runs-context";
-import { orderRowsForReview, summarizeHunk } from "./hunk-review";
+import { UNSHOWN_REASON, orderRowsForReview, summarizeHunk } from "./hunk-review";
 import { itemKey } from "./run-ledger";
 import { Button } from "@astryxdesign/core/Button";
-import { MessageSquareReply } from "lucide-react";
 import { anchorOf, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
 
 export function RunChangeList({ run, onRequestChanges }: { run: AgentRunSummary; onRequestChanges?: (hunkId: string, anchor: NoteAnchor) => void }) {
@@ -49,6 +48,8 @@ export function RunChangeList({ run, onRequestChanges }: { run: AgentRunSummary;
         const summary = summarizeHunk(row.hunk);
         const posted = inFlight.has(row.key);
         const position = `change ${i + 1} of ${rows.length}`;
+        const reason = preview.why[row.key];
+        const unshown = reason ? `can’t be shown inline — ${UNSHOWN_REASON[reason]}` : "can’t be shown inline — decide it here";
         return (
           <li
             key={row.key}
@@ -60,7 +61,7 @@ export function RunChangeList({ run, onRequestChanges }: { run: AgentRunSummary;
               className="agent-run-change__body"
               title={summary.detail}
               // Unanchored rows stay focusable so arrow-key navigation reaches them.
-              aria-label={row.isAnchored ? `Show ${position} in the document` : `${position} (not shown in the document)`}
+              aria-label={row.isAnchored ? `Show ${position} in the document` : `${position} (${unshown})`}
               disabled={posted}
               onClick={() => preview.scrollToHunk(row.key)}
             >
@@ -72,7 +73,7 @@ export function RunChangeList({ run, onRequestChanges }: { run: AgentRunSummary;
                 {summary.context && <span className="agent-run-change__context">{summary.context}</span>}
               </span>
               {!row.isAnchored && (
-                <span className="agent-run-change__note">can’t be shown inline — decide it here</span>
+                <span className="agent-run-change__note">{unshown}</span>
               )}
             </button>
             <span className="agent-run-change__actions">
@@ -99,12 +100,12 @@ export function RunChangeList({ run, onRequestChanges }: { run: AgentRunSummary;
                   label={`Request changes to ${position}`}
                   variant="ghost"
                   size="sm"
-                  isIconOnly
-                  icon={<MessageSquareReply size={14} />}
                   isDisabled={posted}
                   onMouseDown={keepFocus}
                   onClick={(e) => onRequestChanges(row.hunk.id, anchorOf(e))}
-                />
+                >
+                  Request changes
+                </Button>
               )}
             </span>
           </li>

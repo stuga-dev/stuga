@@ -5,14 +5,19 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AgentRunHunk, AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
+import type { Editor } from "@tiptap/react";
+import { yUndoPluginKey } from "@tiptap/y-tiptap";
 import type { StugaProvider } from "../sync/stuga-provider";
 import { useSharedEditor } from "../editor/editor-context";
 import { useRunPreview, type RunPreviewApi } from "../editor/run-preview/use-run-preview";
+import { historyRedo, historyUndo, previewStorage } from "../editor/run-preview/extension";
 import { RUN_HUNK_EVENT, type HunkKey, type RunHunkDecisionDetail, type RunPreviewHunk } from "../editor/run-preview/plan";
 import { hash32 } from "../lib/hash";
 import { Runs } from "../api";
 import { itemKey, pendingItems, pendingItemsOf, type Decision, type RunShape } from "./run-ledger";
 import { useRunLedger, type LedgerApi, type RunNotice } from "./use-run-ledger";
+import { ReviewHistory, type LocalUndoManager } from "./review-history";
+import type { ApiError } from "../lib/http/client";
 
 const DOC_RUN: RunShape<AgentRunSummary, AgentRunHunk> = {
   items: (run) => run.hunks,
@@ -20,6 +25,24 @@ const DOC_RUN: RunShape<AgentRunSummary, AgentRunHunk> = {
   // A truncated run arrives without hunks, but Accept all / Reject all need none.
   elided: (run) => run.hunks_truncated === true,
 };
+
+/** The editor's local undo manager: typing only, since an accepted change lands as a remote update. */
+function undoManagerOf(editor: Editor): LocalUndoManager | null {
+  return (yUndoPluginKey.getState(editor.state) as { undoManager?: LocalUndoManager } | undefined)?.undoManager ?? null;
+}
+
+/** Focus in a field that keeps Mod-Z for its own text. */
+function isTextField(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.isContentEditable || target.closest("input, textarea, select") !== null);
+}
+
+function undoneMessage(n: number): string {
+  return n === 1 ? "That change is back up for review." : `Those ${n} changes are back up for review.`;
+}
+
+function errorText(e: unknown, fallback: string): string {
+  return e instanceof Error && e.message ? e.message : fallback;
+}
 
 /** Hunks still awaiting a decision, in the order the agent wrote them. */
 export function pendingHunks(run: AgentRunSummary): AgentRunHunk[] {
@@ -66,6 +89,8 @@ export interface AgentRunsCtx {
   loadFullHunks: (runId: string) => Promise<void>;
   /** Undo an applied run. Rejects with a 409 ApiError when the document moved on. */
   revert: (runId: string) => Promise<void>;
+  /** Put a decision's hunks back up for review. Rejects with a 409 ApiError when it no longer can. */
+  undo: (runId: string, hunkIds: string[]) => Promise<void>;
   ack: (runId: string) => Promise<void>;
   /** Drained into toasts by the run bar. */
   notices: RunNotice[];
@@ -95,6 +120,7 @@ export function AgentRunsProvider({
       list: (limit) => Runs.list(docId, limit),
       decide: (runId, decision, ids, note) => Runs.decide(docId, runId, decision, ids, note),
       revert: (runId) => Runs.revert(docId, runId),
+      undo: (runId, ids) => Runs.undo(docId, runId, ids),
       ack: (runId) => Runs.ack(docId, runId),
     }),
     [docId],
@@ -104,16 +130,68 @@ export function AgentRunsProvider({
     itemId: docId,
     api,
     conflictMessage,
-    onDecided: (res, runId, decision, notify) => {
-      // An accepted change arrives as a remote update, out of Ctrl+Z's reach, so the
-      // toast offers the ledger's Revert; only once nothing is left pending, since
-      // Revert takes back the whole run.
-      if (decision === "accept" && res.applied > 0 && pendingHunks(res.run).length === 0) {
-        notify("accepted", `Accepted ${res.applied} change${res.applied === 1 ? "" : "s"} from ${res.run.agent}.`, runId);
-      }
-    },
+    onUndoable: (runId, hunkIds, decision) => historyRef.current?.record({ runId, hunkIds, decision }),
   });
   const { stateRef, dispatch, openRuns, inFlight, decide, notify } = ledger;
+  const historyRef = useRef<ReviewHistory | null>(null);
+  const actions = useRef({ ledger, decide, notify });
+  actions.current = { ledger, decide, notify };
+
+  // One history per document and editor: typing and this reviewer's decisions, undone in the order they happened.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    const history = new ReviewHistory(undoManagerOf(editor), {
+      undo: async ({ runId, hunkIds }) => {
+        try {
+          await actions.current.ledger.undo(runId, hunkIds);
+          actions.current.notify("undone", undoneMessage(hunkIds.length), runId);
+          return "done";
+        } catch (e) {
+          actions.current.notify("error", errorText(e, "Couldn’t undo that."));
+          // A 409 never succeeds later (the document or the agent moved on); anything else may.
+          return (e as ApiError).status === 409 ? "refused" : "failed";
+        }
+      },
+      redo: async ({ runId, hunkIds, decision }) => {
+        const run = await actions.current.decide(runId, decision, hunkIds);
+        if (!run) return "failed";
+        const want = decision === "accept" ? "accepted" : "rejected";
+        return hunkIds.every((id) => run.hunks.find((h) => h.id === id)?.status === want) ? "done" : "refused";
+      },
+    });
+    historyRef.current = history;
+    const storage = previewStorage(editor);
+    if (storage) storage.history = history;
+    return () => {
+      history.dispose();
+      if (historyRef.current === history) historyRef.current = null;
+      if (storage?.history === history) storage.history = null;
+    };
+  }, [editor, docId]);
+
+  /** A decision undone from its toast: out of order, so it leaves the history. */
+  const undo = useCallback(
+    async (runId: string, hunkIds: string[]) => {
+      historyRef.current?.forget(runId, hunkIds);
+      await ledger.undo(runId, hunkIds);
+      notify("undone", undoneMessage(hunkIds.length), runId);
+    },
+    [ledger.undo, notify],
+  );
+
+  // The editor's keymap covers focus inside it; with focus on a banner button, say, the same history answers.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !(e.metaKey || e.ctrlKey) || e.altKey || isTextField(e.target)) return;
+      const key = e.key.toLowerCase();
+      const redo = (key === "z" && e.shiftKey) || (key === "y" && !e.shiftKey);
+      if (!redo && !(key === "z" && !e.shiftKey)) return;
+      if (!editor || editor.isDestroyed) return;
+      if (redo ? historyRedo(editor) : historyUndo(editor)) e.preventDefault();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [editor]);
   const [loadingHunks, setLoadingHunks] = useState<ReadonlySet<string>>(() => new Set());
   /** runId → the `updated_at` whose full hunks were last fetched. */
   const fetchedAt = useRef(new Map<string, number>());
@@ -207,6 +285,7 @@ export function AgentRunsProvider({
     decide,
     loadFullHunks,
     revert: ledger.revert,
+    undo,
     ack: ledger.ack,
     notices: ledger.notices,
     dismissNotice: ledger.dismissNotice,

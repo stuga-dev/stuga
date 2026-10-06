@@ -137,6 +137,36 @@ export async function revertDocRun({ ctx, req, match }: WorkspaceCall): Promise<
   return json(reverted);
 }
 
+/** Undo a decision on `hunk_ids`: they wait for review again. 409 when the document or the agent moved on. */
+export async function undoDocRun({ ctx, req, match }: WorkspaceCall): Promise<Response> {
+  const docId = match[1]!;
+  if (ctx.isAgent) return error(403, "agents cannot review agent edits");
+  const doc = proseOnly(await authorizedDoc(ctx, docId));
+  if (!doc) return error(404, "not found");
+  if (!canWriteDoc(ctx, doc)) return error(403, "view-only access");
+  const lk = lockedError(doc);
+  if (lk) return lk;
+  const body = (await req.json().catch(() => ({}))) as { hunk_ids?: unknown };
+  const hunkIds = Array.isArray(body.hunk_ids) ? body.hunk_ids.filter((h): h is string => typeof h === "string") : [];
+  if (hunkIds.length === 0) return error(400, "hunk_ids must list the changes to undo");
+  const res = await ctx.env.docs.get(docId).fetch(`http://actor/runs/undo?docId=${encodeURIComponent(docId)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ run_id: match[2]!, hunk_ids: hunkIds, requested_by: ctx.alias, manager_override: manages(ctx, doc) }),
+  });
+  if (res.status === 409) return json(await res.json(), { status: 409 });
+  if (!res.ok) return runRefusal(res, "undo failed");
+  const undone = (await res.json()) as { run?: AgentRunSummary; reopened?: number };
+  recordAudit(ctx, {
+    action: "run.undo",
+    targetKind: "doc",
+    targetId: docId,
+    targetLabel: doc.title,
+    detail: { run_id: match[2]!, agent: undone.run?.agent ?? null, hunks: undone.reopened ?? 0 },
+  });
+  return json(undone);
+}
+
 export async function ackDocRun({ ctx, match }: WorkspaceCall): Promise<Response> {
   const docId = match[1]!;
   if (ctx.isAgent) return error(403, "agents cannot acknowledge agent edits");

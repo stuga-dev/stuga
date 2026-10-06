@@ -298,6 +298,84 @@ export async function handleRunRevert(ledger: RunLedger, req: Request): Promise<
   return Response.json({ run: ledger.summaryOf(stored, body), reverted: landed.length, rejected: orphaned.length });
 }
 
+/**
+ * Undo a decision: the named hunks go back to pending, as if never decided. An accepted hunk is
+ * taken back out of the document; a rejected one loses its feedback. All or nothing, and refused
+ * where the undo would not restore the state the reviewer decided from: the document moved on, the
+ * agent already revised the rejection, or the agent opened a newer run since this one closed.
+ */
+export async function handleRunUndo(ledger: RunLedger, req: Request): Promise<Response> {
+  const store = ledger.store;
+  await store.ensureLoaded();
+  const input = (await req.json().catch(() => null)) as {
+    run_id?: string;
+    hunk_ids?: unknown;
+    requested_by?: string;
+    manager_override?: boolean;
+  } | null;
+  const ids = Array.isArray(input?.hunk_ids) ? new Set(input.hunk_ids.filter((id): id is string => typeof id === "string")) : null;
+  if (!input || !input.run_id || !ids || ids.size === 0) return badRequest();
+  const stored = await ledger.load(input.run_id);
+  if (!stored) return Response.json({ error: "not_found" }, { status: 404 });
+  const denied = notReviewer(stored, input.requested_by, input.manager_override);
+  if (denied) return denied;
+  const refuse = (error: string, message: string) => Response.json({ error, message }, { status: 409 });
+  if (stored.reverted) return refuse("reverted", "this run was reverted, so its decisions can’t be undone");
+  const body = await ledger.loadBody(stored);
+  if (ledger.bodyLost(stored, body)) return runUnavailable();
+  const targets = body.hunks.filter((h) => ids.has(h.id) && (h.status === "accepted" || h.status === "rejected"));
+  if (targets.length === 0) return refuse("nothing_to_undo", "those changes have no decision to undo");
+  if (targets.some((h) => h.status === "rejected" && h.feedback?.addressed_at !== undefined)) {
+    return refuse("revised", "the agent already revised that change; decide the revision instead");
+  }
+  const reopens = stored.status !== "open";
+  if (reopens) {
+    const newer = await ledger.openRunFor(stored.agent_alias);
+    if (newer && newer.stored.id !== stored.id) {
+      return refuse("superseded", "the agent has proposed again since; decide its newer changes instead");
+    }
+  }
+
+  const requestedBy = input.requested_by!;
+  // Unwound as revert does: newest first, sides swapped, and never a deletion, which has nothing to anchor on.
+  const landed = targets.filter((h) => h.status === "accepted");
+  if (landed.length > 0) {
+    if (landed.some((h) => h.new_string === "")) {
+      return refuse("conflict", "a deletion can’t be restored in place; use version history to restore");
+    }
+    const current = store.markdown();
+    const inverse = [...landed].reverse().map((h) => ({ old_string: h.new_string, new_string: h.old_string }));
+    const result = applyStrEditsStrict(current, inverse);
+    if (result.conflicts.length > 0) return refuse("conflict", "the document has changed since; use version history to restore");
+    await store.commitMarkdown(ledger.commitTarget(result.markdown, body), current, { alias: requestedBy }, "run-large");
+  }
+  let unlist = false;
+  for (const h of targets) {
+    if (h.feedback) {
+      delete h.feedback;
+      unlist = true;
+    }
+    h.status = "pending";
+  }
+  if (reopens) {
+    stored.status = "open";
+    delete stored.seq_at_commit;
+    delete body.final_markdown;
+  }
+  stored.updated_at = Date.now();
+  await ledger.save(stored, body);
+  if (reopens) await ledger.setActive(stored.agent_alias, stored.id);
+  // Saved first: a listed run with no open feedback is pruned on the next scan, never the reverse.
+  if (unlist && !body.hunks.some((h) => h.feedback && h.feedback.addressed_at === undefined)) await ledger.unlistFeedback(stored);
+  ledger.sendUpdated(stored, body);
+  ledger.emitEvent("run.reopened", stored, `user:${requestedBy}`, "human", {
+    decided_by: requestedBy,
+    hunks: targets.length,
+    pending: pendingOf(body).length,
+  });
+  return Response.json({ run: ledger.summaryOf(stored, body), reopened: targets.length });
+}
+
 /** Dismiss a catch-up card; only its reviewer may mark it read. */
 export async function handleRunAck(ledger: RunLedger, req: Request): Promise<Response> {
   const input = (await req.json().catch(() => null)) as {

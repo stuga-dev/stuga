@@ -277,7 +277,7 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
         workspaceId: ctx.workspaceId,
         principals: ctx.principals,
         after: start,
-        types: mine && !types?.length ? ["run.decided", "run.reverted"] : types,
+        types: mine && !types?.length ? ["run.decided", "run.reverted", "run.reopened"] : types,
         scopeFolderIds: scopeFolderIds(ctx),
         ...(mine ? { agentAlias: ctx.alias } : {}),
         ...(lookback ? { since: new Date(Date.now() - RUN_FEEDBACK_LOOKBACK_DAYS * 86_400_000) } : {}),

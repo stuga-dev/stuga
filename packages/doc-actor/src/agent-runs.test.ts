@@ -731,6 +731,113 @@ describe("revert", () => {
   });
 });
 
+describe("undoing a decision", () => {
+  async function proposeTwo(dobj: DocActor): Promise<string> {
+    await propose(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha revised." });
+    const second = await propose(dobj, { action: "str_replace", find: "Bravo paragraph.", replace: "Bravo revised." });
+    return runOf(second.json).id;
+  }
+
+  it("puts a rejected change back up for review and drops the note it carried", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const runId = await proposeTwo(dobj);
+    await post(dobj, "decide", { run_id: runId, decision: "reject", hunk_ids: ["h1"], decided_by: "alice", note: "No." });
+
+    const res = await post(dobj, "undo", { run_id: runId, hunk_ids: ["h1"], requested_by: "alice" });
+    expect(res.status).toBe(200);
+    expect(res.json).toMatchObject({ reopened: 1 });
+    const run = runOf(res.json);
+    expect(run.status).toBe("open");
+    expect(run.hunks.map((x) => x.status)).toEqual(["pending", "pending"]);
+    expect(run.hunks[0]!.feedback).toBeUndefined();
+    // The agent is no longer told about a rejection the reviewer took back.
+    expect((await readMarkdown(dobj, "agent1")).feedback).toBeUndefined();
+    expect(h.queued.find((m) => m.kind === "event" && m.type === "run.reopened")).toMatchObject({ payload: { hunks: 1, pending: 2 } });
+  });
+
+  it("takes an accepted change back out of the document and reopens the closed run", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const runId = await proposeTwo(dobj);
+    const decided = await post(dobj, "decide", { run_id: runId, decision: "accept", decided_by: "alice" });
+    expect(runOf(decided.json).status).toBe("applied");
+
+    const res = await post(dobj, "undo", { run_id: runId, hunk_ids: ["h2"], requested_by: "alice" });
+    expect(res.status).toBe(200);
+    const run = runOf(res.json);
+    expect(run.status).toBe("open");
+    expect(run.hunks.map((x) => x.status)).toEqual(["accepted", "pending"]);
+    const md = (await readMarkdown(dobj)).markdown as string;
+    expect(md).toContain("Alpha revised.");
+    expect(md).toContain("Bravo paragraph.");
+    // The agent's projection shows its change pending again, and it can be accepted anew.
+    expect(await readMarkdown(dobj, "agent1")).toMatchObject({ run_id: runId });
+    const again = await post(dobj, "decide", { run_id: runId, decision: "accept", hunk_ids: ["h2"], decided_by: "alice" });
+    expect(again.json).toMatchObject({ applied: 1 });
+    expect((await readMarkdown(dobj)).markdown).toContain("Bravo revised.");
+  });
+
+  it("refuses a rejection the agent already revised", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const runId = await proposeTwo(dobj);
+    const res = await post(dobj, "decide", { run_id: runId, decision: "reject", hunk_ids: ["h1"], decided_by: "alice", note: "Shorter." });
+    const feedbackId = runOf(res.json).hunks[0]!.feedback!.id;
+    await propose(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha.", revises: [feedbackId] });
+
+    const undo = await post(dobj, "undo", { run_id: runId, hunk_ids: ["h1"], requested_by: "alice" });
+    expect(undo.status).toBe(409);
+    expect(undo.json).toMatchObject({ error: "revised" });
+  });
+
+  it("refuses to take back an accepted change the document has moved on from", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const runId = await proposeTwo(dobj);
+    await post(dobj, "decide", { run_id: runId, decision: "accept", hunk_ids: ["h1"], decided_by: "alice" });
+    await humanEdit(dobj, "Alpha revised.", "Human took it from here.");
+
+    const undo = await post(dobj, "undo", { run_id: runId, hunk_ids: ["h1"], requested_by: "alice" });
+    expect(undo.status).toBe(409);
+    expect(undo.json).toMatchObject({ error: "conflict" });
+    expect((await readMarkdown(dobj)).markdown).toContain("Human took it from here.");
+  });
+
+  it("refuses to reopen a run once its agent has a newer one", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const first = await propose(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha revised." });
+    const runId = runOf(first.json).id;
+    await post(dobj, "decide", { run_id: runId, decision: "reject", decided_by: "alice" });
+    const second = await propose(dobj, { action: "str_replace", find: "Bravo paragraph.", replace: "Bravo revised." });
+    expect(runOf(second.json).id).not.toBe(runId);
+
+    const undo = await post(dobj, "undo", { run_id: runId, hunk_ids: ["h1"], requested_by: "alice" });
+    expect(undo.status).toBe(409);
+    expect(undo.json).toMatchObject({ error: "superseded" });
+  });
+
+  it("is the reviewer's alone, and needs a decided change to undo", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const runId = await proposeTwo(dobj);
+    await post(dobj, "decide", { run_id: runId, decision: "reject", hunk_ids: ["h1"], decided_by: "alice" });
+
+    expect((await post(dobj, "undo", { run_id: runId, hunk_ids: ["h1"], requested_by: "bob" })).status).toBe(403);
+    expect((await post(dobj, "undo", { run_id: runId, hunk_ids: ["h2"], requested_by: "alice" })).json).toMatchObject({
+      error: "nothing_to_undo",
+    });
+    expect((await post(dobj, "undo", { run_id: runId, hunk_ids: [], requested_by: "alice" })).status).toBe(400);
+  });
+});
+
 describe("ack, close and reconnect replay", () => {
   it("acknowledges a catch-up card", async () => {
     const h = harness();

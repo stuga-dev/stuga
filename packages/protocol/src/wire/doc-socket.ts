@@ -30,10 +30,17 @@ export interface AiRequest {
   /** Images already uploaded to the document's media store for this turn; only paths travel. */
   attachments?: AiAttachment[];
   /**
-   * Revise now: the turn may change only the passages one rejection covered, in their full text,
-   * and its edits elsewhere are refused. The run must be the co-author's own.
+   * Reject and revise: the turn may change only the passages these rejections covered, in their
+   * full text, and its edits elsewhere are refused. Each run must be the co-author's own. Several
+   * when Request changes was used more than once during a turn; one, unwrapped, from older clients.
    */
-  revise?: { run_id: string; feedback_id: string } | null;
+  revise?: RevisionScope | RevisionScope[] | null;
+}
+
+/** One rejection a revise turn answers. */
+export interface RevisionScope {
+  run_id: string;
+  feedback_id: string;
 }
 
 export interface AiAttachment {

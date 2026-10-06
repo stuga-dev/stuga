@@ -281,6 +281,7 @@ describe("the /mcp contract", () => {
       "run.applied",
       "run.decided",
       "run.reverted",
+      "run.reopened",
       "comment.added",
       "database.changed",
     ]);

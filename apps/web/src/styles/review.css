@@ -2,13 +2,25 @@
 /* Red and green, never amber, so a proposal cannot read as a comment highlight. */
 .ai-preview-delete { background: color-mix(in srgb, var(--color-background-red) 60%, transparent); text-decoration: line-through; text-decoration-color: var(--color-text-red); }
 .ai-preview-insert { background: color-mix(in srgb, var(--color-background-green) 90%, transparent); color: var(--color-text-primary); border-radius: 3px; text-decoration: none; }
-.ai-preview-insert--block { display: block; border-left: 2px solid var(--color-border-green); padding: 0.1rem 0.4rem; margin: 0.15rem 0; opacity: 0.95; }
+.ai-preview-insert--block { display: block; border-left: 2px solid var(--color-border-emphasized); padding: 0.1rem 0.4rem; margin: 0.15rem 0; opacity: 0.95; }
+/* One neutral rail down a change's live blocks and its ghosts, so the parts of one change read as
+   one; red and green stay on the text. A paragraph's gap to the next part is padding, so the rail runs on. */
+.ai-preview-part { border-left: 2px solid var(--color-border-emphasized); padding-left: 0.4rem; }
+p.ai-preview-part:has(+ .ai-preview-part, + .ai-preview-ghost) { margin-bottom: 0; padding-bottom: 0.85em; }
 .ai-preview-insert--block > :first-child { margin-top: 0; }
 .ai-preview-insert--block > :last-child { margin-bottom: 0; }
 ins.ai-preview-insert { padding: 0 0.1rem; }
 
 /* A ghost's Accept is filled and Reject is an outline that turns red on hover. */
 .ai-preview-hunk-actions { display: flex; gap: 0.4rem; margin-top: 0.45rem; align-items: center; }
+.ai-preview-hunk-scope { margin-left: 0.3rem; font-size: var(--text-body-size); color: var(--color-text-secondary); }
+/* Ends a part whose buttons sit at the change's last part. */
+.ai-preview-hunk-part { margin-top: 0.3rem; font-size: var(--text-body-size); color: var(--color-text-secondary); }
+.ai-preview-hunk-goto {
+  font: inherit; padding: 0; border: none; background: none; cursor: pointer;
+  color: var(--color-text-primary); text-decoration: underline; text-underline-offset: 2px;
+}
+.ai-preview-hunk-goto:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 .ai-preview-hunk-btn {
   font: inherit; font-size: var(--text-body-size); line-height: var(--text-body-leading); font-weight: 600; cursor: pointer;
   padding: 0.2rem 0.75rem; border-radius: var(--radius-element);
@@ -46,12 +58,13 @@ ins.ai-preview-insert { padding: 0 0.1rem; }
 .ai-preview-hunk--pending { opacity: 0.5; }
 /* The word form's <ins>/<del> spans carry the colour instead of a block fill. */
 .ai-preview-ghost--words { display: block; }
+.ai-preview-ghost--inline { display: block; border-left: 2px solid var(--color-border-emphasized); padding: 0 0.4rem 0.1rem; }
 /* It stands in for a paragraph, so it takes the direction of its text as the paragraph does. */
 .ai-preview-ghost--words .ai-preview-hunk { unicode-bidi: plaintext; text-align: start; }
 /* A removal inserts nothing, so its ghost has no green fill. */
 .ai-preview-ghost--removal {
   display: block; margin: 0.15rem 0; padding: 0.1rem 0.4rem;
-  border-left: 2px solid var(--color-border-red);
+  border-left: 2px solid var(--color-border-emphasized);
 }
 
 /* A ghost painted inside a list would otherwise grow a bullet. Among table rows

@@ -24,11 +24,13 @@ export interface RunNotice {
   /**
    * `conflict`: refused because the content moved, and gone. `blocked`: waits
    * on an earlier item of its run and is still pending. `accepted`: landed and
-   * can be undone through `runId`.
+   * can be reverted through `runId`. `decided`: `itemIds` of `runId` were just
+   * decided, and the decision can be undone. `undone`: that decision was undone.
    */
-  kind: "conflict" | "blocked" | "error" | "accepted";
+  kind: "conflict" | "blocked" | "error" | "accepted" | "decided" | "undone";
   message: string;
   runId?: string;
+  itemIds?: string[];
 }
 
 interface DecideResult<R> {
@@ -43,6 +45,8 @@ export interface LedgerApi<R> {
   list: (limit: number) => Promise<{ runs: R[] }>;
   decide: (runId: string, decision: Decision, itemIds?: string[], note?: string) => Promise<DecideResult<R>>;
   revert: (runId: string) => Promise<{ run: R }>;
+  /** Put decided items back up for review; a ledger without it offers no Undo after a decision. */
+  undo?: (runId: string, itemIds: string[]) => Promise<{ run: R }>;
   ack: (runId: string) => Promise<unknown>;
 }
 
@@ -50,6 +54,10 @@ function blockedMessage(n: number): string {
   return n === 1
     ? "That change builds on an earlier one in this run — accept that first (or use Accept all)."
     : `${n} of those changes build on earlier ones in this run — accept those first (or use Accept all).`;
+}
+
+function decidedMessage(decision: Decision, n: number, agent: string): string {
+  return `${decision === "accept" ? "Accepted" : "Rejected"} ${n} change${n === 1 ? "" : "s"} from ${agent}.`;
 }
 
 function errorMessage(e: unknown, decision: Decision): string {
@@ -79,6 +87,7 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
   conflictMessage,
   onDecided,
   onReverted,
+  onUndoable,
 }: {
   shape: RunShape<R, I>;
   /** The document or database the runs belong to; a change resets the ledger. */
@@ -87,6 +96,8 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
   conflictMessage: (n: number) => string;
   onDecided?: (res: DecideResult<R>, runId: string, decision: Decision, notify: Notify) => void;
   onReverted?: () => void;
+  /** A decision that Undo can take back was just made. */
+  onUndoable?: (runId: string, itemIds: string[], decision: Decision) => void;
 }) {
   const reducer = useCallback((s: LedgerState<R>, a: LedgerAction<R>) => ledgerReducer(shape, s, a), [shape]);
   const [state, dispatch] = useReducer(reducer, undefined, emptyLedger<R>);
@@ -101,11 +112,11 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
   stateRef.current = state;
   const apiRef = useRef(api);
   apiRef.current = api;
-  const hooks = useRef({ conflictMessage, onDecided, onReverted });
-  hooks.current = { conflictMessage, onDecided, onReverted };
+  const hooks = useRef({ conflictMessage, onDecided, onReverted, onUndoable });
+  hooks.current = { conflictMessage, onDecided, onReverted, onUndoable };
 
-  const notify = useCallback<Notify>((kind, message, runId) => {
-    setNotices((prev) => [...prev, { id: ++noticeSeq.current, kind, message, runId }]);
+  const notify = useCallback<Notify>((kind, message, runId, itemIds) => {
+    setNotices((prev) => [...prev, { id: ++noticeSeq.current, kind, message, runId, ...(itemIds ? { itemIds } : {}) }]);
   }, []);
   const dismissNotice = useCallback((id: number) => setNotices((prev) => prev.filter((n) => n.id !== id)), []);
 
@@ -153,6 +164,16 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
           notify("error", "Some proposals couldn’t be read just now — they stay pending; try again shortly.");
         }
         hooks.current.onDecided?.(res, runId, decision, notify);
+        // A rejection with a note goes to the agent at once, so only a plain decision offers Undo.
+        if (apiRef.current.undo && !note) {
+          const landed = new Set(targets);
+          const done = shape.items(res.run).filter((i) => landed.has(i.id) && i.status === (decision === "accept" ? "accepted" : "rejected"));
+          if (done.length > 0) {
+            const ids = done.map((i) => i.id);
+            hooks.current.onUndoable?.(runId, ids, decision);
+            notify("decided", decidedMessage(decision, done.length, res.run.agent), runId, ids);
+          }
+        }
         return res.run;
       } catch (e) {
         if (targets.length > 0) dispatch({ type: "rollback", runId, itemIds: targets, decision });
@@ -178,6 +199,19 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
     }
   }, []);
 
+  /** Put a decision's items back up for review; rejects (a 409 ApiError when it no longer can) for the caller to explain. */
+  const undo = useCallback(async (runId: string, itemIds: string[]) => {
+    const call = apiRef.current.undo;
+    if (!call) return;
+    setBusy(true);
+    try {
+      const res = await call(runId, itemIds);
+      dispatch({ type: "updated", run: res.run });
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   /** Dismiss a catch-up card at once; if the call fails the card returns on the next load. */
   const ack = useCallback(async (runId: string) => {
     dispatch({ type: "acked", runId });
@@ -198,8 +232,9 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
     dismissNotice,
     decide,
     revert,
+    undo,
     ack,
   };
 }
 
-type Notify = (kind: RunNotice["kind"], message: string, runId?: string) => void;
+type Notify = (kind: RunNotice["kind"], message: string, runId?: string, itemIds?: string[]) => void;

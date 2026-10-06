@@ -5,6 +5,7 @@
  * each turn did.
  */
 import { useRef, useState } from "react";
+import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { FileText, ImagePlus, SquarePen, X } from "lucide-react";
 import { ALL_DOCUMENTS_SCOPE } from "@stuga/protocol/wire/doc-socket";
@@ -36,8 +37,23 @@ export function AiNewChatButton() {
 }
 
 export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
-  const { turns, streaming, model, setModel, collectionId, setCollectionId, send, stop, attachments, attachImages, removeAttachment } =
-    useAiCoauthor();
+  const {
+    turns,
+    streaming,
+    model,
+    setModel,
+    collectionId,
+    setCollectionId,
+    send,
+    stop,
+    attachments,
+    attachImages,
+    removeAttachment,
+    queuedRevisions,
+    revisionPaused,
+    reviseNow,
+    cancelRevisions,
+  } = useAiCoauthor();
   const [input, setInput] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   // Send waits for uploads: a turn that dropped a just-attached image looks like the AI ignored it.
@@ -93,6 +109,16 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
         onImages={attachImages}
         header={
           <>
+            {queuedRevisions > 0 && (
+              <div className="ai-revision-queue" role="status">
+                <span className="ai-revision-queue__text">
+                  {revisionPaused ? "Revision paused" : "Revision queued"}
+                  {queuedRevisions > 1 ? ` · ${queuedRevisions} requests` : ""}
+                </span>
+                {revisionPaused && <Button label="Revise now" variant="secondary" size="sm" onClick={reviseNow} isDisabled={streaming} />}
+                <Button label="Cancel" variant="ghost" size="sm" onClick={cancelRevisions} />
+              </div>
+            )}
             {selectedText && (
               <div className="ai-input-quote" title={selectedText}>
                 <span className="ai-input-quote__label">Selected</span>

@@ -3,10 +3,12 @@
  * JSON, so nothing in it is trusted to match `AiRequest`.
  */
 import { MEDIA_GET_PATH } from "@stuga/protocol/api/media";
-import type { AiAttachment, AiHistoryItem, AiRequest } from "@stuga/protocol/wire/doc-socket";
+import type { AiAttachment, AiHistoryItem, AiRequest, RevisionScope } from "@stuga/protocol/wire/doc-socket";
 import type { InternalApi } from "@stuga/runtime";
 
 const MAX_ATTACHMENTS = 8;
+/** Rejections one revise turn may answer; more than a reviewer makes during one turn. */
+const MAX_REVISION_SCOPES = 20;
 
 /**
  * Attachments whose pixels reach the model, and their size. Chat providers cap
@@ -53,6 +55,18 @@ function isHistoryItem(h: unknown): h is AiHistoryItem {
   return (role === "user" || role === "assistant") && typeof content === "string";
 }
 
+/** A revise turn's rejections, one or a list, keeping only well-formed ones. */
+export function revisionScopes(raw: unknown): RevisionScope[] {
+  const list = Array.isArray(raw) ? (raw as unknown[]) : raw ? [raw] : [];
+  return list
+    .filter((s): s is RevisionScope => {
+      const v = s as Partial<RevisionScope> | null;
+      return !!v && typeof v.run_id === "string" && v.run_id !== "" && typeof v.feedback_id === "string" && v.feedback_id !== "";
+    })
+    .slice(0, MAX_REVISION_SCOPES)
+    .map((s) => ({ run_id: s.run_id, feedback_id: s.feedback_id }));
+}
+
 export function clampAiRequest(raw: AiRequest): AiRequest {
   const prompt = typeof raw.prompt === "string" ? raw.prompt.slice(0, MAX_AI_PROMPT_CHARS) : "";
   const history = (Array.isArray(raw.history) ? (raw.history as unknown[]) : [])
@@ -66,6 +80,7 @@ export function clampAiRequest(raw: AiRequest): AiRequest {
     selected_text: typeof raw.selected_text === "string" ? raw.selected_text : null,
     model: typeof raw.model === "string" && raw.model ? raw.model : "auto",
     collection_id: typeof raw.collection_id === "string" && raw.collection_id ? raw.collection_id : null,
+    revise: revisionScopes(raw.revise),
   };
 }
 

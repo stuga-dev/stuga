@@ -26,21 +26,44 @@ function useLiveWindow(updatedAt: number): boolean {
 /**
  * Drains a ledger's notices into toasts. Stays mounted with no open run, since a
  * decision can settle as its run leaves the bar. `onUndo` adds Undo to an
- * `accepted` notice.
+ * `accepted` notice, and `onUndoDecision` to a `decided` one.
  */
 export function RunNotices({
   notices,
   dismissNotice,
   onUndo,
+  onUndoDecision,
 }: {
   notices: RunNotice[];
   dismissNotice: (id: number) => void;
   onUndo?: (runId: string) => Promise<void>;
+  onUndoDecision?: (runId: string, itemIds: string[]) => Promise<void>;
 }) {
   const toast = useToast();
   useEffect(() => {
     for (const n of notices) {
-      if (n.kind === "accepted" && n.runId && onUndo) {
+      if (n.kind === "decided" && n.runId && n.itemIds && onUndoDecision) {
+        const { runId, itemIds } = n;
+        // One per run: a newer decision's toast replaces the last, and its Undo is the one that applies.
+        toast({
+          body: n.message,
+          type: "info",
+          uniqueID: `run-decision:${runId}`,
+          autoHideDuration: 8000,
+          endContent: (
+            <UndoButton
+              onUndo={() =>
+                onUndoDecision(runId, itemIds).catch((e: unknown) => {
+                  toast({ body: e instanceof Error && e.message ? e.message : "Couldn’t undo that.", type: "error" });
+                })
+              }
+            />
+          ),
+        });
+      } else if (n.kind === "undone" && n.runId) {
+        // Replaces the decision's own toast, whose Undo no longer applies.
+        toast({ body: n.message, type: "info", uniqueID: `run-decision:${n.runId}` });
+      } else if (n.kind === "accepted" && n.runId && onUndo) {
         const runId = n.runId;
         toast({
           body: n.message,
@@ -59,11 +82,11 @@ export function RunNotices({
         });
       } else {
         // A blocked change lost nothing, so it reads as guidance.
-        toast({ body: n.message, type: n.kind === "blocked" || n.kind === "accepted" ? "info" : "error" });
+        toast({ body: n.message, type: n.kind === "conflict" || n.kind === "error" ? "error" : "info" });
       }
       dismissNotice(n.id);
     }
-  }, [notices, toast, dismissNotice, onUndo]);
+  }, [notices, toast, dismissNotice, onUndo, onUndoDecision]);
   return null;
 }
 

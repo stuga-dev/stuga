@@ -14,6 +14,7 @@ const overlay = vi.hoisted(() => ({
   calls: [] as Array<{ hunks: Array<{ runId: string; id: string; agent?: string }>; pendingKeys?: ReadonlySet<string> }>,
   anchored: [] as string[],
   unanchored: [] as string[],
+  why: {} as Record<string, string>,
   scrolled: [] as string[],
   last() {
     return this.calls[this.calls.length - 1]!;
@@ -31,6 +32,7 @@ vi.mock("../editor/run-preview/use-run-preview", () => ({
     return {
       anchored: overlay.anchored,
       unanchored: overlay.unanchored,
+      why: overlay.why,
       scrollToHunk: (key: string) => {
         overlay.scrolled.push(key);
         return overlay.anchored.includes(key);
@@ -128,6 +130,7 @@ beforeEach(() => {
   overlay.calls = [];
   overlay.anchored = [];
   overlay.unanchored = [];
+  overlay.why = {};
   overlay.scrolled = [];
   responder = () => ({ runs: [] });
   fakeProvider = { runListener: null, doc: null };
@@ -403,7 +406,7 @@ describe("AgentRunsProvider decisions", () => {
     });
   });
 
-  it("offers Undo once an accept closes the run", async () => {
+  it("offers Undo for exactly what an accept decided", async () => {
     responder = (url, method) =>
       method === "POST"
         ? {
@@ -416,13 +419,12 @@ describe("AgentRunsProvider decisions", () => {
     await act(async () => {
       await latest.decide("run_a", "accept");
     });
-    const notice = latest.notices.find((n) => n.kind === "accepted");
-    expect(notice).toBeDefined();
-    expect(notice!.runId).toBe("run_a");
-    expect(notice!.message).toContain("Accepted 2 changes from Claude (Connector)");
+    expect(latest.notices).toEqual([
+      expect.objectContaining({ kind: "decided", runId: "run_a", itemIds: ["h1", "h2"], message: "Accepted 2 changes from Claude (Connector)." }),
+    ]);
   });
 
-  it("stays quiet on a partial accept, where the whole-run Undo would discard the unreviewed rest", async () => {
+  it("offers Undo for one change accepted out of several, leaving the rest pending", async () => {
     responder = (url, method) =>
       method === "POST"
         ? {
@@ -435,11 +437,11 @@ describe("AgentRunsProvider decisions", () => {
     await act(async () => {
       await latest.decide("run_a", "accept", ["h1"]);
     });
-    expect(latest.notices.filter((n) => n.kind === "accepted")).toEqual([]);
+    expect(latest.notices).toEqual([expect.objectContaining({ kind: "decided", itemIds: ["h1"] })]);
     expect(latest.pending.map((p) => p.hunk.id)).toEqual(["h2"]);
   });
 
-  it("stays quiet when a run closes with nothing actually applied", async () => {
+  it("offers Undo after a reject, but not after a rejection with a note the agent acts on", async () => {
     responder = (url, method) =>
       method === "POST"
         ? {
@@ -452,7 +454,44 @@ describe("AgentRunsProvider decisions", () => {
     await act(async () => {
       await latest.decide("run_a", "reject");
     });
-    expect(latest.notices.filter((n) => n.kind === "accepted")).toEqual([]);
+    expect(latest.notices).toEqual([expect.objectContaining({ kind: "decided", message: "Rejected 2 changes from Claude (Connector)." })]);
+
+    await mount("d2");
+    await act(async () => {
+      await latest.decide("run_a", "reject", undefined, "Too formal.");
+    });
+    expect(latest.notices.filter((n) => n.kind === "decided")).toHaveLength(1);
+  });
+
+  it("offers no Undo for a change that conflicted instead of landing", async () => {
+    responder = (url, method) =>
+      method === "POST"
+        ? { run: run({ updated_at: T0 + 1, status: "rejected", hunks: [hunk("h1", "conflict"), hunk("h2", "conflict")] }), applied: 0, conflicts: 2 }
+        : { runs: [run()] };
+    await mount();
+    await act(async () => {
+      await latest.decide("run_a", "accept");
+    });
+    expect(latest.notices.map((n) => n.kind)).toEqual(["conflict"]);
+  });
+
+  it("undoes a decision by putting its hunks back up for review", async () => {
+    responder = (url, method) =>
+      url.endsWith("/undo")
+        ? { run: run({ updated_at: T0 + 2 }), reopened: 1 }
+        : method === "POST"
+          ? { run: run({ updated_at: T0 + 1, hunks: [hunk("h1", "rejected"), hunk("h2")] }), applied: 0, conflicts: 0 }
+          : { runs: [run()] };
+    await mount();
+    await act(async () => {
+      await latest.decide("run_a", "reject", ["h1"]);
+    });
+    expect(latest.pending.map((p) => p.hunk.id)).toEqual(["h2"]);
+    await act(async () => {
+      await latest.undo("run_a", ["h1"]);
+    });
+    expect(calls.find((c) => c.url.endsWith("/undo"))).toMatchObject({ method: "POST", body: { hunk_ids: ["h1"] } });
+    expect(latest.pending.map((p) => p.hunk.id)).toEqual(["h1", "h2"]);
   });
 });
 
@@ -534,6 +573,7 @@ describe("the overlay's payload", () => {
   it("exposes the overlay's anchored order and scroll call to the navigator", async () => {
     overlay.anchored = ["run_a:h2", "run_a:h1"];
     overlay.unanchored = [];
+  overlay.why = {};
     responder = () => ({ runs: [run()] });
     await mount();
     expect(latest.preview.anchored).toEqual(["run_a:h2", "run_a:h1"]);

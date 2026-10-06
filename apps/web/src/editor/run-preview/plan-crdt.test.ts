@@ -731,6 +731,13 @@ describe("exceedsHunkPaintCap", () => {
     };
     expect(exceedsHunkPaintCap(1, 5, 5, table)).toBe(false);
   });
+
+  it("lets a rewrite of many paragraphs paint one region per paragraph", () => {
+    const paras = (word: string) => Array.from({ length: 12 }, (_, i) => `${word} paragraph ${i}.`).join("\n\n");
+    const rewrite = { old_string: paras("Old"), new_string: paras("New") };
+    expect(exceedsHunkPaintCap(12, 12, 12, rewrite)).toBe(false);
+    expect(exceedsHunkPaintCap(13, 12, 12, rewrite)).toBe(true);
+  });
 });
 
 // One word renamed in five places, two of them identical checklist lines.
@@ -944,8 +951,9 @@ describe("a hunk whose old_string is only unique in its run's order", () => {
       { runId: "run_a", id: "h1", old_string: "Alpha\n\nSized in points.", new_string: "Alpha\n\nSized in days." },
       { runId: "run_b", id: "h1", old_string: "Sized in points.", new_string: "Sized in days." },
     ];
-    const { segments, unpaintable } = buildRunSegments(liveDoc, currentMd, twoRuns, schema);
+    const { segments, unpaintable, reasons } = buildRunSegments(liveDoc, currentMd, twoRuns, schema);
     expect(unpaintable).toEqual(["run_b:h1"]);
+    expect(reasons.get("run_b:h1")).toBe("ambiguous");
     expect(segments.flatMap((s) => s.hunks.map((p) => p.key))).toEqual(["run_a:h1"]);
   });
 
@@ -954,8 +962,9 @@ describe("a hunk whose old_string is only unique in its run's order", () => {
       { runId: RUN, id: "h1", old_string: "Alpha\n\nSized in points.", new_string: "Alpha\n\nSized in days." },
       { runId: RUN, id: "h2", old_string: "Sized in days.", new_string: "Sized in half-days." },
     ];
-    const { segments, unpaintable } = buildRunSegments(liveDoc, currentMd, dependent, schema);
+    const { segments, unpaintable, reasons } = buildRunSegments(liveDoc, currentMd, dependent, schema);
     expect(unpaintable).toEqual(["run_a:h2"]);
+    expect(reasons.get("run_a:h2")).toBe("chained");
     expect(segments.flatMap((s) => s.hunks.map((p) => p.key))).toEqual(["run_a:h1"]);
   });
 });

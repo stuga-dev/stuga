@@ -10,7 +10,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { useOptionalAiCoauthor } from "../ai/ai-coauthor-context";
 import { useAgentRuns, pendingHunks } from "./agent-runs-context";
 import { useRejectNote, type NoteAnchor } from "./RejectNoteDialog";
-import { summarizeHunk } from "./hunk-review";
+import { UNSHOWN_REASON, summarizeHunk } from "./hunk-review";
 import { RunChangeList } from "./RunChangeList";
 import { RunBanner, RunNotices } from "./RunBanner";
 import { itemKey } from "./run-ledger";
@@ -39,10 +39,10 @@ function rejectedFeedbackId(run: AgentRunSummary, hunkIds?: string[]): string | 
 }
 
 export function AgentRunBar() {
-  const { openRuns, notices, dismissNotice, revert } = useAgentRuns();
+  const { openRuns, notices, dismissNotice, undo } = useAgentRuns();
   return (
     <>
-      <RunNotices notices={notices} dismissNotice={dismissNotice} onUndo={revert} />
+      <RunNotices notices={notices} dismissNotice={dismissNotice} onUndoDecision={undo} />
       {openRuns.map((run) => (
         <AgentRunBanner key={run.id} run={run} />
       ))}
@@ -57,21 +57,26 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
   const coauthorRef = useRef(coauthor);
   coauthorRef.current = coauthor;
   const { ask, dialog } = useRejectNote();
-  // The co-author's own run, while it is idle: the note becomes its next turn, scoped to what this
-  // decision rejected. Mid-turn the button says what it does, Request changes, and the server hands
-  // the note to the next turn the user starts.
-  const revises = run.source === "panel" && coauthor !== null && !coauthor.streaming;
+  // Whoever proposed revises: an agent's note waits for that agent, and the co-author's own run
+  // becomes a turn scoped to what this decision rejected, at once or when the turn in flight ends.
+  // With AI chat off the co-author can't take one, so its note waits for its next turn instead.
+  const revises = run.source === "panel" && coauthor?.available === true;
   const requestChanges = (hunkIds: string[] | undefined, anchor: NoteAnchor) =>
     ask({
       title: "Request changes",
-      submitLabel: revises ? "Revise now" : "Request changes",
+      submitLabel: revises ? "Reject and revise" : "Reject with note",
+      ...(revises
+        ? { hint: coauthor.streaming ? "Revises when the current turn ends." : null }
+        : run.source === "panel"
+          ? { hint: "The co-author gets your note on its next turn." }
+          : {}),
       anchor,
       quote: quoteOf(run, hunkIds),
       onSubmit: (note) =>
         void decide(run.id, "reject", hunkIds, note).then((decided) => {
           const live = coauthorRef.current;
           const feedbackId = decided && run.source === "panel" ? rejectedFeedbackId(decided, hunkIds) : null;
-          if (feedbackId && live && !live.streaming) live.revise(note, { runId: run.id, feedbackId });
+          if (feedbackId && live?.available) live.revise(note, { runId: run.id, feedbackId });
         }),
     });
   // A ghost's Request changes arrives as the same document event as its Accept/Reject, for this run.
@@ -101,7 +106,11 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
   // The overlay reports every open run's hunks; keep this run's, in document order.
   const mine = new Set(pending.map((h) => itemKey(run.id, h.id)));
   const anchored = preview.anchored.filter((k) => mine.has(k));
-  const unanchoredCount = preview.unanchored.filter((k) => mine.has(k)).length;
+  const unanchored = preview.unanchored.filter((k) => mine.has(k));
+  const unanchoredCount = unanchored.length;
+  // One shared reason fits in the banner; several are told row by row in "Review each".
+  const reasons = new Set(unanchored.map((k) => preview.why[k]));
+  const sharedReason = reasons.size === 1 ? [...reasons][0] : undefined;
 
   const parked = cursor === null ? -1 : anchored.indexOf(cursor.key);
   // A vanished key's slot now holds a change never shown, so the next ▸ lands on it.
@@ -133,7 +142,7 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
         title={n > 0 ? `${run.agent} proposes ${n} edit${n === 1 ? "" : "s"}` : `${run.agent} proposes edits`}
         hint={
           unanchoredCount > 0
-            ? `${unanchoredCount} can’t be shown in the document — see “Review each”`
+            ? `${unanchoredCount} can’t be shown in the document${sharedReason ? ` (${UNSHOWN_REASON[sharedReason]})` : ""} — see “Review each”`
             : "nothing changes until you accept"
         }
         busy={busy}

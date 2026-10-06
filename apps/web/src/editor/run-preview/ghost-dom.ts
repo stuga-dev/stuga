@@ -6,6 +6,7 @@ import {
   RUN_HUNK_EVENT,
   type HunkKey,
   type HunkTotals,
+  type PartRole,
   type PreviewHunkPart,
   type RunHunkDecisionDetail,
 } from "./plan";
@@ -18,16 +19,24 @@ function visibleBlocks(nodes: PMNode[]): PMNode[] {
 /**
  * Accept, Reject and Request changes for one hunk. Clicks go out as RUN_HUNK_EVENT; mousedown is
  * swallowed so ProseMirror doesn't move the selection into the widget. `pending`
- * disables the buttons, which stops a double-click from posting twice.
+ * disables the buttons, which stops a double-click from posting twice. A hunk painted in
+ * `parts` places says the buttons decide all of them.
  */
-function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pending: boolean): HTMLElement {
+function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pending: boolean, parts: number): HTMLElement {
   const bar = document.createElement("div");
   bar.className = "ai-preview-hunk-actions";
   bar.setAttribute("contenteditable", "false");
+  let scope: HTMLElement | null = null;
+  if (parts > 1) {
+    scope = document.createElement("span");
+    scope.className = "ai-preview-hunk-scope";
+    scope.id = `ai-preview-scope-${part.key}`;
+    scope.textContent = parts === 2 ? "Applies to both parts" : `Applies to all ${parts} parts`;
+  }
   const LABELS = {
     accept: { text: "Accept", title: "Apply this change", verb: "Accept" },
     reject: { text: "Reject", title: "Discard this change", verb: "Reject" },
-    request_changes: { text: "Request changes", title: "Discard this change and tell the AI what to change", verb: "Request changes to" },
+    request_changes: { text: "Request changes", title: "Reject this change with a note for the AI", verb: "Request changes to" },
   } as const;
   for (const decision of ["accept", "reject", "request_changes"] as const) {
     const btn = document.createElement("button");
@@ -36,6 +45,7 @@ function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pend
     btn.textContent = LABELS[decision].text;
     btn.title = LABELS[decision].title;
     btn.setAttribute("aria-label", `${LABELS[decision].verb} change ${ordinal} of ${total}: ${part.summary}`);
+    if (scope) btn.setAttribute("aria-describedby", scope.id);
     if (pending) {
       btn.disabled = true;
       btn.setAttribute("aria-disabled", "true");
@@ -58,7 +68,36 @@ function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pend
     });
     bar.appendChild(btn);
   }
+  if (scope) bar.appendChild(scope);
   return bar;
+}
+
+/**
+ * Ends a part of a hunk painted in several places, apart from its last: the buttons are at the
+ * last part, and Go to decision takes the reviewer (and keyboard focus) there.
+ */
+function partNote(part: PreviewHunkPart, role: PartRole): HTMLElement {
+  const note = document.createElement("div");
+  note.className = "ai-preview-hunk-part";
+  note.setAttribute("contenteditable", "false");
+  note.appendChild(document.createTextNode(`Part ${role.index} of ${role.parts} · `));
+  const go = document.createElement("button");
+  go.type = "button";
+  go.className = "ai-preview-hunk-goto";
+  go.textContent = "Go to decision";
+  go.addEventListener("mousedown", (e) => e.preventDefault());
+  go.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const root = go.closest(".ProseMirror") ?? document;
+    const own = Array.from(root.querySelectorAll<HTMLElement>(".ai-preview-hunk")).filter((el) => el.dataset.hunkKey === part.key);
+    const accept = own[own.length - 1]?.querySelector<HTMLButtonElement>(".ai-preview-hunk-btn--accept");
+    if (!accept) return;
+    accept.scrollIntoView({ block: "center", behavior: "smooth" });
+    accept.focus({ preventScroll: true });
+  });
+  note.appendChild(go);
+  return note;
 }
 
 type Box = { top: number; bottom: number; left: number; right: number };
@@ -173,12 +212,22 @@ function appendWordDiff(target: HTMLElement, words: WordOp[]): void {
 }
 
 /** One hunk's slice of a ghost; `data-hunk-key` is how `scrollToHunk` finds it. */
-function hunkPartDom(part: PreviewHunkPart, ordinal: number, total: number, pending: boolean, labeled: boolean, colWidths: number[] | null): HTMLElement {
+function hunkPartDom(
+  part: PreviewHunkPart,
+  ordinal: number,
+  total: number,
+  pending: boolean,
+  labeled: boolean,
+  colWidths: number[] | null,
+  role: PartRole,
+  body: boolean,
+): HTMLElement {
   const el = document.createElement("div");
   el.className = "ai-preview-hunk";
   el.dataset.hunkKey = part.key;
   el.setAttribute("role", "group");
-  el.setAttribute("aria-label", `Change ${ordinal} of ${total}: ${part.summary}`);
+  const which = role.parts > 1 ? `, part ${role.index} of ${role.parts}` : "";
+  el.setAttribute("aria-label", `Change ${ordinal} of ${total}${which}: ${part.summary}`);
   if (pending) {
     el.classList.add("ai-preview-hunk--pending");
     el.setAttribute("aria-busy", "true");
@@ -196,10 +245,22 @@ function hunkPartDom(part: PreviewHunkPart, ordinal: number, total: number, pend
     label.textContent = part.summary;
     el.appendChild(label);
   }
-  if (part.words) appendWordDiff(el, part.words);
-  else appendBlocks(el, part.replacement, colWidths);
-  el.appendChild(hunkActions(part, ordinal, total, pending));
+  // Without a body the change is drawn on the live text, and only the buttons go here.
+  if (body && part.words) appendWordDiff(el, part.words);
+  else if (body) appendBlocks(el, part.replacement, colWidths);
+  if (role.kind === "final") el.appendChild(hunkActions(part, ordinal, total, pending, role.parts));
+  else if (role.kind === "part") el.appendChild(partNote(part, role));
   return el;
+}
+
+const SOLE: PartRole = { kind: "final", index: 1, parts: 1 };
+
+/**
+ * Whether a segment's ghost would show nothing: every hunk in it continues into the next segment
+ * (so carries no buttons), and its change is drawn on the live text or inserts nothing.
+ */
+export function ghostIsEmpty(parts: PreviewHunkPart[], inline: boolean, roles: ReadonlyMap<HunkKey, PartRole>): boolean {
+  return parts.every((p) => roles.get(p.key)?.kind === "joined") && (inline || isRemovalOnly(parts));
 }
 
 /** A ghost that inserts nothing visible, which must not wear the green "inserted" fill. */
@@ -210,12 +271,26 @@ function isRemovalOnly(parts: PreviewHunkPart[]): boolean {
 /**
  * Ghost DOM for the hunks sharing a region. The word and removal forms drop the
  * whole-block green fill: their del/ins spans or the struck text carry the change.
+ * `roles` places each hunk's segment among its parts (only the last carries buttons); `inline`
+ * means the change is drawn on the live text and the ghost carries only buttons.
  */
-export function runGhost(parts: PreviewHunkPart[], ordinals: Map<HunkKey, number>, total: HunkTotals, pendingKeys: ReadonlySet<HunkKey>, view?: EditorView, pos?: number, tableCols?: number | null): HTMLElement {
+export function runGhost(
+  parts: PreviewHunkPart[],
+  ordinals: Map<HunkKey, number>,
+  total: HunkTotals,
+  pendingKeys: ReadonlySet<HunkKey>,
+  view?: EditorView,
+  pos?: number,
+  tableCols?: number | null,
+  roles: ReadonlyMap<HunkKey, PartRole> = new Map(),
+  inline = false,
+): HTMLElement {
   const colWidths = pos === undefined ? null : liveColumnWidths(view, pos);
   const wordForm = parts.length === 1 && !!parts[0]!.words;
   const wrap = document.createElement("div");
-  wrap.className = wordForm
+  wrap.className = inline
+    ? "ai-preview-ghost ai-preview-ghost--inline"
+    : wordForm
     ? "ai-preview-ghost ai-preview-ghost--words"
     : isRemovalOnly(parts)
       ? "ai-preview-ghost ai-preview-ghost--removal"
@@ -224,7 +299,16 @@ export function runGhost(parts: PreviewHunkPart[], ordinals: Map<HunkKey, number
   wrap.setAttribute("contenteditable", "false");
   for (const part of parts) {
     wrap.appendChild(
-      hunkPartDom(part, ordinals.get(part.key) ?? 0, (total.get(part.key) ?? 0), pendingKeys.has(part.key), parts.length > 1, colWidths),
+      hunkPartDom(
+        part,
+        ordinals.get(part.key) ?? 0,
+        total.get(part.key) ?? 0,
+        pendingKeys.has(part.key),
+        parts.length > 1,
+        colWidths,
+        roles.get(part.key) ?? SOLE,
+        !inline,
+      ),
     );
   }
   return tableCols ? rowGhostShell(wrap, tableCols) : wrap;

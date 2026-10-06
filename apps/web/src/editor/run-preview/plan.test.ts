@@ -21,6 +21,7 @@ import {
   ghostWidgetKey,
   hunkSummary,
   mergeOverlapping,
+  partRoles,
   planRunPaint,
   rangesOverlap,
   tableRowContext,
@@ -82,15 +83,32 @@ describe("buildRunSegments", () => {
 
   it("reports a non-unique hunk as unpaintable instead of ghosting the wrong paragraph", () => {
     const md = "Repeat me.\n\nSomething else.\n\nRepeat me.\n";
-    const { segments, unpaintable } = build(md, [hunk("h1", "Repeat me.", "Changed.")]);
+    const { segments, unpaintable, reasons } = build(md, [hunk("h1", "Repeat me.", "Changed.")]);
     expect(segments).toEqual([]);
     expect(unpaintable).toEqual(["run_a:h1"]);
+    expect(reasons.get("run_a:h1")).toBe("ambiguous");
   });
 
   it("reports a hunk whose old_string is gone as unpaintable", () => {
-    const { segments, unpaintable } = build(DOC, [hunk("h1", "about hamsters", "about gerbils")]);
+    const { segments, unpaintable, reasons } = build(DOC, [hunk("h1", "about hamsters", "about gerbils")]);
     expect(segments).toEqual([]);
     expect(unpaintable).toEqual(["run_a:h1"]);
+    expect(reasons.get("run_a:h1")).toBe("missing");
+  });
+
+  it("says a hunk that changes nothing the page renders is invisible", () => {
+    const md = "- one\n- two\n";
+    const { segments, reasons } = build(md, [hunk("h1", "- one\n- two", "* one\n* two")]);
+    expect(segments).toEqual([]);
+    expect(reasons.get("run_a:h1")).toBe("invisible");
+  });
+
+  it("gives a reason for every unpaintable hunk and none for a painted one", () => {
+    const { unpaintable, reasons } = build(DOC, [
+      hunk("h1", "about cats", "about kittens"),
+      hunk("h2", "about hamsters", "about gerbils"),
+    ]);
+    expect([...reasons.keys()]).toEqual(unpaintable);
   });
 
   it("chooses the WORD-level form for a single-block reword", () => {
@@ -541,21 +559,22 @@ describe("classifyRunHunks", () => {
   it("counts a hunk as anchored when only SOME of its segments were dropped", () => {
     const report = classifyRunHunks(
       [{ from: 10, build: 0, keys: ["run_a:h1"] }],
-      [{ at: 50, build: 1, keys: ["run_a:h1"] }],
+      [{ at: 50, build: 1, keys: ["run_a:h1"], reason: "moved" }],
     );
-    expect(report).toEqual({ anchored: ["run_a:h1"], unanchored: [] });
+    expect(report).toEqual({ anchored: ["run_a:h1"], unanchored: [], why: {} });
   });
 
   it("sorts unanchored hunks by known position, with positionless ones last", () => {
     const report = classifyRunHunks(
       [],
       [
-        { at: null, build: 0, keys: ["run_a:h9"] },
-        { at: 80, build: 1, keys: ["run_a:h2"] },
-        { at: 5, build: 2, keys: ["run_a:h1"] },
+        { at: null, build: 0, keys: ["run_a:h9"], reason: "missing" },
+        { at: 80, build: 1, keys: ["run_a:h2"], reason: "moved" },
+        { at: 5, build: 2, keys: ["run_a:h1"], reason: "moved" },
       ],
     );
     expect(report.unanchored).toEqual(["run_a:h1", "run_a:h2", "run_a:h9"]);
+    expect(report.why).toEqual({ "run_a:h1": "moved", "run_a:h2": "moved", "run_a:h9": "missing" });
   });
 });
 
@@ -577,6 +596,7 @@ describe("planRunPaint", () => {
     const data: RunPreviewData = {
       segments: segs.map((s) => s.segment),
       unpaintable,
+      reasons: new Map(unpaintable.map((k) => [k, "missing"] as const)),
     };
     const resolve = (rel: RelRange) => segs.find((s) => s.rel === rel)?.at ?? null;
     return planRunPaint(data, resolve);
@@ -587,13 +607,13 @@ describe("planRunPaint", () => {
       seg(["h2"], { from: 60, to: 80 }),
       seg(["h1"], { from: 4, to: 20 }),
     ]);
-    expect(report).toEqual({ anchored: ["run_a:h1", "run_a:h2"], unanchored: [] });
+    expect(report).toEqual({ anchored: ["run_a:h1", "run_a:h2"], unanchored: [], why: {} });
     expect(placed).toHaveLength(2);
   });
 
   it("reports an ORPHANED anchor as unanchored rather than dropping the hunk", () => {
     const { placed, report } = plan([seg(["h1"], { from: 4, to: 20 }), seg(["h2"], null)]);
-    expect(report).toEqual({ anchored: ["run_a:h1"], unanchored: ["run_a:h2"] });
+    expect(report).toEqual({ anchored: ["run_a:h1"], unanchored: ["run_a:h2"], why: { "run_a:h2": "moved" } });
     expect(placed.map((p) => p.keys)).toEqual([["run_a:h1"]]);
   });
 
@@ -602,7 +622,7 @@ describe("planRunPaint", () => {
       [seg(["h1"], { from: 4, to: 20 }), seg(["h2"], { from: 60, to: 80 })],
       ["run_a:h5"],
     );
-    expect(report).toEqual({ anchored: ["run_a:h1", "run_a:h2"], unanchored: ["run_a:h5"] });
+    expect(report).toEqual({ anchored: ["run_a:h1", "run_a:h2"], unanchored: ["run_a:h5"], why: { "run_a:h5": "missing" } });
   });
 
   it("keeps a merged segment's hunks adjacent in the anchored order", () => {
@@ -825,5 +845,34 @@ describe("the Request changes composer's anchor", () => {
     const above = { top: 390, bottom: 418, left: 485, right: 700 };
     const farBelow = { top: 700, bottom: 728, left: 485, right: 700 };
     expect(anchorClearOf(own, [above, farBelow])).toEqual(own);
+  });
+});
+
+describe("partRoles", () => {
+  const seg = (build: number, from: number, to: number, keys = ["run_a:h1"]) => ({ build, from, to, keys });
+
+  it("gives a one-segment hunk its buttons", () => {
+    expect(partRoles([seg(0, 4, 20)]).get(0)!.get("run_a:h1")).toEqual({ kind: "final", index: 1, parts: 1 });
+  });
+
+  it("joins touching segments into one part and keeps the buttons for the last", () => {
+    const roles = partRoles([seg(1, 20, 40), seg(0, 4, 20)]);
+    expect(roles.get(0)!.get("run_a:h1")).toEqual({ kind: "joined", index: 1, parts: 1 });
+    expect(roles.get(1)!.get("run_a:h1")).toEqual({ kind: "final", index: 1, parts: 1 });
+  });
+
+  it("numbers separated parts, touching runs counting once", () => {
+    const roles = partRoles([seg(0, 4, 20), seg(1, 20, 30), seg(2, 50, 60)]);
+    expect([0, 1, 2].map((b) => roles.get(b)!.get("run_a:h1"))).toEqual([
+      { kind: "joined", index: 1, parts: 2 },
+      { kind: "part", index: 1, parts: 2 },
+      { kind: "final", index: 2, parts: 2 },
+    ]);
+  });
+
+  it("places each hunk of a merged segment on its own", () => {
+    const roles = partRoles([seg(0, 4, 20, ["run_a:h1", "run_a:h2"]), seg(1, 50, 60, ["run_a:h1"])]);
+    expect(roles.get(0)!.get("run_a:h2")).toEqual({ kind: "final", index: 1, parts: 1 });
+    expect(roles.get(0)!.get("run_a:h1")).toEqual({ kind: "part", index: 1, parts: 2 });
   });
 });

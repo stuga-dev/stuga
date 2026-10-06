@@ -462,7 +462,7 @@ A **run** is one agent's editing session on one document or database. For each r
 - **The changes**: each proposed hunk (or database operation), shown against the document and
   reviewable one by one.
 - **The outcome**: per hunk accepted, rejected or pending; per run waiting for review, applied at
-  once, or reverted.
+  once, or reverted. Undo after a decision puts its hunks back to pending.
 
 While a run has pending hunks, their content appears only in the reviewer's overlay. Collaborators
 never see pending agent text, and their own edits continue as usual. Accepted hunks merge block by
@@ -490,8 +490,10 @@ looks:
   read the document.
 
 The in-app co-author hears its rejections at the start of its next turn. Requesting changes to one of
-its runs offers **Revise now**: a turn that may change existing text only inside the passages that
-rejection covered, followed through its own edits. It may add text anywhere, so it can move what was
+its runs offers **Reject and revise**: a turn that may change existing text only inside the passages that
+rejection covered, followed through its own edits. While a turn is running, the revision waits for it
+to end, and every request made meanwhile is answered in one turn; after **Stop** they wait for
+**Revise now**. It may add text anywhere, so it can move what was
 rejected. A change it tries to other existing text, or to another document, is refused, and it says
 so instead of making it. When the document has changed so that the rejected passages can no longer
 be found, every change to existing text is refused and it asks you to request changes again.

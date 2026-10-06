@@ -5,6 +5,7 @@
  * get a change accepted on the strength of a preview that misrepresents it.
  */
 import type { Node as PMNode, Schema } from "@tiptap/pm/model";
+import { findFuzzyMatch } from "@stuga/protocol/text/fuzzy-match";
 import {
   previewBlockSegments,
   resolveSegment,
@@ -71,18 +72,33 @@ export interface PreviewSegment {
   hunks: PreviewHunkPart[];
 }
 
+/**
+ * Why a pending hunk has no ghost, so the change list can say so:
+ * - `missing`: its `old_string` is not in the document.
+ * - `ambiguous`: its `old_string` is in more than one place.
+ * - `chained`: it quotes text only an earlier hunk of its run writes.
+ * - `invisible`: it changes the Markdown but nothing the page renders.
+ * - `unmatched`: the preview would mark more than the hunk says it changes.
+ * - `moved`: its anchor stopped resolving, because the text was just edited.
+ */
+export type UnpaintableReason = "missing" | "ambiguous" | "chained" | "invisible" | "unmatched" | "moved";
+
 /** The resolved preview held in extension storage and rendered as decorations. */
 export interface RunPreviewData {
   /** Disjoint segments; unchanged blocks between them stay unmarked. */
   segments: PreviewSegment[];
-  /** Pending hunks with no segment (their text no longer matches uniquely); still decidable from the list. */
+  /** Pending hunks with no segment; still decidable from the list. */
   unpaintable: HunkKey[];
+  /** Why each `unpaintable` hunk has no segment. */
+  reasons: ReadonlyMap<HunkKey, UnpaintableReason>;
 }
 
 /** What the last paint could and could not show, in document order. */
 export interface RunReport {
   anchored: HunkKey[];
   unanchored: HunkKey[];
+  /** Why each `unanchored` hunk is not shown. */
+  why: Readonly<Record<HunkKey, UnpaintableReason>>;
 }
 
 /**
@@ -114,7 +130,7 @@ export function rangesOverlap(a: { from: number; to: number }, b: { from: number
  */
 export function classifyRunHunks(
   placed: { from: number; build: number; keys: HunkKey[] }[],
-  dropped: { at: number | null; build: number; keys: HunkKey[] }[],
+  dropped: { at: number | null; build: number; keys: HunkKey[]; reason: UnpaintableReason }[],
 ): RunReport {
   const anchored: HunkKey[] = [];
   const seen = new Set<HunkKey>();
@@ -126,15 +142,17 @@ export function classifyRunHunks(
     }
   }
   const unanchored: HunkKey[] = [];
+  const why: Record<HunkKey, UnpaintableReason> = {};
   const sortAt = (v: number | null) => (v == null ? Number.POSITIVE_INFINITY : v);
   for (const seg of [...dropped].sort((a, b) => sortAt(a.at) - sortAt(b.at) || a.build - b.build)) {
     for (const key of seg.keys) {
       if (seen.has(key)) continue;
       seen.add(key);
       unanchored.push(key);
+      why[key] = seg.reason;
     }
   }
-  return { anchored, unanchored };
+  return { anchored, unanchored, why };
 }
 
 /**
@@ -152,12 +170,15 @@ export function ghostVariant(
   ordinals: Map<HunkKey, number>,
   total: HunkTotals,
   pendingKeys: ReadonlySet<HunkKey>,
+  roles: ReadonlyMap<HunkKey, PartRole> = new Map(),
 ): string {
   return parts
     .map((p) => {
       const shape = p.words ? `w${p.words.length}` : `b${p.replacement.length}`;
       const busy = pendingKeys.has(p.key) ? "!" : "";
-      return `${ordinals.get(p.key) ?? 0}of${(total.get(p.key) ?? 0)}${busy}${shape}${hash32(p.summary + (p.agent ?? ""))}`;
+      const role = roles.get(p.key);
+      const part = role ? `${role.kind}${role.index}/${role.parts}` : "";
+      return `${ordinals.get(p.key) ?? 0}of${(total.get(p.key) ?? 0)}${busy}${part}${shape}${hash32(p.summary + (p.agent ?? ""))}`;
     })
     .join(",");
 }
@@ -177,21 +198,63 @@ export function planRunPaint(
   resolve: (rel: RelRange) => { from: number; to: number } | null,
 ): { placed: PlacedRunSegment[]; report: RunReport } {
   const placed: PlacedRunSegment[] = [];
-  const dropped: { at: number | null; build: number; keys: HunkKey[] }[] = [];
+  const dropped: { at: number | null; build: number; keys: HunkKey[]; reason: UnpaintableReason }[] = [];
 
   data.segments.forEach((seg, build) => {
     const parts = seg.hunks;
     const keys = parts.map((p) => p.key);
     const range = resolve(seg.rel);
     if (!range) {
-      dropped.push({ at: null, build, keys });
+      dropped.push({ at: null, build, keys, reason: "moved" });
       return;
     }
     placed.push({ from: range.from, to: range.to, build, keys, parts });
   });
-  for (const key of data.unpaintable) dropped.push({ at: null, build: Number.MAX_SAFE_INTEGER, keys: [key] });
+  for (const key of data.unpaintable) {
+    dropped.push({ at: null, build: Number.MAX_SAFE_INTEGER, keys: [key], reason: data.reasons.get(key) ?? "moved" });
+  }
 
   return { placed, report: classifyRunHunks(placed, dropped) };
+}
+
+/**
+ * Where one segment sits in its hunk. A hunk painted in several places reads as `parts`: runs of
+ * segments that touch (`joined` until the run's last one) count as one part. Only the `final`
+ * segment carries the buttons, so the whole change is in view before it is decided.
+ */
+export interface PartRole {
+  kind: "final" | "joined" | "part";
+  /** 1-based, among the hunk's parts. */
+  index: number;
+  parts: number;
+}
+
+/** Every placed segment's role for each hunk it paints, keyed by build index. */
+export function partRoles(placed: { from: number; to: number; build: number; keys: HunkKey[] }[]): Map<number, Map<HunkKey, PartRole>> {
+  const byKey = new Map<HunkKey, { from: number; to: number; build: number }[]>();
+  for (const seg of placed) {
+    for (const key of seg.keys) {
+      const list = byKey.get(key) ?? [];
+      list.push(seg);
+      byKey.set(key, list);
+    }
+  }
+  const roles = new Map<number, Map<HunkKey, PartRole>>();
+  for (const [key, list] of byKey) {
+    const segs = [...list].sort((a, b) => a.from - b.from || a.build - b.build);
+    // A segment starting where the one before it ends continues that part.
+    const partOf: number[] = [];
+    segs.forEach((seg, i) => partOf.push(i === 0 ? 1 : partOf[i - 1]! + (seg.from === segs[i - 1]!.to ? 0 : 1)));
+    const parts = partOf[partOf.length - 1]!;
+    segs.forEach((seg, i) => {
+      const next = segs[i + 1];
+      const kind = !next ? "final" : next.from === seg.to ? "joined" : "part";
+      const forSeg = roles.get(seg.build) ?? new Map<HunkKey, PartRole>();
+      forSeg.set(key, { kind, index: partOf[i]!, parts });
+      roles.set(seg.build, forSeg);
+    });
+  }
+  return roles;
 }
 
 /**
@@ -321,9 +384,16 @@ function changedRange(text: string, next: string): { from: number; to: number; i
 /** Where a range of the replayed text sits in the baseline — null if rewritten. */
 function toBaselineRange(ctx: RunContext, from: number, to: number): { from: number; to: number } | null {
   let at = 0;
-  for (const chunk of ctx.chunks) {
+  for (const [i, chunk] of ctx.chunks.entries()) {
     const end = at + chunk.text.length;
-    if (chunk.src >= 0 && from >= at && to <= end) return { from: chunk.src + (from - at), to: chunk.src + (to - at) };
+    if (chunk.src >= 0 && from >= at && to <= end) {
+      // An insertion against an earlier hunk's text belongs to that text, not to the baseline beside it.
+      const touchesInserted =
+        from === to &&
+        ((from === end && ctx.chunks[i + 1]?.src === -1) || (from === at && ctx.chunks[i - 1]?.src === -1));
+      if (touchesInserted) return null;
+      return { from: chunk.src + (from - at), to: chunk.src + (to - at) };
+    }
     at = end;
   }
   // An append lands past the last chunk and maps only while the tail is still verbatim.
@@ -359,21 +429,28 @@ function spliceRunContext(ctx: RunContext, from: number, to: number, insert: str
 }
 
 /**
- * The baseline rewritten by this hunk alone, or null if it cannot be placed.
+ * The baseline rewritten by this hunk alone, or why it cannot be placed.
  * Advances `ctx` whenever the hunk applies in sequence, even when unpaintable,
  * because later hunks are placed relative to it.
  */
-function localizeHunk(ctx: RunContext, baseline: string, h: { old_string: string; new_string: string }): string | null {
+function localizeHunk(
+  ctx: RunContext,
+  baseline: string,
+  h: { old_string: string; new_string: string },
+): { md: string } | { reason: UnpaintableReason } {
   const seq = applyStrEditsStrict(ctx.text, [{ old_string: h.old_string, new_string: h.new_string }]);
-  if (seq.conflicts.length === 0 && seq.markdown !== ctx.text) {
+  const inSequence = seq.conflicts.length === 0 && seq.markdown !== ctx.text;
+  if (inSequence) {
     const { from, to, insert } = changedRange(ctx.text, seq.markdown);
     const at = toBaselineRange(ctx, from, to);
     spliceRunContext(ctx, from, to, insert);
-    if (at) return baseline.slice(0, at.from) + insert + baseline.slice(at.to);
+    if (at) return { md: baseline.slice(0, at.from) + insert + baseline.slice(at.to) };
   }
   // The replay couldn't place it; it may still match on its own against the untouched document.
   const alone = applyStrEditsStrict(baseline, [{ old_string: h.old_string, new_string: h.new_string }]);
-  return alone.conflicts.length === 0 && alone.markdown !== baseline ? alone.markdown : null;
+  if (alone.conflicts.length === 0) return alone.markdown !== baseline ? { md: alone.markdown } : { reason: "invisible" };
+  if (inSequence) return { reason: "chained" };
+  return { reason: findFuzzyMatch(baseline, h.old_string) ? "ambiguous" : "missing" };
 }
 
 /**
@@ -501,7 +578,9 @@ export function segmentMatchesHunk(
 /**
  * Cap on one hunk's whole paint: individually plausible segments can still add
  * up to half the page. A hunk over the cap goes unanchored entirely, since a
- * partial paint understates what Accept writes.
+ * partial paint understates what Accept writes. The segment count scales with
+ * the hunk like the spans do: a rewrite of a whole page legitimately touches
+ * one region per paragraph.
  */
 const MAX_SEGMENTS_PER_HUNK = 4;
 
@@ -511,10 +590,12 @@ export function exceedsHunkPaintCap(
   insertedSpan: number,
   hunk: { old_string: string; new_string: string },
 ): boolean {
+  const oldLines = mdLineCount(hunk.old_string);
+  const newLines = mdLineCount(hunk.new_string);
   return (
-    count > MAX_SEGMENTS_PER_HUNK ||
-    removedSpan > mdLineCount(hunk.old_string) + BLOCK_SLACK ||
-    insertedSpan > mdLineCount(hunk.new_string) + BLOCK_SLACK
+    count > Math.max(MAX_SEGMENTS_PER_HUNK, oldLines, newLines) ||
+    removedSpan > oldLines + BLOCK_SLACK ||
+    insertedSpan > newLines + BLOCK_SLACK
   );
 }
 
@@ -529,10 +610,15 @@ export function buildRunSegments(
   currentMd: string,
   hunks: RunPreviewHunk[],
   schema: Schema,
-): { segments: RunSegmentDraft[]; unpaintable: HunkKey[] } {
+): { segments: RunSegmentDraft[]; unpaintable: HunkKey[]; reasons: Map<HunkKey, UnpaintableReason> } {
   const showAgent = new Set(hunks.map((h) => h.runId)).size > 1;
   const drafts: RunSegmentDraft[] = [];
   const unpaintable: HunkKey[] = [];
+  const reasons = new Map<HunkKey, UnpaintableReason>();
+  const skip = (key: HunkKey, reason: UnpaintableReason): void => {
+    unpaintable.push(key);
+    reasons.set(key, reason);
+  };
   const contexts = new Map<string, RunContext>();
   const currentDoc = markdownToDoc(currentMd, schema);
 
@@ -543,11 +629,12 @@ export function buildRunSegments(
       ctx = newRunContext(currentMd);
       contexts.set(h.runId, ctx);
     }
-    const proposedMd = localizeHunk(ctx, currentMd, h);
-    if (proposedMd === null) {
-      unpaintable.push(key);
+    const localized = localizeHunk(ctx, currentMd, h);
+    if ("reason" in localized) {
+      skip(key, localized.reason);
       continue;
     }
+    const proposedMd = localized.md;
     const base: Omit<PreviewHunkPart, "replacement" | "words"> = {
       runId: h.runId,
       hunkId: h.id,
@@ -558,11 +645,16 @@ export function buildRunSegments(
     const mine: RunSegmentDraft[] = [];
     let removedSpan = 0;
     let insertedSpan = 0;
+    // A segment the locality check refused makes the hunk "unmatched" rather than "invisible".
+    let refused = false;
     for (const seg of previewBlockSegments(doc, proposedMd, currentMd, schema, currentDoc)) {
       const at = resolveSegment(doc, seg);
       if (!at) continue;
       if (renderedShape(at.removed) === renderedShape(seg.replacement)) continue;
-      if (!segmentMatchesHunk(at.removed, seg.replacement, h, schema)) continue;
+      if (!segmentMatchesHunk(at.removed, seg.replacement, h, schema)) {
+        refused = true;
+        continue;
+      }
       const oldBlock = at.removed.length === 1 ? at.removed[0]! : null;
       const newBlock = seg.replacement.length === 1 ? seg.replacement[0]! : null;
       const words =
@@ -577,11 +669,15 @@ export function buildRunSegments(
         hunks: [{ ...base, replacement: seg.replacement, ...(words ? { words } : {}) }],
       });
     }
-    if (mine.length === 0 || exceedsHunkPaintCap(mine.length, removedSpan, insertedSpan, h)) {
-      unpaintable.push(key);
+    if (mine.length === 0) {
+      skip(key, refused ? "unmatched" : "invisible");
+      continue;
+    }
+    if (exceedsHunkPaintCap(mine.length, removedSpan, insertedSpan, h)) {
+      skip(key, "unmatched");
       continue;
     }
     drafts.push(...mine);
   }
-  return { segments: mergeOverlapping(drafts), unpaintable };
+  return { segments: mergeOverlapping(drafts), unpaintable, reasons };
 }

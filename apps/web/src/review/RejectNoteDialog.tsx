@@ -35,8 +35,13 @@ export const keepFocus = (e: ReactMouseEvent) => e.preventDefault();
 
 export interface RejectNoteRequest {
   title: string;
-  /** "Revise now" where the co-author takes the note as its next turn. */
+  /** "Reject and revise" where the co-author revises at once; "Reject with note" otherwise. */
   submitLabel?: string;
+  /**
+   * One line under the note saying what happens to it, where the submit label doesn't. Omitted, it
+   * fits an agent outside the app; null when the label says it all.
+   */
+  hint?: string | null;
   /** What is being turned down, quoted above the note. */
   quote?: string;
   /**
@@ -46,6 +51,9 @@ export interface RejectNoteRequest {
   anchor?: NoteAnchor;
   onSubmit: (note: string) => void;
 }
+
+/** Where an agent outside the app finds the note: with its next read or proposal here. */
+const AGENT_HINT = "The agent gets your note the next time it works here.";
 
 /** Composer width, as Edit with AI's composer has, and the room kept below its top. */
 const COMPOSER_WIDTH = 300;
@@ -121,6 +129,7 @@ function RequestChangesComposer({
       )}
       <TextArea
         label="What should change?"
+        description={request.hint === undefined ? AGENT_HINT : (request.hint ?? undefined)}
         hasAutoFocus
         value={note}
         rows={2}
@@ -137,7 +146,7 @@ function RequestChangesComposer({
       <HStack gap={2} justify="end">
         <Button label="Cancel" variant="ghost" size="sm" onMouseDown={keepFocus} onClick={() => onClose()} />
         <Button
-          label={request.submitLabel ?? "Request changes"}
+          label={request.submitLabel ?? "Reject with note"}
           variant="primary"
           size="sm"
           onMouseDown={keepFocus}
@@ -169,7 +178,7 @@ function RejectNoteDialog({ request, onClose }: { request: RejectNoteRequest; on
           <LayoutContent>
             <TextArea
               label="What should change?"
-              description="The AI revises from this."
+              description={request.hint === undefined ? AGENT_HINT : (request.hint ?? undefined)}
               value={note}
               onChange={setNote}
               rows={4}
@@ -182,7 +191,7 @@ function RejectNoteDialog({ request, onClose }: { request: RejectNoteRequest; on
           <LayoutFooter>
             <HStack gap={2} justify="end">
               <Button label="Cancel" variant="ghost" onClick={onClose} />
-              <Button label={request.submitLabel ?? "Request changes"} variant="primary" isDisabled={!text || tooLong} onClick={submit} />
+              <Button label={request.submitLabel ?? "Reject with note"} variant="primary" isDisabled={!text || tooLong} onClick={submit} />
             </HStack>
           </LayoutFooter>
         }

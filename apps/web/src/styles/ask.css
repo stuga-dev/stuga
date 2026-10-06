@@ -107,6 +107,9 @@
   display: flex; align-items: baseline; gap: 0.4rem; min-width: 0;
   border-left: 2px solid var(--color-accent); padding: 0.15rem 0 0.15rem 0.5rem;
 }
+/* Reject and revise waiting on the turn in flight, or paused after a Stop. */
+.ai-revision-queue { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.ai-revision-queue__text { flex: 1 1 auto; min-width: 0; font-size: 0.78rem; color: var(--color-text-secondary); }
 .ai-input-quote__label { flex: 0 0 auto; font-size: 0.68rem; font-weight: 600; color: var(--color-accent); text-transform: uppercase; letter-spacing: 0.03em; }
 .ai-input-quote__text { flex: 1 1 auto; min-width: 0; font-size: 0.78rem; color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

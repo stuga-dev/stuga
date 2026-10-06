@@ -332,6 +332,7 @@ with nothing to catch up on starts. Events are kept for 30 days.
 | `run.applied` | An agent's changes landed without review, on an `auto` document. |
 | `run.decided` | A person accepted or rejected some or all of a run. A rejection with a note carries its `feedback_id`; the note itself reaches only the agent that proposed, through its reads and `status`. |
 | `run.reverted` | A person reverted a run that had landed. |
+| `run.reopened` | A person undid a decision, so some of a run's changes wait for review again. |
 | `comment.added` | A comment was posted. |
 | `database.changed` | A database's rows or schema changed. |
 
@@ -374,6 +375,7 @@ These refuse an agent key.
 | `GET /api/agents/stats` | Per agent: runs, pending, accepted, rejected, applied, reverted runs, and `acceptance_rate`. |
 | `POST /api/docs/:id/runs/:run/decision` | `{ decision: "accept" \| "reject", hunk_ids?, note? }`. Every pending hunk when `hunk_ids` is absent. `note` (rejections only, up to 2,000 characters) is what the agent revises from; it is handed to the agent with its reads and next proposal there. The run's reviewer, the document's owner or a workspace admin decides. |
 | `POST /api/docs/:id/runs/:run/revert` | Undo a run that landed. An optional `{ note }` asks the agent for changes on what was taken back, as a rejection's does. |
+| `POST /api/docs/:id/runs/:run/undo` | `{ hunk_ids }`. Undo a decision: those hunks wait for review again, and an accepted one comes back out of the document. 409 when the document has moved on, the agent already revised a rejection, or the agent has a newer run. |
 | `POST /api/docs/:id/runs/:run/ack` | Dismiss a run's card, and withdraw any changes requested on it. |
 | `POST /api/databases/:id/runs/:run/decision`, `/revert`, `/ack` | The same for a database's runs, with `op_ids` in place of `hunk_ids`. |
 | `PATCH /api/docs/:id/state` | `{ locked?, search_hidden?, agent_mode?, agent_instructions? }`. The owner or a workspace admin. `agent_mode` is `review` or `auto`. `agent_instructions` is text of at most 20,000 characters, stored as given. Every field is checked before anything is written. Answers the document's summary, without the instructions. |

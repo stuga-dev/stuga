@@ -35,6 +35,12 @@ export const Runs = {
       method: "POST",
       ...(note ? { body: JSON.stringify({ note }) } : {}),
     }),
+  /** Put decided hunks back up for review. 409 when the document or the agent has moved on since. */
+  undo: (docId: string, runId: string, hunkIds: string[]) =>
+    api<{ run: AgentRunSummary; reopened: number }>(`/api/docs/${docId}/runs/${runId}/undo`, {
+      method: "POST",
+      body: JSON.stringify({ hunk_ids: hunkIds }),
+    }),
   /** Dismiss the catch-up card everywhere. */
   ack: (docId: string, runId: string) =>
     api<{ ok: boolean }>(`/api/docs/${docId}/runs/${runId}/ack`, { method: "POST" }),

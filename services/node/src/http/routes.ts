@@ -85,7 +85,7 @@ import {
 } from "../api/node/remote-access.js";
 import { listNotificationsRoute, markNotificationsReadRoute, unreadNotifications } from "../api/notifications.js";
 import { addOtherNode, listOtherNodes, removeOtherNode } from "../api/other-nodes.js";
-import { ackDocRun, decideDocRun, getDocRun, listDocRuns, proposeEdit, revertDocRun } from "../api/runs.js";
+import { ackDocRun, decideDocRun, getDocRun, listDocRuns, proposeEdit, revertDocRun, undoDocRun } from "../api/runs.js";
 import { retrieve, search } from "../api/search.js";
 import { createShareLink, listDocShareLinks, redeemShareLink, revokeDocShareLink } from "../api/share-links.js";
 import { getUsage } from "../api/usage.js";
@@ -421,6 +421,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("GET", re(`${DOC}/runs/([^/]+)`), getDocRun),
   api("POST", re(`${DOC}/runs/([^/]+)/decision`), decideDocRun),
   api("POST", re(`${DOC}/runs/([^/]+)/revert`), revertDocRun),
+  api("POST", re(`${DOC}/runs/([^/]+)/undo`), undoDocRun),
   api("POST", re(`${DOC}/runs/([^/]+)/ack`), ackDocRun),
   api("POST", re(`${DOC}/propose`), proposeEdit),
   api("GET", re(`${DOC}/markdown`), getMarkdown),

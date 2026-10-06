@@ -220,4 +220,32 @@ describe("a co-author turn hears what the user rejected", () => {
     expect(mockAgentTurn.mock.calls[3]![1]).not.toHaveProperty("revise", expect.anything());
     warn.mockRestore();
   });
+
+  it("answers several rejections in one revise turn, scoped to all of their passages", async () => {
+    const h = aiHarness("review");
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const ws = await connect(dobj, h, { docId: DOC, alias: "alice", workspaceId: WS_ID });
+
+    await askAi(dobj, ws);
+    const runId = lastEdits(ws).run_id!;
+    const decided = (await (
+      await dobj.fetch(
+        new Request(`http://actor/runs/decide?docId=${DOC}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ run_id: runId, decision: "reject", decided_by: "alice", note: "Shorter." }),
+        }),
+      )
+    ).json()) as { run: { hunks: Array<{ feedback: { id: string } }> } };
+    const feedbackId = decided.run.hunks[0]!.feedback.id;
+
+    // A malformed scope is dropped rather than failing the turn; a foreign run adds no passages.
+    await askAi(dobj, ws, {
+      revise: [{ run_id: runId, feedback_id: feedbackId }, { run_id: "run_other", feedback_id: "fb_x" }, { run_id: 7 } as never],
+    });
+    expect(mockAgentTurn.mock.calls[1]![1]).toMatchObject({
+      revise: { regions: [{ old_string: "Alpha.", new_string: "Alpha, rewritten." }] },
+    });
+  });
 });

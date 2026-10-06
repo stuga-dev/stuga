@@ -16,15 +16,23 @@ const T0 = 1_700_000_000_000;
 const overlay = vi.hoisted(() => ({
   anchored: [] as string[],
   unanchored: [] as string[],
+  why: {} as Record<string, string>,
   scrolled: [] as string[],
 }));
 
-const coauthor = vi.hoisted(() => ({ present: false, streaming: false, revised: [] as string[], scopes: [] as Array<{ runId: string; feedbackId: string }> }));
+const coauthor = vi.hoisted(() => ({
+  present: false,
+  available: true,
+  streaming: false,
+  revised: [] as string[],
+  scopes: [] as Array<{ runId: string; feedbackId: string }>,
+}));
 
 vi.mock("../ai/ai-coauthor-context", () => ({
   useOptionalAiCoauthor: () =>
     coauthor.present
       ? {
+          available: coauthor.available,
           streaming: coauthor.streaming,
           revise: (note: string, scope: { runId: string; feedbackId: string }) => {
             coauthor.revised.push(note);
@@ -39,6 +47,7 @@ vi.mock("../editor/run-preview/use-run-preview", () => ({
   useRunPreview: () => ({
     anchored: overlay.anchored,
     unanchored: overlay.unanchored,
+    why: overlay.why,
     scrollToHunk: (key: string) => {
       overlay.scrolled.push(key);
       return overlay.anchored.includes(key);
@@ -127,9 +136,11 @@ beforeEach(() => {
   coauthor.present = false;
   coauthor.streaming = false;
   coauthor.revised = [];
+  coauthor.available = true;
   coauthor.scopes = [];
   overlay.anchored = [];
   overlay.unanchored = [];
+  overlay.why = {};
   overlay.scrolled = [];
   responder = () => ({ runs: [] });
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -273,6 +284,31 @@ describe("AgentRunBar", () => {
     expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "accept", hunk_ids: ["h2"] });
   });
 
+  it("says why a change can't be shown, in the banner and on its row", async () => {
+    overlay.anchored = ["run_a:h1"];
+    overlay.unanchored = ["run_a:h2"];
+    overlay.why = { "run_a:h2": "missing" };
+    responder = () => ({ runs: [run({ hunks: [hunk("h1"), hunk("h2")] })] });
+    await mount();
+    expect(container.textContent).toContain("1 can’t be shown in the document (its text is no longer there)");
+
+    await click(byLabel("Review each change"));
+    expect(container.textContent).toContain("can’t be shown inline — its text is no longer there");
+    expect(byLabel("change 2 of 2 (can’t be shown inline — its text is no longer there)")).toBeTruthy();
+  });
+
+  it("leaves the reasons to the rows when the unshown changes differ", async () => {
+    overlay.unanchored = ["run_a:h1", "run_a:h2"];
+    overlay.why = { "run_a:h1": "missing", "run_a:h2": "chained" };
+    responder = () => ({ runs: [run({ hunks: [hunk("h1"), hunk("h2")] })] });
+    await mount();
+    expect(container.textContent).toContain("2 can’t be shown in the document — see “Review each”");
+
+    await click(byLabel("Review each change"));
+    expect(container.textContent).toContain("its text is no longer there");
+    expect(container.textContent).toContain("it edits text an earlier change adds; accept that one first");
+  });
+
   it("offers the list for a truncated run and fills it from the detail fetch", async () => {
     responder = (url) =>
       url.includes("full=1")
@@ -301,7 +337,7 @@ describe("AgentRunBar", () => {
       responder = (url, method) =>
         method === "POST" ? { run: run({ updated_at: T0 + 1, status: "rejected", hunks: [] }), applied: 0, conflicts: 0 } : { runs: [run()] };
       await mount();
-      await requestChanges("Request changes", "Request changes", "Keep it plain.");
+      await requestChanges("Request changes", "Reject with note", "Keep it plain.");
       const post = calls.find((c) => c.method === "POST")!;
       expect(post.url).toBe("/api/docs/d1/runs/run_a/decision");
       expect(post.body).toEqual({ decision: "reject", note: "Keep it plain." });
@@ -367,7 +403,7 @@ describe("AgentRunBar", () => {
           : { runs: [run()] };
       await mount();
       await click(byLabel("Review each change"));
-      await requestChanges("Request changes to change 1 of 3", "Request changes", "Not this one.");
+      await requestChanges("Request changes to change 1 of 3", "Reject with note", "Not this one.");
       expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "reject", hunk_ids: ["h1"], note: "Not this one." });
     });
 
@@ -384,7 +420,7 @@ describe("AgentRunBar", () => {
       });
       expect(calls.find((c) => c.method === "POST")).toBeUndefined();
       await typeInto(dialog()?.querySelector("textarea"), "Plainer.");
-      await click(dialogButton("Request changes")!);
+      await click(dialogButton("Reject with note")!);
       expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "reject", hunk_ids: ["h2"], note: "Plainer." });
     });
 
@@ -400,10 +436,45 @@ describe("AgentRunBar", () => {
             }
           : { runs: [run({ source: "panel", agent: "AI co-author" })] };
       await mount();
-      await requestChanges("Request changes", "Revise now", "Shorter, please.");
+      await click(byLabel("Request changes"));
+      // The submit label says what happens, so no line under the note repeats it.
+      expect(dialog()!.textContent).not.toContain("The agent gets your note");
+      await typeInto(dialog()?.querySelector("textarea"), "Shorter, please.");
+      await click(dialogButton("Reject and revise")!);
       expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "reject", note: "Shorter, please." });
       expect(coauthor.revised).toEqual(["Shorter, please."]);
       expect(coauthor.scopes).toEqual([{ runId: "run_a", feedbackId: "fb_1" }]);
+    });
+
+    it("leaves an outside agent's change to that agent, never the co-author", async () => {
+      coauthor.present = true;
+      const feedback = { id: "fb_1", note: "No.", decided_by: "u", decided_at: T0 + 1 };
+      responder = (url, method) =>
+        method === "POST"
+          ? { run: run({ updated_at: T0 + 1, status: "rejected", hunks: [hunk("h1", { status: "rejected", feedback })] }), applied: 0, conflicts: 0 }
+          : { runs: [run()] };
+      await mount();
+      await click(byLabel("Request changes"));
+      expect(dialog()!.textContent).toContain("The agent gets your note the next time it works here.");
+      await typeInto(dialog()?.querySelector("textarea"), "No.");
+      await click(dialogButton("Reject with note")!);
+      expect(coauthor.revised).toEqual([]);
+    });
+
+    it("keeps the co-author's note for its next turn while AI chat is off", async () => {
+      coauthor.present = true;
+      coauthor.available = false;
+      const feedback = { id: "fb_1", note: "No.", decided_by: "u", decided_at: T0 + 1 };
+      responder = (url, method) =>
+        method === "POST"
+          ? { run: run({ source: "panel", updated_at: T0 + 1, status: "rejected", hunks: [hunk("h1", { status: "rejected", feedback })] }), applied: 0, conflicts: 0 }
+          : { runs: [run({ source: "panel", agent: "AI co-author" })] };
+      await mount();
+      await click(byLabel("Request changes"));
+      expect(dialog()!.textContent).toContain("The co-author gets your note on its next turn.");
+      await typeInto(dialog()?.querySelector("textarea"), "No.");
+      await click(dialogButton("Reject with note")!);
+      expect(coauthor.revised).toEqual([]);
     });
 
     it("does not revise when the decision rejected nothing", async () => {
@@ -413,11 +484,11 @@ describe("AgentRunBar", () => {
           ? { run: run({ source: "panel", updated_at: T0 + 1, status: "rejected", hunks: [] }), applied: 0, conflicts: 0 }
           : { runs: [run({ source: "panel", agent: "AI co-author" })] };
       await mount();
-      await requestChanges("Request changes", "Revise now", "Shorter, please.");
+      await requestChanges("Request changes", "Reject and revise", "Shorter, please.");
       expect(coauthor.revised).toEqual([]);
     });
 
-    it("offers a plain Request changes while the co-author is mid-turn, and does not revise", async () => {
+    it("still offers Reject and revise while the co-author is mid-turn, handing the note on to wait for it", async () => {
       coauthor.present = true;
       coauthor.streaming = true;
       const feedback = { id: "fb_1", note: "Again.", decided_by: "u", decided_at: T0 + 1 };
@@ -426,9 +497,10 @@ describe("AgentRunBar", () => {
           ? { run: run({ source: "panel", updated_at: T0 + 1, status: "rejected", hunks: [hunk("h1", { status: "rejected", feedback })] }), applied: 0, conflicts: 0 }
           : { runs: [run({ source: "panel", agent: "AI co-author" })] };
       await mount();
-      await requestChanges("Request changes", "Request changes", "Again.");
+      await requestChanges("Request changes", "Reject and revise", "Again.");
       expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "reject", note: "Again." });
-      expect(coauthor.revised).toEqual([]);
+      // The co-author queues it behind the turn in flight.
+      expect(coauthor.revised).toEqual(["Again."]);
     });
   });
 });

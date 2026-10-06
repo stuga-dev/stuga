@@ -3,10 +3,11 @@
  * turn's edits go into the run ledger server-side and are reviewed where the
  * text is. The conversation is React state only.
  */
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { StugaProvider } from "../sync/stuga-provider";
-import type { AiAttachment, AiRequest } from "@stuga/protocol/wire/doc-socket";
+import type { AiAttachment, AiRequest, RevisionScope } from "@stuga/protocol/wire/doc-socket";
 import { useSharedEditor } from "../editor/editor-context";
+import { useAiChat } from "../state/model-options";
 import { Media } from "../api";
 import { citedSources } from "./citations";
 import type { ChatTurn } from "./ChatTranscript";
@@ -29,6 +30,20 @@ interface PendingAttachment {
   cancel: () => void;
 }
 
+/** A Reject and revise waiting for the turn in flight to end. */
+interface QueuedRevision {
+  note: string;
+  runId: string;
+  feedbackId: string;
+}
+
+/** The turn that answers queued rejections: one turn for all of them, each note under its own change server-side. */
+function revisionPrompt(list: QueuedRevision[]): string {
+  return list.length === 1
+    ? `Revise the edits I rejected, as my note says, and change nothing else: ${list[0]!.note}`
+    : `Revise the edits I rejected, as my notes say, and change nothing else:\n${list.map((r) => `- ${r.note}`).join("\n")}`;
+}
+
 /** A selection-scoped edit being composed: the quoted text and where to float the composer. */
 interface SelectionEdit {
   quote: string;
@@ -36,6 +51,8 @@ interface SelectionEdit {
 }
 
 interface AiCoauthorCtx {
+  /** The node's AI chat is on, so the co-author can take a turn. */
+  available: boolean;
   turns: ChatTurn[];
   streaming: boolean;
   /** A model id from GET /api/models, or "auto". */
@@ -49,11 +66,18 @@ interface AiCoauthorCtx {
   /** Ask the server to end the turn; `streaming` clears on its receipt, which still reports what was proposed. */
   stop: () => void;
   /**
-   * Revise after the user rejected the co-author's edits with `note`: the next turn asks for that
+   * Revise after the user rejected the co-author's edits with `note`: a turn asks for that
    * revision, and the server lets it change only the passages that rejection (`scope`) covered.
-   * False while a turn is running; the note then reaches the next turn the user starts.
+   * While a turn is running it waits, and every revision queued meanwhile goes in one turn when it ends.
    */
-  revise: (note: string, scope: { runId: string; feedbackId: string }) => boolean;
+  revise: (note: string, scope: { runId: string; feedbackId: string }) => void;
+  /** Revisions waiting for the turn in flight to end. */
+  queuedRevisions: number;
+  /** The turn they waited for was stopped or failed, so they wait for Revise now instead. */
+  revisionPaused: boolean;
+  reviseNow: () => void;
+  /** Drop the queued revisions; the rejections and their notes stand. */
+  cancelRevisions: () => void;
   attachments: PendingAttachment[];
   attachImages: (files: File[]) => void;
   /** Drop one staged image, aborting it if still uploading. */
@@ -84,6 +108,7 @@ export function AiCoauthorProvider({
   children: ReactNode;
 }) {
   const { editor } = useSharedEditor();
+  const available = useAiChat() === "on";
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [model, setModel] = useState("auto");
@@ -93,6 +118,24 @@ export function AiCoauthorProvider({
 
   // Captured on "Edit with AI", so focus moving into the composer can't change the target.
   const selEditTarget = useRef<string | null>(null);
+
+  const [queued, setQueued] = useState<QueuedRevision[]>([]);
+  const [revisionPaused, setRevisionPaused] = useState(false);
+  // Read when a turn's receipt arrives, outside any render, so they are kept in step by hand.
+  const queuedRef = useRef<QueuedRevision[]>([]);
+  const pausedRef = useRef(false);
+  /** From send until the turn's receipt: `streaming` clears at "done", before the receipt arrives. */
+  const turnOpen = useRef(false);
+  const stopped = useRef(false);
+  /** Whether the last turn to end was stopped or failed. */
+  const halted = useRef(false);
+  const [receipts, setReceipts] = useState(0);
+  const setQueue = (next: QueuedRevision[], paused = false) => {
+    queuedRef.current = next;
+    pausedRef.current = paused;
+    setQueued(next);
+    setRevisionPaused(paused);
+  };
 
   const removeAttachment = useCallback((id: string) => {
     setAttachments((xs) => {
@@ -155,8 +198,9 @@ export function AiCoauthorProvider({
     async (prompt: string, selectedText: string | null, extra?: Pick<AiRequest, "revise">) => {
       if (!provider || !editor) return;
       const history = turns.map((t) => ({ role: t.role, content: t.text }));
-      // Only uploaded attachments have a media path the model can reference.
-      const ready = attachments.filter((a) => a.path && !a.error);
+      // Only uploaded attachments have a media path the model can reference. A revision is the
+      // reviewer's note, not their next message, so images staged for that message stay staged.
+      const ready = extra?.revise ? [] : attachments.filter((a) => a.path && !a.error);
       const quote = selectedText?.trim() || undefined;
       setTurns((t) => [
         ...t,
@@ -169,8 +213,10 @@ export function AiCoauthorProvider({
         { role: "assistant", text: "", status: "Thinking…" },
       ]);
       setStreaming(true);
+      turnOpen.current = true;
+      stopped.current = false;
       // Cleared at send, not on the reply, so a second message can't re-send them.
-      setAttachments([]);
+      if (!extra?.revise) setAttachments([]);
       provider.sendAiRequest(
         {
           prompt,
@@ -227,6 +273,10 @@ export function AiCoauthorProvider({
               copy[copy.length - 1] = next;
               return copy;
             });
+            turnOpen.current = false;
+            halted.current = stopped.current || payload.error !== null;
+            // Settled after the render that shows this turn, so a revision's history includes it.
+            setReceipts((n) => n + 1);
           },
         },
       );
@@ -245,22 +295,53 @@ export function AiCoauthorProvider({
     [streaming, editor, runTurn],
   );
 
+  const startRevisions = (list: QueuedRevision[]) => {
+    setQueue([]);
+    const scopes: RevisionScope[] = list.map((r) => ({ run_id: r.runId, feedback_id: r.feedbackId }));
+    void runTurn(revisionPrompt(list), null, { revise: scopes });
+  };
+  /**
+   * A turn's receipt arrived. Its queued revisions run now, in one turn, unless the user stopped it
+   * or it failed: then they wait for Revise now, since starting more work after a Stop is not asked for.
+   */
+  const afterTurn = useRef((_halted: boolean) => {});
+  afterTurn.current = (wasHalted: boolean) => {
+    const list = queuedRef.current;
+    if (list.length === 0 || pausedRef.current || turnOpen.current) return;
+    if (wasHalted) setQueue(list, true);
+    else startRevisions(list);
+  };
+
+  useEffect(() => {
+    if (receipts > 0) afterTurn.current(halted.current);
+  }, [receipts]);
+
   const revise = useCallback(
     (note: string, scope: { runId: string; feedbackId: string }) => {
       const text = note.trim();
-      if (!text || streaming || !editor) return false;
+      if (!text || !editor) return;
       onRequestOpen();
-      runTurn(`Revise the edits I rejected, as my note says, and change nothing else: ${text}`, null, {
-        revise: { run_id: scope.runId, feedback_id: scope.feedbackId },
-      });
-      return true;
+      const item = { note: text, ...scope };
+      if (turnOpen.current || pausedRef.current) setQueue([...queuedRef.current, item], pausedRef.current);
+      else startRevisions([item]);
     },
-    [streaming, editor, onRequestOpen, runTurn],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editor, onRequestOpen, runTurn],
   );
+
+  const reviseNow = useCallback(() => {
+    const list = queuedRef.current;
+    if (list.length === 0 || turnOpen.current) return;
+    startRevisions(list);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runTurn]);
+
+  const cancelRevisions = useCallback(() => setQueue([]), []);
 
   // Clearing `streaming` here would race the receipt that reports what the stopped turn proposed.
   const stop = useCallback(() => {
     if (!streaming || !provider) return;
+    stopped.current = true;
     provider.cancelAiRequest();
     setTurns((t) => {
       const last = t[t.length - 1];
@@ -273,6 +354,8 @@ export function AiCoauthorProvider({
 
   const newChat = useCallback(() => {
     if (streaming) return;
+    // A new chat starts clean; the rejections and their notes stand.
+    setQueue([]);
     setTurns([]);
   }, [streaming]);
 
@@ -302,6 +385,7 @@ export function AiCoauthorProvider({
   const cancelSelectionEdit = useCallback(() => setSelectionEdit(null), []);
 
   const value: AiCoauthorCtx = {
+    available,
     turns,
     streaming,
     model,
@@ -311,6 +395,10 @@ export function AiCoauthorProvider({
     send,
     stop,
     revise,
+    queuedRevisions: queued.length,
+    revisionPaused,
+    reviseNow,
+    cancelRevisions,
     attachments,
     attachImages,
     removeAttachment,

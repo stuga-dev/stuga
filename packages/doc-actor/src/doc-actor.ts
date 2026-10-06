@@ -22,6 +22,7 @@ import {
   handleRunList,
   handleRunPropose,
   handleRunRevert,
+  handleRunUndo,
 } from "./ledger/routes.js";
 import { Peers, parseSession, safeSend, type DocSocket, type SessionMeta } from "./session.js";
 import { DocStore } from "./store/doc-store.js";
@@ -62,6 +63,7 @@ export class DocActor implements Actor<SessionMeta> {
       "/runs/propose": { method: "POST", handle: (req) => handleRunPropose(this.ledger, req) },
       "/runs/decide": { method: "POST", handle: (req) => handleRunDecide(this.ledger, req) },
       "/runs/revert": { method: "POST", handle: (req) => handleRunRevert(this.ledger, req) },
+      "/runs/undo": { method: "POST", handle: (req) => handleRunUndo(this.ledger, req) },
       "/runs/ack": { method: "POST", handle: (req) => handleRunAck(this.ledger, req) },
       "/apply-edits": { method: "POST", handle: (req) => this.applyEdits(req) },
       "/restore": { handle: async (_req, url) => this.restore(url) },

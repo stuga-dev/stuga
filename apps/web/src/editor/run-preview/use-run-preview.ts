@@ -4,7 +4,15 @@ import type { Editor } from "@tiptap/react";
 import type * as Y from "yjs";
 import { yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import { captureRelRange } from "../rel-range";
-import { buildRunSegments, type HunkKey, type PreviewSegment, type RunPreviewData, type RunPreviewHunk, type RunReport } from "./plan";
+import {
+  buildRunSegments,
+  type HunkKey,
+  type PreviewSegment,
+  type RunPreviewData,
+  type RunPreviewHunk,
+  type RunReport,
+  type UnpaintableReason,
+} from "./plan";
 import { EMPTY_REPORT, previewStorage, publish, repaint } from "./extension";
 
 /** Class `scrollToHunk` flashes on the ghost it scrolled to. */
@@ -20,6 +28,8 @@ export interface RunPreviewApi {
   anchored: HunkKey[];
   /** Pending hunks that could not be painted. */
   unanchored: HunkKey[];
+  /** Why each `unanchored` hunk could not be painted. */
+  why: Readonly<Record<HunkKey, UnpaintableReason>>;
   /** Scroll a hunk's ghost into view and flash it. False if it is not anchored. */
   scrollToHunk: (key: HunkKey) => boolean;
 }
@@ -34,19 +44,22 @@ function sameKeys(a: ReadonlySet<HunkKey>, b: ReadonlySet<HunkKey>): boolean {
 
 /** Anchor the drafts to stable Yjs positions; un-anchorable ones stay decidable. */
 function runHunksPreview(editor: Editor, currentMd: string, hunks: RunPreviewHunk[]): RunPreviewData | null {
-  const { segments: drafts, unpaintable } = buildRunSegments(editor.state.doc, currentMd, hunks, editor.schema);
+  const { segments: drafts, unpaintable, reasons } = buildRunSegments(editor.state.doc, currentMd, hunks, editor.schema);
   const segments: PreviewSegment[] = [];
   const orphaned: HunkKey[] = [...unpaintable];
   for (const draft of drafts) {
     const rel = captureRelRange(editor.state, draft.from, draft.to);
     if (!rel) {
-      for (const part of draft.hunks) orphaned.push(part.key);
+      for (const part of draft.hunks) {
+        orphaned.push(part.key);
+        reasons.set(part.key, "moved");
+      }
       continue;
     }
     segments.push({ rel, hunks: draft.hunks });
   }
   if (segments.length === 0 && orphaned.length === 0) return null;
-  return { segments, unpaintable: orphaned };
+  return { segments, unpaintable: orphaned, reasons };
 }
 
 /**
@@ -178,5 +191,5 @@ export function useRunPreview(
     return true;
   }, []);
 
-  return { anchored: report.anchored, unanchored: report.unanchored, scrollToHunk };
+  return { anchored: report.anchored, unanchored: report.unanchored, why: report.why, scrollToHunk };
 }

@@ -24,6 +24,8 @@ function fakeEditor(inTable = false) {
     isActive: (name: string) => inTable && name === "table",
     chain: () => chain,
     can: () => ({ undo: () => true, redo: () => true }),
+    commands: { undo: vi.fn(() => true), redo: vi.fn(() => true) },
+    storage: {},
   } as unknown as Editor;
   return { editor, chain };
 }
