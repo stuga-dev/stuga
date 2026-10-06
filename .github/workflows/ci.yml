@@ -71,8 +71,17 @@ jobs:
       # The shared remote-access directory with real owners, as root: skipped by `pnpm test`.
       - run: bash packaging/docker/test/remote-dir-in-image.sh
 
+  # An older macOS and the newest: their tools differ (macOS 15's plutil writes a missing key's error
+  # to stdout). The first keeps the name the ruleset requires.
   macos:
-    runs-on: macos-15
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, name: macos }
+          - { os: macos-26, name: macos-26 }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - id: pins
@@ -89,7 +98,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/stuga-macos-cache
-          key: stuga-macos-${{ hashFiles('packaging/versions.env', 'packaging/macos/build/**') }}
+          key: stuga-${{ matrix.os }}-${{ hashFiles('packaging/versions.env', 'packaging/macos/build/**') }}
       - run: bash packaging/macos/test/ci.sh
         env:
           STUGA_MACOS_CACHE: ${{ runner.temp }}/stuga-macos-cache
