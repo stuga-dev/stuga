@@ -10,7 +10,7 @@ import type { AgentRunSummary, RunDecidedPayload, RunUpdatedPayload } from "@stu
 import { encodeBinary, decodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
 import { DocActor } from "./doc-actor.js";
-import { RUN_FEEDBACK_NOTE_MAX_CHARS, RUN_IDLE_MS } from "@stuga/protocol/domain/limits";
+import { RUN_FEEDBACK_LOOKBACK_DAYS, RUN_FEEDBACK_NOTE_MAX_CHARS, RUN_IDLE_MS } from "@stuga/protocol/domain/limits";
 import {
   RUN_LIST_DEFAULT_LIMIT,
   RUN_ORDER_KEY,
@@ -1681,6 +1681,38 @@ describe("a reviewer's feedback on what they rejected", () => {
     // The id only: the feed reaches every agent that can read the document.
     expect(decided).toMatchObject({ payload: { decision: "reject", feedback_id: a!.feedback!.id, agent_alias: "agent1" } });
     expect((decided as { payload: Record<string, unknown> }).payload).not.toHaveProperty("note");
+  });
+
+  it(`survives eviction past ${RUN_ORDER_MAX} while unaddressed, and not once it is stale`, async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    // The OLDEST run holds the note: exactly the entry a positional cap eats first.
+    const runId = await proposeTwo(dobj);
+    await post(dobj, "decide", { run_id: runId, decision: "reject", decided_by: "alice", note: "Too formal." });
+    const fill = async (from: number, count: number) => {
+      for (let i = from; i < from + count; i++) {
+        const res = await propose(dobj, { action: "str_replace", find: i === 0 ? "# Notes" : `# Notes ${i - 1}`, replace: `# Notes ${i}`, agent_alias: `other${i}` });
+        await post(dobj, "decide", { run_id: runOf(res.json).id, decision: "accept", decided_by: "alice" });
+      }
+    };
+    await fill(0, RUN_ORDER_MAX + 2);
+
+    let order = h.state.storage.map.get(RUN_ORDER_KEY) as string[];
+    expect(order).toContain(runId);
+    expect(order.length).toBeLessThanOrEqual(RUN_ORDER_MAX + 1);
+    const feedback = (await readMarkdown(dobj, "agent1")).feedback as Array<Record<string, unknown>>;
+    expect(feedback).toEqual([expect.objectContaining({ run_id: runId, note: "Too formal." })]);
+
+    // Past the lookback the note no longer leads reads, so the run is history like any other.
+    const stored = (await h.state.storage.get<StoredRun>(runStorageKey(runId)))!;
+    stored.updated_at -= (RUN_FEEDBACK_LOOKBACK_DAYS + 1) * 86_400_000;
+    await h.state.storage.put(runStorageKey(runId), stored);
+    await fill(RUN_ORDER_MAX + 2, 2);
+    order = h.state.storage.map.get(RUN_ORDER_KEY) as string[];
+    expect(order).not.toContain(runId);
+    expect(h.state.storage.map.get("feedback-pending:agent1")).toEqual([]);
+    expect((await readMarkdown(dobj, "agent1")).feedback).toBeUndefined();
   });
 
   it("stays within reach while other agents' runs pile up after it", async () => {

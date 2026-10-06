@@ -266,10 +266,24 @@ export class RunLedger {
   /**
    * Register a new run, evicting the oldest decided runs beyond the cap (metadata,
    * body and any dangling open-run pointer together). A run with a pending hunk is
-   * skipped, never evicted; the run just added is never a candidate.
+   * skipped, never evicted, and so is one holding feedback its agent has not been
+   * handed yet while that feedback is still within RUN_FEEDBACK_LOOKBACK_DAYS: a
+   * reviewer's note is kept for the agent as long as reads would show it. The run
+   * just added is never a candidate.
    */
   async track(runId: string): Promise<void> {
     const order = [...(await this.order()), runId];
+    const stale = Date.now() - RUN_FEEDBACK_LOOKBACK_DAYS * 86_400_000;
+    // One read of each agent's feedback list per eviction pass.
+    const feedbackListed = new Map<string, string[]>();
+    const listedFor = async (agentAlias: string): Promise<string[]> => {
+      let listed = feedbackListed.get(agentAlias);
+      if (!listed) {
+        listed = (await this.storage.get<string[]>(feedbackPendingKey(agentAlias))) ?? [];
+        feedbackListed.set(agentAlias, listed);
+      }
+      return listed;
+    };
     for (let i = 0; order.length > RUN_ORDER_MAX && i < order.length - 1; ) {
       const candidate = order[i]!;
       const stored = await this.load(candidate);
@@ -278,6 +292,17 @@ export class RunLedger {
         continue;
       }
       if (stored) {
+        const listed = await listedFor(stored.agent_alias);
+        // A decision stamps updated_at, so a listed run older than the lookback holds only stale feedback.
+        if (listed.includes(candidate) && stored.updated_at >= stale) {
+          i++;
+          continue;
+        }
+        if (listed.includes(candidate)) {
+          const left = listed.filter((id) => id !== candidate);
+          feedbackListed.set(stored.agent_alias, left);
+          await this.storage.put(feedbackPendingKey(stored.agent_alias), left);
+        }
         const active = await this.storage.get<string>(runActiveKey(stored.agent_alias));
         if (active === candidate) await this.storage.delete(runActiveKey(stored.agent_alias));
         await this.env.snapshots.delete(stored.blob_key).catch(() => {});
