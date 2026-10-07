@@ -88,7 +88,7 @@ function fakeEnv(overrides: Partial<JobsEnv> = {}): JobsEnv {
     aiSettings: fixedStore({
       enabled: false,
       chat: { enabled: true, defaultModel: "m", endpoints: [{ id: "default", provider: "ollama", baseUrl: "x", models: [{ id: "m", name: "m" }] }] },
-      embed: { enabled: true, provider: "ollama", baseUrl: "x", model: "m", dims: 4, searchCutoff: null, retrievalMaxDistance: null },
+      embed: { enabled: true, provider: "ollama", baseUrl: "x", model: "m", dims: 4, searchCutoff: null },
       rerank: { enabled: false, baseUrl: "", model: "" },
     }),
     settings: nodeSettings(),

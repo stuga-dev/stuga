@@ -91,7 +91,6 @@ export async function retrieveAndRerank(args: RetrieveArgs): Promise<RetrieveRes
     scopeFolderIds: args.scopeFolderIds ?? null,
     limit: CANDIDATE_LIMIT,
     embeddingDims,
-    maxDistance: aiCfg.embed.retrievalMaxDistance,
     searchLanguages,
   });
   // Reranked to a wider set so the per-document cap has something to backfill

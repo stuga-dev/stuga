@@ -1,15 +1,11 @@
--- The search box's cutoff by meaning becomes a level, Strict to Off, at distances the node measures
--- for the embedding model in force (embed_calibrations). A distance set before stays in force as
--- level 'custom' until a save changes the embedding service, its address or the model.
+-- The search box's cutoff by meaning is a level, Strict to Off, at distances the node measures for
+-- the embedding model in force (embed_calibrations). Fixed distances are gone: one number does not
+-- fit every model, and Ask and agents take the nearest passages, leaving relevance to the reranker.
 ALTER TABLE node_ai_settings
+    DROP COLUMN search_max_distance,
+    DROP COLUMN retrieval_max_distance,
     -- NULL takes the default level.
-    ADD COLUMN search_strictness TEXT
-        CHECK (search_strictness IN ('strict', 'balanced', 'loose', 'off', 'custom'));
-UPDATE node_ai_settings SET search_strictness = 'custom' WHERE search_max_distance IS NOT NULL;
-ALTER TABLE node_ai_settings
-    ADD CONSTRAINT node_ai_settings_search_custom_check
-        CHECK ((search_strictness IS NOT DISTINCT FROM 'custom') = (search_max_distance IS NOT NULL));
--- retrieval_max_distance stays, set through the API only; NULL now means no cutoff for Ask and agents.
+    ADD COLUMN search_strictness TEXT CHECK (search_strictness IN ('strict', 'balanced', 'loose', 'off'));
 
 -- One measurement per embedding configuration: the key hashes everything that changes distances.
 -- The five most recent are kept, so going back to an earlier model needs no new measurement.

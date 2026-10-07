@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NodeAiSettings } from "../../../api";
 import {
-  STRICTNESS_COPY,
   calibrationBanner,
   chatInputWith,
   connectFailure,
@@ -36,8 +35,6 @@ const settings = (endpoints: ReturnType<typeof provider>[], defaultModel = endpo
     api_key_fingerprint: null,
     api_key_stale: false,
     search_strictness: null,
-    search_max_distance: null,
-    retrieval_max_distance: null,
     cutoff: null,
     calibration: null,
   },
@@ -153,13 +150,10 @@ describe("search strictness copy", () => {
     expect(strictnessWarning(s, { ...toForm(s), embedModel: "other-model" })).toBeNull();
   });
 
-  it("shows no failure banner while a custom distance is in force", () => {
+  it("shows no failure banner while strictness is off", () => {
     const failed = { ...measured().embed.calibration!, state: "failed" as const, levels: null, kind: "endpoint" as const, message: "connect ECONNREFUSED" };
     expect(calibrationBanner(measured({ calibration: failed, cutoff: { level: "balanced", source: "unmeasured", short: null, question: null } }))?.title).toBe("Couldn't measure bge-m3");
-    expect(calibrationBanner(measured({ calibration: failed, cutoff: { level: "custom", source: "custom", short: 0.7, question: 0.7 } }))).toBeNull();
+    expect(calibrationBanner(measured({ calibration: failed, cutoff: { level: "off", source: "off", short: null, question: null } }))).toBeNull();
   });
 
-  it("names a distance set by hand without saying how it was set", () => {
-    expect(STRICTNESS_COPY.custom.line).toBe("A distance set by hand. Choosing a level replaces it.");
-  });
 });

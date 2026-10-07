@@ -38,8 +38,6 @@ const ROW = {
   embedModel: "text-embedding-3-small",
   embedApiKeyFp: null,
   searchStrictness: null,
-  searchMaxDistance: null,
-  retrievalMaxDistance: null,
   rerankEnabled: null,
   rerankBaseUrl: null,
   rerankModel: null,
@@ -61,27 +59,15 @@ describe.skipIf(!URL)("node_ai_settings", () => {
     await sql`DELETE FROM node_ai_settings`;
   });
 
-  it("stores the search strictness, a custom distance with it, and null as not set", async () => {
+  it("stores the search strictness, and null as not set", async () => {
     await upsertNodeAiSettings(sql, ROW);
-    expect(await getNodeAiSettings(sql)).toMatchObject({ search_strictness: null, search_max_distance: null, retrieval_max_distance: null });
-
-    await upsertNodeAiSettings(sql, { ...ROW, searchStrictness: "custom", searchMaxDistance: 0.75, retrievalMaxDistance: 2 });
-    expect(await getNodeAiSettings(sql)).toMatchObject({ search_strictness: "custom", search_max_distance: 0.75, retrieval_max_distance: 2 });
-
+    expect(await getNodeAiSettings(sql)).toMatchObject({ search_strictness: null });
     await upsertNodeAiSettings(sql, { ...ROW, searchStrictness: "loose" });
-    expect(await getNodeAiSettings(sql)).toMatchObject({ search_strictness: "loose", search_max_distance: null });
+    expect(await getNodeAiSettings(sql)).toMatchObject({ search_strictness: "loose" });
   });
 
-  it("refuses a search distance without the custom level, and the custom level without a distance", async () => {
-    await expect(upsertNodeAiSettings(sql, { ...ROW, searchMaxDistance: 0.5 })).rejects.toThrow(/check constraint/);
-    await expect(upsertNodeAiSettings(sql, { ...ROW, searchStrictness: "balanced", searchMaxDistance: 0.5 })).rejects.toThrow(/check constraint/);
-    await expect(upsertNodeAiSettings(sql, { ...ROW, searchStrictness: "custom" })).rejects.toThrow(/check constraint/);
-    expect(await getNodeAiSettings(sql)).toBeNull();
-  });
-
-  it.each([0, -0.1, 2.01])("refuses a cutoff of %s", async (value) => {
-    await expect(upsertNodeAiSettings(sql, { ...ROW, searchStrictness: "custom", searchMaxDistance: value })).rejects.toThrow(/check constraint/);
-    await expect(upsertNodeAiSettings(sql, { ...ROW, retrievalMaxDistance: value })).rejects.toThrow(/check constraint/);
+  it("refuses a level it does not know", async () => {
+    await expect(upsertNodeAiSettings(sql, { ...ROW, searchStrictness: "medium" as never })).rejects.toThrow(/check constraint/);
     expect(await getNodeAiSettings(sql)).toBeNull();
   });
 });

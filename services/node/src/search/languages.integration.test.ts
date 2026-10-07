@@ -108,7 +108,6 @@ function searchWhileRunning(search: SearchLanguages): {
         });
         const passages = await askDocs(sql, {
           embeddingDims: EMBEDDING_DIMS,
-          maxDistance: 0.9,
           workspaceId: WS,
           principals: PRINCIPALS,
           query: "동의 موافقة consent",

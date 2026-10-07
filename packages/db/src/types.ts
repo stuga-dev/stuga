@@ -543,12 +543,8 @@ export interface NodeAiSettingsRow {
   embed_base_url: string | null;
   embed_model: string | null;
   embed_api_key_fp: string | null;
-  /** The search box's level; null takes the default. `custom` goes with `search_max_distance`. */
+  /** The search box's level; null takes the default. */
   search_strictness: SearchStrictness | null;
-  /** A cosine distance for the search box's semantic leg, set through the API (level `custom`). */
-  search_max_distance: number | null;
-  /** A cosine distance for retrieval's semantic leg, set through the API; null for none. */
-  retrieval_max_distance: number | null;
   /** False switches the reranker off while it stays set up. */
   rerank_enabled: boolean | null;
   rerank_base_url: string | null;

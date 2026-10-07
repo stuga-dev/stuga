@@ -70,8 +70,6 @@ const AI: NodeAiSettings = {
     api_key_fingerprint: null,
     api_key_stale: false,
     search_strictness: null,
-    search_max_distance: null,
-    retrieval_max_distance: null,
     cutoff: null,
     calibration: null,
   },
@@ -283,7 +281,7 @@ async function openSearchEditor() {
 }
 
 /** The segment of Search strictness chosen now. */
-const chosenStrictness = () => [...host.querySelectorAll('button[role="radio"][aria-checked="true"]')].map((b) => b.textContent).find((t) => ["Strict", "Balanced", "Loose", "Off", "Custom"].includes(t ?? ""));
+const chosenStrictness = () => [...host.querySelectorAll('button[role="radio"][aria-checked="true"]')].map((b) => b.textContent).find((t) => ["Strict", "Balanced", "Loose", "Off"].includes(t ?? ""));
 
 /** Semantic search measured for its model: Balanced at 0.34 for short queries. */
 const MEASURED: NodeAiSettings = {
@@ -537,8 +535,7 @@ describe("NodeSettingsPage", () => {
     await renderWith(WITH_SEARCH);
     await openSearchEditor();
     expect(chosenStrictness()).toBe("Balanced");
-    expect(host.textContent).toContain("About 1 in 100 unrelated passages gets through.");
-    expect(visibleButtons("Custom")).toHaveLength(0);
+    expect(host.textContent).toContain("Most unrelated passages are left out.");
     savedAs(WITH_SEARCH);
 
     await click("Save");
@@ -553,7 +550,7 @@ describe("NodeSettingsPage", () => {
     await openSearchEditor();
     await click("Loose");
     expect(chosenStrictness()).toBe("Loose");
-    expect(host.textContent).toContain("About 1 in 20 unrelated passages gets through.");
+    expect(host.textContent).toContain("More matches by meaning, some of them unrelated.");
     savedAs({ ...WITH_SEARCH, embed: { ...WITH_SEARCH.embed, search_strictness: "loose" } });
     await click("Save");
     const sent = nodeApi.saveAi.mock.calls[0]![0] as { chat?: unknown; embed: Record<string, unknown> };
@@ -609,17 +606,6 @@ describe("NodeSettingsPage", () => {
     expect(host.textContent).toContain("Until then, nothing is dropped by distance.");
     expect(host.textContent).toContain("bge-m3 · Balanced · not measured");
     expect(visibleButtons("Measure again")).toHaveLength(1);
-  });
-
-  it("offers Custom only while a distance set by hand is in force, and shows a retrieval distance with a way to clear it", async () => {
-    await renderWith({
-      ...MEASURED,
-      embed: { ...MEASURED.embed, search_strictness: "custom", search_max_distance: 0.7, retrieval_max_distance: 0.8, cutoff: { level: "custom", source: "custom", short: 0.7, question: 0.7 } },
-    });
-    expect(host.textContent).toContain("bge-m3 · Distance 0.70");
-    await openSearchEditor();
-    expect(chosenStrictness()).toBe("Custom");
-    expect(host.textContent).toContain("Ask and agents: distance 0.80, set by hand");
   });
 
   it("keeps each settings section's own draft while another section is open", async () => {

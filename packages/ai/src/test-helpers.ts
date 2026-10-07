@@ -29,7 +29,6 @@ export const CFG: AiConfig = {
     model: "text-embedding-3-large",
     dims: 1024,
     searchCutoff: null,
-    retrievalMaxDistance: null,
   },
   rerank: { enabled: false, baseUrl: "https://rerank.example.test/v1", model: "jev-latest", apiKey: "rerank-key" },
 };

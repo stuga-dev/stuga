@@ -23,7 +23,7 @@ const mockUsage = vi.mocked(insertAiUsage);
 const AI: AiConfig = {
   enabled: true,
   chat: { enabled: false, defaultModel: "", endpoints: [] },
-  embed: { enabled: true, provider: "ollama", baseUrl: "http://ai.test", model: "embed-1", dims: 2, searchCutoff: { short: 0.6, question: 0.5 }, retrievalMaxDistance: null },
+  embed: { enabled: true, provider: "ollama", baseUrl: "http://ai.test", model: "embed-1", dims: 2, searchCutoff: { short: 0.6, question: 0.5 } },
   rerank: { enabled: false, baseUrl: "", model: "" },
 };
 

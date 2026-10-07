@@ -52,7 +52,7 @@ const { createCalibrator } = await import("./calibrator.js");
 const CFG: AiConfig = {
   enabled: true,
   chat: { enabled: false, defaultModel: "", endpoints: [] },
-  embed: { enabled: true, provider: "ollama", baseUrl: "http://127.0.0.1:11434", model: "embeddinggemma-2:270m", dims: 1024, searchCutoff: null, retrievalMaxDistance: null },
+  embed: { enabled: true, provider: "ollama", baseUrl: "http://127.0.0.1:11434", model: "embeddinggemma-2:270m", dims: 1024, searchCutoff: null },
   rerank: { enabled: false, baseUrl: "", model: "" },
 };
 const KEY = calibrationKey(CFG);

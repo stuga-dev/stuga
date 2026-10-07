@@ -30,8 +30,6 @@ export async function upsertNodeAiSettings(
     embedModel: string | null;
     embedApiKeyFp: string | null;
     searchStrictness: SearchStrictness | null;
-    searchMaxDistance: number | null;
-    retrievalMaxDistance: number | null;
     rerankEnabled: boolean | null;
     rerankBaseUrl: string | null;
     rerankModel: string | null;
@@ -51,8 +49,6 @@ export async function upsertNodeAiSettings(
       embed_model: input.embedModel,
       embed_api_key_fp: input.embedApiKeyFp,
       search_strictness: input.searchStrictness,
-      search_max_distance: input.searchMaxDistance,
-      retrieval_max_distance: input.retrievalMaxDistance,
       rerank_enabled: input.rerankEnabled,
       rerank_base_url: input.rerankBaseUrl,
       rerank_model: input.rerankModel,
@@ -69,8 +65,6 @@ export async function upsertNodeAiSettings(
       embed_model            = EXCLUDED.embed_model,
       embed_api_key_fp       = EXCLUDED.embed_api_key_fp,
       search_strictness      = EXCLUDED.search_strictness,
-      search_max_distance    = EXCLUDED.search_max_distance,
-      retrieval_max_distance = EXCLUDED.retrieval_max_distance,
       rerank_enabled         = EXCLUDED.rerank_enabled,
       rerank_base_url        = EXCLUDED.rerank_base_url,
       rerank_model           = EXCLUDED.rerank_model,

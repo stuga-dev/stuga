@@ -201,8 +201,9 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
     expect(await semanticScan(indexed, input)).toBe("exact");
     const docs = await searchDocs(indexed, input);
     expect(docs.map((r) => r.doc_id)).toEqual(["a-0.9", "a-0.8", "a-0.7"]);
+    // Retrieval has no cutoff: the farther passage comes too, after the near ones.
     const passages = await askDocs(indexed, input);
-    expect(passages.map((p) => p.content)).toEqual(["alice 0.9", "alice 0.8", "alice 0.7"]);
+    expect(passages.map((p) => p.content)).toEqual(["alice 0.9", "alice 0.8", "alice 0.7", "alice 0.3"]);
   });
 
   const keyword = (query: string) =>

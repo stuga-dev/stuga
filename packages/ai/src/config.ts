@@ -51,8 +51,6 @@ export interface AiConfig {
      * model. Null drops nothing by distance (Off, or no measurement yet).
      */
     searchCutoff: SearchCutoff | null;
-    /** A cutoff for Ask, agents' retrieve and the assistants' document search, set through the API; null for none. */
-    retrievalMaxDistance: number | null;
   };
   /**
    * A System One model that reranks retrieval: TypeSafe's Jev, direct or

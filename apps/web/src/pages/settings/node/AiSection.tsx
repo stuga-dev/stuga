@@ -70,7 +70,7 @@ function ProbeBanner({ probe, labels, level }: { probe: AiProbe; labels: Record<
       ? `${label}: ok${r.model ? ` · ${r.model}` : ""}${r.latency_ms ? ` · ${r.latency_ms}ms` : ""}${r.dims ? ` · ${r.dims} dimensions` : ""}`
       : `${label}: ${r.message ?? "failed"}`;
   // A model measured before shows where the chosen level sits for it.
-  const cutoff = probe.embed.cutoffs && level !== "off" && level !== "custom" ? ` · ${STRICTNESS_COPY[level].label} ${probe.embed.cutoffs[level].toFixed(2)}` : "";
+  const cutoff = probe.embed.cutoffs && level !== "off" ? ` · ${STRICTNESS_COPY[level].label} ${probe.embed.cutoffs[level].toFixed(2)}` : "";
   // A skipped row made no request, so it says nothing about the service.
   const rows = [
     ...probe.chat.filter((r) => !r.skipped).map((r) => line(labels[r.id] ?? r.id, r)),
@@ -205,13 +205,6 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       onSaved(await NodeApi.ai());
     });
 
-  /** Drops the distance for Ask and agents that was set through the API. */
-  const clearRetrievalDistance = () =>
-    act("clear-retrieval", async () => {
-      const input = toInput(toForm(settings), NO_CLEARED_KEYS, baseUrls, "embed");
-      if (input.embed) input.embed.retrieval_max_distance = null;
-      applied((await NodeApi.saveAi(input)).settings);
-    });
 
   /** One action at a time, its failure shown above the fields. */
   async function act(key: string, fn: () => Promise<void>) {
@@ -648,7 +641,6 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                   <SegmentedControlItem value="balanced" label={STRICTNESS_COPY.balanced.label} />
                   <SegmentedControlItem value="loose" label={STRICTNESS_COPY.loose.label} />
                   <SegmentedControlItem value="off" label={STRICTNESS_COPY.off.label} />
-                  {settings.embed.search_strictness === "custom" && <SegmentedControlItem value="custom" label={STRICTNESS_COPY.custom.label} />}
                 </SegmentedControl>
                 <Text type="supporting" color="secondary">
                   {STRICTNESS_COPY[level].line}
@@ -669,14 +661,6 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                 {warning && (
                   <Text type="supporting" color="secondary">
                     {warning}
-                  </Text>
-                )}
-                {settings.embed.retrieval_max_distance !== null && (
-                  <Text type="supporting" color="secondary">
-                    Ask and agents: distance {settings.embed.retrieval_max_distance.toFixed(2)}, set by hand ·{" "}
-                    <Link type="supporting" onClick={() => void clearRetrievalDistance()}>
-                      Clear
-                    </Link>
                   </Text>
                 )}
               </VStack>
@@ -816,10 +800,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       <AlertDialog
         isOpen={confirm?.kind === "reembed"}
         title="Re-index every document?"
-        description={
-          "Vectors from two models cannot be compared, so saving clears them and re-embeds every document. Search matches words until that finishes, and strictness is measured for the new model." +
-          (settings.embed.search_strictness === "custom" || settings.embed.retrieval_max_distance !== null ? " Your custom distance is cleared." : "")
-        }
+        description="Vectors from two models cannot be compared, so saving clears them and re-embeds every document. Search matches words until that finishes, and strictness is measured for the new model."
         onOpenChange={(open) => !open && setConfirm(null)}
         actionLabel="Save and re-index"
         onAction={() => {

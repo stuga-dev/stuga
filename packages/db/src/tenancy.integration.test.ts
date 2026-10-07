@@ -86,7 +86,7 @@ describe.skipIf(!URL)("tenant isolation", () => {
     const sem = await searchDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, principals: bobPrincipals, workspaceId: WS_B, query: "acquisition", queryEmbedding: vec(5) });
     expect(sem.map((r) => r.doc_id)).not.toContain("a-secret");
 
-    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.9, principals: bobPrincipals, workspaceId: WS_B, query: "acquisition Acme", queryEmbedding: vec(5) });
+    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, principals: bobPrincipals, workspaceId: WS_B, query: "acquisition Acme", queryEmbedding: vec(5) });
     expect(chunks.map((c) => c.doc_id)).not.toContain("a-secret");
 
     const editable = await listEditableDocs(sql, bobPrincipals, WS_B);

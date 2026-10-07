@@ -127,17 +127,18 @@ depends on the embedding model, so the node measures its model and sets the dist
 Choose a level under **Search strictness** in the **Edit** of **Semantic search** in **Settings → This
 node → AI providers**; it applies to the next search once saved, and nothing is re-indexed.
 
-| Level | Unrelated passages that get through |
+| Level | Set where this share of the node's unrelated sample pairs falls |
 |---|---|
-| **Strict** | About 1 in 1,000 |
-| **Balanced** (default) | About 1 in 100 |
-| **Loose** | About 1 in 20 |
-| **Off** | Every one: the nearest passages show, however far |
+| **Strict** | 1 in 1,000 |
+| **Balanced** (default) | 1 in 100 |
+| **Loose** | 1 in 20 |
+| **Off** | Every passage: the nearest show, however far |
 
-A level counts passages: in a workspace of 50,000, about 500 get through at **Balanced** for any
-query, and a document with 30 unrelated passages gets through about one time in four. Matches by
-words are never dropped. Choose **Strict** when a large workspace shows unrelated documents, and
-**Loose** when rewordings are missed.
+The share in a workspace differs, with the model, the language and how much of the workspace is
+unrelated to a search: on the MIRACL test sets, **Balanced** kept 96–100% of the relevant passages
+for every model tested, and let through between 0.1% and 10% of random ones. Matches by words are
+never dropped. Choose **Strict** when a large workspace shows unrelated documents, and **Loose** when
+rewordings are missed.
 
 To measure, the node embeds 1,280 texts written for the purpose, as it embeds queries and documents:
 searches, questions and passages on 32 topics in English, Spanish, German, Russian, Arabic, Chinese,
@@ -146,17 +147,15 @@ and for longer questions apart. That is about 240,000 tokens of those fixed text
 workspace's: seconds on a hosted service or a small local model, minutes for a large model on a CPU. It runs when an embedding
 model is saved, again when the service, its address or the model changes or an update changes what
 the node sends, and with **Measure again**. Until a measurement succeeds, nothing is dropped by
-distance (a **Custom** distance stays in force), and Settings says why.
+distance, and Settings says why.
 
 Ask, `POST /api/retrieve`, agents' `retrieve` and the assistants' document search have no distance
-limit unless one is set by hand: they take the 96 nearest passages and the 96 best by words, fused to 24, and reranking or
+limit: they take the 96 nearest passages and the 96 best by words, fused to 24, and reranking or
 Built-in AI decides what is relevant.
 
 In `/api/node/ai-settings`, `embed.search_strictness` takes `strict`, `balanced`, `loose`, `off`, or
-`null` for the default. `embed.search_max_distance` sets a cosine distance by hand (level `custom`),
-and `embed.retrieval_max_distance` one for Ask and agents; a save that changes the embedding service,
-its address or the model clears both. `embed.cutoff` is the distance in force, `embed.calibration`
-the measurement, and `POST /api/node/ai-settings/calibrate` measures again.
+`null` for the default. `embed.cutoff` is the distance in force, `embed.calibration` the
+measurement, and `POST /api/node/ai-settings/calibrate` measures again.
 
 ### Search languages
 

@@ -328,13 +328,12 @@ export function rerankInput(f: RerankForm, opts: { clearKey?: boolean; enabled?:
   return { rerank };
 }
 
-/** Each level, with the share of unrelated passages it lets through, measured for the model in force. */
+/** Each level, as it reads for the model in force. */
 export const STRICTNESS_COPY: Record<SearchStrictness, { label: string; line: string }> = {
-  strict: { label: "Strict", line: "About 1 in 1,000 unrelated passages gets through." },
-  balanced: { label: "Balanced", line: "About 1 in 100 unrelated passages gets through." },
-  loose: { label: "Loose", line: "About 1 in 20 unrelated passages gets through." },
+  strict: { label: "Strict", line: "Only close matches by meaning show." },
+  balanced: { label: "Balanced", line: "Most unrelated passages are left out." },
+  loose: { label: "Loose", line: "More matches by meaning, some of them unrelated." },
   off: { label: "Off", line: "The nearest matches by meaning show, however far." },
-  custom: { label: "Custom", line: "A distance set by hand. Choosing a level replaces it." },
 };
 
 const distance = (d: number) => d.toFixed(2);
@@ -354,7 +353,6 @@ export function strictnessNote(settings: NodeAiSettings, form: Form): { text: st
   if (formChangesModel(settings, form)) return { text: "Measured for the new model once you save.", measureAgain: false };
   const level = form.searchStrictness ?? settings.strictness_default;
   if (level === "off") return null;
-  if (level === "custom") return e.search_max_distance === null ? null : { text: `Distance ${distance(e.search_max_distance)}`, measureAgain: false };
   // A model is measured only while semantic search runs.
   if (!e.running) return { text: "Measured once semantic search is on.", measureAgain: false };
   const c = e.calibration;
@@ -384,14 +382,7 @@ export function strictnessWarning(settings: NodeAiSettings, form: Form): string 
 export function searchServiceDetail(settings: NodeAiSettings): string | null {
   const cut = settings.embed.cutoff;
   if (!cut) return null;
-  const level =
-    cut.level === "off"
-      ? "Strictness off"
-      : cut.level === "custom"
-        ? cut.short === null
-          ? null
-          : `Distance ${distance(cut.short)}`
-        : STRICTNESS_COPY[cut.level].label;
+  const level = cut.level === "off" ? "Strictness off" : STRICTNESS_COPY[cut.level].label;
   const c = settings.embed.calibration;
   const state = cut.source === "measuring" ? `measuring ${c?.progress ?? 0}%` : cut.source === "unmeasured" && c?.state === "failed" ? "not measured" : null;
   return [level, state].filter(Boolean).join(" · ") || null;
@@ -400,7 +391,7 @@ export function searchServiceDetail(settings: NodeAiSettings): string | null {
 /** A failed measurement with no result in force, as a banner outside Edit. */
 export function calibrationBanner(settings: NodeAiSettings): { status: "warning" | "error"; title: string; description: string; retry: boolean } | null {
   const c = settings.embed.calibration;
-  // Only while a level is waiting on it: a custom distance or Off does not need a measurement.
+  // Only while a level is waiting on it: Off does not need a measurement.
   if (!c || c.state !== "failed" || c.levels || settings.embed.cutoff?.source !== "unmeasured") return null;
   if (c.kind === "inseparable") {
     return { status: "error", title: `${c.model} can't tell related text from unrelated`, description: "Choose another embedding model under Edit.", retry: false };

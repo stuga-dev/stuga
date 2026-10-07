@@ -77,8 +77,8 @@ chunks.
 document: it returns individual passages, so the caller can hand sections to a model and cite them.
 It is one SQL statement:
 
-- a **semantic leg**: the 96 chunks nearest the question by cosine distance, at any distance unless
-  one is set through the API ([Search strictness](configuration.md#search-strictness));
+- a **semantic leg**: the 96 chunks nearest the question by cosine distance, at any distance (the
+  search box has its own cutoff: [Search strictness](configuration.md#search-strictness));
 - a **keyword leg**: BM25 through pg_search over each chunk's heading path and text, plus the title on
   chunk 0, matching a passage on any word of the question, by English stem, with stopwords ignored;
 - **Reciprocal Rank Fusion** of the two per-passage ranks into one `score`;

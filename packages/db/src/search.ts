@@ -281,8 +281,6 @@ export interface AskInput {
   query: string;
   queryEmbedding: number[] | null;
   embeddingDims: number;
-  /** As in SearchInput. */
-  maxDistance: number | null;
   /** Passages to return. */
   limit?: number;
   scopeDocIds?: string[] | null;
@@ -470,7 +468,7 @@ export async function semanticScan(sql: Queryable, input: SearchInput | AskInput
  * ef_search tuples before any gate in WHERE runs, so a neighbourhood that
  * belongs to documents the searcher cannot see left the semantic leg empty;
  * iterating walks on toward the leg's LIMIT visible rows, within the scan
- * budget set here. That is also why each leg applies its distance cutoff
+ * budget set here. That is also why the search box's distance cutoff sits
  * outside the ordered scan: inside, a neighbourhood with fewer than LIMIT close
  * passages would walk to the end of that budget.
  */
@@ -716,7 +714,6 @@ export async function askDocs(sql: Sql, input: AskInput): Promise<AskChunk[]> {
     chunk_hits AS (
       SELECT doc_id, chunk_index, content, 1 - dist AS sem_score
       FROM chunk_near
-      WHERE ${input.maxDistance}::float8 IS NULL OR dist < ${input.maxDistance}::float8
     ),
     sem_ranked AS (
       SELECT s.*, rank() OVER (ORDER BY s.sem_score DESC) AS sem_pos

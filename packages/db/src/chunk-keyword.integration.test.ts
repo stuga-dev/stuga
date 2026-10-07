@@ -35,7 +35,7 @@ function chunk(content: string, headingPath: string | null, i: number): ChunkInp
 }
 
 const ask = (sql: Sql, query: string, scopeDocIds: string[] | null = null) =>
-  askDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.9, workspaceId: WS, principals: ALICE, query, queryEmbedding: null, scopeDocIds });
+  askDocs(sql, { embeddingDims: EMBEDDING_DIMS, workspaceId: WS, principals: ALICE, query, queryEmbedding: null, scopeDocIds });
 
 // No chunk embeddings and no query vector: only the keyword leg answers.
 describe.skipIf(!URL)("askDocs per-chunk keyword leg", () => {

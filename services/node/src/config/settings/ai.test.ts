@@ -6,7 +6,7 @@ import type { Sql } from "@stuga/db";
 import { describe, expect, it, vi } from "vitest";
 import { calibrationKey } from "@stuga/ai";
 import type { EmbedCalibrationRow } from "@stuga/db";
-import { createAiSettingsStore, isMaxDistance, resolveAi, searchCutoffInForce, type AiStoredSettings } from "./ai.js";
+import { createAiSettingsStore, resolveAi, searchCutoffInForce, type AiStoredSettings } from "./ai.js";
 
 const BASE_URLS = {
   anthropic: "https://api.anthropic.com",
@@ -129,26 +129,23 @@ describe("search strictness", () => {
   });
 
   it("takes the level's distances from the measurement of the model, Balanced by default", () => {
-    expect(searchCutoffInForce(null, null, measured("ready"))).toEqual({ level: "balanced", source: "measured", cutoff: { short: 0.34, question: 0.31 } });
-    expect(searchCutoffInForce("strict", null, measured("ready")).cutoff).toEqual({ short: 0.27, question: 0.25 });
-    expect(searchCutoffInForce("loose", null, measured("ready")).cutoff).toEqual({ short: 0.39, question: 0.36 });
+    expect(searchCutoffInForce(null, measured("ready"))).toEqual({ level: "balanced", source: "measured", cutoff: { short: 0.34, question: 0.31 } });
+    expect(searchCutoffInForce("strict", measured("ready")).cutoff).toEqual({ short: 0.27, question: 0.25 });
+    expect(searchCutoffInForce("loose", measured("ready")).cutoff).toEqual({ short: 0.39, question: 0.36 });
   });
 
   it("keeps an earlier result in force while measuring again or after an endpoint failure", () => {
-    expect(searchCutoffInForce(null, null, measured("running")).source).toBe("measured");
-    expect(searchCutoffInForce(null, null, measured("failed", true, "endpoint")).source).toBe("measured");
+    expect(searchCutoffInForce(null, measured("running")).source).toBe("measured");
+    expect(searchCutoffInForce(null, measured("failed", true, "endpoint")).source).toBe("measured");
   });
 
   it("drops nothing by distance without a measurement, for Off, and for a model that cannot be measured", () => {
-    expect(searchCutoffInForce(null, null, null)).toEqual({ level: "balanced", source: "unmeasured", cutoff: null });
-    expect(searchCutoffInForce(null, null, measured("running", false))).toEqual({ level: "balanced", source: "measuring", cutoff: null });
-    expect(searchCutoffInForce(null, null, measured("failed", false, "inseparable")).cutoff).toBeNull();
-    expect(searchCutoffInForce("off", null, measured("ready"))).toEqual({ level: "off", source: "off", cutoff: null });
+    expect(searchCutoffInForce(null, null)).toEqual({ level: "balanced", source: "unmeasured", cutoff: null });
+    expect(searchCutoffInForce(null, measured("running", false))).toEqual({ level: "balanced", source: "measuring", cutoff: null });
+    expect(searchCutoffInForce(null, measured("failed", false, "inseparable")).cutoff).toBeNull();
+    expect(searchCutoffInForce("off", measured("ready"))).toEqual({ level: "off", source: "off", cutoff: null });
   });
 
-  it("uses a custom distance for every query", () => {
-    expect(searchCutoffInForce("custom", 0.7, measured("ready"))).toEqual({ level: "custom", source: "custom", cutoff: { short: 0.7, question: 0.7 } });
-  });
 
   it("resolves the measurement of the configuration in force, only while semantic search runs", () => {
     const st: AiStoredSettings = { embedProvider: "ollama", embedBaseUrl: "http://gpu.lan:11434", embedModel: "embeddinggemma-2:270m" };
@@ -159,21 +156,7 @@ describe("search strictness", () => {
     expect(resolveAi({ ...st, embedModel: "bge-m3" }, 1024, BASE_URLS, rows).embed.searchCutoff).toBeNull();
   });
 
-  it("sets no cutoff for Ask and agents unless one was stored", () => {
-    expect(resolve(null).embed.retrievalMaxDistance).toBeNull();
-    expect(resolve({ retrievalMaxDistance: 1.4 }).embed.retrievalMaxDistance).toBe(1.4);
-  });
 
-  it.each([
-    [0.01, true],
-    [2, true],
-    [0, false],
-    [2.0001, false],
-    [Number.NaN, false],
-    ["1", false],
-  ])("accepts %s as a cutoff: %s", (value, ok) => {
-    expect(isMaxDistance(value)).toBe(ok);
-  });
 });
 
 describe("each half's own switch", () => {

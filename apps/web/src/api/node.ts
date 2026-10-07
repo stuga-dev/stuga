@@ -4,7 +4,7 @@ import { api } from "../lib/http/client";
 import type { AuditCursor, AuditEvent } from "./audit";
 import type { MemberCandidate } from "./workspaces";
 import type { RevokeEverythingCounts } from "./users";
-import type { SearchStrictness, SearchStrictnessLevel } from "@stuga/protocol/domain/search-strictness";
+import type { SearchStrictness } from "@stuga/protocol/domain/search-strictness";
 
 /** Keys are write-only: no response carries one. */
 interface AiEndpointSettings {
@@ -32,7 +32,7 @@ interface AiChatEndpointSettings {
   api_key_stale: boolean;
 }
 
-export type CutoffSource = "measured" | "custom" | "off" | "measuring" | "unmeasured";
+export type CutoffSource = "measured" | "off" | "measuring" | "unmeasured";
 export type MeasuredLevels = { strict: number; balanced: number; loose: number };
 
 /** How the node measured its embedding model, for the search box's levels. */
@@ -69,10 +69,6 @@ export interface NodeAiSettings {
   embed: AiEndpointSettings & {
     /** The search box's level as stored; null follows `strictness_default`. */
     search_strictness: SearchStrictness | null;
-    /** A cosine distance set through the API: the level `custom`. */
-    search_max_distance: number | null;
-    /** A cosine distance for Ask and agents, set through the API; null for none. */
-    retrieval_max_distance: number | null;
     /** What the search box uses right now; null while semantic search is off. */
     cutoff: { level: SearchStrictness; source: CutoffSource; short: number | null; question: number | null } | null;
     /** The measurement of the model in force; null while semantic search is off or nothing was tried. */
@@ -91,7 +87,7 @@ export interface NodeAiSettings {
   };
   embedding_column_dims: number;
   /** The level when none is stored. */
-  strictness_default: SearchStrictnessLevel;
+  strictness_default: SearchStrictness;
   /** Where each provider listens when a base URL is left empty. */
   provider_base_urls: Record<"anthropic" | "openai" | "ollama", string>;
   updated_by: string | null;
@@ -132,7 +128,7 @@ export interface NodeAiSettingsInput {
     default_model: string;
     endpoints: Array<{ id: string; provider: string; base_url: string; models: Array<{ id: string; name: string }>; api_key?: string }>;
   };
-  /** No model removes semantic search and forgets its switch. A level or distance: absent keeps the stored one, null restores the default. */
+  /** No model removes semantic search and forgets its switch. A level: absent keeps the stored one, null restores the default. */
   embed?: {
     /** Absent keeps the stored switch. */
     enabled?: boolean;
@@ -141,7 +137,6 @@ export interface NodeAiSettingsInput {
     model: string;
     api_key?: string;
     search_strictness?: SearchStrictness | null;
-    retrieval_max_distance?: number | null;
   };
   /** No model removes the ranker and forgets its key and switch. */
   rerank?: {

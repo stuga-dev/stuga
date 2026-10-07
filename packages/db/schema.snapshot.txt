@@ -374,18 +374,13 @@ TABLE node_ai_settings
   rerank_base_url text
   rerank_enabled boolean
   rerank_model text
-  retrieval_max_distance double precision
-  search_max_distance double precision
   search_strictness text
   updated_at timestamp with time zone NOT NULL DEFAULT now()
   updated_by text
   CONSTRAINT node_ai_settings_embed_provider_check CHECK ((embed_provider = ANY (ARRAY['anthropic'::text, 'openai'::text, 'ollama'::text])))
   CONSTRAINT node_ai_settings_id_check CHECK (id)
   CONSTRAINT node_ai_settings_pkey PRIMARY KEY (id)
-  CONSTRAINT node_ai_settings_retrieval_max_distance_check CHECK (((retrieval_max_distance > (0)::double precision) AND (retrieval_max_distance <= (2)::double precision)))
-  CONSTRAINT node_ai_settings_search_custom_check CHECK (((NOT (search_strictness IS DISTINCT FROM 'custom'::text)) = (search_max_distance IS NOT NULL)))
-  CONSTRAINT node_ai_settings_search_max_distance_check CHECK (((search_max_distance > (0)::double precision) AND (search_max_distance <= (2)::double precision)))
-  CONSTRAINT node_ai_settings_search_strictness_check CHECK ((search_strictness = ANY (ARRAY['strict'::text, 'balanced'::text, 'loose'::text, 'off'::text, 'custom'::text])))
+  CONSTRAINT node_ai_settings_search_strictness_check CHECK ((search_strictness = ANY (ARRAY['strict'::text, 'balanced'::text, 'loose'::text, 'off'::text])))
   INDEX node_ai_settings_pkey CREATE UNIQUE INDEX node_ai_settings_pkey ON public.node_ai_settings USING btree (id)
 
 TABLE node_remote_access

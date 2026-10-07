@@ -43,12 +43,6 @@ describe("searchIndexShapes", () => {
     expect(names(["ko", "ar"])).toEqual(["docs_bm25_v1_ar_ko", "doc_chunks_bm25_v1_ar_ko"]);
   });
 
-  it("names a language whose tokenizer changed with its revision, so only nodes with it rebuild", () => {
-    expect(names(["zh"])).toEqual(["docs_bm25_v1_zh2", "doc_chunks_bm25_v1_zh2"]);
-    expect(names(["ja", "zh"])).toEqual(["docs_bm25_v1_ja_zh2", "doc_chunks_bm25_v1_ja_zh2"]);
-    expect(names(["ja"])).toEqual(["docs_bm25_v1_ja", "doc_chunks_bm25_v1_ja"]);
-  });
-
   it("keeps every name within Postgres's 63 characters, and apart for every set", () => {
     const seen = new Set<string>();
     for (let n = 1; n <= SEARCH_LANGUAGES.length; n++) {

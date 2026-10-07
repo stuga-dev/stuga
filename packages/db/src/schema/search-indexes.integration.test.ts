@@ -36,7 +36,6 @@ const search = (query: string, principals = ALICE, queryEmbedding: number[] | nu
 const ask = (query: string, principals = ALICE) =>
   askDocs(sql, {
     embeddingDims: EMBEDDING_DIMS,
-    maxDistance: 0.9,
     workspaceId: WS,
     principals,
     query,
@@ -437,7 +436,6 @@ describe.skipIf(!URL)("the BM25 keyword leg with search languages ko and ar", ()
     const ask2 = (query: string) =>
       askDocs(sql, {
         embeddingDims: EMBEDDING_DIMS,
-        maxDistance: 0.9,
         workspaceId: WS2,
         principals: ALICE2,
         query,

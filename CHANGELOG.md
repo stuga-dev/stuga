@@ -9,21 +9,16 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
-### Upgrade notes
-
-- A node with **Chinese** among its search languages rebuilds its keyword indexes once when it starts after the upgrade.
-- The node measures its embedding model when it starts: seconds on a hosted service, minutes for a large model on a CPU. Until then the search box drops nothing by distance. A search or retrieval cutoff saved before stays in force (the search one as **Custom**) until the embedding model changes; without one, Ask and agents no longer apply the default 0.9.
-
 ### Added
 
-- **Search strictness** (Strict, Balanced, Loose or Off) sets how far a match by meaning may sit in the search box. The node measures its embedding model when it is saved and sets the distance from that model's own spread, so a level means the same for every model ([Search strictness](docs/configuration.md#search-strictness)).
+- **Search strictness** (Strict, Balanced, Loose or Off) sets how far a match by meaning may sit in the search box. The node measures its embedding model when it is saved and sets the distance from how far that model places unrelated text, where one fixed distance suited a single model ([Search strictness](docs/configuration.md#search-strictness)).
 - Semantic search takes an embedding model that returns fewer dimensions than the node stores, such as EmbeddingGemma 2 (768 on the default 1024), with no database change ([What is embedded](docs/rag-cross-doc-qa.md#what-is-embedded)).
 
 ### Changed
 
 - With **Chinese** on, keyword search reads traditional characters as simplified, in documents and searches alike, so either script finds the other ([Search languages](docs/configuration.md#search-languages)).
-- Ask, agents' `retrieve` and the assistants' document search take the nearest passages at any distance unless a cutoff is set by hand, and reranking decides what is relevant.
-- `GET /api/node/ai-settings` returns `embed.search_strictness`, `embed.cutoff`, `embed.calibration` and `strictness_default` in place of `max_distance_defaults`; `POST /api/node/ai-settings/calibrate` measures again.
+- Ask, agents' `retrieve` and the assistants' document search take the nearest passages at any distance, and reranking decides what is relevant.
+- `/api/node/ai-settings` takes and returns `embed.search_strictness`, and returns `embed.cutoff`, `embed.calibration` and `strictness_default`, in place of `embed.search_max_distance`, `embed.retrieval_max_distance` and `max_distance_defaults`; `POST /api/node/ai-settings/calibrate` measures again.
 - Queries and passages carry the instruction each known embedding model was trained with (EmbeddingGemma, Qwen3-Embedding, Nomic, E5, mxbai, Arctic Embed), so these models rank as their authors measured them.
 - Settings suggests `embeddinggemma-2:270m` when Ollama has no embedding model yet.
 

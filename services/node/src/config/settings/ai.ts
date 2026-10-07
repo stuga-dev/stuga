@@ -19,11 +19,6 @@ export function chatKeyFile(endpointId: string): string {
 /** Id of the blank Ollama endpoint a node offers before any is stored. */
 const BOOTSTRAP_CHAT_ENDPOINT_ID = "default";
 
-/** Cosine distance runs from 0 to 2, and a cutoff of 0 would drop every match. */
-export function isMaxDistance(v: unknown): v is number {
-  return typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 2;
-}
-
 export type ProviderBaseUrls = Readonly<Record<AiProvider, string>>;
 
 interface KeyState {
@@ -54,10 +49,8 @@ export interface AiStoredSettings {
   embedBaseUrl?: string | null;
   embedApiKey?: string | null;
   embedModel?: string | null;
-  /** The search box's level; `custom` goes with searchMaxDistance. */
+  /** The search box's level. */
   searchStrictness?: SearchStrictness | null;
-  searchMaxDistance?: number | null;
-  retrievalMaxDistance?: number | null;
   /** False switches the reranker off while it stays set up. */
   rerankEnabled?: boolean | null;
   rerankBaseUrl?: string | null;
@@ -68,20 +61,18 @@ export interface AiStoredSettings {
 const trimSlash = (s: string): string => s.replace(/\/+$/, "");
 
 /** Where the search box's cutoff comes from right now. */
-export type CutoffSource = "measured" | "custom" | "off" | "measuring" | "unmeasured";
+export type CutoffSource = "measured" | "off" | "measuring" | "unmeasured";
 
 /**
  * The search box's cutoff in force: the level's distances from the measurement of the model in
- * force, a custom distance, or nothing. An earlier result stays in force while the same model is
- * measured again; with none, nothing is dropped by distance, rather than borrowing another model's number.
+ * force, or nothing. An earlier result stays in force while the same model is measured again; with
+ * none, nothing is dropped by distance, rather than borrowing another model's number.
  */
 export function searchCutoffInForce(
   strictness: SearchStrictness | null | undefined,
-  distance: number | null | undefined,
   calibration: EmbedCalibrationRow | null | undefined,
 ): { level: SearchStrictness; source: CutoffSource; cutoff: SearchCutoff | null } {
   const level = strictness ?? DEFAULT_SEARCH_STRICTNESS;
-  if (level === "custom") return distance ? { level, source: "custom", cutoff: { short: distance, question: distance } } : { level, source: "off", cutoff: null };
   if (level === "off") return { level, source: "off", cutoff: null };
   if (calibration?.result) return { level, source: "measured", cutoff: levelCutoff(calibration.result as unknown as CalibrationResult, level) };
   return { level, source: calibration?.state === "running" ? "measuring" : "unmeasured", cutoff: null };
@@ -140,11 +131,10 @@ export function resolveAi(
     model: embedModel,
     dims: embeddingDims,
     searchCutoff: null,
-    retrievalMaxDistance: st.retrievalMaxDistance ?? null,
   };
   if (embedApiKey !== undefined) embed.apiKey = embedApiKey;
   if (embedRuns) {
-    embed.searchCutoff = searchCutoffInForce(st.searchStrictness, st.searchMaxDistance, calibrations.get(calibrationKey({ embed }))).cutoff;
+    embed.searchCutoff = searchCutoffInForce(st.searchStrictness, calibrations.get(calibrationKey({ embed }))).cutoff;
   }
 
   // The reranker is set up by a model and where to reach it; without one the chat model reranks.
@@ -216,8 +206,6 @@ export function createAiSettingsStore(deps: {
         embedApiKey: embedKey,
         embedModel: row?.embed_model ?? null,
         searchStrictness: row?.search_strictness ?? null,
-        searchMaxDistance: row?.search_max_distance ?? null,
-        retrievalMaxDistance: row?.retrieval_max_distance ?? null,
         rerankEnabled: row?.rerank_enabled ?? null,
         rerankBaseUrl: row?.rerank_base_url ?? null,
         rerankModel: row?.rerank_model ?? null,

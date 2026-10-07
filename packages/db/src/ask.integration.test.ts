@@ -70,7 +70,7 @@ describe.skipIf(!URL)("askDocs (chunk-returning RAG retrieval)", () => {
     await seed(sql, "d1", "alice", "Quarterly Plan", "revenue target growth strategy", ["user:alice"]);
     await seed(sql, "secret", "bob", "Quarterly Secret", "revenue target confidential", ["user:bob"]);
 
-    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.9, workspaceId: WS, principals: ALICE, query: "revenue target", queryEmbedding: null });
+    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, workspaceId: WS, principals: ALICE, query: "revenue target", queryEmbedding: null });
     expect(chunks.length).toBeGreaterThan(0);
     expect(chunks.every((c) => c.doc_id === "d1")).toBe(true);
     expect(chunks[0]!.content).toContain("Quarterly Plan");
@@ -82,7 +82,7 @@ describe.skipIf(!URL)("askDocs (chunk-returning RAG retrieval)", () => {
     await seed(sql, "d1", "alice", "Alpha", "shared keyword apple", ["user:alice"]);
     await seed(sql, "d2", "alice", "Beta", "shared keyword apple", ["user:alice"]);
 
-    const scoped = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.9, workspaceId: WS,
+    const scoped = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, workspaceId: WS,
       principals: ALICE,
       query: "apple",
       queryEmbedding: null,
@@ -91,27 +91,27 @@ describe.skipIf(!URL)("askDocs (chunk-returning RAG retrieval)", () => {
     expect(scoped.every((c) => c.doc_id === "d1")).toBe(true);
     expect(scoped.length).toBeGreaterThan(0);
 
-    const empty = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.9, workspaceId: WS, principals: ALICE, query: "apple", queryEmbedding: null, scopeDocIds: [] });
+    const empty = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, workspaceId: WS, principals: ALICE, query: "apple", queryEmbedding: null, scopeDocIds: [] });
     expect(empty).toEqual([]);
   });
 
   it("matches a natural-language question on any of its terms", async () => {
     await seed(sql, "d1", "alice", "Retention Policy", "Stuga keeps document snapshots for ninety days before archival.", ["user:alice"]);
-    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.9, workspaceId: WS,
+    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, workspaceId: WS,
       principals: ALICE,
       query: "how long are snapshots kept",
       queryEmbedding: null,
     });
     expect(chunks.length).toBeGreaterThan(0);
     expect(chunks[0]!.doc_id).toBe("d1");
-    const none = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.9, workspaceId: WS, principals: ALICE, query: "pineapple helicopter", queryEmbedding: null });
+    const none = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, workspaceId: WS, principals: ALICE, query: "pineapple helicopter", queryEmbedding: null });
     expect(none).toEqual([]);
   });
 
   it("orders passages found only by meaning by their similarity, with no keyword credit", async () => {
     await seedPassage(sql, "a", "Alpha", "alpha passage", blendVec(0.5, Math.sqrt(1 - 0.25)));
     await seedPassage(sql, "b", "Beta", "beta passage", blendVec(0.8, 0.6));
-    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.9, workspaceId: WS, principals: ALICE, query: "zephyr", queryEmbedding: blendVec(1, 0) });
+    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, workspaceId: WS, principals: ALICE, query: "zephyr", queryEmbedding: blendVec(1, 0) });
     expect(chunks.map((c) => c.doc_id)).toEqual(["b", "a"]);
     expect(Number(chunks[0]!.score)).toBeCloseTo(1 / 61, 12);
     expect(Number(chunks[1]!.score)).toBeCloseTo(1 / 62, 12);
@@ -121,7 +121,7 @@ describe.skipIf(!URL)("askDocs (chunk-returning RAG retrieval)", () => {
     await seedPassage(sql, "both", "Notes", "zephyr quasar", blendVec(0.9, Math.sqrt(1 - 0.81)));
     await seedPassage(sql, "kw-only", "Notes", "zephyr", null);
     await seedPassage(sql, "sem-only", "Notes", "calm air", blendVec(0.6, 0.8));
-    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.9, workspaceId: WS, principals: ALICE, query: "zephyr quasar", queryEmbedding: blendVec(1, 0) });
+    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, workspaceId: WS, principals: ALICE, query: "zephyr quasar", queryEmbedding: blendVec(1, 0) });
     const score = (docId: string) => Number(chunks.find((c) => c.doc_id === docId)!.score);
     expect(chunks[0]!.doc_id).toBe("both");
     expect(score("both")).toBeCloseTo(1 / 61 + 1 / 61, 12);
@@ -129,16 +129,16 @@ describe.skipIf(!URL)("askDocs (chunk-returning RAG retrieval)", () => {
     expect(score("sem-only")).toBeCloseTo(1 / 62, 12);
   });
 
-  it.each([0.5, 0.9, 1, 2, null])("returns a passage found only by meaning iff its cosine distance is below a cutoff of %s", async (maxDistance) => {
+  it("returns the passages nearest by meaning at any distance, for the reranker to judge", async () => {
     const distances = [0.3, 0.67, 0.98, 1.3];
     for (const d of distances) {
       await seedPassage(sql, `at-${d}`, "Notes", "unrelated filler", blendVec(1 - d, Math.sqrt(1 - (1 - d) ** 2)));
     }
-    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance, workspaceId: WS,
+    const chunks = await askDocs(sql, { embeddingDims: EMBEDDING_DIMS, workspaceId: WS,
       principals: ALICE,
       query: "zephyr",
       queryEmbedding: blendVec(1, 0),
     });
-    expect(chunks.map((c) => c.doc_id).sort()).toEqual(distances.filter((d) => maxDistance === null || d < maxDistance).map((d) => `at-${d}`).sort());
+    expect(chunks.map((c) => c.doc_id).sort()).toEqual(distances.map((d) => `at-${d}`).sort());
   });
 });
