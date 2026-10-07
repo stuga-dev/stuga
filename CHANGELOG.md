@@ -11,6 +11,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ### Upgrade notes
 
+- A node with **Chinese** among its search languages rebuilds its keyword indexes once when it starts after the upgrade.
 - The node measures its embedding model when it starts: seconds on a hosted service, minutes for a large model on a CPU. Until then the search box drops nothing by distance. A search or retrieval cutoff saved before stays in force (the search one as **Custom**) until the embedding model changes; without one, Ask and agents no longer apply the default 0.9.
 
 ### Added
@@ -20,6 +21,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ### Changed
 
+- With **Chinese** on, keyword search reads traditional characters as simplified, in documents and searches alike, so either script finds the other ([Search languages](docs/configuration.md#search-languages)).
 - Ask, agents' `retrieve` and the assistants' document search take the nearest passages at any distance unless a cutoff is set by hand, and reranking decides what is relevant.
 - `GET /api/node/ai-settings` returns `embed.search_strictness`, `embed.cutoff`, `embed.calibration` and `strictness_default` in place of `max_distance_defaults`; `POST /api/node/ai-settings/calibrate` measures again.
 - Queries and passages carry the instruction each known embedding model was trained with (EmbeddingGemma, Qwen3-Embedding, Nomic, E5, mxbai, Arctic Embed), so these models rank as their authors measured them.

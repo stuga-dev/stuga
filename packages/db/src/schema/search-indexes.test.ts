@@ -43,6 +43,12 @@ describe("searchIndexShapes", () => {
     expect(names(["ko", "ar"])).toEqual(["docs_bm25_v1_ar_ko", "doc_chunks_bm25_v1_ar_ko"]);
   });
 
+  it("names a language whose tokenizer changed with its revision, so only nodes with it rebuild", () => {
+    expect(names(["zh"])).toEqual(["docs_bm25_v1_zh2", "doc_chunks_bm25_v1_zh2"]);
+    expect(names(["ja", "zh"])).toEqual(["docs_bm25_v1_ja_zh2", "doc_chunks_bm25_v1_ja_zh2"]);
+    expect(names(["ja"])).toEqual(["docs_bm25_v1_ja", "doc_chunks_bm25_v1_ja"]);
+  });
+
   it("keeps every name within Postgres's 63 characters, and apart for every set", () => {
     const seen = new Set<string>();
     for (let n = 1; n <= SEARCH_LANGUAGES.length; n++) {
@@ -64,7 +70,7 @@ describe("searchIndexShapes", () => {
   it("keeps Japanese, which is written partly in Chinese characters, out of the Chinese column", () => {
     const [docs] = searchIndexShapes(["ja", "zh"]);
     expect(docs!.definition).toContain("~ '[㐀-䶿一-鿿]' AND (title || ' ' || search_text) !~ '[ぁ-ヿ]' THEN");
-    expect(docs!.definition).toContain("pdb.jieba('alias=all_text_zh')");
+    expect(docs!.definition).toContain("pdb.jieba('chinese_convert=t2s', 'alias=all_text_zh')");
     expect(docs!.definition).toContain("~ '[ぁ-ヿ]' THEN");
     expect(docs!.definition).toContain("pdb.lindera(japanese, 'alias=all_text_ja')");
   });

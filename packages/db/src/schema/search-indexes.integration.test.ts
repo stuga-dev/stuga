@@ -544,6 +544,13 @@ describe.skipIf(!URL)("the BM25 keyword leg with every search language", { timeo
     expect(await search3("人工智能")).toEqual(["whole", "apart"]);
   });
 
+  it("finds traditional Chinese from a simplified query, and simplified from a traditional one", async () => {
+    await seed3("traditional", "國家圖書館開放時間", "國家圖書館週末照常開放，閱覽室需預約。");
+    await seed3("simplified", "博物馆讲解安排", "博物馆每周三下午安排免费讲解。");
+    expect(await search3("国家图书馆")).toEqual(["traditional"]);
+    expect(await search3("博物館講解")).toEqual(["simplified"]);
+  });
+
   it("gives Chinese and Japanese each only their own documents", async () => {
     await seed3("zh", "中国的公司", "中国的公司");
     await seed3("ja", "中国の会社", "中国の会社");

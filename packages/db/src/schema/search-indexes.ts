@@ -58,7 +58,9 @@ const LANGUAGE_COLUMNS: Record<SearchLanguage, { script: string; unless?: string
   sv: { script: LATIN, tokenizer: stemmed("swedish", { stopwords: true }) },
   ta: { script: "஀-௿", tokenizer: stemmed("tamil") },
   tr: { script: LATIN, tokenizer: stemmed("turkish") },
-  zh: { script: HAN, unless: KANA, tokenizer: (alias) => `pdb.jieba('alias=${alias}')` },
+  // Traditional characters are folded to simplified first, in documents and queries alike, so either
+  // script finds the other; jieba's dictionary is simplified, and splits traditional text badly.
+  zh: { script: HAN, unless: KANA, tokenizer: (alias) => `pdb.jieba('chinese_convert=t2s', 'alias=${alias}')` },
 };
 
 function stemmed(language: string, opts: { stopwords?: boolean } = {}): (alias: string) => string {
@@ -76,14 +78,27 @@ function gated(lang: SearchLanguage, expr: string): string {
 const MAX_IDENTIFIER = 63;
 
 /**
+ * A language whose tokenizer changed after release, and its revision: its code in an index name
+ * carries the revision, so a node with the language on rebuilds its indexes and one without it does
+ * not. zh 2: traditional folded to simplified.
+ */
+const TOKENIZER_REVISION: Partial<Record<SearchLanguage, number>> = { zh: 2 };
+
+const nameCode = (lang: string) => {
+  const rev = TOKENIZER_REVISION[lang as SearchLanguage];
+  return rev ? `${lang}${rev}` : lang;
+};
+
+/**
  * What an index name adds for its languages: their codes while the longest name fits, else a hash
  * of them, which still changes with the set.
  */
 function languageSuffix(langs: readonly string[]): string {
   if (!langs.length) return "";
-  const readable = `_${langs.join("_")}`;
+  const codes = langs.map(nameCode);
+  const readable = `_${codes.join("_")}`;
   if (`doc_chunks_bm25_v1${readable}`.length <= MAX_IDENTIFIER) return readable;
-  return `_h${createHash("sha256").update(langs.join(",")).digest("hex").slice(0, 12)}`;
+  return `_h${createHash("sha256").update(codes.join(",")).digest("hex").slice(0, 12)}`;
 }
 
 const ENGLISH = "'stemmer=english', 'stopwords_language=english'";

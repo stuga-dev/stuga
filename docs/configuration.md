@@ -166,7 +166,8 @@ stem, always. The field **Languages in your documents** adds a tokenizer for eac
 
 - **Chinese** adds jieba, which segments words the general tokenizer splits wrongly beside their
   neighbours (`智能手机` in `和智能手机`) and keeps a compound whole beside its parts, so a document
-  with `人工智能` ranks above one with `人工` and `智能` apart.
+  with `人工智能` ranks above one with `人工` and `智能` apart. Traditional characters are read as
+  simplified, in documents and searches alike, so `国家图书馆` finds `國家圖書館` and the other way round.
 - **Japanese** and **Korean** add a Lindera dictionary; a Korean word with a particle attached is
   found.
 - Each of the others matches words by stem, so `maisons` finds `maison`: Arabic, Czech, Danish,
