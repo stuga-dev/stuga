@@ -37,7 +37,7 @@ async function reconcileMissingEmbeddings(env: JobsEnv, d: JobDeps): Promise<voi
   for (const c of chunks) {
     const text = chunkEmbedInput(c.title, c.heading_path, c.content, c.is_first);
     try {
-      const res = await d.embed(ai, [text]);
+      const res = await d.embed(ai, [text], "document");
       const vector = res.embeddings[0];
       if (!vector) throw new AiError("embed returned no vector", 0, false);
       await d.db.setChunkEmbedding(c.doc_id, c.chunk_index, vector, env.embeddingDims);

@@ -41,7 +41,7 @@ export async function embedQuery(ai: AiConfig, workspaceId: string, alias: strin
     return { embedding: await kept.vector, called: false, inputTokens: 0 };
   }
 
-  const call = embed(ai, [query]).then((res) => {
+  const call = embed(ai, [query], "query").then((res) => {
     const embedding = res.embeddings[0];
     if (!embedding) throw new Error("embed: no vector for the query");
     return { embedding, inputTokens: res.inputTokens };

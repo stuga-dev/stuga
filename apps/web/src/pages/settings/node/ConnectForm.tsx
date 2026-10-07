@@ -42,8 +42,8 @@ function saveFailure(label: string, model: string, e: unknown): string {
 /** What semantic search's model must do, and where to get one when the service lists none. */
 function embedHint(preset: Preset, width: number, listed: boolean): string {
   const pull = suggestedOllamaEmbedModel(width);
-  if (listed || preset.provider !== "ollama" || !pull) return `It must return ${width} dimensions.`;
-  return `No embedding model here yet. Pull one that returns ${width} dimensions, such as ${pull}.`;
+  if (listed || preset.provider !== "ollama" || !pull) return `It must return ${width} dimensions or fewer.`;
+  return `No embedding model here yet. Pull one, such as ${pull}.`;
 }
 
 export function ConnectForm({

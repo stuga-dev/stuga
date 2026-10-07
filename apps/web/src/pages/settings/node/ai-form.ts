@@ -239,16 +239,13 @@ export function endpointLabel(presets: Preset[], provider: string, baseUrl: stri
 /** Nothing to delete: what a save that clears no key passes to toInput. */
 export const NO_CLEARED_KEYS = { chat: {}, embed: false } as const;
 
-/** Local embedding models by the width they return, for the hint when Ollama has none: it cannot shorten a vector to fit the column. */
-const OLLAMA_EMBED_BY_WIDTH: Record<number, string[]> = {
-  1024: ["bge-m3", "mxbai-embed-large", "snowflake-arctic-embed2"],
-  768: ["nomic-embed-text"],
-  384: ["all-minilm"],
-};
-
-/** A model Ollama could pull for semantic search at this width, for the hint when none is there. */
+/**
+ * A model Ollama could pull for semantic search at this width, for the hint when none is there.
+ * EmbeddingGemma 2 returns 768 dimensions, shortens to 512, 256 or 128, and is padded to the
+ * column. The 270m tag is its text-only build.
+ */
 export function suggestedOllamaEmbedModel(width: number): string | null {
-  return OLLAMA_EMBED_BY_WIDTH[width]?.[0] ?? null;
+  return width >= 128 ? "embeddinggemma-2:270m" : null;
 }
 
 /**

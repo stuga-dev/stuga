@@ -1,5 +1,5 @@
 /** What the job handlers read from the node, and the dependencies tests replace. */
-import { AiError, type AiConfig, type EmbedResult, embed } from "@stuga/ai";
+import { AiError, type AiConfig, type EmbedResult, type EmbedRole, embed } from "@stuga/ai";
 import type { NodeEnv, NotifyConfig } from "../env.js";
 import { type JobsDb, jobsDb } from "./db.js";
 import { type NotificationPayload, type SinkIo, deliver } from "./sinks.js";
@@ -11,7 +11,7 @@ export type JobsEnv = Pick<
 
 export interface JobDeps {
   db: JobsDb;
-  embed: (cfg: AiConfig, texts: string[]) => Promise<EmbedResult>;
+  embed: (cfg: AiConfig, texts: string[], role: EmbedRole) => Promise<EmbedResult>;
   deliver: (cfg: NotifyConfig, n: NotificationPayload, io?: SinkIo) => Promise<string | null>;
   /** What webhook deliveries POST with. */
   fetch: typeof globalThis.fetch;

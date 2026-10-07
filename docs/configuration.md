@@ -76,7 +76,7 @@ letter or a digit. These are reserved: `admin`, `administrator`, `root`, `stuga`
 
 | Variable | Default | |
 |---|---|---|
-| `AI_EMBED_DIMS` | `1024` | The width of embedding vectors, fixed when the database is created. Pick it to match your embedding model, at most 2000. The node refuses to start when it differs from the database: [Change the embedding width](operations.md#change-the-embedding-width). |
+| `AI_EMBED_DIMS` | `1024` | The width of embedding vectors, fixed when the database is created, at most 2000. A model that returns fewer dimensions works too: its vectors are padded with zeros, which leaves search unchanged. The node refuses to start when it differs from the database: [Change the embedding width](operations.md#change-the-embedding-width). |
 | `MEDIA_COOKIE_SAMESITE` | `lax` | `lax`, `strict` or `none`, for the cookie that authorizes images. `none` is for an app served from another origin than the node: it also lets that origin show the images, which otherwise answer only their own ([Headers](network-access.md#headers)). |
 
 ### Packaging hints

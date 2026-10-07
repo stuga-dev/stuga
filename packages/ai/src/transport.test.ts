@@ -8,7 +8,7 @@ import { embed } from "./retrieval/embed.js";
 import { AiError, fetchWithRetry, joinUrl } from "./transport.js";
 import { CFG } from "./test-helpers.js";
 
-const OK = JSON.stringify({ data: [{ index: 0, embedding: Array.from({ length: 1024 }, () => 0) }], usage: { prompt_tokens: 3 } });
+const OK = JSON.stringify({ data: [{ index: 0, embedding: Array.from({ length: 1024 }, () => 0.1) }], usage: { prompt_tokens: 3 } });
 
 describe("retry / backoff (AiError classification)", () => {
   // Make backoff instant so retries don't add real wall-clock to the suite.
@@ -31,7 +31,7 @@ describe("retry / backoff (AiError classification)", () => {
       return Promise.resolve(n < 3 ? new Response("slow down", { status: 429 }) : new Response(OK, { status: 200 }));
     });
     vi.stubGlobal("fetch", fn);
-    const res = await runWithTimers(embed(CFG, ["x"]));
+    const res = await runWithTimers(embed(CFG, ["x"], "document"));
     expect(res.embeddings[0]).toHaveLength(1024);
     expect(fn).toHaveBeenCalledTimes(3); // two 429s + one success
   });
@@ -39,7 +39,7 @@ describe("retry / backoff (AiError classification)", () => {
   it("retries 5xx then gives up as a retryable AiError after exhausting attempts", async () => {
     const fn = vi.fn(() => Promise.resolve(new Response("boom", { status: 503 })));
     vi.stubGlobal("fetch", fn);
-    const err = await runWithTimers(embed(CFG, ["x"]).catch((e) => e));
+    const err = await runWithTimers(embed(CFG, ["x"], "document").catch((e) => e));
     expect(err).toBeInstanceOf(AiError);
     expect((err as AiError).status).toBe(503);
     expect((err as AiError).retryable).toBe(true);
@@ -49,7 +49,7 @@ describe("retry / backoff (AiError classification)", () => {
   it("does NOT retry a 4xx (fail-fast, terminal)", async () => {
     const fn = vi.fn(() => Promise.resolve(new Response("bad input", { status: 400 })));
     vi.stubGlobal("fetch", fn);
-    const err = await runWithTimers(embed(CFG, ["x"]).catch((e) => e));
+    const err = await runWithTimers(embed(CFG, ["x"], "document").catch((e) => e));
     expect(err).toBeInstanceOf(AiError);
     expect((err as AiError).retryable).toBe(false);
     expect((err as AiError).message).toMatch(/embeddings 400: bad input/);
@@ -64,7 +64,7 @@ describe("retry / backoff (AiError classification)", () => {
       return Promise.resolve(new Response(OK, { status: 200 }));
     });
     vi.stubGlobal("fetch", fn);
-    const res = await runWithTimers(embed(CFG, ["x"]));
+    const res = await runWithTimers(embed(CFG, ["x"], "document"));
     expect(res.embeddings).toHaveLength(1);
     expect(fn).toHaveBeenCalledTimes(2);
   });

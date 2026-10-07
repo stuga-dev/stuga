@@ -208,7 +208,7 @@ export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocM
         const batch = embedNow.slice(start, start + EMBED_BATCH);
         let vectors: (number[] | null)[];
         try {
-          const res = await deps.embed(ai, batch.map((i) => inputs[i]!));
+          const res = await deps.embed(ai, batch.map((i) => inputs[i]!), "document");
           vectors = res.embeddings;
           totalTokens += res.inputTokens;
         } catch (err) {

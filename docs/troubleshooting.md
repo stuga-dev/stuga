@@ -184,7 +184,7 @@ give the node an https address as [Network access](network-access.md#https) desc
 | **Connect** or **Test** cannot reach Ollama on Docker Desktop | Use **Ollama (local)**, which fills in `http://host.docker.internal:11434`, and check that Ollama is running on the host. |
 | **Connect** or **Test** cannot reach Ollama on Docker on Linux | Ollama listens on `127.0.0.1` by default, which the container cannot reach. Make it listen on an address the container can reach, such as `OLLAMA_HOST=0.0.0.0:11434`, and keep that port closed to the network in the host's firewall. |
 | Anthropic is not listed under **Semantic search** | Anthropic serves no embeddings. Use another service there, or leave search matching words. |
-| A new embedding model cannot be saved because of its width | The width is fixed when the database is created: [Change the embedding width](operations.md#change-the-embedding-width). |
+| A new embedding model cannot be saved because of its width | Its vectors are wider than the column, which is fixed when the database is created. Choose a model that returns as many dimensions or fewer, or [change the embedding width](operations.md#change-the-embedding-width). |
 
 ## Search
 

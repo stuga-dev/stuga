@@ -9,6 +9,15 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Added
+
+- Semantic search takes an embedding model that returns fewer dimensions than the node stores, such as EmbeddingGemma 2 (768 on the default 1024), with no database change ([What is embedded](docs/rag-cross-doc-qa.md#what-is-embedded)).
+
+### Changed
+
+- Queries and passages carry the instruction each known embedding model was trained with (EmbeddingGemma, Qwen3-Embedding, Nomic, E5, mxbai, Arctic Embed), so these models rank as their authors measured them.
+- Settings suggests `embeddinggemma-2:270m` when Ollama has no embedding model yet.
+
 ## [0.1.12] - 2026-10-06
 
 **Request changes** on an AI edit, so the agent revises from your note; one command to go back to an

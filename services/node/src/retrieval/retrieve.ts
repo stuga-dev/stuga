@@ -65,7 +65,7 @@ export async function retrieveAndRerank(args: RetrieveArgs): Promise<RetrieveRes
 
   let queryEmbedding: number[] | null = null;
   try {
-    const e = await embed(aiCfg, [query]);
+    const e = await embed(aiCfg, [query], "query");
     queryEmbedding = e.embeddings[0] ?? null;
     await insertAiUsage(sql, {
       alias,

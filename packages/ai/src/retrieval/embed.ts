@@ -1,15 +1,20 @@
 /**
  * Embeddings over an OpenAI-compatible `/embeddings` or Ollama `/api/embed`
- * endpoint. The width must equal the `vector(N)` column; it is requested where
- * supported and checked on every response, so a mismatch fails here, not at insert.
+ * endpoint. Every vector leaves here as wide as the `vector(N)` column: a model
+ * that returns fewer dimensions is padded with zeros, which leaves every cosine
+ * distance as it was, and one that returns more is asked to shorten its vectors
+ * (Matryoshka models can). A vector wider than the column fails here, not at insert.
  */
 import { EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
-import type { AiConfig, AiEndpoint } from "../config.js";
+import type { AiConfig, AiEndpoint, AiProvider } from "../config.js";
 import { AiError, fetchWithRetry, joinUrl, jsonHeaders } from "../transport.js";
+import { type EmbedProfile, type EmbedRole, embedProfile } from "./embed-profile.js";
 
 export interface EmbedResult {
-  /** One vector per input text, in input order. */
+  /** One vector per input text, in input order, each as wide as the column. */
   embeddings: number[][];
+  /** The width the model returned, before padding. */
+  modelDims: number;
   /** Tokens the endpoint reported consuming (0 when it reports none). */
   inputTokens: number;
 }
@@ -22,25 +27,51 @@ export function embedDims(cfg: AiConfig): number {
   return Number.isInteger(d) && d > 0 ? d : EMBEDDING_DIMS;
 }
 
-/** Embed `texts` in one request. An empty list makes no call. */
-export async function embed(cfg: AiConfig, texts: string[]): Promise<EmbedResult> {
-  if (texts.length === 0) return { embeddings: [], inputTokens: 0 };
-  const inputs = texts.map((t) => t.slice(0, MAX_INPUT_CHARS));
-  const dims = embedDims(cfg);
+/** Embed `texts` in one request, with the model's own prompt for `role`. An empty list makes no call. */
+export async function embed(cfg: AiConfig, texts: string[], role: EmbedRole): Promise<EmbedResult> {
+  if (texts.length === 0) return { embeddings: [], modelDims: 0, inputTokens: 0 };
   const ep = cfg.embed;
-  const out = ep.provider === "ollama" ? await ollamaEmbed(ep, ep.model, inputs) : await openaiEmbed(ep, ep.model, inputs, dims);
+  const profile = embedProfile(ep.model);
+  const prompt = profile[role];
+  const inputs = texts.map((t) => prompt + t.slice(0, MAX_INPUT_CHARS));
+  const dims = embedDims(cfg);
+  const ask = requestedDims(profile, dims, ep.provider);
+  const out = ep.provider === "ollama" ? await ollamaEmbed(ep, ep.model, inputs, ask) : await openaiEmbed(ep, ep.model, inputs, ask);
   if (out.embeddings.length !== inputs.length) {
     throw new AiError(`embed: expected ${inputs.length} vectors, got ${out.embeddings.length}`, 0, false);
   }
-  for (const v of out.embeddings) {
-    if (v.length !== dims) {
-      throw new AiError(`embed: model ${ep.model} returned ${v.length} dimensions; the configured width is ${dims}`, 0, false);
+  const modelDims = out.embeddings[0]!.length;
+  const embeddings = out.embeddings.map((v) => {
+    if (v.length !== modelDims) throw new AiError(`embed: model ${ep.model} returned vectors of different widths`, 0, false);
+    if (v.length > dims) {
+      throw new AiError(`embed: model ${ep.model} returned ${v.length} dimensions, more than the ${dims} this node stores`, 0, false);
     }
-  }
-  return out;
+    // Cosine distance to a zero vector is undefined, and a non-finite one poisons every comparison.
+    if (!v.every(Number.isFinite) || v.every((x) => x === 0)) {
+      throw new AiError(`embed: model ${ep.model} returned an unusable vector`, 0, false);
+    }
+    return v.length === dims ? v : [...v, ...Array.from({ length: dims - v.length }, () => 0)];
+  });
+  return { embeddings, modelDims, inputTokens: out.inputTokens };
 }
 
-async function openaiEmbed(ep: AiEndpoint, model: string, input: string[], dims: number): Promise<EmbedResult> {
+/**
+ * The width to ask for, or null for none. Only a model known to be wider than the
+ * column is asked to shorten, to the widest it can that fits, since Ollama and some
+ * compatible servers refuse a width beyond the model's own or outside its list. An
+ * unknown model behind an OpenAI-compatible endpoint is asked for the column's
+ * width, which OpenAI's own models need.
+ */
+function requestedDims(profile: EmbedProfile, column: number, provider: AiProvider): number | null {
+  if (profile.dims === null) return provider === "ollama" ? null : column;
+  if (profile.dims <= column) return null;
+  return profile.shortens ? (profile.shortens.find((d) => d <= column) ?? null) : column;
+}
+
+/** Vectors as the endpoint returned them. */
+type RawEmbeddings = Omit<EmbedResult, "modelDims">;
+
+async function openaiEmbed(ep: AiEndpoint, model: string, input: string[], dims: number | null): Promise<RawEmbeddings> {
   if (ep.provider === "anthropic") {
     throw new AiError("embed: the anthropic provider serves no embeddings endpoint; point embed at an OpenAI-compatible or Ollama endpoint", 0, false);
   }
@@ -48,7 +79,7 @@ async function openaiEmbed(ep: AiEndpoint, model: string, input: string[], dims:
     fetch(joinUrl(ep.baseUrl, "/embeddings"), {
       method: "POST",
       headers: jsonHeaders(ep.apiKey),
-      body: JSON.stringify({ model, input, dimensions: dims }),
+      body: JSON.stringify(dims === null ? { model, input } : { model, input, dimensions: dims }),
       signal,
     }),
   );
@@ -65,12 +96,12 @@ async function openaiEmbed(ep: AiEndpoint, model: string, input: string[], dims:
   return { embeddings, inputTokens: json.usage?.prompt_tokens ?? 0 };
 }
 
-async function ollamaEmbed(ep: AiEndpoint, model: string, input: string[]): Promise<EmbedResult> {
+async function ollamaEmbed(ep: AiEndpoint, model: string, input: string[], dims: number | null): Promise<RawEmbeddings> {
   const res = await fetchWithRetry("ollama embed", (signal) =>
     fetch(joinUrl(ep.baseUrl, "/api/embed"), {
       method: "POST",
       headers: jsonHeaders(ep.apiKey),
-      body: JSON.stringify({ model, input }),
+      body: JSON.stringify(dims === null ? { model, input } : { model, input, dimensions: dims }),
       signal,
     }),
   );

@@ -5,6 +5,7 @@ export { failureReason, type ModelFailure } from "./failure.js";
 export { AiError } from "./transport.js";
 export { listModels } from "./list-models.js";
 export { embed, type EmbedResult } from "./retrieval/embed.js";
+export { embedProfile, type EmbedProfile, type EmbedRole } from "./retrieval/embed-profile.js";
 export { chunkEmbedInput, headingAwareChunk } from "./retrieval/chunk.js";
 export { rerankChunks, type RerankCandidate } from "./retrieval/rerank.js";
 export { probeSystemOne } from "./retrieval/system-one.js";

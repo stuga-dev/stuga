@@ -37,10 +37,13 @@ const settings = (endpoints: ReturnType<typeof provider>[], defaultModel = endpo
 });
 
 describe("suggestedOllamaEmbedModel", () => {
-  it("names a model Ollama could pull that returns the column's width", () => {
-    expect(suggestedOllamaEmbedModel(1024)).toBe("bge-m3");
-    expect(suggestedOllamaEmbedModel(768)).toBe("nomic-embed-text");
-    expect(suggestedOllamaEmbedModel(1536)).toBeNull();
+  it("names a model Ollama could pull that fits the column", () => {
+    expect(suggestedOllamaEmbedModel(1024)).toBe("embeddinggemma-2:270m");
+    expect(suggestedOllamaEmbedModel(768)).toBe("embeddinggemma-2:270m");
+    expect(suggestedOllamaEmbedModel(1536)).toBe("embeddinggemma-2:270m");
+    expect(suggestedOllamaEmbedModel(256)).toBe("embeddinggemma-2:270m");
+    expect(suggestedOllamaEmbedModel(384)).toBe("embeddinggemma-2:270m");
+    expect(suggestedOllamaEmbedModel(100)).toBeNull();
   });
 });
 

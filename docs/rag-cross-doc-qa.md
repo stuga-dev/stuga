@@ -40,11 +40,19 @@ its headings:
 
 ## What is embedded
 
-`chunkEmbedInput` defines the exact text sent to the embedding model: the chunk's heading path before
+`chunkEmbedInput` defines the text of each chunk that is embedded: the chunk's heading path before
 its content, and for the first chunk the document title as well. The stored passage stays clean, since
 the prefix is a topical signal for the vector, not text a reader sees. Indexing, the repair sweep and
-the per-chunk hash all use this one function, so a repaired vector equals one written at indexing and
-the hash covers exactly the bytes that were embedded.
+the per-chunk hash all use this one function, so a repaired vector equals one written at indexing.
+
+Many embedding models are trained to see a short instruction before a query and another before a
+passage, such as EmbeddingGemma's `task: search result | query: ` and `title: none | text: `. The node
+adds them for the models it knows by name (EmbeddingGemma, Qwen3-Embedding, Nomic, E5, mxbai, Arctic
+Embed), whichever server runs them, and sends any other model the text as it is.
+
+A model that returns fewer dimensions than the column holds is padded with zeros, which leaves every
+cosine distance unchanged. One known to return more is asked to shorten its vectors, to the column's
+width or the widest it supports below it, which models trained for shortening (Matryoshka) can.
 
 ## Indexing
 

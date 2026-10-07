@@ -492,7 +492,7 @@ describe("index_doc: the version half", () => {
   const DOC = { doc_id: "d1", title: "Notes", title_source: "heading", search_hidden: false } as never;
   const KEY = "d1/7.bin";
   /** The real embed would call the fake endpoint and wait out its retry backoff. */
-  const embed = async (_cfg: unknown, texts: string[]) => ({ embeddings: texts.map(() => [0, 0, 0, 1]), inputTokens: 5 });
+  const embed = async (_cfg: unknown, texts: string[]) => ({ embeddings: texts.map(() => [0, 0, 0, 1]), modelDims: 4, inputTokens: 5 });
 
   function fixture(
     recordVersion: boolean | undefined,
@@ -565,7 +565,7 @@ describe("index_doc: the version half", () => {
   it("skips a forced job for a seq the row has moved past", async () => {
     // The backfill read seq 7, then a newer flush was processed first.
     const { db, env, msg } = fixture(false, { snapshot_seq: 8 });
-    const embed = vi.fn(async (_cfg: unknown, texts: string[]) => ({ embeddings: texts.map(() => [0, 0, 0, 1]), inputTokens: 5 }));
+    const embed = vi.fn(async (_cfg: unknown, texts: string[]) => ({ embeddings: texts.map(() => [0, 0, 0, 1]), modelDims: 4, inputTokens: 5 }));
     await dispatchJob(env, { ...msg, force: true, reason: "embedding_backfill" } as IndexMessage, { db, log: silentLog, embed });
     expect(db.syncDocMentions).not.toHaveBeenCalled();
     expect(embed).not.toHaveBeenCalled();
@@ -576,7 +576,7 @@ describe("index_doc: the version half", () => {
   it("charges the embedding to the version's editors when a promote job overtakes its flush's", async () => {
     // The promote job carries no authors (its flush took them), and that flush's job has not run.
     const { db, env, msg } = fixture(true, { snapshot_seq: 6, owner: "user:bob", workspace_id: "ws1" });
-    const embed = vi.fn(async (_cfg: unknown, texts: string[]) => ({ embeddings: texts.map(() => [0, 0, 0, 1]), inputTokens: 5 }));
+    const embed = vi.fn(async (_cfg: unknown, texts: string[]) => ({ embeddings: texts.map(() => [0, 0, 0, 1]), modelDims: 4, inputTokens: 5 }));
     await dispatchJob(env, { ...msg, authors: [], versionAuthors: ["alice", "ada"] } as IndexMessage, { db, log: silentLog, embed });
     expect(db.insertAiUsage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ alias: "alice", inputTokens: 5 }));
   });

@@ -285,8 +285,8 @@ function whatChanged(before: AiConfig, after: AiConfig): Changed {
 
 /**
  * Call every endpoint that needs verifying. The embed probe relies on embed()
- * asserting each vector against the column width, so a model whose vectors the
- * column would reject is refused before it is saved.
+ * refusing a vector wider than the column, so a model whose vectors the column
+ * cannot hold is refused before it is saved.
  */
 async function probeEndpoints(
   candidate: AiConfig,
@@ -333,9 +333,9 @@ async function probeEndpoints(
     if (candidate.embed.enabled) out.embed = { ok: true, skipped: true, model: candidate.embed.model };
   } else {
     try {
-      const res = await embed(candidate, ["stuga embedding width probe"]);
-      const dims = res.embeddings[0]?.length ?? 0;
-      out.embed = { ok: true, model: candidate.embed.model, dims };
+      const res = await embed(candidate, ["stuga embedding width probe"], "document");
+      // The model's own width; a narrower one is padded to the column.
+      out.embed = { ok: true, model: candidate.embed.model, dims: res.modelDims };
     } catch (e) {
       // No `dims`: the width was not observed, and @stuga/ai's message names both numbers.
       out.embed = { ok: false, model: candidate.embed.model, message: e instanceof Error ? e.message : String(e) };

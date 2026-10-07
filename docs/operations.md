@@ -210,11 +210,13 @@ stuga-node media-scan --empty-trash=30 --reclaim   # destroy what has been in th
 
 The width of the stored embedding vectors is fixed when the database is created, from
 `AI_EMBED_DIMS` (default 1024). The vector index accepts widths up to 2000. The node refuses to
-start when `AI_EMBED_DIMS` differs from the database, and Settings refuses an embedding model of
-another width.
+start when `AI_EMBED_DIMS` differs from the database, and Settings refuses an embedding model whose
+vectors are wider.
 
-A different model of the same width needs none of this. Choose it in **Settings → This node → AI
-providers**, and the node clears the old vectors and re-embeds every document.
+A model of the same width or narrower needs none of this: its vectors are padded with zeros, which
+leaves every cosine distance unchanged. Choose it in **Settings → This node → AI providers**, and
+the node clears the old vectors and re-embeds every document. A narrower column saves space only
+when it is created at that width.
 
 To change the width, take a backup and stop the node, leaving Postgres running. Then run this in
 `psql` against the node's database, here for a width of 768:
