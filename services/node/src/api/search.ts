@@ -1,4 +1,5 @@
 /** Search and retrieval: ACL-filtered hybrid search, and chunk retrieval for grounding. */
+import { cutoffFor } from "@stuga/ai";
 import { type SearchResult, insertAiUsage, searchDocs } from "@stuga/db";
 import type { Ctx } from "../auth/context.js";
 import { scopeFolderIds } from "../authz/authz.js";
@@ -79,7 +80,8 @@ export async function searchDocuments(ctx: Ctx, request: SearchRequest): Promise
   }
   const results = await searchDocs(ctx.sql, {
     embeddingDims: ctx.env.embeddingDims,
-    maxDistance: ai.embed.searchMaxDistance,
+    // The level's distance for this model and this style of query; null drops nothing by distance.
+    maxDistance: cutoffFor(q, ai.embed.searchCutoff),
     searchLanguages: () => ctx.env.searchLanguages.current(),
     principals: ctx.principals,
     workspaceId: ctx.workspaceId,

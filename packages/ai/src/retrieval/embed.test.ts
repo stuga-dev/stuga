@@ -133,7 +133,7 @@ describe("embed (OpenAI-compatible)", () => {
 });
 
 describe("embed (Ollama)", () => {
-  const cfg = { ...CFG, embed: { enabled: true, provider: "ollama" as const, baseUrl: "http://ollama.example.test:11434", model: "nomic", dims: 768, searchMaxDistance: 0.6, retrievalMaxDistance: 0.9 } };
+  const cfg = { ...CFG, embed: { enabled: true, provider: "ollama" as const, baseUrl: "http://ollama.example.test:11434", model: "nomic", dims: 768, searchCutoff: null, retrievalMaxDistance: null } };
 
   it("posts {model, input[]} to /api/embed and reads embeddings + prompt_eval_count", async () => {
     const fn = mockJson({ embeddings: [vec(768), vec(768)], prompt_eval_count: 9 });

@@ -1,5 +1,6 @@
 /** The AI provider form: presets, the write-only key contract, and what a save sends. */
 import type { NodeAiSettings, NodeAiSettingsInput } from "../../../api";
+import type { SearchStrictness } from "@stuga/protocol/domain/search-strictness";
 
 /** What each part is called and is for, the same in Settings and at first run. */
 export const HALF_COPY = {
@@ -90,9 +91,8 @@ export interface Form {
   embedBaseUrl: string;
   embedModel: string;
   embedKey: string;
-  /** Null follows the node's default. */
-  searchMaxDistance: number | null;
-  retrievalMaxDistance: number | null;
+  /** The search box's level; null follows the node's default. */
+  searchStrictness: SearchStrictness | null;
 }
 
 /** The form after one half is saved: that half as the server now has it, the other half's draft untouched. */
@@ -107,8 +107,7 @@ export function withSavedHalf(draft: Form, saved: Form, which: "chat" | "embed")
     embedBaseUrl: saved.embedBaseUrl,
     embedModel: saved.embedModel,
     embedKey: saved.embedKey,
-    searchMaxDistance: saved.searchMaxDistance,
-    retrievalMaxDistance: saved.retrievalMaxDistance,
+    searchStrictness: saved.searchStrictness,
   };
 }
 
@@ -128,8 +127,7 @@ export function toForm(s: NodeAiSettings): Form {
     embedBaseUrl: s.embed.base_url,
     embedModel: s.embed.model ?? "",
     embedKey: "",
-    searchMaxDistance: s.embed.search_max_distance,
-    retrievalMaxDistance: s.embed.retrieval_max_distance,
+    searchStrictness: s.embed.search_strictness,
   };
 }
 
@@ -197,8 +195,7 @@ export function toInput(
       provider: f.embedProvider,
       base_url: f.embedBaseUrl || base[f.embedProvider] || "",
       model: f.embedModel,
-      search_max_distance: f.searchMaxDistance,
-      retrieval_max_distance: f.retrievalMaxDistance,
+      search_strictness: f.searchStrictness,
     },
   };
   if (input.embed) {
@@ -329,4 +326,90 @@ export function rerankInput(f: RerankForm, opts: { clearKey?: boolean; enabled?:
   if (f.key) rerank.api_key = f.key;
   else if (opts.clearKey) rerank.api_key = "";
   return { rerank };
+}
+
+/** Each level, with the share of unrelated passages it lets through, measured for the model in force. */
+export const STRICTNESS_COPY: Record<SearchStrictness, { label: string; line: string }> = {
+  strict: { label: "Strict", line: "About 1 in 1,000 unrelated passages gets through." },
+  balanced: { label: "Balanced", line: "About 1 in 100 unrelated passages gets through." },
+  loose: { label: "Loose", line: "About 1 in 20 unrelated passages gets through." },
+  off: { label: "Off", line: "The nearest matches by meaning show, however far." },
+  custom: { label: "Custom", line: "A distance set by hand. Choosing a level replaces it." },
+};
+
+const distance = (d: number) => d.toFixed(2);
+
+/**
+ * The small print under the control: the distance the chosen level puts in force for this model, or
+ * where its measurement stands. `measureAgain` asks for the link.
+ */
+/** The form names another model, service or address than the one in force. */
+function formChangesModel(settings: NodeAiSettings, form: Form): boolean {
+  const e = settings.embed;
+  return form.embedProvider !== e.provider || form.embedModel !== e.model || (!!form.embedBaseUrl && form.embedBaseUrl !== e.base_url);
+}
+
+export function strictnessNote(settings: NodeAiSettings, form: Form): { text: string; measureAgain: boolean } | null {
+  const e = settings.embed;
+  if (formChangesModel(settings, form)) return { text: "Measured for the new model once you save.", measureAgain: false };
+  const level = form.searchStrictness ?? settings.strictness_default;
+  if (level === "off") return null;
+  if (level === "custom") return e.search_max_distance === null ? null : { text: `Distance ${distance(e.search_max_distance)}`, measureAgain: false };
+  // A model is measured only while semantic search runs.
+  if (!e.running) return { text: "Measured once semantic search is on.", measureAgain: false };
+  const c = e.calibration;
+  if (c?.state === "failed" && c.kind === "inseparable") return { text: "This model can't be measured.", measureAgain: false };
+  const d = c?.levels?.short[level];
+  const progress = c?.progress ?? 0;
+  if (d !== undefined) {
+    if (c!.state === "running") return { text: `Distance ${distance(d)} for this model · measuring again… ${progress}%`, measureAgain: false };
+    if (c!.state === "failed") return { text: `Distance ${distance(d)} for this model · couldn't measure again`, measureAgain: true };
+    return { text: `Distance ${distance(d)} for this model`, measureAgain: true };
+  }
+  if (c?.state === "running") return { text: `Measuring this model… ${progress}%`, measureAgain: false };
+  return { text: "Not measured yet", measureAgain: true };
+}
+
+/** A strict level on a model whose related text often sits as far as unrelated text. */
+export function strictnessWarning(settings: NodeAiSettings, form: Form): string | null {
+  if (formChangesModel(settings, form)) return null;
+  const level = form.searchStrictness ?? settings.strictness_default;
+  const kept = settings.embed.calibration?.related_kept;
+  return (level === "strict" || level === "balanced") && kept != null && kept < 0.9
+    ? "This model puts some related text as far as unrelated text. Loose may suit it."
+    : null;
+}
+
+/** The level on the service row, and a measurement in progress or missing. */
+export function searchServiceDetail(settings: NodeAiSettings): string | null {
+  const cut = settings.embed.cutoff;
+  if (!cut) return null;
+  const level =
+    cut.level === "off"
+      ? "Strictness off"
+      : cut.level === "custom"
+        ? cut.short === null
+          ? null
+          : `Distance ${distance(cut.short)}`
+        : STRICTNESS_COPY[cut.level].label;
+  const c = settings.embed.calibration;
+  const state = cut.source === "measuring" ? `measuring ${c?.progress ?? 0}%` : cut.source === "unmeasured" && c?.state === "failed" ? "not measured" : null;
+  return [level, state].filter(Boolean).join(" · ") || null;
+}
+
+/** A failed measurement with no result in force, as a banner outside Edit. */
+export function calibrationBanner(settings: NodeAiSettings): { status: "warning" | "error"; title: string; description: string; retry: boolean } | null {
+  const c = settings.embed.calibration;
+  // Only while a level is waiting on it: a custom distance or Off does not need a measurement.
+  if (!c || c.state !== "failed" || c.levels || settings.embed.cutoff?.source !== "unmeasured") return null;
+  if (c.kind === "inseparable") {
+    return { status: "error", title: `${c.model} can't tell related text from unrelated`, description: "Choose another embedding model under Edit.", retry: false };
+  }
+  const next = c.next_attempt_at ? ` Next try at ${new Date(c.next_attempt_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.` : "";
+  return {
+    status: "warning",
+    title: `Couldn't measure ${c.model}`,
+    description: `${connectFailure(c.model, c.message ?? "")} Until then, nothing is dropped by distance.${next}`,
+    retry: true,
+  };
 }

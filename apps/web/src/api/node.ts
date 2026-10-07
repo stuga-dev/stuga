@@ -4,6 +4,7 @@ import { api } from "../lib/http/client";
 import type { AuditCursor, AuditEvent } from "./audit";
 import type { MemberCandidate } from "./workspaces";
 import type { RevokeEverythingCounts } from "./users";
+import type { SearchStrictness, SearchStrictnessLevel } from "@stuga/protocol/domain/search-strictness";
 
 /** Keys are write-only: no response carries one. */
 interface AiEndpointSettings {
@@ -31,6 +32,28 @@ interface AiChatEndpointSettings {
   api_key_stale: boolean;
 }
 
+export type CutoffSource = "measured" | "custom" | "off" | "measuring" | "unmeasured";
+export type MeasuredLevels = { strict: number; balanced: number; loose: number };
+
+/** How the node measured its embedding model, for the search box's levels. */
+export interface SearchCalibration {
+  state: "running" | "ready" | "failed";
+  model: string;
+  /** 0–100 while this node measures. */
+  progress: number | null;
+  /** When the result in force was measured; null without one. */
+  measured_at: string | null;
+  /** Each level's distance, for short queries and for questions. */
+  levels: Record<"short" | "question", MeasuredLevels> | null;
+  /** Short queries' own passages kept at Balanced. */
+  related_kept: number | null;
+  by_language: Record<string, { p1: number; p5: number; p50: number; related_p50: number }> | null;
+  /** Why the last attempt failed. */
+  message: string | null;
+  kind: "endpoint" | "inseparable" | null;
+  next_attempt_at: string | null;
+}
+
 /** Each part runs once it is set up; its switch only turns it off, keeping it. */
 export interface NodeAiSettings {
   chat: {
@@ -44,10 +67,16 @@ export interface NodeAiSettings {
     endpoints: AiChatEndpointSettings[];
   };
   embed: AiEndpointSettings & {
-    /** Maximum cosine distance (0 to 2] for a semantic match in the search box; null follows the default. */
+    /** The search box's level as stored; null follows `strictness_default`. */
+    search_strictness: SearchStrictness | null;
+    /** A cosine distance set through the API: the level `custom`. */
     search_max_distance: number | null;
-    /** The same for Ask, agents' retrieve and the assistants' document search. */
+    /** A cosine distance for Ask and agents, set through the API; null for none. */
     retrieval_max_distance: number | null;
+    /** What the search box uses right now; null while semantic search is off. */
+    cutoff: { level: SearchStrictness; source: CutoffSource; short: number | null; question: number | null } | null;
+    /** The measurement of the model in force; null while semantic search is off or nothing was tried. */
+    calibration: SearchCalibration | null;
   };
   /** A System One model that reranks passages; without one, chat does while it runs. */
   rerank: {
@@ -61,8 +90,8 @@ export interface NodeAiSettings {
     api_key_stale: boolean;
   };
   embedding_column_dims: number;
-  /** What each cutoff is when none is stored. */
-  max_distance_defaults: { search: number; retrieval: number };
+  /** The level when none is stored. */
+  strictness_default: SearchStrictnessLevel;
   /** Where each provider listens when a base URL is left empty. */
   provider_base_urls: Record<"anthropic" | "openai" | "ollama", string>;
   updated_by: string | null;
@@ -82,7 +111,15 @@ export interface AiProbe {
   ok: boolean;
   /** A save skips endpoints it did not change; a test probes everything enabled. */
   chat: ChatEndpointProbe[];
-  embed: { ok: boolean; model?: string; dims?: number; message?: string; skipped?: boolean };
+  embed: {
+    ok: boolean;
+    model?: string;
+    dims?: number;
+    message?: string;
+    skipped?: boolean;
+    /** Each level's distance for short queries, when this configuration was measured before. */
+    cutoffs?: MeasuredLevels;
+  };
   rerank: { ok: boolean; model?: string; latency_ms?: number; message?: string; skipped?: boolean };
 }
 
@@ -95,8 +132,7 @@ export interface NodeAiSettingsInput {
     default_model: string;
     endpoints: Array<{ id: string; provider: string; base_url: string; models: Array<{ id: string; name: string }>; api_key?: string }>;
   };
-  /** A cutoff: absent keeps the stored one, null restores the default. */
-  /** No model removes semantic search and forgets its switch. */
+  /** No model removes semantic search and forgets its switch. A level or distance: absent keeps the stored one, null restores the default. */
   embed?: {
     /** Absent keeps the stored switch. */
     enabled?: boolean;
@@ -104,7 +140,7 @@ export interface NodeAiSettingsInput {
     base_url: string;
     model: string;
     api_key?: string;
-    search_max_distance?: number | null;
+    search_strictness?: SearchStrictness | null;
     retrieval_max_distance?: number | null;
   };
   /** No model removes the ranker and forgets its key and switch. */
@@ -341,6 +377,7 @@ export const NodeSettings = {
       "/api/node/ai-settings",
       { method: "PUT", body: JSON.stringify(input) },
     ),
+  calibrateAi: () => api<{ calibration: SearchCalibration | null }>("/api/node/ai-settings/calibrate", { method: "POST" }),
   testAi: (input: NodeAiSettingsInput) =>
     api<AiProbe>("/api/node/ai-settings/test", { method: "POST", body: JSON.stringify(input) }),
 

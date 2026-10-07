@@ -3,7 +3,9 @@ import {
   type AiConfig,
   type AiModelChoice,
   type AiProvider,
+  type CalibrationResult,
   type ChatEndpoint,
+  calibrationKey,
   embed,
   listModels,
   probeChat,
@@ -11,24 +13,28 @@ import {
 } from "@stuga/ai";
 import { sha256Hex } from "@stuga/auth";
 import {
+  type NodeAiSettingsRow,
   type StoredChatEndpoint,
   armEmbeddingBackfillAll,
   clearAllChunkEmbeddings,
+  clearEmbedCalibrations,
   clearNodeAiSettings,
+  getEmbedCalibration,
   getNodeAiSettings,
   upsertNodeAiSettings,
 } from "@stuga/db";
+import { DEFAULT_SEARCH_STRICTNESS, type SearchStrictness, isSearchStrictness } from "@stuga/protocol/domain/search-strictness";
 import { nodeAuditCtx, recordAudit } from "../../audit/record.js";
 import type { Ctx } from "../../auth/context.js";
 import { readSecretFile, removeSecretFile, writeSecretFile } from "../../config/secrets.js";
 import {
   type AiStoredSettings,
   EMBED_KEY_FILE,
-  MAX_DISTANCE_DEFAULTS,
   RERANK_KEY_FILE,
   chatKeyFile,
   isMaxDistance,
   resolveAi,
+  searchCutoffInForce,
 } from "../../config/settings/ai.js";
 import { error, json } from "../../http/respond.js";
 import type { WorkspaceCall } from "../../http/router.js";
@@ -43,6 +49,10 @@ interface CandidateBody {
   rerankKey: string | null | undefined;
   /** Which parts the request carried; an omitted part is left exactly as stored. */
   sent: { chat: boolean; embed: boolean; rerank: boolean };
+  /** The row before this save. */
+  row: NodeAiSettingsRow | null;
+  /** A distance set through the API was dropped because the embedding model changed. */
+  customCleared: boolean;
 }
 
 const PROVIDERS = new Set<AiProvider>(["anthropic", "openai", "ollama"]);
@@ -112,7 +122,7 @@ async function parseCandidate(ctx: Ctx, req: Request): Promise<CandidateBody | {
   }
   const embedBaseUrl = cleanBaseUrl(embed_.base_url);
   if (embedBaseUrl === undefined && embed_.base_url !== undefined) return { error: "embed.base_url must be an absolute http(s) URL", status: 400 };
-  // A cutoff left out keeps the stored one, and null restores the default.
+  // A distance left out keeps the stored one, and null restores the default.
   for (const field of ["search_max_distance", "retrieval_max_distance"]) {
     const v = embed_[field];
     if (v !== undefined && v !== null && !isMaxDistance(v)) {
@@ -190,6 +200,33 @@ async function parseCandidate(ctx: Ctx, req: Request): Promise<CandidateBody | {
   // No providers is how chat is removed, and no model how semantic search is. A
   // removed half has no switch to leave off: it runs again once set up again.
   const embedModel = sent.embed ? (str(embed_.model) ?? null) : (row?.embed_model ?? null);
+
+  // The search box's level. A distance set through the API is the level `custom`; a level clears it.
+  const level = embed_.search_strictness;
+  if (level !== undefined && level !== null && !isSearchStrictness(level)) {
+    return { error: "embed.search_strictness must be strict, balanced, loose, off or custom", status: 400 };
+  }
+  const sentDistance = embed_.search_max_distance as number | null | undefined;
+  let searchStrictness: SearchStrictness | null = row?.search_strictness ?? null;
+  let searchMaxDistance = row?.search_max_distance ?? null;
+  if (typeof sentDistance === "number") {
+    if (level !== undefined && level !== null && level !== "custom") {
+      return { error: "embed.search_max_distance goes with search_strictness custom", status: 400 };
+    }
+    searchStrictness = "custom";
+    searchMaxDistance = sentDistance;
+  } else if (level === "custom") {
+    if (sentDistance === null || searchMaxDistance === null) return { error: "embed.search_strictness custom needs search_max_distance", status: 400 };
+    searchStrictness = "custom";
+  } else if (level !== undefined) {
+    searchStrictness = level as SearchStrictness | null;
+    searchMaxDistance = null;
+  } else if (sentDistance === null) {
+    // Null restores the default, as it always has.
+    if (searchStrictness === "custom") searchStrictness = null;
+    searchMaxDistance = null;
+  }
+
   const stored: AiStoredSettings = {
     chatEnabled: sent.chat
       ? parsedEndpoints.length === 0
@@ -212,8 +249,8 @@ async function parseCandidate(ctx: Ctx, req: Request): Promise<CandidateBody | {
     embedBaseUrl: sent.embed ? (embedBaseUrl ?? null) : (row?.embed_base_url ?? null),
     embedApiKey: keptEmbed,
     embedModel,
-    searchMaxDistance:
-      embed_.search_max_distance === undefined ? (row?.search_max_distance ?? null) : (embed_.search_max_distance as number | null),
+    searchStrictness,
+    searchMaxDistance,
     retrievalMaxDistance:
       embed_.retrieval_max_distance === undefined ? (row?.retrieval_max_distance ?? null) : (embed_.retrieval_max_distance as number | null),
 
@@ -231,8 +268,22 @@ async function parseCandidate(ctx: Ctx, req: Request): Promise<CandidateBody | {
   };
 
   // The width is the column's, never the request's.
-  const candidate = resolveAi(stored, ctx.env.embeddingDims, ctx.env.aiProviderBaseUrls);
-  return { candidate, stored, chatKeys, embedKey, rerankKey, sent };
+  let candidate = resolveAi(stored, ctx.env.embeddingDims, ctx.env.aiProviderBaseUrls);
+
+  // A distance chosen for one model means nothing for another (that is the bug strictness levels
+  // fix), so a new service, address or model drops any set through the API, whatever was sent.
+  const live = ctx.env.aiSettings.current().embed;
+  const modelChanged =
+    sent.embed && (live.provider !== candidate.embed.provider || live.baseUrl !== candidate.embed.baseUrl || live.model !== candidate.embed.model);
+  let customCleared = false;
+  if (modelChanged && (stored.searchStrictness === "custom" || stored.searchMaxDistance != null || stored.retrievalMaxDistance != null)) {
+    customCleared = true;
+    if (stored.searchStrictness === "custom") stored.searchStrictness = null;
+    stored.searchMaxDistance = null;
+    stored.retrievalMaxDistance = null;
+    candidate = resolveAi(stored, ctx.env.embeddingDims, ctx.env.aiProviderBaseUrls);
+  }
+  return { candidate, stored, chatKeys, embedKey, rerankKey, sent, row, customCleared };
 }
 
 interface ChatEndpointProbeResult {
@@ -247,7 +298,15 @@ interface ChatEndpointProbeResult {
 interface ProbeResult {
   ok: boolean;
   chat: ChatEndpointProbeResult[];
-  embed: { ok: boolean; model?: string; dims?: number; message?: string; skipped?: boolean };
+  embed: {
+    ok: boolean;
+    model?: string;
+    dims?: number;
+    message?: string;
+    skipped?: boolean;
+    /** The short-query distance of each level, when this exact configuration has been measured. */
+    cutoffs?: { strict: number; balanced: number; loose: number };
+  };
   rerank: { ok: boolean; model?: string; latency_ms?: number; message?: string; skipped?: boolean };
 }
 
@@ -350,10 +409,43 @@ function fingerprint(key: string): string {
   return sha256Hex(key).slice(0, 8);
 }
 
+/** A passing embed probe also shows where each level sits, when that configuration was measured before. */
+async function withMeasuredCutoffs(ctx: Ctx, candidate: AiConfig, probe: ProbeResult): Promise<ProbeResult> {
+  if (!probe.embed.ok || probe.embed.skipped || !candidate.embed.enabled) return probe;
+  const row = await getEmbedCalibration(ctx.sql, calibrationKey(candidate)).catch(() => null);
+  const result = row?.result as unknown as CalibrationResult | null | undefined;
+  return result ? { ...probe, embed: { ...probe.embed, cutoffs: result.levels.short } } : probe;
+}
+
+/** The measurement of the model in force, as Settings shows it. Null while semantic search is off or nothing was tried. */
+async function calibrationView(ctx: Ctx, ai: AiConfig) {
+  if (!ai.embed.enabled) return null;
+  const key = calibrationKey(ai);
+  const row = await getEmbedCalibration(ctx.sql, key);
+  if (!row) return null;
+  const result = row.result as unknown as CalibrationResult | null;
+  return {
+    state: row.state,
+    model: row.model,
+    progress: ctx.env.calibrator.progress(key),
+    measured_at: result ? row.finished_at : null,
+    levels: result?.levels ?? null,
+    related_kept: result?.related_kept ?? null,
+    by_language: result?.by_language ?? null,
+    message: row.state === "failed" ? row.error : null,
+    kind: row.state === "failed" ? row.error_kind : null,
+    next_attempt_at: row.state === "failed" ? row.next_attempt_at : null,
+  };
+}
+
 async function aiSettingsResponse(ctx: Ctx): Promise<Response> {
   const row = await getNodeAiSettings(ctx.sql);
   const ai = ctx.env.aiSettings.current();
   const keys = ctx.env.aiSettings.secrets();
+  const calibration = await calibrationView(ctx, ai);
+  const inForce = ai.embed.enabled
+    ? searchCutoffInForce(row?.search_strictness, row?.search_max_distance, calibration ? await getEmbedCalibration(ctx.sql, calibrationKey(ai)) : null)
+    : null;
 
   // Each switch reads back as saved; `running` is what is in force.
   const savedEndpoints = (row?.chat_endpoints?.length ?? 0) > 0;
@@ -382,9 +474,18 @@ async function aiSettingsResponse(ctx: Ctx): Promise<Response> {
       api_key_set: keys.embed.set,
       api_key_fingerprint: keys.embed.fingerprint,
       api_key_stale: keys.embed.stale,
-      // What is stored, so a form that sends it back leaves an unset cutoff following the default.
+      // What is stored, so a form that sends it back leaves an unset level following the default.
+      search_strictness: row?.search_strictness ?? null,
       search_max_distance: row?.search_max_distance ?? null,
       retrieval_max_distance: row?.retrieval_max_distance ?? null,
+      // What the search box uses right now.
+      cutoff: inForce && {
+        level: inForce.level,
+        source: inForce.source,
+        short: inForce.cutoff?.short ?? null,
+        question: inForce.cutoff?.question ?? null,
+      },
+      calibration,
     },
     rerank: {
       enabled: row?.rerank_enabled !== false,
@@ -396,8 +497,8 @@ async function aiSettingsResponse(ctx: Ctx): Promise<Response> {
       api_key_stale: keys.rerank.stale,
     },
     embedding_column_dims: ctx.env.embeddingDims,
-    // What each cutoff is when none is stored.
-    max_distance_defaults: MAX_DISTANCE_DEFAULTS,
+    // The level when none is stored.
+    strictness_default: DEFAULT_SEARCH_STRICTNESS,
     // Where each provider listens when a base URL is left empty.
     provider_base_urls: ctx.env.aiProviderBaseUrls,
     updated_by: row?.updated_by ?? null,
@@ -408,15 +509,19 @@ async function aiSettingsResponse(ctx: Ctx): Promise<Response> {
 async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
   const parsed = await parseCandidate(ctx, req);
   if ("error" in parsed) return error(parsed.status, parsed.error);
-  const { candidate, stored, chatKeys, embedKey, rerankKey, sent } = parsed;
+  const { candidate, stored, chatKeys, embedKey, rerankKey, sent, row, customCleared } = parsed;
 
   const before = ctx.env.aiSettings.current();
   const changed = whatChanged(before, candidate);
-  const probe = await probeEndpoints(candidate, {
-    chatEndpointIds: sent.chat ? changed.chatEndpointIds : [],
-    embed: sent.embed && changed.embed,
-    rerank: sent.rerank && changed.rerank,
-  });
+  const probe = await withMeasuredCutoffs(
+    ctx,
+    candidate,
+    await probeEndpoints(candidate, {
+      chatEndpointIds: sent.chat ? changed.chatEndpointIds : [],
+      embed: sent.embed && changed.embed,
+      rerank: sent.rerank && changed.rerank,
+    }),
+  );
   if (!probe.ok) {
     // Nothing has been written yet.
     const failedChat = probe.chat.find((c) => !c.ok);
@@ -465,6 +570,7 @@ async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
     embedBaseUrl: stored.embedBaseUrl ?? null,
     embedModel: stored.embedModel ?? null,
     embedApiKeyFp: stored.embedApiKey ? fingerprint(stored.embedApiKey) : null,
+    searchStrictness: stored.searchStrictness ?? null,
     searchMaxDistance: stored.searchMaxDistance ?? null,
     retrievalMaxDistance: stored.retrievalMaxDistance ?? null,
     rerankEnabled: stored.rerankEnabled ?? null,
@@ -479,6 +585,10 @@ async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
     for (const e of before.chat.endpoints) if (!kept.has(e.id)) removeSecretFile(ctx.env.dataDir, chatKeyFile(e.id));
   }
   await ctx.env.aiSettings.refresh();
+  // A new model is measured in the background; the save never waits for it.
+  if (sent.embed) {
+    await ctx.env.calibrator.ensure({ alias: ctx.alias }).catch((err) => console.warn("[node] could not start measuring the embedding model", err));
+  }
 
   // A new embedding endpoint invalidates every vector. `embed_hash` covers the
   // input, not the model, so old vectors would otherwise be reused as-is.
@@ -488,13 +598,13 @@ async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
     (before.embed.model !== after.embed.model ||
       before.embed.baseUrl !== after.embed.baseUrl ||
       before.embed.provider !== after.embed.provider);
-  let reembed: { armed: boolean; chunks_cleared: number; workspaces: number } | null = null;
+  let reembed: { armed: boolean; chunks_cleared: number; workspaces: number; custom_cleared: boolean } | null = null;
   if (embedChanged) {
     const cleared = await clearAllChunkEmbeddings(ctx.sql);
     // A removed model leaves nothing to embed with.
     const armed = after.embed.model !== "";
     const workspaces = armed ? await armEmbeddingBackfillAll(ctx.sql) : 0;
-    reembed = { armed, chunks_cleared: cleared, workspaces };
+    reembed = { armed, chunks_cleared: cleared, workspaces, custom_cleared: customCleared };
   }
 
   recordAudit(nodeAuditCtx(ctx), {
@@ -511,8 +621,9 @@ async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
       rerank_model: { before: before.rerank.model, after: after.rerank.model },
       chat_model: { before: before.chat.defaultModel, after: after.chat.defaultModel },
       embed_model: { before: before.embed.model, after: after.embed.model },
-      search_max_distance: { before: before.embed.searchMaxDistance, after: after.embed.searchMaxDistance },
-      retrieval_max_distance: { before: before.embed.retrievalMaxDistance, after: after.embed.retrievalMaxDistance },
+      search_strictness: { before: row?.search_strictness ?? null, after: stored.searchStrictness ?? null },
+      search_max_distance: { before: row?.search_max_distance ?? null, after: stored.searchMaxDistance ?? null },
+      retrieval_max_distance: { before: row?.retrieval_max_distance ?? null, after: stored.retrievalMaxDistance ?? null },
       key_changed: {
         chat: chatKeys.filter((k) => k.key !== undefined).map((k) => k.id),
         embed: embedKey !== undefined,
@@ -529,6 +640,7 @@ async function saveAiSettings(ctx: Ctx, req: Request): Promise<Response> {
 async function resetAiSettings(ctx: Ctx): Promise<Response> {
   const before = ctx.env.aiSettings.current();
   await clearNodeAiSettings(ctx.sql);
+  await clearEmbedCalibrations(ctx.sql);
   for (const ep of before.chat.endpoints) removeSecretFile(ctx.env.dataDir, chatKeyFile(ep.id));
   removeSecretFile(ctx.env.dataDir, EMBED_KEY_FILE);
   removeSecretFile(ctx.env.dataDir, RERANK_KEY_FILE);
@@ -545,7 +657,7 @@ async function resetAiSettings(ctx: Ctx): Promise<Response> {
 export async function testAiSettings({ ctx, req }: WorkspaceCall): Promise<Response> {
   const parsed = await parseCandidate(ctx, req);
   if ("error" in parsed) return error(parsed.status, parsed.error);
-  const probe = await probeEndpoints(parsed.candidate);
+  const probe = await withMeasuredCutoffs(ctx, parsed.candidate, await probeEndpoints(parsed.candidate));
   recordAudit(nodeAuditCtx(ctx), {
     action: "node.ai_settings.test",
     targetKind: "node",
@@ -605,4 +717,18 @@ export async function saveAiSettingsRoute({ ctx, req }: WorkspaceCall): Promise<
 
 export async function resetAiSettingsRoute({ ctx }: WorkspaceCall): Promise<Response> {
   return resetAiSettings(ctx);
+}
+
+/** **Measure again**: measure the model in force now, even when a measurement is in force or a retry is not yet due. */
+export async function calibrateAiSettingsRoute({ ctx }: WorkspaceCall): Promise<Response> {
+  const ai = ctx.env.aiSettings.current();
+  if (!ai.embed.enabled) return error(409, "Semantic search is off on this node");
+  await ctx.env.calibrator.ensure({ alias: ctx.alias, force: true });
+  recordAudit(nodeAuditCtx(ctx), {
+    action: "node.ai_settings.calibrate",
+    targetKind: "node",
+    targetId: ctx.env.publicOrigin,
+    detail: { model: ai.embed.model },
+  });
+  return json({ calibration: await calibrationView(ctx, ai) }, { status: 202 });
 }

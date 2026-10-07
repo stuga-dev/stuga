@@ -2,8 +2,9 @@
  * The AI configuration in force: the node_ai_settings row, its key files, and
  * the provider defaults for whatever the row leaves unset.
  */
-import type { AiConfig, AiProvider, ChatEndpoint } from "@stuga/ai";
-import { getNodeAiSettings, type Sql, type StoredChatEndpoint } from "@stuga/db";
+import { type AiConfig, type AiProvider, type CalibrationResult, type ChatEndpoint, type SearchCutoff, calibrationKey, levelCutoff } from "@stuga/ai";
+import { type EmbedCalibrationRow, getNodeAiSettings, listEmbedCalibrations, type Sql, type StoredChatEndpoint } from "@stuga/db";
+import { DEFAULT_SEARCH_STRICTNESS, type SearchStrictness } from "@stuga/protocol/domain/search-strictness";
 import { readSecretFile } from "../secrets.js";
 import { createSettingsStore, type SettingsStore } from "./store.js";
 
@@ -17,12 +18,6 @@ export function chatKeyFile(endpointId: string): string {
 
 /** Id of the blank Ollama endpoint a node offers before any is stored. */
 const BOOTSTRAP_CHAT_ENDPOINT_ID = "default";
-
-/**
- * Semantic cutoffs, as maximum cosine distance, when none is stored. Retrieval's is looser: a short
- * question sits far from even the best passage, and fusion and the rerank do the ranking.
- */
-export const MAX_DISTANCE_DEFAULTS = { search: 0.6, retrieval: 0.9 } as const;
 
 /** Cosine distance runs from 0 to 2, and a cutoff of 0 would drop every match. */
 export function isMaxDistance(v: unknown): v is number {
@@ -59,6 +54,8 @@ export interface AiStoredSettings {
   embedBaseUrl?: string | null;
   embedApiKey?: string | null;
   embedModel?: string | null;
+  /** The search box's level; `custom` goes with searchMaxDistance. */
+  searchStrictness?: SearchStrictness | null;
   searchMaxDistance?: number | null;
   retrievalMaxDistance?: number | null;
   /** False switches the reranker off while it stays set up. */
@@ -70,12 +67,37 @@ export interface AiStoredSettings {
 
 const trimSlash = (s: string): string => s.replace(/\/+$/, "");
 
+/** Where the search box's cutoff comes from right now. */
+export type CutoffSource = "measured" | "custom" | "off" | "measuring" | "unmeasured";
+
+/**
+ * The search box's cutoff in force: the level's distances from the measurement of the model in
+ * force, a custom distance, or nothing. An earlier result stays in force while the same model is
+ * measured again; with none, nothing is dropped by distance, rather than borrowing another model's number.
+ */
+export function searchCutoffInForce(
+  strictness: SearchStrictness | null | undefined,
+  distance: number | null | undefined,
+  calibration: EmbedCalibrationRow | null | undefined,
+): { level: SearchStrictness; source: CutoffSource; cutoff: SearchCutoff | null } {
+  const level = strictness ?? DEFAULT_SEARCH_STRICTNESS;
+  if (level === "custom") return distance ? { level, source: "custom", cutoff: { short: distance, question: distance } } : { level, source: "off", cutoff: null };
+  if (level === "off") return { level, source: "off", cutoff: null };
+  if (calibration?.result) return { level, source: "measured", cutoff: levelCutoff(calibration.result as unknown as CalibrationResult, level) };
+  return { level, source: calibration?.state === "running" ? "measuring" : "unmeasured", cutoff: null };
+}
+
 /**
  * Settle the configuration in force: stored row, then provider default, per
  * field. `embeddingDims` is the database column's width, never a configured
  * number, so no save can disagree with the column.
  */
-export function resolveAi(stored: AiStoredSettings | null, embeddingDims: number, baseUrls: ProviderBaseUrls): AiConfig {
+export function resolveAi(
+  stored: AiStoredSettings | null,
+  embeddingDims: number,
+  baseUrls: ProviderBaseUrls,
+  calibrations: ReadonlyMap<string, EmbedCalibrationRow> = new Map(),
+): AiConfig {
   const st = stored ?? {};
 
   // Each half runs once it is configured, and its own switch turns it off while
@@ -117,10 +139,13 @@ export function resolveAi(stored: AiStoredSettings | null, embeddingDims: number
     baseUrl: embedBaseUrl,
     model: embedModel,
     dims: embeddingDims,
-    searchMaxDistance: st.searchMaxDistance ?? MAX_DISTANCE_DEFAULTS.search,
-    retrievalMaxDistance: st.retrievalMaxDistance ?? MAX_DISTANCE_DEFAULTS.retrieval,
+    searchCutoff: null,
+    retrievalMaxDistance: st.retrievalMaxDistance ?? null,
   };
   if (embedApiKey !== undefined) embed.apiKey = embedApiKey;
+  if (embedRuns) {
+    embed.searchCutoff = searchCutoffInForce(st.searchStrictness, st.searchMaxDistance, calibrations.get(calibrationKey({ embed }))).cutoff;
+  }
 
   // The reranker is set up by a model and where to reach it; without one the chat model reranks.
   const rerankBaseUrl = trimSlash(st.rerankBaseUrl ?? "");
@@ -145,6 +170,7 @@ export function createAiSettingsStore(deps: {
   return createSettingsStore(async () => {
     // A failed read rejects, so a refresh keeps the last good snapshot rather than switching AI off.
     const row = await getNodeAiSettings(deps.sql);
+    const calibrations = new Map((await listEmbedCalibrations(deps.sql)).map((c) => [c.config_key, c]));
 
     // The key file is the truth; the column holds only a fingerprint label.
     const storedRows: StoredChatEndpoint[] = row?.chat_endpoints ?? [];
@@ -189,6 +215,7 @@ export function createAiSettingsStore(deps: {
         embedBaseUrl: row?.embed_base_url ?? null,
         embedApiKey: embedKey,
         embedModel: row?.embed_model ?? null,
+        searchStrictness: row?.search_strictness ?? null,
         searchMaxDistance: row?.search_max_distance ?? null,
         retrievalMaxDistance: row?.retrieval_max_distance ?? null,
         rerankEnabled: row?.rerank_enabled ?? null,
@@ -198,6 +225,7 @@ export function createAiSettingsStore(deps: {
       },
       deps.embeddingDims,
       deps.baseUrls,
+      calibrations,
     );
     return { value, secrets };
   });

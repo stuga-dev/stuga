@@ -4,7 +4,9 @@ import { join } from "node:path";
 import type { ChatEndpoint } from "@stuga/ai";
 import type { Sql } from "@stuga/db";
 import { describe, expect, it, vi } from "vitest";
-import { createAiSettingsStore, isMaxDistance, resolveAi, type AiStoredSettings } from "./ai.js";
+import { calibrationKey } from "@stuga/ai";
+import type { EmbedCalibrationRow } from "@stuga/db";
+import { createAiSettingsStore, isMaxDistance, resolveAi, searchCutoffInForce, type AiStoredSettings } from "./ai.js";
 
 const BASE_URLS = {
   anthropic: "https://api.anthropic.com",
@@ -110,11 +112,56 @@ describe("resolveAi", () => {
   });
 });
 
-describe("semantic match cutoffs", () => {
-  it("uses the defaults until a cutoff is stored, whatever the switches say", () => {
-    expect(resolve(null).embed).toMatchObject({ searchMaxDistance: 0.6, retrievalMaxDistance: 0.9 });
-    expect(resolve({ embedEnabled: true, searchMaxDistance: 1.1 }).embed).toMatchObject({ searchMaxDistance: 1.1, retrievalMaxDistance: 0.9 });
-    expect(resolve({ retrievalMaxDistance: 1.4 }).embed).toMatchObject({ searchMaxDistance: 0.6, retrievalMaxDistance: 1.4 });
+describe("search strictness", () => {
+  const LEVELS = { strict: 0.27, balanced: 0.34, loose: 0.39 };
+  const measured = (state: EmbedCalibrationRow["state"], result = true, kind: EmbedCalibrationRow["error_kind"] = null): EmbedCalibrationRow => ({
+    config_key: "a".repeat(64),
+    model: "m",
+    state,
+    result: result ? { levels: { short: LEVELS, question: { strict: 0.25, balanced: 0.31, loose: 0.36 } } } : null,
+    error: state === "failed" ? "down" : null,
+    error_kind: kind,
+    attempts: 0,
+    next_attempt_at: null,
+    triggered_by: "system",
+    started_at: new Date(),
+    finished_at: null,
+  });
+
+  it("takes the level's distances from the measurement of the model, Balanced by default", () => {
+    expect(searchCutoffInForce(null, null, measured("ready"))).toEqual({ level: "balanced", source: "measured", cutoff: { short: 0.34, question: 0.31 } });
+    expect(searchCutoffInForce("strict", null, measured("ready")).cutoff).toEqual({ short: 0.27, question: 0.25 });
+    expect(searchCutoffInForce("loose", null, measured("ready")).cutoff).toEqual({ short: 0.39, question: 0.36 });
+  });
+
+  it("keeps an earlier result in force while measuring again or after an endpoint failure", () => {
+    expect(searchCutoffInForce(null, null, measured("running")).source).toBe("measured");
+    expect(searchCutoffInForce(null, null, measured("failed", true, "endpoint")).source).toBe("measured");
+  });
+
+  it("drops nothing by distance without a measurement, for Off, and for a model that cannot be measured", () => {
+    expect(searchCutoffInForce(null, null, null)).toEqual({ level: "balanced", source: "unmeasured", cutoff: null });
+    expect(searchCutoffInForce(null, null, measured("running", false))).toEqual({ level: "balanced", source: "measuring", cutoff: null });
+    expect(searchCutoffInForce(null, null, measured("failed", false, "inseparable")).cutoff).toBeNull();
+    expect(searchCutoffInForce("off", null, measured("ready"))).toEqual({ level: "off", source: "off", cutoff: null });
+  });
+
+  it("uses a custom distance for every query", () => {
+    expect(searchCutoffInForce("custom", 0.7, measured("ready"))).toEqual({ level: "custom", source: "custom", cutoff: { short: 0.7, question: 0.7 } });
+  });
+
+  it("resolves the measurement of the configuration in force, only while semantic search runs", () => {
+    const st: AiStoredSettings = { embedProvider: "ollama", embedBaseUrl: "http://gpu.lan:11434", embedModel: "embeddinggemma-2:270m" };
+    const key = calibrationKey(resolve(st));
+    const rows = new Map([[key, { ...measured("ready"), config_key: key }]]);
+    expect(resolveAi(st, 1024, BASE_URLS, rows).embed.searchCutoff).toEqual({ short: 0.34, question: 0.31 });
+    expect(resolveAi({ ...st, embedEnabled: false }, 1024, BASE_URLS, rows).embed.searchCutoff).toBeNull();
+    expect(resolveAi({ ...st, embedModel: "bge-m3" }, 1024, BASE_URLS, rows).embed.searchCutoff).toBeNull();
+  });
+
+  it("sets no cutoff for Ask and agents unless one was stored", () => {
+    expect(resolve(null).embed.retrievalMaxDistance).toBeNull();
+    expect(resolve({ retrievalMaxDistance: 1.4 }).embed.retrievalMaxDistance).toBe(1.4);
   });
 
   it.each([

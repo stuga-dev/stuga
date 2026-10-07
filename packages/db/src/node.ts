@@ -6,7 +6,8 @@
 import { randomBytes } from "node:crypto";
 import type { TransactionSql } from "postgres";
 import { SEARCH_LANGUAGES, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
-import type { NodeAiSettingsRow, NodeSettingsRow, NodeStateRow, StoredChatEndpoint } from "./types.js";
+import type { SearchStrictness } from "@stuga/protocol/domain/search-strictness";
+import type { EmbedCalibrationRow, NodeAiSettingsRow, NodeSettingsRow, NodeStateRow, StoredChatEndpoint } from "./types.js";
 import { jsonb } from "./sql.js";
 import type { Sql } from "./client.js";
 
@@ -28,6 +29,7 @@ export async function upsertNodeAiSettings(
     embedBaseUrl: string | null;
     embedModel: string | null;
     embedApiKeyFp: string | null;
+    searchStrictness: SearchStrictness | null;
     searchMaxDistance: number | null;
     retrievalMaxDistance: number | null;
     rerankEnabled: boolean | null;
@@ -48,6 +50,7 @@ export async function upsertNodeAiSettings(
       embed_base_url: input.embedBaseUrl,
       embed_model: input.embedModel,
       embed_api_key_fp: input.embedApiKeyFp,
+      search_strictness: input.searchStrictness,
       search_max_distance: input.searchMaxDistance,
       retrieval_max_distance: input.retrievalMaxDistance,
       rerank_enabled: input.rerankEnabled,
@@ -65,6 +68,7 @@ export async function upsertNodeAiSettings(
       embed_base_url         = EXCLUDED.embed_base_url,
       embed_model            = EXCLUDED.embed_model,
       embed_api_key_fp       = EXCLUDED.embed_api_key_fp,
+      search_strictness      = EXCLUDED.search_strictness,
       search_max_distance    = EXCLUDED.search_max_distance,
       retrieval_max_distance = EXCLUDED.retrieval_max_distance,
       rerank_enabled         = EXCLUDED.rerank_enabled,
@@ -77,6 +81,76 @@ export async function upsertNodeAiSettings(
 
 export async function clearNodeAiSettings(sql: Sql): Promise<void> {
   await sql`DELETE FROM node_ai_settings WHERE id = TRUE`;
+}
+
+/** Calibrations kept: the newest few, so going back to an earlier model needs no new measurement. */
+export const EMBED_CALIBRATIONS_KEPT = 5;
+
+/** The kept measurements, newest first: the settings store resolves the one in force from them. */
+export async function listEmbedCalibrations(sql: Sql): Promise<EmbedCalibrationRow[]> {
+  return sql<EmbedCalibrationRow[]>`
+    SELECT * FROM embed_calibrations ORDER BY started_at DESC LIMIT ${EMBED_CALIBRATIONS_KEPT}`;
+}
+
+export async function getEmbedCalibration(sql: Sql, configKey: string): Promise<EmbedCalibrationRow | null> {
+  const rows = await sql<EmbedCalibrationRow[]>`SELECT * FROM embed_calibrations WHERE config_key = ${configKey}`;
+  return rows[0] ?? null;
+}
+
+/**
+ * Marks a configuration as being measured, unless a live run already is: one that started after
+ * `processStartedAt` belongs to this process, and an older one was left by a process that died.
+ * True when this caller may run it.
+ */
+export async function claimEmbedCalibration(
+  sql: Sql,
+  input: { configKey: string; model: string; triggeredBy: string; processStartedAt: Date },
+): Promise<boolean> {
+  const rows = await sql`
+    INSERT INTO embed_calibrations (config_key, model, state, attempts, triggered_by, started_at)
+    VALUES (${input.configKey}, ${input.model}, 'running', 1, ${input.triggeredBy}, now())
+    ON CONFLICT (config_key) DO UPDATE SET
+      state        = 'running',
+      attempts     = embed_calibrations.attempts + 1,
+      triggered_by = EXCLUDED.triggered_by,
+      started_at   = now(),
+      error        = NULL,
+      error_kind   = NULL
+    WHERE embed_calibrations.state <> 'running' OR embed_calibrations.started_at < ${input.processStartedAt}
+    RETURNING 1`;
+  return rows.length > 0;
+}
+
+export async function finishEmbedCalibration(sql: Sql, configKey: string, result: object): Promise<void> {
+  await sql`
+    UPDATE embed_calibrations
+    SET state = 'ready', result = ${jsonb(sql, result)}, attempts = 0, next_attempt_at = NULL, finished_at = now()
+    WHERE config_key = ${configKey}`;
+}
+
+/** An `inseparable` model has no floor worth keeping; an endpoint failure keeps the last result in force. */
+export async function failEmbedCalibration(
+  sql: Sql,
+  configKey: string,
+  input: { error: string; kind: "endpoint" | "inseparable"; nextAttemptAt: Date | null },
+): Promise<void> {
+  await sql`
+    UPDATE embed_calibrations
+    SET state = 'failed', error = ${input.error}, error_kind = ${input.kind}, next_attempt_at = ${input.nextAttemptAt},
+        result = CASE WHEN ${input.kind} = 'inseparable' THEN NULL ELSE result END
+    WHERE config_key = ${configKey}`;
+}
+
+/** Keeps the newest few, and always the key in force. */
+export async function pruneEmbedCalibrations(sql: Sql, protect: string): Promise<void> {
+  await sql`
+    DELETE FROM embed_calibrations
+    WHERE config_key <> ${protect}
+      AND config_key NOT IN (SELECT config_key FROM embed_calibrations ORDER BY started_at DESC LIMIT ${EMBED_CALIBRATIONS_KEPT})`;
+}
+
+export async function clearEmbedCalibrations(sql: Sql): Promise<void> {
+  await sql`DELETE FROM embed_calibrations`;
 }
 
 /** Null when nothing has been saved. */

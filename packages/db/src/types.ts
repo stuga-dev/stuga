@@ -1,4 +1,5 @@
 /** Table row types. Query-specific inputs and result shapes live beside their functions. */
+import type { SearchStrictness } from "@stuga/protocol/domain/search-strictness";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
 
@@ -542,9 +543,11 @@ export interface NodeAiSettingsRow {
   embed_base_url: string | null;
   embed_model: string | null;
   embed_api_key_fp: string | null;
-  /** Maximum cosine distance for search's semantic leg. */
+  /** The search box's level; null takes the default. `custom` goes with `search_max_distance`. */
+  search_strictness: SearchStrictness | null;
+  /** A cosine distance for the search box's semantic leg, set through the API (level `custom`). */
   search_max_distance: number | null;
-  /** Maximum cosine distance for retrieval's semantic leg. */
+  /** A cosine distance for retrieval's semantic leg, set through the API; null for none. */
   retrieval_max_distance: number | null;
   /** False switches the reranker off while it stays set up. */
   rerank_enabled: boolean | null;
@@ -553,6 +556,22 @@ export interface NodeAiSettingsRow {
   rerank_api_key_fp: string | null;
   updated_by: string | null;
   updated_at: Date;
+}
+
+/** A measurement of one embedding configuration (its key hashes everything that changes distances). */
+export interface EmbedCalibrationRow {
+  config_key: string;
+  model: string;
+  state: "running" | "ready" | "failed";
+  /** The last successful measurement, as @stuga/ai's CalibrationResult; it stays in force while measured again. */
+  result: Record<string, unknown> | null;
+  error: string | null;
+  error_kind: "endpoint" | "inseparable" | null;
+  attempts: number;
+  next_attempt_at: Date | null;
+  triggered_by: string;
+  started_at: Date;
+  finished_at: Date | null;
 }
 
 /** NULL fields are not set here; a retention of 0 keeps every row. */

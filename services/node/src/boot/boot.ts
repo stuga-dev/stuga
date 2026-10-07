@@ -36,6 +36,7 @@ import { purgeUnfinishedImports } from "../api/workspaces.js";
 import { recordSignInAudit } from "../audit/record.js";
 import { ConfigError, parseConfig } from "../config/env.js";
 import { createAiSettingsStore } from "../config/settings/ai.js";
+import { createCalibrator } from "../retrieval/calibrator.js";
 import { createNodeSettingsStore, issuerHost } from "../config/settings/node.js";
 import type { NodeEnv } from "../env.js";
 import { createApp, createRequestHandler, readsOwnBody } from "../http/dispatch.js";
@@ -242,6 +243,8 @@ async function boot(): Promise<void> {
     embeddingDims: cfg.embeddingDims,
     baseUrls: cfg.aiProviderBaseUrls,
   });
+  // A run older than this process was left by one that has stopped, and may be taken over.
+  const calibrator = createCalibrator({ sql, aiSettings, processStartedAt: new Date() });
   const settings = await createNodeSettingsStore({ sql, dataDir: cfg.dataDir, publicOrigin: cfg.publicOrigin });
   bodyLimit = () => settings.current().maxBodyBytes;
 
@@ -300,6 +303,7 @@ async function boot(): Promise<void> {
     internal,
     sql,
     aiSettings,
+    calibrator,
     settings,
     searchLanguages,
     verifier,
@@ -442,10 +446,15 @@ async function boot(): Promise<void> {
       // Also picks up hand edits to the settings tables.
       await aiSettings.refresh().catch(() => {});
       await settings.refresh().catch(() => {});
+      // Starts a measurement the model in force still needs; never waits for it.
+      await calibrator.ensure().catch((err) => console.warn("[node] could not start measuring the embedding model", err));
       await runMaintenanceTick(env);
       await env.backups?.runIfDue();
     }),
   );
+
+  // The first maintenance tick is minutes away: a model set up before this node started is measured now.
+  void calibrator.ensure().catch((err) => console.warn("[node] could not start measuring the embedding model", err));
 
   const claim = setupCode ? "unclaimed" : "claimed";
   const idp = settings.current().identityProvider;
@@ -473,6 +482,7 @@ async function boot(): Promise<void> {
       { name: "socket sweep", run: () => socketSweep.stop() },
       { name: "search index rebuild", run: () => searchLanguages.stop() },
       { name: "job worker", run: () => worker.stop() },
+      { name: "embedding measurement", run: () => calibrator.stop() },
       { name: "document actors", run: () => docs.close() },
       { name: "database actors", run: () => databases.close() },
       { name: "Postgres connections", run: () => closeClients() },

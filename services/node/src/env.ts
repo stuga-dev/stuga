@@ -14,6 +14,7 @@ import type { NodeBackups } from "./ops/node-backups.js";
 import type { SearchLanguages } from "./search/languages.js";
 import type { RemoteAccess } from "./remote/service.js";
 import type { SessionSockets } from "./auth/session-sockets.js";
+import type { Calibrator } from "./retrieval/calibrator.js";
 
 export interface NotifyConfig {
   /** slack | teams | discord | email | webhook | none */
@@ -72,6 +73,8 @@ export interface RemoteAccessView {
 interface NodeServices {
   /** The AI configuration in force; the AI settings routes refresh it after a save. */
   aiSettings: AiSettingsStore;
+  /** Measures the embedding model in force, in the background, for the search box's strictness levels. */
+  calibrator: Calibrator;
   /** Every other setting the Settings page edits. */
   settings: NodeSettingsStore;
   /** The languages keyword search answers for, and the rebuild of its indexes when they change. */

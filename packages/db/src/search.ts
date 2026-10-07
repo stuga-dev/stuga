@@ -256,8 +256,8 @@ export interface SearchInput {
   /** Null skips the semantic leg. */
   queryEmbedding: number[] | null;
   embeddingDims: number;
-  /** The semantic leg keeps a chunk only below this cosine distance to the query. */
-  maxDistance: number;
+  /** The semantic leg keeps a chunk only below this cosine distance to the query; null keeps the nearest at any distance. */
+  maxDistance: number | null;
   limit?: number;
   /** Collection scope: only these doc ids. An empty array yields no results. */
   scopeDocIds?: string[] | null;
@@ -282,7 +282,7 @@ export interface AskInput {
   queryEmbedding: number[] | null;
   embeddingDims: number;
   /** As in SearchInput. */
-  maxDistance: number;
+  maxDistance: number | null;
   /** Passages to return. */
   limit?: number;
   scopeDocIds?: string[] | null;
@@ -616,7 +616,7 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
     chunk_hits AS (
       SELECT doc_id, chunk_index, 1 - dist AS sem_score
       FROM chunk_near
-      WHERE dist < ${input.maxDistance}::float8
+      WHERE ${input.maxDistance}::float8 IS NULL OR dist < ${input.maxDistance}::float8
     ),
     sem_best AS (
       SELECT DISTINCT ON (doc_id) doc_id, chunk_index, sem_score
@@ -716,7 +716,7 @@ export async function askDocs(sql: Sql, input: AskInput): Promise<AskChunk[]> {
     chunk_hits AS (
       SELECT doc_id, chunk_index, content, 1 - dist AS sem_score
       FROM chunk_near
-      WHERE dist < ${input.maxDistance}::float8
+      WHERE ${input.maxDistance}::float8 IS NULL OR dist < ${input.maxDistance}::float8
     ),
     sem_ranked AS (
       SELECT s.*, rank() OVER (ORDER BY s.sem_score DESC) AS sem_pos

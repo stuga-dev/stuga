@@ -2,6 +2,13 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { createClient, closeClients } from "./client.js";
 import { initSchema } from "./schema/migrate.js";
 import {
+  claimEmbedCalibration,
+  clearEmbedCalibrations,
+  failEmbedCalibration,
+  finishEmbedCalibration,
+  getEmbedCalibration,
+  listEmbedCalibrations,
+  pruneEmbedCalibrations,
   getNodeAiSettings,
   getNodeSettings,
   getNodeState,
@@ -30,6 +37,7 @@ const ROW = {
   embedBaseUrl: "https://api.openai.test/v1",
   embedModel: "text-embedding-3-small",
   embedApiKeyFp: null,
+  searchStrictness: null,
   searchMaxDistance: null,
   retrievalMaxDistance: null,
   rerankEnabled: null,
@@ -53,18 +61,79 @@ describe.skipIf(!URL)("node_ai_settings", () => {
     await sql`DELETE FROM node_ai_settings`;
   });
 
-  it("stores the semantic cutoffs as numbers, and null as not set", async () => {
+  it("stores the search strictness, a custom distance with it, and null as not set", async () => {
     await upsertNodeAiSettings(sql, ROW);
-    expect(await getNodeAiSettings(sql)).toMatchObject({ search_max_distance: null, retrieval_max_distance: null });
+    expect(await getNodeAiSettings(sql)).toMatchObject({ search_strictness: null, search_max_distance: null, retrieval_max_distance: null });
 
-    await upsertNodeAiSettings(sql, { ...ROW, searchMaxDistance: 0.75, retrievalMaxDistance: 2 });
-    expect(await getNodeAiSettings(sql)).toMatchObject({ search_max_distance: 0.75, retrieval_max_distance: 2 });
+    await upsertNodeAiSettings(sql, { ...ROW, searchStrictness: "custom", searchMaxDistance: 0.75, retrievalMaxDistance: 2 });
+    expect(await getNodeAiSettings(sql)).toMatchObject({ search_strictness: "custom", search_max_distance: 0.75, retrieval_max_distance: 2 });
+
+    await upsertNodeAiSettings(sql, { ...ROW, searchStrictness: "loose" });
+    expect(await getNodeAiSettings(sql)).toMatchObject({ search_strictness: "loose", search_max_distance: null });
+  });
+
+  it("refuses a search distance without the custom level, and the custom level without a distance", async () => {
+    await expect(upsertNodeAiSettings(sql, { ...ROW, searchMaxDistance: 0.5 })).rejects.toThrow(/check constraint/);
+    await expect(upsertNodeAiSettings(sql, { ...ROW, searchStrictness: "balanced", searchMaxDistance: 0.5 })).rejects.toThrow(/check constraint/);
+    await expect(upsertNodeAiSettings(sql, { ...ROW, searchStrictness: "custom" })).rejects.toThrow(/check constraint/);
+    expect(await getNodeAiSettings(sql)).toBeNull();
   });
 
   it.each([0, -0.1, 2.01])("refuses a cutoff of %s", async (value) => {
-    await expect(upsertNodeAiSettings(sql, { ...ROW, searchMaxDistance: value })).rejects.toThrow(/check constraint/);
+    await expect(upsertNodeAiSettings(sql, { ...ROW, searchStrictness: "custom", searchMaxDistance: value })).rejects.toThrow(/check constraint/);
     await expect(upsertNodeAiSettings(sql, { ...ROW, retrievalMaxDistance: value })).rejects.toThrow(/check constraint/);
     expect(await getNodeAiSettings(sql)).toBeNull();
+  });
+});
+
+describe.skipIf(!URL)("embed_calibrations", () => {
+  let sql: Sql;
+  const key = (c: string) => c.repeat(64);
+  const claim = (configKey: string, processStartedAt = new Date(Date.now() - 60_000)) =>
+    claimEmbedCalibration(sql, { configKey, model: "m", triggeredBy: "system", processStartedAt });
+
+  beforeAll(async () => {
+    sql = createClient(URL!);
+    await initSchema(sql);
+  });
+  afterAll(async () => {
+    await closeClients();
+  });
+  beforeEach(async () => {
+    await clearEmbedCalibrations(sql);
+  });
+
+  it("claims a configuration once while its run is alive, and takes over one left by a process that died", async () => {
+    expect(await claim(key("a"))).toBe(true);
+    expect(await claim(key("a"))).toBe(false);
+    // A process that started after the run began finds it left behind by one that has gone.
+    expect(await claim(key("a"), new Date(Date.now() + 60_000))).toBe(true);
+    expect((await getEmbedCalibration(sql, key("a")))?.attempts).toBe(2);
+  });
+
+  it("keeps the last result through a new run and an endpoint failure, and drops it for an inseparable model", async () => {
+    await claim(key("b"));
+    await finishEmbedCalibration(sql, key("b"), { levels: { short: { balanced: 0.34 } } });
+    const ready = await getEmbedCalibration(sql, key("b"));
+    expect(ready).toMatchObject({ state: "ready", attempts: 0, result: { levels: { short: { balanced: 0.34 } } } });
+
+    await claim(key("b"));
+    await failEmbedCalibration(sql, key("b"), { error: "embeddings 503", kind: "endpoint", nextAttemptAt: new Date() });
+    expect(await getEmbedCalibration(sql, key("b"))).toMatchObject({ state: "failed", error_kind: "endpoint", result: { levels: { short: { balanced: 0.34 } } } });
+    expect((await getEmbedCalibration(sql, key("b")))?.finished_at).toEqual(ready?.finished_at);
+
+    await claim(key("b"));
+    await failEmbedCalibration(sql, key("b"), { error: "alike", kind: "inseparable", nextAttemptAt: null });
+    expect(await getEmbedCalibration(sql, key("b"))).toMatchObject({ state: "failed", error_kind: "inseparable", result: null });
+  });
+
+  it("keeps the newest five and the one in force", async () => {
+    for (const c of "0123456") await claim(key(c));
+    await pruneEmbedCalibrations(sql, key("0"));
+    const kept = (await listEmbedCalibrations(sql)).map((r) => r.config_key);
+    expect(kept).toHaveLength(5);
+    expect(await getEmbedCalibration(sql, key("0"))).not.toBeNull();
+    expect(await getEmbedCalibration(sql, key("1"))).toBeNull();
   });
 });
 

@@ -1,4 +1,6 @@
 /** AI configuration: chat and embeddings go to operator-configured endpoints. */
+import type { SearchCutoff } from "./retrieval/cutoff.js";
+
 export type AiProvider = "anthropic" | "openai" | "ollama";
 
 /** A model the UI offers. `id` is the provider's own model name. */
@@ -43,10 +45,14 @@ export interface AiConfig {
     model: string;
     /** Must match the `vector(N)` column. */
     dims: number;
-    /** Search keeps a chunk only below this cosine distance to the query; how far a match sits depends on the model. */
-    searchMaxDistance: number;
-    /** The same cutoff for retrieval: Ask, agents' retrieve, and the assistants' document search. */
-    retrievalMaxDistance: number;
+    /**
+     * The search box keeps a match by meaning only below this cosine distance to the query, one for
+     * typed searches and one for questions: the level chosen, at the distances measured for this
+     * model. Null drops nothing by distance (Off, or no measurement yet).
+     */
+    searchCutoff: SearchCutoff | null;
+    /** A cutoff for Ask, agents' retrieve and the assistants' document search, set through the API; null for none. */
+    retrievalMaxDistance: number | null;
   };
   /**
    * A System One model that reranks retrieval: TypeSafe's Jev, direct or

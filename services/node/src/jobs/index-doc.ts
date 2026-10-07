@@ -1,5 +1,5 @@
 /** Indexing a document after its actor flushed. */
-import { chunkEmbedInput, headingAwareChunk } from "@stuga/ai";
+import { EMBED_BATCH, chunkEmbedInput, headingAwareChunk } from "@stuga/ai";
 import { sha256Hex, principalId } from "@stuga/auth";
 import { charChangeCounts, yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import type { ChunkInput } from "@stuga/db";
@@ -12,8 +12,6 @@ import { type JobDeps, type JobsEnv, isTerminal } from "./deps.js";
 
 export type IndexDocMessage = Extract<IndexMessage, { kind: "index_doc" }>;
 
-/** Texts per embedding request. */
-const EMBED_BATCH = 16;
 /** New or changed chunks one job embeds; the rest are stored vector-less for the reconcile sweep. */
 const EMBED_CHUNKS_PER_JOB = 200;
 

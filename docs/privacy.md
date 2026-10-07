@@ -30,7 +30,9 @@ An AI app you connect sees what its model reads and writes
 | An app's metadata document | When an app that names itself by one signs in, at most once a day | That URL, to name the app on the consent page ([Agents signing in](network-access.md#agents-signing-in)) |
 
 **Test** and the list of models under **AI providers** reach the service with its key and no
-workspace content. **Send a test** under **Notifications** sends a fixed message with the node's
+workspace content. So does measuring the embedding model for [search strictness](configuration.md#search-strictness):
+when it is saved, when the node starts, on a retry and with **Measure again**, the node sends the
+semantic search service fixed texts written for the purpose. **Send a test** under **Notifications** sends a fixed message with the node's
 address.
 
 AI is off until a node administrator sets it up, and with Ollama on the same machine the text stays

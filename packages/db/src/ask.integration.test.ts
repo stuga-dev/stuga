@@ -129,7 +129,7 @@ describe.skipIf(!URL)("askDocs (chunk-returning RAG retrieval)", () => {
     expect(score("sem-only")).toBeCloseTo(1 / 62, 12);
   });
 
-  it.each([0.5, 0.9, 1, 2])("returns a passage found only by meaning iff its cosine distance is below a cutoff of %s", async (maxDistance) => {
+  it.each([0.5, 0.9, 1, 2, null])("returns a passage found only by meaning iff its cosine distance is below a cutoff of %s", async (maxDistance) => {
     const distances = [0.3, 0.67, 0.98, 1.3];
     for (const d of distances) {
       await seedPassage(sql, `at-${d}`, "Notes", "unrelated filler", blendVec(1 - d, Math.sqrt(1 - (1 - d) ** 2)));
@@ -139,6 +139,6 @@ describe.skipIf(!URL)("askDocs (chunk-returning RAG retrieval)", () => {
       query: "zephyr",
       queryEmbedding: blendVec(1, 0),
     });
-    expect(chunks.map((c) => c.doc_id).sort()).toEqual(distances.filter((d) => d < maxDistance).map((d) => `at-${d}`).sort());
+    expect(chunks.map((c) => c.doc_id).sort()).toEqual(distances.filter((d) => maxDistance === null || d < maxDistance).map((d) => `at-${d}`).sort());
   });
 });

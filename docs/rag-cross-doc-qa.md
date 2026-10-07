@@ -77,9 +77,8 @@ chunks.
 document: it returns individual passages, so the caller can hand sections to a model and cite them.
 It is one SQL statement:
 
-- a **semantic leg**: the chunks nearest the question by cosine distance, closer than the node's
-  **Retrieval cutoff** ([configuration.md](configuration.md#match-cutoffs)), read from the AI settings
-  in force when the question is asked;
+- a **semantic leg**: the 96 chunks nearest the question by cosine distance, at any distance unless
+  one is set through the API ([Search strictness](configuration.md#search-strictness));
 - a **keyword leg**: BM25 through pg_search over each chunk's heading path and text, plus the title on
   chunk 0, matching a passage on any word of the question, by English stem, with stopwords ignored;
 - **Reciprocal Rank Fusion** of the two per-passage ranks into one `score`;
@@ -195,6 +194,5 @@ node's request handler and streams over server-sent events, as the table assista
 
 - A question is answered from one node's documents.
 - The per-document cap, the 24 candidates and the round limit are fixed in code, not configuration.
-  The retrieval cutoff is a setting because it depends on the embedding model.
 - Ask does not write. Turning an answer into an edit is the co-author's job, through the run ledger,
   with `cited_edits` carrying the sources along.

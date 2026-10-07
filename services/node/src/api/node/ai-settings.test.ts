@@ -1,8 +1,8 @@
 /**
  * PUT /api/node/ai-settings validation: model ids are one namespace across endpoints, so a shared id
- * or a default model no endpoint lists is refused before anything is written, and the semantic match
- * cutoffs are range-checked and put in force on save. A save that would run a provider is sent with
- * that half switched off, so no probe makes an outbound request.
+ * or a default model no endpoint lists is refused before anything is written, and the search box's
+ * strictness level and any distance set through the API are checked and stored on save. A save that
+ * would run a provider is sent with that half switched off, so no probe makes an outbound request.
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,9 +16,15 @@ vi.mock("@stuga/db", async (importOriginal) => ({
   isNodeAdminAlias: vi.fn(async () => true),
   getNodeAiSettings: vi.fn(async () => null),
   upsertNodeAiSettings: vi.fn(async () => {}),
+  listEmbedCalibrations: vi.fn(async () => []),
+  getEmbedCalibration: vi.fn(async () => null),
+  clearEmbedCalibrations: vi.fn(async () => {}),
+  clearNodeAiSettings: vi.fn(async () => {}),
+  clearAllChunkEmbeddings: vi.fn(async () => 0),
+  armEmbeddingBackfillAll: vi.fn(async () => 0),
 }));
 
-const { getNodeAiSettings, upsertNodeAiSettings } = await import("@stuga/db");
+const { clearEmbedCalibrations, getNodeAiSettings, upsertNodeAiSettings } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../../http/dispatch.js");
 const { createAiSettingsStore } = await import("../../config/settings/ai.js");
 import type { Ctx } from "../../auth/context.js";
@@ -32,9 +38,12 @@ const BASE_URLS = { anthropic: "https://api.anthropic.com", openai: "https://api
 const EMPTY_AI: AiConfig = {
   enabled: false,
   chat: { enabled: false, defaultModel: "", endpoints: [] },
-  embed: { enabled: false, provider: "ollama", baseUrl: "http://127.0.0.1:11434", model: "bge-m3", dims: 1024, searchMaxDistance: 0.6, retrievalMaxDistance: 0.9 },
+  embed: { enabled: false, provider: "ollama", baseUrl: "http://127.0.0.1:11434", model: "bge-m3", dims: 1024, searchCutoff: null, retrievalMaxDistance: null },
   rerank: { enabled: false, baseUrl: "", model: "" },
 };
+
+/** The background measurement, recorded rather than run. */
+const calibrator = { ensure: vi.fn(async (_opts?: { alias?: string; force?: boolean }) => {}), progress: () => null, stop: async () => {} };
 
 /** A node administrator, with nothing configured yet. */
 function ctx(ai: AiConfig = EMPTY_AI): Ctx {
@@ -48,6 +57,7 @@ function ctx(ai: AiConfig = EMPTY_AI): Ctx {
       dataDir: "/tmp/stuga-test",
       embeddingDims: 1024,
       aiProviderBaseUrls: BASE_URLS,
+      calibrator,
       aiSettings: {
         current: () => ai,
         refresh: async () => {},
@@ -152,7 +162,7 @@ describe("GET /api/node/ai-settings", () => {
   });
 });
 
-describe("PUT /api/node/ai-settings: semantic match cutoffs", () => {
+describe("PUT /api/node/ai-settings: search strictness", () => {
   let dataDir: string;
   let row: NodeAiSettingsRow | null;
   let store: AiSettingsStore;
@@ -183,6 +193,7 @@ describe("PUT /api/node/ai-settings: semantic match cutoffs", () => {
         embed_base_url: input.embedBaseUrl,
         embed_model: input.embedModel,
         embed_api_key_fp: input.embedApiKeyFp,
+        search_strictness: input.searchStrictness,
         search_max_distance: input.searchMaxDistance,
         retrieval_max_distance: input.retrievalMaxDistance,
         rerank_enabled: input.rerankEnabled,
@@ -201,7 +212,7 @@ describe("PUT /api/node/ai-settings: semantic match cutoffs", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it.each([0, -0.2, 2.5, "0.7", true])("refuses a cutoff of %j with 400 and writes nothing", async (value) => {
+  it.each([0, -0.2, 2.5, "0.7", true])("refuses a distance of %j with 400 and writes nothing", async (value) => {
     for (const field of ["search_max_distance", "retrieval_max_distance"]) {
       const res = await saveEmbed({ [field]: value });
       expect(res?.status).toBe(400);
@@ -211,47 +222,102 @@ describe("PUT /api/node/ai-settings: semantic match cutoffs", () => {
     expect(upsert).not.toHaveBeenCalled();
   });
 
-  it("serves an unset cutoff as null beside the defaults, and keeps it unset through a save that sends it back", async () => {
+  it.each(["medium", 3, true])("refuses a strictness of %j", async (value) => {
+    const res = await saveEmbed({ search_strictness: value });
+    expect(res?.status).toBe(400);
+    expect(((await res!.json()) as { error: string }).error).toBe("embed.search_strictness must be strict, balanced, loose, off or custom");
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("serves an unset level as null beside the default, and keeps it unset through a save that sends it back", async () => {
     const get = async () =>
       (await (await routeWorkspaceRequest(admin(), new Request("http://node.test/api/node/ai-settings")))!.json()) as {
         embed: Record<string, unknown>;
-        max_distance_defaults: unknown;
+        strictness_default: unknown;
       };
     const first = await get();
-    expect(first.embed).toMatchObject({ search_max_distance: null, retrieval_max_distance: null });
-    expect(first.max_distance_defaults).toEqual({ search: 0.6, retrieval: 0.9 });
+    expect(first.embed).toMatchObject({ search_strictness: null, search_max_distance: null, retrieval_max_distance: null, cutoff: null, calibration: null });
+    expect(first.strictness_default).toBe("balanced");
 
-    await saveEmbed({ search_max_distance: first.embed.search_max_distance, retrieval_max_distance: first.embed.retrieval_max_distance });
-    expect(row).toMatchObject({ search_max_distance: null, retrieval_max_distance: null });
-    expect((await get()).embed).toMatchObject({ search_max_distance: null, retrieval_max_distance: null });
+    await saveEmbed({ search_strictness: first.embed.search_strictness, retrieval_max_distance: first.embed.retrieval_max_distance });
+    expect(row).toMatchObject({ search_strictness: null, search_max_distance: null, retrieval_max_distance: null });
   });
 
-  it("puts a saved cutoff in force at once and serves it with the defaults", async () => {
-    expect(store.current().embed).toMatchObject({ searchMaxDistance: 0.6, retrievalMaxDistance: 0.9 });
+  it("stores a level, and a level clears a distance set before", async () => {
+    await saveEmbed({ search_max_distance: 0.7 });
+    expect(row).toMatchObject({ search_strictness: "custom", search_max_distance: 0.7 });
+    await saveEmbed({ search_strictness: "loose" });
+    expect(row).toMatchObject({ search_strictness: "loose", search_max_distance: null });
+  });
 
-    const res = await saveEmbed({ search_max_distance: 1.2, retrieval_max_distance: 2 });
+  it("takes a distance only with the custom level, and the custom level only with a distance", async () => {
+    let res = await saveEmbed({ search_strictness: "strict", search_max_distance: 0.7 });
+    expect(res?.status).toBe(400);
+    expect(((await res!.json()) as { error: string }).error).toBe("embed.search_max_distance goes with search_strictness custom");
+    res = await saveEmbed({ search_strictness: "custom" });
+    expect(res?.status).toBe(400);
+    expect(((await res!.json()) as { error: string }).error).toBe("embed.search_strictness custom needs search_max_distance");
+    expect(upsert).not.toHaveBeenCalled();
+
+    res = await saveEmbed({ search_strictness: "custom", search_max_distance: 0.7 });
     expect(res?.status).toBe(200);
-    expect(upsert.mock.calls[0]?.[1]).toMatchObject({ searchMaxDistance: 1.2, retrievalMaxDistance: 2 });
-    expect(store.current().embed).toMatchObject({ searchMaxDistance: 1.2, retrievalMaxDistance: 2 });
-
-    const got = (await (await routeWorkspaceRequest(admin(), new Request("http://node.test/api/node/ai-settings")))!.json()) as {
-      embed: Record<string, unknown>;
-      max_distance_defaults: unknown;
-    };
-    expect(got.embed).toMatchObject({ search_max_distance: 1.2, retrieval_max_distance: 2 });
-    expect(got.max_distance_defaults).toEqual({ search: 0.6, retrieval: 0.9 });
+    expect(row).toMatchObject({ search_strictness: "custom", search_max_distance: 0.7 });
   });
 
-  it("keeps a stored cutoff the request leaves out, and restores the default for null", async () => {
+  it("keeps a stored level and distances the request leaves out, and restores the default for null", async () => {
     await saveEmbed({ search_max_distance: 1.2, retrieval_max_distance: 1.5 });
-
     await saveEmbed({});
     await put(admin(), { chat: { endpoints: [] } });
-    expect(store.current().embed).toMatchObject({ searchMaxDistance: 1.2, retrievalMaxDistance: 1.5 });
+    expect(row).toMatchObject({ search_strictness: "custom", search_max_distance: 1.2, retrieval_max_distance: 1.5 });
 
     await saveEmbed({ search_max_distance: null });
-    expect(store.current().embed).toMatchObject({ searchMaxDistance: 0.6, retrievalMaxDistance: 1.5 });
-    expect(row).toMatchObject({ search_max_distance: null, retrieval_max_distance: 1.5 });
+    expect(row).toMatchObject({ search_strictness: null, search_max_distance: null, retrieval_max_distance: 1.5 });
+    await saveEmbed({ retrieval_max_distance: null });
+    expect(row).toMatchObject({ retrieval_max_distance: null });
+    expect(store.current().embed.retrievalMaxDistance).toBeNull();
+  });
+
+  it("drops distances set through the API when the embedding model changes, whatever the save sends", async () => {
+    await saveEmbed({ model: "model-a", enabled: false });
+    await saveEmbed({ model: "model-a", enabled: false, search_max_distance: 0.7, retrieval_max_distance: 0.8 });
+    expect(row).toMatchObject({ search_strictness: "custom", search_max_distance: 0.7, retrieval_max_distance: 0.8 });
+
+    const res = await saveEmbed({ model: "model-b", enabled: false, search_max_distance: 0.7 });
+    expect(res?.status).toBe(200);
+    expect(row).toMatchObject({ embed_model: "model-b", search_strictness: null, search_max_distance: null, retrieval_max_distance: null });
+    expect(((await res!.json()) as { reembed: { custom_cleared: boolean } }).reembed.custom_cleared).toBe(true);
+  });
+
+  it("starts measuring after a save of semantic search, as the admin who saved", async () => {
+    calibrator.ensure.mockClear();
+    await saveEmbed({ search_strictness: "strict" });
+    expect(calibrator.ensure).toHaveBeenCalledWith({ alias: "admin-1" });
+    calibrator.ensure.mockClear();
+    await put(admin(), { chat: { endpoints: [] } });
+    expect(calibrator.ensure).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/node/ai-settings/calibrate and Reset", () => {
+  const call = (c: Ctx, method: string, path: string) => routeWorkspaceRequest(c, new Request(`http://node.test${path}`, { method }));
+
+  it("measures again on request, and says so when semantic search is off", async () => {
+    calibrator.ensure.mockClear();
+    const off = await call(ctx(), "POST", "/api/node/ai-settings/calibrate");
+    expect(off?.status).toBe(409);
+    expect(calibrator.ensure).not.toHaveBeenCalled();
+
+    const on = await call(ctx({ ...EMPTY_AI, enabled: true, embed: { ...EMPTY_AI.embed, enabled: true } }), "POST", "/api/node/ai-settings/calibrate");
+    expect(on?.status).toBe(202);
+    expect(calibrator.ensure).toHaveBeenCalledWith({ alias: "admin-1", force: true });
+  });
+
+  it("forgets every measurement on Reset", async () => {
+    const clear = clearEmbedCalibrations as unknown as ReturnType<typeof vi.fn>;
+    clear.mockClear();
+    const res = await call(ctx(), "DELETE", "/api/node/ai-settings");
+    expect(res?.status).toBe(200);
+    expect(clear).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -288,6 +354,7 @@ describe("each half's switch", () => {
         embed_base_url: input.embedBaseUrl,
         embed_model: input.embedModel,
         embed_api_key_fp: input.embedApiKeyFp,
+        search_strictness: input.searchStrictness,
         search_max_distance: input.searchMaxDistance,
         retrieval_max_distance: input.retrievalMaxDistance,
         rerank_enabled: input.rerankEnabled,

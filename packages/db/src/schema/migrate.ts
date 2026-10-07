@@ -14,7 +14,7 @@ import type { Queryable } from "../sql.js";
  * Migration filenames in apply order. Explicit, so a stray file cannot change
  * what runs. Append only: an applied file is frozen by its checksum.
  */
-export const MIGRATIONS: readonly string[] = ["0001_initial.sql", "0002_remote_sign_in.sql"];
+export const MIGRATIONS: readonly string[] = ["0001_initial.sql", "0002_remote_sign_in.sql", "0003_search_strictness.sql"];
 
 /**
  * Each migration's checksum, pinned when it is added: a unit test fails when a file stops matching.
@@ -24,6 +24,7 @@ export const MIGRATIONS: readonly string[] = ["0001_initial.sql", "0002_remote_s
 export const MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
   "0001_initial.sql": "1a7acca75c129611",
   "0002_remote_sign_in.sql": "2d52cb9a03c6e524",
+  "0003_search_strictness.sql": "e753ff53b7975bf4",
 };
 
 /** `0007_foo.sql` → 7. Throws on a filename that is not numbered. */

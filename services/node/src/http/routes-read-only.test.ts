@@ -172,6 +172,7 @@ const PINNED = [
   "* /api/node/ai-settings: GET agents refused, POST refused",
   "POST /api/node/ai-settings/test: refused",
   "POST /api/node/ai-settings/models: refused",
+  "POST /api/node/ai-settings/calibrate: refused",
   "GET /api/node/audit: agents refused",
   "GET /api/node/version: agents refused",
   "POST /api/node/version/check: refused",

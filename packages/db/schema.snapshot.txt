@@ -254,6 +254,27 @@ TABLE docs
   INDEX docs_ws_acl_gin CREATE INDEX docs_ws_acl_gin ON public.docs USING gin (workspace_id, acl_principals)
   INDEX docs_ws_writers_gin CREATE INDEX docs_ws_writers_gin ON public.docs USING gin (workspace_id, acl_writers)
 
+TABLE embed_calibrations
+  attempts integer NOT NULL DEFAULT 0
+  config_key text NOT NULL
+  error text
+  error_kind text
+  finished_at timestamp with time zone
+  model text NOT NULL
+  next_attempt_at timestamp with time zone
+  result jsonb
+  started_at timestamp with time zone NOT NULL DEFAULT now()
+  state text NOT NULL
+  triggered_by text NOT NULL
+  CONSTRAINT embed_calibrations_attempts_check CHECK ((attempts >= 0))
+  CONSTRAINT embed_calibrations_config_key_check CHECK ((config_key ~ '^[0-9a-f]{64}$'::text))
+  CONSTRAINT embed_calibrations_error_kind_check CHECK ((error_kind = ANY (ARRAY['endpoint'::text, 'inseparable'::text])))
+  CONSTRAINT embed_calibrations_failed_check CHECK (((state = 'failed'::text) = ((error IS NOT NULL) AND (error_kind IS NOT NULL))))
+  CONSTRAINT embed_calibrations_pkey PRIMARY KEY (config_key)
+  CONSTRAINT embed_calibrations_ready_check CHECK (((state <> 'ready'::text) OR (result IS NOT NULL)))
+  CONSTRAINT embed_calibrations_state_check CHECK ((state = ANY (ARRAY['running'::text, 'ready'::text, 'failed'::text])))
+  INDEX embed_calibrations_pkey CREATE UNIQUE INDEX embed_calibrations_pkey ON public.embed_calibrations USING btree (config_key)
+
 TABLE favorites
   created_at timestamp with time zone NOT NULL DEFAULT now()
   doc_id text NOT NULL
@@ -355,13 +376,16 @@ TABLE node_ai_settings
   rerank_model text
   retrieval_max_distance double precision
   search_max_distance double precision
+  search_strictness text
   updated_at timestamp with time zone NOT NULL DEFAULT now()
   updated_by text
   CONSTRAINT node_ai_settings_embed_provider_check CHECK ((embed_provider = ANY (ARRAY['anthropic'::text, 'openai'::text, 'ollama'::text])))
   CONSTRAINT node_ai_settings_id_check CHECK (id)
   CONSTRAINT node_ai_settings_pkey PRIMARY KEY (id)
   CONSTRAINT node_ai_settings_retrieval_max_distance_check CHECK (((retrieval_max_distance > (0)::double precision) AND (retrieval_max_distance <= (2)::double precision)))
+  CONSTRAINT node_ai_settings_search_custom_check CHECK (((NOT (search_strictness IS DISTINCT FROM 'custom'::text)) = (search_max_distance IS NOT NULL)))
   CONSTRAINT node_ai_settings_search_max_distance_check CHECK (((search_max_distance > (0)::double precision) AND (search_max_distance <= (2)::double precision)))
+  CONSTRAINT node_ai_settings_search_strictness_check CHECK ((search_strictness = ANY (ARRAY['strict'::text, 'balanced'::text, 'loose'::text, 'off'::text, 'custom'::text])))
   INDEX node_ai_settings_pkey CREATE UNIQUE INDEX node_ai_settings_pkey ON public.node_ai_settings USING btree (id)
 
 TABLE node_remote_access

@@ -22,20 +22,27 @@ export interface EmbedResult {
 /** Per-text input cap, behind the chunker's own limits. */
 const MAX_INPUT_CHARS = 50_000;
 
-export function embedDims(cfg: AiConfig): number {
+/** Texts per embeddings request when a caller sends many: indexing, and measuring a model. */
+export const EMBED_BATCH = 16;
+
+export function embedDims(cfg: Pick<AiConfig, "embed">): number {
   const d = cfg.embed.dims;
   return Number.isInteger(d) && d > 0 ? d : EMBEDDING_DIMS;
+}
+
+/** The exact strings `embed` sends for `texts`: the model's prompt for `role`, then each text within the cap. */
+export function embedInputs(model: string, texts: string[], role: EmbedRole): string[] {
+  const prompt = embedProfile(model)[role];
+  return texts.map((t) => prompt + t.slice(0, MAX_INPUT_CHARS));
 }
 
 /** Embed `texts` in one request, with the model's own prompt for `role`. An empty list makes no call. */
 export async function embed(cfg: AiConfig, texts: string[], role: EmbedRole): Promise<EmbedResult> {
   if (texts.length === 0) return { embeddings: [], modelDims: 0, inputTokens: 0 };
   const ep = cfg.embed;
-  const profile = embedProfile(ep.model);
-  const prompt = profile[role];
-  const inputs = texts.map((t) => prompt + t.slice(0, MAX_INPUT_CHARS));
+  const inputs = embedInputs(ep.model, texts, role);
   const dims = embedDims(cfg);
-  const ask = requestedDims(profile, dims, ep.provider);
+  const ask = requestedDims(embedProfile(ep.model), dims, ep.provider);
   const out = ep.provider === "ollama" ? await ollamaEmbed(ep, ep.model, inputs, ask) : await openaiEmbed(ep, ep.model, inputs, ask);
   if (out.embeddings.length !== inputs.length) {
     throw new AiError(`embed: expected ${inputs.length} vectors, got ${out.embeddings.length}`, 0, false);
@@ -62,7 +69,7 @@ export async function embed(cfg: AiConfig, texts: string[], role: EmbedRole): Pr
  * unknown model behind an OpenAI-compatible endpoint is asked for the column's
  * width, which OpenAI's own models need.
  */
-function requestedDims(profile: EmbedProfile, column: number, provider: AiProvider): number | null {
+export function requestedDims(profile: EmbedProfile, column: number, provider: AiProvider): number | null {
   if (profile.dims === null) return provider === "ollama" ? null : column;
   if (profile.dims <= column) return null;
   return profile.shortens ? (profile.shortens.find((d) => d <= column) ?? null) : column;

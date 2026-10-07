@@ -13,6 +13,7 @@ const nodeApi = vi.hoisted(() => ({
   ai: vi.fn(),
   saveAi: vi.fn(),
   testAi: vi.fn(),
+  calibrateAi: vi.fn(),
   discoverModels: vi.fn(),
   settings: vi.fn(),
   saveSettings: vi.fn(),
@@ -68,12 +69,15 @@ const AI: NodeAiSettings = {
     api_key_set: false,
     api_key_fingerprint: null,
     api_key_stale: false,
+    search_strictness: null,
     search_max_distance: null,
     retrieval_max_distance: null,
+    cutoff: null,
+    calibration: null,
   },
   rerank: { enabled: true, running: false, base_url: "", model: "", api_key_set: false, api_key_fingerprint: null, api_key_stale: false },
   embedding_column_dims: 1024,
-  max_distance_defaults: { search: 0.6, retrieval: 0.9 },
+  strictness_default: "balanced",
   provider_base_urls: { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com", ollama: "http://127.0.0.1:11434" },
   updated_by: null,
   updated_at: null,
@@ -228,12 +232,6 @@ function inputs(labelText: string): HTMLInputElement[] {
   );
 }
 
-/** Type and blur, which is when a NumberInput commits. */
-async function commitNumber(input: HTMLInputElement | undefined, value: string) {
-  await act(async () => input!.focus());
-  await typeInto(input, value);
-  await act(async () => input!.blur());
-}
 
 async function click(label: string) {
   const el = [...host.querySelectorAll("button")].find((b) => isShown(b) && b.textContent === label);
@@ -279,11 +277,36 @@ const isDisabled = (b: HTMLButtonElement | undefined) => !!b && (b.disabled || b
 
 const visibleButtons = (label: string) => [...host.querySelectorAll("button")].filter((b) => isShown(b) && b.textContent === label);
 
-/** Semantic search's editor, with its match cutoffs showing. */
+/** Semantic search's editor. */
 async function openSearchEditor() {
   await clickNth("Edit", 1);
-  await click("Match cutoffs");
 }
+
+/** The segment of Search strictness chosen now. */
+const chosenStrictness = () => [...host.querySelectorAll('button[role="radio"][aria-checked="true"]')].map((b) => b.textContent).find((t) => ["Strict", "Balanced", "Loose", "Off", "Custom"].includes(t ?? ""));
+
+/** Semantic search measured for its model: Balanced at 0.34 for short queries. */
+const MEASURED: NodeAiSettings = {
+  ...AI,
+  embed: {
+    ...AI.embed,
+    model: "bge-m3",
+    running: true,
+    cutoff: { level: "balanced", source: "measured", short: 0.34, question: 0.31 },
+    calibration: {
+      state: "ready",
+      model: "bge-m3",
+      progress: null,
+      measured_at: "2026-10-07T12:00:00Z",
+      levels: { short: { strict: 0.27, balanced: 0.34, loose: 0.39 }, question: { strict: 0.25, balanced: 0.31, loose: 0.36 } },
+      related_kept: 0.99,
+      by_language: null,
+      message: null,
+      kind: null,
+      next_attempt_at: null,
+    },
+  },
+};
 
 /** A button in the open dialog, which shares its label with the one that opened it. */
 async function confirmIn(label: string) {
@@ -510,47 +533,38 @@ describe("NodeSettingsPage", () => {
     expect(nodeApi.saveAi).toHaveBeenCalledWith({ rerank: { base_url: "", model: "" } });
   });
 
-  it("leaves unset cutoffs empty under their defaults, and an untouched save keeps them unset", async () => {
+  it("shows Balanced while no level is stored, and an untouched save keeps following the default", async () => {
     await renderWith(WITH_SEARCH);
     await openSearchEditor();
-    expect(inputs("Search cutoff")[0]!.value).toBe("");
-    expect(inputs("Search cutoff")[0]!.placeholder).toBe("Default 0.6");
-    expect(inputs("Retrieval cutoff")[0]!.value).toBe("");
-    expect(inputs("Retrieval cutoff")[0]!.placeholder).toBe("Default 0.9");
+    expect(chosenStrictness()).toBe("Balanced");
+    expect(host.textContent).toContain("About 1 in 100 unrelated passages gets through.");
+    expect(visibleButtons("Custom")).toHaveLength(0);
     savedAs(WITH_SEARCH);
 
     await click("Save");
 
     const sent = nodeApi.saveAi.mock.calls[0]![0] as { embed: Record<string, unknown> };
-    expect(sent.embed).toMatchObject({ enabled: true, model: "bge-m3", search_max_distance: null, retrieval_max_distance: null });
+    expect(sent.embed).toMatchObject({ enabled: true, model: "bge-m3", search_strictness: null });
+    expect(sent.embed).not.toHaveProperty("search_max_distance");
   });
 
-  it("saves the match cutoffs with semantic search, a cleared one as the default", async () => {
+  it("saves the chosen level with semantic search", async () => {
     await renderWith(WITH_SEARCH);
     await openSearchEditor();
-    await commitNumber(inputs("Search cutoff")[0], "1.1");
-    await commitNumber(inputs("Retrieval cutoff")[0], "1.4");
-    savedAs({ ...WITH_SEARCH, embed: { ...WITH_SEARCH.embed, search_max_distance: 1.1, retrieval_max_distance: 1.4 } });
+    await click("Loose");
+    expect(chosenStrictness()).toBe("Loose");
+    expect(host.textContent).toContain("About 1 in 20 unrelated passages gets through.");
+    savedAs({ ...WITH_SEARCH, embed: { ...WITH_SEARCH.embed, search_strictness: "loose" } });
     await click("Save");
-    await settle();
-
-    await openSearchEditor();
-    expect(inputs("Search cutoff")[0]!.value).toBe("1.1");
-    await commitNumber(inputs("Retrieval cutoff")[0], "");
-    savedAs({ ...WITH_SEARCH, embed: { ...WITH_SEARCH.embed, search_max_distance: 1.1 } });
-    await click("Save");
-
-    expect(nodeApi.saveAi).toHaveBeenCalledTimes(2);
-    const [first, second] = nodeApi.saveAi.mock.calls.map((c) => c[0] as { chat?: unknown; embed: Record<string, unknown> });
-    expect(first!.chat).toBeUndefined();
-    expect(first!.embed).toMatchObject({ search_max_distance: 1.1, retrieval_max_distance: 1.4 });
-    expect(second!.embed).toMatchObject({ search_max_distance: 1.1, retrieval_max_distance: null });
+    const sent = nodeApi.saveAi.mock.calls[0]![0] as { chat?: unknown; embed: Record<string, unknown> };
+    expect(sent.chat).toBeUndefined();
+    expect(sent.embed).toMatchObject({ search_strictness: "loose" });
   });
 
-  it("saves one provider without touching semantic search, and keeps its unsaved cutoff draft", async () => {
+  it("saves one provider without touching semantic search, and keeps its unsaved level draft", async () => {
     await renderWith(WITH_SEARCH);
     await openSearchEditor();
-    await commitNumber(inputs("Search cutoff")[0], "1.1");
+    await click("Strict");
     nodeApi.discoverModels.mockResolvedValue({ models: ["gpt-4.1", "gpt-4o"] });
     savedAs(WITH_SEARCH);
 
@@ -563,20 +577,49 @@ describe("NodeSettingsPage", () => {
     const sent = nodeApi.saveAi.mock.calls[0]![0] as Record<string, unknown>;
     expect(sent).not.toHaveProperty("embed");
     expect(sent.chat).toMatchObject({ enabled: true, default_model: "gpt-4.1", endpoints: [{ id: "openai-1" }] });
-    expect(inputs("Search cutoff")[0]!.value).toBe("1.1");
+    expect(chosenStrictness()).toBe("Strict");
   });
 
-  it("steps a cutoff by 0.05 from its value", async () => {
-    await renderWith(WITH_SEARCH);
+  it("shows the level on the service row and the measured distance in Edit, and measures again on request", async () => {
+    await renderWith(MEASURED);
+    expect(host.textContent).toContain("bge-m3 · Balanced");
     await openSearchEditor();
-    const input = inputs("Search cutoff")[0]!;
-    await commitNumber(input, "0.6");
-    const press = (key: string) => act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })));
-    await press("ArrowUp");
-    expect(input.value).toBe("0.65");
-    await press("ArrowDown");
-    await press("ArrowDown");
-    expect(input.value).toBe("0.55");
+    expect(host.textContent).toContain("Distance 0.34 for this model");
+    await click("Strict");
+    expect(host.textContent).toContain("Distance 0.27 for this model");
+
+    nodeApi.calibrateAi.mockResolvedValue({ calibration: null });
+    const link = [...host.querySelectorAll("button, a")].find((b) => isShown(b as HTMLElement) && b.textContent === "Measure again");
+    expect(link).toBeTruthy();
+    await act(async () => link!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+    expect(nodeApi.calibrateAi).toHaveBeenCalledTimes(1);
+  });
+
+  it("says when the model could not be measured, outside Edit, with a way to try again", async () => {
+    await renderWith({
+      ...MEASURED,
+      embed: {
+        ...MEASURED.embed,
+        cutoff: { level: "balanced", source: "unmeasured", short: null, question: null },
+        calibration: { ...MEASURED.embed.calibration!, state: "failed", levels: null, message: "connect ECONNREFUSED", kind: "endpoint", next_attempt_at: null },
+      },
+    });
+    expect(host.textContent).toContain("Couldn't measure bge-m3");
+    expect(host.textContent).toContain("Until then, nothing is dropped by distance.");
+    expect(host.textContent).toContain("bge-m3 · Balanced · not measured");
+    expect(visibleButtons("Measure again")).toHaveLength(1);
+  });
+
+  it("offers Custom only while a distance set by hand is in force, and shows a retrieval distance with a way to clear it", async () => {
+    await renderWith({
+      ...MEASURED,
+      embed: { ...MEASURED.embed, search_strictness: "custom", search_max_distance: 0.7, retrieval_max_distance: 0.8, cutoff: { level: "custom", source: "custom", short: 0.7, question: 0.7 } },
+    });
+    expect(host.textContent).toContain("bge-m3 · Distance 0.70");
+    await openSearchEditor();
+    expect(chosenStrictness()).toBe("Custom");
+    expect(host.textContent).toContain("Ask and agents: distance 0.80, set by hand");
   });
 
   it("keeps each settings section's own draft while another section is open", async () => {

@@ -118,13 +118,13 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
     expect(Number(hit("sem-only").score)).toBeCloseTo(1 / 62, 12);
   });
 
-  it.each([0.5, 0.6, 1, 2])("returns a document found only by meaning iff its best chunk's cosine distance is below a cutoff of %s", async (maxDistance) => {
+  it.each([0.5, 0.6, 1, 2, null])("returns a document found only by meaning iff its best chunk's cosine distance is below a cutoff of %s", async (maxDistance) => {
     const distances = [0.3, 0.55, 0.8, 1.3];
     for (const d of distances) {
       await makeDoc(`at-${d}`, "Notes", "unrelated filler", "alice", [{ content: "unrelated filler", embedding: towardQuery(1 - d) }]);
     }
     const res = await searchDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance, workspaceId: WS, principals: ALICE, query: "zephyr", queryEmbedding: QUERY });
-    expect(res.map((r) => r.doc_id).sort()).toEqual(distances.filter((d) => d < maxDistance).map((d) => `at-${d}`).sort());
+    expect(res.map((r) => r.doc_id).sort()).toEqual(distances.filter((d) => maxDistance === null || d < maxDistance).map((d) => `at-${d}`).sort());
   });
 
   it("ACL gate: a non-principal never sees the doc on either leg", async () => {

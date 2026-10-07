@@ -28,8 +28,8 @@ export const CFG: AiConfig = {
     apiKey: "embed-key",
     model: "text-embedding-3-large",
     dims: 1024,
-    searchMaxDistance: 0.6,
-    retrievalMaxDistance: 0.9,
+    searchCutoff: null,
+    retrievalMaxDistance: null,
   },
   rerank: { enabled: false, baseUrl: "https://rerank.example.test/v1", model: "jev-latest", apiKey: "rerank-key" },
 };

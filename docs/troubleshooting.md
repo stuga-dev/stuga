@@ -192,8 +192,10 @@ give the node an https address as [Network access](network-access.md#https) desc
 |---|---|
 | Search finds exact words but nothing by meaning | **Semantic search** is off, or the node has not embedded the documents yet. It does so in the background. |
 | It found things by meaning, and stopped | The embedding service is failing, so search falls back to keywords. The log says `degrading to keyword-only`. |
-| Semantic search misses paraphrases: a document is found by its exact words but not by a rewording | The match cutoff is too strict for this embedding model. Some models, such as `text-embedding-3-small`, place related text further apart. Raise **Search cutoff** (or **Retrieval cutoff** for Ask and agents' `retrieve`) under **Match cutoffs** in the **Edit** of **Semantic search** in **Settings → This node → AI providers**, a step at a time, and save: [Match cutoffs](configuration.md#match-cutoffs). |
-| Semantic search returns unrelated documents | The match cutoff is too loose for this embedding model. Lower it the same way. |
+| Semantic search misses paraphrases: a document is found by its exact words but not by a rewording | Search strictness is too strict for this workspace. Choose **Loose**, or **Off**, under **Search strictness** in the **Edit** of **Semantic search** in **Settings → This node → AI providers**: [Search strictness](configuration.md#search-strictness). |
+| Semantic search returns unrelated documents | Choose **Strict** the same way. A large workspace has more unrelated passages near any query. |
+| **Couldn't measure** under **Semantic search** | The node could not embed its measuring texts, and the banner says why. It tries again on its own; **Measure again** tries now. |
+| **… can't tell related text from unrelated** | The embedding model places related and unrelated text alike, as a chat model served at an embeddings address does. Choose an embedding model. |
 | A word is missed in another of its forms (Korean with a particle attached, French `chevaux` for `cheval`), or a Chinese word is missed beside its neighbour | Add the language under **Languages in your documents** in **Settings → This node → Search**: [Search languages](configuration.md#search-languages). |
 
 ## Uploads and disk

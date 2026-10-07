@@ -28,7 +28,7 @@ const ZERO = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWr
 const AI = {
   enabled: true,
   chat: { enabled: true, defaultModel: "chat-1", endpoints: [{ id: "default", provider: "openai", baseUrl: "http://ai.test", models: [] }] },
-  embed: { enabled: true, provider: "openai", baseUrl: "http://ai.test", model: "embed-model-1", dims: 4, searchMaxDistance: 0.6, retrievalMaxDistance: 0.9 },
+  embed: { enabled: true, provider: "openai", baseUrl: "http://ai.test", model: "embed-model-1", dims: 4, searchCutoff: null, retrievalMaxDistance: null },
   rerank: { enabled: false, baseUrl: "", model: "" },
 } as unknown as AiConfig;
 
@@ -100,6 +100,12 @@ describe("retrieveAndRerank", () => {
     mockRerank.mockResolvedValue({ chunks: chunks("a b c d"), usage: ZERO, degraded: false });
     await retrieveAndRerank(args({ topN: 4 }));
     expect(mockRerank).toHaveBeenCalledWith(expect.anything(), "q", expect.anything(), 8, { rankAbove: 4 });
+  });
+
+  it("takes the nearest passages at any distance unless a cutoff was set through the API", async () => {
+    mockRerank.mockResolvedValue({ chunks: chunks("a"), usage: ZERO, degraded: false });
+    await retrieveAndRerank(args());
+    expect(mockAskDocs).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ maxDistance: null }));
   });
 
   it("filters the semantic leg by the configuration's retrieval cutoff", async () => {

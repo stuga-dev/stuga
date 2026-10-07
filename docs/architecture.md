@@ -250,8 +250,8 @@ field sees only text containing its script, so a Chinese document costs the Lati
 nothing, and the Chinese field skips text with kana. An index name that would pass Postgres's 63 characters carries a
 hash of its languages in place of their codes. The search box needs every non-stopword term of the query (a query of stopwords alone
 matches them as written) and tolerates a one-letter typo in a title. The semantic leg is pgvector
-HNSW over chunk embeddings, keeping chunks within the node's
-[match cutoff](configuration.md#match-cutoffs). Its iterative scan walks on past passages the searcher
+HNSW over chunk embeddings, keeping chunks within the distance of the node's
+[search strictness](configuration.md#search-strictness). Its iterative scan walks on past passages the searcher
 cannot read; when they can read 5,000 chunks or fewer, a count taken first sends the leg to an exact
 scan instead, so a crowd of unreadable passages near the question never hides theirs. The two legs are fused with Reciprocal Rank Fusion in
 the same statement, and the tenant, trash, hidden-from-search, ACL and key-scope filters sit inside

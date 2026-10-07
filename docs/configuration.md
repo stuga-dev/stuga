@@ -105,7 +105,7 @@ and node administrators also see **This node**.
 | Where | What |
 |---|---|
 | Preferences → **Your AI agents** | Connecting your own agent, such as Claude Desktop, Claude Code or Codex, and the agents you have connected: apps that signed in, and keys ([agents.md](agents.md)). Each person connects their own. |
-| This node → **AI providers** | **Built-in AI** (chat), with its model providers and **Default model**; **Semantic search** (embeddings), with its service, model and [match cutoffs](#match-cutoffs); and **Reranking**, a model that puts the most relevant passages first for Ask and agents (TypeSafe's Jev, directly or through OpenRouter; without it, Built-in AI reranks). Each is set up on its own and runs without the others. Setting one up turns it on, its switch turns it off and keeps it, and **Remove** forgets it. **Test** in an **Edit** checks that service. |
+| This node → **AI providers** | **Built-in AI** (chat), with its model providers and **Default model**; **Semantic search** (embeddings), with its service, model and [search strictness](#search-strictness); and **Reranking**, a model that puts the most relevant passages first for Ask and agents (TypeSafe's Jev, directly or through OpenRouter; without it, Built-in AI reranks). Each is set up on its own and runs without the others. Setting one up turns it on, its switch turns it off and keeps it, and **Remove** forgets it. **Test** in an **Edit** checks that service. |
 | This node → **Notifications** | Where notifications go: Slack, Microsoft Teams, Discord, a plain webhook or email, with **Send a test**. An alert about the node or someone's account says whether it went out there too. Changing where they go tells every administrator, through the place they went before. |
 | This node → **Access** | The node's address and accepted origins, and its remote address once it has one (read-only), the [identity provider](#identity-provider), administrators, the node's audit log, and account recovery links. |
 | This node → **Remote access** | Where the packaging offers it: the node's public https address, turned on with a code and off again, with where it stands and the connector's command ([Remote access](remote-access.md)). |
@@ -120,23 +120,43 @@ and node administrators also see **This node**.
 Provider API keys, the identity provider's client secret, the notification webhook URL and the SMTP
 URL entered in Settings are kept under `DATA_DIR/secrets`, not in the database.
 
-### Match cutoffs
+### Search strictness
 
-The semantic half of search drops a passage whose meaning is too far from the query. How far is a
-maximum cosine distance between the two embeddings: greater than 0 and at most 2, where lower is
-stricter. There are two, under **Match cutoffs** in the **Edit** of **Semantic search** in
-**Settings → This node → AI providers**, and a change applies to the next query once saved. Nothing is re-indexed.
+The search box drops a passage found only by meaning when it sits too far from the query. How far
+depends on the embedding model, so the node measures its model and sets the distance from that.
+Choose a level under **Search strictness** in the **Edit** of **Semantic search** in **Settings → This
+node → AI providers**; it applies to the next search once saved, and nothing is re-indexed.
 
-| Setting | Default | Applies to |
-|---|---|---|
-| **Search cutoff** | `0.6` | The search box, `POST /api/search`, and agents' `search`. |
-| **Retrieval cutoff** | `0.9` | Ask, `POST /api/retrieve`, agents' `retrieve`, and the co-author's and table assistant's document search. |
+| Level | Unrelated passages that get through |
+|---|---|
+| **Strict** | About 1 in 1,000 |
+| **Balanced** (default) | About 1 in 100 |
+| **Loose** | About 1 in 20 |
+| **Off** | Every one: the nearest passages show, however far |
 
-Retrieval's default is looser because a short question sits far from even its best passage, and
-ranking and the rerank decide what is kept. How far apart related text lands depends on the embedding
-model, so set the cutoffs for the model you use: raise one when paraphrases are missed, lower it when
-unrelated documents come back. Keyword matches are not affected. Clear a field and save to return to
-its default.
+A level counts passages: in a workspace of 50,000, about 500 get through at **Balanced** for any
+query, and a document with 30 unrelated passages gets through about one time in four. Matches by
+words are never dropped. Choose **Strict** when a large workspace shows unrelated documents, and
+**Loose** when rewordings are missed.
+
+To measure, the node embeds 1,280 texts written for the purpose, as it embeds queries and documents:
+searches, questions and passages on 32 topics in English, Spanish, German, Russian, Arabic, Chinese,
+Japanese and Korean. It records how close unrelated ones land, for searches of four words or fewer
+and for longer questions apart. That is about 240,000 tokens of those fixed texts, none of the
+workspace's: seconds on a hosted service or a small local model, minutes for a large model on a CPU. It runs when an embedding
+model is saved, again when the service, its address or the model changes or an update changes what
+the node sends, and with **Measure again**. Until a measurement succeeds, nothing is dropped by
+distance (a **Custom** distance stays in force), and Settings says why.
+
+Ask, `POST /api/retrieve`, agents' `retrieve` and the assistants' document search have no distance
+limit unless one is set by hand: they take the 96 nearest passages and the 96 best by words, fused to 24, and reranking or
+Built-in AI decides what is relevant.
+
+In `/api/node/ai-settings`, `embed.search_strictness` takes `strict`, `balanced`, `loose`, `off`, or
+`null` for the default. `embed.search_max_distance` sets a cosine distance by hand (level `custom`),
+and `embed.retrieval_max_distance` one for Ask and agents; a save that changes the embedding service,
+its address or the model clears both. `embed.cutoff` is the distance in force, `embed.calibration`
+the measurement, and `POST /api/node/ai-settings/calibrate` measures again.
 
 ### Search languages
 

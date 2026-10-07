@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { NodeAiSettings } from "../../../api";
-import { chatInputWith, connectFailure, suggestedOllamaEmbedModel, withConnectedProvider } from "./ai-form";
+import {
+  STRICTNESS_COPY,
+  calibrationBanner,
+  chatInputWith,
+  connectFailure,
+  strictnessNote,
+  strictnessWarning,
+  suggestedOllamaEmbedModel,
+  toForm,
+  withConnectedProvider,
+} from "./ai-form";
 
 const BASE = { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com", ollama: "http://127.0.0.1:11434" };
 
@@ -25,12 +35,15 @@ const settings = (endpoints: ReturnType<typeof provider>[], defaultModel = endpo
     api_key_set: false,
     api_key_fingerprint: null,
     api_key_stale: false,
+    search_strictness: null,
     search_max_distance: null,
     retrieval_max_distance: null,
+    cutoff: null,
+    calibration: null,
   },
   rerank: { enabled: true, running: false, base_url: "", model: "", api_key_set: false, api_key_fingerprint: null, api_key_stale: false },
   embedding_column_dims: 1024,
-  max_distance_defaults: { search: 0.6, retrieval: 0.9 },
+  strictness_default: "balanced",
   provider_base_urls: BASE,
   updated_by: null,
   updated_at: null,
@@ -103,5 +116,50 @@ describe("connectFailure", () => {
     expect(connectFailure("OpenAI", 'models 401: {"error":{"message":"Incorrect API key provided"}}')).toBe("OpenAI didn’t accept that key.");
     expect(connectFailure("Ollama (local)", "fetch failed")).toContain("Couldn’t reach Ollama (local)");
     expect(connectFailure("Groq", "models 500: overloaded")).toBe("Groq answered: models 500: overloaded");
+  });
+});
+
+describe("search strictness copy", () => {
+  const LEVELS = { short: { strict: 0.27, balanced: 0.34, loose: 0.39 }, question: { strict: 0.25, balanced: 0.31, loose: 0.36 } };
+  const base = settings([]);
+  const measured = (over: Partial<NodeAiSettings["embed"]> = {}): NodeAiSettings => ({
+    ...base,
+    embed: {
+      ...base.embed,
+      model: "bge-m3",
+      running: true,
+      cutoff: { level: "balanced", source: "measured", short: 0.34, question: 0.31 },
+      calibration: { state: "ready", model: "bge-m3", progress: null, measured_at: null, levels: LEVELS, related_kept: 0.8, by_language: null, message: null, kind: null, next_attempt_at: null },
+      ...over,
+    },
+  });
+
+  it("shows the measured distance of the chosen level, and nothing to measure while semantic search is off", () => {
+    const s = measured();
+    expect(strictnessNote(s, toForm(s))).toEqual({ text: "Distance 0.34 for this model", measureAgain: true });
+    const off = measured({ running: false });
+    expect(strictnessNote(off, toForm(off))).toEqual({ text: "Measured once semantic search is on.", measureAgain: false });
+  });
+
+  it("offers no retry for a model that cannot be measured", () => {
+    const s = measured({ calibration: { ...measured().embed.calibration!, state: "failed", levels: null, kind: "inseparable", message: "alike" }, cutoff: { level: "balanced", source: "unmeasured", short: null, question: null } });
+    expect(strictnessNote(s, toForm(s))).toEqual({ text: "This model can't be measured.", measureAgain: false });
+    expect(calibrationBanner(s)?.retry).toBe(false);
+  });
+
+  it("warns about a model that keeps related text far only for the model in force", () => {
+    const s = measured();
+    expect(strictnessWarning(s, toForm(s))).toMatch(/Loose may suit it/);
+    expect(strictnessWarning(s, { ...toForm(s), embedModel: "other-model" })).toBeNull();
+  });
+
+  it("shows no failure banner while a custom distance is in force", () => {
+    const failed = { ...measured().embed.calibration!, state: "failed" as const, levels: null, kind: "endpoint" as const, message: "connect ECONNREFUSED" };
+    expect(calibrationBanner(measured({ calibration: failed, cutoff: { level: "balanced", source: "unmeasured", short: null, question: null } }))?.title).toBe("Couldn't measure bge-m3");
+    expect(calibrationBanner(measured({ calibration: failed, cutoff: { level: "custom", source: "custom", short: 0.7, question: 0.7 } }))).toBeNull();
+  });
+
+  it("names a distance set by hand without saying how it was set", () => {
+    expect(STRICTNESS_COPY.custom.line).toBe("A distance set by hand. Choosing a level replaces it.");
   });
 });

@@ -40,6 +40,7 @@ export const ACTION_LABEL: Record<string, string> = {
   "node.account.revoke_everything": "Everything revoked",
   "node.admins.grant": "Node admin granted",
   "node.admins.revoke": "Node admin revoked",
+  "node.ai_settings.calibrate": "Search strictness measurement requested",
   "node.ai_settings.reset": "AI settings reset",
   "node.ai_settings.test": "AI settings tested",
   "node.ai_settings.update": "AI settings changed",

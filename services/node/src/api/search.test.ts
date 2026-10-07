@@ -23,7 +23,7 @@ const mockUsage = vi.mocked(insertAiUsage);
 const AI: AiConfig = {
   enabled: true,
   chat: { enabled: false, defaultModel: "", endpoints: [] },
-  embed: { enabled: true, provider: "ollama", baseUrl: "http://ai.test", model: "embed-1", dims: 2, searchMaxDistance: 0.6, retrievalMaxDistance: 0.9 },
+  embed: { enabled: true, provider: "ollama", baseUrl: "http://ai.test", model: "embed-1", dims: 2, searchCutoff: { short: 0.6, question: 0.5 }, retrievalMaxDistance: null },
   rerank: { enabled: false, baseUrl: "", model: "" },
 };
 
@@ -85,15 +85,18 @@ describe("searchDocuments", () => {
     expect(mockEmbed).toHaveBeenCalledTimes(2);
   });
 
-  it("passes the search cutoff in force at each query, so a saved change applies to the next one", async () => {
+  it("passes the cutoff in force for the query's style at each query, so a saved change applies to the next one", async () => {
     let current = AI;
     const ctx = searcher({ current: () => current });
 
     await searchDocuments(ctx, { q: "paraphrase" });
-    current = { ...AI, embed: { ...AI.embed, searchMaxDistance: 1.1 } };
+    await searchDocuments(ctx, { q: "which document explains the paraphrase rules?" });
+    current = { ...AI, embed: { ...AI.embed, searchCutoff: { short: 1.1, question: 1 } } };
+    await searchDocuments(ctx, { q: "paraphrase" });
+    current = { ...AI, embed: { ...AI.embed, searchCutoff: null } };
     await searchDocuments(ctx, { q: "paraphrase" });
 
-    expect(mockSearch.mock.calls.map((c) => (c[1] as { maxDistance: number }).maxDistance)).toEqual([0.6, 1.1]);
+    expect(mockSearch.mock.calls.map((c) => (c[1] as { maxDistance: number | null }).maxDistance)).toEqual([0.6, 0.5, 1.1, null]);
   });
 
   it("withholds the raw BM25 score, whose IDF counts documents the caller cannot read", async () => {

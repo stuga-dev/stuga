@@ -65,6 +65,7 @@ import {
   getAiSettingsRoute,
   listProviderModels,
   resetAiSettingsRoute,
+  calibrateAiSettingsRoute,
   saveAiSettingsRoute,
   testAiSettings,
 } from "../api/node/ai-settings.js";
@@ -362,6 +363,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("*", "/api/node/ai-settings", methodNotAllowed, NODE),
   api("POST", "/api/node/ai-settings/test", testAiSettings, NODE),
   api("POST", "/api/node/ai-settings/models", listProviderModels, NODE),
+  api("POST", "/api/node/ai-settings/calibrate", calibrateAiSettingsRoute, NODE),
   api("GET", "/api/node/audit", listNodeAudit, NODE),
   api("GET", "/api/node/version", getNodeVersion, NODE),
   api("POST", "/api/node/version/check", checkNodeVersion, NODE),
