@@ -26,6 +26,7 @@ import { ImageCaption } from "./image-caption";
 import { withImageSizeSync } from "./image-resize-sync";
 import { RunPreview } from "./run-preview/extension";
 import { CommentHighlight } from "../comments/comment-highlight";
+import { PassageFlash } from "./passage-flash";
 
 // A link ends at its boundary, so typing after an autolinked URL is plain text.
 // `inclusive` is editing behaviour, not part of the schema.
@@ -100,6 +101,8 @@ export function stugaEditorExtensions(deps: {
     FootnoteHide,
     ImageCaption,
     RunPreview.configure({ ydoc: deps.ydoc }),
+    // The block a citation or search hit landed on (see CitationJump).
+    PassageFlash,
     // Decorations only, never the document. editor.css shows the hint on an empty document once it has synced.
     Placeholder.configure({ placeholder: "Start writing here…", showOnlyWhenEditable: true }),
   ];

@@ -62,6 +62,14 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
     expect(res.map((r) => r.doc_id)).toContain("d1");
   });
 
+  it("says whether each hit is a document or a database", async () => {
+    await makeDoc("prose", "Vendor notes", "Every vendor we use.");
+    await createDoc(sql, { docId: "db", workspaceId: WS, owner: "user:alice", title: "Vendors", docType: "database", aclPrincipals: ["user:alice"] });
+    await indexDoc(sql, { embeddingDims: EMBEDDING_DIMS, docId: "db", snapshotSeq: 1, title: "Vendors", searchText: "Vendor list", embeddingHash: "hash-db", chunks: [] });
+    const res = await searchDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query: "vendor", queryEmbedding: null });
+    expect(Object.fromEntries(res.map((r) => [r.doc_id, r.doc_type]))).toEqual({ prose: "prose", db: "database" });
+  });
+
   it("defaults an invalid result limit instead of passing it to PostgreSQL", async () => {
     await makeDoc("bounded", "Bounded Search", "bounded search result");
     await expect(
@@ -195,6 +203,136 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
     expect(docs.map((r) => r.doc_id)).toEqual(["a-0.9", "a-0.8", "a-0.7"]);
     const passages = await askDocs(indexed, input);
     expect(passages.map((p) => p.content)).toEqual(["alice 0.9", "alice 0.8", "alice 0.7"]);
+  });
+
+  const keyword = (query: string) =>
+    searchDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query, queryEmbedding: null });
+
+  it("reads the last word as unfinished: a whole-word match first, then a title it begins, then a body word", async () => {
+    await makeDoc("body", "Deadlines", "Send a notification within 72 hours.");
+    await makeDoc("title", "Notifications", "Who to tell.");
+    await makeDoc("exact", "Channels", "The notif channel is muted.");
+    await makeDoc("none", "Other", "Nothing relevant here.");
+    expect((await keyword("notif")).map((r) => r.doc_id)).toEqual(["exact", "title", "body"]);
+  });
+
+  it("finds a body word the unfinished last word begins, highlighted in the excerpt", async () => {
+    await makeDoc("d", "Start here", `${"Some opening words. ".repeat(10)}If you are not sure where a rule comes from, open Sources.`);
+    const [hit] = await keyword("whe");
+    expect(hit?.doc_id).toBe("d");
+    expect(hit?.snippet).toContain("not sure ⟦where⟧ a rule");
+  });
+
+  it("requires the finished words of a query whose last word is unfinished", async () => {
+    await makeDoc("both", "Start here", "If you are not sure where a rule comes from.");
+    await makeDoc("prefix-only", "Wheat prices", "Grain markets moved.");
+    expect((await keyword("sure whe")).map((r) => r.doc_id)).toEqual(["both"]);
+  });
+
+  it("matches the finished words of an unfinished query by their stems, as a whole query's", async () => {
+    await makeDoc("d", "Handbook", "Send a notification within 72 hours.");
+    expect((await keyword("sending notif")).map((r) => r.doc_id)).toEqual(["d"]);
+  });
+
+  it("leaves a short or unspaced last word to whole-word matching", async () => {
+    await makeDoc("d", "Wheat prices", "Grain markets moved.");
+    expect(await keyword("wh")).toEqual([]);
+  });
+
+  it("gives a document matched by its title alone the opening of its text, not an empty excerpt", async () => {
+    await makeDoc("d", "Zephyr", "Calm air over the bay.");
+    const [hit] = await keyword("zephyr");
+    expect(hit?.snippet).toBe("Calm air over the bay.");
+  });
+
+  it("gives a document found by meaning alone its closest passage", async () => {
+    await makeDoc("d", "Mixed Doc", "intro paragraph about cats, then much else", "alice", [
+      { content: "intro paragraph about cats", embedding: vec(5) },
+      { content: "target passage about quantum entanglement", embedding: vec(42) },
+    ]);
+    const res = await searchDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query: "zzqxq nomatch", queryEmbedding: vec(42) });
+    expect(res.find((r) => r.doc_id === "d")?.snippet).toBe("target passage about quantum entanglement");
+  });
+
+  /** A fenced block whose `zebra` line is far below its opening fence, each line after `quote`. */
+  function codeBlock(quote = ""): string {
+    const lines = ["```python"];
+    for (let i = 0; i < 30; i++) lines.push(`    def method_${i}(self):`, "        return self.__iter__()");
+    lines.push("    zebra = 1", "```");
+    return lines.map((line) => quote + line).join("\n");
+  }
+
+  it.each([
+    ["a code block", ""],
+    ["a code block in a quote", "> "],
+  ])("opens a keyword excerpt that begins inside %s with a fence of its own", async (_, quote) => {
+    const body = `# Iterators\n\nHow the class walks its items.\n\n${codeBlock(quote)}\n\nThat is all.`;
+    await makeDoc("d", "Iterators", body);
+    const [hit] = await keyword("zebra");
+    // A block in a quote has its fence there too.
+    expect(hit?.snippet.startsWith(`${quote}\`\`\`\n`)).toBe(true);
+    expect(hit?.snippet).toContain("⟦zebra⟧ = 1");
+    // The fence is all the excerpt gains, and it begins below the block's own.
+    const excerpt = hit!.snippet.slice(quote.length + 4).replace(/[⟦⟧]/g, "");
+    expect(body).toContain(excerpt);
+    expect(excerpt).not.toContain("```python");
+  });
+
+  it("opens an excerpt of the word an unfinished query begins with a fence when it begins inside a code block", async () => {
+    await makeDoc("d", "Iterators", `How the class walks its items.\n\n${codeBlock()}\n\nThat is all.`);
+    const [hit] = await keyword("zeb");
+    expect(hit?.snippet).toBe("```\n    def method_29(self):\n        return self.__iter__()\n    ⟦zebra⟧ = 1\n```\n\nThat is all.");
+  });
+
+  it("makes a fence line whole again when the excerpt begins past its backticks", async () => {
+    // The excerpt keeps 60 characters before the word: from the "sh" after the fence's backticks.
+    const head = "```sh\n";
+    const line = `${"npm ci && ".padEnd(63 - head.length)}wombat start`;
+    await makeDoc("d", "Setup", `${head}${line}\n\`\`\`\n\nDone.`);
+    const [hit] = await keyword("womb");
+    expect(hit?.snippet).toBe(`${head}${line.replace("wombat", "⟦wombat⟧")}\n\`\`\`\n\nDone.`);
+  });
+
+  it("drops the blank lines an excerpt begins with inside a code block, which would read as the block's end", async () => {
+    // The excerpt keeps 60 characters before the word, so it begins on the blank line.
+    const line = `${"    tally = herd.count()  # at the gate".padEnd(59)}quokka = 1`;
+    await makeDoc("d", "Herd", ["```python", "    import herd", "", line, "```"].join("\n"));
+    const [hit] = await keyword("quok");
+    expect(hit?.snippet).toBe(`\`\`\`\n${line.replace("quokka", "⟦quokka⟧")}\n\`\`\``);
+  });
+
+  it("opens a passage found by meaning that begins inside a code block with a fence of its own", async () => {
+    const body = `# Iterators\n\n${codeBlock()}\n\nThat is all.`;
+    // A section too long for one chunk is cut at line breaks, inside its code too, and trimmed.
+    const cut = body.indexOf("    def method_20");
+    const passage = body.slice(cut).trim();
+    await makeDoc("d", "Iterators", body, "alice", [
+      { content: body.slice(0, cut).trim(), embedding: vec(5) },
+      { content: passage, embedding: vec(42) },
+    ]);
+    const res = await searchDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query: "zzqxq nomatch", queryEmbedding: vec(42) });
+    expect(res.find((r) => r.doc_id === "d")?.snippet).toBe(`\`\`\`\n${passage.slice(0, 200)}`);
+  });
+
+  it.each([
+    ["a document without code", ""],
+    ["prose below a closed code block", `${codeBlock()}\n\n`],
+  ])("leaves the excerpt of %s as the body has it", async (_, above) => {
+    const body = `${above}${"Calm air over the bay. ".repeat(20)}The okapi waits by the water.`;
+    await makeDoc("d", "Bay", body);
+    for (const query of ["okapi", "oka"]) {
+      const [hit] = await keyword(query);
+      expect(hit?.snippet).toContain("⟦okapi⟧");
+      expect(body).toContain(hit!.snippet.replace(/[⟦⟧]/g, ""));
+    }
+  });
+
+  it("leaves an excerpt that begins inside a code block's closing fence as the body has it", async () => {
+    // The excerpt keeps 60 characters before the word: from the fence's second backtick.
+    const prose = `${"The herd crosses at dawn, and the".padEnd(56)}gazelle waits.`;
+    await makeDoc("d", "Herd", `${codeBlock()}\n\n${prose}`);
+    const [hit] = await keyword("gaze");
+    expect(hit?.snippet).toBe(`\`\`\n\n${prose.replace("gazelle", "⟦gazelle⟧")}`);
   });
 
   it("indexDoc replaces the chunk set on re-index (no stale chunks)", async () => {

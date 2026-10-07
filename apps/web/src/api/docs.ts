@@ -30,6 +30,7 @@ export interface DocSummary {
 export interface SearchResult {
   doc_id: string;
   title: string;
+  doc_type: "prose" | "database";
   /** Raw document text with highlights between ⟦ and ⟧; escape before rendering. */
   snippet: string;
   score: number;
@@ -176,11 +177,20 @@ export const Docs = {
     api<DocSummary>(`/api/docs/${id}`, { method: "PATCH", body: JSON.stringify({ trashed }) }),
   /** Delete permanently; owner only. */
   remove: (id: string) => api<{ deleted: boolean }>(`/api/docs/${id}`, { method: "DELETE" }),
-  /** `degraded`: the query could not be embedded, so only the keyword leg ran. */
-  search: (q: string) =>
+  /**
+   * `degraded`: the query could not be embedded, so only the keyword leg ran.
+   * `keywordOnly` skips the semantic leg on purpose, for a quick answer while typing.
+   * `limit` defaults to 20 on the server, which caps it at 100.
+   */
+  search: (q: string, opts: { keywordOnly?: boolean; limit?: number; signal?: AbortSignal } = {}) =>
     api<{ query: string; results: SearchResult[]; degraded: boolean }>("/api/search", {
       method: "POST",
-      body: JSON.stringify({ q }),
+      body: JSON.stringify({
+        q,
+        ...(opts.keywordOnly ? { keyword_only: true } : {}),
+        ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+      }),
+      signal: opts.signal,
     }),
   versions: (id: string) => api<VersionListing>(`/api/docs/${id}/versions`),
   comments: (id: string) => api<{ comments: Comment[] }>(`/api/docs/${id}/comments`),

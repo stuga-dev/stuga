@@ -5,6 +5,7 @@ import { AuthError, StorageBlockedError } from "./errors";
 import { noteSignOut } from "./provider";
 import { clearMediaTicket } from "./tickets";
 import { setActiveWorkspace } from "./workspace-pointer";
+import { clearRecentDocs } from "../recent-docs";
 
 interface TokenSet {
   accessToken: string;
@@ -59,8 +60,9 @@ function getTokenSet(): TokenSet | null {
 
 export function clearTokens(): void {
   removeStored("local", SESSION_KEY);
-  // The workspace pointer belongs to the session, not to the browser.
+  // The workspace pointer and what was opened belong to the session, not to the browser.
   setActiveWorkspace(null);
+  clearRecentDocs();
 }
 
 /**

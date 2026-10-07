@@ -11,11 +11,14 @@ vi.mock("@stuga/ai", async (orig) => ({
   embed: vi.fn(async () => ({ embeddings: [[0.1, 0.2]], inputTokens: 3 })),
 }));
 
-const { searchDocs } = await import("@stuga/db");
+const { searchDocs, insertAiUsage } = await import("@stuga/db");
+const { embed } = await import("@stuga/ai");
 const { searchDocuments } = await import("./search.js");
-import { fixed, personCtx } from "../testing/ctx.js";
+import { agentCtx, fixed, personCtx } from "../testing/ctx.js";
 
 const mockSearch = searchDocs as unknown as ReturnType<typeof vi.fn>;
+const mockEmbed = vi.mocked(embed);
+const mockUsage = vi.mocked(insertAiUsage);
 
 const AI: AiConfig = {
   enabled: true,
@@ -28,7 +31,59 @@ const searcher = (aiSettings: { current: () => AiConfig }) =>
   personCtx({ alias: "user-1", principals: ["user:user-1"], env: { embeddingDims: 2, searchLanguages: fixed([]), aiSettings } });
 
 describe("searchDocuments", () => {
-  beforeEach(() => mockSearch.mockClear());
+  beforeEach(() => {
+    mockSearch.mockClear();
+    mockEmbed.mockClear();
+    mockUsage.mockClear();
+  });
+
+  // Each test searches its own words: query vectors outlive a test.
+
+  it("answers a keyword-only request without the provider, as working rather than degraded", async () => {
+    const answer = await searchDocuments(searcher(fixed(AI)), { q: "keyword first", keyword_only: true });
+    expect(mockEmbed).not.toHaveBeenCalled();
+    expect(mockSearch.mock.calls[0]?.[1]).toMatchObject({ queryEmbedding: null });
+    expect(answer).toMatchObject({ degraded: false, semantic: false });
+  });
+
+  it("embeds a repeated query once, and records usage for that call only", async () => {
+    const ctx = searcher(fixed(AI));
+    await searchDocuments(ctx, { q: "repeated words" });
+    await searchDocuments(ctx, { q: "repeated words" });
+    expect(mockEmbed).toHaveBeenCalledTimes(1);
+    expect(mockUsage).toHaveBeenCalledTimes(1);
+    expect(mockSearch.mock.calls.map((c) => (c[1] as { queryEmbedding: number[] }).queryEmbedding)).toEqual([[0.1, 0.2], [0.1, 0.2]]);
+  });
+
+  it("embeds the same query again for another workspace, or after a model change", async () => {
+    await searchDocuments(searcher(fixed(AI)), { q: "kept apart" });
+    await searchDocuments(personCtx({ alias: "user-1", principals: ["user:user-1"], workspaceId: "ws-other", env: { embeddingDims: 2, searchLanguages: fixed([]), aiSettings: fixed(AI) } }), { q: "kept apart" });
+    await searchDocuments(searcher(fixed({ ...AI, embed: { ...AI.embed, model: "embed-2" } })), { q: "kept apart" });
+    expect(mockEmbed).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps a query vector for its caller only, so a fast answer tells nobody what someone else searched", async () => {
+    const env = { embeddingDims: 2, searchLanguages: fixed([]), aiSettings: fixed(AI) };
+    const liv = personCtx({ alias: "liv", env });
+    // Both at once, so a call in flight is not shared across callers either.
+    await Promise.all([searchDocuments(liv, { q: "acme layoffs" }), searchDocuments(personCtx({ alias: "guest-1", env }), { q: "acme layoffs" })]);
+    // Liv's own key is narrower than Liv, so it does not share her vectors.
+    await searchDocuments(agentCtx({ onBehalfOf: "liv", scope: { folders: ["f1"], readOnly: true, credentialId: "k1" }, env }), { q: "acme layoffs" });
+    expect(mockEmbed).toHaveBeenCalledTimes(3);
+
+    await searchDocuments(liv, { q: "acme layoffs" });
+    expect(mockEmbed).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not keep a failed embedding: the next search asks the provider again", async () => {
+    const ctx = searcher(fixed(AI));
+    mockEmbed.mockRejectedValueOnce(new Error("provider down"));
+    const failed = await searchDocuments(ctx, { q: "flaky provider" });
+    expect(failed).toMatchObject({ degraded: true });
+    const recovered = await searchDocuments(ctx, { q: "flaky provider" });
+    expect(recovered).toMatchObject({ degraded: false, semantic: true });
+    expect(mockEmbed).toHaveBeenCalledTimes(2);
+  });
 
   it("passes the search cutoff in force at each query, so a saved change applies to the next one", async () => {
     let current = AI;

@@ -221,7 +221,7 @@ describe("retrieve", () => {
 });
 
 describe("search", () => {
-  const HIT = { doc_id: "d1", title: "Handbook", page_of: null, page_row: null, snippet: "Expenses are filed", kw_rank: 3.2, sem_score: 0.8, score: 0.03 };
+  const HIT = { doc_id: "d1", title: "Handbook", doc_type: "prose" as const, page_of: null, page_row: null, snippet: "Expenses are filed", kw_rank: 3.2, sem_score: 0.8, score: 0.03 };
 
   it("answers with REST's hits, each naming its workspace and link, without the per-workspace scores", async () => {
     vi.mocked(searchDocs).mockResolvedValue([HIT]);

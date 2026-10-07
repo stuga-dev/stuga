@@ -1,10 +1,10 @@
 /** Search and retrieval: ACL-filtered hybrid search, and chunk retrieval for grounding. */
-import { embed } from "@stuga/ai";
 import { type SearchResult, insertAiUsage, searchDocs } from "@stuga/db";
 import type { Ctx } from "../auth/context.js";
 import { scopeFolderIds } from "../authz/authz.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
+import { embedQuery } from "../retrieval/query-embedding.js";
 import { retrieveAndRerank } from "../retrieval/retrieve.js";
 import { collectionScope } from "../retrieval/scope.js";
 
@@ -13,6 +13,8 @@ export interface SearchRequest {
   q?: string;
   limit?: number;
   collection_id?: string;
+  /** Skip the semantic leg: a quick first answer while a person is still typing. */
+  keyword_only?: boolean;
 }
 
 /**
@@ -49,19 +51,23 @@ export async function searchDocuments(ctx: Ctx, request: SearchRequest): Promise
   // The semantic leg needs embeddings; without a query vector searchDocs uses its keyword legs.
   let queryEmbedding: number[] | null = null;
   const ai = ctx.env.aiSettings.current();
-  const semantic = ai.embed.enabled;
+  const semantic = ai.embed.enabled && request.keyword_only !== true;
   if (semantic) {
     try {
-      const res = await embed(ai, [q]);
-      queryEmbedding = res.embeddings[0] ?? null;
-      await insertAiUsage(ctx.sql, {
-        alias: ctx.alias,
-        workspaceId: ctx.workspaceId,
-        docId: null,
-        kind: "embedding",
-        model: ai.embed.model,
-        inputTokens: res.inputTokens,
-      }).catch(() => {});
+      // Kept per caller, not per person, so a narrowed agent key learns nothing of its person's searches.
+      const res = await embedQuery(ai, ctx.workspaceId, ctx.alias, q);
+      queryEmbedding = res.embedding;
+      // A kept vector cost nothing this time.
+      if (res.called) {
+        await insertAiUsage(ctx.sql, {
+          alias: ctx.alias,
+          workspaceId: ctx.workspaceId,
+          docId: null,
+          kind: "embedding",
+          model: ai.embed.model,
+          inputTokens: res.inputTokens,
+        }).catch(() => {});
+      }
     } catch (e) {
       // Keyword-only, but logged and flagged so an outage is visible.
       console.warn("search embed failed, degrading to keyword-only", {

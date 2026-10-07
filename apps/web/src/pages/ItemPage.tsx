@@ -20,6 +20,8 @@ import { LoadFailed } from "../ui/LoadFailed";
 import { DocPage } from "./DocPage";
 import { DatabasePage } from "./DatabasePage";
 import { errorMessage } from "../lib/http/client";
+import { noteRecentDoc } from "../lib/recent-docs";
+import { getActiveWorkspace } from "../lib/session/workspace-pointer";
 import "../styles/editor.css";
 import "../styles/review.css";
 import "../styles/ask.css";
@@ -41,7 +43,9 @@ export function ItemPage() {
     let cancelled = false;
     Docs.get(docId).then(
       (doc) => {
-        if (!cancelled) setLoad({ docId, kind: "ready", doc });
+        if (cancelled) return;
+        setLoad({ docId, kind: "ready", doc });
+        if (!doc.trashed) noteRecentDoc(getActiveWorkspace(), docId);
       },
       (e: unknown) => {
         if (cancelled) return;

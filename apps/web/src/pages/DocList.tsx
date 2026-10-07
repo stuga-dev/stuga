@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from "react";
+import { Link as RouterLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Docs, Folders, type DocSummary, type SearchResult } from "../api";
 import { TRASH_RETENTION_DAYS } from "@stuga/protocol/domain/limits";
 import { useFavorites } from "../state/favorites";
@@ -24,6 +24,7 @@ import { TopNav } from "@astryxdesign/core/TopNav";
 import { Button } from "@astryxdesign/core/Button";
 import { Kbd } from "@astryxdesign/core/Kbd";
 import { Item } from "@astryxdesign/core/Item";
+import { LinkProvider } from "@astryxdesign/core/Link";
 import { List } from "@astryxdesign/core/List";
 import { Badge } from "@astryxdesign/core/Badge";
 import { Banner } from "@astryxdesign/core/Banner";
@@ -34,9 +35,42 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Brand, nodeName } from "../shell/Brand";
 import { VStack } from "@astryxdesign/core/VStack";
-import { FileText, Files, Search, Users as UsersIcon, Star, Share2, ExternalLink } from "lucide-react";
+import { Database, FileText, Files, Search, Users as UsersIcon, Star, Share2, ExternalLink } from "lucide-react";
 import { errorMessage } from "../lib/http/client";
+import { Marked, Snippet, hitHref, markTerms, queryTerms } from "../lib/snippet";
+import { readStored, writeStored } from "../lib/storage";
 import "../styles/library.css";
+
+/** Results asked for at first and added by each Show more, up to the server's cap. */
+const SEARCH_PAGE = 20;
+const SEARCH_MAX = 100;
+
+/**
+ * How deep Show more took a search, kept in its history entry's state rather than
+ * the URL: Back from a document asks for that many again, while a new query (the
+ * palette copies the library's URL keys) or a shared link starts at the first page.
+ */
+function savedDepth(state: unknown): number {
+  const depth = (state as { searchDepth?: unknown } | null)?.searchDepth;
+  if (typeof depth !== "number" || !Number.isInteger(depth)) return SEARCH_PAGE;
+  return Math.min(SEARCH_MAX, Math.max(SEARCH_PAGE, depth));
+}
+
+/** sessionStorage: the history entry of the search results last left, and how far down they were scrolled. */
+const SEARCH_SCROLL_KEY = "stuga_search_scroll";
+
+/** The shell's content area, which scrolls the results. */
+const resultsScroller = (list: HTMLElement | null) => list?.closest<HTMLElement>("[role=main]") ?? null;
+
+function savedScroll(entry: string): number {
+  try {
+    const saved: unknown = JSON.parse(readStored("session", SEARCH_SCROLL_KEY) ?? "null");
+    const { key, top } = (saved ?? {}) as { key?: unknown; top?: unknown };
+    return key === entry && typeof top === "number" && top > 0 ? top : 0;
+  } catch {
+    return 0;
+  }
+}
 
 export function DocList() {
   const palette = useCommandPalette();
@@ -47,6 +81,9 @@ export function DocList() {
   const [searchError, setSearchError] = useState<string | null>(null);
   /** Apart from `results === null`, so a Retry can spin without unmounting its banner. */
   const [isSearching, setIsSearching] = useState(false);
+  /** The limit the shown results were asked for with, and whether the answer filled it, so more may exist. */
+  const [searchPage, setSearchPage] = useState({ limit: SEARCH_PAGE, full: false });
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   /** Bumped per request; only the newest may write. */
   const searchGenRef = useRef(0);
   /** The previous effect run's query, telling an entry into search from a replacement. */
@@ -61,6 +98,7 @@ export function DocList() {
   /** Bumped when a move through the dialog completes, so FileExplorer prunes its selection. */
   const [movedAway, setMovedAway] = useState(0);
   const nav = useNavigate();
+  const location = useLocation();
   const toast = useToast();
 
   // Navigation lives in the URL (/?folder=<id>/<id>&sel=<docId>&trash=1), so Back steps through folders.
@@ -74,6 +112,9 @@ export function DocList() {
   const selectedDocId = searchParams.get("sel");
   /** The full-corpus search, in the URL so it is linkable and the ⌘K palette can hand a query over. Blank is no search. */
   const query = (searchParams.get("q") ?? "").trim();
+  // Read when the query's search runs; a Show more writing a new depth must not start one.
+  const depthRef = useRef(SEARCH_PAGE);
+  depthRef.current = savedDepth(location.state);
   const sortKeyParam = searchParams.get("sort");
   const sort: LibrarySort = {
     key: sortKeyParam === "title" || sortKeyParam === "created_at" ? sortKeyParam : "updated_at",
@@ -200,7 +241,7 @@ export function DocList() {
   }
 
   /** Outside the debounce, so Retry runs at once. */
-  const runSearch = useCallback((q: string) => {
+  const runSearch = useCallback((q: string, limit: number) => {
     // Nothing aborts an overtaken request, so only the newest may land.
     const gen = ++searchGenRef.current;
     if (!q.trim()) {
@@ -211,10 +252,11 @@ export function DocList() {
       return;
     }
     setIsSearching(true);
-    Docs.search(q)
+    Docs.search(q, { limit })
       .then((r) => {
         if (gen !== searchGenRef.current) return;
         setResults(r.results);
+        setSearchPage({ limit, full: r.results.length >= limit });
         setSearchDegraded(r.degraded);
         setSearchError(null);
         setIsSearching(false);
@@ -223,6 +265,7 @@ export function DocList() {
         if (gen !== searchGenRef.current) return;
         // A failure is not zero matches.
         setResults([]);
+        setSearchPage({ limit, full: false });
         setSearchDegraded(false);
         setSearchError(errorMessage(e, "Search failed. Please try again."));
         setIsSearching(false);
@@ -230,21 +273,83 @@ export function DocList() {
   }, []);
 
   /**
-   * Run the URL's query: at once when entering search or repeating a query, and
-   * debounced when one query replaces another (holding Back through `?q=` values),
-   * since each search is an uncached database query.
+   * Asks again with a deeper limit. A deeper candidate pool can reorder the fused
+   * ranking, so the rows on screen stay where they are and only documents not yet
+   * shown join the end.
+   */
+  function showMore() {
+    const gen = ++searchGenRef.current;
+    const limit = Math.min(searchPage.limit + SEARCH_PAGE, SEARCH_MAX);
+    setIsLoadingMore(true);
+    Docs.search(query, { limit })
+      .then((r) => {
+        if (gen !== searchGenRef.current) return;
+        setResults((cur) => {
+          const shown = new Set((cur ?? []).map((x) => x.doc_id));
+          return [...(cur ?? []), ...r.results.filter((x) => !shown.has(x.doc_id))];
+        });
+        setSearchPage({ limit, full: r.results.length >= limit });
+        setSearchDegraded((d) => d || r.degraded);
+        setIsLoadingMore(false);
+        // Replace, not push: a deeper list is not navigation for Back to undo.
+        setSearchParams(searchParams, { replace: true, state: { searchDepth: limit } });
+      })
+      .catch((e: unknown) => {
+        if (gen !== searchGenRef.current) return;
+        // The rows already found stay; the button stays to try again.
+        setIsLoadingMore(false);
+        toast({ body: errorMessage(e, "Couldn’t load more results."), type: "error" });
+      });
+  }
+
+  /**
+   * Run the URL's query, as deep as its history entry went: at once when entering
+   * search or repeating a query, and debounced when one query replaces another
+   * (holding Back through `?q=` values), since each search is an uncached database query.
    */
   useEffect(() => {
     const previous = lastQueryRef.current;
     lastQueryRef.current = query;
+    // An answer still out for the previous query, a first page or a Show more, must not land under this one.
+    searchGenRef.current++;
     setResults(null);
+    setSearchPage({ limit: SEARCH_PAGE, full: false });
+    setIsLoadingMore(false);
     if (!query || !previous || previous === query) {
-      runSearch(query);
+      runSearch(query, depthRef.current);
       return;
     }
-    const t = setTimeout(() => runSearch(query), 400);
+    const t = setTimeout(() => runSearch(query, depthRef.current), 400);
     return () => clearTimeout(t);
   }, [query, runSearch]);
+
+  // An answer still out when the page goes, a Show more's above all, must not write the URL from under a document.
+  useEffect(() => () => void searchGenRef.current++, []);
+
+  const listRef = useRef<HTMLDivElement>(null);
+  // The entry being left: the page unmounts without rendering the document's location.
+  const entryRef = useRef(location.key);
+  entryRef.current = location.key;
+  const [restoreTop] = useState(() => savedScroll(location.key));
+  const scrollRestoredRef = useRef(false);
+
+  // Back to results left for a document lands where the reader was, once the rows are in.
+  useLayoutEffect(() => {
+    if (scrollRestoredRef.current || results === null) return;
+    scrollRestoredRef.current = true;
+    const scroller = resultsScroller(listRef.current);
+    if (scroller && restoreTop > 0) scroller.scrollTop = restoreTop;
+  }, [results, restoreTop]);
+
+  // On the way out, while the list is still in the page.
+  useLayoutEffect(
+    () => () => {
+      const scroller = resultsScroller(listRef.current);
+      if (!scroller) return;
+      writeStored("session", SEARCH_SCROLL_KEY, JSON.stringify({ key: entryRef.current, top: scroller.scrollTop }));
+    },
+    [],
+  );
 
   async function createItem(docType: "prose" | "database") {
     try {
@@ -353,14 +458,17 @@ export function DocList() {
     >
       {query ? (
         // Gated on the query, not the results, so a `?q=` link never paints the explorer first.
-        <div className="doc-list">
+        <div className="doc-list" ref={listRef}>
           <header className="doc-list-head">
             <div className="doc-list-head__title">
               <Heading level={1} type="display-3">Search results</Heading>
               <span className="doc-list-head__query">
                 <Text type="supporting" color="secondary">for “{query}”</Text>
               </span>
-              {results && results.length > 0 && <Badge variant="neutral" label={String(results.length)} />}
+              {results && results.length > 0 && (
+                // A full answer is the top of a longer list, not a total.
+                <Badge variant="neutral" label={searchPage.full ? `Top ${results.length}` : String(results.length)} />
+              )}
             </div>
             {/* The way out: a shared `?q=` link has no history to go Back through. */}
             <Button label="All documents" icon={<Files size={16} />} variant="ghost" size="sm" onClick={clearSearch} />
@@ -382,7 +490,7 @@ export function DocList() {
                         variant="ghost"
                         size="sm"
                         isLoading={isSearching}
-                        onClick={() => runSearch(query)}
+                        onClick={() => runSearch(query, searchPage.limit)}
                       />
                     }
                   />
@@ -394,22 +502,34 @@ export function DocList() {
                     description="Semantic search is unavailable right now."
                   />
                 )}
-                <List hasDividers>
-                  {results.map((r) => (
-                    <Item
-                      as="li"
-                      key={r.doc_id}
-                      label={
-                        <span className="bidi-line">
-                          {r.page_of ? `${pageParentLabel(r.page_of)} › ${r.title || "Untitled"}` : r.title || "Untitled"}
-                        </span>
-                      }
-                      description={<span className="snippet" dangerouslySetInnerHTML={{ __html: sanitize(r.snippet) }} />}
-                      startContent={<FileText size={16} />}
-                      onClick={() => nav(`/doc/${r.doc_id}`)}
-                    />
-                  ))}
-                </List>
+                {/* Rows are links, so one opens in a new tab or copies its link; a plain click stays in the app. */}
+                <LinkProvider component={RouterLink}>
+                  <List hasDividers>
+                    {results.map((r) => (
+                      <Item
+                        as="li"
+                        key={r.doc_id}
+                        className="search-result"
+                        align="start"
+                        label={
+                          <span className="bidi-line search-hit">
+                            {r.page_of && `${pageParentLabel(r.page_of)} › `}
+                            <Marked parts={markTerms(r.title || "Untitled", queryTerms(query))} />
+                          </span>
+                        }
+                        description={<Snippet text={r.snippet} />}
+                        startContent={r.doc_type === "database" ? <Database size={16} /> : <FileText size={16} />}
+                        // Opens at the passage that matched.
+                        href={hitHref(r.doc_id, r, query)}
+                      />
+                    ))}
+                  </List>
+                </LinkProvider>
+                {searchPage.full && searchPage.limit < SEARCH_MAX && !searchError && (
+                  <HStack hAlign="center">
+                    <Button label="Show more" variant="secondary" size="sm" isLoading={isLoadingMore} onClick={showMore} />
+                  </HStack>
+                )}
                 {results.length === 0 && !searchError && (
                   <EmptyState title="No matches" description="Try a different search term." icon={<FileText size={28} />} />
                 )}
@@ -588,13 +708,4 @@ function FlatDocTable({
       {instructions.dialog}
     </div>
   );
-}
-
-/** A snippet is raw document text: escape all of it, then turn only the ⟦ ⟧ highlight sentinels into <mark>. */
-function sanitize(snippet: string): string {
-  const escaped = snippet
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  return escaped.replace(/⟦/g, "<mark>").replace(/⟧/g, "</mark>");
 }

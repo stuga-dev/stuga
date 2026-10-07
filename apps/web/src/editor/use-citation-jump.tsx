@@ -1,20 +1,24 @@
 /**
  * Lands a document opened from a citation on the cited passage, from the link's
- * `q` (an excerpt slice) and `sec` (the heading path). The body arrives over the
- * socket in several frames, so it retries until a match or the deadline, then
- * says the passage was not found. The params stay in the URL.
+ * `q` (an excerpt slice) and `sec` (the heading path), and one opened from a
+ * search hit on the matched block, from `hit` (see passageHint). The body arrives
+ * over the socket in several frames, so it retries until a match or the deadline.
+ * A citation then says the passage was not found; a search hit leaves the
+ * document at the top, as a plain link would. The params stay in the URL.
  */
 import { useEffect, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { useToast } from "@astryxdesign/core/Toast";
+import type { Editor } from "@tiptap/react";
+import { Selection } from "@tiptap/pm/state";
 import { useSharedEditor } from "./editor-context";
-import { headingSegments, stripMarkdown } from "../ai/citations";
+import { flashBlock } from "./passage-flash";
+import { SNIPPET_MIN, headingSegments, stripMarkdown } from "../ai/citations";
+import { HIT_PARAM } from "../lib/snippet";
 
 /** A document not rendered by now is not going to match. */
 const DEADLINE_MS = 8_000;
 const RETRY_MS = 150;
-/** How long the landed-on block stays highlighted. */
-const FLASH_MS = 1_600;
 /** The document's scroll container. */
 const SCROLLER = ".doc-main";
 /** Breathing room between the sticky toolbar and the passage. */
@@ -39,11 +43,34 @@ export function findTarget(root: HTMLElement, q: string, sec: string): HTMLEleme
 
   if (q) {
     const needle = norm(q);
-    if (needle) {
-      for (const el of Array.from(root.querySelectorAll<HTMLElement>(BLOCKS))) {
-        if (norm(el.textContent ?? "").includes(needle)) return sectionHeadingOf(root, el) ?? el;
-      }
-    }
+    const el = needle ? firstBlock(root, needle) : null;
+    if (el) return sectionHeadingOf(root, el) ?? el;
+  }
+  return null;
+}
+
+/**
+ * A search hit lands on the block that holds the hit, innermost first, so a
+ * paragraph in a list item or a quote flashes alone. Its section heading would
+ * leave the reader looking for the words again.
+ */
+export function findPassage(root: HTMLElement, hit: string): HTMLElement | null {
+  const needle = norm(hit);
+  // A hand-made link is held to the length a generated one meets.
+  if (needle.length < SNIPPET_MIN) return null;
+  let block = firstBlock(root, needle);
+  let inner = block && firstBlock(block, needle);
+  while (inner) {
+    block = inner;
+    inner = firstBlock(inner, needle);
+  }
+  return block;
+}
+
+/** The first block under `scope`, in document order, whose text holds `needle` (already normalized). */
+function firstBlock(scope: HTMLElement, needle: string): HTMLElement | null {
+  for (const el of Array.from(scope.querySelectorAll<HTMLElement>(BLOCKS))) {
+    if (norm(el.textContent ?? "").includes(needle)) return el;
   }
   return null;
 }
@@ -117,20 +144,50 @@ export function jumpTo(target: HTMLElement): void {
   scroller.scrollTop += delta;
 }
 
+/**
+ * Puts the reader at the landed block, not just the viewport, so a Tab into the
+ * editor or a screen reader starts at the passage instead of the top. An editable
+ * editor gets its caret there without focus: opening a document is reading, and a
+ * phone would raise its keyboard. ProseMirror holds the caret until the editor is
+ * focused, and puts it back when a Tab in resets it to the top. A read-only
+ * editor has no caret, so the block takes focus, as PresenceStack does.
+ */
+function placeReader(editor: Editor, block: HTMLElement): void {
+  if (!editor.isEditable) {
+    block.tabIndex = -1;
+    // jumpTo placed it below the sticky toolbar; focus's own scroll could tuck it back under.
+    block.focus({ preventScroll: true });
+    return;
+  }
+  const { view } = editor;
+  try {
+    const $pos = view.state.doc.resolve(view.posAtDOM(block, 0));
+    // No scrollIntoView, since jumpTo placed it; a selection alone never enters undo history.
+    view.dispatch(view.state.tr.setSelection(Selection.near($pos)));
+  } catch {
+    // A block ProseMirror cannot map leaves the caret where it was; the jump still happened.
+  }
+}
+
 function useCitationJump(): void {
   const [params] = useSearchParams();
   const toast = useToast();
   const { editor } = useSharedEditor();
   const q = params.get("q") ?? "";
   const sec = params.get("sec") ?? "";
-  // Once per set of hints, or every render would fight the reader's own scrolling.
-  const done = useRef("");
+  // A citation's hints win over a search hit's; no link carries both.
+  const hit = q || sec ? "" : (params.get(HIT_PARAM) ?? "");
+  // The palette's pick of the passage already open repeats the URL, so it carries a fresh nonce to land again.
+  const jump = (useLocation().state as { jump?: number } | null)?.jump ?? 0;
+  // Once per set of hints and pick, or every render would fight the reader's own scrolling.
+  const done = useRef({ key: "", jump: 0 });
 
   useEffect(() => {
-    if (!q && !sec) return;
+    if (!q && !sec && !hit) return;
     // Escaped: a literal NUL makes tools treat the file as binary.
-    const key = `${q}\u0000${sec}`;
-    if (done.current === key) return;
+    const key = `${q}\u0000${sec}\u0000${hit}`;
+    // A later navigation that drops the nonce is no new pick.
+    if (done.current.key === key && (!jump || done.current.jump === jump)) return;
     if (!editor) return;
 
     let timer: number | undefined;
@@ -140,14 +197,15 @@ function useCitationJump(): void {
     const attempt = () => {
       if (cancelled) return;
       const root = editor.view?.dom as HTMLElement | undefined;
-      const target = root ? findTarget(root, q, sec) : null;
+      const target = root ? (hit ? findPassage(root, hit) : findTarget(root, q, sec)) : null;
       if (!target) {
         if (Date.now() < giveUpAt) {
           timer = window.setTimeout(attempt, RETRY_MS);
           return;
         }
         // Spent, so a later render does not toast again.
-        done.current = key;
+        done.current = { key, jump };
+        if (hit) return;
         toast({
           body: q
             ? `Couldn't find “${q}” in this document. It may have changed since that answer was written.`
@@ -156,10 +214,10 @@ function useCitationJump(): void {
         });
         return;
       }
-      done.current = key;
+      done.current = { key, jump };
       jumpTo(target);
-      target.classList.add("citation-target--flash");
-      window.setTimeout(() => target.classList.remove("citation-target--flash"), FLASH_MS);
+      placeReader(editor, target);
+      flashBlock(editor.view, target);
     };
 
     attempt();
@@ -167,7 +225,7 @@ function useCitationJump(): void {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [editor, q, sec, toast]);
+  }, [editor, q, sec, hit, jump, toast]);
 }
 
 /** The hook as a component, to sit inside <EditorProvider>. */

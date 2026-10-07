@@ -30,8 +30,15 @@
 .account-trigger:focus-visible { outline: 2px solid var(--focus-outline-color); outline-offset: 2px; }
 
 .cmdk { display: flex; flex-direction: column; gap: 0.5rem; }
-.cmdk-list { display: flex; flex-direction: column; gap: 1px; max-height: 50vh; overflow: auto; }
-.cmdk-empty { padding: 0.8rem; color: var(--color-text-secondary); }
+.cmdk-list { display: flex; flex-direction: column; gap: 1px; max-height: 55vh; overflow: auto; }
+.cmdk mark { background: var(--color-background-yellow); color: inherit; }
+.cmdk-parent { color: var(--color-text-secondary); }
+.cmdk-snippet { unicode-bidi: plaintext; }
+/* The previous query's hits while the next search runs. */
+.cmdk-stale { opacity: 0.5; pointer-events: none; }
+.cmdk-status { display: block; padding: var(--spacing-1) var(--spacing-3); }
+.cmdk-footer { border-top: 1px solid var(--color-border); margin-top: var(--spacing-1); }
+.cmdk-hint { display: inline-flex; align-items: center; gap: var(--spacing-1); }
 
 /* Fixed, not AppShell's banner slot: shells fill 100dvh, and the editor page has
    none. Above the editor's popovers (55), below Astryx's layers. */

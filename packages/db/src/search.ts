@@ -304,6 +304,30 @@ function normalizeQueryLimit(value: number | undefined, fallback: number): numbe
 // own WHERE, ahead of its own LIMIT: a leg spends its candidate budget only on
 // rows the searcher may see, and nothing outside it can widen that set.
 
+/** Scripts written without spaces between words, where a typed word is no token's prefix. */
+const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
+/**
+ * The query's last word, lowercased as the index stores it, when it may be a word
+ * still being typed: letters and digits only, in a script that spaces its words,
+ * and long enough to narrow (three characters, or two Hangul syllables). Null otherwise.
+ */
+export function completionPrefix(query: string): { head: string; prefix: string } | null {
+  const words = query.trim().split(/\s+/);
+  const last = words.pop() ?? "";
+  if (!/^[\p{L}\p{M}\p{N}]+$/u.test(last) || UNSPACED.test(last)) return null;
+  if ([...last].length < (/\p{Script=Hangul}/u.test(last) ? 2 : 3)) return null;
+  return { head: words.join(" "), prefix: last.toLowerCase() };
+}
+
+/**
+ * Below any real BM25 score short of a word in nearly every document, which ranks
+ * nothing anyway. A title prefix outranks a body prefix, and a typo (scored zero)
+ * ranks below both; pdb.score() is a float4, which keeps the two apart.
+ */
+const TITLE_PREFIX_SCORE = "0.000002";
+const BODY_PREFIX_SCORE = "0.000001";
+
 /**
  * Document-level BM25 candidates `(doc_id, kw_snippet, kw_rank)`.
  *
@@ -311,8 +335,11 @@ function normalizeQueryLimit(value: number | undefined, fallback: number): numbe
  * field clause is a conjunction so more words narrow. The `search_text` clause
  * scores zero and exists because pdb.snippet() highlights only a field that
  * matched in its own right. The fuzzy title clause also scores zero, so a typo
- * can recall a document but never outrank a real match. kw_rank must stay a
- * bare pdb.score(): wrapped in arithmetic, ORDER BY leaves the index's top-K.
+ * can recall a document but never outrank a real match. The prefix clauses read
+ * the query's last word as unfinished, at a constant just above zero, so "whe"
+ * finds "where" while typing and a whole-word match still ranks first. kw_rank
+ * must stay a bare pdb.score(): wrapped in arithmetic, ORDER BY leaves the
+ * index's top-K.
  */
 function keywordLeg(
   sql: Sql,
@@ -321,9 +348,25 @@ function keywordLeg(
   scopeFilter: Fragment,
   candidates: number,
 ): Fragment {
-  let langLegs = sql``;
-  for (const lang of languages) {
-    langLegs = sql`${langLegs}, paradedb.match_conjunction(${`all_text_${lang}`}, ${input.query})`;
+  // Every field a whole-word match may land in: as written, stemmed English, and each language's.
+  const wholeWords = (text: string) => {
+    let langLegs = sql``;
+    for (const lang of languages) {
+      langLegs = sql`${langLegs}, paradedb.match_conjunction(${`all_text_${lang}`}, ${text})`;
+    }
+    return sql`paradedb.match_conjunction('all_text', ${text}),
+                            paradedb.match_conjunction('all_text_en', ${text})${langLegs}`;
+  };
+  const completion = completionPrefix(input.query);
+  let prefixLegs = sql``;
+  if (completion) {
+    // The finished words must all appear, matched as a whole query's are; the last one need only begin a word.
+    const head = completion.head ? sql`paradedb.disjunction_max(ARRAY[${wholeWords(completion.head)}]), ` : sql``;
+    const startsWord = (field: string) =>
+      sql`paradedb.fuzzy_term(${field}, ${completion.prefix}, distance => 0, prefix => true)`;
+    prefixLegs = sql`,
+              paradedb.const_score(${sql.unsafe(TITLE_PREFIX_SCORE)}, paradedb.boolean(must => ARRAY[${head}${startsWord("title")}])),
+              paradedb.const_score(${sql.unsafe(BODY_PREFIX_SCORE)}, paradedb.boolean(must => ARRAY[${head}${startsWord("all_text")}]))`;
   }
   return sql`
       SELECT d.doc_id,
@@ -343,12 +386,11 @@ function keywordLeg(
               paradedb.boolean(
                 must   => ARRAY[ paradedb.disjunction_max(ARRAY[
                             paradedb.boost(2.0, paradedb.match_conjunction('title', ${input.query})),
-                            paradedb.match_conjunction('all_text', ${input.query}),
-                            paradedb.match_conjunction('all_text_en', ${input.query})${langLegs}]) ],
+                            ${wholeWords(input.query)}]) ],
                 should => ARRAY[ paradedb.const_score(0.0,
                             paradedb.match_disjunction('search_text', ${input.query})) ]),
               paradedb.const_score(0.0,
-                paradedb.match('title', ${input.query}, distance => 1, conjunction_mode => true))])
+                paradedb.match('title', ${input.query}, distance => 1, conjunction_mode => true))${prefixLegs}])
       ORDER BY kw_rank DESC
       LIMIT ${candidates}`;
 }
@@ -469,7 +511,72 @@ async function withSearchLanguages<T>(
   }
 }
 
-/** Hybrid search, one row per document. */
+/** A searchDocs row before its excerpt is chosen. */
+interface SearchRow extends Omit<SearchResult, "snippet"> {
+  kw_snippet: string | null;
+  prefix_excerpt: string | null;
+  prefix_offset: number | null;
+  passage: string | null;
+  head: string;
+  /** Whether the excerpt excerptOf picks begins inside a fenced code block. */
+  in_code: boolean;
+  /** The part of the excerpt's first line the cut left out, before where it begins. */
+  line_lead: string;
+}
+
+const EXCERPT_CHARS = 200;
+/** Characters kept before a prefix match, so the excerpt reads as a sentence. */
+const PREFIX_LEAD = 60;
+
+/**
+ * A fenced code block's opening or closing line, inside any quote or list item,
+ * read as the web app's snippet renderer reads one (FENCE in its snippet.tsx).
+ * Matched with 'n', so ^ and $ are line ends and no line runs into the next.
+ */
+const FENCE_LINE = "^[ \\t]*(?:>[ \\t]?)*[ \\t]*(?:(?:[-+*]|\\d+[.)])[ \\t]+)?(?:`{3,}[^`]*|~{3,}.*)$";
+const FENCE = new RegExp(FENCE_LINE);
+
+/** Wraps the word starting `offset` code points into `text` in highlight sentinels. */
+function markWordAt(text: string, offset: number): string {
+  const chars = [...text];
+  const rest = chars.slice(offset).join("");
+  const word = /^[\p{L}\p{M}\p{N}_]+/u.exec(rest)?.[0] ?? "";
+  if (!word) return text;
+  return `${chars.slice(0, offset).join("")}⟦${word}⟧${rest.slice(word.length)}`;
+}
+
+/**
+ * Why a document is on the list, as text: the body's keyword highlights; else the
+ * word the unfinished last term begins; else the passage closest in meaning; else
+ * the document's opening.
+ *
+ * The text is the body's Markdown. An excerpt that begins inside a fenced code
+ * block starts with a fence line the body does not have there ("```"): cut from
+ * below the block's own fence, its code would read as prose, and `__iter__` as
+ * emphasis. Agents read snippets too, through MCP, and the fence keeps the
+ * excerpt honest Markdown.
+ */
+function excerptOf(row: SearchRow): string {
+  const text = row.kw_snippet?.includes("⟦")
+    ? row.kw_snippet
+    : row.prefix_excerpt && row.prefix_offset !== null
+      ? markWordAt(row.prefix_excerpt, row.prefix_offset)
+      : row.passage || row.head;
+  if (!row.in_code) return text;
+  const line = row.line_lead + (text.split("\n", 1)[0] ?? "");
+  // Cut past an opening fence's backticks, at its language ("sh"): the fence line is made whole again.
+  if (row.line_lead.trim() && FENCE.test(line)) return row.line_lead + text;
+  // The serializer follows an opening fence with code and a closing one with a
+  // blank line, which is how the page tells them apart: blank lines go. A block
+  // in a quote has its fence there too.
+  const quote = /^(?:[ \t]*>[ \t]?)*/.exec(line)?.[0] ?? "";
+  return `${quote}\`\`\`\n${text.replace(/^[\s>]*\n/, "")}`;
+}
+
+/**
+ * Hybrid search, one row per document. Each hit's snippet says why it matched:
+ * see excerptOf. The excerpts are cut after the limit, so only returned rows pay.
+ */
 export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchResult[]> {
   const limit = normalizeQueryLimit(input.limit, 20);
   const candidates = Math.max(limit * 4, 50);
@@ -477,10 +584,13 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
   const scopeFilter = scopeFragment(sql, input.scopeDocIds ?? null, input.scopeFolderIds ?? null);
   const qvec = vectorLiteral(input.queryEmbedding, input.embeddingDims);
   const semLimit = candidates * 4;
+  // completionPrefix admits letters, marks and digits only, so the pattern needs no escaping.
+  const completion = completionPrefix(input.query);
+  const startsWord = completion ? `\\m${completion.prefix}` : null;
 
   // Reciprocal Rank Fusion: each leg a document appears in adds 1/(60 + its rank
   // there), and a leg it is absent from adds nothing.
-  return withSearchLanguages(input, (languages) => withVectorScan(sql, input, semLimit, (tx, nearest) => tx<SearchResult[]>`
+  const rows = await withSearchLanguages(input, (languages) => withVectorScan(sql, input, semLimit, (tx, nearest) => tx<SearchRow[]>`
     WITH q AS (
       SELECT ${qvec}::vector AS qvec
     ),
@@ -493,7 +603,7 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
     ),
     -- Nearest visible chunks, then the cutoff, collapsed to each document's best passage.
     chunk_near AS (
-      SELECT c.doc_id, c.embedding <=> q.qvec AS dist
+      SELECT c.doc_id, c.chunk_index, c.embedding <=> q.qvec AS dist
       FROM doc_chunks c
       JOIN docs d ON d.doc_id = c.doc_id
       , q
@@ -504,14 +614,18 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
       LIMIT ${semLimit}
     ),
     chunk_hits AS (
-      SELECT doc_id, 1 - dist AS sem_score
+      SELECT doc_id, chunk_index, 1 - dist AS sem_score
       FROM chunk_near
       WHERE dist < ${input.maxDistance}::float8
     ),
-    sem_candidates AS (
-      SELECT doc_id, MAX(sem_score) AS sem_score
+    sem_best AS (
+      SELECT DISTINCT ON (doc_id) doc_id, chunk_index, sem_score
       FROM chunk_hits
-      GROUP BY doc_id
+      ORDER BY doc_id, sem_score DESC, chunk_index
+    ),
+    sem_candidates AS (
+      SELECT doc_id, chunk_index, sem_score
+      FROM sem_best
       ORDER BY sem_score DESC
       LIMIT ${candidates}
     ),
@@ -523,20 +637,56 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
       SELECT COALESCE(k.doc_id, s.doc_id)                AS doc_id,
              COALESCE(k.kw_rank, 0)                      AS kw_rank,
              COALESCE(s.sem_score, 0)                    AS sem_score,
+             s.chunk_index                               AS sem_chunk,
              k.kw_snippet                                AS kw_snippet,
              COALESCE(1.0/(60 + k.kw_pos), 0)
                + COALESCE(1.0/(60 + s.sem_pos), 0)       AS score
       FROM kw_ranked k
       FULL OUTER JOIN sem_ranked s ON k.doc_id = s.doc_id
+    ),
+    top AS (
+      SELECT f.*, d.title, d.doc_type, d.page_of, d.page_row
+      FROM fused f
+      JOIN docs d ON d.doc_id = f.doc_id
+      ORDER BY f.score DESC, d.doc_id
+      LIMIT ${limit}
     )
-    SELECT d.doc_id, d.title, d.page_of, d.page_row,
-           f.kw_rank, f.sem_score, f.score,
-           -- No highlight unless the body matched by stem: fall back to the head of the text.
-           COALESCE(f.kw_snippet, left(d.search_text, 200)) AS snippet
-    FROM fused f
-    JOIN docs d ON d.doc_id = f.doc_id
-    ORDER BY f.score DESC, d.doc_id
-    LIMIT ${limit}`));
+    SELECT t.doc_id, t.title, t.doc_type, t.page_of, t.page_row, t.kw_rank, t.sem_score, t.score,
+           -- pdb.snippet gives '' for a document that matched in its title only.
+           NULLIF(t.kw_snippet, '') AS kw_snippet,
+           CASE WHEN x.pos > 0 THEN substr(d.search_text, greatest(1, x.pos - ${PREFIX_LEAD}), ${EXCERPT_CHARS + PREFIX_LEAD}) END AS prefix_excerpt,
+           CASE WHEN x.pos > 0 THEN x.pos - greatest(1, x.pos - ${PREFIX_LEAD}) END AS prefix_offset,
+           left(ch.content, ${EXCERPT_CHARS}) AS passage,
+           left(d.search_text, ${EXCERPT_CHARS}) AS head,
+           -- The body is in code after the excerpt's first line when its fences through
+           -- that line are odd in number, and the excerpt opens a block of its own when
+           -- that line reads as a fence. Either without the other wants a fence above it.
+           e.at > 0 AND (regexp_count(left(d.search_text, e.at - 1 + length(e.line)), ${FENCE_LINE}, 1, 'n')
+                         + regexp_count(e.line, ${FENCE_LINE}, 1, 'n')) % 2 = 1 AS in_code,
+           CASE WHEN e.at > 1 THEN reverse(split_part(reverse(left(d.search_text, e.at - 1)), chr(10), 1)) ELSE '' END AS line_lead
+    FROM top t
+    JOIN docs d ON d.doc_id = t.doc_id
+    LEFT JOIN doc_chunks ch ON ch.doc_id = t.doc_id AND ch.chunk_index = t.sem_chunk
+    -- Where the unfinished last word begins a word of the body, when the body has no keyword highlight.
+    CROSS JOIN LATERAL (
+      SELECT CASE WHEN ${startsWord}::text IS NOT NULL AND strpos(coalesce(t.kw_snippet, ''), '⟦') = 0
+                  THEN regexp_instr(d.search_text, ${startsWord}::text, 1, 1, 0, 'i') ELSE 0 END AS pos
+    ) x
+    -- Where in the body the excerpt excerptOf picks begins, tried in its order, and
+    -- the rest of that line. pdb.snippet's fragment and a passage are slices of the
+    -- body; 0 for the opening, which no fence can precede, or one not found.
+    CROSS JOIN LATERAL (
+      SELECT s.at, split_part(substr(d.search_text, greatest(s.at, 1)), chr(10), 1) AS line
+      FROM (SELECT CASE WHEN strpos(t.kw_snippet, '⟦') > 0 THEN strpos(d.search_text, translate(t.kw_snippet, '⟦⟧', ''))
+                        WHEN x.pos > 0 THEN greatest(1, x.pos - ${PREFIX_LEAD})
+                        WHEN ch.content <> '' THEN strpos(d.search_text, left(ch.content, ${EXCERPT_CHARS}))
+                        ELSE 0 END AS at) s
+    ) e
+    ORDER BY t.score DESC, t.doc_id`));
+  return rows.map((row) => {
+    const { kw_snippet: _k, prefix_excerpt: _p, prefix_offset: _o, passage: _s, head: _h, in_code: _c, line_lead: _l, ...hit } = row;
+    return { ...hit, snippet: excerptOf(row) };
+  });
 }
 
 /** Hybrid retrieval of individual passages for cited answers, without the per-document collapse. */

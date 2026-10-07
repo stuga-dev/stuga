@@ -20,7 +20,7 @@ export interface CitationDetail {
 /** Longest prefix of the excerpt worth putting in a URL. */
 const SNIPPET_CHARS = 80;
 /** Below this a match is more likely to be coincidence than the passage. */
-const SNIPPET_MIN = 12;
+export const SNIPPET_MIN = 12;
 
 /** "Doc > Phase 2 > 2.2 Hand-off" becomes ["Doc", "Phase 2", "2.2 Hand-off"]. */
 export function headingSegments(headingPath?: string | null): string[] {

@@ -143,8 +143,9 @@ const koreanHits = async (languages: readonly SearchLanguage[]) =>
     maxDistance: 0.6,
     workspaceId: WS,
     principals: PRINCIPALS,
-    // Only the Korean segmenter finds 해구의 from 해구.
-    query: "해구",
+    // Only the Korean segmenter finds 해구의 from 해구. A last word may be unfinished and is
+    // also matched as a prefix, which finds 해구의 without it, so 해구 comes first here.
+    query: "해구 생물",
     queryEmbedding: null,
     limit: 5,
     searchLanguages: () => languages,

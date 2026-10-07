@@ -306,6 +306,7 @@ export interface NotificationRow {
 export interface SearchResult {
   doc_id: string;
   title: string;
+  doc_type: "prose" | "database";
   page_of: string | null;
   page_row: string | null;
   snippet: string;

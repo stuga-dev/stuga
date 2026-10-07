@@ -181,7 +181,9 @@
 .doc-list-head__query { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Document text, so it reads in its own direction. */
 .snippet { display: block; unicode-bidi: plaintext; text-align: start; color: var(--color-text-secondary); font-size: 0.85rem; }
-.snippet mark { background: var(--color-background-yellow); color: inherit; }
+.snippet mark, .search-hit mark { background: var(--color-background-yellow); color: inherit; }
+/* Item's link wraps only the text; stretched over the row, the icon and padding open it too. */
+.search-result > a::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
 
 .folder-picker-tree { max-height: 320px; overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius-element); padding: 0.4rem; }
 
