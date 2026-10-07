@@ -143,7 +143,10 @@ export async function updateFolder(
   return rows[0] ?? null;
 }
 
-/** The chain from the root down to the folder itself, for breadcrumbs. */
+/**
+ * The chain from the root down to the folder itself, for breadcrumbs and move checks.
+ * No ACL applies: a caller that shows it redacts the ancestors its reader cannot read.
+ */
 export async function getFolderAncestors(sql: Sql, folderId: string, workspaceId: string): Promise<FolderRow[]> {
   const chain: FolderRow[] = [];
   let id: string | null = folderId;

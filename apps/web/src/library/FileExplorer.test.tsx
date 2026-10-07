@@ -158,7 +158,7 @@ async function rename(to: string) {
   await click(button("Rename"));
 }
 
-async function renderExplorer() {
+async function renderExplorer(path: string[] = [], onPathChange: (path: string[]) => void = () => {}) {
   await act(async () => {
     root.render(
       <MemoryRouter>
@@ -166,9 +166,9 @@ async function renderExplorer() {
           <FileExplorer
             refreshKey={0}
             movedAway={0}
-            path={[]}
+            path={path}
             selectedDocId={DOC.doc_id}
-            onPathChange={() => {}}
+            onPathChange={onPathChange}
             onSelectDoc={onSelectDoc}
             sort={{ key: "updated_at", direction: "descending" }}
             onSortChange={() => {}}
@@ -313,5 +313,46 @@ describe("FileExplorer row actions", () => {
     expect(folders.instructions).toHaveBeenCalledWith(FOLDER.folder_id);
     await click(button("Instructions for agents…", DOC.doc_id));
     expect(docs.instructions).toHaveBeenCalledWith(DOC.doc_id);
+  });
+});
+
+describe("FileExplorer breadcrumb", () => {
+  /** An enclosing folder the caller cannot read, as the ancestors call redacts it. */
+  const hidden = (id: string, parent: string | null) => ({
+    folder_id: id,
+    parent_id: parent,
+    title: null,
+    owner: null,
+    created_at: null,
+    updated_at: null,
+  });
+  const crumbs = () => [...host.querySelectorAll<HTMLElement>('nav[aria-label="Folder path"] li')];
+
+  it("shows a folder the caller cannot read as a named place in the chain, not somewhere to go", async () => {
+    folders.ancestors.mockResolvedValue({ ancestors: [hidden("f_a", null), hidden("f_b", "f_a"), { ...FOLDER, parent_id: "f_b" }] });
+    const onPathChange = vi.fn();
+    await renderExplorer(["f_a", "f_b", FOLDER.folder_id], onPathChange);
+    const [all, a, b, own] = crumbs();
+    expect(all?.querySelector("button")?.textContent).toBe("All documents");
+    for (const crumb of [a, b]) {
+      expect(crumb?.querySelector("button, a")).toBeNull();
+      // A screen reader hears the words, not the glyph.
+      const glyph = [...(crumb?.querySelectorAll<HTMLElement>("*") ?? [])].find((el) => el.textContent === "…");
+      expect(glyph?.getAttribute("aria-hidden")).toBe("true");
+      expect(crumb?.textContent).toContain("Folder you can't open");
+      await click(glyph);
+    }
+    expect(onPathChange).not.toHaveBeenCalled();
+    expect(own?.querySelector('[aria-current="page"]')?.textContent).toBe("Contracts");
+  });
+
+  it("keeps a crumb whose title did not load as a way back to that folder", async () => {
+    folders.ancestors.mockRejectedValue(new Error("offline"));
+    const onPathChange = vi.fn();
+    await renderExplorer(["f_a", FOLDER.folder_id], onPathChange);
+    const back = crumbs()[1]?.querySelector("button");
+    expect(back?.textContent).toBe("…");
+    await click(back ?? undefined);
+    expect(onPathChange).toHaveBeenCalledWith(["f_a"]);
   });
 });

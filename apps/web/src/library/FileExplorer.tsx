@@ -11,6 +11,7 @@ import { Section } from "@astryxdesign/core/Section";
 import { useAppShellMobile } from "@astryxdesign/core/AppShell";
 import type { LayerAlignment } from "@astryxdesign/core/Layer";
 import { Breadcrumbs, BreadcrumbItem } from "@astryxdesign/core/Breadcrumbs";
+import { VisuallyHidden } from "@astryxdesign/core/VisuallyHidden";
 import { VStack } from "@astryxdesign/core/VStack";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Heading } from "@astryxdesign/core/Text";
@@ -99,7 +100,8 @@ export function FileExplorer({
   const [bulkBusy, setBulkBusy] = useState(false);
   const [dropTarget, setDropTarget] = useState<string | "background" | null>(null);
   const [localKey, setLocalKey] = useState(0);
-  const [crumbTitles, setCrumbTitles] = useState<Record<string, string>>({});
+  /** Null for a folder the caller cannot read; its crumb shows "…" and goes nowhere. */
+  const [crumbTitles, setCrumbTitles] = useState<Record<string, string | null>>({});
   const [rows, setRows] = useState<LibraryRow[] | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ok" | "error">("loading");
   const [atCap, setAtCap] = useState(false);
@@ -154,7 +156,7 @@ export function FileExplorer({
           return next;
         });
       })
-      // A crumb without its title shows "…" and still navigates.
+      // A crumb whose title did not load shows "…" and still navigates.
       .catch(() => {});
     return () => {
       live = false;
@@ -425,11 +427,19 @@ export function FileExplorer({
               <BreadcrumbItem onClick={() => onPathChange([])} startIcon={<Files size={14} />} {...crumbDropProps(-1)}>
                 All documents
               </BreadcrumbItem>
-              {path.map((id, i) => (
-                <BreadcrumbItem key={id} isCurrent={i === path.length - 1} onClick={() => onPathChange(path.slice(0, i + 1))} {...crumbDropProps(i)}>
-                  {crumbTitles[id] ?? "…"}
-                </BreadcrumbItem>
-              ))}
+              {path.map((id, i) =>
+                crumbTitles[id] === null ? (
+                  // A folder the caller cannot read is a place in the chain, nowhere to open or drop into.
+                  <BreadcrumbItem key={id} isCurrent={i === path.length - 1}>
+                    <span aria-hidden="true">…</span>
+                    <VisuallyHidden>Folder you can't open</VisuallyHidden>
+                  </BreadcrumbItem>
+                ) : (
+                  <BreadcrumbItem key={id} isCurrent={i === path.length - 1} onClick={() => onPathChange(path.slice(0, i + 1))} {...crumbDropProps(i)}>
+                    {crumbTitles[id] ?? "…"}
+                  </BreadcrumbItem>
+                ),
+              )}
             </Breadcrumbs>
           )}
           <Heading level={1} maxLines={1}>

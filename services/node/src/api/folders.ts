@@ -12,7 +12,7 @@ import {
   updateFolder,
 } from "@stuga/db";
 import { recordAudit } from "../audit/record.js";
-import { canWriteFolder, guestForbidden, manages, scopeFolderIds } from "../authz/authz.js";
+import { canReadFolder, canWriteFolder, guestForbidden, manages, scopeFolderIds } from "../authz/authz.js";
 import { docOwnership } from "../authz/ownership.js";
 import { agentInstructionsError, authorizedFolder, recordItemChange, reflattenFolderSubtree } from "../documents/access.js";
 import { visibilityFloor } from "../documents/create.js";
@@ -97,12 +97,18 @@ export async function createFolderRoute({ ctx, req }: WorkspaceCall): Promise<Re
   return json(folderSummary(folder), { status: 201 });
 }
 
-// Breadcrumb ancestors (root→self), as summaries: an ancestor the caller cannot open gives away no grants or instructions.
+/** The ids alone, which keep the breadcrumb's shape; the summary's other fields are null. */
+function redactedAncestor(row: FolderRow) {
+  return { folder_id: row.folder_id, parent_id: row.parent_id, title: null, owner: null, created_at: null, updated_at: null };
+}
+
+// Breadcrumb ancestors (root→self). Someone shared only a subfolder learns nothing about the folders
+// above it but their ids: an ancestor the caller cannot read, key scope included, is redacted.
 export async function listFolderAncestors({ ctx, match }: WorkspaceCall): Promise<Response> {
   const folderId = match[1]!;
   if (!(await authorizedFolder(ctx, folderId))) return error(404, "not found");
   const ancestors = await getFolderAncestors(ctx.sql, folderId, ctx.workspaceId);
-  return json({ ancestors: ancestors.map(folderSummary) });
+  return json({ ancestors: ancestors.map((f) => (canReadFolder(ctx, f) ? folderSummary(f) : redactedAncestor(f))) });
 }
 
 /**

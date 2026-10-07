@@ -12,6 +12,16 @@ export interface Folder {
   updated_at: string;
 }
 
+/** An enclosing folder the caller cannot read: its place in the chain, nothing about it. */
+export interface HiddenFolder {
+  folder_id: string;
+  parent_id: string | null;
+  title: null;
+  owner: null;
+  created_at: null;
+  updated_at: null;
+}
+
 export const Folders = {
   /** `parentId`: a folder for its subfolders, null for the top level, undefined for every folder. Folders sort by title or updated_at only. */
   list: (parentId?: string | null, opts?: { sort?: DocSort; order?: SortOrder }) => {
@@ -40,7 +50,8 @@ export const Folders = {
     api<Folder>(`/api/folders/${id}`, { method: "PATCH", body: JSON.stringify({ agent_instructions: text }) }),
   /** Any reader may ask; saving needs `can_edit`. */
   instructions: (id: string) => api<ItemInstructions>(`/api/folders/${id}/instructions`),
-  ancestors: (id: string) => api<{ ancestors: Folder[] }>(`/api/folders/${id}/ancestors`),
+  /** Top level first, ending with the folder itself; an enclosing folder the caller cannot read comes back hidden. */
+  ancestors: (id: string) => api<{ ancestors: Array<Folder | HiddenFolder> }>(`/api/folders/${id}/ancestors`),
   /** Active documents and descendant folders, for the delete warning. */
   contents: (id: string) => api<{ docs: number; folders: number }>(`/api/folders/${id}/contents`),
   /** Owner only. Deletes the subtree; its documents move to Trash. */
