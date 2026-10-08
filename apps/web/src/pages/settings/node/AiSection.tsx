@@ -169,6 +169,12 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   const [foundEmbed, setFoundEmbed] = useState<string[]>([]);
   /** The ranker as edited so far, while it is being set up or edited. */
   const [rerankDraft, setRerankDraft] = useState<RerankForm | null>(null);
+
+  // The local Ollama takes no key, as Set up asks none; a key already on file can still be removed.
+  // A key typed before switching to it is dropped with its field.
+  const asksKey = (provider: string, baseUrl: string, keySet: boolean) => keySet || presetFor(presets, provider, baseUrl) !== "ollama";
+  const setProviderDraft = (d: ChatEndpointForm, keySet: boolean) => setDraft(asksKey(d.provider, d.baseUrl, keySet) ? d : { ...d, key: "" });
+  const setSearchForm = (f: Form) => setForm(asksKey(f.embedProvider, f.embedBaseUrl, settings.embed.api_key_set) ? f : { ...f, embedKey: "" });
   const [rerankKeyCleared, setRerankKeyCleared] = useState(false);
   const rerankSetUp = !!settings.rerank.model;
 
@@ -434,11 +440,10 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                     if (!preset) return;
                     // Discovered models belong to the old host.
                     setFound(({ [ep.id]: _drop, ...rest }) => rest);
-                    setDraft({ ...draft, provider: preset.provider, baseUrl: preset.baseUrl });
+                    setProviderDraft({ ...draft, provider: preset.provider, baseUrl: preset.baseUrl }, ep.api_key_set);
                   }}
                 />
-                {/* A local Ollama takes no key, as Set up asks none; a key already on file can still be removed. */}
-                {(draft.provider !== "ollama" || ep.api_key_set) && (
+                {asksKey(draft.provider, draft.baseUrl, ep.api_key_set) && (
                   <VStack gap={1}>
                     <TextInput
                       label="API key"
@@ -477,8 +482,8 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                 </HStack>
                 <Collapsible trigger="Advanced" defaultIsOpen={presetFor(presets, draft.provider, draft.baseUrl) === "custom"}>
                   <VStack gap={3}>
-                    <Selector label="API protocol" options={PROVIDERS} value={draft.provider} onChange={(v: string) => setDraft({ ...draft, provider: v })} />
-                    <TextInput label="Base URL" value={draft.baseUrl} placeholder={baseUrls[draft.provider]} onChange={(v: string) => setDraft({ ...draft, baseUrl: v })} />
+                    <Selector label="API protocol" options={PROVIDERS} value={draft.provider} onChange={(v: string) => setProviderDraft({ ...draft, provider: v }, ep.api_key_set)} />
+                    <TextInput label="Base URL" value={draft.baseUrl} placeholder={baseUrls[draft.provider]} onChange={(v: string) => setProviderDraft({ ...draft, baseUrl: v }, ep.api_key_set)} />
                   </VStack>
                 </Collapsible>
                 <HStack gap={2}>
@@ -594,10 +599,10 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                   const preset = presets.find((x) => x.value === v);
                   if (!preset) return;
                   setFoundEmbed([]);
-                  setForm({ ...form, embedProvider: preset.provider, embedBaseUrl: preset.baseUrl });
+                  setSearchForm({ ...form, embedProvider: preset.provider, embedBaseUrl: preset.baseUrl });
                 }}
               />
-              {(form.embedProvider !== "ollama" || settings.embed.api_key_set) && (
+              {asksKey(form.embedProvider, form.embedBaseUrl, settings.embed.api_key_set) && (
                 <VStack gap={1}>
                   <TextInput
                     label="API key"
@@ -675,9 +680,9 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                     label="API protocol"
                     options={PROVIDERS.filter((o) => o.value !== "anthropic")}
                     value={form.embedProvider}
-                    onChange={(v: string) => setForm({ ...form, embedProvider: v })}
+                    onChange={(v: string) => setSearchForm({ ...form, embedProvider: v })}
                   />
-                  <TextInput label="Base URL" value={form.embedBaseUrl} placeholder={baseUrls[form.embedProvider]} onChange={(v: string) => setForm({ ...form, embedBaseUrl: v })} />
+                  <TextInput label="Base URL" value={form.embedBaseUrl} placeholder={baseUrls[form.embedProvider]} onChange={(v: string) => setSearchForm({ ...form, embedBaseUrl: v })} />
                 </VStack>
               </Collapsible>
               <HStack gap={2}>

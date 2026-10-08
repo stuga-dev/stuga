@@ -511,10 +511,38 @@ describe("NodeSettingsPage", () => {
     expect(isDisabled(visibleButtons("Connect")[0])).toBe(false);
   });
 
-  it("asks no key in Edit for semantic search on a local Ollama", async () => {
+  it("asks no key in Edit for semantic search on a local Ollama, and drops one typed before switching to it", async () => {
     await renderWith(WITH_SEARCH);
     await openSearchEditor();
     expect(inputs("API key")).toHaveLength(0);
+
+    await choose("Service", "OpenAI");
+    await typeInto(inputs("API key")[0], "sk-typed");
+    await choose("Service", "Ollama (local)");
+    expect(inputs("API key")).toHaveLength(0);
+    savedAs(WITH_SEARCH);
+    await click("Save");
+    await settle();
+    const sent = nodeApi.saveAi.mock.calls.at(-1)![0] as { embed: { api_key?: string } };
+    expect(sent.embed.api_key).toBeUndefined();
+  });
+
+  it("keeps a model id typed while Ollama lists again and still finds none", async () => {
+    await renderWith(FRESH);
+    nodeApi.discoverModels.mockResolvedValue({ models: [] });
+    await clickNth("Set up", 1);
+    await choose("Service", "Ollama (local)");
+    await settle();
+
+    let answer!: (r: { models: string[] }) => void;
+    nodeApi.discoverModels.mockReturnValue(new Promise((r) => (answer = r)));
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    expect(nodeApi.discoverModels).toHaveBeenCalledTimes(2);
+    await typeInto(inputs("Model")[0], "house-embed");
+    await act(async () => answer({ models: [] }));
+    await settle();
+    expect(inputs("Model")[0]!.value).toBe("house-embed");
   });
 
   it("removes semantic search only after asking, forgetting its model and key", async () => {

@@ -97,6 +97,8 @@ export function ConnectForm({
         setError(connectFailure(preset.label, found.message));
         return;
       }
+      // Still none: keep any id typed while the request was out.
+      if (listedNone && found.models.length === 0) return;
       setListed({ for: signature, models: found.models });
       setModel("");
     } catch (e) {
@@ -115,12 +117,12 @@ export function ConnectForm({
   // A service that listed no models lists again when the page is back in front, so a model pulled in
   // the meantime shows up without starting over.
   useEffect(() => {
-    if (!listedNone || model.trim()) return;
+    if (!listedNone || model.trim() || loading) return;
     const again = () => void load(true);
     window.addEventListener("focus", again);
     return () => window.removeEventListener("focus", again);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load reads this render's service, address and key
-  }, [listedNone, signature, model]);
+  }, [listedNone, signature, model, loading]);
 
   function pick(value: string) {
     setService(value);
