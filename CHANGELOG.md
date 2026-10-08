@@ -9,31 +9,11 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
-### Added
+## [0.1.12] - 2026-10-08
 
-- **Search strictness** (Strict, Balanced, Loose or Off) sets how far a match by meaning may sit in the search box. The node measures its embedding model when it is saved and sets the distance from how far that model places unrelated text, where one fixed distance suited a single model ([Search strictness](docs/configuration.md#search-strictness)).
-- Semantic search takes an embedding model that returns fewer dimensions than the node stores, such as EmbeddingGemma 2 (768 on the default 1024), with no database change ([What is embedded](docs/rag-cross-doc-qa.md#what-is-embedded)).
-
-### Changed
-
-- An AI edit's note button says what the note does, **Revise…** for the co-author's own edits and **Reject with note…** for an agent's, and the button that sends it says the same. Under a change in the document the note is written in place of its buttons; for a whole run it sits in the menu beside **Reject all** ([Reject with a note](docs/agents.md#reject-with-a-note)).
-- With **Chinese** on, keyword search reads traditional characters as simplified, in documents and searches alike, so either script finds the other ([Search languages](docs/configuration.md#search-languages)).
-- Ask, agents' `retrieve` and the assistants' document search take the nearest passages at any distance, and reranking decides what is relevant.
-- `/api/node/ai-settings` takes and returns `embed.search_strictness`, and returns `embed.cutoff`, `embed.calibration` and `strictness_default`, in place of `embed.search_max_distance`, `embed.retrieval_max_distance` and `max_distance_defaults`; `POST /api/node/ai-settings/calibrate` measures again.
-- Queries and passages carry the instruction each known embedding model was trained with (EmbeddingGemma, Qwen3-Embedding, Nomic, E5, mxbai, Arctic Embed), so these models rank as their authors measured them.
-- Settings suggests `embeddinggemma:300m` when Ollama has no embedding model yet.
-
-### Fixed
-
-- A passage Ollama refuses as longer than the embedding model's context (bge-m3 on long Korean text) is cut to fit and embedded, as Ollama cuts other long text, instead of staying out of search by meaning.
-- Setting up a local Ollama that has no model yet lists its models again when you come back to the page, so one pulled in the meantime shows up.
-- **Edit** asks for no API key for a local Ollama, as **Set up** does.
-
-## [0.1.12] - 2026-10-06
-
-**Request changes** on an AI edit, so the agent revises from your note; one command to go back to an
-earlier version on a Mac; and a security fix that keeps agents' pending changes out of database
-queries.
+**Reject with note** on an AI edit, so the agent revises from your note; search by meaning that fits
+each embedding model, EmbeddingGemma 2 among them; one command to go back to an earlier version on a
+Mac; and a security fix that keeps agents' pending changes out of database queries.
 
 ### Upgrade notes
 
@@ -47,10 +27,13 @@ queries.
 
 - One command goes back to an earlier version on a Mac: `sudo "/Library/Application Support/Stuga/current/bin/stuga" restore <backup>` ([macOS](docs/install/macos.md#go-back-to-an-earlier-version)). **Settings → This node → Backups** shows it for each backup.
 - `stuga-node list` marks backups taken before an upgrade.
-- **Request changes** rejects an AI edit, or reverts one that landed, with a note for the agent that made it ([Agents](docs/agents.md#reject-with-a-note)).
+- **Reject with note…** rejects an AI edit with a note for the agent that made it; on the co-author's own edits in the document, with AI chat on, it is **Revise…**, and the button that sends the note says the same. Under a change in the document the note is written in place of its buttons; for a whole run it sits in the menu beside **Reject all** ([Reject with a note](docs/agents.md#reject-with-a-note)).
+- **Revert with note…** in the review inbox takes back a run that landed and tells the agent why.
 - The note leads the agent's reads and proposals there until it answers it, you mark the run reviewed, or 14 days pass.
 - The co-author offers **Revise now**, changing only the passages you turned down.
 - The `events` tool's `mine: true` lists the decisions on an agent's own proposals.
+- **Search strictness** (Strict, Balanced, Loose or Off) sets how far a match by meaning may sit in the search box. The node measures its embedding model when it is saved and sets the distance from how far that model places unrelated text, where one fixed distance suited a single model ([Search strictness](docs/configuration.md#search-strictness)).
+- Semantic search takes an embedding model that returns fewer dimensions than the node stores, such as EmbeddingGemma 2 (768 on the default 1024), with no database change ([What is embedded](docs/rag-cross-doc-qa.md#what-is-embedded)).
 
 ### Changed
 
@@ -58,6 +41,11 @@ queries.
 - Stuga on a Mac takes about 330 MB instead of 480 MB.
 - An earlier release started on a later one's data changes nothing and says which backup to restore.
 - `./stuga restore` going back pins the whole stack to the backup's release.
+- With **Chinese** on, keyword search reads traditional characters as simplified, in documents and searches alike, so either script finds the other ([Search languages](docs/configuration.md#search-languages)).
+- Ask, agents' `retrieve` and the assistants' document search take the nearest passages at any distance, and reranking decides what is relevant.
+- `/api/node/ai-settings` takes and returns `embed.search_strictness`, and returns `embed.cutoff`, `embed.calibration` and `strictness_default`, in place of `embed.search_max_distance`, `embed.retrieval_max_distance` and `max_distance_defaults`; `POST /api/node/ai-settings/calibrate` measures again.
+- Queries and passages carry the instruction each known embedding model was trained with (EmbeddingGemma, Qwen3-Embedding, Nomic, E5, mxbai, Arctic Embed), so these models rank as their authors measured them.
+- Settings suggests `embeddinggemma:300m` when Ollama has no embedding model yet.
 
 ### Fixed
 
@@ -68,6 +56,9 @@ queries.
 - `install.sh` stops at once when the node refuses its data.
 - The menu bar runs the new Stuga.app after an update.
 - A patch to an older release line leaves the `:<major>` image tags alone.
+- A passage Ollama refuses as longer than the embedding model's context (bge-m3 on long Korean text) is cut to fit and embedded, as Ollama cuts other long text, instead of staying out of search by meaning.
+- Setting up a local Ollama that has no model yet lists its models again when you come back to the page, so one pulled in the meantime shows up.
+- **Edit** asks for no API key for a local Ollama, as **Set up** does.
 
 ## [0.1.11] - 2026-10-02
 
