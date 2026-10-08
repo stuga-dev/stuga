@@ -545,8 +545,16 @@ describe("NodeSettingsPage", () => {
     expect(inputs("Model")).toHaveLength(0);
     expect(fillsRow("Model")).toBe(true);
 
+    // The chat provider's editor lists its models on opening; one that lists none keeps the typed list.
+    nodeApi.discoverModels.mockResolvedValue({ models: [] });
     await clickNth("Edit", 0);
     await settle();
+    expect(inputs("Models offered")).toHaveLength(1);
+    expect(fillsRow("Models offered")).toBe(true);
+    nodeApi.discoverModels.mockResolvedValue({ models: ["gpt-5.2", "gpt-4.1"] });
+    await clickNth("Fetch models", 0);
+    await settle();
+    expect(inputs("Models offered")).toHaveLength(0);
     expect(fillsRow("Models offered")).toBe(true);
   });
 
