@@ -13,9 +13,9 @@ const ANTHROPIC_VERSION = "2023-06-01";
  */
 export async function listModels(ep: AiEndpoint, which: "chat" | "embed"): Promise<string[]> {
   const models = await fetchModels(ep);
-  return newestFirst(models)
-    .map((m) => m.id)
-    .filter((id) => (which === "embed" ? isEmbeddingModelId(id) : !isEmbeddingModelId(id) && !isNonChatModelId(id)));
+  // Each id once, where it first sorts: Ollama 0.40 can list one name twice, under two digests.
+  const ids = new Set(newestFirst(models).map((m) => m.id));
+  return [...ids].filter((id) => (which === "embed" ? isEmbeddingModelId(id) : !isEmbeddingModelId(id) && !isNonChatModelId(id)));
 }
 
 /** A listed model and when the service dated it, if it did. */

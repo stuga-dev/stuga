@@ -11,6 +11,7 @@ import { Card } from "@astryxdesign/core/Card";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/VStack";
+import { StackItem } from "@astryxdesign/core/Stack";
 import { Button } from "@astryxdesign/core/Button";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
@@ -462,22 +463,26 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                   </VStack>
                 )}
                 <HStack gap={2} vAlign="end">
-                  {found[ep.id]?.length ? (
-                    <MultiSelector
-                      label="Models offered"
-                      options={modelOptions(found[ep.id]!, modelIds(draft.models))}
-                      value={modelIds(draft.models)}
-                      hasSearch
-                      onChange={(ids: string[]) => setDraft({ ...draft, models: withSelectedModels(draft.models, ids) })}
-                    />
-                  ) : (
-                    <TextInput
-                      label="Models offered"
-                      value={draft.models}
-                      placeholder="gpt-4.1=GPT-4.1, o3-mini=o3 mini"
-                      onChange={(v: string) => setDraft({ ...draft, models: v })}
-                    />
-                  )}
+                  <StackItem size="fill">
+                    {found[ep.id]?.length ? (
+                      <MultiSelector
+                        label="Models offered"
+                        width="100%"
+                        options={modelOptions(found[ep.id]!, modelIds(draft.models))}
+                        value={modelIds(draft.models)}
+                        hasSearch
+                        onChange={(ids: string[]) => setDraft({ ...draft, models: withSelectedModels(draft.models, ids) })}
+                      />
+                    ) : (
+                      <TextInput
+                        label="Models offered"
+                        width="100%"
+                        value={draft.models}
+                        placeholder="gpt-4.1=GPT-4.1, o3-mini=o3 mini"
+                        onChange={(v: string) => setDraft({ ...draft, models: v })}
+                      />
+                    )}
+                  </StackItem>
                   <Button label="Fetch models" variant="secondary" size="sm" isLoading={fetching === ep.id} onClick={() => void discover(draft)} />
                 </HStack>
                 <Collapsible trigger="Advanced" defaultIsOpen={presetFor(presets, draft.provider, draft.baseUrl) === "custom"}>
@@ -621,18 +626,21 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                 </VStack>
               )}
               <HStack gap={2} vAlign="end">
-                {foundEmbed.length > 0 ? (
-                  <Selector
-                    label="Model"
-                    placeholder="Choose a model"
-                    options={modelOptions(foundEmbed, form.embedModel)}
-                    value={form.embedModel}
-                    hasSearch
-                    onChange={(v: string) => setForm({ ...form, embedModel: v })}
-                  />
-                ) : (
-                  <TextInput label="Model" value={form.embedModel} onChange={(v: string) => setForm({ ...form, embedModel: v })} />
-                )}
+                <StackItem size="fill">
+                  {foundEmbed.length > 0 ? (
+                    <Selector
+                      label="Model"
+                      width="100%"
+                      placeholder="Choose a model"
+                      options={modelOptions(foundEmbed, form.embedModel)}
+                      value={form.embedModel}
+                      hasSearch
+                      onChange={(v: string) => setForm({ ...form, embedModel: v })}
+                    />
+                  ) : (
+                    <TextInput label="Model" width="100%" value={form.embedModel} onChange={(v: string) => setForm({ ...form, embedModel: v })} />
+                  )}
+                </StackItem>
                 <Button label="Fetch models" variant="secondary" size="sm" isLoading={fetching === "embed"} onClick={() => void discoverEmbed()} />
               </HStack>
               <VStack gap={1}>

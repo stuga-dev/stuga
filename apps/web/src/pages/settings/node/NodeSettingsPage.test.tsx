@@ -275,6 +275,13 @@ const isDisabled = (b: HTMLButtonElement | undefined) => !!b && (b.disabled || b
 
 const visibleButtons = (label: string) => [...host.querySelectorAll("button")].filter((b) => isShown(b) && b.textContent === label);
 
+/** The visible field labelled so fills its row beside **Fetch models**, so a long model id shows whole. */
+function fillsRow(labelText: string): boolean {
+  const label = [...host.querySelectorAll("label")].find((l) => isShown(l) && l.textContent === labelText);
+  const field = label?.closest<HTMLElement>(".astryx-field");
+  return !!field?.closest('.astryx-stack-item[data-size="fill"]') && field.style.getPropertyValue("--x-width") === "100%";
+}
+
 /** Semantic search's editor. */
 async function openSearchEditor() {
   await clickNth("Edit", 1);
@@ -525,6 +532,22 @@ describe("NodeSettingsPage", () => {
     await settle();
     const sent = nodeApi.saveAi.mock.calls.at(-1)![0] as { embed: { api_key?: string } };
     expect(sent.embed.api_key).toBeUndefined();
+  });
+
+  it("gives the model field the row's free width in Edit, typed or picked from the list", async () => {
+    await renderWith(WITH_SEARCH);
+    await openSearchEditor();
+    expect(fillsRow("Model")).toBe(true);
+    nodeApi.discoverModels.mockResolvedValue({ models: ["embeddinggemma-2:270m", "embeddinggemma:300m"] });
+    await click("Fetch models");
+    await settle();
+    // The listed models replace the typed id with a picker.
+    expect(inputs("Model")).toHaveLength(0);
+    expect(fillsRow("Model")).toBe(true);
+
+    await clickNth("Edit", 0);
+    await settle();
+    expect(fillsRow("Models offered")).toBe(true);
   });
 
   it("keeps a model id typed while Ollama lists again and still finds none", async () => {

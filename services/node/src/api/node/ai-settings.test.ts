@@ -162,6 +162,37 @@ describe("GET /api/node/ai-settings", () => {
   });
 });
 
+describe("POST /api/node/ai-settings/test", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("says how long semantic search took to answer, as it does for the reranker", async () => {
+    // A local Ollama's 768-dimension vector, and a ranker's answer.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).endsWith("/api/embed")
+          ? new Response(JSON.stringify({ embeddings: [Array.from({ length: 768 }, (_, i) => (i + 1) / 768)] }), { status: 200 })
+          : new Response(JSON.stringify({ model: "jev-1.13.0", answers: { ok: { type: "noul", noul: 0.9 } } }), { status: 200 }),
+      ),
+    );
+    const req = new Request("http://node.test/api/node/ai-settings/test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        embed: { provider: "ollama", base_url: BASE_URLS.ollama, model: "embeddinggemma:300m" },
+        rerank: { base_url: "https://api.typesafe.test/v1", model: "jev-latest", api_key: "ts-key" },
+      }),
+    });
+    const res = await routeWorkspaceRequest(ctx(), req);
+    expect(res?.status).toBe(200);
+    expect(await res!.json()).toMatchObject({
+      ok: true,
+      embed: { ok: true, model: "embeddinggemma:300m", dims: 768, latency_ms: expect.any(Number) },
+      rerank: { ok: true, model: "jev-latest", latency_ms: expect.any(Number) },
+    });
+  });
+});
+
 describe("PUT /api/node/ai-settings: search strictness", () => {
   let dataDir: string;
   let row: NodeAiSettingsRow | null;

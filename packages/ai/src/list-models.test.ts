@@ -79,6 +79,17 @@ describe("listModels", () => {
     expect(await listModels({ ...EP, provider: "ollama" }, "chat")).toEqual(["qwen3:8b", "llama3.1:8b"]);
   });
 
+  it("lists a model Ollama names twice once, where it first sorts", async () => {
+    // As Ollama 0.40 lists it: one name under two digests.
+    const pulled = [
+      { name: "embeddinggemma:300m", digest: "3a2d262bdb75", modified_at: "2026-10-01T00:00:00Z" },
+      { name: "bge-m3:latest", digest: "790764642607", modified_at: "2026-09-01T00:00:00Z" },
+      { name: "embeddinggemma:300m", digest: "5265a4c1d1e7", modified_at: "2026-10-01T00:00:00Z" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ models: pulled }), { status: 200 })));
+    expect(await listModels({ ...EP, provider: "ollama" }, "embed")).toEqual(["embeddinggemma:300m", "bge-m3:latest"]);
+  });
+
   it("knows the embedding families whose names do not say embed", async () => {
     const pulled = ["bge-m3:latest", "BAAI/bge-large-en-v1.5", "intfloat/multilingual-e5-large", "thenlper/gte-large", "all-minilm:l6-v2", "qwen3:8b", "llama3.1:8b", "gpt-4.5-preview"];
     mockModelList(pulled);

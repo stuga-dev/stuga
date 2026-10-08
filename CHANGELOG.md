@@ -12,6 +12,9 @@ Releases before 0.1.7 were previews. Their notes are on their
 ### Fixed
 
 - Remote access orders no certificate once the CA's new terms wait for an administrator, or the service has refused the node, even when that is recorded while a renewal is starting.
+- The model field in **Settings → This node → AI providers → Edit** takes the row's width, so a long id such as `embeddinggemma-2:270m` shows whole.
+- A model Ollama 0.40 lists twice, such as `embeddinggemma:300m`, shows once among the models to choose from.
+- **Test** for **Semantic search** says how long the service took to answer, as it does for **Built-in AI** and **Reranking**.
 
 ## [0.1.12] - 2026-10-08
 

@@ -111,6 +111,7 @@ export interface AiProbe {
     ok: boolean;
     model?: string;
     dims?: number;
+    latency_ms?: number;
     message?: string;
     skipped?: boolean;
     /** Each level's distance for short queries, when this configuration was measured before. */

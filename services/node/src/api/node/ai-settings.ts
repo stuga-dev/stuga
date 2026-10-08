@@ -256,6 +256,7 @@ interface ProbeResult {
     ok: boolean;
     model?: string;
     dims?: number;
+    latency_ms?: number;
     message?: string;
     skipped?: boolean;
     /** The short-query distance of each level, when this exact configuration has been measured. */
@@ -345,10 +346,11 @@ async function probeEndpoints(
   if (!probeEmbed) {
     if (candidate.embed.enabled) out.embed = { ok: true, skipped: true, model: candidate.embed.model };
   } else {
+    const started = Date.now();
     try {
       const res = await embed(candidate, ["stuga embedding width probe"], "document");
       // The model's own width; a narrower one is padded to the column.
-      out.embed = { ok: true, model: candidate.embed.model, dims: res.modelDims };
+      out.embed = { ok: true, model: candidate.embed.model, dims: res.modelDims, latency_ms: Date.now() - started };
     } catch (e) {
       // No `dims`: the width was not observed, and @stuga/ai's message names both numbers.
       out.embed = { ok: false, model: candidate.embed.model, message: e instanceof Error ? e.message : String(e) };
