@@ -11,9 +11,11 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [0.1.12] - 2026-10-08
 
-**Reject with note** on an AI edit, so the agent revises from your note; search by meaning that fits
-each embedding model, EmbeddingGemma 2 among them; one command to go back to an earlier version on a
-Mac; and a security fix that keeps agents' pending changes out of database queries.
+**Reject with note** on an AI edit, so the agent revises from your note; undo for every review
+decision; search that fits each embedding model, EmbeddingGemma 2 among them, and shows why each hit
+matched; one command to go back to an earlier version on a Mac; and two security fixes: agents'
+pending changes stay out of database queries, and a shared subfolder no longer reveals the folders
+above it.
 
 ### Upgrade notes
 
@@ -22,6 +24,7 @@ Mac; and a security fix that keeps agents' pending changes out of database queri
 ### Security
 
 - A database query no longer reads the review ledger. Before, anyone who could read a database could select agents' pending changes from it.
+- Someone given a subfolder no longer sees the names, owners and dates of the folders above it that they cannot read; the path shows each as **…**.
 
 ### Added
 
@@ -32,12 +35,15 @@ Mac; and a security fix that keeps agents' pending changes out of database queri
 - The note leads the agent's reads and proposals there until it answers it, you mark the run reviewed, or 14 days pass.
 - The co-author offers **Revise now**, changing only the passages you turned down.
 - The `events` tool's `mine: true` lists the decisions on an agent's own proposals.
+- **Undo** after every accept or reject, and the editor's undo walks back decisions and typing in the order they happened.
+- Search finds a word you are still typing ("whe" finds "where"), and each hit shows the passage that matched and opens at it. Before you type, the search box lists recent documents.
 - **Search strictness** (Strict, Balanced, Loose or Off) sets how far a match by meaning may sit in the search box. The node measures its embedding model when it is saved and sets the distance from how far that model places unrelated text, where one fixed distance suited a single model ([Search strictness](docs/configuration.md#search-strictness)).
 - Semantic search takes an embedding model that returns fewer dimensions than the node stores, such as EmbeddingGemma 2 (768 on the default 1024), with no database change ([What is embedded](docs/rag-cross-doc-qa.md#what-is-embedded)).
 
 ### Changed
 
 - Stuga on a Mac needs macOS 15 or later, the versions Apple still updates.
+- A change shown in several places carries its buttons once; parts set apart link to them with **Go to decision**. A change the document can't show says why, in the banner and the change list.
 - Stuga on a Mac takes about 330 MB instead of 480 MB.
 - An earlier release started on a later one's data changes nothing and says which backup to restore.
 - `./stuga restore` going back pins the whole stack to the backup's release.
@@ -50,6 +56,7 @@ Mac; and a security fix that keeps agents' pending changes out of database queri
 ### Fixed
 
 - Installing on a Mac takes about 20 seconds less.
+- A deletion between two edits no longer turns an AI's rewrite of a page into one change to accept or reject whole.
 - `./stuga upgrade` refuses a `compose.yml` older than the data.
 - `./stuga restore` works without a node container.
 - After a failed upgrade, `./stuga` offers the backup the new version took.
