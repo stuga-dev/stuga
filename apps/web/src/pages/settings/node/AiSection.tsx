@@ -437,22 +437,25 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                     setDraft({ ...draft, provider: preset.provider, baseUrl: preset.baseUrl });
                   }}
                 />
-                <VStack gap={1}>
-                  <TextInput
-                    label="API key"
-                    type="password"
-                    value={draft.key}
-                    placeholder={ep.api_key_set ? "Leave blank to keep the current key" : "Not set"}
-                    onChange={(v: string) => setDraft({ ...draft, key: v })}
-                  />
-                  <StoredSecret
-                    onFile={ep.api_key_set ? `Key set · ${ep.api_key_fingerprint ?? "on file"}` : null}
-                    removed={draftKeyCleared}
-                    onRemove={() => setDraftKeyCleared(true)}
-                    removeLabel="Remove key"
-                    removedNote="The key will be removed when you save."
-                  />
-                </VStack>
+                {/* A local Ollama takes no key, as Set up asks none; a key already on file can still be removed. */}
+                {(draft.provider !== "ollama" || ep.api_key_set) && (
+                  <VStack gap={1}>
+                    <TextInput
+                      label="API key"
+                      type="password"
+                      value={draft.key}
+                      placeholder={ep.api_key_set ? "Leave blank to keep the current key" : "Not set"}
+                      onChange={(v: string) => setDraft({ ...draft, key: v })}
+                    />
+                    <StoredSecret
+                      onFile={ep.api_key_set ? `Key set · ${ep.api_key_fingerprint ?? "on file"}` : null}
+                      removed={draftKeyCleared}
+                      onRemove={() => setDraftKeyCleared(true)}
+                      removeLabel="Remove key"
+                      removedNote="The key will be removed when you save."
+                    />
+                  </VStack>
+                )}
                 <HStack gap={2} vAlign="end">
                   {found[ep.id]?.length ? (
                     <MultiSelector
@@ -594,22 +597,24 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                   setForm({ ...form, embedProvider: preset.provider, embedBaseUrl: preset.baseUrl });
                 }}
               />
-              <VStack gap={1}>
-                <TextInput
-                  label="API key"
-                  type="password"
-                  value={form.embedKey}
-                  placeholder={settings.embed.api_key_set ? "Leave blank to keep the current key" : "Not set"}
-                  onChange={(v: string) => setForm({ ...form, embedKey: v })}
-                />
-                <StoredSecret
-                  onFile={settings.embed.api_key_set ? `Key set · ${settings.embed.api_key_fingerprint ?? "on file"}` : null}
-                  removed={embedKeyCleared}
-                  onRemove={() => setEmbedKeyCleared(true)}
-                  removeLabel="Remove key"
-                  removedNote="The key will be removed when you save."
-                />
-              </VStack>
+              {(form.embedProvider !== "ollama" || settings.embed.api_key_set) && (
+                <VStack gap={1}>
+                  <TextInput
+                    label="API key"
+                    type="password"
+                    value={form.embedKey}
+                    placeholder={settings.embed.api_key_set ? "Leave blank to keep the current key" : "Not set"}
+                    onChange={(v: string) => setForm({ ...form, embedKey: v })}
+                  />
+                  <StoredSecret
+                    onFile={settings.embed.api_key_set ? `Key set · ${settings.embed.api_key_fingerprint ?? "on file"}` : null}
+                    removed={embedKeyCleared}
+                    onRemove={() => setEmbedKeyCleared(true)}
+                    removeLabel="Remove key"
+                    removedNote="The key will be removed when you save."
+                  />
+                </VStack>
+              )}
               <HStack gap={2} vAlign="end">
                 {foundEmbed.length > 0 ? (
                   <Selector

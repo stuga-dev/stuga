@@ -495,6 +495,28 @@ describe("NodeSettingsPage", () => {
     expect(host.textContent).toContain("Semantic search is on with text-embedding-3-small.");
   });
 
+  it("lists Ollama's models again when the page is back in front, after it listed none", async () => {
+    await renderWith(FRESH);
+    nodeApi.discoverModels.mockResolvedValue({ models: [] });
+    await clickNth("Set up", 1);
+    await choose("Service", "Ollama (local)");
+    await settle();
+    expect(host.textContent).toContain("No embedding model here yet. Pull one, such as embeddinggemma:300m.");
+
+    // Pulled in a terminal meanwhile.
+    nodeApi.discoverModels.mockResolvedValue({ models: ["embeddinggemma:300m"] });
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    await settle();
+    await choose("Model", "embeddinggemma:300m");
+    expect(isDisabled(visibleButtons("Connect")[0])).toBe(false);
+  });
+
+  it("asks no key in Edit for semantic search on a local Ollama", async () => {
+    await renderWith(WITH_SEARCH);
+    await openSearchEditor();
+    expect(inputs("API key")).toHaveLength(0);
+  });
+
   it("removes semantic search only after asking, forgetting its model and key", async () => {
     await renderWith(WITH_SEARCH);
     savedAs(AI);

@@ -26,6 +26,8 @@ Releases before 0.1.7 were previews. Their notes are on their
 ### Fixed
 
 - A passage Ollama refuses as longer than the embedding model's context (bge-m3 on long Korean text) is cut to fit and embedded, as Ollama cuts other long text, instead of staying out of search by meaning.
+- Setting up a local Ollama that has no model yet lists its models again when you come back to the page, so one pulled in the meantime shows up.
+- **Edit** asks for no API key for a local Ollama, as **Set up** does.
 
 ## [0.1.12] - 2026-10-06
 

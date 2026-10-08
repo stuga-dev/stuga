@@ -84,9 +84,11 @@ export function ConnectForm({
   const needsKey = !isLocal && preset.value !== "custom" && !inheritsKey;
   const signature = `${service}|${url}|${key.trim()}`;
   const models = listed?.for === signature ? listed.models : null;
+  const listedNone = models?.length === 0;
 
-  async function load() {
-    if (!url || (needsKey && !key.trim()) || models || loading) return;
+  /** Lists the service's models, once per service, address and key, or `again` after it listed none. */
+  async function load(again = false) {
+    if (!url || (needsKey && !key.trim()) || (models && !(again && listedNone)) || loading) return;
     setLoading(true);
     setError(null);
     try {
@@ -109,6 +111,16 @@ export function ConnectForm({
     if (!needsKey) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the service changes, reading it from this render
   }, [service]);
+
+  // A service that listed no models lists again when the page is back in front, so a model pulled in
+  // the meantime shows up without starting over.
+  useEffect(() => {
+    if (!listedNone || model.trim()) return;
+    const again = () => void load(true);
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load reads this render's service, address and key
+  }, [listedNone, signature, model]);
 
   function pick(value: string) {
     setService(value);
@@ -148,7 +160,7 @@ export function ConnectForm({
   }
 
   // Enter lists the models first, then connects.
-  const onEnter = () => void (models && model.trim() ? connect() : load());
+  const onEnter = () => void (models && model.trim() ? connect() : load(true));
 
   return (
     <VStack gap={3}>

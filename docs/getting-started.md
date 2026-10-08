@@ -91,7 +91,8 @@ the other two are in **Settings → This node → AI providers**, each set up th
 1. Choose **Set up**, then a **Service**, and enter its **API key** unless it is a local server. For a
    local Ollama, choose **Ollama (local)**. The address it fills in is the right one for your platform.
 2. Choose a **Model**. The list comes from the service, newest first, which also shows that the key
-   works. For **Semantic search**, choose one that returns the node's vector width, 1024 by default.
+   works. For **Semantic search**, choose one that returns at most the node's vector width, 1024 by
+   default.
 3. Click **Connect**.
 
 That turns it on; there is no switch to turn on afterwards. Your own agent, such as Claude
