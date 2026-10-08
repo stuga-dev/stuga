@@ -9,6 +9,10 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Fixed
+
+- Remote access orders no certificate once the CA's new terms wait for an administrator, or the service has refused the node, even when that is recorded while a renewal is starting.
+
 ## [0.1.12] - 2026-10-08
 
 **Reject with note** on an AI edit, so the agent revises from your note; undo for every review

@@ -162,6 +162,21 @@ vi.mock("@stuga/db", async (importOriginal) => {
   };
 });
 
+/** Runs while the service reads its certificate from disk, once. */
+const certHook = vi.hoisted(() => ({ onRead: null as null | (() => Promise<void>) }));
+vi.mock("./certificates.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./certificates.js")>();
+  return {
+    ...real,
+    readCertificate: async (dir: string) => {
+      const hook = certHook.onRead;
+      certHook.onRead = null;
+      await hook?.();
+      return real.readCertificate(dir);
+    },
+  };
+});
+
 const { createRemoteAccess, RemoteAccessRefusal } = await import("./service.js");
 const { createServingGate } = await import("../http/serving-gate.js");
 const { startFakeRemoteService } = await import("./testing/fake-service.js");
@@ -1369,6 +1384,29 @@ describe("the certificate loop", () => {
     expect(keys(told)).toEqual([`REMOTE_CERT_RENEWAL_FAILED:${serial}`]);
     expect(row().cert_alerted_serial).toBe(serial);
     expect(ca.orders).toHaveLength(orders);
+  });
+
+  it("orders nothing when renewing is blocked while the certificate is being read", async () => {
+    const ca = fakeCa();
+    const s = await on(ca);
+    await until("the renewal window", () => row().cert_ari_window_start !== null);
+    const orders = ca.orders.length;
+    // Due and blocked at once, while a tick that found neither reads the disk, and the service's
+    // own copy of the row read again meanwhile, as its other loop does.
+    let blocked = false;
+    certHook.onRead = async () => {
+      memory.set({
+        cert_failures: 0,
+        cert_renew_at: new Date(Date.now() - 1),
+        last_error: { code: "acme_action_required", message: "Accept the CA's new terms.", at: new Date().toISOString() },
+      });
+      await s.status();
+      blocked = true;
+    };
+    await until("the tick that reads the certificate", () => blocked);
+    await sleep(150);
+    expect(ca.orders).toHaveLength(orders);
+    expect(row().last_error?.code).toBe("acme_action_required");
   });
 
   it("says the certificate runs short once renewing it has failed", async () => {

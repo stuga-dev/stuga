@@ -765,12 +765,17 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     if (after.enabled) await tellAdmins(after);
   }
 
+  /** Renewing waits for an administrator, or the service refused this node: nothing to order. */
+  const renewBlocked = (r: NodeRemoteAccessRow): boolean => {
+    const code = r.last_error?.code;
+    return code === "acme_action_required" || code === "denied" || code === "retired";
+  };
+
   async function renew(r: NodeRemoteAccessRow): Promise<void> {
     if (!r.hostname || !r.api_url || !r.remote_id || upgradeRequired) return;
     // Nothing to ask for before the first check-in names a CA.
     if (!r.acme_directory) return;
-    const code = r.last_error?.code;
-    if (code === "acme_action_required" || code === "denied" || code === "retired") return;
+    if (renewBlocked(r)) return;
     const disk = await readCertificate(config.dataDir);
     if (disk.kind === "ok" && certUsable(disk.cert, r.hostname, now())) {
       const found = disk.cert;
@@ -795,16 +800,19 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       }
       await pollRenewalInfo(row!, found);
     }
-    const evidence = issuanceEvidence(disk, row!, now());
+    // The service loop may have recorded a refusal while the disk was read: order on the row as it is now.
+    const cur = await refreshRow();
+    if (!cur.enabled || !cur.hostname || renewBlocked(cur)) return;
+    const evidence = issuanceEvidence(disk, cur, now());
     if (!evidence) return;
-    if (r.cert_retry_at && now() < r.cert_retry_at.getTime()) return;
+    if (cur.cert_retry_at && now() < cur.cert_retry_at.getTime()) return;
     try {
-      await issue(r, evidence === "due" || evidence === "reissue_requested" ? replacing(row!, disk) : null);
+      await issue(cur, evidence === "due" || evidence === "reissue_requested" ? replacing(cur, disk) : null);
     } catch (e) {
       if (e instanceof Stopped) return;
       await refreshRow();
       if (e instanceof ServiceError) {
-        const retryAt = await serviceRefused(e, "cert", r.binding_thumbprint);
+        const retryAt = await serviceRefused(e, "cert", cur.binding_thumbprint);
         // Moved, or turned off meanwhile: nothing to try again.
         if (row!.enabled) await recordRemoteCertFailure(sql, { failures: row!.cert_failures + 1, retryAt });
       } else {
