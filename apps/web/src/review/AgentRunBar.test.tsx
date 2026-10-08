@@ -167,8 +167,9 @@ describe("AgentRunBar", () => {
     const title = container.querySelector(".agent-run-title")!;
     expect(title.querySelector(".agent-run-title__main")!.textContent).toBe("Claude (Connector) proposes 3 edits");
     expect(title.querySelector(".agent-run-title__hint")!.textContent).toBe("nothing changes until you accept");
+    // Reject all's menu stays mounted, closed.
     expect(container.textContent).toBe(
-      "Claude (Connector) proposes 3 editsnothing changes until you acceptReview eachAccept allReject allRequest changes",
+      "Claude (Connector) proposes 3 editsnothing changes until you acceptReview eachAccept allReject allReject all with note…",
     );
   });
 
@@ -323,21 +324,35 @@ describe("AgentRunBar", () => {
     expect(container.textContent).toContain("proposes 2 edits");
   });
 
-  describe("requesting changes", () => {
+  describe("rejecting with a note", () => {
     const dialog = () => document.body.querySelector<HTMLElement>('[role="dialog"]');
     const dialogButton = (text: string) => [...(dialog()?.querySelectorAll("button") ?? [])].find((b) => b.textContent === text);
 
-    async function requestChanges(trigger: string, submit: string, note: string): Promise<void> {
-      await click(byLabel(trigger));
+    /** Reject all's menu, beside it in one split button. */
+    async function fromRejectMenu(item: string): Promise<void> {
+      await click(byLabel("More ways to reject"));
+      const entry = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((m) => m.textContent?.trim() === item);
+      if (!entry) throw new Error(`no menu item "${item}"`);
+      await click(entry);
+    }
+
+    async function noteAll(trigger: string, submit: string, note: string): Promise<void> {
+      await fromRejectMenu(trigger);
       await typeInto(dialog()?.querySelector("textarea"), note);
       await click(dialogButton(submit)!);
+    }
+
+    function ghostNote(hunkId: string, note: string): Promise<void> {
+      return act(async () => {
+        document.dispatchEvent(new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId, decision: "request_changes", note } }));
+      });
     }
 
     it("sends the note with the rejection, and closes", async () => {
       responder = (url, method) =>
         method === "POST" ? { run: run({ updated_at: T0 + 1, status: "rejected", hunks: [] }), applied: 0, conflicts: 0 } : { runs: [run()] };
       await mount();
-      await requestChanges("Request changes", "Reject with note", "Keep it plain.");
+      await noteAll("Reject all with note…", "Reject all with note", "Keep it plain.");
       const post = calls.find((c) => c.method === "POST")!;
       expect(post.url).toBe("/api/docs/d1/runs/run_a/decision");
       expect(post.body).toEqual({ decision: "reject", note: "Keep it plain." });
@@ -345,45 +360,31 @@ describe("AgentRunBar", () => {
       expect(coauthor.revised).toEqual([]);
     });
 
-    it("floats under its button like Edit with AI: no modal, the change quoted, Enter sends, Escape closes", async () => {
+    it("floats like Edit with AI: no modal, the change quoted, Enter sends, Escape closes", async () => {
       responder = (url, method) =>
         method === "POST"
           ? { run: run({ updated_at: T0 + 1, hunks: [hunk("h1", { status: "rejected" }), hunk("h2"), hunk("h3")] }), applied: 0, conflicts: 0 }
           : { runs: [run()] };
       await mount();
-      await act(async () => {
-        document.dispatchEvent(
-          new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId: "h1", decision: "request_changes", anchor: { top: 100, bottom: 120, left: 40, right: 140 } } }),
-        );
-      });
+      await click(byLabel("Review each change"));
+      const open = () => click(byLabel("Reject with note: change 1 of 3"));
+      await open();
       expect(document.body.querySelector("dialog")).toBeNull();
       const composer = document.body.querySelector<HTMLElement>(".ai-edit-composer")!;
-      // Beside the button, so the next change's buttons under it stay in reach.
-      expect([composer.style.top, composer.style.left]).toEqual(["96px", "148px"]);
-      expect(composer.querySelector("textarea")!.placeholder).toBe("");
       expect(composer.textContent).toContain("as written → rewritten for h1");
-      const area = composer.querySelector("textarea")!;
       await act(async () => {
-        area.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        composer.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       });
       expect(dialog()).toBeNull();
       expect(calls.find((c) => c.method === "POST")).toBeUndefined();
 
-      await act(async () => {
-        document.dispatchEvent(
-          new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId: "h1", decision: "request_changes", anchor: { top: 100, bottom: 120, left: 40, right: 140 } } }),
-        );
-      });
+      await open();
       // A press elsewhere closes it while the note is empty, and keeps it once something is written.
       await act(async () => {
         document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
       });
       expect(dialog()).toBeNull();
-      await act(async () => {
-        document.dispatchEvent(
-          new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId: "h1", decision: "request_changes", anchor: { top: 100, bottom: 120, left: 40, right: 140 } } }),
-        );
-      });
+      await open();
       await typeInto(dialog()?.querySelector("textarea"), "Plainer.");
       await act(async () => {
         document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
@@ -396,32 +397,45 @@ describe("AgentRunBar", () => {
       expect(dialog()).toBeNull();
     });
 
-    it("rejects one change from the list with its own note", async () => {
+    it("rejects one change from the list with its own note, under the button's own words", async () => {
       responder = (url, method) =>
         method === "POST"
           ? { run: run({ updated_at: T0 + 1, hunks: [hunk("h1", { status: "rejected" }), hunk("h2"), hunk("h3")] }), applied: 0, conflicts: 0 }
           : { runs: [run()] };
       await mount();
       await click(byLabel("Review each change"));
-      await requestChanges("Request changes to change 1 of 3", "Reject with note", "Not this one.");
+      await click(byLabel("Reject with note: change 1 of 3"));
+      await typeInto(dialog()?.querySelector("textarea"), "Not this one.");
+      await click(dialogButton("Reject with note")!);
       expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "reject", hunk_ids: ["h1"], note: "Not this one." });
     });
 
-    it("asks for the note when a ghost's Request changes is clicked, and rejects that one hunk", async () => {
+    it("sends a ghost's note at once, rejecting that one hunk", async () => {
       responder = (url, method) =>
         method === "POST"
           ? { run: run({ updated_at: T0 + 1, hunks: [hunk("h1"), hunk("h2", { status: "rejected" }), hunk("h3")] }), applied: 0, conflicts: 0 }
           : { runs: [run()] };
       await mount();
-      await act(async () => {
-        document.dispatchEvent(
-          new CustomEvent(RUN_HUNK_EVENT, { detail: { runId: "run_a", hunkId: "h2", decision: "request_changes", anchor: { top: 100, bottom: 120, left: 40, right: 140 } } }),
-        );
-      });
-      expect(calls.find((c) => c.method === "POST")).toBeUndefined();
-      await typeInto(dialog()?.querySelector("textarea"), "Plainer.");
-      await click(dialogButton("Reject with note")!);
+      await ghostNote("h2", "Plainer.");
+      expect(dialog()).toBeNull();
       expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "reject", hunk_ids: ["h2"], note: "Plainer." });
+    });
+
+    it("has the co-author revise from a ghost's note on its own run", async () => {
+      coauthor.present = true;
+      const feedback = { id: "fb_2", note: "Plainer.", decided_by: "u", decided_at: T0 + 1 };
+      responder = (url, method) =>
+        method === "POST"
+          ? {
+              run: run({ source: "panel", updated_at: T0 + 1, hunks: [hunk("h1"), hunk("h2", { status: "rejected", feedback }), hunk("h3")] }),
+              applied: 0,
+              conflicts: 0,
+            }
+          : { runs: [run({ source: "panel", agent: "AI co-author" })] };
+      await mount();
+      await ghostNote("h2", "Plainer.");
+      expect(coauthor.revised).toEqual(["Plainer."]);
+      expect(coauthor.scopes).toEqual([{ runId: "run_a", feedbackId: "fb_2" }]);
     });
 
     it("has the co-author revise from the note when the run is its own, scoped to what was rejected", async () => {
@@ -436,11 +450,11 @@ describe("AgentRunBar", () => {
             }
           : { runs: [run({ source: "panel", agent: "AI co-author" })] };
       await mount();
-      await click(byLabel("Request changes"));
+      await fromRejectMenu("Revise all…");
       // The submit label says what happens, so no line under the note repeats it.
       expect(dialog()!.textContent).not.toContain("The agent gets your note");
       await typeInto(dialog()?.querySelector("textarea"), "Shorter, please.");
-      await click(dialogButton("Reject and revise")!);
+      await click(dialogButton("Revise all")!);
       expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "reject", note: "Shorter, please." });
       expect(coauthor.revised).toEqual(["Shorter, please."]);
       expect(coauthor.scopes).toEqual([{ runId: "run_a", feedbackId: "fb_1" }]);
@@ -454,10 +468,10 @@ describe("AgentRunBar", () => {
           ? { run: run({ updated_at: T0 + 1, status: "rejected", hunks: [hunk("h1", { status: "rejected", feedback })] }), applied: 0, conflicts: 0 }
           : { runs: [run()] };
       await mount();
-      await click(byLabel("Request changes"));
+      await fromRejectMenu("Reject all with note…");
       expect(dialog()!.textContent).toContain("The agent gets your note the next time it works here.");
       await typeInto(dialog()?.querySelector("textarea"), "No.");
-      await click(dialogButton("Reject with note")!);
+      await click(dialogButton("Reject all with note")!);
       expect(coauthor.revised).toEqual([]);
     });
 
@@ -470,10 +484,10 @@ describe("AgentRunBar", () => {
           ? { run: run({ source: "panel", updated_at: T0 + 1, status: "rejected", hunks: [hunk("h1", { status: "rejected", feedback })] }), applied: 0, conflicts: 0 }
           : { runs: [run({ source: "panel", agent: "AI co-author" })] };
       await mount();
-      await click(byLabel("Request changes"));
+      await fromRejectMenu("Reject all with note…");
       expect(dialog()!.textContent).toContain("The co-author gets your note on its next turn.");
       await typeInto(dialog()?.querySelector("textarea"), "No.");
-      await click(dialogButton("Reject with note")!);
+      await click(dialogButton("Reject all with note")!);
       expect(coauthor.revised).toEqual([]);
     });
 
@@ -484,11 +498,11 @@ describe("AgentRunBar", () => {
           ? { run: run({ source: "panel", updated_at: T0 + 1, status: "rejected", hunks: [] }), applied: 0, conflicts: 0 }
           : { runs: [run({ source: "panel", agent: "AI co-author" })] };
       await mount();
-      await requestChanges("Request changes", "Reject and revise", "Shorter, please.");
+      await noteAll("Revise all…", "Revise all", "Shorter, please.");
       expect(coauthor.revised).toEqual([]);
     });
 
-    it("still offers Reject and revise while the co-author is mid-turn, handing the note on to wait for it", async () => {
+    it("still offers Revise while the co-author is mid-turn, handing the note on to wait for it", async () => {
       coauthor.present = true;
       coauthor.streaming = true;
       const feedback = { id: "fb_1", note: "Again.", decided_by: "u", decided_at: T0 + 1 };
@@ -497,7 +511,10 @@ describe("AgentRunBar", () => {
           ? { run: run({ source: "panel", updated_at: T0 + 1, status: "rejected", hunks: [hunk("h1", { status: "rejected", feedback })] }), applied: 0, conflicts: 0 }
           : { runs: [run({ source: "panel", agent: "AI co-author" })] };
       await mount();
-      await requestChanges("Request changes", "Reject and revise", "Again.");
+      await fromRejectMenu("Revise all…");
+      expect(dialog()!.textContent).toContain("Revises when the current turn ends.");
+      await typeInto(dialog()?.querySelector("textarea"), "Again.");
+      await click(dialogButton("Revise all")!);
       expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "reject", note: "Again." });
       // The co-author queues it behind the turn in flight.
       expect(coauthor.revised).toEqual(["Again."]);

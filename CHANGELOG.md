@@ -16,6 +16,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ### Changed
 
+- An AI edit's note button says what the note does, **Revise…** for the co-author's own edits and **Reject with note…** for an agent's, and the button that sends it says the same. Under a change in the document the note is written in place of its buttons; for a whole run it sits in the menu beside **Reject all** ([Reject with a note](docs/agents.md#reject-with-a-note)).
 - With **Chinese** on, keyword search reads traditional characters as simplified, in documents and searches alike, so either script finds the other ([Search languages](docs/configuration.md#search-languages)).
 - Ask, agents' `retrieve` and the assistants' document search take the nearest passages at any distance, and reranking decides what is relevant.
 - `/api/node/ai-settings` takes and returns `embed.search_strictness`, and returns `embed.cutoff`, `embed.calibration` and `strictness_default`, in place of `embed.search_max_distance`, `embed.retrieval_max_distance` and `max_distance_defaults`; `POST /api/node/ai-settings/calibrate` measures again.
@@ -44,7 +45,7 @@ queries.
 
 - One command goes back to an earlier version on a Mac: `sudo "/Library/Application Support/Stuga/current/bin/stuga" restore <backup>` ([macOS](docs/install/macos.md#go-back-to-an-earlier-version)). **Settings → This node → Backups** shows it for each backup.
 - `stuga-node list` marks backups taken before an upgrade.
-- **Request changes** rejects an AI edit, or reverts one that landed, with a note for the agent that made it ([Agents](docs/agents.md#request-changes)).
+- **Request changes** rejects an AI edit, or reverts one that landed, with a note for the agent that made it ([Agents](docs/agents.md#reject-with-a-note)).
 - The note leads the agent's reads and proposals there until it answers it, you mark the run reviewed, or 14 days pass.
 - The co-author offers **Revise now**, changing only the passages you turned down.
 - The `events` tool's `mine: true` lists the decisions on an agent's own proposals.

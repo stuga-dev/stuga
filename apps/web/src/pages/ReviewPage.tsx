@@ -298,20 +298,25 @@ export function ReviewPage() {
                       { label: "Accept all suggestions", onClick: () => void act(row, "accept"), isDisabled: isBusy },
                       { label: "Reject all suggestions", onClick: () => void act(row, "reject"), isDisabled: isBusy },
                       {
-                        label: "Request changes…",
-                        onClick: () => askNote({ title: "Request changes", onSubmit: (note) => void act(row, "reject", note) }),
+                        label: "Reject all with note…",
+                        onClick: () =>
+                          askNote({
+                            title: "Reject all with note",
+                            submitLabel: "Reject all with note",
+                            onSubmit: (note) => void act(row, "reject", note),
+                          }),
                         isDisabled: isBusy,
                       },
                     ] : []),
                     ...(actions.revert ? [
                       { label: "Revert these changes", variant: "destructive" as const, onClick: () => openRevert(row), isDisabled: isBusy },
                       {
-                        label: "Revert and request changes…",
+                        label: "Revert with note…",
                         variant: "destructive" as const,
                         onClick: () =>
                           askNote({
-                            title: "Revert and request changes",
-                            submitLabel: "Revert",
+                            title: "Revert with note",
+                            submitLabel: "Revert with note",
                             quote: `The changes in “${title}” are taken back, and the agent is told why.`,
                             onSubmit: (note) => void act(row, "revert", note),
                           }),

@@ -130,7 +130,7 @@ POST /api/docs/:id/propose
 | `cited_edits` | `edits: [{ old_string, new_string }]`, `citations?: [{ n, doc_id, title, heading_path?, content? }]` | Up to 200 exact edits in one proposal, each `old_string` matching once, and up to 50 citations. A `[^n]` in a `new_string` becomes a footnote to citation `n` when the edit lands. For grounded edits drawn from `/api/retrieve`. |
 
 Every action takes `revises?`, the ids of the feedback this proposal answers
-([Request changes](agents.md#request-changes)); the reply's `revised` lists the ones it did, and
+([Reject with a note](agents.md#reject-with-a-note)); the reply's `revised` lists the ones it did, and
 `feedback` what is still open.
 
 Images in the new text (`![alt](https://…)` or a `data:` URI) are downloaded, stored in the

@@ -14,10 +14,11 @@ import { UNSHOWN_REASON, summarizeHunk } from "./hunk-review";
 import { RunChangeList } from "./RunChangeList";
 import { RunBanner, RunNotices } from "./RunBanner";
 import { itemKey } from "./run-ledger";
+import { noteLabels, noteModeOf } from "./note-mode";
 import { RUN_HUNK_EVENT, type HunkKey, type RunHunkDecisionDetail } from "../editor/run-preview/plan";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
-/** What a Request changes turns down, as its composer quotes it: one change's summary, or how many. */
+/** What a note turns down, as its composer quotes it: one change's summary, or how many. */
 function quoteOf(run: AgentRunSummary, hunkIds: string[] | undefined): string {
   const pending = pendingHunks(run);
   if (hunkIds?.length === 1) {
@@ -60,34 +61,32 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
   // Whoever proposed revises: an agent's note waits for that agent, and the co-author's own run
   // becomes a turn scoped to what this decision rejected, at once or when the turn in flight ends.
   // With AI chat off the co-author can't take one, so its note waits for its next turn instead.
-  const revises = run.source === "panel" && coauthor?.available === true;
-  const requestChanges = (hunkIds: string[] | undefined, anchor: NoteAnchor) =>
+  const mode = noteModeOf(run.source, coauthor?.available === true);
+  const sendNote = (hunkIds: string[] | undefined, note: string) =>
+    void decide(run.id, "reject", hunkIds, note).then((decided) => {
+      const live = coauthorRef.current;
+      const feedbackId = decided && run.source === "panel" ? rejectedFeedbackId(decided, hunkIds) : null;
+      if (feedbackId && live?.available) live.revise(note, { runId: run.id, feedbackId });
+    });
+  const requestChanges = (hunkIds: string[] | undefined, anchor: NoteAnchor) => {
+    const labels = noteLabels(mode, hunkIds === undefined);
     ask({
-      title: "Request changes",
-      submitLabel: revises ? "Reject and revise" : "Reject with note",
-      ...(revises
-        ? { hint: coauthor.streaming ? "Revises when the current turn ends." : null }
-        : run.source === "panel"
-          ? { hint: "The co-author gets your note on its next turn." }
-          : {}),
+      title: labels.submit,
+      submitLabel: labels.submit,
+      hint: mode === "revise" && coauthor?.streaming ? "Revises when the current turn ends." : labels.hint,
       anchor,
       quote: quoteOf(run, hunkIds),
-      onSubmit: (note) =>
-        void decide(run.id, "reject", hunkIds, note).then((decided) => {
-          const live = coauthorRef.current;
-          const feedbackId = decided && run.source === "panel" ? rejectedFeedbackId(decided, hunkIds) : null;
-          if (feedbackId && live?.available) live.revise(note, { runId: run.id, feedbackId });
-        }),
+      onSubmit: (note) => sendNote(hunkIds, note),
     });
-  // A ghost's Request changes arrives as the same document event as its Accept/Reject, for this run.
-  const requestRef = useRef(requestChanges);
-  requestRef.current = requestChanges;
+  };
+  // A ghost's note arrives as the same document event as its Accept/Reject, for this run.
+  const sendRef = useRef(sendNote);
+  sendRef.current = sendNote;
   useEffect(() => {
     const onHunk = (e: Event) => {
       const detail = (e as CustomEvent<RunHunkDecisionDetail>).detail;
-      if (detail?.decision === "request_changes" && detail.runId === run.id && detail.hunkId) {
-        const mid = { top: window.innerHeight / 3, bottom: window.innerHeight / 3, left: window.innerWidth / 2, right: window.innerWidth / 2 };
-        requestRef.current([detail.hunkId], detail.anchor ?? mid);
+      if (detail?.decision === "request_changes" && detail.runId === run.id && detail.hunkId && detail.note) {
+        sendRef.current([detail.hunkId], detail.note);
       }
     };
     document.addEventListener(RUN_HUNK_EVENT, onHunk);
@@ -147,8 +146,15 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
         }
         busy={busy}
         onDecide={(decision) => void decide(run.id, decision)}
-        onRequestChanges={(anchor) => requestChanges(undefined, anchor)}
-        list={hasList ? <RunChangeList run={run} onRequestChanges={(hunkId, anchor) => requestChanges([hunkId], anchor)} /> : undefined}
+        noteAction={{ label: noteLabels(mode, true).trigger, onOpen: (anchor) => requestChanges(undefined, anchor) }}
+        list={
+          hasList ? (
+            <RunChangeList
+              run={run}
+              noteAction={{ label: noteLabels(mode).trigger, onOpen: (hunkId, anchor) => requestChanges([hunkId], anchor) }}
+            />
+          ) : undefined
+        }
         controls={
           anchored.length > 0 && (
             <div className="agent-run-nav" role="group" aria-label="Move between this run's changes">

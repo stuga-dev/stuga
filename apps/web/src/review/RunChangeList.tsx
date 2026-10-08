@@ -11,7 +11,14 @@ import { itemKey } from "./run-ledger";
 import { Button } from "@astryxdesign/core/Button";
 import { anchorOf, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
 
-export function RunChangeList({ run, onRequestChanges }: { run: AgentRunSummary; onRequestChanges?: (hunkId: string, anchor: NoteAnchor) => void }) {
+export function RunChangeList({
+  run,
+  noteAction,
+}: {
+  run: AgentRunSummary;
+  /** Rejecting one change with a note: the button's words, and what opens the composer. */
+  noteAction?: { label: string; onOpen: (hunkId: string, anchor: NoteAnchor) => void };
+}) {
   const { preview, inFlight, loadingHunks, decide, loadFullHunks } = useAgentRuns();
 
   // A truncated run arrives without hunks; they are fetched when the list opens.
@@ -95,16 +102,16 @@ export function RunChangeList({ run, onRequestChanges }: { run: AgentRunSummary;
               >
                 Reject
               </Button>
-              {onRequestChanges && (
+              {noteAction && (
                 <Button
-                  label={`Request changes to ${position}`}
+                  label={`${noteAction.label.replace(/…$/, "")}: ${position}`}
                   variant="ghost"
                   size="sm"
                   isDisabled={posted}
                   onMouseDown={keepFocus}
-                  onClick={(e) => onRequestChanges(row.hunk.id, anchorOf(e))}
+                  onClick={(e) => noteAction.onOpen(row.hunk.id, anchorOf(e))}
                 >
-                  Request changes
+                  {noteAction.label}
                 </Button>
               )}
             </span>

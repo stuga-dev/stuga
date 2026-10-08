@@ -11,7 +11,7 @@ p.ai-preview-part:has(+ .ai-preview-part, + .ai-preview-ghost) { margin-bottom: 
 .ai-preview-insert--block > :last-child { margin-bottom: 0; }
 ins.ai-preview-insert { padding: 0 0.1rem; }
 
-/* A ghost's Accept is filled and Reject is an outline that turns red on hover. */
+/* A ghost's Accept is filled, Reject is an outline that turns red on hover, and the note is plain text. */
 .ai-preview-hunk-actions { display: flex; gap: 0.4rem; margin-top: 0.45rem; align-items: center; }
 .ai-preview-hunk-scope { margin-left: 0.3rem; font-size: var(--text-body-size); color: var(--color-text-secondary); }
 /* Ends a part whose buttons sit at the change's last part. */
@@ -37,11 +37,34 @@ ins.ai-preview-insert { padding: 0 0.1rem; }
   background: color-mix(in srgb, var(--color-success) 80%, var(--color-text-primary));
   border-color: color-mix(in srgb, var(--color-success) 80%, var(--color-text-primary));
 }
-.ai-preview-hunk-btn--reject, .ai-preview-hunk-btn--request_changes { color: var(--color-text-secondary); }
-.ai-preview-hunk-btn--reject:hover:not(:disabled), .ai-preview-hunk-btn--request_changes:hover:not(:disabled) {
+.ai-preview-hunk-btn--reject { color: var(--color-text-secondary); }
+.ai-preview-hunk-btn--reject:hover:not(:disabled) {
   color: var(--color-text-red);
   border-color: var(--color-text-red);
   background: color-mix(in srgb, var(--color-background-red) 40%, transparent);
+}
+/* The note and Cancel are text buttons, a step below Reject. */
+.ai-preview-hunk-btn--request_changes, .ai-preview-hunk-btn--cancel {
+  border-color: transparent; background: none; color: var(--color-text-secondary); font-weight: 500;
+}
+.ai-preview-hunk-btn--request_changes:hover:not(:disabled), .ai-preview-hunk-btn--cancel:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-background-muted);
+}
+/* The note, written where the buttons were. */
+.ai-preview-hunk-note { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.45rem; max-width: 36rem; }
+.ai-preview-hunk-note__field {
+  font: inherit; font-size: var(--text-body-size); line-height: var(--text-body-leading); color: var(--color-text-primary);
+  resize: vertical; min-height: 3.6rem; padding: 0.4rem 0.55rem;
+  border: 1px solid var(--color-border-emphasized); border-radius: var(--radius-element); background: var(--color-background-surface);
+}
+.ai-preview-hunk-note__field::placeholder { color: var(--color-text-secondary); }
+.ai-preview-hunk-note__field:focus { outline: 2px solid var(--color-accent); outline-offset: -1px; border-color: transparent; }
+.ai-preview-hunk-note__foot { display: flex; align-items: center; justify-content: flex-end; gap: 0.4rem; }
+.ai-preview-hunk-note__hint { margin-right: auto; font-size: var(--text-supporting-size); color: var(--color-text-secondary); }
+.ai-preview-hunk-btn--submit { background: var(--color-background-inverted); border-color: var(--color-background-inverted); color: var(--color-background-surface); }
+.ai-preview-hunk-btn--submit:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-background-inverted) 85%, var(--color-background-surface));
 }
 .ai-preview-hunk-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 .ai-preview-hunk-btn:disabled { opacity: 0.5; cursor: default; }

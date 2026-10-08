@@ -13,7 +13,7 @@ import * as Y from "yjs";
 import { applyMarkdownToYXmlFragment, stugaExtensions } from "@stuga/crdt-ops";
 import { RunPreview, previewStorage } from "./extension";
 import { useRunPreview } from "./use-run-preview";
-import type { HunkKey, RunPreviewHunk } from "./plan";
+import { RUN_HUNK_EVENT, type HunkKey, type RunHunkDecisionDetail, type RunPreviewHunk } from "./plan";
 
 const MD = [
   "Intro paragraph.",
@@ -221,5 +221,80 @@ describe("Mod-Z with a review history", () => {
     expect(editor.state.doc.textContent).toContain("Typed");
     press({ key: "z" });
     expect(editor.state.doc.textContent).not.toContain("Typed");
+  });
+});
+
+describe("a change's note", () => {
+  const INTRO: RunPreviewHunk = { runId: "run_a", id: "h1", old_string: "Intro paragraph.", new_string: "Intro rewritten." };
+  const noteButton = () => editor.view.dom.querySelector<HTMLButtonElement>(".ai-preview-hunk-btn--request_changes");
+  const field = () => editor.view.dom.querySelector<HTMLTextAreaElement>(".ai-preview-hunk-note__field");
+  const type = (text: string) => {
+    field()!.value = text;
+    field()!.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const key = (k: string) => field()!.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+
+  it("names the button for what the note does, and sends with the same words", async () => {
+    await render([{ ...INTRO, noteMode: "revise" }]);
+    expect(noteButton()!.textContent).toBe("Revise…");
+    noteButton()!.click();
+    // The note takes the row's place, so nothing else can be decided while it is written.
+    expect(editor.view.dom.querySelector(".ai-preview-hunk-actions")).toBeNull();
+    const submit = editor.view.dom.querySelector<HTMLButtonElement>(".ai-preview-hunk-btn--submit")!;
+    expect(submit.textContent).toBe("Revise");
+    expect(submit.disabled).toBe(true);
+    expect(editor.view.dom.querySelector(".ai-preview-hunk-note__hint")).toBeNull();
+    key("Escape");
+  });
+
+  it("says where an agent's note goes", async () => {
+    await render([INTRO]);
+    expect(noteButton()!.textContent).toBe("Reject with note…");
+    noteButton()!.click();
+    expect(editor.view.dom.querySelector(".ai-preview-hunk-btn--submit")!.textContent).toBe("Reject with note");
+    expect(editor.view.dom.querySelector(".ai-preview-hunk-note__hint")!.textContent).toMatch(/next time it works here/);
+    key("Escape");
+  });
+
+  it("sends the note on Enter, as a decision on that one change", async () => {
+    await render([INTRO]);
+    const sent: RunHunkDecisionDetail[] = [];
+    const listen = (e: Event) => sent.push((e as CustomEvent<RunHunkDecisionDetail>).detail);
+    document.addEventListener(RUN_HUNK_EVENT, listen);
+    noteButton()!.click();
+    key("Enter");
+    expect(sent).toEqual([]);
+    type("  Keep it shorter.  ");
+    key("Enter");
+    document.removeEventListener(RUN_HUNK_EVENT, listen);
+    expect(sent).toEqual([{ runId: "run_a", hunkId: "h1", decision: "request_changes", note: "Keep it shorter." }]);
+    // The document is the editor's, and the keys in the note were not.
+    expect(editor.state.doc.textContent).toContain("Intro paragraph.");
+  });
+
+  it("puts the row back on Escape, with focus on the note button", async () => {
+    await render([INTRO]);
+    noteButton()!.click();
+    type("Half a thought");
+    key("Escape");
+    expect(field()).toBeNull();
+    expect(document.activeElement).toBe(noteButton());
+    // Opened again, it starts empty.
+    noteButton()!.click();
+    expect(field()!.value).toBe("");
+    key("Escape");
+  });
+
+  it("keeps the note being written when the ghost is painted again", async () => {
+    await render([INTRO]);
+    noteButton()!.click();
+    type("Not this word");
+    const before = field();
+    // A second change renumbers the first ("1 of 2"), which builds its ghost anew.
+    await render([INTRO, ROW_HUNK]);
+    expect(field()).not.toBe(before);
+    expect(field()!.value).toBe("Not this word");
+    expect(document.activeElement).toBe(field());
+    key("Escape");
   });
 });

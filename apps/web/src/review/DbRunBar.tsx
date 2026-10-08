@@ -11,6 +11,7 @@ import { pendingOps, useDbRuns } from "./db-runs-context";
 import { anchorOf, keepFocus, useRejectNote, type NoteAnchor } from "./RejectNoteDialog";
 import { RunBanner, RunNotices } from "./RunBanner";
 import { itemKey } from "./run-ledger";
+import { noteLabels } from "./note-mode";
 
 export function DbRunBar({ tables, activeTableId }: { tables: TableSchema[]; activeTableId: string | null }) {
   const { openRuns, notices, dismissNotice } = useDbRuns();
@@ -35,8 +36,18 @@ function DbRunBanner({
 }) {
   const { busy, decide, inFlight } = useDbRuns();
   const { ask, dialog } = useRejectNote();
-  const requestChanges = (opIds: string[] | undefined, anchor: NoteAnchor, quote: string) =>
-    ask({ title: "Request changes", anchor, quote, onSubmit: (note) => void decide(run.id, "reject", opIds, note) });
+  // A database run is always an agent's: its note waits for that agent.
+  const requestChanges = (opIds: string[] | undefined, anchor: NoteAnchor, quote: string) => {
+    const labels = noteLabels("agent", opIds === undefined);
+    ask({
+      title: labels.submit,
+      submitLabel: labels.submit,
+      hint: labels.hint,
+      anchor,
+      quote,
+      onSubmit: (note) => void decide(run.id, "reject", opIds, note),
+    });
+  };
   const pending = pendingOps(run);
   const n = pending.length;
   const tableName = (tableId: string) => tables.find((t) => t.table_id === tableId)?.display ?? "a new table";
@@ -54,7 +65,10 @@ function DbRunBanner({
         }
         busy={busy}
         onDecide={(decision) => void decide(run.id, decision)}
-        onRequestChanges={(anchor) => requestChanges(undefined, anchor, `All ${n} change${n === 1 ? "" : "s"} by ${run.agent}`)}
+        noteAction={{
+          label: noteLabels("agent", true).trigger,
+          onOpen: (anchor) => requestChanges(undefined, anchor, `All ${n} change${n === 1 ? "" : "s"} by ${run.agent}`),
+        }}
         list={
           n > 0 ? (
             <ul className="db-run-list" aria-label={`Changes proposed by ${run.agent}`}>
@@ -91,14 +105,14 @@ function DbRunBanner({
                         Reject
                       </Button>
                       <Button
-                        label="Request changes to this change"
+                        label="Reject this change with a note"
                         variant="ghost"
                         size="sm"
                         isDisabled={flying}
                         onMouseDown={keepFocus}
                         onClick={(e) => requestChanges([op.id], anchorOf(e), op.summary)}
                       >
-                        Request changes
+                        {noteLabels("agent").trigger}
                       </Button>
                     </HStack>
                   </li>

@@ -1,5 +1,5 @@
 /**
- * Request changes: a rejection with a note saying what should change. The agent that proposed it is
+ * Reject with note: a rejection saying what should change. The agent that proposed it is
  * handed the note with its next read or proposal here; the in-app co-author takes it as its next turn.
  */
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
@@ -35,7 +35,7 @@ export const keepFocus = (e: ReactMouseEvent) => e.preventDefault();
 
 export interface RejectNoteRequest {
   title: string;
-  /** "Reject and revise" where the co-author revises at once; "Reject with note" otherwise. */
+  /** The words of the button that opened the composer, without its ellipsis (note-mode.ts). */
   submitLabel?: string;
   /**
    * One line under the note saying what happens to it, where the submit label doesn't. Omitted, it

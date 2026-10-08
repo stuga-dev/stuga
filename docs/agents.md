@@ -471,36 +471,26 @@ block, so surrounding structure and other people's changes survive.
 An agent is never blocked on review. A proposal returns immediately, the agent's later reads include
 its own pending edits, and `markdown` or `databases` action `status` reports what was decided.
 
-## Request changes
+## Reject with a note
 
-**Request changes** rejects with a note saying what should change: from the run bar, from a single
-change in the document or under **Review each**, or from the inbox's **⋯** menu. The note is kept
-with each change it rejected, and it reaches the agent that proposed them where that agent already
-looks:
+**Reject with note** rejects with a note saying what should change: under a single change in the
+document, where the note is written in place of its buttons, from **Review each**, from the menu
+beside the run bar's **Reject all**, or from the inbox's **⋯** menu. The button that opens the note
+and the one that sends it carry the same words. The note is kept with each change it rejected, and it
+reaches the agent that proposed them where that agent already looks:
 
-- **Its reads of that document** (for a database, its schema and query results) open with the
-  reviewer's feedback (what was rejected and the note), and **every proposal it makes there** carries
-  it again, until the agent answers it: a proposal that names the feedback's ids in `revises` is the
-  revision, and from then on only `status` shows it. Proposing something else answers nothing. You
-  can withdraw it with **Mark as reviewed** on the run, and it stops leading reads after 14 days.
-- **`markdown` or `databases` action `status`** lists each rejection and its note under its run.
-- **`events` with `mine: true`** lists the decisions on the agent's own proposals across the
-  workspace, the last 14 days of them without a cursor. A `run.decided` event with a `feedback_id` is a
-  rejection with a note; the note itself is in `status`, since the feed reaches every agent that can
-  read the document.
-
-The in-app co-author hears its rejections at the start of its next turn. Requesting changes to one of
-its runs offers **Reject and revise**: a turn that may change existing text only inside the passages that
-rejection covered, followed through its own edits. While a turn is running, the revision waits for it
+The in-app co-author hears its rejections at the start of its next turn. On its runs, with AI chat
+on, the note button is **Revise** (**Revise all** for the whole run): a turn that may change existing
+text only inside the passages that rejection covered, followed through its own edits. While a turn is running, the revision waits for it
 to end, and every request made meanwhile is answered in one turn; after **Stop** they wait for
 **Revise now**. It may add text anywhere, so it can move what was
 rejected. A change it tries to other existing text, or to another document, is refused, and it says
 so instead of making it. When the document has changed so that the rejected passages can no longer
-be found, every change to existing text is refused and it asks you to request changes again.
+be found, every change to existing text is refused and it asks you to revise again.
 
 A note is advice to the agent, like an instruction. It decides nothing about what a later write may
-do; review mode and permissions do. A rejection carries one, and so does a revert: **Revert and
-request changes…** in the inbox takes back a run that landed, on an `auto` document for instance,
+do; review mode and permissions do. A rejection carries one, and so does a revert: **Revert with
+note…** in the inbox takes back a run that landed, on an `auto` document for instance,
 and tells the agent why, the same way.
 
 ## Agent changes: wait for review, or apply at once
@@ -553,8 +543,8 @@ Before letting AI edits to a document apply directly, look at that agent's recor
 **Needs review** (waiting for a decision, or applied at once and not yet looked at),
 **In progress** (still collecting changes: something waiting, or active in the last 10 minutes),
 **Finished** and **Everything**, filterable by agent. A run's **⋯** menu acts on
-the whole run: **Accept all suggestions**, **Reject all suggestions**, **Request changes…**,
-**Revert these changes** and **Mark as reviewed** (which also withdraws changes you requested on it); open the document to decide change by change. **AI activity**, below the list,
+the whole run: **Accept all suggestions**, **Reject all suggestions**, **Reject all with note…**,
+**Revert these changes**, **Revert with note…** and **Mark as reviewed** (which also withdraws the notes you left on it); open the document to decide change by change. **AI activity**, below the list,
 is each agent's record (runs, waiting, kept, skipped, applied automatically, reverted) and is what to
 consult before switching a document to `auto`.
 

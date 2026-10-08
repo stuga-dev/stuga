@@ -29,7 +29,7 @@ import {
   type RunPreviewData,
   type RunReport,
 } from "./plan";
-import { ghostIsEmpty, runGhost } from "./ghost-dom";
+import { ghostIsEmpty, isInHunkNote, runGhost } from "./ghost-dom";
 
 interface RunPreviewOptions {
   /** The shared Y.Doc the segments' relative anchors resolve against. */
@@ -179,6 +179,9 @@ function paintRuns(
     decos.push(
       Decoration.widget(seg.to, (view) => runGhost(parts, ordinals, totals, pendingKeys, view, seg.from, tableCols, roles, !!inline), {
         side: 1,
+        // A change's note is a field of its own: its keys, clicks and caret are not the editor's.
+        stopEvent: isInHunkNote,
+        ignoreSelection: true,
         key: ghostWidgetKey(
           seg.build,
           seg.keys,

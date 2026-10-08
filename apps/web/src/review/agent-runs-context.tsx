@@ -17,6 +17,8 @@ import { Runs } from "../api";
 import { itemKey, pendingItems, pendingItemsOf, type Decision, type RunShape } from "./run-ledger";
 import { useRunLedger, type LedgerApi, type RunNotice } from "./use-run-ledger";
 import { ReviewHistory, type LocalUndoManager } from "./review-history";
+import { noteModeOf } from "./note-mode";
+import { useOptionalAiCoauthor } from "../ai/ai-coauthor-context";
 import type { ApiError } from "../lib/http/client";
 
 const DOC_RUN: RunShape<AgentRunSummary, AgentRunHunk> = {
@@ -210,8 +212,17 @@ export function AgentRunsProvider({
   }, [provider, dispatch]);
 
   const pending = useMemo(() => pendingHunksOf(openRuns), [openRuns]);
+  // Each ghost's note button names what its note does, which turns on who proposed and on AI chat.
+  const coauthorAvailable = useOptionalAiCoauthor()?.available === true;
+  const noteModes = useMemo(
+    () => new Map(openRuns.map((r) => [r.id, noteModeOf(r.source, coauthorAvailable)])),
+    [openRuns, coauthorAvailable],
+  );
   // Keyed on the hunk text, so the costly block diff reruns only when the pending set really changes.
-  const previewKey = useMemo(() => previewKeyOf(pending), [pending]);
+  const previewKey = useMemo(
+    () => `${previewKeyOf(pending)}#${[...noteModes].map(([id, mode]) => `${id}=${mode}`).join(",")}`,
+    [pending, noteModes],
+  );
   const previewHunks = useMemo<RunPreviewHunk[]>(
     () =>
       pending.map((p) => ({
@@ -220,6 +231,7 @@ export function AgentRunsProvider({
         old_string: p.hunk.old_string,
         new_string: p.hunk.new_string,
         agent: p.agent,
+        noteMode: noteModes.get(p.runId) ?? "agent",
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [previewKey],
@@ -256,8 +268,8 @@ export function AgentRunsProvider({
   );
 
   // Inline Accept/Reject clicks arrive as a document event carrying the (run, hunk) pair.
-  // Only pairs on screen and not already in flight are posted. Request changes needs a
-  // note first, so the run's banner answers that one.
+  // Only pairs on screen and not already in flight are posted. A note may start a revision,
+  // so the run's banner answers that one.
   const shown = useMemo(() => new Set(pending.map((p) => itemKey(p.runId, p.hunk.id))), [pending]);
   const live = useRef({ shown, inFlight, decide });
   live.current = { shown, inFlight, decide };

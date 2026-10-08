@@ -19,11 +19,12 @@ import { hash32 } from "../../lib/hash";
 import type { RelRange } from "../rel-range";
 import { summarizeHunk } from "../../review/hunk-review";
 import { itemKey } from "../../review/run-ledger";
+import type { NoteMode } from "../../review/note-mode";
 
 /**
- * Fired on `document` when a ghost's Accept, Reject or Request changes is clicked. The buttons are
- * widget DOM outside the React tree, so this event is their way to the run ledger provider (which
- * decides) and the run's banner (which asks for the note).
+ * Fired on `document` when a ghost's Accept or Reject is clicked, or its note is sent. The buttons
+ * are widget DOM outside the React tree, so this event is their way to the run ledger provider
+ * (which decides) and the run's banner (which sends the note and starts the revision).
  */
 export const RUN_HUNK_EVENT = "stuga-run-hunk";
 
@@ -31,10 +32,10 @@ export interface RunHunkDecisionDetail {
   /** Hunk ids restart at "h1" in every run, so a decision needs both. */
   runId: string;
   hunkId: string;
-  /** `request_changes` rejects with a note the agent revises from; the banner collects the note first. */
+  /** `request_changes` rejects with `note`, which the agent revises from. */
   decision: "accept" | "reject" | "request_changes";
-  /** Request changes only: the button's viewport box, which the note composer floats beside. */
-  anchor?: { top: number; bottom: number; left: number; right: number };
+  /** Request changes only: what should change. */
+  note?: string;
 }
 
 /** A pending hunk's identity across runs: `itemKey(runId, hunkId)`. */
@@ -62,6 +63,8 @@ export interface PreviewHunkPart {
   summary: string;
   /** Agent display name, set only when more than one run is painted. */
   agent?: string;
+  /** What a note on this change does, which names its button; `agent` when absent. */
+  noteMode?: NoteMode;
 }
 
 /** One anchored structural change segment: strike its region, ghost its blocks. */
@@ -178,7 +181,7 @@ export function ghostVariant(
       const busy = pendingKeys.has(p.key) ? "!" : "";
       const role = roles.get(p.key);
       const part = role ? `${role.kind}${role.index}/${role.parts}` : "";
-      return `${ordinals.get(p.key) ?? 0}of${(total.get(p.key) ?? 0)}${busy}${part}${shape}${hash32(p.summary + (p.agent ?? ""))}`;
+      return `${ordinals.get(p.key) ?? 0}of${(total.get(p.key) ?? 0)}${busy}${part}${shape}${p.noteMode ?? ""}${hash32(p.summary + (p.agent ?? ""))}`;
     })
     .join(",");
 }
@@ -303,6 +306,7 @@ export interface RunPreviewHunk {
   new_string: string;
   /** Agent display name, shown on the ghost when more than one run is open. */
   agent?: string;
+  noteMode?: NoteMode;
 }
 
 /** A run segment before it is anchored: live positions plus the hunks it renders. */
@@ -641,6 +645,7 @@ export function buildRunSegments(
       key,
       summary: hunkSummary(h.old_string, h.new_string),
       ...(showAgent && h.agent ? { agent: h.agent } : {}),
+      ...(h.noteMode ? { noteMode: h.noteMode } : {}),
     };
     const mine: RunSegmentDraft[] = [];
     let removedSpan = 0;

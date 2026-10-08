@@ -1,12 +1,14 @@
 /** The pieces the document and database review banners share. */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
+import { ButtonGroup } from "@astryxdesign/core/ButtonGroup";
+import { DropdownMenu } from "@astryxdesign/core/DropdownMenu";
 import { HStack } from "@astryxdesign/core/HStack";
 import { useToast } from "@astryxdesign/core/Toast";
 import { ChevronDown, ChevronUp, Sparkles, Zap } from "lucide-react";
 import type { RunNotice } from "./use-run-ledger";
-import { anchorOf, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
+import { anchorRect, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
 
 /** How long after its last update a run still reads as streaming in. */
 const LIVE_WINDOW_MS = 5_000;
@@ -110,10 +112,16 @@ function UndoButton({ onUndo }: { onUndo: () => Promise<void> }) {
   );
 }
 
+/** Rejecting with a note: the button's words, and what opens the composer at an anchor. */
+export interface NoteAction {
+  label: string;
+  onOpen: (anchor: NoteAnchor) => void;
+}
+
 /**
  * One open run as a single-line banner: a count and one muted hint, then the
- * run's controls and Accept all / Reject all, and Request changes (reject all with
- * a note) when `onRequestChanges` is given. `list` is the expandable per-change drawer under it.
+ * run's controls and Accept all / Reject all. With a `noteAction`, Reject all is a split
+ * button whose menu rejects all with a note. `list` is the expandable per-change drawer under it.
  */
 export function RunBanner({
   updatedAt,
@@ -123,7 +131,7 @@ export function RunBanner({
   list,
   busy,
   onDecide,
-  onRequestChanges,
+  noteAction,
 }: {
   updatedAt: number;
   title: string;
@@ -132,10 +140,11 @@ export function RunBanner({
   list?: ReactNode;
   busy: boolean;
   onDecide: (decision: "accept" | "reject") => void;
-  /** Gets the button's anchor, so the note composer floats under it. */
-  onRequestChanges?: (anchor: NoteAnchor) => void;
+  noteAction?: NoteAction;
 }) {
   const live = useLiveWindow(updatedAt);
+  // The composer floats beside the whole Reject all control, not the menu that opened it.
+  const rejectGroup = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="agent-run">
@@ -166,16 +175,31 @@ export function RunBanner({
               </Button>
             )}
             <Button label="Accept all" variant="primary" size="sm" isDisabled={busy} onClick={() => onDecide("accept")} />
-            <Button label="Reject all" variant="ghost" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
-            {onRequestChanges && (
-              <Button
-                label="Request changes"
-                variant="ghost"
-                size="sm"
-                isDisabled={busy}
-                onMouseDown={keepFocus}
-                onClick={(e) => onRequestChanges(anchorOf(e))}
-              />
+            {noteAction ? (
+              <ButtonGroup ref={rejectGroup} label="Reject all" size="sm">
+                <Button label="Reject all" variant="secondary" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
+                <DropdownMenu
+                  button={{
+                    label: "More ways to reject",
+                    variant: "secondary",
+                    size: "sm",
+                    isIconOnly: true,
+                    icon: <ChevronDown size={15} />,
+                    isDisabled: busy,
+                    onMouseDown: keepFocus,
+                  }}
+                  hasChevron={false}
+                  alignment="end"
+                  items={[
+                    {
+                      label: noteAction.label,
+                      onClick: () => rejectGroup.current && noteAction.onOpen(anchorRect(rejectGroup.current)),
+                    },
+                  ]}
+                />
+              </ButtonGroup>
+            ) : (
+              <Button label="Reject all" variant="secondary" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
             )}
           </HStack>
         }

@@ -1,4 +1,4 @@
-/** The ghost DOM a run hunk paints inline: struck/ghosted content plus its Accept, Reject and Request changes. */
+/** The ghost DOM a run hunk paints inline: struck/ghosted content plus its Accept, Reject and note. */
 import type { EditorView } from "@tiptap/pm/view";
 import { DOMSerializer, Fragment, type Node as PMNode } from "@tiptap/pm/model";
 import type { WordOp } from "@stuga/crdt-ops";
@@ -10,6 +10,8 @@ import {
   type PreviewHunkPart,
   type RunHunkDecisionDetail,
 } from "./plan";
+import { RUN_FEEDBACK_NOTE_MAX_CHARS } from "@stuga/protocol/domain/limits";
+import { noteLabels } from "../../review/note-mode";
 
 /** Blocks the body renders: footnote definitions are hidden there (FootnoteHide), so a ghost omits them too. */
 function visibleBlocks(nodes: PMNode[]): PMNode[] {
@@ -17,15 +19,54 @@ function visibleBlocks(nodes: PMNode[]): PMNode[] {
 }
 
 /**
- * Accept, Reject and Request changes for one hunk. Clicks go out as RUN_HUNK_EVENT; mousedown is
- * swallowed so ProseMirror doesn't move the selection into the widget. `pending`
- * disables the buttons, which stops a double-click from posting twice. A hunk painted in
- * `parts` places says the buttons decide all of them.
+ * Notes being written in a change's row, by hunk key. A repaint (a collaborator's edit, another
+ * change decided) builds the row anew, and the note, and the caret in it, must survive that.
+ */
+const drafts = new Map<HunkKey, { text: string; focused: boolean }>();
+
+function sendHunkEvent(detail: RunHunkDecisionDetail): void {
+  document.dispatchEvent(new CustomEvent<RunHunkDecisionDetail>(RUN_HUNK_EVENT, { detail }));
+}
+
+/**
+ * One hunk's decision: Accept, Reject and the note button, which opens the note in place of the
+ * row. `pending` disables the buttons, which stops a double-click from posting twice. A hunk painted
+ * in `parts` places says the buttons decide all of them.
  */
 function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pending: boolean, parts: number): HTMLElement {
+  const holder = document.createElement("div");
+  holder.className = "ai-preview-hunk-decide";
+  holder.setAttribute("contenteditable", "false");
+  const show = (writing: boolean): void => {
+    if (writing) {
+      holder.replaceChildren(noteComposer(part, ordinal, total, () => {
+        show(false);
+        holder.querySelector<HTMLButtonElement>(".ai-preview-hunk-btn--request_changes")?.focus({ preventScroll: true });
+      }));
+      return;
+    }
+    holder.replaceChildren(
+      decisionRow(part, ordinal, total, pending, parts, () => {
+        drafts.set(part.key, { text: "", focused: true });
+        show(true);
+      }),
+    );
+  };
+  show(!pending && drafts.has(part.key));
+  return holder;
+}
+
+/** Clicks go out as RUN_HUNK_EVENT; mousedown is swallowed so ProseMirror doesn't move the selection into the widget. */
+function decisionRow(
+  part: PreviewHunkPart,
+  ordinal: number,
+  total: number,
+  pending: boolean,
+  parts: number,
+  openNote: () => void,
+): HTMLElement {
   const bar = document.createElement("div");
   bar.className = "ai-preview-hunk-actions";
-  bar.setAttribute("contenteditable", "false");
   let scope: HTMLElement | null = null;
   if (parts > 1) {
     scope = document.createElement("span");
@@ -33,10 +74,15 @@ function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pend
     scope.id = `ai-preview-scope-${part.key}`;
     scope.textContent = parts === 2 ? "Applies to both parts" : `Applies to all ${parts} parts`;
   }
+  const note = noteLabels(part.noteMode ?? "agent");
   const LABELS = {
     accept: { text: "Accept", title: "Apply this change", verb: "Accept" },
     reject: { text: "Reject", title: "Discard this change", verb: "Reject" },
-    request_changes: { text: "Request changes", title: "Reject this change with a note for the AI", verb: "Request changes to" },
+    request_changes: {
+      text: note.trigger,
+      title: part.noteMode === "revise" ? "Discard this change and have the AI rewrite it from your note" : "Discard this change with a note for the AI",
+      verb: note.submit,
+    },
   } as const;
   for (const decision of ["accept", "reject", "request_changes"] as const) {
     const btn = document.createElement("button");
@@ -55,21 +101,106 @@ function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pend
       e.preventDefault();
       e.stopPropagation();
       if (btn.disabled) return;
-      document.dispatchEvent(
-        new CustomEvent<RunHunkDecisionDetail>(RUN_HUNK_EVENT, {
-          detail: {
-            runId: part.runId,
-            hunkId: part.hunkId,
-            decision,
-            ...(decision === "request_changes" ? { anchor: anchorClearOf(boxOf(btn), otherButtonBoxes(btn)) } : {}),
-          },
-        }),
-      );
+      if (decision === "request_changes") openNote();
+      else sendHunkEvent({ runId: part.runId, hunkId: part.hunkId, decision });
     });
     bar.appendChild(btn);
   }
   if (scope) bar.appendChild(scope);
   return bar;
+}
+
+/**
+ * The note, written where the buttons were: Enter sends, Shift+Enter breaks a line, Escape closes.
+ * Its send button says what the trigger said, so the reviewer confirms the action they chose.
+ */
+function noteComposer(part: PreviewHunkPart, ordinal: number, total: number, close: () => void): HTMLElement {
+  const labels = noteLabels(part.noteMode ?? "agent");
+  const draft = drafts.get(part.key) ?? { text: "", focused: true };
+  drafts.set(part.key, draft);
+
+  const box = document.createElement("div");
+  box.className = "ai-preview-hunk-note";
+  box.setAttribute("role", "group");
+  box.setAttribute("aria-label", `${labels.submit} change ${ordinal} of ${total}: ${part.summary}`);
+
+  const field = document.createElement("textarea");
+  field.className = "ai-preview-hunk-note__field";
+  field.rows = 2;
+  field.dir = "auto";
+  field.placeholder = "What should change?";
+  field.setAttribute("aria-label", "What should change?");
+  field.maxLength = RUN_FEEDBACK_NOTE_MAX_CHARS;
+  field.value = draft.text;
+
+  const foot = document.createElement("div");
+  foot.className = "ai-preview-hunk-note__foot";
+  if (labels.hint) {
+    const hint = document.createElement("span");
+    hint.className = "ai-preview-hunk-note__hint";
+    hint.textContent = labels.hint;
+    foot.appendChild(hint);
+  }
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "ai-preview-hunk-btn ai-preview-hunk-btn--cancel";
+  cancel.textContent = "Cancel";
+  const submit = document.createElement("button");
+  submit.type = "button";
+  submit.className = "ai-preview-hunk-btn ai-preview-hunk-btn--submit";
+  submit.textContent = labels.submit;
+  submit.disabled = !draft.text.trim();
+  foot.append(cancel, submit);
+  box.append(field, foot);
+
+  const dismiss = (): void => {
+    drafts.delete(part.key);
+    close();
+  };
+  const send = (): void => {
+    const note = field.value.trim();
+    if (!note) return;
+    drafts.delete(part.key);
+    sendHunkEvent({ runId: part.runId, hunkId: part.hunkId, decision: "request_changes", note });
+  };
+  field.addEventListener("input", () => {
+    draft.text = field.value;
+    submit.disabled = !field.value.trim();
+  });
+  field.addEventListener("focus", () => {
+    draft.focused = true;
+  });
+  // A field removed by a repaint may report a blur; the rebuilt one takes the focus back.
+  field.addEventListener("blur", () => {
+    if (field.isConnected) draft.focused = false;
+  });
+  field.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      send();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      dismiss();
+    }
+  });
+  for (const btn of [cancel, submit]) btn.addEventListener("mousedown", (e) => e.preventDefault());
+  cancel.addEventListener("click", dismiss);
+  submit.addEventListener("click", send);
+
+  if (draft.focused) {
+    requestAnimationFrame(() => {
+      if (!field.isConnected) return;
+      field.focus({ preventScroll: true });
+      field.setSelectionRange(field.value.length, field.value.length);
+    });
+  }
+  return box;
+}
+
+/** True for an event inside a change's note, which is the field's to handle, not ProseMirror's. */
+export function isInHunkNote(event: Event): boolean {
+  return event.target instanceof Element && event.target.closest(".ai-preview-hunk-note") !== null;
 }
 
 /**
@@ -98,32 +229,6 @@ function partNote(part: PreviewHunkPart, role: PartRole): HTMLElement {
   });
   note.appendChild(go);
   return note;
-}
-
-type Box = { top: number; bottom: number; left: number; right: number };
-
-/** `el`'s viewport box. */
-function boxOf(el: Element): Box {
-  const r = el.getBoundingClientRect();
-  return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
-}
-
-/** The other changes' buttons on screen: a nested change's row sits further right than this one's. */
-function otherButtonBoxes(btn: HTMLElement): Box[] {
-  return Array.from(document.querySelectorAll(".ai-preview-hunk-btn"), (b) => (b === btn ? null : boxOf(b))).filter((b): b is Box => b !== null);
-}
-
-/** How far down the note composer reaches from the top of the button that opened it. */
-const COMPOSER_REACH = 200;
-
-/**
- * The composer's anchor: `own`, widened to the right edge of every other button in the rows the
- * composer will cover, so it floats beside all of them and hides none.
- */
-export function anchorClearOf(own: Box, others: Box[]): Box {
-  let right = own.right;
-  for (const o of others) if (o.bottom > own.top && o.top < own.top + COMPOSER_REACH) right = Math.max(right, o.right);
-  return { ...own, right };
 }
 
 /**
