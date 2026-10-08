@@ -20,7 +20,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 - Ask, agents' `retrieve` and the assistants' document search take the nearest passages at any distance, and reranking decides what is relevant.
 - `/api/node/ai-settings` takes and returns `embed.search_strictness`, and returns `embed.cutoff`, `embed.calibration` and `strictness_default`, in place of `embed.search_max_distance`, `embed.retrieval_max_distance` and `max_distance_defaults`; `POST /api/node/ai-settings/calibrate` measures again.
 - Queries and passages carry the instruction each known embedding model was trained with (EmbeddingGemma, Qwen3-Embedding, Nomic, E5, mxbai, Arctic Embed), so these models rank as their authors measured them.
-- Settings suggests `embeddinggemma-2:270m` when Ollama has no embedding model yet.
+- Settings suggests `embeddinggemma:300m` when Ollama has no embedding model yet.
 
 ### Fixed
 

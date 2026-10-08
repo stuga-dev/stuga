@@ -238,11 +238,12 @@ export const NO_CLEARED_KEYS = { chat: {}, embed: false } as const;
 
 /**
  * A model Ollama could pull for semantic search at this width, for the hint when none is there.
- * EmbeddingGemma 2 returns 768 dimensions, shortens to 512, 256 or 128, and is padded to the
- * column. The 270m tag is its text-only build.
+ * EmbeddingGemma 300m returns 768 dimensions, shortens to 512, 256 or 128, and is padded to the
+ * column. It retrieved text better than EmbeddingGemma 2 in Stuga's benchmark (multilingual
+ * Wikipedia and StackOverflow), whose gains are in images, audio and code search.
  */
 export function suggestedOllamaEmbedModel(width: number): string | null {
-  return width >= 128 ? "embeddinggemma-2:270m" : null;
+  return width >= 128 ? "embeddinggemma:300m" : null;
 }
 
 /**
