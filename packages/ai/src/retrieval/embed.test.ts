@@ -168,6 +168,35 @@ describe("embed (Ollama)", () => {
     });
   });
 
+  it("sends a batch Ollama refuses as too long text by text, and cuts the refused text until it fits", async () => {
+    const sent: string[][] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const input = (JSON.parse(init.body as string) as { input: string[] }).input;
+        sent.push(input);
+        if (input.some((t) => [...t].length > 100)) return new Response(JSON.stringify({ error: "the input length exceeds the context length" }), { status: 413 });
+        return new Response(JSON.stringify({ embeddings: input.map(() => vec(768)), prompt_eval_count: input.length }), { status: 200 });
+      }),
+    );
+    const long = "조승우는 영화 배우로서 자리를 굳혔다. ".repeat(20);
+    const out = await embed(cfg, ["short one", long, "short two"], "document");
+    expect(out.embeddings).toHaveLength(3);
+    // The batch, then each text alone, then the long one cut until it fits.
+    expect(sent[0]).toHaveLength(3);
+    expect(sent.slice(1, 3)).toEqual([["short one"], [long]]);
+    // The last cut is the one that fitted: a start of the text, within what the server takes.
+    const fitted = sent.at(-2)![0]!;
+    expect(long.startsWith(fitted)).toBe(true);
+    expect([...fitted].length).toBeLessThanOrEqual(100);
+    expect(sent.at(-1)).toEqual(["short two"]);
+  });
+
+  it("gives up on a text Ollama refuses however short it is cut", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "the input length exceeds the context length" }), { status: 413 })));
+    await expect(embed(cfg, ["x".repeat(500)], "document")).rejects.toThrow(/refused a text as longer than its context/);
+  });
+
   it("throws when the response carries no embeddings", async () => {
     mockJson({ model: "nomic" });
     await expect(embed(cfg, ["a"], "document")).rejects.toThrow(/no embeddings/);

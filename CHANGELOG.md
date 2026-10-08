@@ -22,6 +22,10 @@ Releases before 0.1.7 were previews. Their notes are on their
 - Queries and passages carry the instruction each known embedding model was trained with (EmbeddingGemma, Qwen3-Embedding, Nomic, E5, mxbai, Arctic Embed), so these models rank as their authors measured them.
 - Settings suggests `embeddinggemma-2:270m` when Ollama has no embedding model yet.
 
+### Fixed
+
+- A passage Ollama refuses as longer than the embedding model's context (bge-m3 on long Korean text) is cut to fit and embedded, as Ollama cuts other long text, instead of staying out of search by meaning.
+
 ## [0.1.12] - 2026-10-06
 
 **Request changes** on an AI edit, so the agent revises from your note; one command to go back to an

@@ -43,7 +43,7 @@ export async function embed(cfg: AiConfig, texts: string[], role: EmbedRole): Pr
   const inputs = embedInputs(ep.model, texts, role);
   const dims = embedDims(cfg);
   const ask = requestedDims(embedProfile(ep.model), dims, ep.provider);
-  const out = ep.provider === "ollama" ? await ollamaEmbed(ep, ep.model, inputs, ask) : await openaiEmbed(ep, ep.model, inputs, ask);
+  const out = ep.provider === "ollama" ? await ollamaEmbedFitting(ep, ep.model, inputs, ask) : await openaiEmbed(ep, ep.model, inputs, ask);
   if (out.embeddings.length !== inputs.length) {
     throw new AiError(`embed: expected ${inputs.length} vectors, got ${out.embeddings.length}`, 0, false);
   }
@@ -101,6 +101,36 @@ async function openaiEmbed(ep: AiEndpoint, model: string, input: string[], dims:
     return d.embedding;
   });
   return { embeddings, inputTokens: json.usage?.prompt_tokens ?? 0 };
+}
+
+/**
+ * Ollama cuts a text longer than the model's context to fit, but refuses some with 413 instead (seen
+ * with bge-m3 on long Korean passages, `truncate` or not). Such a batch goes again text by text, and a
+ * refused text is cut from its end, as Ollama cuts the others, until it fits; its prompt comes first,
+ * so the cut keeps it.
+ */
+async function ollamaEmbedFitting(ep: AiEndpoint, model: string, input: string[], dims: number | null): Promise<RawEmbeddings> {
+  const overflow = (e: unknown) => e instanceof AiError && e.status === 413;
+  try {
+    return await ollamaEmbed(ep, model, input, dims);
+  } catch (e) {
+    if (!overflow(e)) throw e;
+  }
+  if (input.length > 1) {
+    const parts: RawEmbeddings[] = [];
+    for (const text of input) parts.push(await ollamaEmbedFitting(ep, model, [text], dims));
+    return { embeddings: parts.flatMap((p) => p.embeddings), inputTokens: parts.reduce((a, p) => a + p.inputTokens, 0) };
+  }
+  let chars = [...input[0]!];
+  for (let attempt = 0; attempt < 8 && chars.length > 1; attempt++) {
+    chars = chars.slice(0, Math.floor(chars.length * 0.75));
+    try {
+      return await ollamaEmbed(ep, model, [chars.join("")], dims);
+    } catch (e) {
+      if (!overflow(e)) throw e;
+    }
+  }
+  throw new AiError(`ollama embed: ${model} refused a text as longer than its context, even cut to ${chars.length} characters`, 413, false);
 }
 
 async function ollamaEmbed(ep: AiEndpoint, model: string, input: string[], dims: number | null): Promise<RawEmbeddings> {
