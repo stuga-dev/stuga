@@ -284,7 +284,7 @@ const OUTSIDE_REVISION =
   "them; to move something, insert it where it belongs. If other text needs changing, tell the user it needs a separate request.";
 const PASSAGES_GONE =
   "Refused: the passages the user rejected are no longer in the document as they were, so this revision cannot be made " +
-  "safely. You may still add new text. Tell the user the text has changed since, and ask them to request changes again.";
+  "safely. You may still add new text. Tell the user the text has changed since, and ask them to revise again.";
 const OTHER_DOCUMENT_IN_REVISION = "Refused: a revision changes only the document whose edits the user rejected.";
 
 /**
