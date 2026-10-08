@@ -53,8 +53,8 @@ another Stuga node ([Several nodes](network-access.md#several-nodes)).
 
 **Start with** picks what the workspace holds at first:
 
-- **Empty workspace**.
-- A sample, such as **Privacy laws**: a workspace of real, openly licensed material. The node reads
+- **Empty**.
+- **Sample**, then a sample such as **Privacy laws**: a workspace of real, openly licensed material. The node reads
   the list of samples from [github.com/stuga-dev/samples](https://github.com/stuga-dev/samples) when
   the page or dialog opens, keeps it an hour, and downloads the sample you choose when you create the
   workspace. When its last look for the list failed, as it does without internet access, it says
@@ -62,7 +62,7 @@ another Stuga node ([Several nodes](network-access.md#several-nodes)).
   a mirror. The new workspace opens at the sample's **Start here** document. **Sample agent**'s
   changes, written in advance, wait for your review in **Review AI edits**, and its comment mentions
   you.
-- **From a file**: a `.stuga.zip` exported from Stuga ([Workspace archive](workspace-archive.md)),
+- **Import**: a `.stuga.zip` exported from Stuga ([Workspace archive](workspace-archive.md)),
   a Notion export, or a zipped Obsidian vault or other folder of Markdown
   ([Importing from Notion or Obsidian](import.md)). With no name typed, the workspace keeps the one
   it had: a Notion export its Notion workspace's, a vault its folder's.

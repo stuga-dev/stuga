@@ -482,8 +482,10 @@ reaches the agent that proposed them where that agent already looks:
 - **Its reads of that document** (for a database, its schema and query results) open with the
   reviewer's feedback (what was rejected and the note), and **every proposal it makes there** carries
   it again, until the agent answers it: a proposal that names the feedback's ids in `revises` is the
-  revision, and from then on only `status` shows it. Proposing something else answers nothing. You
-  can withdraw it with **Mark as reviewed** on the run, and it stops leading reads after 14 days.
+  revision, and from then on only `status` shows it. Proposing something else answers nothing. It
+  stops leading reads after 14 days, or sooner once the run is marked reviewed: **Mark as reviewed**
+  in the inbox, offered on a run with changes applied at once and not yet looked at, or
+  `POST /api/docs/:id/runs/:run/ack` ([API](api.md#for-people-only)) on any run.
 - **`markdown` or `databases` action `status`** lists each rejection and its note under its run.
 - **`events` with `mine: true`** lists the decisions on the agent's own proposals across the
   workspace, the last 14 days of them without a cursor. A `run.decided` event with a `feedback_id` is a

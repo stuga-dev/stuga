@@ -147,10 +147,10 @@ A backup moves a whole node. One workspace moves as a [workspace archive](worksp
 
 1. On the old node, a workspace owner or admin chooses **Settings → This workspace → General →
    Export workspace**. The `<name>.stuga.zip` it downloads holds everything that person can open.
-2. On the other node, **Create a workspace** with **Start with → From a file**, and choose the
-   file. With no name typed, the workspace keeps the one it had. The file must be within that
-   node's upload limit, 10 MB unless an administrator raises it in **Settings → This node →
-   Storage**, up to 50 MB.
+2. On the other node, **Create a workspace** with **Start with → Import**, and choose the
+   file. With no name typed, the workspace keeps the one it had. The file may be up to 512 MB,
+   and each image or file in it must be within that node's upload limit, 10 MB unless an
+   administrator raises it in **Settings → This node → Storage**, up to 50 MB.
 
 The new workspace has the folders, documents, databases with their rows, views and row pages,
 images, comments, agent instructions, and each document's review mode, lock and search setting.

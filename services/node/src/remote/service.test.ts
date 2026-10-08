@@ -1359,8 +1359,12 @@ describe("the certificate loop", () => {
     await until("the renewal window", () => row().cert_ari_window_start !== null);
     const serial = row().cert_serial!;
     const orders = ca.orders.length;
-    memory.set({ cert_failures: 0, cert_renew_at: new Date(Date.now() - 1), last_error: { code: "acme_action_required", message: "Accept the CA's new terms.", at: new Date().toISOString() } });
+    // The error first, then the renewal due. Changed together, a certificate tick that read the row
+    // before, and found it due once the service loop read it again, would order a certificate, whose
+    // success clears the error: no warning at all.
+    memory.set({ cert_failures: 0, last_error: { code: "acme_action_required", message: "Accept the CA's new terms.", at: new Date().toISOString() } });
     await until("the warning", () => told.length === 1);
+    memory.set({ cert_renew_at: new Date(Date.now() - 1) });
     await sleep(150);
     expect(keys(told)).toEqual([`REMOTE_CERT_RENEWAL_FAILED:${serial}`]);
     expect(row().cert_alerted_serial).toBe(serial);

@@ -1,13 +1,13 @@
 # Importing from Notion or Obsidian
 
-**Create a workspace → Start with → From a file** takes a Notion export or a zipped folder of
+**Create a workspace → Start with → Import** takes a Notion export or a zipped folder of
 Markdown, such as an Obsidian vault, and makes a new workspace of it. The node converts the export
 into a [workspace archive](workspace-archive.md) and imports that, with the same checks.
 
 ## Notion
 
 Export as **Markdown & CSV** with subpages: a page from its **⋯ → Export**, or everything from
-**Settings → General → Export all workspace content**. Upload the zip Notion sends, parts and all.
+**Settings → Workspace → General → Export all workspace content**. Upload the zip Notion sends, parts and all.
 If Safari unzipped it, compress the folder again. The workspace takes the Notion workspace's name.
 
 | In Notion | In Stuga |

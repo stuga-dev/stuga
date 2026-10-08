@@ -13,7 +13,7 @@ does not carry version history, the review and Activity history, sharing, member
 favorites, or when rows were created and updated.
 
 A workspace owner or admin exports one with **Settings → This workspace → General → Export
-workspace**. **Create a workspace** with **Start with → From a file** imports one into a new
+workspace**. **Create a workspace** with **Start with → Import** imports one into a new
 workspace, and converts a Notion export or a folder of Markdown into one first
 ([Importing from Notion or Obsidian](import.md)).
 
