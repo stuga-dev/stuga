@@ -249,7 +249,9 @@ field: jieba for Chinese, a Lindera dictionary for Japanese or Korean, or a lang
 field sees only text containing its script, so a Chinese document costs the Latin-script languages
 nothing, and the Chinese field skips text with kana. An index name that would pass Postgres's 63 characters carries a
 hash of its languages in place of their codes. The search box needs every non-stopword term of the query (a query of stopwords alone
-matches them as written) and tolerates a one-letter typo in a title. The semantic leg is pgvector
+matches them as written) and tolerates a one-letter typo in a title. A keyword hit's excerpt is the
+passage of its text showing the most of the query's words, then the most matches, then the first, so
+it stays the same whatever else the node's index holds. The semantic leg is pgvector
 HNSW over chunk embeddings, keeping chunks within the distance of the node's
 [search strictness](configuration.md#search-strictness). Its iterative scan walks on past passages the searcher
 cannot read; when they can read 5,000 chunks or fewer, a count taken first sends the leg to an exact

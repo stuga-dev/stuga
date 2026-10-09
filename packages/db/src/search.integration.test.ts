@@ -240,6 +240,24 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
     expect(await keyword("wh")).toEqual([]);
   });
 
+  // Far enough apart that each passage is an excerpt of its own.
+  const apart = "Calm air over the bay. ".repeat(12);
+
+  it("gives a keyword excerpt the passage showing the most of the query's words, over one repeating fewer", async () => {
+    await makeDoc("d", "Notes", `The tapir sleeps. The tapir eats. The tapir swims. The tapir naps. ${apart}By the river a tapir, a heron and a lemur.`);
+    const [hit] = await keyword("tapir heron lemur");
+    expect(hit?.snippet).toContain("a ⟦tapir⟧, a ⟦heron⟧ and a ⟦lemur⟧");
+  });
+
+  // pdb.snippet weighed each word by how many rows of the node's index hold it, unreadable ones too.
+  it("gives a keyword excerpt the first of the passages showing as many of the query's words, whatever the searcher cannot read", async () => {
+    await makeDoc("d", "Notes", `Early on, a tapir met a heron. ${apart}Later, a tapir met a lemur.`);
+    const excerpt = async () => (await keyword("tapir heron lemur"))[0]?.snippet;
+    expect(await excerpt()).toContain("a ⟦tapir⟧ met a ⟦heron⟧");
+    for (let i = 0; i < 5; i++) await makeDoc(`bob-${i}`, "Birds", "A heron by the reeds.", "bob");
+    expect(await excerpt()).toContain("a ⟦tapir⟧ met a ⟦heron⟧");
+  });
+
   it("gives a document matched by its title alone the opening of its text, not an empty excerpt", async () => {
     await makeDoc("d", "Zephyr", "Calm air over the bay.");
     const [hit] = await keyword("zephyr");
