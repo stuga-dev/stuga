@@ -326,11 +326,11 @@ export function completionPrefix(query: string): { head: string; prefix: string 
 const TITLE_PREFIX_SCORE = "0.000002";
 const BODY_PREFIX_SCORE = "0.000001";
 
-/** pdb.snippets returns five fragments unless given a limit. */
-const ALL_FRAGMENTS = 2147483647;
+/** The excerpt is the best of the first 64 windows of the body that hold a match. */
+const EXCERPT_WINDOWS = 64;
 
 /**
- * Document-level BM25 candidates `(doc_id, kw_snippet, kw_rank)`.
+ * Document-level BM25 candidates `(doc_id, kw_fragments, kw_rank)`.
  *
  * `must` scores each document by its best field (disjunction_max), and each
  * field clause is a conjunction so more words narrow. The `search_text` clause
@@ -342,11 +342,12 @@ const ALL_FRAGMENTS = 2147483647;
  * must stay a bare pdb.score(): wrapped in arithmetic, ORDER BY leaves the
  * index's top-K.
  *
- * The excerpt is chosen here from every fragment pdb.snippets cuts, not left to
- * pdb.snippet, which weighs each word by how many rows of the node's index hold
- * it: other workspaces', ones the searcher cannot read, and old versions of
- * rewritten rows until a merge drops them. The same document could show another
- * passage after a fresh import of it, or an import elsewhere.
+ * kw_fragments are the body's first EXCERPT_WINDOWS windows holding a match, in
+ * order; searchDocs picks the excerpt among them for the rows it returns.
+ * pdb.snippets is filled in by the scan, so it stays here. pdb.snippet's own
+ * pick is not used: it weighs each word by how many rows of the node's index
+ * hold it, other workspaces', ones the searcher cannot read, and old versions
+ * of rewritten rows until a merge drops them.
  */
 function keywordLeg(
   sql: Sql,
@@ -376,45 +377,26 @@ function keywordLeg(
               paradedb.const_score(${sql.unsafe(BODY_PREFIX_SCORE)}, paradedb.boolean(must => ARRAY[${head}${startsWord("all_text")}]))`;
   }
   return sql`
-      SELECT k.doc_id,
-             -- pdb.snippets HTML-escapes around matches; decoded so the snippet is
-             -- raw text on every path. &amp; goes last.
-             replace(replace(replace(replace(replace(
-               best.fragment,
-               '&lt;', '<'), '&gt;', '>'), '&quot;', '"'), '&#x27;', ''''), '&amp;', '&') AS kw_snippet,
-             k.kw_rank
-      FROM (
-        SELECT d.doc_id,
-               pdb.snippets(d.search_text, '⟦', '⟧', 200, ${ALL_FRAGMENTS}, NULL, 'position') AS fragments,
-               pdb.score(d) AS kw_rank
-        FROM docs d
-        WHERE d.workspace_id = ${input.workspaceId}
-          AND d.trashed = FALSE
-          AND d.search_hidden = FALSE
-          AND d.acl_principals && ${input.principals}
-          ${scopeFilter}
-          AND d.doc_id @@@ paradedb.boolean(should => ARRAY[
-                paradedb.boolean(
-                  must   => ARRAY[ paradedb.disjunction_max(ARRAY[
-                              paradedb.boost(2.0, paradedb.match_conjunction('title', ${input.query})),
-                              ${wholeWords(input.query)}]) ],
-                  should => ARRAY[ paradedb.const_score(0.0,
-                              paradedb.match_disjunction('search_text', ${input.query})) ]),
-                paradedb.const_score(0.0,
-                  paradedb.match('title', ${input.query}, distance => 1, conjunction_mode => true))${prefixLegs}])
-        ORDER BY kw_rank DESC
-        LIMIT ${candidates}
-      ) k
-      -- The fragment showing the most of the query's words (as written, case aside),
-      -- then the most matches, then the first. Each piece after a ⟦ opens with a match.
-      LEFT JOIN LATERAL (
-        SELECT f.fragment
-        FROM unnest(k.fragments) WITH ORDINALITY AS f(fragment, ord),
-             unnest((string_to_array(f.fragment, '⟦'))[2:]) AS mark
-        GROUP BY f.ord, f.fragment
-        ORDER BY count(DISTINCT lower(split_part(mark, '⟧', 1))) DESC, count(*) DESC, f.ord
-        LIMIT 1
-      ) best ON TRUE`;
+      SELECT d.doc_id,
+             pdb.snippets(d.search_text, '⟦', '⟧', 200, ${EXCERPT_WINDOWS}, NULL, 'position') AS kw_fragments,
+             pdb.score(d) AS kw_rank
+      FROM docs d
+      WHERE d.workspace_id = ${input.workspaceId}
+        AND d.trashed = FALSE
+        AND d.search_hidden = FALSE
+        AND d.acl_principals && ${input.principals}
+        ${scopeFilter}
+        AND d.doc_id @@@ paradedb.boolean(should => ARRAY[
+              paradedb.boolean(
+                must   => ARRAY[ paradedb.disjunction_max(ARRAY[
+                            paradedb.boost(2.0, paradedb.match_conjunction('title', ${input.query})),
+                            ${wholeWords(input.query)}]) ],
+                should => ARRAY[ paradedb.const_score(0.0,
+                            paradedb.match_disjunction('search_text', ${input.query})) ]),
+              paradedb.const_score(0.0,
+                paradedb.match('title', ${input.query}, distance => 1, conjunction_mode => true))${prefixLegs}])
+      ORDER BY kw_rank DESC
+      LIMIT ${candidates}`;
 }
 
 /**
@@ -660,7 +642,7 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
              COALESCE(k.kw_rank, 0)                      AS kw_rank,
              COALESCE(s.sem_score, 0)                    AS sem_score,
              s.chunk_index                               AS sem_chunk,
-             k.kw_snippet                                AS kw_snippet,
+             k.kw_fragments                              AS kw_fragments,
              COALESCE(1.0/(60 + k.kw_pos), 0)
                + COALESCE(1.0/(60 + s.sem_pos), 0)       AS score
       FROM kw_ranked k
@@ -675,7 +657,7 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
     )
     SELECT t.doc_id, t.title, t.doc_type, t.page_of, t.page_row, t.kw_rank, t.sem_score, t.score,
            -- Null for a document that matched in its title only.
-           t.kw_snippet,
+           kw.kw_snippet,
            CASE WHEN x.pos > 0 THEN substr(d.search_text, greatest(1, x.pos - ${PREFIX_LEAD}), ${EXCERPT_CHARS + PREFIX_LEAD}) END AS prefix_excerpt,
            CASE WHEN x.pos > 0 THEN x.pos - greatest(1, x.pos - ${PREFIX_LEAD}) END AS prefix_offset,
            left(ch.content, ${EXCERPT_CHARS}) AS passage,
@@ -689,9 +671,23 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
     FROM top t
     JOIN docs d ON d.doc_id = t.doc_id
     LEFT JOIN doc_chunks ch ON ch.doc_id = t.doc_id AND ch.chunk_index = t.sem_chunk
+    -- The keyword window showing the most different matching words (as written, case
+    -- aside), then the most matches, then the first. Each piece after a ⟦ opens with a
+    -- match. pdb.snippets HTML-escapes around matches; decoded so the snippet is raw
+    -- text on every path. &amp; goes last.
+    LEFT JOIN LATERAL (
+      SELECT replace(replace(replace(replace(replace(
+               f.fragment,
+               '&lt;', '<'), '&gt;', '>'), '&quot;', '"'), '&#x27;', ''''), '&amp;', '&') AS kw_snippet
+      FROM unnest(t.kw_fragments) WITH ORDINALITY AS f(fragment, ord),
+           unnest((string_to_array(f.fragment, '⟦'))[2:]) AS mark
+      GROUP BY f.ord, f.fragment
+      ORDER BY count(DISTINCT lower(split_part(mark, '⟧', 1))) DESC, count(*) DESC, f.ord
+      LIMIT 1
+    ) kw ON TRUE
     -- Where the unfinished last word begins a word of the body, when the body has no keyword highlight.
     CROSS JOIN LATERAL (
-      SELECT CASE WHEN ${startsWord}::text IS NOT NULL AND strpos(coalesce(t.kw_snippet, ''), '⟦') = 0
+      SELECT CASE WHEN ${startsWord}::text IS NOT NULL AND strpos(coalesce(kw.kw_snippet, ''), '⟦') = 0
                   THEN regexp_instr(d.search_text, ${startsWord}::text, 1, 1, 0, 'i') ELSE 0 END AS pos
     ) x
     -- Where in the body the excerpt excerptOf picks begins, tried in its order, and
@@ -699,7 +695,7 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
     -- body; 0 for the opening, which no fence can precede, or one not found.
     CROSS JOIN LATERAL (
       SELECT s.at, split_part(substr(d.search_text, greatest(s.at, 1)), chr(10), 1) AS line
-      FROM (SELECT CASE WHEN strpos(t.kw_snippet, '⟦') > 0 THEN strpos(d.search_text, translate(t.kw_snippet, '⟦⟧', ''))
+      FROM (SELECT CASE WHEN strpos(kw.kw_snippet, '⟦') > 0 THEN strpos(d.search_text, translate(kw.kw_snippet, '⟦⟧', ''))
                         WHEN x.pos > 0 THEN greatest(1, x.pos - ${PREFIX_LEAD})
                         WHEN ch.content <> '' THEN strpos(d.search_text, left(ch.content, ${EXCERPT_CHARS}))
                         ELSE 0 END AS at) s

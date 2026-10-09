@@ -115,7 +115,7 @@ export interface SearchIndexShape {
  * tables that is not named here, so changing a field or tokenizer means changing
  * the suffix. `all_text` keeps words as written beside the stemmed `all_text_en`,
  * so a stopword-only title still matches; `search_text` is indexed under its own
- * name because pdb.snippet() cannot highlight an aliased field.
+ * name because pdb.snippets() cannot highlight an aliased field.
  */
 export function searchIndexShapes(languages: readonly SearchLanguage[]): readonly SearchIndexShape[] {
   const langs = [...new Set(languages)].sort();

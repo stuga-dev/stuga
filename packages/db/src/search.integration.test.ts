@@ -258,6 +258,15 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
     expect(await excerpt()).toContain("a ⟦tapir⟧ met a ⟦heron⟧");
   });
 
+  it("takes a keyword excerpt from the first 64 passages holding a match", async () => {
+    const naps = (n: number) => `A tapir naps. ${apart}`.repeat(n);
+    await makeDoc("64th", "Notes", `${naps(63)}A tapir met a heron.`);
+    await makeDoc("65th", "Notes", `${naps(64)}A tapir met a heron.`);
+    const hits = await keyword("tapir heron");
+    expect(hits.find((h) => h.doc_id === "64th")?.snippet).toContain("A ⟦tapir⟧ met a ⟦heron⟧");
+    expect(hits.find((h) => h.doc_id === "65th")?.snippet).toMatch(/^A ⟦tapir⟧ naps\./);
+  });
+
   it("gives a document matched by its title alone the opening of its text, not an empty excerpt", async () => {
     await makeDoc("d", "Zephyr", "Calm air over the bay.");
     const [hit] = await keyword("zephyr");

@@ -206,7 +206,7 @@ describe.skipIf(!URL)("the BM25 keyword leg", () => {
     expect((await ask("albatross")).map((c) => c.doc_id)).toEqual(["live"]);
   });
 
-  describe("the snippet of a row pdb.snippet cannot highlight", () => {
+  describe("the snippet of a row pdb.snippets cannot highlight", () => {
     const BODY = "Counts from the northern colonies were lower this year. ".repeat(6);
 
     it("is the head of the text for a match on the title alone", async () => {
