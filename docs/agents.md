@@ -474,11 +474,11 @@ its own pending edits, and `markdown` or `databases` action `status` reports wha
 ## Reject with a note
 
 **Reject with note…** rejects with a note saying what should change: under a single change in the
-document, where the note is written in place of its buttons and kept until that change is decided,
-from **Review each**, from the menu
-beside the run bar's **Reject all**, or from the inbox's **⋯** menu. The button that opens the note
-and the one that sends it carry the same words. The note is kept with each change it rejected, and it
-reaches the agent that proposed them where that agent already looks:
+document, where the note is written in place of its buttons and stays until that change is decided,
+from **Review each**, from the menu beside the run bar's **Reject all**, or from the inbox's **⋯**
+menu. The button that opens the note and the one that sends it carry the same words. The note is
+kept with each change it rejected, and it reaches the agent that proposed them where that agent
+already looks:
 
 - **Its reads of that document** (for a database, its schema and query results) open with the
   reviewer's feedback (what was rejected and the note), and **every proposal it makes there** carries

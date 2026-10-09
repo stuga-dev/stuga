@@ -193,8 +193,8 @@ function noteComposer(part: PreviewHunkPart, ordinal: number, total: number, clo
     drafts.delete(part.key);
     close();
   };
-  // The draft stays until the change leaves review (keepDrafts), so a rejection that fails or is
-  // blocked paints the note back, as written.
+  // The draft stays until the change leaves review (keepDrafts), so a rejection that fails paints
+  // the note back, as written.
   const send = (): void => {
     const note = field.value.trim();
     if (!note) return;

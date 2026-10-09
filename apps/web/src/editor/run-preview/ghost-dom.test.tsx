@@ -293,7 +293,7 @@ describe("a change's note", () => {
     noteButton()!.click();
     type("Keep it shorter.");
     key("Enter");
-    // In flight the change leaves the page; failed or blocked, it is pending again.
+    // In flight the change leaves the page; failed, it is pending again.
     await render([], new Set(["run_a:h1"]));
     expect(field()).toBeNull();
     await render([INTRO]);

@@ -15,7 +15,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 - The model field in **Settings → This node → AI providers → Edit** takes the row's width, so a long id such as `embeddinggemma-2:270m` shows whole.
 - A model Ollama 0.40 lists twice, such as `embeddinggemma:300m`, shows once among the models to choose from.
 - **Test** for **Semantic search** says how long the service took to answer, as it does for **Built-in AI** and **Reranking**.
-- A note written under a change in the document is still there, as written, when its rejection fails or waits on an earlier change ([Reject with a note](docs/agents.md#reject-with-a-note)).
+- A note written under a change in the document is still there, as written, when its rejection fails ([Reject with a note](docs/agents.md#reject-with-a-note)).
 - A note left unsent under a change no longer comes back when that change, decided another way (**Reject all**, a collaborator), returns for review.
 - The document repainting around a note you are writing keeps your caret and selection, and waits while an input method is composing.
 - The Enter that picks a Chinese or Japanese input candidate, in Safari too, no longer sends or applies what you are typing: a note, comment, chat message, **Edit with AI** request, question, search, link, caption, cell or filter, or a pick in the slash or mention menu.
