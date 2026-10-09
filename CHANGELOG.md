@@ -9,6 +9,12 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-10-08
+
+A security fix for search excerpts; Settings shows a model's full name and lists each of Ollama's
+models once; a note under a change outlasts a failed rejection, and choosing a Chinese or Japanese
+input candidate no longer sends what you are typing.
+
 ### Security
 
 - A search hit's excerpt no longer depends on how often a word appears in documents you cannot read or in other workspaces: it is the passage of the document showing the most of your search's words ([Postgres](docs/architecture.md#postgres)).
