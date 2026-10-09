@@ -14,7 +14,7 @@
     "start": "node bin/stuga-node.js serve"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@stuga/agent-surface": "workspace:*",
     "@stuga/ai": "workspace:*",
     "@stuga/auth": "workspace:*",
@@ -36,7 +36,7 @@
     "@types/ws": "^8.18.2",
     "esbuild": "^0.28.2",
     "jose": "^6.2.12",
-    "playwright-core": "1.63.0",
+    "playwright-core": "1.64.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"
   }
