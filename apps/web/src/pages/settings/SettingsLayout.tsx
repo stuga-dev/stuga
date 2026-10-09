@@ -16,6 +16,7 @@ import { NODE_CATEGORIES } from "./node/categories";
 import { Me, NodeSettings, Workspaces, type AvailableUpdate, type WorkspaceInfo } from "../../api";
 import { getActiveWorkspace } from "../../lib/session/workspace-pointer";
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
+import { t } from "../../i18n/i18n";
 import "../../styles/settings.css";
 
 /** What every settings page needs to know about who is asking and about what. */
@@ -125,35 +126,35 @@ export function SettingsLayout() {
   const updateMark = update && (
     <StatusDot
       variant={update.security ? "warning" : "accent"}
-      label={update.security ? `Security update: Stuga ${update.version}` : `Stuga ${update.version} is available`}
+      label={update.security ? t("settings.layout.securityUpdate", { version: update.version }) : t("settings.layout.updateAvailable", { version: update.version })}
     />
   );
 
   const shell = (
     <AppShell
-      topNav={<AppTopNav title="Settings" hasWorkspaceSwitcher={workspace !== null} />}
+      topNav={<AppTopNav title={t("common.settings")} hasWorkspaceSwitcher={workspace !== null} />}
       contentPadding={0}
       sideNav={
         // The library and Ask rails' geometry, so the content edge does not jump between them.
         <SideNav resizable={{ defaultWidth: 248, minWidth: 200, maxWidth: 380, autoSaveId: "stuga-settings-nav" }}>
-          <SideNavSection title="Preferences">
-            {item("Profile", <UserRound size={16} />, "/settings/profile")}
-            {item("Appearance", <Palette size={16} />, "/settings/appearance")}
-            {item("Your AI agents", <Plug size={16} />, "/settings/agents")}
+          <SideNavSection title={t("settings.layout.preferences")}>
+            {item(t("settings.layout.profile"), <UserRound size={16} />, "/settings/profile")}
+            {item(t("settings.layout.appearance"), <Palette size={16} />, "/settings/appearance")}
+            {item(t("common.yourAiAgents"), <Plug size={16} />, "/settings/agents")}
           </SideNavSection>
 
           {isReady && workspace && (
-            <SideNavSection title={`This workspace — ${workspace.name}`}>
-              {item("General", <SlidersHorizontal size={16} />, "/settings/workspace")}
-              {item("Members", <Users size={16} />, "/settings/workspace/members")}
-              {item("Agents", <Bot size={16} />, "/settings/workspace/agents")}
-              {canSeeLedger && item("Audit log", <ScrollText size={16} />, "/settings/workspace/audit")}
-              {canSeeLedger && item("AI usage", <Gauge size={16} />, "/settings/workspace/usage")}
+            <SideNavSection title={t("settings.layout.thisWorkspace", { name: workspace.name })}>
+              {item(t("settings.layout.general"), <SlidersHorizontal size={16} />, "/settings/workspace")}
+              {item(t("settings.layout.members"), <Users size={16} />, "/settings/workspace/members")}
+              {item(t("settings.layout.agents"), <Bot size={16} />, "/settings/workspace/agents")}
+              {canSeeLedger && item(t("settings.layout.auditLog"), <ScrollText size={16} />, "/settings/workspace/audit")}
+              {canSeeLedger && item(t("settings.layout.aiUsage"), <Gauge size={16} />, "/settings/workspace/usage")}
             </SideNavSection>
           )}
 
           {isReady && isNodeAdmin && (
-            <SideNavSection title="This node">
+            <SideNavSection title={t("settings.layout.thisNode")}>
               {NODE_CATEGORIES.filter((c) => c.key !== "remote" || remoteOffered).map((c) =>
                 item(c.label, c.icon, `/settings/node/${c.key}`, c.key === "about" ? updateMark : undefined),
               )}

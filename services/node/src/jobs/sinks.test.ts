@@ -5,10 +5,13 @@ import { parseSmtpUrl } from "./smtp.js";
 const n: NotificationPayload = {
   recipient: "u_r",
   recipientEmail: "r@example.com",
-  title: "Q3 plan",
-  body: "Ada shared a document with you",
+  eventType: "DIRECT_DOC_PERMISSIONS",
+  params: { actor: "Ada", doc: "Q3 plan" },
+  language: "en",
   url: "http://localhost:8787/doc/d1",
 };
+const TITLE = "Ada shared “Q3 plan” with you";
+const BODY = "You now have access to this document.";
 
 function io(status = 200): SinkIo & { calls: Array<{ url: string; body: unknown }> } {
   const calls: Array<{ url: string; body: unknown }> = [];
@@ -34,11 +37,34 @@ describe("deliver", () => {
     const i = io();
     await deliver({ sink: "slack", webhookUrl: "https://hooks.example/T" }, n, i);
     expect(i.calls[0]?.url).toBe("https://hooks.example/T");
-    expect(JSON.stringify(i.calls[0]?.body)).toContain(n.url);
+    expect(i.calls[0]?.body).toEqual({
+      blocks: [
+        { type: "section", text: { type: "mrkdwn", text: `*${TITLE}*\n${BODY}` } },
+        { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open" }, url: n.url }] },
+      ],
+    });
+  });
+
+  it("writes every channel in the recipient's language", async () => {
+    const ja = { ...n, language: "ja" };
+    const slack = io();
+    await deliver({ sink: "slack", webhookUrl: "https://hooks.example/T" }, ja, slack);
+    expect(JSON.stringify(slack.calls[0]!.body)).toContain("Adaが「Q3 plan」をあなたと共有しました");
+    expect(JSON.stringify(slack.calls[0]!.body)).toContain('"text":"開く"');
+    const teams = io();
+    await deliver({ sink: "teams", webhookUrl: "https://t.example" }, { ...n, language: "de" }, teams);
+    expect(teams.calls[0]!.body).toMatchObject({ summary: "Ada hat „Q3 plan“ mit dir geteilt", text: expect.stringContaining("[Öffnen](") });
+    const mail = io();
+    await deliver({ sink: "email", smtpUrl: "smtp://mail.example", emailFrom: "stuga@example.com" }, { ...n, language: "zh-Hans" }, mail);
+    expect(mail.sendMail).toHaveBeenCalledWith("smtp://mail.example", expect.objectContaining({ subject: "Ada 与你共享了“Q3 plan”" }));
   });
 
   it("quotes names as text, never as the channel's markup: no link, no mention", async () => {
-    const named = { ...n, title: "App connected: <https://evil.example|Revoke everything>", body: "[Revoke everything](https://evil.example) @everyone" };
+    const named = {
+      ...n,
+      eventType: "MENTIONED_IN_COMMENT",
+      params: { actor: "Ada", doc: "<https://evil.example|Revoke everything>", excerpt: "[Revoke everything](https://evil.example) @everyone" },
+    };
     const slack = io();
     await deliver({ sink: "slack", webhookUrl: "https://hooks.example/T" }, named, slack);
     const text = (slack.calls[0]!.body as { blocks: Array<{ text?: { text: string } }> }).blocks[0]!.text!.text;
@@ -54,14 +80,28 @@ describe("deliver", () => {
     expect((teams.calls[0]!.body as { text: string }).text).toContain("[Revoke everything] (https://evil.example)");
   });
 
-  it("the generic webhook receives the raw payload", async () => {
+  it("the generic webhook receives the text, and the event and its params", async () => {
     const i = io();
     await deliver({ sink: "webhook", webhookUrl: "https://sink.example" }, n, i);
-    expect(i.calls[0]?.body).toEqual({ recipient: n.recipient, title: n.title, body: n.body, url: n.url });
+    expect(i.calls[0]?.body).toEqual({
+      recipient: n.recipient,
+      event_type: "DIRECT_DOC_PERMISSIONS",
+      params: { actor: "Ada", doc: "Q3 plan" },
+      language: "en",
+      title: TITLE,
+      body: BODY,
+      url: n.url,
+    });
   });
 
   it("a sink answering non-2xx throws so the job retries", async () => {
-    await expect(deliver({ sink: "discord", webhookUrl: "https://d.example" }, n, io(500))).rejects.toThrow("500");
+    await expect(deliver({ sink: "discord", webhookUrl: "https://d.example" }, n, io(500))).rejects.toMatchObject({ status: 500 });
+  });
+
+  it("says why nothing was sent as a code", async () => {
+    expect(await deliver({ sink: "slack" }, n, io())).toBe("no_webhook_url");
+    expect(await deliver({ sink: "email" }, n, io())).toBe("email_not_set_up");
+    expect(await deliver({ sink: "carrier-pigeon" }, n, io())).toBe("no_sink");
   });
 
   it("email sends through SMTP, and silently skips a recipient with no address", async () => {
@@ -70,10 +110,10 @@ describe("deliver", () => {
     await deliver(cfg, n, i);
     expect(i.sendMail).toHaveBeenCalledWith(
       "smtp://mail.example:587",
-      expect.objectContaining({ from: "stuga@example.com", to: "r@example.com", subject: n.title }),
+      expect.objectContaining({ from: "stuga@example.com", to: "r@example.com", subject: TITLE, text: `${BODY}\n\n${n.url}\n` }),
     );
     const skip = io();
-    await deliver(cfg, { ...n, recipientEmail: null }, skip);
+    expect(await deliver(cfg, { ...n, recipientEmail: null }, skip)).toBe("no_email_address");
     expect(skip.sendMail).not.toHaveBeenCalled();
   });
 });

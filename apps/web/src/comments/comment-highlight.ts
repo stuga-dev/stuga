@@ -166,7 +166,7 @@ export function commentHighlightPlugin(options: CommentHighlightOptions, storage
 }
 
 export const CommentHighlight = Extension.create<CommentHighlightOptions, CommentHighlightStorage>({
-  name: "commentHighlight",
+  name: "commentHighlight", // i18n-exempt: the extension's identifier
 
   addOptions() {
     return { ydoc: null, onClickComment: undefined };

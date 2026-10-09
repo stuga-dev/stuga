@@ -9,7 +9,7 @@ import type { JobsDb } from "./db.js";
 import { isTerminal, type JobsEnv } from "./deps.js";
 import { runMaintenanceTick } from "./maintenance.js";
 import { CHANNEL_CHANGED_ERROR, channelKey } from "./notify.js";
-import type { NotificationPayload } from "./sinks.js";
+import { SinkAnsweredError, type NotificationPayload } from "./sinks.js";
 import { auditRow, dispatchJob, handleJobBatch, type AuditMessage } from "./worker.js";
 
 /** A JobsDb whose every member is a spy with a benign default. */
@@ -28,6 +28,7 @@ function fakeDb(overrides: Partial<JobsDb> = {}): JobsDb {
     recordDelivery: vi.fn(async () => {}),
     insertAuditEvents: vi.fn(async () => {}),
     userEmail: vi.fn(async () => null),
+    uiLanguage: vi.fn(async () => ({ chosen: null, detected: null }) as { chosen: string | null; detected: string | null } | null),
     displayNameOf: vi.fn(async () => null),
     syncDocMentions: vi.fn(async () => []),
     mentionReaders: vi.fn(async (_doc: unknown, aliases: string[]) => aliases),
@@ -259,9 +260,8 @@ describe("notify", () => {
     docId: "d1",
     recipient: "u_r",
     workspaceId: "w1",
-    eventType: "doc_shared",
-    title: "Q3 plan",
-    body: "Ada shared a document with you",
+    eventType: "DIRECT_DOC_PERMISSIONS",
+    params: { actor: "Ada", doc: "Q3 plan" },
     actor: "u_a",
   };
 
@@ -269,8 +269,8 @@ describe("notify", () => {
     kind: "notify_deliver",
     channel: "webhook",
     recipient: "u_r",
-    title: "Q3 plan",
-    body: "Ada shared a document with you",
+    eventType: "DIRECT_DOC_PERMISSIONS",
+    params: { actor: "Ada", doc: "Q3 plan" },
     url: "http://localhost:8787/doc/d1",
   };
 
@@ -285,7 +285,14 @@ describe("notify", () => {
     });
     expect(db.insertNotification).toHaveBeenCalledTimes(1);
     expect(db.insertNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ recipient_alias: "u_r", event_type: "doc_shared", resource_url: "http://localhost:8787/doc/d1" }),
+      expect.objectContaining({
+        recipient_alias: "u_r",
+        event_type: "DIRECT_DOC_PERMISSIONS",
+        // The document's own title as data, and the params the text is written from.
+        resource_title: "Q3 plan",
+        payload: { actor: "Ada", doc: "Q3 plan" },
+        resource_url: "http://localhost:8787/doc/d1",
+      }),
       { ...deliverMsg, channelKey: channelKey({ sink: "webhook", webhookUrl: "http://sink" }) },
     );
     expect(deliver).not.toHaveBeenCalled();
@@ -305,7 +312,31 @@ describe("notify", () => {
       log: silentLog,
       deliver: async (_cfg, n) => (delivered.push(n), null),
     });
-    expect(delivered).toEqual([{ recipient: "u_r", title: "Q3 plan", body: "Ada shared a document with you", url: "http://localhost:8787/doc/d1" }]);
+    expect(delivered).toEqual([
+      {
+        recipient: "u_r",
+        eventType: "DIRECT_DOC_PERMISSIONS",
+        params: { actor: "Ada", doc: "Q3 plan" },
+        language: "en",
+        url: "http://localhost:8787/doc/d1",
+      },
+    ]);
+  });
+
+  it("writes a delivery in the recipient's language: their choice, else the one their browser asked for", async () => {
+    const settings = nodeSettings({ notify: { sink: "webhook", webhookUrl: "http://sink" } });
+    const languageOf = async (saved: { chosen: string | null; detected: string | null }) => {
+      const delivered: NotificationPayload[] = [];
+      await handleJobBatch(fakeEnv({ settings }), batchOf([message(deliverMsg)]), {
+        db: fakeDb({ uiLanguage: vi.fn(async () => saved) }),
+        log: silentLog,
+        deliver: async (_cfg, n) => (delivered.push(n), null),
+      });
+      return delivered[0]?.language;
+    };
+    expect(await languageOf({ chosen: "ja", detected: "de" })).toBe("ja");
+    expect(await languageOf({ chosen: null, detected: "de" })).toBe("de");
+    expect(await languageOf({ chosen: null, detected: null })).toBe("en");
   });
 
   it("retries a failed delivery on its own, without storing the notification again", async () => {
@@ -359,8 +390,20 @@ describe("notify", () => {
       log: silentLog,
       deliver: async () => Promise.reject(new Error("smtp://u:secret@mail.test answered 550")),
     });
-    expect(recordDelivery).toHaveBeenLastCalledWith("n1", { error: "the configured address answered 550" });
+    expect(recordDelivery).toHaveBeenLastCalledWith("n1", { error: "failed:<address> answered 550" });
     expect(failed.retried()).toBe(true);
+    await handleJobBatch(fakeEnv({ settings }), batchOf([message(msg)]), {
+      db: fakeDb({ recordDelivery }),
+      log: silentLog,
+      deliver: async () => Promise.reject(new SinkAnsweredError(503)),
+    });
+    expect(recordDelivery).toHaveBeenLastCalledWith("n1", { error: "sink_answered:503" });
+    await handleJobBatch(fakeEnv({ settings }), batchOf([message(msg)]), {
+      db: fakeDb({ recordDelivery }),
+      log: silentLog,
+      deliver: async () => "no_webhook_url",
+    });
+    expect(recordDelivery).toHaveBeenLastCalledWith("n1", { error: "no_webhook_url" });
   });
 
   it("goes only through the channel it was queued for: once that changed, it is recorded unsent and goes nowhere", async () => {
@@ -674,8 +717,7 @@ describe("index_doc: mentions", () => {
         kind: "notify",
         recipient: "u_cy",
         eventType: "MENTIONED_IN_DOC",
-        title: 'Alice A mentioned you in "Plan"',
-        body: "Owner: @bob and @cy",
+        params: { actor: "Alice A", doc: "Plan", excerpt: "Owner: @bob and @cy" },
         actor: "alice",
       }),
     ]);
@@ -696,7 +738,7 @@ describe("index_doc: mentions", () => {
     const { db, env, sent } = setup(["u_bob"]);
     await dispatchJob(env, msg(["agent:claude"]), { db, log: silentLog });
     expect(db.mentionReaders).toHaveBeenCalledWith(expect.anything(), ["u_bob"], null);
-    expect(sent()[0]).toMatchObject({ title: 'You were mentioned in "Plan"', body: "Owner: @bob and @cy" });
+    expect(sent()[0]).toMatchObject({ params: { actor: null, doc: "Plan", excerpt: "Owner: @bob and @cy" } });
   });
 
   it("names the version's first person when a promote job overtakes its flush's", async () => {
@@ -705,7 +747,7 @@ describe("index_doc: mentions", () => {
     const promote = { ...msg([]), recordVersion: true, versionFloor: 1, versionAuthors: ["agent:claude", "alice"] } as IndexMessage;
     await dispatchJob(env, promote, { db, log: silentLog });
     expect(db.mentionReaders).toHaveBeenCalledWith(expect.anything(), ["u_cy"], "alice");
-    expect(sent()).toEqual([expect.objectContaining({ recipient: "u_cy", title: 'Alice A mentioned you in "Plan"', actor: "alice" })]);
+    expect(sent()).toEqual([expect.objectContaining({ recipient: "u_cy", params: expect.objectContaining({ actor: "Alice A" }), actor: "alice" })]);
   });
 
   it("keeps indexing when the mention step fails", async () => {

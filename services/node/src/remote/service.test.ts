@@ -1064,7 +1064,7 @@ describe("where the packaging runs the connector", () => {
     expect(readFileSync(keyPath, "utf8")).toBe(key);
     expect((await readCertificate(dataDir)).kind).toBe("ok");
     await until("the notice", () => told.some((n) => n.event === "REMOTE_ADDRESS_MOVED"));
-    expect(told.find((n) => n.event === "REMOTE_ADDRESS_MOVED")!.body).toContain(`https://${hostname}`);
+    expect(told.find((n) => n.event === "REMOTE_ADDRESS_MOVED")!.params).toEqual({ address: `https://${hostname}` });
 
     // Nothing more goes to the service.
     const heard = fake.requests.length;

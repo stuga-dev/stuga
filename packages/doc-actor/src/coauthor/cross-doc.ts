@@ -7,6 +7,7 @@
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { parseInstructionLevels, type InstructionLevel } from "@stuga/protocol/domain/instructions";
 import { parseReviewMode } from "@stuga/protocol/domain/runs";
+import type { CoauthorNotice, CrossDocError } from "@stuga/protocol/api/ai-turn";
 import type { AiCitation, AiCrossDocProposal, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
 import { CITATION_EXCERPT_CHARS } from "@stuga/protocol/wire/doc-socket";
 import type { ToolRunner } from "@stuga/ai";
@@ -159,12 +160,12 @@ export function crossDocTools(
 
 /**
  * Host external images a turn's edits reference, rewriting the edits in place, so
- * the destination the reviewer sees is the one that lands. Returns a warning, or
- * "" — an image that could not be fetched never costs the turn.
+ * the destination the reviewer sees is the one that lands. Returns what the reviewer should
+ * know about images left external — an image that could not be fetched never costs the turn.
  */
-export async function hostAgentImages(internal: InternalApi, docId: string, edits: AiStrEdit[], meta: SessionMeta): Promise<string> {
+export async function hostAgentImages(internal: InternalApi, docId: string, edits: AiStrEdit[], meta: SessionMeta): Promise<CoauthorNotice[]> {
   const targets = edits.filter((e) => e.new_string.includes("!["));
-  if (targets.length === 0) return "";
+  if (targets.length === 0) return [];
   try {
     const res = await post(internal, "/internal/media-ingest", {
       doc_id: docId,
@@ -172,16 +173,47 @@ export async function hostAgentImages(internal: InternalApi, docId: string, edit
       workspaceId: meta.workspaceId,
       markdown: targets.map((e) => e.new_string),
     });
-    if (!res.ok) return "";
-    const data = (await res.json()) as { markdown?: string[]; warning?: string };
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      markdown?: string[];
+      failures?: Array<{ url?: unknown; reason?: unknown }>;
+      truncated_after?: number | null;
+    };
     // Paired by index, so an answer of the wrong length is dropped rather than misapplied.
-    if (!Array.isArray(data.markdown) || data.markdown.length !== targets.length) return "";
+    if (!Array.isArray(data.markdown) || data.markdown.length !== targets.length) return [];
     targets.forEach((e, i) => {
       e.new_string = data.markdown![i]!;
     });
-    return typeof data.warning === "string" ? data.warning : "";
+    const notices: CoauthorNotice[] = (Array.isArray(data.failures) ? data.failures : [])
+      .filter((f) => typeof f?.url === "string" && typeof f.reason === "string")
+      .map((f) => ({ code: "image_not_downloaded", url: f.url as string, reason: f.reason as string }));
+    if (typeof data.truncated_after === "number") notices.push({ code: "images_truncated", count: data.truncated_after });
+    return notices;
   } catch {
-    return "";
+    return [];
+  }
+}
+
+/**
+ * Why the node refused a proposal, from its status: its sentence is written for
+ * agents, and the person reads the app's own words.
+ */
+function crossDocError(status: number): CrossDocError {
+  switch (status) {
+    case 403:
+      return { code: "no_access" };
+    case 404:
+      return { code: "not_found" };
+    case 409:
+      return { code: "stale" };
+    case 413:
+      return { code: "too_large" };
+    case 423:
+      return { code: "locked" };
+    case 503:
+      return { code: "ledger_unavailable" };
+    default:
+      return { code: "refused" };
   }
 }
 
@@ -212,7 +244,7 @@ export async function proposeCrossDoc(
         edits: g.strEdits,
         citations: g.citations,
       });
-      const data = (await res.json().catch(() => null)) as { kind?: string; pending?: number; applied?: number; message?: string } | null;
+      const data = (await res.json().catch(() => null)) as { kind?: string; pending?: number; applied?: number } | null;
       if (res.ok && data?.kind === "proposed") {
         out.push({ doc_id: g.docId, title: g.title, staged: data.pending ?? g.strEdits.length, mode: "proposed" });
       } else if (res.ok && data?.kind === "auto_applied") {
@@ -220,10 +252,10 @@ export async function proposeCrossDoc(
       } else if (res.ok && data?.kind === "noop") {
         out.push({ doc_id: g.docId, title: g.title, staged: 0, mode: "proposed" });
       } else {
-        out.push({ doc_id: g.docId, title: g.title, staged: 0, mode: "error", message: data?.message ?? "the edits were refused" });
+        out.push({ doc_id: g.docId, title: g.title, staged: 0, mode: "error", error: res.ok ? { code: "refused" } : crossDocError(res.status) });
       }
     } catch {
-      out.push({ doc_id: g.docId, title: g.title, staged: 0, mode: "error", message: "that document was unreachable" });
+      out.push({ doc_id: g.docId, title: g.title, staged: 0, mode: "error", error: { code: "unreachable" } });
     }
   }
   return out;

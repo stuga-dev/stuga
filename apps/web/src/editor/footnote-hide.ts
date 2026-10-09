@@ -7,12 +7,12 @@ import { Extension } from "@tiptap/react";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
-const footnoteHideKey = new PluginKey("footnoteHide");
+const footnoteHideKey = new PluginKey("footnoteHide"); // i18n-exempt: plugin identifier
 
 const HIDE_ATTRS = { class: "footnote-hidden", contenteditable: "false" };
 
 export const FootnoteHide = Extension.create({
-  name: "footnoteHide",
+  name: "footnoteHide", // i18n-exempt: extension identifier
 
   addProseMirrorPlugins() {
     return [

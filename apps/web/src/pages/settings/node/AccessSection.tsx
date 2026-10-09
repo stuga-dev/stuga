@@ -18,6 +18,8 @@ import { NodeAudit } from "./NodeAudit";
 import { IdentityProviderSection } from "./IdentityProviderSection";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 import { LinkAddressSwitch, localOnlyNote, useLinkAddresses, type LinkAddress } from "../../../ui/LinkAddress";
+import { formatLocale, t, uiLanguage } from "../../../i18n/i18n";
+import { presentServerMessage } from "../../../lib/http/server-messages";
 
 /**
  * Who may reach and administer this node, most used first: administrators,
@@ -103,21 +105,21 @@ export function AccessSection({
     <>
       <SectionStatusBanners status={status} />
       <VStack gap={3}>
-        <Heading level={2}>Administrators</Heading>
+        <Heading level={2}>{t("nodeAccess.admins.heading")}</Heading>
         <Text type="supporting" color="secondary">
-          Manage node settings and recover accounts. This is separate from workspace roles.
+          {t("nodeAccess.admins.intro")}
         </Text>
-        {adminsFailed && <Text color="secondary">Couldn’t load the administrators.</Text>}
+        {adminsFailed && <Text color="secondary">{t("nodeAccess.admins.loadFailed")}</Text>}
         {admins?.map((a) => (
           <HStack key={a.alias} hAlign="between" vAlign="center">
             <VStack gap={0}>
               <Text>{a.display_name || a.alias}</Text>
               <Text type="supporting" color="secondary">
-                @{a.username} · {a.granted_by ? "appointed" : "claimed this node"}
+                {a.granted_by ? t("nodeAccess.admins.appointed", { username: a.username }) : t("nodeAccess.admins.claimed", { username: a.username })}
               </Text>
             </VStack>
             <Button
-              label="Remove"
+              label={t("common.remove")}
               variant="ghost"
               size="sm"
               onClick={() => {
@@ -129,7 +131,7 @@ export function AccessSection({
         <HStack gap={2} vAlign="end">
           <StackItem size="fill">
             <PersonPicker
-              label="Add an administrator"
+              label={t("nodeAccess.admins.add")}
               search={(q, signal) => NodeApi.users(q, { signal }).then((r) => r.users)}
               exclude={admins?.map((a) => a.alias)}
               value={newAdmin}
@@ -137,7 +139,7 @@ export function AccessSection({
             />
           </StackItem>
           <Button
-            label="Appoint"
+            label={t("nodeAccess.admins.appoint")}
             variant="secondary"
             isDisabled={!newAdmin?.auxiliaryData?.username}
             onClick={() => {
@@ -157,30 +159,30 @@ export function AccessSection({
       <Divider />
 
       <VStack gap={3}>
-        <Heading level={2}>Account recovery</Heading>
+        <Heading level={2}>{t("nodeAccess.recovery.heading")}</Heading>
         <Text type="supporting" color="secondary">
-          Create a one-time password reset link. Copy it now; using it ends the account’s other sessions.
+          {t("nodeAccess.recovery.intro")}
         </Text>
         <LinkAddressSwitch addresses={addresses} value={linkAddress} onChange={setChosenAddress} />
         <HStack gap={2} vAlign="end">
           <StackItem size="fill">
             <PersonPicker
-              label="Account"
+              label={t("nodeAccess.recovery.account")}
               search={(q, signal) => NodeApi.users(q, { signal }).then((r) => r.users)}
               value={resetFor}
               onChange={setResetFor}
             />
           </StackItem>
           <Button
-            label="Revoke everything"
+            label={t("nodeAccess.recovery.revokeEverything")}
             variant="secondary"
             isDisabled={!resetFor || resetFor.id === getAlias()}
             // Your own takes a new password, which Profile asks for.
-            tooltip={resetFor && resetFor.id === getAlias() ? "Revoke everything for yourself in Settings → Profile." : undefined}
+            tooltip={resetFor && resetFor.id === getAlias() ? t("nodeAccess.recovery.revokeSelf") : undefined}
             onClick={() => resetFor && askRevoke(resetFor)}
           />
           <Button
-            label="Create link"
+            label={t("nodeAccess.recovery.createLink")}
             variant="secondary"
             isDisabled={!resetFor?.auxiliaryData?.username}
             onClick={() => {
@@ -199,7 +201,7 @@ export function AccessSection({
         {reset && (
           <Banner
             status="info"
-            title={`Password link for ${reset.name}. Copy it now — it is not shown again`}
+            title={t("nodeAccess.recovery.linkFor", { name: reset.name })}
             description={
               <VStack gap={1}>
                 <Text type="supporting">{reset.url}</Text>
@@ -212,7 +214,7 @@ export function AccessSection({
           <Layout
             header={
               <DialogHeader
-                title={`Revoke everything for ${revoking?.person.label ?? ""}?`}
+                title={t("nodeAccess.recovery.revokeTitle", { name: revoking?.person.label ?? "" })}
                 onOpenChange={(o) => !o && !revokeBusy && setRevoking(null)}
               />
             }
@@ -226,8 +228,8 @@ export function AccessSection({
             footer={
               <LayoutFooter>
                 <HStack gap={2} justify="end">
-                  <Button label="Cancel" variant="ghost" onClick={() => setRevoking(null)} isDisabled={revokeBusy} />
-                  <Button label="Revoke everything" variant="primary" onClick={() => void revoke()} isLoading={revokeBusy} />
+                  <Button label={t("common.cancel")} variant="ghost" onClick={() => setRevoking(null)} isDisabled={revokeBusy} />
+                  <Button label={t("nodeAccess.recovery.revokeEverything")} variant="primary" onClick={() => void revoke()} isLoading={revokeBusy} />
                 </HStack>
               </LayoutFooter>
             }
@@ -241,14 +243,14 @@ export function AccessSection({
           <IdentityProviderSection ops={ops} onSaved={onSaved} />
           <Divider />
           <VStack gap={3}>
-            <Heading level={2}>Network access</Heading>
+            <Heading level={2}>{t("nodeAccess.network.heading")}</Heading>
             {/* An origin here is a caller the node answers; only the remote address is also one it serves. */}
             <Text type="supporting" color="secondary">
-              Browsers may call this node only from these origins.
+              {t("nodeAccess.network.intro")}
             </Text>
             <MetadataList columns="single" label={{ position: "start" }}>
-              <MetadataListItem label="Public address">{ops.node.public_origin}</MetadataListItem>
-              <MetadataListItem label="Also accepted from">
+              <MetadataListItem label={t("nodeAccess.network.publicAddress")}>{ops.node.public_origin}</MetadataListItem>
+              <MetadataListItem label={t("nodeAccess.network.alsoAccepted")}>
                 {ops.node.extra_origins.length > 0 ? (
                   <VStack gap={0}>
                     {ops.node.extra_origins.map((o) => (
@@ -256,15 +258,15 @@ export function AccessSection({
                     ))}
                   </VStack>
                 ) : (
-                  "None"
+                  t("nodeAccess.network.none")
                 )}
               </MetadataListItem>
               {/* Answered only for pages served there, and never for the addresses above. */}
-              {ops.node.remote_origin && <MetadataListItem label="Remote address">{ops.node.remote_origin}</MetadataListItem>}
+              {ops.node.remote_origin && <MetadataListItem label={t("nodeAccess.network.remoteAddress")}>{ops.node.remote_origin}</MetadataListItem>}
             </MetadataList>
             <Text type="supporting" color="secondary">
-              Set with PUBLIC_ORIGIN and EXTRA_ORIGINS{ops.node.remote_origin ? "; the remote address under Remote access" : ""}.{" "}
-              {ops.restart_hint}
+              {ops.node.remote_origin ? t("nodeAccess.network.setWithRemote") : t("nodeAccess.network.setWith")}{" "}
+              {presentServerMessage(ops.restart_hint)}
             </Text>
           </VStack>
         </>
@@ -278,13 +280,20 @@ export function AccessSection({
 
 /** What the confirmation says Revoke everything takes from someone, from the node's count. */
 export function memberRevokeSummary(counts: RevokeEverythingCounts | null, provider: string | null): string {
-  const parts = ["their password"];
-  if (counts && counts.passkeys > 0) parts.push(counts.passkeys === 1 ? "a passkey" : `${counts.passkeys} passkeys`);
-  if (counts?.provider) parts.push(`${provider ?? "identity provider"} sign-in`);
-  if (counts && counts.apps > 0) parts.push(counts.apps === 1 ? "a connected app" : `${counts.apps} connected apps`);
-  if (counts && counts.api_keys > 0) parts.push(counts.api_keys === 1 ? "an API key" : `${counts.api_keys} API keys`);
+  const parts = [t("nodeAccess.recovery.theirPassword")];
+  if (counts && counts.passkeys > 0) parts.push(t("nodeAccess.recovery.passkeys", { count: counts.passkeys }));
+  if (counts?.provider) {
+    parts.push(provider ? t("nodeAccess.recovery.providerSignIn", { provider }) : t("nodeAccess.recovery.identityProviderSignIn"));
+  }
+  if (counts && counts.apps > 0) parts.push(t("nodeAccess.recovery.apps", { count: counts.apps }));
+  if (counts && counts.api_keys > 0) parts.push(t("nodeAccess.recovery.apiKeys", { count: counts.api_keys }));
   const links = counts ? counts.invites + counts.share_links : 0;
-  if (links > 0) parts.push(links === 1 ? "a link they shared" : `${links} links they shared`);
-  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
-  return `Signs them out everywhere and removes ${list}. You get a password link to send them.`;
+  if (links > 0) parts.push(t("nodeAccess.recovery.links", { count: links }));
+  return t("nodeAccess.recovery.summary", { list: conjunction(parts) });
+}
+
+/** "a, b and c" in the reader's language; English keeps the house style, with no serial comma. */
+function conjunction(items: string[]): string {
+  const locale = uiLanguage() === "en" ? "en-GB" : formatLocale();
+  return new Intl.ListFormat(locale, { type: "conjunction" }).format(items);
 }

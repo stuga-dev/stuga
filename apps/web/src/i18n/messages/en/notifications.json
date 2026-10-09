@@ -1,0 +1,20 @@
+{
+  "tray.unreadLabel": "Notifications ({count, plural, one {# unread} other {# unread}})",
+  "tray.loadFailed": "Couldn’t load notifications.",
+  "tray.showFailed": "Couldn’t show these notifications.",
+  "tray.allCaughtUp": "You’re all caught up.",
+  "channel.email": "email",
+  "channel.webhook": "webhook",
+  "delivery.inStugaOnly": "Shown in Stuga only.",
+  "delivery.sent": "Also sent by {channel}.",
+  "delivery.sending": "Sending by {channel}…",
+  "delivery.notSent": "Not sent by {channel}.",
+  "delivery.emailNotSetUp": "Not sent by {channel}: email is not set up.",
+  "delivery.noEmailAddress": "Not sent by {channel}: you have no email address in Stuga.",
+  "delivery.noSink": "Not sent by {channel}: no notification channel is set up.",
+  "delivery.noWebhookUrl": "Not sent by {channel}: no webhook URL is set.",
+  "delivery.channelChanged": "Not sent by {channel}: the notification channel changed before it was sent.",
+  "delivery.nodeRestarted": "Not sent by {channel}: the node restarted before it was sent.",
+  "delivery.sinkAnswered": "Not sent by {channel}: it answered {status}.",
+  "delivery.failed": "Not sent by {channel}: {detail}."
+}

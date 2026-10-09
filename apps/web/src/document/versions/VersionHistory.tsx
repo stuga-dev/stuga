@@ -7,6 +7,8 @@ import { Fragment } from "react";
 import type { Version } from "../../api";
 import { authorLabel, nameLoading } from "../../state/identity";
 import { absoluteTime, dayLabel, fmtInt, timeOfDay, versionLabel } from "../../lib/format";
+import { t } from "../../i18n/i18n";
+import { nameList } from "../name-list";
 
 /**
  * Who made a version; null while a person's name is still loading, so no raw alias shows.
@@ -18,9 +20,9 @@ export function authorsOf(v: Version, versions: Version[]): string | null {
     const restored = /^restore:v(\d+)$/.exec(a);
     if (!restored) return authorLabel(a);
     const source = versions.find((x) => x.seq === Number(restored[1]));
-    return source ? `restored from ${versionLabel(source.ts)}` : authorLabel(a);
+    return source ? t("document.versions.restoredFrom", { version: versionLabel(source.ts) }) : authorLabel(a);
   });
-  return names.join(", ") || "—";
+  return names.length > 0 ? nameList(names) : "—";
 }
 
 /** Consecutive versions, newest first, under their calendar day. */
@@ -40,16 +42,21 @@ function ChangeCounts({ v }: { v: Version }) {
   const added = v.chars_added;
   const removed = v.chars_removed;
   if (added == null || removed == null) return null;
-  const size = v.chars == null ? "" : ` · ${fmtInt(v.chars)} characters in this version`;
+  const count = v.chars;
   if (added === 0 && removed === 0) {
+    const title = count == null ? t("document.versions.noChangeTitle") : t("document.versions.noChangeTitleSized", { count });
     return (
-      <span className="vchange vchange--none" title={`No characters added or removed${size}`}>
-        No text change
+      <span className="vchange vchange--none" title={title}>
+        {t("document.versions.noChange")}
       </span>
     );
   }
+  const title =
+    count == null
+      ? t("document.versions.changeTitle", { added, removed })
+      : t("document.versions.changeTitleSized", { added, removed, count });
   return (
-    <span className="vchange" title={`${fmtInt(added)} characters added, ${fmtInt(removed)} removed${size}`}>
+    <span className="vchange" title={title}>
       {added > 0 && <span className="vchange__ins">+{fmtInt(added)}</span>}
       {removed > 0 && <span className="vchange__del">−{fmtInt(removed)}</span>}
     </span>
@@ -67,7 +74,7 @@ export function VersionHistory({
   currentSeq: number | null;
   onOpen: (seq: number) => void;
 }) {
-  if (versions.length === 0) return <p className="empty">No versions yet.</p>;
+  if (versions.length === 0) return <p className="empty">{t("document.versions.empty")}</p>;
 
   return (
     <div className="version-history">
@@ -78,7 +85,7 @@ export function VersionHistory({
           <ul className="version-list">
             {items.map((v) => (
               <li key={v.seq}>
-                <button className="version-open" onClick={() => onOpen(v.seq)} title="View and compare this version">
+                <button className="version-open" onClick={() => onOpen(v.seq)} title={t("document.versions.open")}>
                   <span className="version-open__head">
                     <span className="vtime" title={absoluteTime(v.ts)}>
                       {timeOfDay(v.ts)}
@@ -88,7 +95,7 @@ export function VersionHistory({
                   <span className="version-open__sub">
                     {/* A blank keeps the row's height until the names arrive. */}
                     <span className="vauthors">{authorsOf(v, versions) ?? "\u00a0"}</span>
-                    {v.seq === currentSeq && <span className="vcurrent">Current</span>}
+                    {v.seq === currentSeq && <span className="vcurrent">{t("document.versions.current")}</span>}
                   </span>
                 </button>
               </li>

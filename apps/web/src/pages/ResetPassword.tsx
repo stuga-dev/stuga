@@ -24,6 +24,7 @@ import { notePasskeyOffer } from "../lib/session/passkey-offer";
 import { useRemoteStrength } from "../lib/session/password-strength";
 import { PasswordStrengthHint } from "../ui/PasswordStrengthHint";
 import { PasswordRules } from "./Login";
+import { t } from "../i18n/i18n";
 import "../styles/auth.css";
 
 export function ResetPassword() {
@@ -37,7 +38,7 @@ export function ResetPassword() {
 
   async function submit() {
     if (!passwordOk(password, strength.strong)) {
-      setError("Choose a password that meets all the requirements below.");
+      setError(t("auth.choosePassword"));
       return;
     }
     setBusy(true);
@@ -72,10 +73,10 @@ export function ResetPassword() {
 
           <VStack gap={1}>
             <Heading level={1} type="display-3">
-              Choose a new password
+              {t("auth.reset.title")}
             </Heading>
             <Text type="supporting" color="secondary">
-              Setting it signs you out everywhere else.
+              {t("auth.reset.subtitle")}
             </Text>
           </VStack>
 
@@ -83,7 +84,7 @@ export function ResetPassword() {
 
           <VStack gap={4}>
             <TextInput
-              label="New password"
+              label={t("auth.reset.newPassword")}
               type="password"
               size="lg"
               isRequired
@@ -95,7 +96,7 @@ export function ResetPassword() {
             />
             {password.length > 0 && <PasswordRules password={password} strong={strength.strong} />}
             <PasswordStrengthHint password={password} strength={strength} />
-            <Button label="Set password" variant="primary" size="lg" width="100%" isLoading={busy} onClick={() => void submit()} />
+            <Button label={t("auth.reset.setPassword")} variant="primary" size="lg" width="100%" isLoading={busy} onClick={() => void submit()} />
           </VStack>
         </VStack>
       </Card>

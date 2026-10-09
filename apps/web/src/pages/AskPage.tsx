@@ -36,6 +36,7 @@ import { takeStored, writeStored } from "../lib/storage";
 import { isComposingKey } from "../lib/ime";
 import { useAiChat } from "../state/model-options";
 import { AiSetupNotice } from "../ai/AiSetupNotice";
+import { t } from "../i18n/i18n";
 import "../styles/ask.css";
 
 function AskTurnView({
@@ -79,7 +80,7 @@ function AskTurnView({
       {turn.error && (
         <div className="ask-turn__error" style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
           <span>{turn.error}</span>
-          {onRetry && <Button label="Try again" variant="secondary" size="sm" onClick={onRetry} />}
+          {onRetry && <Button label={t("pages.ask.tryAgain")} variant="secondary" size="sm" onClick={onRetry} />}
         </div>
       )}
       {turn.notice && <div className="ask-notice">{turn.notice}</div>}
@@ -188,12 +189,12 @@ function AskConversation() {
 
   const scopeOptions: SelectorOptionType[] = [
     // Not "my documents": retrieval reads every document the viewer may open, a teammate's included.
-    { value: "", label: "All documents in this workspace", icon: <Files size={15} /> },
+    { value: "", label: t("pages.ask.scope.all"), icon: <Files size={15} /> },
     ...(collections.length
       ? [
           {
             type: "section" as const,
-            title: "Collections",
+            title: t("pages.ask.scope.collections"),
             options: collections.map((c) => ({
               value: c.collection_id,
               label: c.name,
@@ -203,9 +204,9 @@ function AskConversation() {
         ]
       : []),
     { type: "divider" as const },
-    { value: NEW_COLLECTION, label: "New collection…", icon: <Plus size={15} /> },
+    { value: NEW_COLLECTION, label: t("pages.ask.scope.newCollection"), icon: <Plus size={15} /> },
     ...(collections.length
-      ? [{ value: MANAGE_COLLECTIONS, label: "Manage collections…", icon: <Settings2 size={15} /> }]
+      ? [{ value: MANAGE_COLLECTIONS, label: t("pages.ask.scope.manage"), icon: <Settings2 size={15} /> }]
       : []),
   ];
 
@@ -231,37 +232,35 @@ function AskConversation() {
             <div className="ask-empty">
               <Sparkles size={22} aria-hidden />
               <Text type="display-3" as="h1">
-                Ask your documents
+                {t("pages.ask.title")}
               </Text>
               <Text color="secondary" as="p">
-                {scopeName
-                  ? `Ask about the documents in “${scopeName}”. Answers can link back to the documents they use.`
-                  : "Ask a question about your documents. Answers can link back to the documents they use."}
+                {scopeName ? t("pages.ask.empty.bodyScoped", { name: scopeName }) : t("pages.ask.empty.body")}
               </Text>
               <Text type="supporting" color="secondary" as="p">
-                Documents hidden from search aren’t included.
+                {t("pages.ask.empty.hiddenNote")}
               </Text>
             </div>
           )}
           {loading && turns.length === 0 && (
             <div style={{ display: "flex", justifyContent: "center", padding: "3rem 0" }}>
-              <Spinner label="Loading this conversation…" />
+              <Spinner label={t("pages.ask.loadingThread")} />
             </div>
           )}
           {loadError && (
             <LoadFailed
-              title="Couldn’t load this conversation"
-                description="Your answers are still saved."
+              title={t("pages.ask.loadFailed")}
+              description={t("pages.ask.loadFailedNote")}
               icon={<Sparkles size={28} />}
               onRetry={retryLoad}
             />
           )}
-          {turns.map((t, i) => (
+          {turns.map((turn, i) => (
             <AskTurnView
               key={`${threadId ?? "new"}-${i}`}
-              turn={t}
+              turn={turn}
               onCitationClick={onCitationClick}
-              onRetry={i === turns.length - 1 && !!t.error && !streaming ? () => void retryLast() : undefined}
+              onRetry={i === turns.length - 1 && !!turn.error && !streaming ? () => void retryLast() : undefined}
             />
           ))}
           <div ref={bottomRef} />
@@ -280,7 +279,7 @@ function AskConversation() {
           >
             <span style={{ pointerEvents: "auto" }}>
               <Button
-                label="Jump to latest"
+                label={t("pages.ask.jumpToLatest")}
                 variant="secondary"
                 size="sm"
                 icon={<ArrowDown size={14} />}
@@ -302,12 +301,12 @@ function AskConversation() {
         <div className="ask-composer">
           <div className="ask-composer__box">
             <TextArea
-              label="Question"
+              label={t("pages.ask.question")}
               isLabelHidden
               rows={2}
               value={input}
               onChange={setInput}
-              placeholder={turns.length ? "Ask a follow-up…" : "Ask a question across your documents…"}
+              placeholder={turns.length ? t("pages.ask.placeholderFollowUp") : t("pages.ask.placeholder")}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !isComposingKey(e)) {
                   e.preventDefault();
@@ -317,7 +316,7 @@ function AskConversation() {
             />
             <div className="ask-composer__foot">
               <Selector
-                label="Search scope"
+                label={t("pages.ask.scope.label")}
                 isLabelHidden
                 size="sm"
                 variant="ghost"
@@ -327,17 +326,17 @@ function AskConversation() {
                 onChange={onScopeChange}
                 options={scopeOptions}
                 isDisabled={turns.length > 0}
-                disabledMessage="Scope is fixed for this conversation. Start a new one to change it."
+                disabledMessage={t("pages.ask.scope.fixed")}
               />
               <HStack gap={2} vAlign="center">
                 <Text type="supporting" color="secondary" as="span" className="ask-composer__hint">
-                  Enter to send, Shift + Enter for a new line
+                  {t("pages.ask.hint")}
                 </Text>
                 {streaming ? (
-                  <Button label="Stop" variant="secondary" size="sm" onClick={stop} />
+                  <Button label={t("common.stop")} variant="secondary" size="sm" onClick={stop} />
                 ) : (
                   <Button
-                    label="Ask"
+                    label={t("pages.ask.send")}
                     variant="primary"
                     size="sm"
                     onClick={() => submit()}
@@ -352,8 +351,8 @@ function AskConversation() {
 
       <PromptDialog
         isOpen={naming}
-        title="New collection"
-        label="Collection name"
+        title={t("pages.ask.newCollection.title")}
+        label={t("pages.ask.newCollection.label")}
         onSubmit={createCollection}
         onClose={() => setNaming(false)}
       />
@@ -384,13 +383,13 @@ export default function AskPage() {
 
   const topNav = (
     <TopNav
-      label="Ask"
+      label={t("pages.ask.nav")}
       startContent={
         <HStack gap={2} vAlign="center">
-          <IconButton label="All documents" variant="ghost" icon={<ArrowLeft size={18} />} onClick={() => nav("/")} />
+          <IconButton label={t("common.allDocuments")} variant="ghost" icon={<ArrowLeft size={18} />} onClick={() => nav("/")} />
           <div className="brand">
             <Brand />
-            <Heading level={1}>Ask your documents</Heading>
+            <Heading level={1}>{t("pages.ask.title")}</Heading>
           </div>
         </HStack>
       }

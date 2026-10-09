@@ -17,7 +17,9 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { validateSelectChoices } from "@stuga/protocol/databases/cells";
 import { DATABASE_MAX_COLUMN_DESCRIPTION_CHARS } from "@stuga/protocol/databases/limits";
 import type { ColumnSpec, DatabaseColumnType } from "@stuga/protocol/databases/types";
-import { COLUMN_TYPES } from "./model/column-types";
+import { columnTypeOptions } from "./model/column-types";
+import { t } from "../i18n/i18n";
+import { cellProblem } from "./model/cell-problems";
 
 export interface ColumnDialogSubmit {
   display: string;
@@ -68,7 +70,7 @@ export function ColumnDialog({ isOpen, retypeOf, busy, onSubmit, onClose }: Colu
       const parsed = parseChoices();
       const v = validateSelectChoices(parsed);
       if (!v.ok) {
-        setChoicesError(v.reason);
+        setChoicesError(cellProblem(v.reason));
         return;
       }
       choices = v.choices;
@@ -92,7 +94,7 @@ export function ColumnDialog({ isOpen, retypeOf, busy, onSubmit, onClose }: Colu
     })();
   const showClearWarning = retypeOf !== null && (retypeOf.type !== type || removesChoices);
 
-  const title = retypeOf ? `Change type of “${retypeOf.display}”` : "Add column";
+  const title = retypeOf ? t("database.columnDialog.changeTypeTitle", { name: retypeOf.display }) : t("database.column.add");
   return (
     <Dialog isOpen={isOpen} onOpenChange={(o) => !o && !busy && onClose()} purpose="form" width={440}>
       <Layout
@@ -102,7 +104,7 @@ export function ColumnDialog({ isOpen, retypeOf, busy, onSubmit, onClose }: Colu
             <VStack gap={4}>
               {!retypeOf && (
                 <TextInput
-                  label="Column name"
+                  label={t("database.column.name")}
                   value={display}
                   onChange={setDisplay}
                   hasAutoFocus
@@ -110,8 +112,8 @@ export function ColumnDialog({ isOpen, retypeOf, busy, onSubmit, onClose }: Colu
                 />
               )}
               <Selector
-                label="Type"
-                options={[...COLUMN_TYPES]}
+                label={t("database.columnDialog.type")}
+                options={columnTypeOptions()}
                 value={type}
                 onChange={(v) => {
                   setType(v as DatabaseColumnType);
@@ -120,8 +122,8 @@ export function ColumnDialog({ isOpen, retypeOf, busy, onSubmit, onClose }: Colu
               />
               {type === "single_select" && (
                 <TextInput
-                  label="Choices"
-                  description="Comma-separated, e.g. Todo, Doing, Done"
+                  label={t("database.columnDialog.choices")}
+                  description={t("database.columnDialog.choicesHelp")}
                   value={choicesText}
                   onChange={(v) => {
                     setChoicesText(v);
@@ -133,8 +135,8 @@ export function ColumnDialog({ isOpen, retypeOf, busy, onSubmit, onClose }: Colu
               )}
               {!retypeOf && (
                 <TextArea
-                  label="Description"
-                  description="Shown in the header and used by AI answers."
+                  label={t("database.columnDescription.label")}
+                  description={t("database.columnDescription.help")}
                   isOptional
                   rows={3}
                   value={description}
@@ -143,7 +145,7 @@ export function ColumnDialog({ isOpen, retypeOf, busy, onSubmit, onClose }: Colu
                     descriptionTooLong
                       ? {
                           type: "error",
-                          message: `Too long: ${trimmedDescription.length.toLocaleString()} characters, and the limit is ${DATABASE_MAX_COLUMN_DESCRIPTION_CHARS.toLocaleString()}.`,
+                          message: t("common.tooLong", { count: trimmedDescription.length, limit: DATABASE_MAX_COLUMN_DESCRIPTION_CHARS }),
                         }
                       : undefined
                   }
@@ -152,11 +154,11 @@ export function ColumnDialog({ isOpen, retypeOf, busy, onSubmit, onClose }: Colu
               {showClearWarning && (
                 <Banner
                   status="warning"
-                  title="Some values may be cleared"
+                  title={t("database.columnDialog.clearWarning")}
                   description={
                     removesChoices && retypeOf?.type === type
-                      ? "Cells holding a removed choice become empty. This can't be undone."
-                      : "Values that don't fit the new type become empty. This can't be undone."
+                      ? t("database.columnDialog.clearChoices")
+                      : t("database.columnDialog.clearType")
                   }
                 />
               )}
@@ -166,9 +168,9 @@ export function ColumnDialog({ isOpen, retypeOf, busy, onSubmit, onClose }: Colu
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label="Cancel" variant="ghost" onClick={onClose} isDisabled={busy} />
+              <Button label={t("common.cancel")} variant="ghost" onClick={onClose} isDisabled={busy} />
               <Button
-                label={retypeOf ? "Change type" : "Add column"}
+                label={retypeOf ? t("database.columnDialog.changeType") : t("database.column.add")}
                 variant="primary"
                 onClick={submit}
                 isDisabled={busy || (!retypeOf && (!display.trim() || descriptionTooLong))}

@@ -1,5 +1,6 @@
 /** `/api/whoami`: who the caller is, the name they go by, how to reach them, and how a person signs in. */
-import { getSignInMethods, getUserEmail, getUsers, revokeEverythingCounts, setDisplayName, setUserEmail } from "@stuga/db";
+import { getSignInMethods, getUiLanguage, getUserEmail, getUsers, revokeEverythingCounts, setDisplayName, setUiLanguage, setUserEmail } from "@stuga/db";
+import { isUiLanguage } from "@stuga/protocol/domain/ui-languages";
 import { isEmailShaped } from "@stuga/protocol/domain/username";
 import { isNodeAdmin } from "../authz/authz.js";
 import { error, json } from "../http/respond.js";
@@ -86,4 +87,18 @@ export async function updateWhoami({ ctx, req }: WorkspaceCall): Promise<Respons
 export async function getRevokeEverythingCounts({ ctx }: AccountCall): Promise<Response> {
   const counts = await revokeEverythingCounts(ctx.sql, ctx.alias);
   return counts ? json(counts) : error(404, "this account no longer exists");
+}
+
+/** The interface language the caller chose; null follows their browser. Before any workspace, like the sign-in it follows. */
+export async function getUiLanguagePreference({ ctx }: AccountCall): Promise<Response> {
+  const language = await getUiLanguage(ctx.sql, ctx.alias);
+  return language ? json({ ui_language: language.chosen }) : error(404, "this account no longer exists");
+}
+
+export async function setUiLanguagePreference({ ctx, req }: AccountCall): Promise<Response> {
+  const body = (await req.json().catch(() => ({}))) as { ui_language?: unknown };
+  const language = body.ui_language ?? null;
+  if (language !== null && !isUiLanguage(language)) return error(400, "ui_language must be one of the interface languages or null");
+  await setUiLanguage(ctx.sql, ctx.alias, language);
+  return json({ ui_language: language });
 }

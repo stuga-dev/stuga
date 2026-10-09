@@ -8,6 +8,7 @@ import {
   createOidcTicket,
   createProviderAccount,
   createRefreshSessionIf,
+  noteDetectedUiLanguage,
   endRefreshSession,
   findAccountByAlias,
   findAccountBySub,
@@ -109,6 +110,8 @@ export interface IdentityDb {
 
   /** A new sign-in; with `requires`, only while it still holds (null otherwise, nothing written). */
   createRefreshSession(input: NewRefreshSession, requires?: StillHolds | null): Promise<RefreshSessionRow | null>;
+  /** The interface language the browser asked for at a sign-in, for what the node sends outside the app. */
+  noteDetectedUiLanguage(alias: string, language: string): Promise<void>;
   findRefreshSession(tokenHash: string): Promise<RefreshSessionRow | null>;
   /** Only a token issued at `arrival`; its successor continues the same sign-in and never outlives it. */
   rotateRefreshSession(input: {
@@ -193,6 +196,7 @@ export function identityDb(sql: Sql): IdentityDb {
     linkIdentity: (alias, sub, issuer, requires) => linkIdentity(sql, alias, sub, issuer, requires ?? null),
     unlinkIdentity: (alias) => unlinkIdentity(sql, alias),
     createRefreshSession: (input, requires) => createRefreshSessionIf(sql, input, requires ?? null),
+    noteDetectedUiLanguage: (alias, language) => noteDetectedUiLanguage(sql, alias, language),
     findRefreshSession: (tokenHash) => findRefreshSession(sql, tokenHash),
     rotateRefreshSession: (input) => rotateRefreshSession(sql, input),
     siblingRefreshSession: (input) => siblingRefreshSession(sql, input),

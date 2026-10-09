@@ -46,8 +46,9 @@ import {
 } from "../shell/StartWith";
 import { logout } from "../lib/session/tokens";
 import { takeWorkspaceReturn } from "../lib/session/return-path";
-import { Brand, nodeName } from "../shell/Brand";
+import { Brand, PRODUCT_NAME, nodeName } from "../shell/Brand";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
 /** How often the page looks for a workspace whose import it stopped waiting for. */
 export const IMPORT_CHECK_MS = 10_000;
@@ -115,7 +116,7 @@ export function WorkspaceOnboarding() {
       await work();
     } catch (err) {
       if (err instanceof ImportMayFinish) setImporting(asked);
-      else setError(errorMessage(err, "Couldn't create the workspace."));
+      else setError(errorMessage(err, t("auth.onboarding.createFailedFallback")));
     } finally {
       setBusy(false);
     }
@@ -157,7 +158,7 @@ export function WorkspaceOnboarding() {
           }
           if (Date.now() - importing < IMPORT_GIVE_UP_MS) return;
           stop();
-          setError("The import didn’t finish. Try again.");
+          setError(t("auth.onboarding.importUnfinished"));
         })
         .catch(() => {});
     }, IMPORT_CHECK_MS);
@@ -173,14 +174,14 @@ export function WorkspaceOnboarding() {
       contentPadding={0}
       topNav={
         <TopNav
-          label="Workspace setup"
+          label={t("auth.onboarding.navLabel")}
           startContent={
             <HStack gap={2} vAlign="center">
               <Brand />
               <Heading level={1}>{nodeName()}</Heading>
             </HStack>
           }
-          endContent={<IconButton label="Sign out" variant="ghost" icon={<LogOut size={17} />} onClick={logout} />}
+          endContent={<IconButton label={t("auth.onboarding.signOut")} variant="ghost" icon={<LogOut size={17} />} onClick={logout} />}
         />
       }
     >
@@ -196,29 +197,29 @@ export function WorkspaceOnboarding() {
           ) : (
             <VStack gap={6}>
               <VStack gap={2}>
-                <Heading level={1}>Create your workspace</Heading>
-                <Text color="secondary">A place for your documents. Start on your own and invite others when you’re ready.</Text>
+                <Heading level={1}>{t("auth.onboarding.title")}</Heading>
+                <Text color="secondary">{t("auth.onboarding.subtitle")}</Text>
               </VStack>
               {held?.left_out ? (
                 <>
-                  {error && <Banner ref={errorRef} status="error" title="Workspace creation failed" description={error} />}
+                  {error && <Banner ref={errorRef} status="error" title={t("auth.onboarding.createFailed")} description={error} />}
                   <LeftOutList leftOut={held.left_out} />
                   <HStack gap={2} justify="end">
-                    <Button label="Cancel" variant="ghost" onClick={letGo} isDisabled={busy} />
-                    <Button label="Import" variant="primary" icon={<ArrowRight size={16} />} onClick={importHeld} isDisabled={busy || importing !== null} isLoading={busy} />
+                    <Button label={t("common.cancel")} variant="ghost" onClick={letGo} isDisabled={busy} />
+                    <Button label={t("common.import")} variant="primary" icon={<ArrowRight size={16} />} onClick={importHeld} isDisabled={busy || importing !== null} isLoading={busy} />
                   </HStack>
                 </>
               ) : (
                 <>
                 {importing !== null && (
-                  <Banner ref={importingRef} status="info" title="The import may still finish" description="This page opens the workspace when it does." />
+                  <Banner ref={importingRef} status="info" title={t("auth.onboarding.importMayFinish")} description={t("auth.onboarding.importMayFinishBody")} />
                 )}
-                {error && <Banner ref={errorRef} status="error" title="Workspace creation failed" description={error} />}
+                {error && <Banner ref={errorRef} status="error" title={t("auth.onboarding.createFailed")} description={error} />}
                 <VStack gap={4}>
                   <StartWith value={start} onChange={setStart} samples={samples} isDisabled={busy} />
                   <TextInput
-                    label="Workspace name"
-                    placeholder={nameOptional ? ARCHIVE_NAME_PLACEHOLDER : "For example, My projects"}
+                    label={t("auth.onboarding.nameLabel")}
+                    placeholder={nameOptional ? ARCHIVE_NAME_PLACEHOLDER : t("auth.onboarding.namePlaceholder")}
                     value={name}
                     onChange={setName}
                     onEnter={createWorkspace}
@@ -228,7 +229,7 @@ export function WorkspaceOnboarding() {
                   />
                   {/* This choice is stamped on new items; it does not change existing sharing. */}
                   <Selector
-                    label="Who can use new documents?"
+                    label={t("auth.onboarding.accessLabel")}
                     description={WORKSPACE_ACCESS_HELP}
                     value={access}
                     onChange={(v) => setAccess(v as DocAccessMode)}
@@ -238,7 +239,7 @@ export function WorkspaceOnboarding() {
                 </VStack>
                 <HStack justify="end">
                   <Button
-                    label="Create workspace"
+                    label={t("auth.onboarding.create")}
                     variant="primary"
                     icon={<PanelsTopLeft size={16} />}
                     onClick={createWorkspace}
@@ -290,22 +291,22 @@ function AiChoices({
   return (
     <VStack gap={6}>
       <VStack gap={2}>
-        <Heading level={1}>Your workspace is ready</Heading>
-        <Text color="secondary">Start writing now. AI is optional: add it here or later.</Text>
+        <Heading level={1}>{t("auth.onboarding.ready")}</Heading>
+        <Text color="secondary">{t("auth.onboarding.readyBody")}</Text>
       </VStack>
       <Card>
         <VStack gap={4}>
           <Choice
             icon={<Plug size={18} />}
-            title="Your AI agents"
-            about="Connect Claude, Codex or another AI agent, on your own subscription. Each member connects their own."
+            title={t("common.yourAiAgents")}
+            about={t("auth.onboarding.agentsAbout")}
             isOpen={open.agent}
             onOpen={() => show("agent", true)}
           >
             {/* Nothing on this page lists keys, so a new one has nothing to reload. */}
             <AgentClients onKeyCreated={() => {}} />
             <HStack>
-              <Button label="Done" variant="secondary" size="sm" onClick={() => show("agent", false)} />
+              <Button label={t("common.done")} variant="secondary" size="sm" onClick={() => show("agent", false)} />
             </HStack>
           </Choice>
           <Divider />
@@ -331,7 +332,7 @@ function AiChoices({
         </VStack>
       </Card>
       <HStack justify="end">
-        <Button label="Start using Stuga" variant="primary" endContent={<ArrowRight size={16} />} onClick={onStart} />
+        <Button label={t("auth.onboarding.start", { product: PRODUCT_NAME })} variant="primary" endContent={<ArrowRight size={16} />} onClick={onStart} />
       </HStack>
     </VStack>
   );
@@ -370,11 +371,11 @@ function Choice({
           setUp ? (
             <HStack gap={1} vAlign="center">
               {/* The word beside it says the same, so the dot is not read out twice. */}
-              <StatusDot variant="success" label="On" aria-hidden="true" />
-              <Text type="supporting">On</Text>
+              <StatusDot variant="success" label={t("auth.onboarding.on")} aria-hidden="true" />
+              <Text type="supporting">{t("auth.onboarding.on")}</Text>
             </HStack>
           ) : (
-            !isOpen && <Button label="Set up" variant="secondary" size="sm" onClick={onOpen} />
+            !isOpen && <Button label={t("auth.onboarding.setUp")} variant="secondary" size="sm" onClick={onOpen} />
           )
         }
       />

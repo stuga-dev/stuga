@@ -10,6 +10,8 @@ export interface Notification {
   resource_title: string | null;
   resource_url: string | null;
   actor_alias: string | null;
+  /** What it says, as its event's params (@stuga/protocol/notify/events): the reader's language writes the text. */
+  payload?: Record<string, unknown>;
   read: boolean;
   created_at: string;
   /** The sink it was also sent through, as set up when it was written; "none" when shown in Stuga only, null when not recorded. */

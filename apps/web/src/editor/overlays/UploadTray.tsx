@@ -3,6 +3,7 @@ import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { ImageIcon, AlertTriangle, X } from "lucide-react";
 import type { Uploader } from "../use-upload";
+import { t } from "../../i18n/i18n";
 
 export function UploadTray({ uploader }: { uploader: Uploader }) {
   const { items, dismiss } = uploader;
@@ -20,19 +21,19 @@ export function UploadTray({ uploader }: { uploader: Uploader }) {
             <>
               <div className="upload-bar">
                 <ProgressBar
-                  label={`Uploading ${it.name}`}
+                  label={t("editor.upload.uploading", { name: it.name })}
                   isLabelHidden
                   hasValueLabel
                   value={Math.round(it.progress * 100)}
                   max={100}
                 />
               </div>
-              <IconButton label="Cancel upload" variant="ghost" size="sm" icon={<X size={14} />} onClick={it.cancel} />
+              <IconButton label={t("editor.upload.cancel")} variant="ghost" size="sm" icon={<X size={14} />} onClick={it.cancel} />
             </>
           ) : (
             <>
-              <span className="upload-row__err" title={it.error}>{it.error ?? "Upload failed"}</span>
-              <IconButton label="Dismiss" variant="ghost" size="sm" icon={<X size={14} />} onClick={() => dismiss(it.id)} />
+              <span className="upload-row__err" title={it.error}>{it.error ?? t("editor.upload.failed")}</span>
+              <IconButton label={t("common.dismiss")} variant="ghost" size="sm" icon={<X size={14} />} onClick={() => dismiss(it.id)} />
             </>
           )}
         </div>

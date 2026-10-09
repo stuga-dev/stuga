@@ -1,0 +1,20 @@
+{
+  "tray.unreadLabel": "通知（未読{count, plural, other {#件}}）",
+  "tray.loadFailed": "通知を読み込めませんでした。",
+  "tray.showFailed": "これらの通知を表示できませんでした。",
+  "tray.allCaughtUp": "新しい通知はありません。",
+  "channel.email": "メール",
+  "channel.webhook": "Webhook",
+  "delivery.inStugaOnly": "Stuga内にのみ表示されます。",
+  "delivery.sent": "{channel}でも送信しました。",
+  "delivery.sending": "{channel}で送信中…",
+  "delivery.notSent": "{channel}で送信されませんでした。",
+  "delivery.emailNotSetUp": "{channel}で送信されませんでした：メールが設定されていません。",
+  "delivery.noEmailAddress": "{channel}で送信されませんでした：Stugaにメールアドレスが登録されていません。",
+  "delivery.noSink": "{channel}で送信されませんでした：通知チャネルが設定されていません。",
+  "delivery.noWebhookUrl": "{channel}で送信されませんでした：Webhook URLが設定されていません。",
+  "delivery.channelChanged": "{channel}で送信されませんでした：送信前に通知チャネルが変更されました。",
+  "delivery.nodeRestarted": "{channel}で送信されませんでした：送信前にノードが再起動しました。",
+  "delivery.sinkAnswered": "{channel}で送信されませんでした：応答コードは{status}でした。",
+  "delivery.failed": "{channel}で送信されませんでした：{detail}。"
+}

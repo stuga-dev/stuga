@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "preview": "vite preview",
-    "clean": "rm -rf dist node_modules/.vite"
+    "clean": "rm -rf dist node_modules/.vite",
+    "i18n:check": "node scripts/i18n-check.mjs"
   },
   "dependencies": {
     "@astryxdesign/core": "0.6.6",
@@ -33,6 +34,7 @@
     "@tiptap/react": "3.31.4",
     "@tiptap/starter-kit": "3.31.4",
     "@tiptap/y-tiptap": "3.0.9",
+    "intl-messageformat": "^11.2.15",
     "lucide-react": "1.52.0",
     "markdown-it": "^15.0.2",
     "mermaid": "^12.1.0",

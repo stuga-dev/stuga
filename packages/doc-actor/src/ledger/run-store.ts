@@ -553,17 +553,19 @@ export class RunLedger {
   }
 
   /** Notify the reviewer. Best-effort: a queue hiccup must not fail an edit that committed or parked. */
-  async notify(stored: StoredRun, eventType: string, body: string): Promise<void> {
+  async notify(stored: StoredRun, n: { eventType: "AGENT_EDITS_PROPOSED"; count: number } | { eventType: "AGENT_EDITS_APPLIED" }): Promise<void> {
+    const agent = stored.agent;
+    const doc = stored.doc_title;
     try {
       await this.env.jobs.send({
         kind: "notify",
         recipient: stored.reviewer,
         workspaceId: stored.workspace_id,
-        eventType,
         docId: this.store.docId,
-        title: stored.doc_title,
-        body,
         actor: stored.agent,
+        ...(n.eventType === "AGENT_EDITS_PROPOSED"
+          ? { eventType: n.eventType, params: { agent, doc, count: n.count } }
+          : { eventType: n.eventType, params: { agent, doc } }),
       });
     } catch (err) {
       console.warn("agent-run notify enqueue failed", { docId: this.store.docId, runId: stored.id, err: String(err) });

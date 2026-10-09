@@ -15,6 +15,7 @@ import { useSharedEditor } from "./editor-context";
 import { flashBlock } from "./passage-flash";
 import { SNIPPET_MIN, headingSegments, stripMarkdown } from "../ai/citations";
 import { HIT_PARAM } from "../lib/snippet";
+import { t } from "../i18n/i18n";
 
 /** A document not rendered by now is not going to match. */
 const DEADLINE_MS = 8_000;
@@ -207,9 +208,7 @@ function useCitationJump(): void {
         done.current = { key, jump };
         if (hit) return;
         toast({
-          body: q
-            ? `Couldn't find “${q}” in this document. It may have changed since that answer was written.`
-            : "Couldn't find the cited passage in this document. It may have changed since that answer was written.",
+          body: q ? t("editor.citation.notFoundQuote", { quote: q }) : t("editor.citation.notFound"),
           type: "error",
         });
         return;

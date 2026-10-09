@@ -152,17 +152,33 @@ describe("a table co-author turn", () => {
     expect(vi.mocked(runTableAgentTurn).mock.calls.at(-1)![1]).toMatchObject({ instructions: LEVELS });
   });
 
-  it("tells the person what failed in plain words, and logs the provider's own", async () => {
+  it("tells the person what kind of failure it was, never the provider's words, and logs them", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const failure = { kind: "auth" as const, protocol: "anthropic-messages", model: "claude-opus-5-5", message: "401 invalid x-api-key for org-abc" };
     vi.mocked(resolveDocInstructions).mockResolvedValue([]);
     vi.mocked(runTableAgentTurn).mockResolvedValue({ ...turnResult, modelId: "claude-opus-5-5", stopReason: "error", error: failure.message, failure });
     const text = await start(turnCtx());
     expect(text).toContain("event: error");
-    expect(text).toContain("did not accept this node's key");
+    expect(text).toContain('event: error\ndata: {"message":"the AI turn failed","failure":"auth"}');
     expect(text).not.toContain("org-abc");
     expect(warn).toHaveBeenCalledWith("table assistant model call failed", expect.objectContaining({ docId: "db1", ...failure }));
     warn.mockRestore();
+  });
+
+  it("sends what the turn is doing and why it ended early as data, never as sentences", async () => {
+    vi.mocked(resolveDocInstructions).mockResolvedValue([]);
+    vi.mocked(runTableAgentTurn).mockImplementation(async (_cfg, _input, _runner, _onChunk, onStatus) => {
+      onStatus?.({ kind: "searching", query: "pricing" });
+      return { ...turnResult, modelId: "m", staged: 2, stopReason: "error", failure: { kind: "rate_limit", protocol: null, model: "m", message: "429" } };
+    });
+    const text = await start(turnCtx());
+    expect(text).toContain('event: status\ndata: {"kind":"searching","query":"pricing"}');
+    const done = JSON.parse(/event: done\ndata: (.*)\n/.exec(text)![1]!) as Record<string, unknown>;
+    expect(done.notice).toEqual({ code: "ended_early", kept: "staged", failure: "rate_limit" });
+
+    vi.mocked(runTableAgentTurn).mockReset().mockResolvedValue({ ...turnResult, applied: 1, rounds: 12, stopReason: "max_rounds" });
+    const capped = JSON.parse(/event: done\ndata: (.*)\n/.exec(await start(turnCtx()))![1]!) as Record<string, unknown>;
+    expect(capped.notice).toEqual({ code: "max_rounds", rounds: 12 });
   });
 
   it("runs the turn without them when they cannot be read", async () => {

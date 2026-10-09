@@ -40,6 +40,7 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
   const passkeys = new Map<string, PasskeyRow>();
   /** Accounts that said Not now to the passkey offer. */
   const offerDismissed = new Set<string>();
+  const detectedUiLanguages = new Map<string, string>(); // alias → language
   /** `${alias}:${arrival}:${tokenHash}` → the device's label and first address. */
   const devices = new Map<string, { label: string; firstFrom: string | null }>();
   /** The settings row's setup choices: written only by the account that claims the node. */
@@ -186,6 +187,9 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
       r.used = true;
       row.password_hash = passwordHash;
       return r.alias;
+    },
+    async noteDetectedUiLanguage(alias, language) {
+      detectedUiLanguages.set(alias, language);
     },
     async createRefreshSession(input, requires) {
       if (!holds(input.alias, requires)) return null;
@@ -447,6 +451,6 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
     for (const [hash, row] of sessions) if (row.passkey_id === credentialId) sessions.delete(hash);
     return [...new Set(ended)];
   };
-  return { db, accounts, sessions, invites, admins, resets, flows, tickets, names, emails, settings, devices, passkeys, offerDismissed, removePasskey };
+  return { db, accounts, sessions, invites, admins, resets, flows, tickets, names, emails, settings, devices, passkeys, offerDismissed, detectedUiLanguages, removePasskey };
 }
 

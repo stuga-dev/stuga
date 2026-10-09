@@ -1,0 +1,20 @@
+{
+  "tray.unreadLabel": "Benachrichtigungen ({count, plural, one {# ungelesen} other {# ungelesen}})",
+  "tray.loadFailed": "Benachrichtigungen konnten nicht geladen werden.",
+  "tray.showFailed": "Diese Benachrichtigungen konnten nicht angezeigt werden.",
+  "tray.allCaughtUp": "Du bist auf dem neuesten Stand.",
+  "channel.email": "E-Mail",
+  "channel.webhook": "Webhook",
+  "delivery.inStugaOnly": "Nur in Stuga angezeigt.",
+  "delivery.sent": "Auch per {channel} gesendet.",
+  "delivery.sending": "Wird per {channel} gesendet…",
+  "delivery.notSent": "Nicht per {channel} gesendet.",
+  "delivery.emailNotSetUp": "Nicht per {channel} gesendet: E-Mail ist nicht eingerichtet.",
+  "delivery.noEmailAddress": "Nicht per {channel} gesendet: Du hast in Stuga keine E-Mail-Adresse.",
+  "delivery.noSink": "Nicht per {channel} gesendet: Es ist kein Benachrichtigungskanal eingerichtet.",
+  "delivery.noWebhookUrl": "Nicht per {channel} gesendet: Es ist keine Webhook-URL festgelegt.",
+  "delivery.channelChanged": "Nicht per {channel} gesendet: Der Benachrichtigungskanal wurde vor dem Senden geändert.",
+  "delivery.nodeRestarted": "Nicht per {channel} gesendet: Der Knoten wurde vor dem Senden neu gestartet.",
+  "delivery.sinkAnswered": "Nicht per {channel} gesendet: Die Antwort war {status}.",
+  "delivery.failed": "Nicht per {channel} gesendet: {detail}."
+}

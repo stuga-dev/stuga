@@ -9,6 +9,7 @@ import { renderImageCaptions } from "../editor/image-caption-markdown";
 import { renderTextDirection } from "../editor/text-direction-markdown";
 import { denseFootnoteMap } from "@stuga/crdt-ops";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
+import { t } from "../i18n/i18n";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 renderImageCaptions(md);
@@ -57,11 +58,12 @@ function renderTextWithCitations(
     out += md.utils.escapeHtml(content.slice(last, m.index));
     const display = renumber?.get(raw) ?? raw;
     if (cite) {
-      const title = escapeAttr(`Source: ${cite.title}`);
+      const title = escapeAttr(t("ai.citation.chipTitle", { title: cite.title }));
       out += `<button class="citation-ref" data-cite-raw="${raw}" data-cite-display="${display}" title="${title}">[${display}]</button>`;
     } else {
       // No data-cite-raw, so the delegated click handler ignores it.
-      out += `<span class="citation-ref citation-ref--pending" title="Source appears when the answer finishes">[${display}]</span>`;
+      const title = escapeAttr(t("ai.citation.pendingTitle"));
+      out += `<span class="citation-ref citation-ref--pending" title="${title}">[${display}]</span>`;
     }
     last = m.index + m[0].length;
   }

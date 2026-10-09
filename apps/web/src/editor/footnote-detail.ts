@@ -4,6 +4,7 @@
  */
 import type { Node as PMNode } from "@tiptap/pm/model";
 import type { CitationDetail } from "../ai/citations";
+import { t } from "../i18n/i18n";
 
 export function readDefinition(def: PMNode, n: number): CitationDetail {
   let docId = "";
@@ -27,7 +28,7 @@ export function readDefinition(def: PMNode, n: number): CitationDetail {
   return {
     n,
     doc_id: docId,
-    title: (title ?? "").trim() || "Untitled",
+    title: (title ?? "").trim() || t("common.untitled"),
     heading_path: rest.length ? rest.join(" — ").trim() : null,
     content: excerpt || null,
   };

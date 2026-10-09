@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { useIsNodeAdmin } from "../state/node-admin";
+import { t } from "../i18n/i18n";
 
 /** Where chat is set up and switched on. */
 const AI_SETTINGS_PATH = "/settings/node/ai";
@@ -22,13 +23,13 @@ export function AiSetupNotice() {
     <Banner
       status="info"
       // Workspace UI: "node" belongs to Settings and the switcher, and AI is set per node, so no noun at all.
-      title="AI chat is off"
-      description={isAdmin ? undefined : "Ask your administrator to turn it on, or connect your own AI agent."}
+      title={t("ai.setup.title")}
+      description={isAdmin ? undefined : t("ai.setup.askAdmin")}
       endContent={
         isAdmin ? (
-          <Button label="AI settings" variant="primary" size="sm" onClick={() => nav(AI_SETTINGS_PATH)} />
+          <Button label={t("ai.setup.aiSettings")} variant="primary" size="sm" onClick={() => nav(AI_SETTINGS_PATH)} />
         ) : (
-          <Button label="Connect your AI agent" variant="primary" size="sm" onClick={() => nav(YOUR_AI_AGENTS_PATH)} />
+          <Button label={t("ai.setup.connectAgent")} variant="primary" size="sm" onClick={() => nav(YOUR_AI_AGENTS_PATH)} />
         )
       }
     />

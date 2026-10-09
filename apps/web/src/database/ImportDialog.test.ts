@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TableSchema } from "@stuga/protocol/databases/types";
-import { importTemplateCsv } from "./ImportDialog";
+import { importHint, importProblem, importTemplateCsv } from "./ImportDialog";
 
 const table: TableSchema = {
   table_id: "t1",
@@ -21,5 +21,33 @@ const table: TableSchema = {
 describe("importTemplateCsv", () => {
   it("writes display-name headers the importer matches, quoted where needed, and no example rows", () => {
     expect(importTemplateCsv(table)).toBe('"Guest, full",Nightly Rate,Breakfast,Check In,Status\r\n');
+  });
+});
+
+// The node's sentences, as services/node/src/databases/imports/format.ts writes them.
+describe("importProblem and importHint", () => {
+  it("reads the counts out of a malformed row", () => {
+    expect(importProblem({ row: 3, code: "malformed_row", message: "row has 4 fields but the header has 5" })).toBe(
+      "This row has 4 fields, but the header has 5.",
+    );
+    expect(importProblem({ row: 2, code: "malformed_row", message: "not valid JSON: Unexpected token" })).toBe("This row can’t be read.");
+    expect(importProblem({ row: 0, code: "malformed_row", message: "expected a JSON array of objects" })).toBe("The file can’t be read.");
+  });
+
+  it("says a refused cell from its code, or from the validator’s reason when it carries one", () => {
+    expect(importProblem({ row: 2, column: "Rate", value: "abc", code: "invalid_number", message: "not a number" })).toBe("Not a number.");
+    expect(importProblem({ row: 2, column: "Notes", value: "…", code: "invalid_text", message: "text too long (max 16384 bytes)" })).toBe(
+      "Text too long: the limit is 16,384 bytes.",
+    );
+  });
+
+  it("translates the near-miss and the choices hints", () => {
+    const base = { row: 2, column: "Status", value: "Confrmed", code: "invalid_choice" as const, message: "not one of the column's choices" };
+    expect(importHint({ ...base, hint: 'did you mean "Confirmed"?' })).toBe("Did you mean “Confirmed”?");
+    expect(importHint({ ...base, hint: "choices: Confirmed, Cancelled" })).toBe("Choices: Confirmed, Cancelled");
+    expect(importHint({ ...base, code: "invalid_date", hint: "2026-01-04, 1/4/26 and 4 Jan 2026 all work" })).toBe(
+      "2026-01-04, 1/4/26 and 4 Jan 2026 all work.",
+    );
+    expect(importHint({ ...base })).toBeNull();
   });
 });

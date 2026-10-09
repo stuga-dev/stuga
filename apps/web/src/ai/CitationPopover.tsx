@@ -7,6 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEv
 import { FileText } from "lucide-react";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
 import { citationHref, readableExcerpt, sectionLabel, type CitationDetail } from "./citations";
+import { t } from "../i18n/i18n";
 
 /** Clearance kept from every window edge. */
 const MARGIN = 8;
@@ -48,13 +49,13 @@ export function CitationPopover({
     document.addEventListener("keydown", onKey);
     // Deferred so the click that opened the card, and any scroll that focusing
     // its chip causes, don't close it straight away.
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       document.addEventListener("mousedown", onDown);
       window.addEventListener("scroll", bye, true);
       window.addEventListener("resize", bye);
     }, 0);
     return () => {
-      clearTimeout(t);
+      clearTimeout(timer);
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("mousedown", onDown);
       window.removeEventListener("scroll", bye, true);
@@ -70,15 +71,16 @@ export function CitationPopover({
 
   const left = Math.min(Math.max(anchor.left, HALF + MARGIN), window.innerWidth - HALF - MARGIN);
   const section = sectionLabel(citation.heading_path, citation.title);
-  const source = section ? `${citation.title || "Untitled"} — ${section}` : citation.title || "Untitled";
+  const title = citation.title || t("common.untitled");
+  const source = section ? t("ai.citation.sourceWithSection", { title, section }) : title;
   const excerpt = readableExcerpt(citation.content);
 
   return (
-    <div ref={ref} className="citation-popover" style={{ top, left }} role="dialog" aria-label="Citation">
+    <div ref={ref} className="citation-popover" style={{ top, left }} role="dialog" aria-label={t("ai.citation.label")}>
       {excerpt ? (
         <blockquote className="citation-popover__excerpt" dir="auto">{excerpt}</blockquote>
       ) : (
-        <p className="citation-popover__empty">No excerpt available.</p>
+        <p className="citation-popover__empty">{t("ai.citation.noExcerpt")}</p>
       )}
       <div className="citation-popover__source" title={source}>
         <FileText size={13} />
@@ -92,7 +94,7 @@ export function CitationPopover({
           rel="noopener noreferrer"
           onClick={onClose}
         >
-          Open document ↗
+          {t("ai.citation.openDocument")}
         </a>
       ) : null}
     </div>

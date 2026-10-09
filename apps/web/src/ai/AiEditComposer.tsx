@@ -9,12 +9,18 @@ import { TextArea } from "@astryxdesign/core/TextArea";
 import { HStack } from "@astryxdesign/core/HStack";
 import { isComposingKey } from "../lib/ime";
 import { useAiCoauthor } from "./ai-coauthor-context";
+import { t, type MessageKey } from "../i18n/i18n";
 
-const QUICK_ACTIONS: { label: string; instruction: string }[] = [
-  { label: "Improve", instruction: "Improve the writing of this text: make it clearer and more polished, but keep the meaning and roughly the same length." },
-  { label: "Shorten", instruction: "Make this text more concise without losing its meaning." },
-  { label: "Lengthen", instruction: "Expand this text with more detail and explanation." },
-  { label: "Fix grammar", instruction: "Fix any spelling and grammar mistakes in this text. Do not change the wording otherwise." },
+// The instructions are sent to the model, so they stay English; the labels are translated.
+const QUICK_ACTIONS: { label: MessageKey; instruction: string }[] = [
+  // i18n-exempt: an instruction sent to the model
+  { label: "ai.editComposer.improve", instruction: "Improve the writing of this text: make it clearer and more polished, but keep the meaning and roughly the same length." },
+  // i18n-exempt: an instruction sent to the model
+  { label: "ai.editComposer.shorten", instruction: "Make this text more concise without losing its meaning." },
+  // i18n-exempt: an instruction sent to the model
+  { label: "ai.editComposer.lengthen", instruction: "Expand this text with more detail and explanation." },
+  // i18n-exempt: an instruction sent to the model
+  { label: "ai.editComposer.fixGrammar", instruction: "Fix any spelling and grammar mistakes in this text. Do not change the wording otherwise." },
 ];
 
 export function AiEditComposer() {
@@ -23,10 +29,11 @@ export function AiEditComposer() {
 
   if (!selectionEdit) return null;
 
-  const run = (text: string) => {
+  /** `shown` is the transcript's text for a quick action, whose instruction is English for the model. */
+  const run = (text: string, shown?: string) => {
     if (!text.trim()) return;
     setInstruction("");
-    submitSelectionEdit(text);
+    submitSelectionEdit(text, shown);
   };
 
   const top = Math.min(selectionEdit.rect.top + 6, window.innerHeight - 220);
@@ -37,7 +44,7 @@ export function AiEditComposer() {
       className="ai-edit-composer"
       style={{ top, left }}
       role="dialog"
-      aria-label="Edit with AI"
+      aria-label={t("ai.editComposer.title")}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -52,20 +59,20 @@ export function AiEditComposer() {
         {QUICK_ACTIONS.map((a) => (
           <Button
             key={a.label}
-            label={a.label}
+            label={t(a.label)}
             variant="secondary"
             size="sm"
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => run(a.instruction)}
+            onClick={() => run(a.instruction, t(a.label))}
           />
         ))}
       </div>
       <TextArea
-        label="Instruction for the AI"
+        label={t("ai.editComposer.instructionLabel")}
         isLabelHidden
         hasAutoFocus
         value={instruction}
-        placeholder="Or describe the change…"
+        placeholder={t("ai.editComposer.instructionPlaceholder")}
         rows={2}
         onChange={setInstruction}
         onKeyDown={(e: React.KeyboardEvent) => {
@@ -76,8 +83,8 @@ export function AiEditComposer() {
         }}
       />
       <HStack gap={2} justify="end">
-        <Button label="Cancel" variant="ghost" size="sm" onMouseDown={(e) => e.preventDefault()} onClick={cancelSelectionEdit} />
-        <Button label="Edit with AI" variant="primary" size="sm" onMouseDown={(e) => e.preventDefault()} onClick={() => run(instruction)} isDisabled={!instruction.trim()} />
+        <Button label={t("common.cancel")} variant="ghost" size="sm" onMouseDown={(e) => e.preventDefault()} onClick={cancelSelectionEdit} />
+        <Button label={t("ai.editComposer.title")} variant="primary" size="sm" onMouseDown={(e) => e.preventDefault()} onClick={() => run(instruction)} isDisabled={!instruction.trim()} />
       </HStack>
     </div>
   );

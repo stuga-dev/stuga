@@ -1,0 +1,54 @@
+/* Stuga.app (ko). Keys are app/main.swift's and app/Health.swift's L("key", "English"). */
+
+/* The menu */
+"menu.open" = "Stuga 열기";
+"menu.setUp" = "Stuga 설정…";
+"menu.copyAddress" = "주소 복사";
+"menu.copySetupLink" = "설정 링크 복사";
+"menu.addressQR" = "주소를 QR 코드로 표시…";
+"menu.setupLinkQR" = "설정 링크를 QR 코드로 표시…";
+"menu.showLogs" = "로그 보기";
+"menu.restart" = "Stuga 재시동…";
+"menu.uninstall" = "Stuga 제거…";
+"menu.quit" = "메뉴 종료";
+
+/* The menu's status line */
+"status.missing" = "Stuga가 설치되어 있지 않아요";
+"status.starting" = "시작하는 중…";
+"status.running" = "실행 중: %@";
+"status.unclaimed" = "설정 대기 중: %@";
+"status.installing" = "업데이트 설치 중…";
+"status.restoring" = "백업 복원 중…";
+"status.uninstalling" = "제거하는 중…";
+
+/* What has gone wrong, as the status line and an alert say it */
+"fault.nodeStopped" = "Stuga가 멈췄고 다시 시작되지 않았어요";
+"fault.postgresStopped" = "Stuga의 데이터베이스가 멈췄고 다시 시작되지 않았어요";
+"fault.databaseUnreachable" = "Stuga가 데이터베이스에 연결할 수 없어요";
+"fault.notResponding" = "Stuga가 응답하지 않아요";
+"fault.refused" = "Stuga가 데이터보다 오래된 버전이에요";
+
+/* The alert that says Stuga has stopped working */
+"failure.refused" = "Stuga를 열어 해결 방법을 확인하세요.";
+"failure.restart" = "Stuga를 재시동하면 해결되는 경우가 많아요. 무슨 일이 있었는지는 로그에서 확인할 수 있어요.";
+
+/* Alert buttons */
+"button.ok" = "확인";
+"button.cancel" = "취소";
+
+/* The QR code alert */
+"qr.setUp.title" = "휴대폰에서 Stuga 설정하기";
+"qr.setUp.text" = "같은 네트워크에 있는 휴대폰으로 스캔하세요. 설정 코드가 포함되어 있으니 다른 사람과 공유하지 마세요.";
+"qr.open.title" = "휴대폰에서 Stuga 열기";
+"qr.open.text" = "같은 네트워크에 있는 휴대폰으로 스캔하세요: %@";
+
+/* The uninstall alert */
+"uninstall.title" = "Stuga를 제거할까요?";
+"uninstall.text" = "Stuga가 멈추고 이 Mac에서 제거돼요. 문서와 백업은 직접 삭제하지 않는 한 %@에 남아 있어요.";
+"uninstall.keepData" = "제거하고 데이터 유지";
+"uninstall.deleteData" = "제거하고 데이터 삭제";
+
+/* macOS's administrator password prompt */
+"prompt.setupCode" = "Stuga가 설정 코드를 읽으려면 관리자 비밀번호가 필요해요.";
+"prompt.restart" = "Stuga를 재시동하려면 비밀번호가 필요해요.";
+"prompt.uninstall" = "Stuga를 제거하려면 비밀번호가 필요해요.";

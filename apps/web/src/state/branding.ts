@@ -112,7 +112,7 @@ export function applyBranding(): void {
     tag.id = STYLE_TAG_ID;
     document.head.appendChild(tag);
   }
-  tag.textContent = `html:root { --brand: light-dark(${light}, ${dark}); }`;
+  tag.textContent = `html:root { --brand: light-dark(${light}, ${dark}); }`; // i18n-exempt: a stylesheet
 }
 
 const brandingVersion = createStore(0);

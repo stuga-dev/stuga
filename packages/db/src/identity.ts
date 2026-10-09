@@ -26,6 +26,24 @@ export async function setDisplayName(sql: Sql, alias: string, name: string): Pro
     WHERE alias = ${alias}`;
 }
 
+/** The interface language a person chose (null follows their browser), and the one their browser asked for at their last sign-in. */
+export async function getUiLanguage(sql: Sql, alias: string): Promise<{ chosen: string | null; detected: string | null } | null> {
+  const rows = await sql<{ ui_language: string | null; ui_language_detected: string | null }[]>`
+    SELECT ui_language, ui_language_detected FROM users WHERE alias = ${alias}`;
+  const row = rows[0];
+  return row ? { chosen: row.ui_language, detected: row.ui_language_detected } : null;
+}
+
+/** Null follows the browser. Checking the tag against the catalogs is the caller's job. */
+export async function setUiLanguage(sql: Sql, alias: string, language: string | null): Promise<void> {
+  await sql`UPDATE users SET ui_language = ${language}, updated_at = now() WHERE alias = ${alias}`;
+}
+
+/** Recorded at sign-in; leaves updated_at alone, since nothing the person changed. */
+export async function noteDetectedUiLanguage(sql: Sql, alias: string, language: string): Promise<void> {
+  await sql`UPDATE users SET ui_language_detected = ${language} WHERE alias = ${alias} AND ui_language_detected IS DISTINCT FROM ${language}`;
+}
+
 /** Directory rows for these aliases, limited to members of the workspace. Never oidc_sub: other people read these. */
 export async function getUsers(sql: Sql, aliases: string[], workspaceId: string): Promise<UserRow[]> {
   if (aliases.length === 0) return [];

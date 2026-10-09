@@ -6,18 +6,20 @@
 import { useEffect, type KeyboardEvent } from "react";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import { useAgentRuns, pendingHunks } from "./agent-runs-context";
-import { UNSHOWN_REASON, orderRowsForReview, summarizeHunk } from "./hunk-review";
+import { orderRowsForReview, summarizeHunk, unshownReason } from "./hunk-review";
 import { itemKey } from "./run-ledger";
 import { Button } from "@astryxdesign/core/Button";
 import { anchorOf, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
+import { t } from "../i18n/i18n";
+import { runAgentLabel } from "../state/identity";
 
 export function RunChangeList({
   run,
   noteAction,
 }: {
   run: AgentRunSummary;
-  /** Rejecting one change with a note: the button's words, and what opens the composer. */
-  noteAction?: { label: string; onOpen: (hunkId: string, anchor: NoteAnchor) => void };
+  /** Rejecting one change with a note: the button's words, the action they name, and what opens the composer. */
+  noteAction?: { label: string; name: string; onOpen: (hunkId: string, anchor: NoteAnchor) => void };
 }) {
   const { preview, inFlight, loadingHunks, decide, loadFullHunks } = useAgentRuns();
 
@@ -33,8 +35,8 @@ export function RunChangeList({
     return (
       <p className="agent-run-changes__empty">
         {loading
-          ? "Loading the individual changes…"
-          : "These changes can’t be listed one by one — use Accept all or Reject all above."}
+          ? t("review.changeList.loading")
+          : t("review.changeList.unlisted")}
       </p>
     );
   }
@@ -50,13 +52,15 @@ export function RunChangeList({
   }
 
   return (
-    <ul className="agent-run-changes" aria-label={`Changes proposed by ${run.agent}`} onKeyDown={onKeyDown}>
+    <ul className="agent-run-changes" aria-label={t("review.changeList.label", { agent: runAgentLabel(run) })} onKeyDown={onKeyDown}>
       {rows.map((row, i) => {
         const summary = summarizeHunk(row.hunk);
         const posted = inFlight.has(row.key);
-        const position = `change ${i + 1} of ${rows.length}`;
+        const position = { index: i + 1, total: rows.length };
         const reason = preview.why[row.key];
-        const unshown = reason ? `can’t be shown inline — ${UNSHOWN_REASON[reason]}` : "can’t be shown inline — decide it here";
+        const unshown = reason
+          ? t("review.changeList.unshown", { reason: unshownReason(reason) })
+          : t("review.changeList.unshownDecideHere");
         return (
           <li
             key={row.key}
@@ -68,7 +72,7 @@ export function RunChangeList({
               className="agent-run-change__body"
               title={summary.detail}
               // Unanchored rows stay focusable so arrow-key navigation reaches them.
-              aria-label={row.isAnchored ? `Show ${position} in the document` : `${position} (${unshown})`}
+              aria-label={row.isAnchored ? t("review.changeList.show", position) : t("review.changeList.unshownRow", { ...position, unshown })}
               disabled={posted}
               onClick={() => preview.scrollToHunk(row.key)}
             >
@@ -85,26 +89,26 @@ export function RunChangeList({
             </button>
             <span className="agent-run-change__actions">
               <Button
-                label={`Accept ${position}`}
+                label={t("review.changeList.accept", position)}
                 variant="secondary"
                 size="sm"
                 isDisabled={posted}
                 onClick={() => void decide(run.id, "accept", [row.hunk.id])}
               >
-                Accept
+                {t("common.accept")}
               </Button>
               <Button
-                label={`Reject ${position}`}
+                label={t("review.changeList.reject", position)}
                 variant="ghost"
                 size="sm"
                 isDisabled={posted}
                 onClick={() => void decide(run.id, "reject", [row.hunk.id])}
               >
-                Reject
+                {t("common.reject")}
               </Button>
               {noteAction && (
                 <Button
-                  label={`${noteAction.label.replace(/…$/, "")}: ${position}`}
+                  label={t("review.changeList.note", { action: noteAction.name, ...position })}
                   variant="ghost"
                   size="sm"
                   isDisabled={posted}

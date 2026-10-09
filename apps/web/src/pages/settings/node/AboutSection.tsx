@@ -10,8 +10,28 @@ import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList"
 import { Switch } from "@astryxdesign/core/Switch";
 import { ExternalLink } from "lucide-react";
 import { NodeSettings as NodeApi, type NodeOperationalSettings, type NodeVersion } from "../../../api";
+import { t } from "../../../i18n/i18n";
 import { calendarDay, relativeTime, versionLabel } from "../../../lib/format";
+import { presentServerMessage } from "../../../lib/http/server-messages";
 import { SectionStatusBanners, useSectionStatus } from "./status";
+
+/** The license the node is published under, by its SPDX identifier. */
+const LICENSE = "AGPL-3.0-only"; // i18n-exempt: an SPDX identifier
+
+/** The version, when it was released and how it was built, then what it was upgraded from. */
+function versionLine(version: NodeVersion): string {
+  const line = [
+    version.version,
+    // The one fact about a build's age that a node with no way out still has.
+    version.released_at ? t("node.about.released", { date: calendarDay(version.released_at) }) : null,
+    version.build === "source" ? t("node.about.fromSource") : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return version.previous_version && version.previous_version !== version.version
+    ? t("node.about.upgradedFrom", { version: line, previous: version.previous_version })
+    : line;
+}
 
 /** What the node's environment and first boot fixed, read-only, and what it knows about newer versions. */
 export function AboutSection({ ops, onSaved }: { ops: NodeOperationalSettings; onSaved: (s: NodeOperationalSettings) => void }) {
@@ -24,49 +44,41 @@ export function AboutSection({ ops, onSaved }: { ops: NodeOperationalSettings; o
   return (
     <VStack gap={5}>
       <VStack gap={3}>
-        <Heading level={2}>This node</Heading>
+        <Heading level={2}>{t("node.about.thisNode")}</Heading>
         <Text type="supporting" color="secondary">
-          Set in the node&apos;s environment. {ops.restart_hint}
+          {t("node.about.setInEnvironment", { hint: presentServerMessage(ops.restart_hint) })}
         </Text>
         <MetadataList columns="single" label={{ position: "start" }}>
-          <MetadataListItem label="Public address">{ops.node.public_origin}</MetadataListItem>
-          <MetadataListItem label="Listening on">
+          <MetadataListItem label={t("node.about.publicAddress")}>{ops.node.public_origin}</MetadataListItem>
+          <MetadataListItem label={t("node.about.listeningOn")}>
             {ops.node.bind}:{ops.node.port}
           </MetadataListItem>
-          <MetadataListItem label="Data directory">{ops.node.data_dir}</MetadataListItem>
-          <MetadataListItem label="Database">{ops.node.database}</MetadataListItem>
+          <MetadataListItem label={t("node.about.dataDirectory")}>{ops.node.data_dir}</MetadataListItem>
+          <MetadataListItem label={t("common.database")}>{ops.node.database}</MetadataListItem>
           {/* What agents and the switcher call the node: its name under Branding, else its host. */}
-          <MetadataListItem label="Known to agents as">{ops.node_label}</MetadataListItem>
+          <MetadataListItem label={t("node.about.knownToAgentsAs")}>{ops.node_label}</MetadataListItem>
           {/* Chosen at the first start and kept through a rename. */}
-          <MetadataListItem label="Node ID">{ops.node.node_id}</MetadataListItem>
+          <MetadataListItem label={t("node.about.nodeId")}>{ops.node.node_id}</MetadataListItem>
           {version && (
             <>
-              <MetadataListItem label="Version">
-                {version.version}
-                {/* The one fact about a build's age that a node with no way out still has. */}
-                {version.released_at ? ` · released ${calendarDay(version.released_at)}` : ""}
-                {version.build === "source" ? " · built from source" : ""}
-                {version.previous_version && version.previous_version !== version.version
-                  ? ` (upgraded from ${version.previous_version})`
-                  : ""}
-              </MetadataListItem>
+              <MetadataListItem label={t("node.about.version")}>{versionLine(version)}</MetadataListItem>
               {version.first_boot_at && (
-                <MetadataListItem label="Database created">{versionLabel(version.first_boot_at)}</MetadataListItem>
+                <MetadataListItem label={t("node.about.databaseCreated")}>{versionLabel(version.first_boot_at)}</MetadataListItem>
               )}
             </>
           )}
-          <MetadataListItem label="License">
-            AGPL-3.0-only ·{" "}
+          <MetadataListItem label={t("node.about.license")}>
+            {LICENSE} ·{" "}
             {version && (
               <>
                 <Link href={version.source_url} isExternalLink>
-                  Source code
+                  {t("node.about.sourceCode")}
                 </Link>{" "}
                 ·{" "}
               </>
             )}
             <Link href="/third-party-licenses.txt" isExternalLink>
-              Third-party licenses
+              {t("node.about.thirdPartyLicenses")}
             </Link>
           </MetadataListItem>
         </MetadataList>
@@ -79,11 +91,8 @@ export function AboutSection({ ops, onSaved }: { ops: NodeOperationalSettings; o
 /** How often the page asks how an install is going; the node restarts partway, so a failed ask is "not yet". */
 const INSTALL_POLL_MS = 3000;
 
-const INSTALL_SAYS: Record<string, string> = {
-  downloading: "Downloading",
-  verifying: "Checking",
-  installing: "Installing",
-};
+/** The install states the progress line names; any other reads as starting. */
+const INSTALL_STATES = new Set(["downloading", "verifying", "installing"]);
 
 /** A newer version, the switch that looks for one, and a look on request. */
 function Updates({
@@ -121,10 +130,10 @@ function Updates({
           const state = next.update.install.status?.state;
           if (next.version === target) {
             setInstalling(null);
-            status.setNotice({ status: "success", message: `Updated to Stuga ${target}.` });
+            status.setNotice({ status: "success", message: t("node.about.updatedTo", { version: target }) });
           } else if (state === "failed" || state === "refused") {
             setInstalling(null);
-            status.setError(next.update.install.status!.message);
+            status.setError(presentServerMessage(next.update.install.status!.message));
           } else {
             watchInstall(target);
           }
@@ -158,11 +167,9 @@ function Updates({
   if (!update.comparable) {
     return (
       <VStack gap={3}>
-        <Heading level={2}>Updates</Heading>
+        <Heading level={2}>{t("node.about.updates")}</Heading>
         <Text type="supporting" color="secondary">
-          {version.build === "source"
-            ? "Built from source: update the checkout and rebuild."
-            : `${version.version} is not a release, so there is nothing to compare it with.`}
+          {version.build === "source" ? t("node.about.sourceBuildUpdates") : t("node.about.notARelease", { version: version.version })}
         </Text>
       </VStack>
     );
@@ -182,7 +189,7 @@ function Updates({
     <HStack gap={2}>
       {update.install.available && (
         <Button
-          label={installing ? "Updating…" : "Update now"}
+          label={installing ? t("node.about.updating") : t("node.about.updateNow")}
           variant="primary"
           size="sm"
           isLoading={busy === "install" || installing !== null}
@@ -191,7 +198,7 @@ function Updates({
         />
       )}
       <Button
-        label="Release notes"
+        label={t("node.about.releaseNotes")}
         variant="secondary"
         size="sm"
         endContent={<ExternalLink size={14} />}
@@ -204,39 +211,42 @@ function Updates({
 
   return (
     <VStack gap={3}>
-      <Heading level={2}>Updates</Heading>
+      <Heading level={2}>{t("node.about.updates")}</Heading>
       <SectionStatusBanners status={status} />
       {update.available ? (
         <Banner
           status={update.available.security ? "warning" : "info"}
           title={
             update.available.security
-              ? `Security update: Stuga ${update.available.version}`
-              : `Stuga ${update.available.version} is available`
+              ? t("node.about.securityUpdate", { version: update.available.version })
+              : t("node.about.available", { version: update.available.version })
           }
           description={
             installing
-              ? `${INSTALL_SAYS[progress?.state ?? ""] ?? "Starting"} Stuga ${installing}… The node backs up first, then restarts.`
+              ? t("node.about.installing", {
+                  state: progress?.state && INSTALL_STATES.has(progress.state) ? progress.state : "other",
+                  version: installing,
+                })
               : update.install.available
-                ? "The node backs up, installs it and restarts."
-                : update.upgrade_hint
+                ? t("node.about.installHint")
+                : update.upgrade_hint && presentServerMessage(update.upgrade_hint)
           }
           endContent={notes}
         />
       ) : (
         <Text type="supporting" color="secondary">
           {update.error
-            ? `Couldn’t check: ${update.error}.`
+            ? t("node.about.checkFailed", { error: presentServerMessage(update.error) })
             : update.checked_at
-              ? `Up to date. Checked ${relativeTime(update.checked_at)}.`
+              ? t("node.about.upToDate", { when: relativeTime(update.checked_at) })
               : on
-                ? "Not checked yet."
-                : "Not checking."}
+                ? t("node.about.notCheckedYet")
+                : t("node.about.notChecking")}
         </Text>
       )}
       <Switch
-        label="Check for new versions"
-        description="Checks GitHub daily. Sends no node data."
+        label={t("node.about.checkSwitch")}
+        description={t("node.about.checkSwitchNote")}
         value={on}
         isDisabled={busy !== ""}
         isLoading={busy === "switch"}
@@ -245,9 +255,9 @@ function Updates({
       <AlertDialog
         isOpen={confirming}
         onOpenChange={(o) => !o && setConfirming(false)}
-        title={`Update to Stuga ${target ?? ""}?`}
-        description="The node backs up, installs the update and restarts. Everyone is disconnected for a few minutes."
-        actionLabel="Update"
+        title={t("node.about.confirmTitle", { version: target ?? "" })}
+        description={t("node.about.confirmBody")}
+        actionLabel={t("node.about.update")}
         onAction={() => {
           setConfirming(false);
           void updateNow();
@@ -256,7 +266,7 @@ function Updates({
       <HStack gap={2}>
         {on && (
           <Button
-            label="Check now"
+            label={t("node.about.checkNow")}
             variant="secondary"
             size="sm"
             isLoading={busy === "check"}
@@ -266,7 +276,7 @@ function Updates({
         )}
         {/* For a node that cannot look: a plain link, opened by the administrator's own browser. */}
         <Button
-          label="All releases"
+          label={t("node.about.allReleases")}
           variant="ghost"
           size="sm"
           endContent={<ExternalLink size={14} />}

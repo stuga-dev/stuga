@@ -10,6 +10,8 @@ import { AiScopePicker } from "../ai/AiScopePicker";
 import { ChatComposer } from "../ai/ChatComposer";
 import { ChatTranscript } from "../ai/ChatTranscript";
 import { useTableAi } from "./use-table-ai";
+import { t } from "../i18n/i18n";
+import { aiCoauthorLabel } from "../lib/format";
 
 export function TableAiPanel({
   docId,
@@ -33,18 +35,14 @@ export function TableAiPanel({
   }
 
   return (
-    <aside className="ai-panel" aria-label="AI co-author">
+    <aside className="ai-panel" aria-label={aiCoauthorLabel()}>
       <ChatTranscript
         turns={ai.turns}
         streaming={ai.streaming}
-        reviewWhere="in the banner above the grid"
+        reviewIn="grid"
         empty={
           <>
-            Ask for changes to this database — “add a Status column and mark the done rows”, “insert the Q3
-            milestones”, “dedupe rows by Name”.{" "}
-            {agentAuto
-              ? "AI edits to this database apply directly: each lands as it is made, recorded and revertible."
-              : "Every change is proposed for your review before it lands."}
+            {t("database.ai.empty")} {agentAuto ? t("database.ai.emptyAuto") : t("database.ai.emptyReview")}
           </>
         }
       />
@@ -55,9 +53,7 @@ export function TableAiPanel({
         onStop={ai.stop}
         streaming={ai.streaming}
         placeholder={
-          ai.collectionId === null
-            ? "Ask the AI to change this database…"
-            : "Ask the AI to change this database, using your documents…"
+          ai.collectionId === null ? t("database.ai.placeholder") : t("database.ai.placeholderDocs")
         }
         canSend={draft.trim() !== ""}
         header={
@@ -66,7 +62,7 @@ export function TableAiPanel({
             onModelChange={ai.setModel}
             scope={ai.collectionId}
             onScopeChange={ai.setCollectionId}
-            base={{ label: "This database only", icon: <Database size={15} /> }}
+            base={{ label: t("database.ai.scopeBase"), icon: <Database size={15} /> }}
           />
         }
       />

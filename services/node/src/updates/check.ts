@@ -4,6 +4,7 @@
  * waiting. The request says nothing about this node, and the comparison happens here.
  */
 import type { NodeStateRow } from "@stuga/db";
+import { notification } from "@stuga/protocol/notify/events";
 import { sinkDelivery } from "../jobs/notify.js";
 import type { JobDeps, JobsEnv } from "../jobs/deps.js";
 import { isReleaseVersion } from "../version.js";
@@ -106,11 +107,10 @@ export async function checkForUpdates(env: JobsEnv, d: JobDeps, version: string)
   const pending = pendingUpdate(version, outcome.releases);
   if (!pending?.securityVersion) return;
 
-  const title = `Security update available: Stuga ${pending.version}`;
-  const body = `This node runs ${version}. Stuga ${pending.securityVersion} fixes a security issue.`;
+  const what = notification("SECURITY_UPDATE_AVAILABLE", { running: version, latest: pending.version, securityVersion: pending.securityVersion });
   const url = `${env.publicOrigin}${ABOUT_PATH}`;
   for (const admin of await d.db.listNodeAdmins()) {
-    const delivery = sinkDelivery(env.settings.current().notify, { recipient: admin.alias, title, body, url });
+    const delivery = sinkDelivery(env.settings.current().notify, { recipient: admin.alias, ...what, url });
     await d.db.insertNotification(
       {
         id: `${SECURITY_UPDATE_EVENT}:${pending.securityVersion}:${admin.alias}`,
@@ -118,10 +118,10 @@ export async function checkForUpdates(env: JobsEnv, d: JobDeps, version: string)
         recipient_alias: admin.alias,
         event_type: SECURITY_UPDATE_EVENT,
         resource_id: null,
-        resource_title: title,
+        resource_title: null,
         resource_url: url,
         actor_alias: null,
-        payload: { running: version, latest: pending.version, security_version: pending.securityVersion },
+        payload: what.params,
       },
       delivery,
     );

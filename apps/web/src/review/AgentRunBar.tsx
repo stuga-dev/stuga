@@ -10,13 +10,15 @@ import { Button } from "@astryxdesign/core/Button";
 import { useOptionalAiCoauthor } from "../ai/ai-coauthor-context";
 import { useAgentRuns, pendingHunks } from "./agent-runs-context";
 import { useRejectNote, type NoteAnchor } from "./RejectNoteDialog";
-import { UNSHOWN_REASON, summarizeHunk } from "./hunk-review";
+import { summarizeHunk, unshownReason } from "./hunk-review";
 import { RunChangeList } from "./RunChangeList";
 import { RunBanner, RunNotices } from "./RunBanner";
 import { itemKey } from "./run-ledger";
 import { noteLabels, noteModeOf } from "./note-mode";
 import { RUN_HUNK_EVENT, type HunkKey, type RunHunkDecisionDetail } from "../editor/run-preview/plan";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { t } from "../i18n/i18n";
+import { runAgentLabel } from "../state/identity";
 
 /** What a note turns down, as its composer quotes it: one change's summary, or how many. */
 function quoteOf(run: AgentRunSummary, hunkIds: string[] | undefined): string {
@@ -26,7 +28,7 @@ function quoteOf(run: AgentRunSummary, hunkIds: string[] | undefined): string {
     if (hunk) return summarizeHunk(hunk).detail;
   }
   const n = hunkIds?.length ?? pending.length;
-  return `All ${n} edit${n === 1 ? "" : "s"} by ${run.agent}`;
+  return t("review.runBar.docQuoteAll", { count: n, agent: runAgentLabel(run) });
 }
 
 /** The feedback the newest rejection of `hunkIds` (every hunk when undefined) minted, or null when nothing was rejected. */
@@ -73,7 +75,7 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
     ask({
       title: labels.submit,
       submitLabel: labels.submit,
-      hint: mode === "revise" && coauthor?.streaming ? "Revises when the current turn ends." : labels.hint,
+      hint: mode === "revise" && coauthor?.streaming ? t("review.runBar.reviseAfterTurn") : labels.hint,
       anchor,
       returnFocus,
       quote: quoteOf(run, hunkIds),
@@ -139,11 +141,17 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
     <>
       <RunBanner
         updatedAt={run.updated_at}
-        title={n > 0 ? `${run.agent} proposes ${n} edit${n === 1 ? "" : "s"}` : `${run.agent} proposes edits`}
+        title={
+          n > 0
+            ? t("review.runBar.docTitle", { agent: runAgentLabel(run), count: n })
+            : t("review.runBar.docTitleNoCount", { agent: runAgentLabel(run) })
+        }
         hint={
-          unanchoredCount > 0
-            ? `${unanchoredCount} can’t be shown in the document${sharedReason ? ` (${UNSHOWN_REASON[sharedReason]})` : ""} — see “Review each”`
-            : "nothing changes until you accept"
+          unanchoredCount === 0
+            ? t("review.runBar.docHint")
+            : sharedReason
+              ? t("review.runBar.unshownWhy", { count: unanchoredCount, reason: unshownReason(sharedReason) })
+              : t("review.runBar.unshown", { count: unanchoredCount })
         }
         busy={busy}
         onDecide={(decision) => void decide(run.id, decision)}
@@ -155,18 +163,18 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
           hasList ? (
             <RunChangeList
               run={run}
-              noteAction={{ label: noteLabels(mode).trigger, onOpen: (hunkId, anchor) => requestChanges([hunkId], anchor) }}
+              noteAction={{ label: noteLabels(mode).trigger, name: noteLabels(mode).submit, onOpen: (hunkId, anchor) => requestChanges([hunkId], anchor) }}
             />
           ) : undefined
         }
         controls={
           anchored.length > 0 && (
-            <div className="agent-run-nav" role="group" aria-label="Move between this run's changes">
-              <Button label="Previous change" variant="ghost" size="sm" isIconOnly icon={<ChevronLeft size={15} />} onClick={() => go(-1)} />
+            <div className="agent-run-nav" role="group" aria-label={t("review.runBar.navigate")}>
+              <Button label={t("review.runBar.previous")} variant="ghost" size="sm" isIconOnly icon={<ChevronLeft size={15} />} onClick={() => go(-1)} />
               <span className="agent-run-nav__count" aria-live="polite">
-                {(at ?? 0) + 1} of {anchored.length}
+                {t("review.runBar.position", { index: (at ?? 0) + 1, total: anchored.length })}
               </span>
-              <Button label="Next change" variant="ghost" size="sm" isIconOnly icon={<ChevronRight size={15} />} onClick={() => go(1)} />
+              <Button label={t("review.runBar.next")} variant="ghost" size="sm" isIconOnly icon={<ChevronRight size={15} />} onClick={() => go(1)} />
             </div>
           )
         }

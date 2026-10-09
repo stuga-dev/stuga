@@ -15,6 +15,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { DATABASE_MAX_COLUMN_DESCRIPTION_CHARS } from "@stuga/protocol/databases/limits";
 import type { ColumnSpec } from "@stuga/protocol/databases/types";
 import { Databases } from "../api";
+import { t } from "../i18n/i18n";
 
 interface ColumnDescriptionDialogProps {
   isOpen: boolean;
@@ -62,7 +63,7 @@ export function ColumnDescriptionDialog({
       onSaved();
       onClose();
     } catch (e) {
-      onError(e, "Couldn’t save the description.");
+      onError(e, t("database.columnDescription.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -75,14 +76,14 @@ export function ColumnDescriptionDialog({
     <Dialog isOpen={isOpen} onOpenChange={(o) => !o && close()} purpose="form" width={460}>
       <Layout
         header={
-          <DialogHeader title="Column description" subtitle={column?.display ?? ""} onOpenChange={(o) => !o && close()} />
+          <DialogHeader title={t("database.columnDescription.title")} subtitle={column?.display ?? ""} onOpenChange={(o) => !o && close()} />
         }
         content={
           <LayoutContent>
             <VStack gap={3}>
               <TextArea
-                label="Description"
-                description="Shown in the header and used by AI answers."
+                label={t("database.columnDescription.label")}
+                description={t("database.columnDescription.help")}
                 rows={4}
                 value={text}
                 onChange={setText}
@@ -92,13 +93,13 @@ export function ColumnDescriptionDialog({
                   tooLong
                     ? {
                         type: "error",
-                        message: `Too long: ${trimmed.length.toLocaleString()} characters, and the limit is ${DATABASE_MAX_COLUMN_DESCRIPTION_CHARS.toLocaleString()}.`,
+                        message: t("common.tooLong", { count: trimmed.length, limit: DATABASE_MAX_COLUMN_DESCRIPTION_CHARS }),
                       }
                     : undefined
                 }
               />
               <Text type="supporting" color="secondary">
-                Leave it empty to remove the description.
+                {t("database.columnDescription.emptyRemoves")}
               </Text>
             </VStack>
           </LayoutContent>
@@ -106,8 +107,8 @@ export function ColumnDescriptionDialog({
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label="Cancel" variant="ghost" onClick={close} isDisabled={saving} />
-              <Button label="Save" variant="primary" onClick={() => void save()} isDisabled={!canSave} isLoading={saving} />
+              <Button label={t("common.cancel")} variant="ghost" onClick={close} isDisabled={saving} />
+              <Button label={t("common.save")} variant="primary" onClick={() => void save()} isDisabled={!canSave} isLoading={saving} />
             </HStack>
           </LayoutFooter>
         }

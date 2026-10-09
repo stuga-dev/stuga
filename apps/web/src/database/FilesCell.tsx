@@ -10,6 +10,7 @@ import { fileLinks, filesCell } from "@stuga/protocol/databases/cells";
 import type { RowValue } from "@stuga/protocol/databases/types";
 import { Media } from "../api";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
 export function FilesCell({
   databaseId,
@@ -45,7 +46,7 @@ export function FilesCell({
       try {
         links.push((await Media.uploadWithProgress(databaseId, file, () => {})).url);
       } catch (e) {
-        toast({ body: errorMessage(e, `Couldn't upload ${file.name}.`), type: "error" });
+        toast({ body: errorMessage(e, t("database.files.uploadFailed", { name: file.name })), type: "error" });
       } finally {
         setUploading((n) => n - 1);
       }
@@ -74,15 +75,15 @@ export function FilesCell({
     <span className={`db-files${wrap ? " db-files--wrap" : ""}${dropping ? " db-files--drop" : ""}`} {...dropProps}>
       {files.map((file) => (
         <span key={file.link} className="db-file">
-          <a className="db-file__link" href={file.link} download={file.name} title={`Download ${file.name}`}>
+          <a className="db-file__link" href={file.link} download={file.name} title={t("database.files.download", { name: file.name })}>
             <Paperclip size={12} aria-hidden />
             <span className="db-file__name">{file.name}</span>
           </a>
           {!readOnly && (
             <button
               className="db-file__remove"
-              aria-label={`Remove ${file.name}`}
-              title="Remove"
+              aria-label={t("database.files.remove", { name: file.name })}
+              title={t("common.remove")}
               onClick={() => onChange(filesCell(files.filter((f) => f.link !== file.link).map((f) => f.link)))}
             >
               <X size={12} />
@@ -90,10 +91,10 @@ export function FilesCell({
           )}
         </span>
       ))}
-      {uploading > 0 && <span className="db-files__busy">Uploading…</span>}
+      {uploading > 0 && <span className="db-files__busy">{t("database.files.uploading")}</span>}
       {!readOnly && (
         <>
-          <button className="db-files__add" aria-label={`Add files to ${label}`} title="Add files" onClick={() => picker.current?.click()}>
+          <button className="db-files__add" aria-label={t("database.files.addTo", { name: label })} title={t("database.files.add")} onClick={() => picker.current?.click()}>
             <Plus size={14} />
           </button>
           <input

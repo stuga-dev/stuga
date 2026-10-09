@@ -94,7 +94,7 @@ describe("RowPanel's page actions", () => {
     await render(true);
     expect(button("Create page")).toBeUndefined();
     expect(button("Restore page")).toBeUndefined();
-    expect(host.textContent).toContain("This row's page is in the Trash.");
+    expect(host.textContent).toContain("This row’s page is in the Trash.");
   });
 
   it("keeps one action for a row with a live page or none", async () => {

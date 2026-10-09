@@ -1,5 +1,6 @@
 /** The people an @query matches, as a listbox. Positioning is the caller's. */
 import type { UserInfo } from "../api";
+import { t } from "../i18n/i18n";
 import { Avatar } from "../state/identity";
 import { MIN_MENTION_QUERY } from "./mention-query";
 
@@ -24,14 +25,14 @@ export function MentionList({
 }) {
   const hint =
     query.trim().length < MIN_MENTION_QUERY
-      ? "Type a name or username"
+      ? t("document.mentions.typeName")
       : people.length === 0
         ? loading
-          ? "Searching…"
-          : `No one matches “${query.trim()}”`
+          ? t("document.mentions.searching")
+          : t("document.mentions.noMatch", { query: query.trim() })
         : null;
   return (
-    <div className={`mention-list${className ? ` ${className}` : ""}`} style={style} role="listbox" aria-label="Mention someone">
+    <div className={`mention-list${className ? ` ${className}` : ""}`} style={style} role="listbox" aria-label={t("document.mentions.label")}>
       {hint && (
         <div className="mention-item mention-item--empty" role="presentation">
           {hint}
@@ -49,6 +50,7 @@ export function MentionList({
           onMouseEnter={() => onActive(i)}
           onClick={() => onChoose(u)}
         >
+          {/* i18n-exempt: a principal id */}
           <Avatar principal={`user:${u.alias}`} size={20} />
           <span className="mention-item__name">{u.display_name || u.username || u.email || u.alias}</span>
           {u.username && <span className="mention-item__handle">@{u.username}</span>}

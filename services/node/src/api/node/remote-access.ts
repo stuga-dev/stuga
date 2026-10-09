@@ -4,7 +4,7 @@
  * refused, asked for again. Where the packaging offers no remote access the GET says so and the
  * rest refuse.
  */
-import type { RemoteAccessEnableError } from "@stuga/protocol/api/remote-access";
+import type { RemoteAccessEnableError, RemoteAccessEnableErrorCode } from "@stuga/protocol/api/remote-access";
 import { nodeAuditCtx, recordAudit } from "../../audit/record.js";
 import { json } from "../../http/respond.js";
 import type { WorkspaceCall } from "../../http/router.js";
@@ -12,7 +12,11 @@ import { RemoteAccessRefusal } from "../../remote/service.js";
 
 const refuse = (status: number, body: RemoteAccessEnableError): Response => json(body, { status });
 
-const unavailable = () => refuse(409, { error: "Remote access isn't set up in this node's packaging.", code: "unavailable" });
+const unavailable = () => refuse(409, { error: "unavailable", message: "Remote access isn't set up in this node's packaging." });
+
+/** A refusal from the service, by its code where it has one. */
+const refusal = (e: RemoteAccessRefusal): Response =>
+  refuse(e.status, e.code ? { error: e.code as RemoteAccessEnableErrorCode, message: e.message } : { error: e.message });
 
 export async function getRemoteAccessRoute({ ctx }: WorkspaceCall): Promise<Response> {
   const remote = ctx.env.remoteAccess;
@@ -36,7 +40,7 @@ export async function enableRemoteAccessRoute({ ctx, req }: WorkspaceCall): Prom
     result = await remote.enable({ ...(code ? { code } : {}), acceptCaTerms: true, by: ctx.alias });
   } catch (e) {
     if (!(e instanceof RemoteAccessRefusal)) throw e;
-    return refuse(e.status, { error: e.message, ...(e.code ? { code: e.code as RemoteAccessEnableError["code"] } : {}) });
+    return refusal(e);
   }
   const bound = remote.view.current();
   // The code itself is a credential, and stays out of the ledger.
@@ -75,7 +79,7 @@ export async function retryRemoteConnectorRoute({ ctx }: WorkspaceCall): Promise
     status = await remote.retryConnector(ctx.alias);
   } catch (e) {
     if (!(e instanceof RemoteAccessRefusal)) throw e;
-    return refuse(e.status, { error: e.message, ...(e.code ? { code: e.code as RemoteAccessEnableError["code"] } : {}) });
+    return refusal(e);
   }
   recordAudit(nodeAuditCtx(ctx), {
     action: "node.remote_access.connector_retry",

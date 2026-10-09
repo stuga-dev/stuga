@@ -127,8 +127,7 @@ export class Database {
         workspaceId: run.workspace_id,
         eventType: "DATABASE_AGENT_PROPOSED",
         docId: this.dbId,
-        title: run.doc_title,
-        body: `${run.agent} proposed ${pending === 1 ? "1 change" : `${pending} changes`} to this table — waiting for your review in the table's Activity panel.`,
+        params: { agent: run.agent, doc: run.doc_title, count: pending },
         actor: run.agent_alias,
       });
     } catch (err) {

@@ -14,6 +14,7 @@ import { nodeLink } from "../lib/session/auth-config";
 import { useDocStateMenu } from "./doc-state";
 import { useInstructionsDialog } from "./use-instructions-dialog";
 import { FolderPicker } from "../ui/FolderPicker";
+import { t } from "../i18n/i18n";
 
 /** A page-specific entry in the item section, such as a database's Import. */
 interface ItemMenuExtra {
@@ -47,14 +48,14 @@ export function ItemOptionsMenu({
   const instructions = useInstructionsDialog();
   const [showMove, setShowMove] = useState(false);
   const noun = doc?.doc_type === "database" ? "database" : "document";
-  const nounTitle = noun === "database" ? "Database" : "Document";
+  const nounTitle = noun === "database" ? t("common.database") : t("common.document");
 
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(nodeLink(location.pathname + location.search + location.hash));
-      toast({ body: "Link copied. Only people with access can open it.", type: "info" });
+      toast({ body: t("library.options.linkCopied"), type: "info" });
     } catch {
-      toast({ body: "Couldn’t copy the link.", type: "error" });
+      toast({ body: t("library.options.copyFailed"), type: "error" });
     }
   }
 
@@ -64,11 +65,11 @@ export function ItemOptionsMenu({
     try {
       await Docs.move(doc.doc_id, parentId);
       onStateChanged({ ...doc, parent_id: parentId });
-      toast({ body: parentId ? "Moved to that folder." : "Moved to the top level.", type: "info" });
+      toast({ body: parentId ? t("library.options.moved") : t("library.options.movedTop"), type: "info" });
     } catch (err) {
       const status = (err as { status?: number }).status;
       toast({
-        body: status === 403 ? `You don’t have permission to move this ${noun}.` : `Couldn’t move this ${noun}. Please try again.`,
+        body: status === 403 ? t("library.options.moveDenied", { noun }) : t("library.options.moveFailed", { noun }),
         type: "error",
       });
     }
@@ -79,15 +80,13 @@ export function ItemOptionsMenu({
     if (!doc) return;
     try {
       await Docs.trash(doc.doc_id, true);
-      toast({ body: `Moved “${doc.title || "Untitled"}” to Trash.`, type: "info" });
+      toast({ body: t("library.options.trashed", { title: doc.title || t("common.untitled") }), type: "info" });
       nav(afterTrash);
     } catch (err) {
       const status = (err as { status?: number }).status;
       toast({
         body:
-          status === 403
-            ? `You don’t have permission to move this ${noun} to Trash.`
-            : `Couldn’t move this ${noun} to Trash. Please try again.`,
+          status === 403 ? t("library.options.trashDenied", { noun }) : t("library.options.trashFailed", { noun }),
         type: "error",
       });
     }
@@ -96,7 +95,7 @@ export function ItemOptionsMenu({
   return (
     <>
       <MoreMenu
-        label={`${nounTitle} options`}
+        label={t("library.options.menuLabel", { noun })}
         variant="ghost"
         size="sm"
         alignment="end"
@@ -106,21 +105,21 @@ export function ItemOptionsMenu({
             type: "section",
             title: nounTitle,
             items: [
-              { label: "Rename…", icon: <Pencil size={15} />, isDisabled: readOnly, onClick: onRename },
-              { label: "Copy link", icon: <LinkIcon size={15} />, onClick: () => void copyLink() },
-              { label: "Move to folder…", icon: <FolderInput size={15} />, isDisabled: readOnly, onClick: () => setShowMove(true) },
+              { label: t("common.renameEllipsis"), icon: <Pencil size={15} />, isDisabled: readOnly, onClick: onRename },
+              { label: t("library.options.copyLink"), icon: <LinkIcon size={15} />, onClick: () => void copyLink() },
+              { label: t("library.item.moveToFolder"), icon: <FolderInput size={15} />, isDisabled: readOnly, onClick: () => setShowMove(true) },
               ...extras.map((x) => ({ label: x.label, icon: x.icon, isDisabled: x.isDisabled ?? false, onClick: x.onClick })),
             ],
           },
           {
             type: "section",
-            title: "Access",
+            title: t("common.access"),
             items: doc
               ? [...stateMenu(doc, onStateChanged), instructions.item({ kind: noun, id: doc.doc_id, title: doc.title })]
               : [],
           },
           { type: "divider" },
-          { label: "Move to Trash", icon: <Trash2 size={15} />, variant: "destructive", isDisabled: readOnly, onClick: () => void moveToTrash() },
+          { label: t("library.item.moveToTrash"), icon: <Trash2 size={15} />, variant: "destructive", isDisabled: readOnly, onClick: () => void moveToTrash() },
         ]}
       />
       {showMove && <FolderPicker onPick={(id) => void moveTo(id)} onClose={() => setShowMove(false)} />}

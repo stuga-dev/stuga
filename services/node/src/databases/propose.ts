@@ -84,7 +84,7 @@ export async function proposeDatabaseOp(
   const revised = body.revised as string[] | undefined;
   const feedback = { ...(ctx.isAgent && handed?.length ? { feedback: handed } : {}), ...(ctx.isAgent && revised?.length ? { revised } : {}) };
   if (body.mode === "applied") {
-    await afterDatabaseMutation(ctx, doc, summarizeApplied(run));
+    await afterDatabaseMutation(ctx, doc, { kind: "changes_made", count: Math.max(1, run.ops.length) }, summarizeApplied(run));
     // An applied op may have deleted rows that had pages.
     await reconcileDocLinks(ctx, doc);
     return { kind: "applied", run, result: (body.result ?? null) as Record<string, unknown> | null, minted, ...feedback };
@@ -112,10 +112,10 @@ export async function proposeDatabaseOp(
   };
 }
 
-/** One line for the applied-at-once notification body, from the run's newest op. */
-function summarizeApplied(run: DatabaseRunSummary): string {
+/** The audit's English line for an applied-at-once run, from its newest op. */
+function summarizeApplied(run: DatabaseRunSummary): string | undefined {
   const last = run.ops[run.ops.length - 1];
-  return last ? `${last.summary}.` : "Made changes.";
+  return last ? `${last.summary}.` : undefined;
 }
 
 /** A column as a declarative create names it: `{ name|display, type, choices?, description? }`. */

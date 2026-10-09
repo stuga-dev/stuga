@@ -311,6 +311,18 @@ describe("login", () => {
     expect(unknownUser.status).toBe(401);
     expect(await wrongPassword.json()).toEqual(await unknownUser.json());
   });
+
+  it("notes the interface language the browser asks for, and nothing when it asks for none", async () => {
+    await register();
+    const alias = [...mem.accounts.values()][0]!.alias;
+    expect(mem.detectedUiLanguages.get(alias)).toBeUndefined();
+    await router().handle(post("/auth/login", { username: "ada", password: "correct horse" }, { "accept-language": "zh-TW,zh;q=0.9,en;q=0.8" }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mem.detectedUiLanguages.get(alias)).toBe("zh-Hant");
+    await router().handle(post("/auth/login", { username: "ada", password: "correct horse" }, { "accept-language": "sv-SE" }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mem.detectedUiLanguages.get(alias)).toBe("en");
+  });
 });
 
 describe("refresh", () => {

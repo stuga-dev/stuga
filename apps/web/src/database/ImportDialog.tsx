@@ -16,9 +16,13 @@ import { Text } from "@astryxdesign/core/Text";
 import { Banner } from "@astryxdesign/core/Banner";
 import { AlertTriangle, Check, Download, FileText } from "lucide-react";
 import { Databases } from "../api";
-import type { ApiError } from "../lib/http/client";
+import { errorMessage, type ApiError } from "../lib/http/client";
 import { saveBlob } from "../lib/download";
-import type { DatabaseImportCheck, DatabaseImportError, DatabaseImportResult, TableSchema } from "@stuga/protocol/databases/types";
+import type { DatabaseImportCheck, DatabaseImportError, DatabaseImportErrorCode, DatabaseImportResult, TableSchema } from "@stuga/protocol/databases/types";
+import { t, type MessageKey } from "../i18n/i18n";
+import { byteSize, fmtInt } from "../lib/format";
+import { presentServerMessage } from "../lib/http/server-messages";
+import { knownCellProblem } from "./model/cell-problems";
 import { csvCell } from "@stuga/protocol/domain/audit";
 
 const ACCEPT = ".csv,.tsv,.txt,.jsonl,.ndjson,.json,text/csv,text/tab-separated-values,text/plain,application/json";
@@ -49,8 +53,52 @@ interface ImportDialogProps {
   onImported: (result: DatabaseImportResult) => void;
 }
 
-const plural = (k: number, noun: string) => `${k.toLocaleString()} ${noun}${k === 1 ? "" : "s"}`;
-const fileSize = (bytes: number) => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`);
+/** What each refusal code says to a person; the node's own text is written for agents. */
+const PROBLEM_KEYS: Record<Exclude<DatabaseImportErrorCode, "malformed_row">, MessageKey> = {
+  unknown_column: "database.import.error.unknownColumn",
+  duplicate_column: "database.import.error.duplicateColumn",
+  invalid_text: "database.import.error.invalidText",
+  invalid_number: "database.import.error.invalidNumber",
+  invalid_checkbox: "database.import.error.invalidCheckbox",
+  invalid_date: "database.import.error.invalidDate",
+  invalid_choice: "database.import.error.invalidChoice",
+  invalid_files: "database.import.error.invalidFiles",
+};
+
+/** The fixed how-to the node attaches to a refused cell of each type. */
+const HINT_KEYS: Partial<Record<DatabaseImportErrorCode, MessageKey>> = {
+  invalid_number: "database.import.hint.number",
+  invalid_checkbox: "database.import.hint.checkbox",
+  invalid_date: "database.import.hint.date",
+  invalid_files: "database.import.hint.files",
+};
+
+/** One refusal in the reader's language, from its code; a code this app does not know reads as the node sent it. */
+export function importProblem(e: DatabaseImportError): string {
+  if (e.code === "malformed_row") {
+    const fields = /^row has (\d+) fields but the header has (\d+)$/.exec(e.message);
+    if (fields) return t("database.import.error.fieldCount", { fields: Number(fields[1]), header: Number(fields[2]) });
+    const columns = /^too many columns: this file has more than (\d+) /.exec(e.message);
+    if (columns) return t("database.import.error.tooManyColumns", { max: Number(columns[1]) });
+    return t(e.row === 0 ? "database.import.error.malformedFile" : "database.import.error.malformedRow");
+  }
+  // A cell the validator refused carries its reason, which says more than the code (a limit, the choices).
+  const cell = knownCellProblem(e.message);
+  if (cell) return cell;
+  const key = PROBLEM_KEYS[e.code] as MessageKey | undefined;
+  return key ? t(key) : presentServerMessage(e.message);
+}
+
+/** The refusal's hint, if the node gave one, in the reader's language. */
+export function importHint(e: DatabaseImportError): string | null {
+  if (!e.hint) return null;
+  const near = /^did you mean "(.*)"\?$/s.exec(e.hint);
+  if (near) return t("database.import.hint.didYouMean", { value: near[1] });
+  const choices = /^choices: (.*)$/s.exec(e.hint);
+  if (choices && e.code === "invalid_choice") return t("database.import.hint.choices", { choices: choices[1] });
+  const key = HINT_KEYS[e.code];
+  return key ? t(key) : presentServerMessage(e.hint);
+}
 
 export function ImportDialog({ isOpen, docId, table, onClose, onImported }: ImportDialogProps) {
   const [file, setFile] = useState<File | null>(null);
@@ -85,7 +133,7 @@ export function ImportDialog({ isOpen, docId, table, onClose, onImported }: Impo
       setPhase({ kind: "checked", check: verdict });
     } catch (e) {
       setPhase({ kind: "idle" });
-      setError((e as ApiError).message || "Couldn’t read this file.");
+      setError(errorMessage(e, t("database.import.readFailed")));
     }
   }
 
@@ -112,7 +160,7 @@ export function ImportDialog({ isOpen, docId, table, onClose, onImported }: Impo
       onImported(result);
     } catch (e) {
       setPhase({ kind: "checked", check: verdict });
-      setError((e as ApiError).message || "Couldn’t import this file.");
+      setError(errorMessage(e, t("database.import.failed")));
     }
   }
 
@@ -132,7 +180,7 @@ export function ImportDialog({ isOpen, docId, table, onClose, onImported }: Impo
   }
 
   function downloadTemplate() {
-    saveBlob(new Blob([importTemplateCsv(table)], { type: "text/csv;charset=utf-8" }), `${table.name}-template.csv`);
+    saveBlob(new Blob([importTemplateCsv(table)], { type: "text/csv;charset=utf-8" }), t("database.import.templateFileName", { table: table.name }));
   }
 
   const close = () => !busy && onClose();
@@ -140,27 +188,25 @@ export function ImportDialog({ isOpen, docId, table, onClose, onImported }: Impo
 
   const action = verdict
     ? verdict.rows_ready === 0
-      ? { label: "Import", disabled: true }
+      ? { label: t("common.import"), disabled: true }
       : verdict.rows_failed > 0
-        ? { label: `Import ${plural(verdict.rows_ready, "row")}, skip ${verdict.rows_failed.toLocaleString()}`, disabled: false }
-        : { label: `Import ${plural(verdict.rows_ready, "row")}`, disabled: false }
-    : { label: "Import", disabled: true };
+        ? { label: t("database.import.actionRowsSkip", { count: verdict.rows_ready, skipped: verdict.rows_failed }), disabled: false }
+        : { label: t("database.import.actionRows", { count: verdict.rows_ready }), disabled: false }
+    : { label: t("common.import"), disabled: true };
 
   return (
     <Dialog isOpen={isOpen} onOpenChange={(o) => !o && close()} purpose="form" width={600}>
       <Layout
-        header={<DialogHeader title={`Import into “${table.display}”`} onOpenChange={(o) => !o && close()} />}
+        header={<DialogHeader title={t("database.import.title", { name: table.display })} onOpenChange={(o) => !o && close()} />}
         content={
           <LayoutContent>
             {phase.kind === "done" ? (
               <VStack gap={3}>
                 <Banner
                   status="success"
-                  title={`Imported ${plural(phase.result.rows_ingested, "row")}.`}
+                  title={t("database.import.done", { count: phase.result.rows_ingested })}
                   description={
-                    phase.result.rows_skipped > 0
-                      ? `${plural(phase.result.rows_skipped, "row")} with problems ${phase.result.rows_skipped === 1 ? "was" : "were"} left out.`
-                      : undefined
+                    phase.result.rows_skipped > 0 ? t("database.import.skipped", { count: phase.result.rows_skipped }) : undefined
                   }
                 />
                 {phase.result.errors.length > 0 && (
@@ -175,14 +221,14 @@ export function ImportDialog({ isOpen, docId, table, onClose, onImported }: Impo
                   <div className="db-import__file">
                     <FileText size={16} className="db-import__file-icon" />
                     <span className="db-import__file-name">{file.name}</span>
-                    <span className="db-import__file-size">{fileSize(file.size)}</span>
-                    <Button label="Change" variant="ghost" size="sm" isDisabled={busy} onClick={() => chooseFile(null)} />
+                    <span className="db-import__file-size">{byteSize(file.size)}</span>
+                    <Button label={t("database.import.change")} variant="ghost" size="sm" isDisabled={busy} onClick={() => chooseFile(null)} />
                   </div>
                 ) : (
                   <>
                     <FileInput
-                      label="File"
-                      description="CSV or JSONL. The first line names the columns; empty cells stay empty."
+                      label={t("database.import.file")}
+                      description={t("database.import.fileHelp")}
                       mode="dropzone"
                       accept={ACCEPT}
                       value={null}
@@ -190,7 +236,7 @@ export function ImportDialog({ isOpen, docId, table, onClose, onImported }: Impo
                     />
                     <HStack gap={2} vAlign="center">
                       <Button
-                        label="Download template"
+                        label={t("database.import.template")}
                         variant="ghost"
                         size="sm"
                         icon={<Download size={15} />}
@@ -198,7 +244,7 @@ export function ImportDialog({ isOpen, docId, table, onClose, onImported }: Impo
                         onClick={downloadTemplate}
                       />
                       <Text type="supporting" color="secondary">
-                        This table’s headers as a CSV, ready to fill in.
+                        {t("database.import.templateHelp")}
                       </Text>
                     </HStack>
                   </>
@@ -209,9 +255,9 @@ export function ImportDialog({ isOpen, docId, table, onClose, onImported }: Impo
                 {phase.kind === "checking" && (
                   <div className="db-import__card db-import__card-head">
                     <HStack gap={2} vAlign="center">
-                      <Spinner label="Checking the file" />
+                      <Spinner label={t("database.import.checking")} />
                       <Text type="supporting" color="secondary">
-                        Checking the file…
+                        {t("database.import.checkingEllipsis")}
                       </Text>
                     </HStack>
                   </div>
@@ -226,10 +272,10 @@ export function ImportDialog({ isOpen, docId, table, onClose, onImported }: Impo
           <LayoutFooter>
             <HStack gap={2} justify="end">
               {phase.kind === "done" ? (
-                <Button label="Done" variant="primary" onClick={onClose} />
+                <Button label={t("common.done")} variant="primary" onClick={onClose} />
               ) : (
                 <>
-                  <Button label="Cancel" variant="ghost" onClick={close} isDisabled={busy} />
+                  <Button label={t("common.cancel")} variant="ghost" onClick={close} isDisabled={busy} />
                   <Button
                     label={action.label}
                     variant="primary"
@@ -263,26 +309,26 @@ function Verdict({
   const nothing = check.rows_ready === 0;
   const headline = nothing
     ? check.rows_total === 0
-      ? "The file has no data rows."
-      : `None of the ${plural(check.rows_total, "row")} can be imported.`
+      ? t("database.import.noDataRows")
+      : t("database.import.noneImportable", { count: check.rows_total })
     : allGood
-      ? `${plural(check.rows_ready, "row")} ready to import.`
-      : `${check.rows_ready.toLocaleString()} of ${plural(check.rows_total, "row")} ready to import.`;
+      ? t("database.import.allReady", { count: check.rows_ready })
+      : t("database.import.someReady", { ready: check.rows_ready, total: check.rows_total });
   const detail = nothing
     ? check.errors.some((e) => e.row === 0)
-      ? "The file’s headers don’t match this table’s columns — download the template to get them right."
-      : "Every row has a problem; they are listed below."
+      ? t("database.import.headersMismatch")
+      : t("database.import.everyRowBad")
     : allGood
       ? undefined
-      : `${plural(check.rows_failed, "row")} ${check.rows_failed === 1 ? "has" : "have"} a problem and will be left out unless you fix the file.`;
+      : t("database.import.someBad", { count: check.rows_failed });
   const effectiveOrder = dateOrder ?? check.guessed_date_order ?? null;
   const matched = check.matched_columns.length;
   const columnsLine =
     matched === 0
       ? null
       : check.ignored_columns.length === 0
-        ? `All ${plural(matched, "column")} matched.`
-        : `${plural(matched, "column")} matched · ignored: ${check.ignored_columns.join(", ")}`;
+        ? t("database.import.allColumnsMatched", { count: matched })
+        : t("database.import.columnsMatchedIgnored", { count: matched, ignored: check.ignored_columns.join(", ") });
 
   return (
     <div className={`db-import__card${nothing ? " db-import__card--bad" : allGood ? " db-import__card--good" : ""}`}>
@@ -316,7 +362,7 @@ function Verdict({
       {effectiveOrder && (
         <div className="db-import__card-section">
         <RadioList
-          label="Dates like 1/4/26 in this file are"
+          label={t("database.import.dateOrder")}
           size="sm"
           orientation="horizontal"
           value={effectiveOrder}
@@ -325,8 +371,8 @@ function Verdict({
             if (v !== effectiveOrder) onDateOrder(v as DateOrder);
           }}
         >
-          <RadioListItem value="mdy" label="Month / day / year" description="1/4/26 = January 4" />
-          <RadioListItem value="dmy" label="Day / month / year" description="1/4/26 = 1 April" />
+          <RadioListItem value="mdy" label={t("database.import.mdy")} description={t("database.import.mdyExample")} />
+          <RadioListItem value="dmy" label={t("database.import.dmy")} description={t("database.import.dmyExample")} />
         </RadioList>
         </div>
       )}
@@ -341,30 +387,33 @@ function ErrorTable({ errors, truncated }: { errors: DatabaseImportError[]; trun
       <table className="db-import__table">
         <thead>
           <tr>
-            <th className="db-import__num">Row</th>
-            <th>Column</th>
-            <th>Value</th>
-            <th>Problem</th>
+            <th className="db-import__num">{t("common.row")}</th>
+            <th>{t("database.column.label")}</th>
+            <th>{t("database.value.label")}</th>
+            <th>{t("database.import.problem")}</th>
           </tr>
         </thead>
         <tbody>
-          {errors.map((e, i) => (
-            <tr key={i}>
-              <td className="db-import__num">{e.row === 0 ? "header" : e.row}</td>
-              <td>{e.column ?? ""}</td>
-              <td className="db-import__value">{e.value ?? ""}</td>
-              <td>
-                <div>{e.message}</div>
-                {e.hint ? <div className="db-import__hint">{e.hint}</div> : null}
-              </td>
-            </tr>
-          ))}
+          {errors.map((e, i) => {
+            const hint = importHint(e);
+            return (
+              <tr key={i}>
+                <td className="db-import__num">{e.row === 0 ? t("database.import.headerRow") : fmtInt(e.row)}</td>
+                <td>{e.column ?? ""}</td>
+                <td className="db-import__value">{e.value ?? ""}</td>
+                <td>
+                  <div>{importProblem(e)}</div>
+                  {hint ? <div className="db-import__hint">{hint}</div> : null}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       {truncated && (
         <div className="db-import__more">
           <Text type="supporting" color="secondary">
-            Only the first {errors.length} problems are shown.
+            {t("database.import.truncated", { count: errors.length })}
           </Text>
         </div>
       )}

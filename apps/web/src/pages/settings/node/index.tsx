@@ -10,6 +10,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { Server } from "lucide-react";
+import { t } from "../../../i18n/i18n";
 import { LoadFailed } from "../../../ui/LoadFailed";
 import { PageColumn } from "../../../ui/PageColumn";
 import { asNodeCategory, type NodeCategory } from "./categories";
@@ -31,7 +32,7 @@ export function NodeSettingsPage() {
   if (failed) {
     return (
       <PageColumn>
-        <LoadFailed icon={<Server size={28} />} title="Couldn’t load node settings" onRetry={retry} />
+        <LoadFailed icon={<Server size={28} />} title={t("node.page.loadFailed")} onRetry={retry} />
       </PageColumn>
     );
   }
@@ -50,9 +51,9 @@ export function NodeSettingsPage() {
       <PageColumn width={640}>
         <Card>
           <VStack gap={2}>
-            <Heading level={2}>You are not this node&apos;s administrator</Heading>
+            <Heading level={2}>{t("node.page.notAdminTitle")}</Heading>
             <Text type="supporting" color="secondary">
-              Only node administrators can change these settings. Ask one to add you.
+              {t("node.page.notAdminBody")}
             </Text>
           </VStack>
         </Card>
@@ -71,8 +72,8 @@ export function NodeSettingsPage() {
         {staleAiKey && (
           <Banner
             status="warning"
-            title="A provider key is missing from this node&apos;s files"
-            description="Paste the key again to restore AI."
+            title={t("node.page.staleKeyTitle")}
+            description={t("node.page.staleKeyBody")}
           />
         )}
         {/* Hidden, not unmounted: each section's unsaved draft must survive a visit to another. */}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
-import { CLIENT_GROUPS, TAB_LABEL, clientConfigs, clientTabs, TOKEN_PLACEHOLDER } from "./client-configs";
+import { CLIENT_GROUPS, CLIENT_NAME, clientConfigs, clientTabs, TOKEN_PLACEHOLDER } from "./client-configs";
 
 const PUBLIC: AgentSetup = {
   url: "https://stuga.example.com",
@@ -64,7 +64,7 @@ describe("clientTabs", () => {
   it("lists every client in exactly one group, with Other clients last on its own", () => {
     const grouped = CLIENT_GROUPS.flatMap((g) => g.clients);
     expect(new Set(grouped).size).toBe(grouped.length);
-    expect([...grouped, "other"].sort()).toEqual(Object.keys(TAB_LABEL).sort());
+    expect([...grouped, "other"].sort()).toEqual([...Object.keys(CLIENT_NAME), "other"].sort());
   });
 });
 

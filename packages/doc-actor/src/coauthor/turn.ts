@@ -4,11 +4,12 @@
  * run under `panel:<human>`, where the document's own setting decides, as for
  * any agent, whether it waits for the human who asked or applies at once.
  */
+import type { CoauthorActivity, CoauthorError, CoauthorNotice } from "@stuga/protocol/api/ai-turn";
 import type { AiEditsPayload, AiRequest, AiResponseChunk, AiCitation } from "@stuga/protocol/wire/doc-socket";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { decodeJson, encodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
-import { failureReason, runAgentTurn, type AgentActivity, type AiConfig, type ToolRunner } from "@stuga/ai";
+import { runAgentTurn, type AiConfig, type ToolRunner } from "@stuga/ai";
 import { applyStrEditsStrict } from "@stuga/crdt-ops";
 import type { InternalApi, JobQueue } from "@stuga/runtime";
 import { recordPanelPropose, type Refusals } from "../audit.js";
@@ -29,32 +30,21 @@ export interface CoAuthorEnv {
   ai: () => AiConfig;
 }
 
-function activityLabel(a: AgentActivity): string {
-  switch (a.kind) {
-    case "thinking":
-      return "Thinking…";
-    case "reading":
-      return "Reading the document…";
-    case "searching":
-      return a.query ? `Searching for “${a.query}”…` : "Searching the knowledge base…";
-    case "editing":
-      return "Preparing edits…";
-  }
-}
-
-/** Why staging failed, in the reviewer's language: the turn worked, the edit was refused. */
-function proposeFailure(result: { error: string; message?: string }): string {
+/** Why staging failed: the turn worked, the edit was refused. The app words it; `detail` is the ledger's own. */
+function proposeFailure(result: { error: string; message?: string; count?: number }): CoauthorError {
   switch (result.error) {
+    case "review_backlog":
+      return { code: "review_backlog", count: result.count ?? 0 };
     case "locked":
-      return "This document was locked before the changes could be proposed, so nothing was staged.";
+      return { code: "propose_locked" };
     case "too_large":
-      return "The result would be too large for one document, so nothing was staged.";
+      return { code: "too_large" };
     case "unavailable":
-      return "This document's edit ledger is temporarily unavailable — nothing was staged. Try again shortly.";
+      return { code: "ledger_unavailable" };
     case "stale":
-      return "The document changed while the AI was writing, so its changes no longer applied.";
+      return { code: "stale" };
     default:
-      return result.message ?? "The changes couldn't be proposed.";
+      return result.message ? { code: "propose_failed", detail: result.message } : { code: "propose_failed" };
   }
 }
 
@@ -78,16 +68,16 @@ export class CoAuthor {
     const meta = ws.meta;
     const store = this.ledger.store;
     // An AI turn ends in a document edit, so it takes the write gates.
-    if (store.locked) return this.refuse(ws, "locked", "This document is locked; unlock it to make changes.");
-    if (!meta.canWrite) return this.refuse(ws, "acl", "You have view-only access to this document.");
-    if (!this.rate.allow(ws, "ai")) return this.refuse(ws, "rate-limit", "Too many AI requests; try again shortly.");
+    if (store.locked) return this.refuse(ws, "locked", "This document is locked; unlock it to make changes.", { code: "locked" });
+    if (!meta.canWrite) return this.refuse(ws, "acl", "You have view-only access to this document.", { code: "view_only" });
+    if (!this.rate.allow(ws, "ai")) return this.refuse(ws, "rate-limit", "Too many AI requests; try again shortly.", { code: "rate_limited" });
     let req: AiRequest;
     try {
       req = clampAiRequest(decodeJson<AiRequest>(payload));
     } catch {
-      return this.fail(ws, "The request could not be read.");
+      return this.fail(ws, { code: "unreadable" });
     }
-    if (!req.prompt.trim()) return this.fail(ws, "Say what you'd like me to do.");
+    if (!req.prompt.trim()) return this.fail(ws, { code: "empty_prompt" });
     await this.runTurn(ws, req);
   }
 
@@ -96,9 +86,9 @@ export class CoAuthor {
     const store = this.ledger.store;
     const docId = store.docId;
     // A human surface: an agent driving it would mint a run it reviews itself. Agents have MCP.
-    if (meta.agentAuth) return this.fail(ws, "Agents use the MCP tools, not the in-app co-author.");
+    if (meta.agentAuth) return this.fail(ws, { code: "agent" });
     const ai = this.env.ai();
-    if (!ai.chat.enabled) return this.fail(ws, "AI chat is disabled on this node");
+    if (!ai.chat.enabled) return this.fail(ws, { code: "ai_disabled" });
 
     const panelAlias = `panel:${meta.alias}`;
     const controller = new AbortController();
@@ -166,20 +156,19 @@ export class CoAuthor {
         },
         runner,
         (chunk) => safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { chunk, done: false } satisfies AiResponseChunk)),
-        (activity) =>
-          safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { status: activityLabel(activity), done: false } satisfies AiResponseChunk)),
+        (activity) => safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { status: activity, done: false } satisfies AiResponseChunk)),
       );
 
       // The next turn hears only what the user rejects after this one.
       if (feedback.length > 0 && result.rounds > 0) await this.ledger.answerFeedback(panelAlias, feedback.map((f) => f.id));
       if (result.failure) console.warn("co-author model call failed", { docId, ...result.failure });
-      const reason = failureReason(result.failure);
+      const failure = result.failure?.kind ?? null;
       // A partial turn (round cap, a later round failing) still proposes what its finished rounds staged.
-      const incomplete =
+      const incomplete: CoauthorNotice | null =
         result.stopReason === "max_rounds"
-          ? `Stopped after ${result.rounds} rounds of work. Ask me to continue if there's more to do.`
+          ? { code: "max_rounds", rounds: result.rounds }
           : result.stopReason === "error"
-            ? ["The turn ended early.", reason].filter(Boolean).join(" ")
+            ? { code: "ended_early", failure }
             : null;
       const tokens = {
         model: result.modelId,
@@ -191,18 +180,18 @@ export class CoAuthor {
 
       if (result.stopReason === "error" && result.strEdits.length === 0 && result.docEdits.length === 0 && !result.prose.trim()) {
         recordUsage({ ...tokens, status: "error" });
-        return this.fail(ws, reason ?? "The AI turn failed.");
+        return this.fail(ws, { code: "failed", failure });
       }
 
       // Before staging, so the image destination in the diff is the one that lands.
-      const mediaWarning = await hostAgentImages(this.env.internal, docId, result.strEdits, meta);
+      const imageNotices = await hostAgentImages(this.env.internal, docId, result.strEdits, meta);
 
       let staged = 0;
       let applied = 0;
       let runId: string | null = null;
-      let proposeError: string | null = null;
+      let proposeError: CoauthorError | null = null;
       if (result.strEdits.length > 0) {
-        const status = applyAtOnce ? "Applying changes…" : "Proposing changes…";
+        const status: CoauthorActivity = { kind: applyAtOnce ? "applying" : "proposing" };
         safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { status, done: false } satisfies AiResponseChunk));
         const out = await proposeRunEdit(this.ledger, {
           op: { action: "cited_edits", edits: result.strEdits, citations: result.citations },
@@ -232,14 +221,18 @@ export class CoAuthor {
       }
       const crossDocs = await proposeCrossDoc(this.env.internal, result.docEdits, meta, req.collection_id ?? null, panelAlias, PANEL_AGENT);
 
-      const stopped =
+      const stopped: CoauthorNotice | null =
         result.stopReason !== "aborted"
           ? null
-          : staged > 0 || crossDocs.some((d) => d.mode === "proposed")
-            ? "Stopped. The changes it had already made are staged for review."
-            : applied > 0 || crossDocs.some((d) => d.mode === "applied")
-              ? "Stopped. The changes it had already made were applied."
-              : "Stopped.";
+          : {
+              code: "stopped",
+              kept:
+                staged > 0 || crossDocs.some((d) => d.mode === "proposed")
+                  ? "staged"
+                  : applied > 0 || crossDocs.some((d) => d.mode === "applied")
+                    ? "applied"
+                    : null,
+            };
 
       safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { done: true } satisfies AiResponseChunk));
       recordUsage(tokens);
@@ -253,30 +246,30 @@ export class CoAuthor {
           cross_docs: crossDocs,
           citations: result.citations,
           error: proposeError,
-          notice: [incomplete, stopped, mediaWarning].filter(Boolean).join(" ") || null,
+          notices: [incomplete, stopped, ...imageNotices].filter((n): n is CoauthorNotice => n !== null),
         } satisfies AiEditsPayload),
       );
     } catch (err) {
       // The resolved model id is unknown when the stream fails before its metadata.
       recordUsage({ model: req.model, status: "error" });
-      this.fail(ws, (err as Error).message);
+      this.fail(ws, { code: "failed", failure: null, detail: (err as Error).message });
     } finally {
       this.turns.delete(ws);
     }
   }
 
-  /** Refuse at the gate: WRITE_REJECTED carries the reason, AI_EDITS ends the turn. */
-  private refuse(ws: DocSocket, kind: "locked" | "acl" | "rate-limit", message: string): void {
+  /** Refuse at the gate: WRITE_REJECTED carries the reason for the page, AI_EDITS ends the turn. */
+  private refuse(ws: DocSocket, kind: "locked" | "acl" | "rate-limit", message: string, error: CoauthorError): void {
     this.refusals.reject(ws, kind, message);
-    this.fail(ws, message);
+    this.fail(ws, error);
   }
 
-  /** End a turn with an error: the client shows it from AI_RESPONSE and clears the turn on AI_EDITS. */
-  private fail(ws: DocSocket, error: string): void {
+  /** End a turn with an error: the client shows it from AI_EDITS, which also clears the turn. */
+  private fail(ws: DocSocket, error: CoauthorError): void {
     safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { done: true, error } satisfies AiResponseChunk));
     safeSend(
       ws,
-      encodeJson(Opcode.AI_EDITS, { staged: 0, applied: 0, run_id: null, cross_docs: [], error, notice: null } satisfies AiEditsPayload),
+      encodeJson(Opcode.AI_EDITS, { staged: 0, applied: 0, run_id: null, cross_docs: [], error, notices: [] } satisfies AiEditsPayload),
     );
   }
 }

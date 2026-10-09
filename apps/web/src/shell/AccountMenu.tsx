@@ -13,6 +13,7 @@ import { LifeBuoy, LogOut, UserRound } from "lucide-react";
 import { Me } from "../api";
 import { getDisplayName } from "../lib/http/client";
 import { logout } from "../lib/session/tokens";
+import { t } from "../i18n/i18n";
 
 // A plain link: the node sends nothing to us, so help starts from the person.
 const DISCUSSIONS_URL = "https://github.com/stuga-dev/stuga/discussions";
@@ -58,7 +59,7 @@ export function AccountMenu() {
   const nav = useNavigate();
   const [open, setOpen] = useState(false);
   const { name, handle } = useAccountIdentity();
-  const label = name ?? "Account";
+  const label = name ?? t("shell.account.label");
 
   function go(to: string) {
     setOpen(false);
@@ -72,7 +73,7 @@ export function AccountMenu() {
       placement="below"
       alignment="end"
       width={260}
-      label="Account"
+      label={t("shell.account.label")}
       content={
         <VStack gap={0}>
           <HStack gap={2} vAlign="center" padding={3}>
@@ -93,7 +94,7 @@ export function AccountMenu() {
             {/* Settings has its one entry in the sidebar; this is the shortcut to your own part of it. */}
             <Item
               as="li"
-              label="Profile"
+              label={t("shell.account.profile")}
               startContent={<UserRound size={16} />}
               onClick={() => go("/settings/profile")}
             />
@@ -102,7 +103,7 @@ export function AccountMenu() {
           <List>
             <Item
               as="li"
-              label="Help and feedback"
+              label={t("shell.account.help")}
               startContent={<LifeBuoy size={16} />}
               href={DISCUSSIONS_URL}
               target="_blank"
@@ -110,13 +111,13 @@ export function AccountMenu() {
           </List>
           <Divider />
           <List>
-            <Item as="li" label="Sign out" startContent={<LogOut size={16} />} onClick={logout} />
+            <Item as="li" label={t("shell.account.signOut")} startContent={<LogOut size={16} />} onClick={logout} />
           </List>
         </VStack>
       }
     >
       {/* Avatar's own tooltip races this Popover's showPopover() on open. */}
-      <button className="account-trigger" aria-label={`Account — ${label}`} title={label}>
+      <button className="account-trigger" aria-label={t("shell.account.trigger", { name: label })} title={label}>
         <Avatar name={label} size="sm" tooltip={false} />
       </button>
     </Popover>

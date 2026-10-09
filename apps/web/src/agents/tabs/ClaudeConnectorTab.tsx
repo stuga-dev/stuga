@@ -4,6 +4,8 @@ import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import { ExternalLink } from "lucide-react";
+import { t } from "../../i18n/i18n";
+import { tRich } from "../../i18n/rich";
 
 /** Claude has no "add this URL" link, so the URL is pasted by hand. */
 const CLAUDE_CONNECTORS = "https://claude.ai/settings/connectors";
@@ -12,16 +14,16 @@ export function ClaudeConnectorTab({ mcpUrl }: { mcpUrl: string }) {
   return (
     <VStack gap={2}>
       <Text size="sm" color="secondary">
-        1. In Claude, open Settings → Connectors → <strong>Add custom connector</strong>.
+        {tRich("agents.claudeConnector.step1", { strong: (chunks) => <strong>{chunks}</strong> })}
       </Text>
       <Text size="sm" color="secondary">
-        2. Paste this URL, then sign in to Stuga.
+        {t("agents.claudeConnector.step2")}
       </Text>
       {/* Without a title the copy button is positioned over a wrapped URL's last characters. */}
-      <CodeBlock code={mcpUrl} title="MCP endpoint" width="100%" isWrapped hasCopyButton size="sm" />
+      <CodeBlock code={mcpUrl} title={t("agents.claudeConnector.endpoint")} width="100%" isWrapped hasCopyButton size="sm" />
       <HStack gap={2}>
         <Button
-          label="Open Claude connectors"
+          label={t("agents.claudeConnector.open")}
           variant="secondary"
           size="sm"
           endContent={<ExternalLink size={14} />}

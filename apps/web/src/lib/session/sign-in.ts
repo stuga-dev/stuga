@@ -1,5 +1,6 @@
 /** Sign-in, sign-up and the account's own credentials, against the node's auth routes. */
 import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
+import { formatLocale, t } from "../../i18n/i18n";
 import { atRemoteAddress } from "./auth-config";
 import { authRequest } from "./auth-request";
 import { AuthError } from "./errors";
@@ -7,12 +8,12 @@ import { clearLinkPending, clearSsoHint, markLinkPending, startProviderSignIn } 
 import { withConfirmation } from "./reauth";
 import { authPost, ensureFreshToken, type Session, type TokenResponse } from "./tokens";
 
-function toSession(t: TokenResponse): Session {
+function toSession(tokens: TokenResponse): Session {
   return {
-    accessToken: t.access_token,
-    refreshToken: t.refresh_token,
-    expiresIn: t.expires_in,
-    ...(t.passkey_offer ? { passkeyOffer: true } : {}),
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    expiresIn: tokens.expires_in,
+    ...(tokens.passkey_offer ? { passkeyOffer: true } : {}),
   };
 }
 
@@ -55,8 +56,8 @@ export interface ProviderSession {
   returnTo: string | undefined;
 }
 
-function toProviderSession(t: TokenResponse): ProviderSession {
-  return { session: toSession(t), returnTo: t.return_to };
+function toProviderSession(tokens: TokenResponse): ProviderSession {
+  return { session: toSession(tokens), returnTo: tokens.return_to };
 }
 
 /** Trade the one-time code /auth/complete was handed for a session. */
@@ -178,15 +179,49 @@ export async function unlinkProvider(): Promise<void> {
   clearSsoHint();
 }
 
+/** One rule of the password policy. */
+export interface PasswordRule {
+  /** The checklist line: "A letter". */
+  label: string;
+  /** The rule inside the one-sentence policy: "a letter". Without one, the label with a lowercase first letter. */
+  requirement?: string;
+  test: (pw: string, strong: boolean) => boolean;
+}
+
+/** The shortest password the node takes. */
+const MIN_LENGTH = 8;
+
 /**
  * The node's password policy, mirrored for the form; the server stays the authority, and asks only
  * for the length. A password that meets the remote address's rule (`strong`: 15 characters or more,
  * hard to guess) needs no letter or number, so a passphrase such as "trumpet walnut ceiling" works.
+ * Getters, so each label is read in the interface language when it is shown.
  */
-export const PASSWORD_RULES: { label: string; test: (pw: string, strong: boolean) => boolean }[] = [
-  { label: "At least 8 characters", test: (pw) => pw.length >= 8 },
-  { label: "A letter", test: (pw, strong) => strong || /[A-Za-z]/.test(pw) },
-  { label: "A number", test: (pw, strong) => strong || /\d/.test(pw) },
+export const PASSWORD_RULES: PasswordRule[] = [
+  {
+    get label() {
+      return t("auth.passwordRules.length", { count: MIN_LENGTH });
+    },
+    test: (pw) => pw.length >= MIN_LENGTH,
+  },
+  {
+    get label() {
+      return t("auth.passwordRules.letter");
+    },
+    get requirement() {
+      return t("auth.passwordRules.letterInSentence");
+    },
+    test: (pw, strong) => strong || /[A-Za-z]/.test(pw),
+  },
+  {
+    get label() {
+      return t("auth.passwordRules.number");
+    },
+    get requirement() {
+      return t("auth.passwordRules.numberInSentence");
+    },
+    test: (pw, strong) => strong || /\d/.test(pw),
+  },
 ];
 
 export function passwordOk(pw: string, strong = false): boolean {
@@ -198,10 +233,13 @@ export function passwordOk(pw: string, strong = false): boolean {
  * letter and a number." For a password that meets the remote rule (`strong`), only the length.
  */
 export function passwordRulesText(strong = false): string {
-  const [first, ...rest] = PASSWORD_RULES.filter((r) => !strong || !r.test("", true)).map((r) => r.label);
+  const [first, ...rest] = PASSWORD_RULES.filter((r) => !strong || !r.test("", true));
   if (!first) return "";
-  if (rest.length === 0) return `${first}.`;
-  const lower = rest.map((label) => label.charAt(0).toLowerCase() + label.slice(1));
-  const last = lower.pop()!;
-  return `${first}, with ${lower.length ? `${lower.join(", ")} and ${last}` : last}.`;
+  if (rest.length === 0) return t("auth.passwordRules.sentenceOnly", { first: first.label });
+  const phrases = rest.map((r) => r.requirement ?? r.label.charAt(0).toLocaleLowerCase(formatLocale()) + r.label.slice(1));
+  const last = phrases.pop()!;
+  let list = phrases.shift();
+  if (list === undefined) return t("auth.passwordRules.sentenceWith", { first: first.label, rest: last });
+  for (const next of phrases) list = t("auth.passwordRules.listMore", { list, next });
+  return t("auth.passwordRules.sentenceWith", { first: first.label, rest: t("auth.passwordRules.listPair", { list, last }) });
 }

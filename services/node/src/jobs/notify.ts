@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import type { NotifyDeliverMessage, NotifyMessage } from "@stuga/protocol/internal/jobs";
+import type { DeliveryErrorCode } from "@stuga/protocol/notify/events";
+import { recipientLanguage } from "@stuga/protocol/notify/render";
 import type { NotifyConfig } from "../env.js";
 import type { JobDeps, JobsEnv } from "./deps.js";
-import type { NotificationPayload } from "./sinks.js";
+import { SinkAnsweredError, type NotificationPayload } from "./sinks.js";
 
 const HOUR_MS = 3_600_000;
 
@@ -23,34 +25,46 @@ export function channelKey(cfg: NotifyConfig): string {
  */
 export function sinkDelivery(
   cfg: NotifyConfig,
-  m: { recipient: string; title: string; body: string; url: string; to?: string },
+  m: { recipient: string; eventType: string; params: Record<string, unknown>; url: string; to?: string },
 ): NotifyDeliverMessage | null {
   return cfg.sink === "none" ? null : { kind: "notify_deliver", channel: cfg.sink, channelKey: channelKey(cfg), ...m };
 }
 
 /** What a delivery records when the channel it was queued for is no longer the node's. */
-export const CHANNEL_CHANGED_ERROR = "the notification channel changed before it was sent";
+export const CHANNEL_CHANGED_ERROR: DeliveryErrorCode = "channel_changed";
 
 /**
- * Why a delivery failed, as its notification shows it: one line, at most ERROR_MAX characters, and
- * never a URL, which for a webhook is the credential and for SMTP may carry its password.
+ * Why a delivery failed, as its notification keeps it (@stuga/protocol/notify/events
+ * parseDeliveryError), for the reader's app to word: `sink_answered:<status>`, or `failed:` and what
+ * the channel said, on one line, at most ERROR_MAX characters, and never with a URL, which for a
+ * webhook is the credential and for SMTP may carry its password.
  */
 export function deliveryErrorText(err: unknown): string {
+  if (err instanceof SinkAnsweredError) return `sink_answered:${err.status}`;
   const raw = err instanceof Error ? err.message : String(err);
   const text = raw
-    .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "the configured address")
+    .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<address>")
     .replace(/\s+/g, " ")
     .trim();
-  return (text || "it could not be sent").slice(0, ERROR_MAX);
+  return text ? `failed:${text}`.slice(0, ERROR_MAX) : "not_sent";
+}
+
+/** A notification's payload for the recipient: written in their language, the person's choice else their browser's. */
+export async function payloadFor(
+  db: Pick<JobDeps["db"], "uiLanguage">,
+  m: { recipient: string; eventType: string; params: Record<string, unknown>; url: string },
+): Promise<NotificationPayload> {
+  const language = recipientLanguage(await db.uiLanguage(m.recipient));
+  return { recipient: m.recipient, eventType: m.eventType, params: m.params, language, url: m.url };
 }
 
 /** Store an in-app notification; a new one also queues its delivery to the configured sink. */
 export async function handleNotify(env: JobsEnv, deps: JobDeps, msg: NotifyMessage): Promise<void> {
-  const { recipient, eventType, docId, title, body } = msg;
+  const { recipient, eventType, docId, params } = msg;
   // Bucketed by hour: a repeated share or comment within the hour is one notification and one ping.
   const id = `${eventType}:${docId}:${recipient}:${Math.floor(Date.now() / HOUR_MS)}`;
   const url = `${env.publicOrigin}/doc/${docId}`;
-  const delivery = sinkDelivery(env.settings.current().notify, { recipient, title, body, url });
+  const delivery = sinkDelivery(env.settings.current().notify, { recipient, eventType, params, url });
 
   await deps.db.insertNotification(
     {
@@ -59,10 +73,11 @@ export async function handleNotify(env: JobsEnv, deps: JobDeps, msg: NotifyMessa
       recipient_alias: recipient,
       event_type: eventType,
       resource_id: docId || null,
-      resource_title: title,
+      // The document's own title, as data; what the notification says is written from its params.
+      resource_title: params.doc,
       resource_url: url,
       actor_alias: msg.actor,
-      payload: msg,
+      payload: params,
     },
     delivery,
   );
@@ -75,7 +90,6 @@ export async function handleNotify(env: JobsEnv, deps: JobDeps, msg: NotifyMessa
  * queued for: once that has changed, it is recorded as not sent, and goes nowhere else.
  */
 export async function handleNotifyDeliver(env: JobsEnv, deps: JobDeps, msg: NotifyDeliverMessage): Promise<void> {
-  const payload: NotificationPayload = { recipient: msg.recipient, title: msg.title, body: msg.body, url: msg.url };
   // One settings snapshot, so the address lookup and the delivery agree on the sink.
   const notify = env.settings.current().notify;
   const record = (outcome: { delivered: true } | { error: string }) =>
@@ -84,6 +98,7 @@ export async function handleNotifyDeliver(env: JobsEnv, deps: JobDeps, msg: Noti
     await record({ error: CHANNEL_CHANGED_ERROR });
     return;
   }
+  const payload = await payloadFor(deps.db, msg);
   if (notify.sink === "email") payload.recipientEmail = msg.to ?? (await deps.db.userEmail(msg.recipient));
   let unsent: string | null;
   try {
@@ -92,5 +107,5 @@ export async function handleNotifyDeliver(env: JobsEnv, deps: JobDeps, msg: Noti
     await record({ error: deliveryErrorText(err) }).catch(() => {});
     throw err;
   }
-  await record(unsent === null ? { delivered: true } : { error: deliveryErrorText(unsent) });
+  await record(unsent === null ? { delivered: true } : { error: unsent });
 }

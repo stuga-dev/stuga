@@ -36,7 +36,9 @@ function item(id: string, status: LedgerItem["status"] = "pending"): LedgerItem 
 function run(over: Partial<TestRun> = {}): TestRun {
   return {
     id: "run_a",
+    source: "connector",
     agent: "Claude",
+    agent_alias: "agent-claude",
     reviewer: ME,
     status: "open",
     items: [item("h1"), item("h2")],
@@ -198,5 +200,11 @@ describe("pendingItemsOf", () => {
       run({ id: "run_b", items: [item("h3")] }),
     ]);
     expect(flat.map((p) => itemKey(p.runId, p.item.id))).toEqual(["run_a:h1", "run_b:h3"]);
+  });
+
+  it("names the co-author in the reader's language, not by the name the node stored", () => {
+    const [first] = pendingItemsOf(SHAPE, [run({ source: "panel", agent: "stored name", agent_alias: "panel:me-sub" })]);
+    expect(first?.agent).toBe("AI co-author");
+    expect(pendingItemsOf(SHAPE, [run()])[0]?.agent).toBe("Claude");
   });
 });

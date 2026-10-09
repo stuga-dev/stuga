@@ -17,6 +17,8 @@ import { Databases, type DocSummary } from "../api";
 import type { DatabaseSchema } from "@stuga/protocol/databases/types";
 import { relativeTime, absoluteTime } from "../lib/format";
 import { principalName, useUserNames } from "../state/identity";
+import { t } from "../i18n/i18n";
+import { tRich } from "../i18n/rich";
 
 interface DocDetailProps {
   doc: DocSummary;
@@ -32,7 +34,7 @@ interface DocDetailProps {
 }
 
 export function DocDetail({ doc, isFavorite, onToggleFavorite, onOpen, onShare, onClose, folderTitle, onStateChange }: DocDetailProps) {
-  const title = doc.title || "Untitled";
+  const title = doc.title || t("common.untitled");
   const isDatabase = doc.doc_type === "database";
   const stateMenu = useDocStateMenu();
   const instructions = useInstructionsDialog();
@@ -65,40 +67,43 @@ export function DocDetail({ doc, isFavorite, onToggleFavorite, onOpen, onShare, 
               {isDatabase ? <Database size={14} /> : <FileText size={14} />}
             </span>
             <Text type="supporting" color="secondary">
-              {isDatabase ? "Database" : "Document"}
+              {isDatabase ? t("common.database") : t("common.document")}
             </Text>
             {DOC_STATE_FLAGS.filter((f) => f.isOn(docStateOf(doc))).map(({ label, icon: Icon, badge }) => (
               <Badge key={label} variant={badge} label={label} icon={<Icon size={12} />} />
             ))}
             <span className="doc-detail__close">
-              <IconButton label="Close details" variant="ghost" size="sm" icon={<X size={16} />} onClick={onClose} />
+              <IconButton label={t("library.detail.close")} variant="ghost" size="sm" icon={<X size={16} />} onClick={onClose} />
             </span>
           </HStack>
           <Heading level={2} maxLines={2}>
             {title}
           </Heading>
           <Text type="supporting" color="secondary">
-            Edited <span title={absoluteTime(doc.updated_at)}>{relativeTime(doc.updated_at)}</span>
+            {tRich("library.detail.edited", {
+              when: relativeTime(doc.updated_at),
+              time: (chunks) => <span title={absoluteTime(doc.updated_at)}>{chunks}</span>,
+            })}
           </Text>
         </VStack>
 
         <HStack gap={2} vAlign="center" wrap="wrap">
-          <Button label="Open" variant="primary" icon={<ExternalLink size={16} />} onClick={onOpen} />
-          <Button label="Share" variant="secondary" icon={<Share2 size={16} />} onClick={onShare} />
+          <Button label={t("common.open")} variant="primary" icon={<ExternalLink size={16} />} onClick={onOpen} />
+          <Button label={t("common.share")} variant="secondary" icon={<Share2 size={16} />} onClick={onShare} />
           <IconButton
-            label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+            label={isFavorite ? t("library.favorites.remove") : t("library.favorites.add")}
             variant="ghost"
             onClick={onToggleFavorite}
             icon={
               <Star
                 size={17}
-                fill={isFavorite ? "currentColor" : "none"}
+                fill={isFavorite ? "currentColor" : "none"} // i18n-exempt: an SVG paint value
                 className={isFavorite ? "doc-detail__star--on" : undefined}
               />
             }
           />
           <MoreMenu
-            label={`Settings for ${title}`}
+            label={t("library.detail.settingsFor", { title })}
             variant="ghost"
             size="sm"
             alignment="end"
@@ -113,16 +118,16 @@ export function DocDetail({ doc, isFavorite, onToggleFavorite, onOpen, onShare, 
           <>
             <Divider />
             <VStack gap={2}>
-              <Text type="label">Tables</Text>
+              <Text type="label">{t("library.detail.tables")}</Text>
               <ul className="db-detail-tables">
                 {dbSchema.tables
                   .slice()
                   .sort((a, b) => a.position - b.position)
-                  .map((t) => (
-                    <li key={t.table_id} className="db-detail-tables__row">
-                      <span className="db-detail-tables__name">{t.display || "Untitled table"}</span>
+                  .map((table) => (
+                    <li key={table.table_id} className="db-detail-tables__row">
+                      <span className="db-detail-tables__name">{table.display || t("library.detail.untitledTable")}</span>
                       <Text type="supporting" color="secondary">
-                        {t.row_count} row{t.row_count === 1 ? "" : "s"}
+                        {t("library.detail.rows", { count: table.row_count })}
                       </Text>
                     </li>
                   ))}
@@ -133,18 +138,18 @@ export function DocDetail({ doc, isFavorite, onToggleFavorite, onOpen, onShare, 
 
         <Divider />
 
-        <MetadataList title="Details">
-          <MetadataListItem label="Owner">
+        <MetadataList title={t("library.detail.details")}>
+          <MetadataListItem label={t("library.table.owner")}>
             <HStack gap={2} vAlign="center">
               <Avatar name={owner} size="xsm" />
               <span title={doc.owner}>{owner}</span>
             </HStack>
           </MetadataListItem>
-          <MetadataListItem label="Created">
+          <MetadataListItem label={t("library.detail.created")}>
             <span title={absoluteTime(doc.created_at)}>{relativeTime(doc.created_at)}</span>
           </MetadataListItem>
-          <MetadataListItem label="Location">
-            {doc.parent_id ? (folderTitle ?? "In a folder") : "Top level"}
+          <MetadataListItem label={t("library.table.location")}>
+            {doc.parent_id ? (folderTitle ?? t("library.detail.inFolder")) : t("library.table.topLevel")}
           </MetadataListItem>
         </MetadataList>
       </VStack>

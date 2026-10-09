@@ -43,8 +43,7 @@ async function enqueueGranteeNotifications(ctx: Ctx, docId: string, title: strin
       eventType: "DIRECT_DOC_PERMISSIONS",
       docId,
       // The name: an alias is an opaque directory key.
-      title: `${ctx.displayName || ctx.alias} shared "${title}" with you`,
-      body: "You now have access to this document.",
+      params: { actor: ctx.displayName || ctx.alias, doc: title },
       actor: ctx.alias,
     });
   }

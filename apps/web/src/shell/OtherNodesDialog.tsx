@@ -21,6 +21,7 @@ import { MAX_NODE_LABEL_CHARS, MAX_OTHER_NODES } from "@stuga/protocol/api/other
 import { OtherNodes, type OtherNode } from "../api";
 import { errorMessage, type ApiError } from "../lib/http/client";
 import { plainTextProblem } from "../lib/plain-text";
+import { t } from "../i18n/i18n";
 
 interface OtherNodesDialogProps {
   isOpen: boolean;
@@ -32,17 +33,17 @@ interface OtherNodesDialogProps {
 function refusal(e: unknown): { field: "label" | "url"; message: string } {
   switch ((e as ApiError).code) {
     case "invalid_url":
-      return { field: "url", message: "Enter the full address, starting with https:// or http://." };
+      return { field: "url", message: t("shell.otherNodes.invalidUrl") };
     case "own_node":
-      return { field: "url", message: "That’s this node’s own address." };
+      return { field: "url", message: t("shell.otherNodes.ownNode") };
     case "already_added":
-      return { field: "url", message: "That node is already in your list." };
+      return { field: "url", message: t("shell.otherNodes.alreadyAdded") };
     case "limit_reached":
-      return { field: "url", message: `You can keep up to ${MAX_OTHER_NODES} nodes here. Remove one first.` };
+      return { field: "url", message: t("shell.otherNodes.limitReached", { max: MAX_OTHER_NODES }) };
     case "invalid_label":
-      return { field: "label", message: `Use up to ${MAX_NODE_LABEL_CHARS} characters, at least one of them visible, and no control characters.` };
+      return { field: "label", message: t("shell.otherNodes.invalidLabel", { max: MAX_NODE_LABEL_CHARS }) };
     default:
-      return { field: "url", message: errorMessage(e, "Couldn’t add that node.") };
+      return { field: "url", message: errorMessage(e, t("shell.otherNodes.addFailed")) };
   }
 }
 
@@ -85,7 +86,7 @@ export function OtherNodesDialog({ isOpen, nodes, onClose }: OtherNodesDialogPro
     try {
       await OtherNodes.remove(node.id);
     } catch (e) {
-      toast({ body: errorMessage(e, `Couldn’t remove ${node.label}.`), type: "error" });
+      toast({ body: errorMessage(e, t("shell.otherNodes.removeFailed", { name: node.label })), type: "error" });
     } finally {
       setRemoving(null);
     }
@@ -103,11 +104,11 @@ export function OtherNodesDialog({ isOpen, nodes, onClose }: OtherNodesDialogPro
   return (
     <Dialog isOpen={isOpen} onOpenChange={(o) => !o && close()} purpose="form" width={440}>
       <Layout
-        header={<DialogHeader title="Other nodes" onOpenChange={(o) => !o && close()} />}
+        header={<DialogHeader title={t("shell.otherNodes.title")} onOpenChange={(o) => !o && close()} />}
         content={
           <LayoutContent>
             <VStack gap={4}>
-              <Text color="secondary">Shortcuts to other Stuga nodes. Each has its own sign-in.</Text>
+              <Text color="secondary">{t("shell.otherNodes.intro")}</Text>
               {nodes.length > 0 && (
                 <List hasDividers density="compact">
                   {nodes.map((node) => (
@@ -117,7 +118,7 @@ export function OtherNodesDialog({ isOpen, nodes, onClose }: OtherNodesDialogPro
                       description={node.origin}
                       endContent={
                         <IconButton
-                          label={`Remove ${node.label}`}
+                          label={t("shell.otherNodes.remove", { name: node.label })}
                           variant="ghost"
                           size="sm"
                           icon={<X size={15} />}
@@ -132,7 +133,7 @@ export function OtherNodesDialog({ isOpen, nodes, onClose }: OtherNodesDialogPro
               {nodes.length > 0 && <Divider />}
               <VStack gap={3}>
                 <TextInput
-                  label="Label"
+                  label={t("shell.otherNodes.label")}
                   isOptional
                   width="100%"
                   value={label}
@@ -147,7 +148,7 @@ export function OtherNodesDialog({ isOpen, nodes, onClose }: OtherNodesDialogPro
                   }
                 />
                 <TextInput
-                  label="URL"
+                  label={t("shell.otherNodes.url")}
                   width="100%"
                   placeholder="https://…"
                   autoComplete="url"
@@ -163,9 +164,9 @@ export function OtherNodesDialog({ isOpen, nodes, onClose }: OtherNodesDialogPro
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label="Done" variant="ghost" isDisabled={adding} onClick={close} />
+              <Button label={t("common.done")} variant="ghost" isDisabled={adding} onClick={close} />
               <Button
-                label="Add"
+                label={t("shell.otherNodes.add")}
                 variant="primary"
                 isDisabled={!url.trim() || labelProblem !== null}
                 isLoading={adding}

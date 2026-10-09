@@ -120,7 +120,7 @@ export const rowsInsert: OpDef<DbRunOpRowsInsert> = {
     }
     return {
       result: { inserted: p.rows.length, row_ids: p.row_ids },
-      summary: `${p.import ? "Imported" : "Inserted"} ${plural(p.rows.length, "row")} into "${meta.display}"`,
+      detail: { kind: "rows.insert", table: meta.display, rows: p.rows.length, imported: p.import === true },
     };
   },
   proposal: {
@@ -185,8 +185,10 @@ export const rowsUpdate: OpDef<DbRunOpRowsUpdate> = {
     if (proposal && updated === 0) throw conflict("none of the proposed rows exist any more");
     // The grid saves one cell at a time, so the column names are what tell entries apart.
     const touched = [...new Set(p.updates.flatMap((u) => Object.keys(u.values)))].map((id) => byId.get(id)!.display);
-    const cols = ` (${touched.slice(0, 3).join(", ")}${touched.length > 3 ? ", …" : ""})`;
-    return { result: { updated, missing }, summary: `Updated ${plural(updated, "row")} in "${meta.display}"${cols}` };
+    return {
+      result: { updated, missing },
+      detail: { kind: "rows.update", table: meta.display, rows: updated, columns: touched.slice(0, 3), more_columns: touched.length > 3 },
+    };
   },
   proposal: {
     describe: (p, view) => `Update ${plural(p.updates.length, "row")} in "${view.displayOf(p.table_id)}"`,
@@ -236,7 +238,7 @@ export const rowsDelete: OpDef<DbRunOpRowsDelete> = {
       sql.exec(`DELETE FROM _row_docs WHERE row_id IN (${inList})`, ...p.row_ids);
       queueDocLinks(sql, links, "trash", now);
     }
-    return { result: { deleted: found.size }, summary: `Deleted ${plural(found.size, "row")} from "${meta.display}"` };
+    return { result: { deleted: found.size }, detail: { kind: "rows.delete", table: meta.display, rows: found.size } };
   },
   proposal: {
     describe: (p, view) => `Delete ${plural(p.row_ids.length, "row")} from "${view.displayOf(p.table_id)}"`,
@@ -281,7 +283,7 @@ export const rowsLinkPage: OpDef<RowsLinkPage> = {
       unlinkRowDoc(sql, p.row_id);
     }
     const linked = linkRowDoc(sql, meta.table_id, p.row_id, p.doc_id, now);
-    return { result: { linked, doc_id: p.doc_id, replaced }, summary: `Linked a page to a row of "${meta.display}"` };
+    return { result: { linked, doc_id: p.doc_id, replaced }, detail: { kind: "rows.link_page", table: meta.display } };
   },
 };
 
@@ -322,6 +324,6 @@ export const rowsLinkPages: OpDef<RowsLinkPages> = {
     const meta = getTable(sql, p.table_id);
     let linked = 0;
     for (const l of p.links) if (linkRowDoc(sql, meta.table_id, l.row_id, l.doc_id, now)) linked++;
-    return { result: { linked }, summary: `Linked ${plural(linked, "page")} to rows of "${meta.display}"` };
+    return { result: { linked }, detail: { kind: "rows.link_pages", table: meta.display, pages: linked } };
   },
 };

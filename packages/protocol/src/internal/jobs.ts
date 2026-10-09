@@ -1,5 +1,6 @@
 /** Messages on the node's background job queue, produced by actors and routes. */
 import type { AuditStatus } from "../domain/audit.js";
+import type { DocNotification } from "../notify/events.js";
 
 interface IndexDocFields {
   kind: "index_doc";
@@ -91,19 +92,20 @@ export type IndexMessage =
       eventId: number;
     };
 
-/** One in-app notification for one recipient, also delivered to the configured sink. */
+/**
+ * One in-app notification about a document for one recipient, also delivered to the configured
+ * sink. It carries its event and params, never a sentence: each reader's language writes the text
+ * (@stuga/protocol/notify/render). `params.doc` is the document's title as it was.
+ */
 export type NotifyMessage = {
   kind: "notify";
   /** The recipient's bare alias. */
   recipient: string;
   workspaceId: string | null;
-  eventType: string;
   docId: string;
-  title: string;
-  body: string;
-  /** Who caused it, as a display string or alias. */
+  /** Who caused it: an alias, or an agent's id. */
   actor: string;
-};
+} & DocNotification;
 
 /**
  * Hand one stored notification to the configured sink. Queued with the row it
@@ -124,8 +126,9 @@ export type NotifyDeliverMessage = {
   recipient: string;
   /** An address to email in place of the recipient's own: the old one, when they changed it. */
   to?: string;
-  title: string;
-  body: string;
+  /** What it says, written in the recipient's language when it is sent (@stuga/protocol/notify/render). */
+  eventType: string;
+  params: Record<string, unknown>;
   url: string;
 };
 

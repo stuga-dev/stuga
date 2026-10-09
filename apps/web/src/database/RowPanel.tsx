@@ -21,9 +21,18 @@ import { pageHref, pageStateOf, rowTitle } from "./model/row-ref";
 import { parseFieldInput } from "./model/field-input";
 import { FilesCell } from "./FilesCell";
 import { errorMessage } from "../lib/http/client";
+import { t, type MessageKey } from "../i18n/i18n";
+import { cellProblem } from "./model/cell-problems";
+import { columnTypeLabel } from "./model/column-types";
 
 /** What a page button does; the one in flight labels its button. */
 type PageAction = "open" | "create" | "restore";
+
+const PAGE_FAILED: Record<PageAction, MessageKey> = {
+  open: "database.page.openFailed",
+  create: "database.page.createFailed",
+  restore: "database.page.restoreFailed",
+};
 
 interface RowPanelProps {
   docId: string;
@@ -63,7 +72,7 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
       .catch((e) => {
         if (!live) return;
         setLoading(false);
-        toast({ body: errorMessage(e, "Couldn't load the row."), type: "error" });
+        toast({ body: errorMessage(e, t("database.row.loadFailed")), type: "error" });
       });
     return () => {
       live = false;
@@ -80,7 +89,7 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
   function commitField(col: ColumnSpec, input: RowInputValue): boolean {
     const v = validateCellValue(col.type, col.options, input);
     if (!v.ok) {
-      toast({ body: v.reason, type: "error" });
+      toast({ body: cellProblem(v.reason), type: "error" });
       return false;
     }
     if (!row || (row[col.column_id] ?? null) === v.value) return true;
@@ -88,14 +97,14 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
     Databases.updateRows(docId, table.table_id, [{ _id: rowId, values: { [col.column_id]: v.value } }])
       .then((r) => {
         if (r.missing.length > 0) {
-          toast({ body: "That row was deleted by someone else.", type: "error" });
+          toast({ body: t("database.row.deletedElsewhere"), type: "error" });
           setMissing(true);
         }
         onSaved();
       })
       .catch((e) => {
         // Re-read rather than restore the captured value, which a racing save may have superseded.
-        surfaceError(e, "Couldn't save the change.");
+        surfaceError(e, t("database.row.saveFailed"));
         setReloadKey((k) => k + 1);
       });
     return true;
@@ -120,7 +129,7 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
       if (r.created || r.restored) onSaved();
       nav(pageHref(r.doc_id, ref));
     } catch (e) {
-      surfaceError(e, `Couldn't ${action} the page.`);
+      surfaceError(e, t(PAGE_FAILED[action]));
     } finally {
       setPageBusy(null);
     }
@@ -141,7 +150,7 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
     return (
       <div className="dock-panel row-panel">
         <div className="db-grid-center">
-          <Spinner label="Loading row…" />
+          <Spinner label={t("database.row.loading")} />
         </div>
       </div>
     );
@@ -151,7 +160,7 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
       <div className="dock-panel row-panel">
         <div className="row-panel__body">
           <Text type="supporting" color="secondary">
-            This row was deleted.
+            {t("database.row.deleted")}
           </Text>
         </div>
       </div>
@@ -159,13 +168,16 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
   }
 
   return (
-    <div className="dock-panel row-panel" aria-label="Row">
+    <div className="dock-panel row-panel" aria-label={t("common.row")}>
       <div className="row-panel__head">
         <Text type="large" weight="semibold" maxLines={2} className="row-panel__title">
           {rowTitle(columns, row)}
         </Text>
         <Text type="supporting" color="secondary">
-          Created {absoluteTime(new Date(row._created_at).toISOString())} · Edited {absoluteTime(new Date(row._updated_at).toISOString())}
+          {t("database.row.createdEdited", {
+            created: absoluteTime(new Date(row._created_at).toISOString()),
+            edited: absoluteTime(new Date(row._updated_at).toISOString()),
+          })}
         </Text>
       </div>
       <div className="row-panel__body">
@@ -175,7 +187,7 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
             const about = col.description?.trim();
             return (
               <div key={col.column_id} className="row-panel__field">
-                <dt className="row-panel__label" title={about ? `${col.type}\n\n${about}` : col.type}>
+                <dt className="row-panel__label" title={about ? `${columnTypeLabel(col.type)}\n\n${about}` : columnTypeLabel(col.type)}>
                   {col.display}
                 </dt>
                 <dd className="row-panel__value">
@@ -209,22 +221,22 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
       <div className="row-panel__foot">
         {readOnly && pageState.kind !== "live" ? (
           <Text type="supporting" color="secondary">
-            {pageState.kind === "trashed" ? "This row's page is in the Trash." : "This row has no page."}
+            {pageState.kind === "trashed" ? t("database.row.pageTrashed") : t("database.row.noPage")}
           </Text>
         ) : (
           <>
             <HStack gap={2} vAlign="center" wrap="wrap">
               {pageState.kind === "live"
-                ? pageButton("open", "Open page", "Opening…", <FileText size={15} />)
-                : pageButton("create", "Create page", "Creating…", <FilePlus2 size={15} />, true)}
-              {pageState.kind === "trashed" && pageButton("restore", "Restore page", "Restoring…", <RotateCcw size={15} />)}
+                ? pageButton("open", t("database.page.open"), t("database.page.opening"), <FileText size={15} />)
+                : pageButton("create", t("database.page.create"), t("database.page.creating"), <FilePlus2 size={15} />, true)}
+              {pageState.kind === "trashed" && pageButton("restore", t("database.page.restore"), t("database.page.restoring"), <RotateCcw size={15} />)}
             </HStack>
             <Text type="supporting" color="secondary">
               {pageState.kind === "live"
-                ? "Notes, comments and versions for this row."
+                ? t("database.page.liveHelp")
                 : pageState.kind === "trashed"
-                  ? "Restore the trashed page or create a new one."
-                  : "Add notes, comments and versions to this row."}
+                  ? t("database.page.trashedHelp")
+                  : t("database.page.noneHelp")}
             </Text>
           </>
         )}

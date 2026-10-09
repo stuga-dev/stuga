@@ -9,6 +9,7 @@ import type { DatabaseRunOp, DatabaseRunSummary } from "@stuga/protocol/database
 import type { DatabaseSocket } from "../sync/database-socket";
 import { pendingItems, pendingItemsOf, type Decision, type RunShape } from "./run-ledger";
 import { useRunLedger, type LedgerApi, type RunNotice } from "./use-run-ledger";
+import { t } from "../i18n/i18n";
 
 /** Rows fetched per pending insert for the grid's ghost preview. */
 const RUN_SAMPLE_ROWS = 50;
@@ -51,9 +52,7 @@ interface DbRunsCtx {
 const Ctx = createContext<DbRunsCtx | null>(null);
 
 function conflictMessage(n: number): string {
-  return n === 1
-    ? "That change no longer applies — the table moved on since it was proposed."
-    : `${n} of those changes no longer apply — the table moved on since they were proposed.`;
+  return t("review.notice.dbConflict", { count: n });
 }
 
 export function DbRunsProvider({

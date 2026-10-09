@@ -45,7 +45,7 @@ export function imageCaptionDecorations(doc: PMNode): Decoration[] {
 }
 
 export const ImageCaption = Extension.create({
-  name: "imageCaption",
+  name: "imageCaption", // i18n-exempt: extension identifier
 
   addProseMirrorPlugins() {
     return [

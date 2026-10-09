@@ -7,14 +7,15 @@ import { useEffect, useRef, useState } from "react";
 import { getMarkRange, type Editor } from "@tiptap/react";
 import { clampCentre, useEditorAnchor } from "../use-editor-anchor";
 import { isComposingKey } from "../../lib/ime";
+import { t } from "../../i18n/i18n";
 
 const HALF = 150;
 
 /** Add https:// when a typed URL has no scheme. */
 function normalizeUrl(raw: string): string {
-  const t = raw.trim();
-  if (!t) return "";
-  return /^[a-z][\w+.-]*:/i.test(t) || t.startsWith("//") ? t : `https://${t}`;
+  const url = raw.trim();
+  if (!url) return "";
+  return /^[a-z][\w+.-]*:/i.test(url) || url.startsWith("//") ? url : `https://${url}`;
 }
 
 export function LinkPopover({ editor, editTick }: { editor: Editor; editTick: number }) {
@@ -74,7 +75,7 @@ export function LinkPopover({ editor, editTick }: { editor: Editor; editTick: nu
       className="link-popover"
       style={{ top: anchor.top, left: anchor.left }}
       role="dialog"
-      aria-label={editing ? "Edit link" : "Link"}
+      aria-label={editing ? t("editor.link.editLabel") : t("common.link")}
       onMouseDown={keep}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
@@ -92,8 +93,8 @@ export function LinkPopover({ editor, editTick }: { editor: Editor; editTick: nu
             type="text"
             autoFocus
             value={draft}
-            placeholder="Paste or type a link…"
-            aria-label="Link URL"
+            placeholder={t("editor.link.placeholder")}
+            aria-label={t("editor.link.url")}
             onMouseDown={(e) => e.stopPropagation()}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -103,9 +104,9 @@ export function LinkPopover({ editor, editTick }: { editor: Editor; editTick: nu
               }
             }}
           />
-          <button className="link-popover__btn" title="Apply" onClick={apply}>Apply</button>
+          <button className="link-popover__btn" title={t("editor.link.apply")} onClick={apply}>{t("editor.link.apply")}</button>
           {href && (
-            <button className="link-popover__btn link-popover__btn--danger" title="Remove link" onClick={remove}>✕</button>
+            <button className="link-popover__btn link-popover__btn--danger" title={t("editor.link.remove")} onClick={remove}>✕</button>
           )}
         </>
       ) : (
@@ -115,16 +116,16 @@ export function LinkPopover({ editor, editTick }: { editor: Editor; editTick: nu
           </a>
           <button
             className="link-popover__btn"
-            title="Edit link"
+            title={t("editor.link.editLabel")}
             onClick={() => {
               setDraft(href);
               setEditing(true);
               requestAnimationFrame(() => inputRef.current?.select());
             }}
           >
-            Edit
+            {t("editor.link.edit")}
           </button>
-          <button className="link-popover__btn link-popover__btn--danger" title="Remove link" onClick={remove}>✕</button>
+          <button className="link-popover__btn link-popover__btn--danger" title={t("editor.link.remove")} onClick={remove}>✕</button>
         </>
       )}
     </div>

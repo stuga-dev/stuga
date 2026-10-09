@@ -776,7 +776,7 @@ describe("AuditLog — a filter change in flight", () => {
     await settle();
     expect(bodyRows()).toHaveLength(1);
     expect(document.body.textContent).not.toContain("Updating");
-    expect(document.body.textContent).toContain("1 events loaded");
+    expect(document.body.textContent).toContain("1 event loaded");
   });
 
   it("leaves the ledger on screen when the new page fails to arrive", async () => {
@@ -794,6 +794,6 @@ describe("AuditLog — a filter change in flight", () => {
     await choose("Result", /Refused only/);
     await settle();
     expect(document.querySelector("table")).toBeNull();
-    expect(document.body.textContent).toContain("You can't see this workspace's audit log");
+    expect(document.body.textContent).toContain("You can’t see this workspace’s audit log");
   });
 });

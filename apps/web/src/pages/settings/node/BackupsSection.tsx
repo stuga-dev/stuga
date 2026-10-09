@@ -12,22 +12,28 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Check, Copy } from "lucide-react";
 import { NodeSettings as NodeApi, type NodeBackup, type NodeBackups, type NodeOperationalSettings } from "../../../api";
+import { formatLocale, t } from "../../../i18n/i18n";
 import { copyText } from "../../../lib/clipboard";
+import { presentServerMessage } from "../../../lib/http/server-messages";
 import { byteSize, relativeTime, versionLabel } from "../../../lib/format";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 
 const HOURS = Array.from({ length: 24 }, (_, h) => ({ value: String(h), label: `${String(h).padStart(2, "0")}:00` }));
 
 const REPEAT = [
-  { value: "day", label: "Every day" },
-  { value: "week", label: "Every week" },
+  { value: "day", label: t("node.backups.everyDay") },
+  { value: "week", label: t("node.backups.everyWeek") },
 ];
 
-/** 0 is Sunday, as the node counts them. */
-const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((label, day) => ({
+/** 0 is Sunday, as the node counts them; named in the reader's language from a week that starts on a Sunday (4 January 1970). */
+const weekdayName = new Intl.DateTimeFormat(formatLocale(), { weekday: "long", timeZone: "UTC" });
+const WEEKDAYS = Array.from({ length: 7 }, (_, day) => ({
   value: String(day),
-  label,
+  label: weekdayName.format(Date.UTC(1970, 0, 4 + day)),
 }));
+
+/** The one reason the node gives for holding a backup (boot.ts), worded here as a whole sentence. */
+const ARCHIVE_WORK = "a workspace is being imported or exported";
 
 /** One width for every field on the page, so they line up whichever are shown. */
 const FIELD_WIDTH = 160;
@@ -38,7 +44,7 @@ const FIRST_WEEKDAY = 0;
 /** The counts offered, with whatever the node keeps now. */
 function keepOptions(keep: number) {
   const counts = [...new Set([1, 2, 3, 5, 7, 10, 14, 30, keep])].sort((a, b) => a - b);
-  return counts.map((n) => ({ value: String(n), label: n === 1 ? "The newest backup" : `The newest ${n}` }));
+  return counts.map((n) => ({ value: String(n), label: t("node.backups.keepNewest", { count: n }) }));
 }
 
 /** How often the page asks whether a backup has finished. */
@@ -88,8 +94,8 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
         .then((next) => {
           if (next.running) return poll();
           setWaiting(false);
-          if (next.error) status.setError(`The backup failed: ${next.error}`);
-          else status.setNotice({ status: "success", message: "Backed up." });
+          if (next.error) status.setError(t("node.backups.failedWith", { error: presentServerMessage(next.error) }));
+          else status.setNotice({ status: "success", message: t("node.backups.backedUp") });
         })
         .catch(() => poll());
     }, POLL_MS);
@@ -132,19 +138,19 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
     <VStack gap={5}>
       <SectionStatusBanners status={status} />
       {state?.error && !waiting && !status.error && (
-        <Banner status="warning" title="The last backup failed" description={state.error} />
+        <Banner status="warning" title={t("node.backups.lastFailed")} description={presentServerMessage(state.error)} />
       )}
 
       <VStack gap={3}>
         <HStack hAlign="between" vAlign="center" gap={3}>
           <VStack gap={0}>
-            <Heading level={2}>Scheduled backup</Heading>
+            <Heading level={2}>{t("node.backups.scheduled")}</Heading>
             <Text type="supporting" color="secondary">
-              The node pauses for a moment while it backs up.
+              {t("node.backups.scheduledNote")}
             </Text>
           </VStack>
           <Switch
-            label="Scheduled backup"
+            label={t("node.backups.scheduled")}
             isLabelHidden
             value={auto}
             isDisabled={busy !== ""}
@@ -155,7 +161,7 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
         {auto && (
           <HStack gap={3} vAlign="end" wrap="wrap">
             <Selector
-              label="Repeat"
+              label={t("node.backups.repeat")}
               width={FIELD_WIDTH}
               value={weekday === null ? "day" : "week"}
               options={REPEAT}
@@ -164,7 +170,7 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
             />
             {weekday !== null && (
               <Selector
-                label="On"
+                label={t("node.backups.on")}
                 width={FIELD_WIDTH}
                 value={String(weekday)}
                 options={WEEKDAYS}
@@ -173,7 +179,7 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
               />
             )}
             <Selector
-              label="At"
+              label={t("node.backups.at")}
               width={FIELD_WIDTH}
               value={String(hour)}
               options={HOURS}
@@ -185,11 +191,11 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
         {auto && (
           <HStack gap={2} vAlign="center" wrap="wrap">
             <Text type="supporting" color="secondary">
-              {state?.next_at ? `Next: ${versionLabel(state.next_at)} · ${zone}` : zone}
+              {state?.next_at ? t("node.backups.next", { when: versionLabel(state.next_at), zone }) : zone}
             </Text>
             {here && here !== zone && (
               <Button
-                label={`Use ${here}`}
+                label={t("node.backups.useZone", { zone: here })}
                 variant="ghost"
                 size="sm"
                 isLoading={busy === "zone"}
@@ -204,13 +210,13 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
       <VStack gap={3}>
         <HStack hAlign="between" vAlign="center" gap={3}>
           <VStack gap={0}>
-            <Heading level={2}>Backups</Heading>
+            <Heading level={2}>{t("node.backups.heading")}</Heading>
             <Text type="supporting" color="secondary">
-              {state ? (state.backups.length > 0 ? `${byteSize(total)} in ${state.dir}` : state.dir) : " "}
+              {state ? (state.backups.length > 0 ? t("node.backups.total", { size: byteSize(total), dir: state.dir }) : state.dir) : " "}
             </Text>
           </VStack>
           <Button
-            label={waiting ? "Backing up…" : "Back up now"}
+            label={waiting ? t("node.backups.backingUp") : t("node.backups.backUpNow")}
             variant="secondary"
             size="sm"
             isLoading={busy === "now" || waiting}
@@ -219,7 +225,7 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
           />
         </HStack>
         <Selector
-          label="Keep"
+          label={t("node.backups.keep")}
           width={FIELD_WIDTH}
           value={String(keep)}
           options={keepOptions(keep)}
@@ -228,12 +234,12 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
         />
         {state?.waiting && (
           <Text type="supporting" color="secondary">
-            Waiting to back up: {state.waiting}.
+            {state.waiting === ARCHIVE_WORK ? t("node.backups.waitingArchive") : t("node.backups.waiting", { reason: state.waiting })}
           </Text>
         )}
         {state && state.backups.length === 0 && (
           <Text type="supporting" color="secondary">
-            No backups yet.
+            {t("node.backups.none")}
           </Text>
         )}
         {state && state.backups.length > 0 && (
@@ -241,8 +247,12 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
             {state.backups.map((b) => {
               const note = [
                 b === newest ? relativeTime(b.created_at) : null,
-                b.before_upgrade ? `Before upgrading from ${b.stuga_version ?? "an earlier version"}` : null,
-                b === lastUpgrade && state.backups.indexOf(b) >= keep ? "kept until the next upgrade" : null,
+                b.before_upgrade
+                  ? b.stuga_version
+                    ? t("node.backups.beforeUpgradeFrom", { version: b.stuga_version })
+                    : t("node.backups.beforeUpgrade")
+                  : null,
+                b === lastUpgrade && state.backups.indexOf(b) >= keep ? t("node.backups.keptUntilUpgrade") : null,
               ]
                 .filter(Boolean)
                 .join(" · ");
@@ -258,7 +268,7 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
                       </Text>
                       {b.restore_command && (
                         <Button
-                          label="Restore…"
+                          label={t("node.backups.restore")}
                           variant="ghost"
                           size="sm"
                           onClick={() => {
@@ -295,12 +305,12 @@ function RestoreDialog({ backup, isOpen, onClose }: { backup: NodeBackup | null;
   return (
     <Dialog isOpen={isOpen} onOpenChange={(o) => !o && onClose()} width={520}>
       <Layout
-        header={<DialogHeader title="Restore this backup" onOpenChange={(o) => !o && onClose()} />}
+        header={<DialogHeader title={t("node.backups.restoreTitle")} onOpenChange={(o) => !o && onClose()} />}
         content={
           <LayoutContent>
             <VStack gap={3}>
               <Text type="supporting" color="secondary">
-                Run this on the machine that runs Stuga. It checks the backup first, and asks before it changes anything.
+                {t("node.backups.restoreBody")}
               </Text>
               <CodeBlock code={command} language="bash" width="100%" isWrapped size="sm" hasCopyButton={false} />
             </VStack>
@@ -310,12 +320,12 @@ function RestoreDialog({ backup, isOpen, onClose }: { backup: NodeBackup | null;
           <LayoutFooter>
             <HStack gap={2} justify="end">
               <Button
-                label={copied ? "Copied" : "Copy"}
+                label={copied ? t("common.copied") : t("common.copy")}
                 variant="secondary"
                 icon={copied ? <Check size={15} /> : <Copy size={15} />}
                 onClick={() => void copyText(command).then(setCopied)}
               />
-              <Button label="Done" variant="primary" onClick={onClose} />
+              <Button label={t("common.done")} variant="primary" onClick={onClose} />
             </HStack>
           </LayoutFooter>
         }

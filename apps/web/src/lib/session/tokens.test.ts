@@ -201,7 +201,7 @@ describe("signInWithPassword", () => {
     const err = await signInWithPassword("ann", "nope").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AuthError);
     expect((err as AuthError).status).toBe(401);
-    expect(describeError(err)).toMatch(/don't match/);
+    expect(describeError(err)).toMatch(/don’t match/);
   });
 
   it("refuses a response with no usable token", async () => {

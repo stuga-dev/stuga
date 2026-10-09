@@ -6,6 +6,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Docs, type Comment } from "../api";
 import { useComments } from "../comments/comments-context";
+import { t } from "../i18n/i18n";
+import { tRich } from "../i18n/rich";
 import { importedAuthor } from "../lib/format";
 import { isComposingKey } from "../lib/ime";
 import { authorLabel, nameLoading, useUserNames } from "../state/identity";
@@ -73,7 +75,9 @@ export function CommentsPanel({ docId }: { docId: string }) {
             onClick={() => setShowResolved((s) => !s)}
           >
             <ChevronRight size={13} className="resolved-toggle__caret" aria-hidden="true" />
-            {showResolved ? "Hide" : "Show"} {resolvedCount} resolved
+            {showResolved
+              ? t("document.comments.hideResolved", { count: resolvedCount })
+              : t("document.comments.showResolved", { count: resolvedCount })}
           </button>
         </div>
       )}
@@ -102,12 +106,8 @@ export function CommentsPanel({ docId }: { docId: string }) {
             <EmptyState
               isCompact
               icon={<MessageSquareText size={22} aria-hidden="true" />}
-              title={resolvedCount > 0 ? "No open comments" : "No comments yet"}
-              description={
-                resolvedCount > 0
-                  ? "Every thread on this document has been resolved."
-                  : "Select text in the document to comment on it."
-              }
+              title={resolvedCount > 0 ? t("document.comments.noOpen") : t("document.comments.none")}
+              description={resolvedCount > 0 ? t("document.comments.noOpenNote") : t("document.comments.noneNote")}
             />
           </div>
         )}
@@ -115,15 +115,15 @@ export function CommentsPanel({ docId }: { docId: string }) {
 
       <div className="comment-add">
         <MentionTextArea
-          label="Add a general comment"
+          label={t("document.comments.general")}
           isLabelHidden
           placement="above"
           value={draft}
           onChange={setDraft}
           rows={2}
-          placeholder="Add a general comment… Type @ to mention someone"
+          placeholder={t("document.comments.generalPlaceholder")}
         />
-        <Button label="Comment" variant="primary" size="sm" onClick={addGeneralComment} isDisabled={!draft.trim()} />
+        <Button label={t("common.comment")} variant="primary" size="sm" onClick={addGeneralComment} isDisabled={!draft.trim()} />
       </div>
 
       <AlertDialog
@@ -131,7 +131,7 @@ export function CommentsPanel({ docId }: { docId: string }) {
         onOpenChange={(o) => !o && setDeleting(null)}
         title={deleteCopy(deleting).title}
         description={deleteCopy(deleting).description}
-        actionLabel="Delete"
+        actionLabel={t("common.delete")}
         onAction={() => {
           if (deleting) del(deleting.num);
           setDeleting(null);
@@ -144,16 +144,15 @@ export function CommentsPanel({ docId }: { docId: string }) {
 /** Called with null while the dialog animates out, so it always answers. */
 function deleteCopy(target: { isRoot: boolean; replies: number } | null): { title: string; description: string } {
   if (target && !target.isRoot) {
-    return { title: "Delete this reply?", description: "The reply is removed for everyone. This can’t be undone." };
+    return { title: t("document.comments.deleteReplyTitle"), description: t("document.comments.deleteReplyBody") };
   }
   if (target && target.replies > 0) {
-    const n = target.replies;
     return {
-      title: `Delete this comment and its ${n} ${n === 1 ? "reply" : "replies"}?`,
-      description: "Deleting the first comment in a thread removes the whole thread for everyone. This can’t be undone.",
+      title: t("document.comments.deleteThreadTitle", { count: target.replies }),
+      description: t("document.comments.deleteThreadBody"),
     };
   }
-  return { title: "Delete this comment?", description: "The comment is removed for everyone. This can’t be undone." };
+  return { title: t("document.comments.deleteCommentTitle"), description: t("document.comments.deleteCommentBody") };
 }
 
 /**
@@ -164,11 +163,7 @@ function AuthorName({ author }: { author: string }) {
   if (nameLoading(`user:${author}`)) return "\u00a0";
   const imported = importedAuthor(author);
   if (imported === null) return authorLabel(author);
-  return (
-    <>
-      <bdi>{imported}</bdi> · imported
-    </>
-  );
+  return tRich("document.comments.importedAuthor", { name: imported, bdi: (chunks) => <bdi>{chunks}</bdi> });
 }
 
 /** The alias behind the name, which tells two of one name apart; none for an imported author, whose name is all there is. */
@@ -211,7 +206,7 @@ function CommentThread({
   return (
     <li ref={ref} className={`comment-item${active ? " active" : ""}${root.resolved ? " resolved" : ""}`}>
       {root.anchor_quote && (
-        <button className="comment-quote" dir="auto" title="Jump to highlighted text" onClick={onJump}>
+        <button className="comment-quote" dir="auto" title={t("document.comments.jumpToQuote")} onClick={onJump}>
           “{root.anchor_quote}”
         </button>
       )}
@@ -220,8 +215,8 @@ function CommentThread({
           <AuthorName author={root.author} />
         </strong>
         <span className="comment-actions">
-          <Button label={root.resolved ? "Reopen" : "Resolve"} variant="ghost" size="sm" onClick={onResolve} />
-          <Button label="Delete" variant="ghost" size="sm" onClick={() => onDelete(root.num)} tooltip="Delete comment" />
+          <Button label={root.resolved ? t("document.comments.reopen") : t("document.comments.resolve")} variant="ghost" size="sm" onClick={onResolve} />
+          <Button label={t("common.delete")} variant="ghost" size="sm" onClick={() => onDelete(root.num)} tooltip={t("document.comments.deleteComment")} />
         </span>
       </div>
       <CommentText body={root.body} mentions={root.mentions} />
@@ -235,7 +230,7 @@ function CommentThread({
                   <AuthorName author={r.author} />
                 </strong>
                 <span className="comment-actions">
-                  <Button label="Delete" variant="ghost" size="sm" onClick={() => onDelete(r.num)} tooltip="Delete reply" />
+                  <Button label={t("common.delete")} variant="ghost" size="sm" onClick={() => onDelete(r.num)} tooltip={t("document.comments.deleteReply")} />
                 </span>
               </div>
               <CommentText body={r.body} mentions={r.mentions} />
@@ -248,10 +243,10 @@ function CommentThread({
       {!root.resolved && (
         <div className="comment-reply-box">
           <MentionTextArea
-            label="Reply"
+            label={t("document.comments.reply")}
             isLabelHidden
             value={draft}
-            placeholder="Reply…"
+            placeholder={t("document.comments.replyPlaceholder")}
             rows={1}
             onChange={setDraft}
             onKeyDown={(e: React.KeyboardEvent) => {
@@ -261,7 +256,7 @@ function CommentThread({
               }
             }}
           />
-          <Button label="Reply" variant="secondary" size="sm" onClick={() => void submitReply()} isDisabled={!draft.trim() || busy} />
+          <Button label={t("document.comments.reply")} variant="secondary" size="sm" onClick={() => void submitReply()} isDisabled={!draft.trim() || busy} />
         </div>
       )}
     </li>

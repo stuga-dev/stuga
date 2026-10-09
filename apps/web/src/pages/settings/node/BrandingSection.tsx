@@ -12,6 +12,7 @@ import { updateBranding } from "../../../state/branding";
 import { BrandingPreview } from "./BrandingPreview";
 import { toOpsForm, type OpsForm } from "./ops-form";
 import { SectionStatusBanners, useSectionStatus } from "./status";
+import { t } from "../../../i18n/i18n";
 
 export function BrandingSection({ ops, onSaved }: { ops: NodeOperationalSettings; onSaved: (ops: NodeOperationalSettings) => void }) {
   const status = useSectionStatus();
@@ -34,7 +35,7 @@ export function BrandingSection({ ops, onSaved }: { ops: NodeOperationalSettings
       });
       onSaved(res);
       setOpsForm(toOpsForm(res));
-      status.setNotice({ status: "success", message: "Saved — live now, no restart." });
+      status.setNotice({ status: "success", message: t("common.savedLive") });
     } catch (e) {
       status.fail(e);
     } finally {
@@ -46,14 +47,14 @@ export function BrandingSection({ ops, onSaved }: { ops: NodeOperationalSettings
     <>
       <SectionStatusBanners status={status} />
       <VStack gap={3}>
-        <Heading level={2}>Branding</Heading>
+        <Heading level={2}>{t("nodeAccess.branding.heading")}</Heading>
         <Text type="supporting" color="secondary">
-          Set the node name and selection color.
+          {t("nodeAccess.branding.intro")}
         </Text>
 
         <VStack gap={1}>
           <TextInput
-            label="Name"
+            label={t("common.name")}
             value={opsForm.nodeName}
             placeholder={PRODUCT_NAME}
             onChange={(nodeName) => setOpsForm({ ...opsForm, nodeName })}
@@ -61,14 +62,14 @@ export function BrandingSection({ ops, onSaved }: { ops: NodeOperationalSettings
             {...(nameProblem ? { status: { type: "error" as const, message: nameProblem } } : {})}
           />
           <Text type="supporting" color="secondary">
-            Shown in navigation, sign-in and agent tools.
+            {t("nodeAccess.branding.nameHelp")}
           </Text>
         </VStack>
 
         <VStack gap={1}>
-          <Text type="supporting" weight="medium">Brand color</Text>
+          <Text type="supporting" weight="medium">{t("nodeAccess.branding.color")}</Text>
           <Text type="supporting" color="secondary">
-            Marks the current sidebar item and selected rows.
+            {t("nodeAccess.branding.colorHelp")}
           </Text>
           <HStack gap={2} vAlign="center">
             <input
@@ -79,7 +80,7 @@ export function BrandingSection({ ops, onSaved }: { ops: NodeOperationalSettings
             />
             {opsForm.brandAccentColor && (
               <Button
-                label="Reset to default"
+                label={t("nodeAccess.branding.resetColor")}
                 variant="ghost"
                 size="sm"
                 onClick={() => setOpsForm({ ...opsForm, brandAccentColor: "" })}
@@ -92,7 +93,7 @@ export function BrandingSection({ ops, onSaved }: { ops: NodeOperationalSettings
 
         <HStack gap={2} vAlign="center">
           <Button
-            label="Save"
+            label={t("common.save")}
             variant="primary"
             size="sm"
             isDisabled={nameProblem !== null}

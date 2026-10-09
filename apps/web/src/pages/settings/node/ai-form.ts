@@ -1,18 +1,20 @@
 /** The AI provider form: presets, the write-only key contract, and what a save sends. */
 import type { NodeAiSettings, NodeAiSettingsInput } from "../../../api";
 import type { SearchStrictness } from "@stuga/protocol/domain/search-strictness";
+import { t } from "../../../i18n/i18n";
+import { timeOfDay } from "../../../lib/format";
 
 /** What each part is called and is for, the same in Settings and at first run. */
 export const HALF_COPY = {
-  chat: { title: "Built-in AI", about: "The co-author, Ask and the table assistant for every member, on your API key or a local model." },
-  search: { title: "Semantic search", about: "Finds documents by meaning, even when the words differ, in the search box, Ask and agents." },
-  rerank: { title: "Reranking", about: "Puts the most relevant passages first, for Ask and agents." },
+  chat: { title: t("node.ai.chat.title"), about: t("node.ai.chat.about") },
+  search: { title: t("node.ai.search.title"), about: t("node.ai.search.about") },
+  rerank: { title: t("node.ai.rerank.title"), about: t("node.ai.rerank.about") },
 } as const;
 
 export const PROVIDERS = [
-  { value: "openai", label: "OpenAI-compatible" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "ollama", label: "Ollama (local)" },
+  { value: "openai", label: t("node.ai.protocol.openaiCompatible") },
+  { value: "anthropic", label: "Anthropic" }, // i18n-exempt: a vendor's name
+  { value: "ollama", label: t("node.ai.preset.ollamaLocal") },
 ];
 
 /** Where each protocol listens when a base URL is left empty, as the node reports it. */
@@ -33,23 +35,23 @@ export interface Preset {
 /** The protocol entries take the node's own defaults, so a packaged node's Ollama address shows as the preset. */
 export function presetsFor(base: BaseUrls): Preset[] {
   return [
-    { value: "openai", label: "OpenAI", provider: "openai", baseUrl: base.openai ?? "", embeddings: true },
-    { value: "anthropic", label: "Anthropic (Claude)", provider: "anthropic", baseUrl: base.anthropic ?? "", embeddings: false },
-    { value: "gemini", label: "Google Gemini", provider: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", embeddings: true },
-    { value: "cerebras", label: "Cerebras", provider: "openai", baseUrl: "https://api.cerebras.ai/v1", embeddings: false },
-    { value: "deepseek", label: "DeepSeek", provider: "openai", baseUrl: "https://api.deepseek.com/v1", embeddings: false },
-    { value: "fireworks", label: "Fireworks", provider: "openai", baseUrl: "https://api.fireworks.ai/inference/v1", embeddings: true },
-    { value: "groq", label: "Groq", provider: "openai", baseUrl: "https://api.groq.com/openai/v1", embeddings: false },
-    { value: "minimax", label: "MiniMax", provider: "anthropic", baseUrl: "https://api.minimax.io/anthropic", embeddings: false },
-    { value: "mistral", label: "Mistral", provider: "openai", baseUrl: "https://api.mistral.ai/v1", embeddings: true },
-    { value: "moonshot", label: "Moonshot (Kimi)", provider: "openai", baseUrl: "https://api.moonshot.ai/v1", embeddings: false },
-    { value: "openrouter", label: "OpenRouter", provider: "openai", baseUrl: "https://openrouter.ai/api/v1", embeddings: false },
-    { value: "qwen", label: "Qwen (Alibaba Cloud)", provider: "openai", baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", embeddings: true },
-    { value: "together", label: "Together", provider: "openai", baseUrl: "https://api.together.ai/v1", embeddings: true },
-    { value: "xai", label: "xAI (Grok)", provider: "openai", baseUrl: "https://api.x.ai/v1", embeddings: false },
-    { value: "zai", label: "Z.ai (GLM)", provider: "openai", baseUrl: "https://api.z.ai/api/paas/v4", embeddings: false },
-    { value: "ollama", label: "Ollama (local)", provider: "ollama", baseUrl: base.ollama ?? "", embeddings: true },
-    { value: "custom", label: "Something else…", provider: "openai", baseUrl: "", embeddings: true },
+    { value: "openai", label: "OpenAI", provider: "openai", baseUrl: base.openai ?? "", embeddings: true }, // i18n-exempt: a vendor's name
+    { value: "anthropic", label: "Anthropic (Claude)", provider: "anthropic", baseUrl: base.anthropic ?? "", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "gemini", label: "Google Gemini", provider: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", embeddings: true }, // i18n-exempt: a vendor's name
+    { value: "cerebras", label: "Cerebras", provider: "openai", baseUrl: "https://api.cerebras.ai/v1", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "deepseek", label: "DeepSeek", provider: "openai", baseUrl: "https://api.deepseek.com/v1", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "fireworks", label: "Fireworks", provider: "openai", baseUrl: "https://api.fireworks.ai/inference/v1", embeddings: true }, // i18n-exempt: a vendor's name
+    { value: "groq", label: "Groq", provider: "openai", baseUrl: "https://api.groq.com/openai/v1", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "minimax", label: "MiniMax", provider: "anthropic", baseUrl: "https://api.minimax.io/anthropic", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "mistral", label: "Mistral", provider: "openai", baseUrl: "https://api.mistral.ai/v1", embeddings: true }, // i18n-exempt: a vendor's name
+    { value: "moonshot", label: "Moonshot (Kimi)", provider: "openai", baseUrl: "https://api.moonshot.ai/v1", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "openrouter", label: "OpenRouter", provider: "openai", baseUrl: "https://openrouter.ai/api/v1", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "qwen", label: "Qwen (Alibaba Cloud)", provider: "openai", baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", embeddings: true }, // i18n-exempt: a vendor's name
+    { value: "together", label: "Together", provider: "openai", baseUrl: "https://api.together.ai/v1", embeddings: true }, // i18n-exempt: a vendor's name
+    { value: "xai", label: "xAI (Grok)", provider: "openai", baseUrl: "https://api.x.ai/v1", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "zai", label: "Z.ai (GLM)", provider: "openai", baseUrl: "https://api.z.ai/api/paas/v4", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "ollama", label: t("node.ai.preset.ollamaLocal"), provider: "ollama", baseUrl: base.ollama ?? "", embeddings: true },
+    { value: "custom", label: t("node.ai.preset.custom"), provider: "openai", baseUrl: "", embeddings: true },
   ];
 }
 
@@ -59,7 +61,7 @@ export function presetFor(presets: Preset[], provider: string, baseUrl: string):
 
 /** The endpoint a choice resolves to, in one line under the picker. */
 export function endpointSummary(base: BaseUrls, provider: string, baseUrl: string): string {
-  return `${baseUrl || base[provider] || "—"} · ${provider} protocol`;
+  return t("node.ai.endpointSummary", { address: baseUrl || base[provider] || "—", protocol: provider });
 }
 
 /** The discovered models plus any selected one that fell out of that list, so it stays selectable. */
@@ -267,10 +269,10 @@ export function withConnectedProvider(
 
 /** A failed connection in words: a refused key and an unreachable server read differently from anything else. */
 export function connectFailure(label: string, message: string): string {
-  if (/\b(401|403)\b|unauthori[sz]ed|invalid.{0,20}key|api key/i.test(message)) return `${label} didn’t accept that key.`;
-  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|fetch failed|timed? ?out|network/i.test(message)) return `Couldn’t reach ${label}. Check the address and that the service is running.`;
+  if (/\b(401|403)\b|unauthori[sz]ed|invalid.{0,20}key|api key/i.test(message)) return t("node.ai.connect.keyRefused", { service: label });
+  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|fetch failed|timed? ?out|network/i.test(message)) return t("node.ai.connect.unreachable", { service: label });
   const short = message.length > 240 ? `${message.slice(0, 240)}…` : message;
-  return `${label} answered: ${short}`;
+  return t("node.ai.connect.answered", { service: label, message: short });
 }
 
 /**
@@ -298,9 +300,9 @@ export function chatInputWith(
 
 /** Where a System One ranker is served, and the model to ask for there. */
 export const RERANK_PRESETS = [
-  { value: "typesafe", label: "TypeSafe", baseUrl: "https://api.typesafe.ai/v1", model: "jev-latest" },
-  { value: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "~typesafe/jev-latest" },
-  { value: "custom", label: "Something else…", baseUrl: "", model: "" },
+  { value: "typesafe", label: "TypeSafe", baseUrl: "https://api.typesafe.ai/v1", model: "jev-latest" }, // i18n-exempt: a vendor's name
+  { value: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "~typesafe/jev-latest" }, // i18n-exempt: a vendor's name
+  { value: "custom", label: t("node.ai.preset.custom"), baseUrl: "", model: "" },
 ];
 
 export function rerankPresetFor(baseUrl: string): string {
@@ -331,13 +333,14 @@ export function rerankInput(f: RerankForm, opts: { clearKey?: boolean; enabled?:
 
 /** Each level, as it reads for the model in force. */
 export const STRICTNESS_COPY: Record<SearchStrictness, { label: string; line: string }> = {
-  strict: { label: "Strict", line: "Only close matches by meaning show." },
-  balanced: { label: "Balanced", line: "Most unrelated passages are left out." },
-  loose: { label: "Loose", line: "More matches by meaning, some of them unrelated." },
-  off: { label: "Off", line: "The nearest matches by meaning show, however far." },
+  strict: { label: t("node.ai.strictness.strict"), line: t("node.ai.strictness.strictLine") },
+  balanced: { label: t("node.ai.strictness.balanced"), line: t("node.ai.strictness.balancedLine") },
+  loose: { label: t("node.ai.strictness.loose"), line: t("node.ai.strictness.looseLine") },
+  off: { label: t("node.ai.strictness.off"), line: t("node.ai.strictness.offLine") },
 };
 
-const distance = (d: number) => d.toFixed(2);
+/** A measurement's progress, 0–100, as the fraction a percent message formats. */
+const fraction = (progress: number | null | undefined) => (progress ?? 0) / 100;
 
 /**
  * The small print under the control: the distance the chosen level puts in force for this model, or
@@ -351,22 +354,22 @@ function formChangesModel(settings: NodeAiSettings, form: Form): boolean {
 
 export function strictnessNote(settings: NodeAiSettings, form: Form): { text: string; measureAgain: boolean } | null {
   const e = settings.embed;
-  if (formChangesModel(settings, form)) return { text: "Measured for the new model once you save.", measureAgain: false };
+  if (formChangesModel(settings, form)) return { text: t("node.ai.strictness.measuredOnSave"), measureAgain: false };
   const level = form.searchStrictness ?? settings.strictness_default;
   if (level === "off") return null;
   // A model is measured only while semantic search runs.
-  if (!e.running) return { text: "Measured once semantic search is on.", measureAgain: false };
+  if (!e.running) return { text: t("node.ai.strictness.measuredWhenOn"), measureAgain: false };
   const c = e.calibration;
-  if (c?.state === "failed" && c.kind === "inseparable") return { text: "This model can't be measured.", measureAgain: false };
+  if (c?.state === "failed" && c.kind === "inseparable") return { text: t("node.ai.strictness.cannotMeasure"), measureAgain: false };
   const d = c?.levels?.short[level];
-  const progress = c?.progress ?? 0;
+  const progress = fraction(c?.progress);
   if (d !== undefined) {
-    if (c!.state === "running") return { text: `Distance ${distance(d)} for this model · measuring again… ${progress}%`, measureAgain: false };
-    if (c!.state === "failed") return { text: `Distance ${distance(d)} for this model · couldn't measure again`, measureAgain: true };
-    return { text: `Distance ${distance(d)} for this model`, measureAgain: true };
+    if (c!.state === "running") return { text: t("node.ai.strictness.distanceRemeasuring", { distance: d, progress }), measureAgain: false };
+    if (c!.state === "failed") return { text: t("node.ai.strictness.distanceRemeasureFailed", { distance: d }), measureAgain: true };
+    return { text: t("node.ai.strictness.distance", { distance: d }), measureAgain: true };
   }
-  if (c?.state === "running") return { text: `Measuring this model… ${progress}%`, measureAgain: false };
-  return { text: "Not measured yet", measureAgain: true };
+  if (c?.state === "running") return { text: t("node.ai.strictness.measuring", { progress }), measureAgain: false };
+  return { text: t("node.ai.strictness.notMeasured"), measureAgain: true };
 }
 
 /** A strict level on a model whose related text often sits as far as unrelated text. */
@@ -374,18 +377,21 @@ export function strictnessWarning(settings: NodeAiSettings, form: Form): string 
   if (formChangesModel(settings, form)) return null;
   const level = form.searchStrictness ?? settings.strictness_default;
   const kept = settings.embed.calibration?.related_kept;
-  return (level === "strict" || level === "balanced") && kept != null && kept < 0.9
-    ? "This model puts some related text as far as unrelated text. Loose may suit it."
-    : null;
+  return (level === "strict" || level === "balanced") && kept != null && kept < 0.9 ? t("node.ai.strictness.looseSuits") : null;
 }
 
 /** The level on the service row, and a measurement in progress or missing. */
 export function searchServiceDetail(settings: NodeAiSettings): string | null {
   const cut = settings.embed.cutoff;
   if (!cut) return null;
-  const level = cut.level === "off" ? "Strictness off" : STRICTNESS_COPY[cut.level].label;
+  const level = cut.level === "off" ? t("node.ai.strictness.offDetail") : STRICTNESS_COPY[cut.level].label;
   const c = settings.embed.calibration;
-  const state = cut.source === "measuring" ? `measuring ${c?.progress ?? 0}%` : cut.source === "unmeasured" && c?.state === "failed" ? "not measured" : null;
+  const state =
+    cut.source === "measuring"
+      ? t("node.ai.strictness.measuringDetail", { progress: fraction(c?.progress) })
+      : cut.source === "unmeasured" && c?.state === "failed"
+        ? t("node.ai.strictness.notMeasuredDetail")
+        : null;
   return [level, state].filter(Boolean).join(" · ") || null;
 }
 
@@ -395,13 +401,20 @@ export function calibrationBanner(settings: NodeAiSettings): { status: "warning"
   // Only while a level is waiting on it: Off does not need a measurement.
   if (!c || c.state !== "failed" || c.levels || settings.embed.cutoff?.source !== "unmeasured") return null;
   if (c.kind === "inseparable") {
-    return { status: "error", title: `${c.model} can't tell related text from unrelated`, description: "Choose another embedding model under Edit.", retry: false };
+    return {
+      status: "error",
+      title: t("node.ai.calibration.inseparableTitle", { model: c.model }),
+      description: t("node.ai.calibration.inseparableBody"),
+      retry: false,
+    };
   }
-  const next = c.next_attempt_at ? ` Next try at ${new Date(c.next_attempt_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.` : "";
+  const reason = connectFailure(c.model, c.message ?? "");
   return {
     status: "warning",
-    title: `Couldn't measure ${c.model}`,
-    description: `${connectFailure(c.model, c.message ?? "")} Until then, nothing is dropped by distance.${next}`,
+    title: t("node.ai.calibration.failedTitle", { model: c.model }),
+    description: c.next_attempt_at
+      ? t("node.ai.calibration.failedBodyNext", { reason, time: timeOfDay(c.next_attempt_at) })
+      : t("node.ai.calibration.failedBody", { reason }),
     retry: true,
   };
 }

@@ -3,6 +3,14 @@
 // test/HealthTests.swift runs it without waiting.
 import Foundation
 
+/// Interface text in the reader's language, from the app's <lang>.lproj/Localizable.strings; the
+/// English given here wherever a bundle has no translation (the tests, the local trial). `english`
+/// is a format string when there are arguments: %@, or %1$@, %2$@ for several.
+func L(_ key: String, _ english: String, _ args: CVarArg...) -> String {
+    let format = NSLocalizedString(key, bundle: .main, value: english, comment: "")
+    return args.isEmpty ? format : String(format: format, locale: Locale.current, arguments: args)
+}
+
 /// What /ready answered. The node answers once it owns its database: 200 when it serves, 503 with a
 /// `status` while it starts, backs up, upgrades or makes a backup, 503 `refused` while it refuses
 /// data a newer version served, until it is stopped, and a bare 503 when its database does not
@@ -67,11 +75,11 @@ enum Fault: Equatable {
 
     var title: String {
         switch self {
-        case .nodeStopped: return "Stuga stopped and has not started again"
-        case .postgresStopped: return "Stuga's database stopped and has not started again"
-        case .databaseUnreachable: return "Stuga cannot reach its database"
-        case .notResponding: return "Stuga is not responding"
-        case .refused: return "Stuga is older than its data"
+        case .nodeStopped: return L("fault.nodeStopped", "Stuga stopped and has not started again")
+        case .postgresStopped: return L("fault.postgresStopped", "Stuga's database stopped and has not started again")
+        case .databaseUnreachable: return L("fault.databaseUnreachable", "Stuga cannot reach its database")
+        case .notResponding: return L("fault.notResponding", "Stuga is not responding")
+        case .refused: return L("fault.refused", "Stuga is older than its data")
         }
     }
 }

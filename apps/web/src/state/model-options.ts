@@ -5,17 +5,18 @@
 import { useEffect, useMemo, useState } from "react";
 import type { SelectorOptionType } from "@astryxdesign/core/Selector";
 import { Me, type AiModel } from "../api";
+import { t } from "../i18n/i18n";
 import { cachedResource } from "../lib/store";
 
 type ModelOption = SelectorOptionType;
 
-const AUTO: ModelOption = { value: "auto", label: "Auto" };
-
-const PROVIDER_LABEL: Record<string, string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI-compatible",
-  ollama: "Ollama",
-};
+/** A vendor's section heading: its name, or what it speaks for one that stands for many. */
+function providerLabel(provider: string): string {
+  if (provider === "anthropic") return "Anthropic"; // i18n-exempt: a vendor's name
+  if (provider === "openai") return t("ui.models.openaiCompatible");
+  if (provider === "ollama") return "Ollama"; // i18n-exempt: a vendor's name
+  return provider;
+}
 
 /** One vendor stays a flat list; several are grouped so an id says which vendor it belongs to. */
 function groupByProvider(models: AiModel[]): ModelOption[] {
@@ -34,7 +35,7 @@ function groupByProvider(models: AiModel[]): ModelOption[] {
   }
   return order.map((p) => ({
     type: "section" as const,
-    title: PROVIDER_LABEL[p] ?? p,
+    title: providerLabel(p),
     options: byProvider.get(p)!.map((m) => ({ value: m.id, label: m.name })),
   }));
 }
@@ -69,7 +70,7 @@ function useModels(): AiModel[] | null | undefined {
 export function useModelOptions(): ModelOption[] {
   const list = useModels();
   // Offline: "Auto" alone still lets a turn report its own failure.
-  return useMemo(() => [AUTO, ...groupByProvider(list ?? [])], [list]);
+  return useMemo(() => [{ value: "auto", label: t("ui.models.auto") }, ...groupByProvider(list ?? [])], [list]);
 }
 
 /**

@@ -9,6 +9,7 @@ import { Brand } from "./Brand";
 import { AccountMenu } from "./AccountMenu";
 import { NotificationsBell } from "./NotificationsBell";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { t } from "../i18n/i18n";
 
 interface AppTopNavProps {
   /** Names the page, in the bar and as the nav landmark's accessible name. */
@@ -24,7 +25,7 @@ export function AppTopNav({ title, hasWorkspaceSwitcher = false }: AppTopNavProp
       label={title}
       startContent={
         <HStack gap={2} vAlign="center">
-          <IconButton label="All documents" variant="ghost" icon={<ArrowLeft size={18} />} onClick={() => nav("/")} />
+          <IconButton label={t("common.allDocuments")} variant="ghost" icon={<ArrowLeft size={18} />} onClick={() => nav("/")} />
           <div className="brand">
             <Brand />
             <Heading level={1}>{title}</Heading>

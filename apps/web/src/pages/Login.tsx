@@ -41,9 +41,10 @@ import { PasskeyCancelled, cancelPasskeyAutofill, passkeyAutofillAvailable, pass
 import { notePasskeyOffer } from "../lib/session/passkey-offer";
 import { PasswordStrengthHint } from "../ui/PasswordStrengthHint";
 import { useRemoteStrength } from "../lib/session/password-strength";
-import { USERNAME_RULE, isValidUsername, normalizeUsername } from "@stuga/protocol/domain/username";
+import { isValidUsername, normalizeUsername } from "@stuga/protocol/domain/username";
 import { SEARCH_LANGUAGES, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { SearchLanguageList } from "../ui/SearchLanguageList";
+import { t } from "../i18n/i18n";
 import "../styles/auth.css";
 
 type View = "setup" | "signin" | "signup";
@@ -56,19 +57,10 @@ const COLUMN_MIN_WIDTH = 260;
  * Setup greets with the product: nobody has named the node yet.
  */
 function headingsFor(view: View): { title: string; subtitle?: string } {
-  return {
-    setup: { title: `Welcome to ${PRODUCT_NAME}` },
-    signin: { title: "Welcome back", subtitle: `Sign in to ${nodeName()}` },
-    signup: { title: "Create your account" },
-  }[view];
+  if (view === "setup") return { title: t("auth.login.welcome", { product: PRODUCT_NAME }) };
+  if (view === "signin") return { title: t("auth.login.welcomeBack"), subtitle: t("auth.login.signInTo", { node: nodeName() }) };
+  return { title: t("auth.createYourAccount") };
 }
-
-const CONFIG_NOTICE = "Server unavailable. Sign-in may fail until it returns.";
-
-/** The lowest-priority seeded notice: a routed failure and an unreachable server outrank it. */
-const INVITE_NOTICE = "You’re invited. Create an account or sign in to join.";
-
-const CLAIMED_NOTICE = "This server is already set up. Sign in or request an invite.";
 
 /** This browser's time zone, which setup gives the node for the scheduled backup's hour. */
 function browserTimeZone(): string | undefined {
@@ -141,14 +133,19 @@ export function Login() {
   /** Starts the autofill's passkey request again, with a fresh challenge; null where there is none. */
   const autofill = useRef<(() => void) | null>(null);
   const [error, setError] = useState<string | null>(() =>
-    failedReturn && !silentReturn ? `Couldn’t sign in with ${label ?? "the identity provider"}.` : null,
+    failedReturn && !silentReturn
+      ? label
+        ? t("auth.login.providerFailed", { provider: label })
+        : t("auth.login.providerFailedUnnamed")
+      : null,
   );
   /** An available username the node offered with a refused one. */
   const [suggestion, setSuggestion] = useState<string | null>(null);
   /** Stays up across a switch between sign-in and sign-up: it is why the visitor is here. */
-  const inviteNotice = inviteToken ? INVITE_NOTICE : null;
+  // The lowest-priority seeded notice: a routed failure and an unreachable server outrank it.
+  const inviteNotice = inviteToken ? t("auth.login.inviteNotice") : null;
   const [notice, setNotice] = useState<string | null>(
-    typeof routedNotice === "string" ? routedNotice : authConfigUnavailable() ? CONFIG_NOTICE : inviteNotice,
+    typeof routedNotice === "string" ? routedNotice : authConfigUnavailable() ? t("auth.login.configNotice") : inviteNotice,
   );
 
   // A round trip that failed or never finished: the hint must not send the next visit straight back out.
@@ -237,7 +234,7 @@ export function Login() {
   if (silent) {
     return (
       <Center axis="both" className="auth-page">
-        <Spinner label="Signing you in…" />
+        <Spinner label={t("auth.signingIn")} />
       </Center>
     );
   }
@@ -306,7 +303,7 @@ export function Login() {
 
   async function submitSignIn() {
     if (!username.trim() || !password) {
-      setError("Enter your username and password.");
+      setError(t("auth.enterUsernameAndPassword"));
       return;
     }
     try {
@@ -320,11 +317,11 @@ export function Login() {
 
   async function submitSignUp() {
     if (!isValidUsername(normalizeUsername(username))) {
-      setError(username.trim() ? USERNAME_RULE : "Choose a username.");
+      setError(username.trim() ? t("auth.username.rule") : t("auth.chooseUsername"));
       return;
     }
     if (!passwordOk(password, strength.strong)) {
-      setError("Choose a password that meets all the requirements below.");
+      setError(t("auth.choosePassword"));
       return;
     }
     if (view === "setup" && !setupCode.trim()) {
@@ -349,7 +346,7 @@ export function Login() {
       // Setup lost a race with another first visitor: this one now needs an invite, so it is sent to sign in.
       if (view === "setup") {
         await loadAuthConfig();
-        if (!nodeUnclaimed()) go("signin", CLAIMED_NOTICE);
+        if (!nodeUnclaimed()) go("signin", t("auth.login.claimedNotice"));
       }
     }
   }
@@ -404,7 +401,7 @@ export function Login() {
                 <VStack gap={4}>
                   <VStack gap={3}>
                     <TextInput
-                      label="Username"
+                      label={t("common.username")}
                       size="lg"
                       value={username}
                       onChange={setUsername}
@@ -413,7 +410,7 @@ export function Login() {
                       autoComplete={passkeysOffered() ? "username webauthn" : "username"}
                     />
                     <TextInput
-                      label="Password"
+                      label={t("common.password")}
                       type="password"
                       size="lg"
                       value={password}
@@ -423,7 +420,7 @@ export function Login() {
                     />
                   </VStack>
                   <Button
-                    label="Sign in"
+                    label={t("auth.signIn")}
                     variant="primary"
                     size="lg"
                     width="100%"
@@ -432,7 +429,7 @@ export function Login() {
                   />
                   {passkeysOffered() && (
                     <Button
-                      label="Sign in with a passkey"
+                      label={t("auth.login.signInWithPasskey")}
                       variant="secondary"
                       size="lg"
                       width="100%"
@@ -449,8 +446,12 @@ export function Login() {
                   <VStack gap={3}>
                     {view === "setup" && askSetupCode && (
                       <TextInput
-                        label="Setup code"
-                        description="On the Mac running Stuga, choose Set Up Stuga… in the menu bar. With Docker, run ./stuga status."
+                        label={t("auth.login.setupCode")}
+                        description={t("auth.login.setupCodeHint", {
+                          product: PRODUCT_NAME,
+                          menuItem: t("auth.macMenu.setUp"),
+                          command: "./stuga status", // i18n-exempt: a shell command
+                        })}
                         size="lg"
                         isRequired
                         value={setupCode}
@@ -460,7 +461,7 @@ export function Login() {
                       />
                     )}
                     <TextInput
-                      label="Full name"
+                      label={t("auth.fullName")}
                       size="lg"
                       isOptional
                       value={name}
@@ -468,7 +469,7 @@ export function Login() {
                       htmlName="name"
                     />
                     <TextInput
-                      label="Username"
+                      label={t("common.username")}
                       size="lg"
                       isRequired
                       value={username}
@@ -477,7 +478,7 @@ export function Login() {
                       autoComplete="username"
                     />
                     <TextInput
-                      label="Password"
+                      label={t("common.password")}
                       type="password"
                       size="lg"
                       isRequired
@@ -496,7 +497,7 @@ export function Login() {
                   )}
 
                   <Button
-                    label={view === "setup" ? "Create administrator account" : "Create account"}
+                    label={view === "setup" ? t("auth.login.createAdministrator") : t("auth.createAccount")}
                     variant="primary"
                     size="lg"
                     width="100%"
@@ -509,9 +510,9 @@ export function Login() {
               {/* Not at setup: the node's owner always starts with a password. */}
               {label && view !== "setup" && (
                 <VStack gap={4}>
-                  <Divider label="Or" />
+                  <Divider label={t("auth.login.or")} />
                   <Button
-                    label={`Continue with ${label}`}
+                    label={t("auth.login.continueWith", { provider: label })}
                     variant="secondary"
                     size="lg"
                     width="100%"
@@ -528,25 +529,25 @@ export function Login() {
                   <VStack gap={2} hAlign="stretch">
                     <HStack justify="center">
                       <Text type="supporting" color="secondary">
-                        Don&apos;t have an account?
+                        {t("auth.login.noAccount")}
                       </Text>
                     </HStack>
-                    <Button label="Create account" variant="secondary" size="lg" width="100%" onClick={() => go("signup")} />
+                    <Button label={t("auth.createAccount")} variant="secondary" size="lg" width="100%" onClick={() => go("signup")} />
                   </VStack>
                 )}
                 {view === "signin" && !inviteToken && (
                   <Text type="supporting" color="secondary">
-                    Need an account? Ask a member for an invite.
+                    {t("auth.login.askForInvite")}
                   </Text>
                 )}
                 {view === "signup" && (
                   <VStack gap={2} hAlign="stretch">
                     <HStack justify="center">
                       <Text type="supporting" color="secondary">
-                        Already have an account?
+                        {t("auth.login.haveAccount")}
                       </Text>
                     </HStack>
-                    <Button label="Sign in" variant="secondary" size="lg" width="100%" onClick={() => go("signin")} />
+                    <Button label={t("auth.signIn")} variant="secondary" size="lg" width="100%" onClick={() => go("signin")} />
                   </VStack>
                 )}
               </VStack>
@@ -589,23 +590,23 @@ function SetupAside() {
   return (
     <VStack gap={6} height="100%" className="auth-aside__inner">
       <Text type="large" weight="semibold">
-        Get started in three steps.
+        {t("auth.login.setupAside.title")}
       </Text>
       <VStack gap={4}>
         <Feature
           icon={<ShieldCheck size={16} />}
-          title="1. Create the administrator"
-          body="Manages settings, AI providers, and backups."
+          title={t("auth.login.setupAside.adminTitle")}
+          body={t("auth.login.setupAside.adminBody")}
         />
         <Feature
           icon={<LayoutGrid size={16} />}
-          title="2. Name your workspace"
-          body="Holds your documents, databases, and people."
+          title={t("auth.login.setupAside.workspaceTitle")}
+          body={t("auth.login.setupAside.workspaceBody")}
         />
         <Feature
           icon={<UserPlus size={16} />}
-          title="3. Invite your team"
-          body="Everyone else joins by invite link."
+          title={t("auth.login.setupAside.inviteTitle")}
+          body={t("auth.login.setupAside.inviteBody")}
         />
       </VStack>
     </VStack>
@@ -616,23 +617,23 @@ function IntroAside() {
   return (
     <VStack gap={6} height="100%" className="auth-aside__inner">
       <Text type="large" weight="semibold">
-        Documents that write back.
+        {t("auth.login.introAside.title")}
       </Text>
       <VStack gap={4}>
         <Feature
           icon={<Users size={16} />}
-          title="Real-time by default"
-          body="Edit together, with no conflicts."
+          title={t("auth.login.introAside.realtimeTitle")}
+          body={t("auth.login.introAside.realtimeBody")}
         />
         <Feature
           icon={<Wand2 size={16} />}
-          title="An AI co-author"
-          body="Draft, rewrite, and ask across your documents."
+          title={t("auth.login.introAside.coauthorTitle")}
+          body={t("auth.login.introAside.coauthorBody")}
         />
         <Feature
           icon={<Sparkles size={16} />}
-          title="Search that understands"
-          body="Search by words and by meaning across your workspace."
+          title={t("auth.login.introAside.searchTitle")}
+          body={t("auth.login.introAside.searchBody")}
         />
       </VStack>
     </VStack>

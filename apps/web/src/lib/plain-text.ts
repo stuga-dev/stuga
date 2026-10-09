@@ -4,11 +4,12 @@
  * before a round trip does.
  */
 import { UNSAFE_TEXT, hasVisibleText } from "@stuga/protocol/domain/node-name";
+import { t } from "../i18n/i18n";
 
 /** Why a non-empty `value` would be refused, as a sentence for under the field, or null when it would not. */
 export function plainTextProblem(value: string, max: number): string | null {
-  if (value.length > max) return `Use up to ${max} characters.`;
-  if (UNSAFE_TEXT.test(value)) return "Remove the hidden control characters.";
-  if (!hasVisibleText(value)) return "Use at least one visible character.";
+  if (value.length > max) return t("ui.plainText.tooLong", { max });
+  if (UNSAFE_TEXT.test(value)) return t("ui.plainText.hiddenCharacters");
+  if (!hasVisibleText(value)) return t("ui.plainText.noVisibleText");
   return null;
 }

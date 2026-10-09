@@ -6,6 +6,8 @@ import { noteSignOut } from "./provider";
 import { clearMediaTicket } from "./tickets";
 import { setActiveWorkspace } from "./workspace-pointer";
 import { clearRecentDocs } from "../recent-docs";
+import { forgetLanguageChoice } from "../../i18n/choice-cache";
+import { t } from "../../i18n/i18n";
 
 interface TokenSet {
   accessToken: string;
@@ -20,8 +22,8 @@ export function getToken(): string | null {
 }
 
 /** False when the write did not persist. */
-function storeTokens(t: TokenSet): boolean {
-  return writeStored("local", SESSION_KEY, JSON.stringify(t));
+function storeTokens(set: TokenSet): boolean {
+  return writeStored("local", SESSION_KEY, JSON.stringify(set));
 }
 
 export interface Session {
@@ -37,11 +39,11 @@ export interface Session {
  * Persist a local sign-in or sign-up. Throws when storage refuses it: the caller
  * navigates into the app next, which would find no token and loop back to /login.
  */
-export function setSession(t: Session): void {
+export function setSession(session: Session): void {
   const stored = storeTokens({
-    accessToken: t.accessToken,
-    refreshToken: t.refreshToken,
-    expiresAt: Date.now() + t.expiresIn * 1000,
+    accessToken: session.accessToken,
+    refreshToken: session.refreshToken,
+    expiresAt: Date.now() + session.expiresIn * 1000,
   });
   if (!stored) throw new StorageBlockedError();
 }
@@ -63,6 +65,7 @@ export function clearTokens(): void {
   // The workspace pointer and what was opened belong to the session, not to the browser.
   setActiveWorkspace(null);
   clearRecentDocs();
+  forgetLanguageChoice();
 }
 
 /**
@@ -81,7 +84,7 @@ export interface TokenResponse {
 export async function authPost(path: string, body: Record<string, unknown>, bearer?: string): Promise<TokenResponse> {
   const json = await authRequest<Partial<TokenResponse>>(path, body, bearer);
   if (!json?.access_token || typeof json.expires_in !== "number") {
-    throw new AuthError(200, "The server returned an unusable session.");
+    throw new AuthError(200, t("auth.errors.unusableSession"));
   }
   return {
     access_token: json.access_token,

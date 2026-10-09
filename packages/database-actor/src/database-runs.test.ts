@@ -128,6 +128,12 @@ describe("pre-minted ids and dependencies", () => {
     });
     expect(r.mode).toBe("proposed");
     expect(r.run.ops).toHaveLength(3);
+    // What each op would do, as data, named as the run's pending schema names things.
+    expect(r.run.ops.map((o) => o.detail)).toEqual([
+      { kind: "tables.create", table: "Projects", columns: 0 },
+      { kind: "columns.add", table: "Projects", column: "Title" },
+      { kind: "rows.insert", table: "Projects", rows: 1, imported: false },
+    ]);
 
     const decided = await decide(actor, r.run.id, "accept");
     expect(decided.applied).toBe(3);
@@ -151,6 +157,7 @@ describe("pre-minted ids and dependencies", () => {
       updates: [{ _id: rowId, values: { Notes: "annotated" } }],
     });
     const updOpId = upd.run.ops[1]!.id;
+    expect(upd.run.ops[1]!.detail).toEqual({ kind: "rows.update", table: starter.display, rows: 1, columns: ["Notes"], more_columns: false });
 
     const blocked = await decide(actor, upd.run.id, "accept", [updOpId]);
     expect(blocked.blocked).toBe(1);

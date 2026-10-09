@@ -29,21 +29,22 @@ import { Download, ScrollText } from "lucide-react";
 import { LoadFailed } from "../../ui/LoadFailed";
 import { ActorName } from "../../ui/ActorName";
 import { PageColumn } from "../../ui/PageColumn";
-import { ACTION_LABEL, actionLabel, sourceLabel } from "./audit-labels";
-import { AI_COAUTHOR_LABEL, fmtInt, relativeTime, absoluteTime, principalHuman } from "../../lib/format";
+import { actionLabel, actionName, sourceLabel } from "./audit-labels";
+import { aiCoauthorLabel, relativeTime, absoluteTime, principalHuman } from "../../lib/format";
 import { Audit, type AuditCursor, type AuditEvent, type AuditExportFilters, type AuditFacets } from "../../api";
 import { actorHandle, actorName, resolveNames, useNamesVersion } from "../../state/identity";
 import { errorMessage, type ApiError } from "../../lib/http/client";
 import { saveBlob } from "../../lib/download";
+import { t, type MessageKey } from "../../i18n/i18n";
 
 /** "all" sends no bound; "custom" takes its bounds from the `from` and `to` days. */
-const RANGES = [
-  { value: "24h", label: "Last 24 hours", ms: 24 * 3600_000 },
-  { value: "7d", label: "Last 7 days", ms: 7 * 86_400_000 },
-  { value: "30d", label: "Last 30 days", ms: 30 * 86_400_000 },
-  { value: "90d", label: "Last 90 days", ms: 90 * 86_400_000 },
-  { value: "all", label: "All time", ms: null as number | null },
-  { value: "custom", label: "Custom range…", ms: null as number | null },
+const RANGES: { value: string; label: MessageKey; ms: number | null }[] = [
+  { value: "24h", label: "settings.audit.range.day", ms: 24 * 3600_000 },
+  { value: "7d", label: "settings.audit.range.week", ms: 7 * 86_400_000 },
+  { value: "30d", label: "settings.audit.range.month", ms: 30 * 86_400_000 },
+  { value: "90d", label: "settings.audit.range.quarter", ms: 90 * 86_400_000 },
+  { value: "all", label: "settings.audit.range.all", ms: null },
+  { value: "custom", label: "settings.audit.range.custom", ms: null },
 ];
 
 /** Never written to the URL: a link without a range means this default. */
@@ -84,10 +85,10 @@ function instrumentOf(e: AuditEvent): string | null {
   return e.on_behalf_of && e.on_behalf_of !== e.actor ? e.actor : null;
 }
 
-const RESULTS = [
-  { value: "", label: "All results" },
-  { value: "denied", label: "Refused only" },
-  { value: "ok", label: "Allowed only" },
+const RESULTS: { value: string; label: MessageKey }[] = [
+  { value: "", label: "settings.audit.result.all" },
+  { value: "denied", label: "settings.audit.result.denied" },
+  { value: "ok", label: "settings.audit.result.ok" },
 ];
 
 /** A flex item shrinks below its content only with min-width 0. */
@@ -185,7 +186,7 @@ export function AuditLog() {
         // A refusal closes the page even over loaded rows: the role that loaded them is gone.
         if (e?.status === 403) setError("forbidden");
         else if (!loaded.current) setError("failed");
-        else toast({ body: "Couldn’t load events for these filters. The table still shows the previous ones.", type: "error" });
+        else toast({ body: t("settings.audit.loadFiltersFailed"), type: "error" });
       });
     return () => {
       query.current++;
@@ -227,7 +228,7 @@ export function AuditLog() {
       setCursor(next_before);
       absorb(page);
     } catch {
-      if (query.current === gen) toast({ body: "Couldn’t load older events.", type: "error" });
+      if (query.current === gen) toast({ body: t("settings.audit.loadOlderFailed"), type: "error" });
     } finally {
       setLoadingOlder(false);
     }
@@ -251,35 +252,35 @@ export function AuditLog() {
   /** Co-authors are minted per person, so the Agent menu names each by its person. */
   const instrumentName = (alias: string): string => {
     const human = principalHuman(alias);
-    return human ? `${AI_COAUTHOR_LABEL} · ${nameAndHandle(human)}` : displayName(alias);
+    return human ? `${aiCoauthorLabel()} · ${nameAndHandle(human)}` : displayName(alias);
   };
 
   const principalOptions = useMemo(() => {
     const from = facets?.principals.map((f) => ({
       value: f.value,
-      label: `${nameAndHandle(f.value)} (${fmtInt(f.count)})`,
+      label: t("settings.audit.withCount", { label: nameAndHandle(f.value), count: f.count }),
     }));
     const fallback = seenPrincipals.map((a) => ({ value: a, label: nameAndHandle(a) }));
-    return withSelected([{ value: "", label: "Everyone" }, ...(from ?? fallback)], principal, nameAndHandle);
+    return withSelected([{ value: "", label: t("settings.audit.everyone") }, ...(from ?? fallback)], principal, nameAndHandle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facets, seenPrincipals, namesVersion, principal]);
 
   const agentOptions = useMemo(() => {
     const from = facets?.agents.map((f) => ({
       value: f.value,
-      label: `${instrumentName(f.value)} (${fmtInt(f.count)})`,
+      label: t("settings.audit.withCount", { label: instrumentName(f.value), count: f.count }),
     }));
     const fallback = seenAgents.map((a) => ({ value: a, label: instrumentName(a) }));
     // Not "All agents": most rows involve no agent at all.
-    return withSelected([{ value: "", label: "Any or none" }, ...(from ?? fallback)], actor, instrumentName);
+    return withSelected([{ value: "", label: t("settings.audit.anyOrNone") }, ...(from ?? fallback)], actor, instrumentName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facets, seenAgents, namesVersion, actor]);
 
   const actionOptions = useMemo(() => {
-    const named = (a: string) => ACTION_LABEL[a] ?? a;
-    const from = facets?.actions.map((f) => ({ value: f.value, label: `${named(f.value)} (${fmtInt(f.count)})` }));
+    const named = actionName;
+    const from = facets?.actions.map((f) => ({ value: f.value, label: t("settings.audit.withCount", { label: named(f.value), count: f.count }) }));
     const fallback = seenActions.map((a) => ({ value: a, label: named(a) }));
-    return withSelected([{ value: "", label: "All actions" }, ...(from ?? fallback)], action, named);
+    return withSelected([{ value: "", label: t("settings.audit.allActions") }, ...(from ?? fallback)], action, named);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facets, seenActions, action]);
 
@@ -287,7 +288,7 @@ export function AuditLog() {
     const count = (value: string) => facets?.statuses.find((f) => f.value === value)?.count;
     return RESULTS.map((r) => {
       const n = r.value ? count(r.value) : undefined;
-      return { value: r.value, label: n === undefined ? r.label : `${r.label} (${fmtInt(n)})` };
+      return { value: r.value, label: n === undefined ? t(r.label) : t("settings.audit.withCount", { label: t(r.label), count: n }) };
     });
   }, [facets]);
 
@@ -311,13 +312,13 @@ export function AuditLog() {
   const columns = [
     {
       key: "at",
-      header: "When",
+      header: t("settings.audit.when"),
       width: pixel(110),
       renderCell: (e: AuditEvent) => <span title={absoluteTime(e.at)}>{relativeTime(e.at)}</span>,
     },
     {
       key: "who",
-      header: "Who",
+      header: t("settings.audit.who"),
       width: proportional(1),
       renderCell: (e: AuditEvent) => {
         const person = accountable(e);
@@ -328,12 +329,12 @@ export function AuditLog() {
               {/* Only an agent nobody answers for gets the chip; beside a person's name it would call them an agent. */}
               {e.actor_kind === "agent" && !instrument && (
                 <HStack style={KEEP}>
-                  <Badge variant="purple" label="agent" />
+                  <Badge variant="purple" label={t("settings.audit.agentBadge")} />
                 </HStack>
               )}
               {e.actor_kind === "internal" && (
                 <HStack style={KEEP}>
-                  <Badge variant="neutral" label="system" />
+                  <Badge variant="neutral" label={t("settings.audit.systemBadge")} />
                 </HStack>
               )}
               <ActorName alias={person} />
@@ -342,7 +343,7 @@ export function AuditLog() {
             {instrument && (
               <span title={instrument} style={CLAMP}>
                 <Text type="supporting" color="secondary" as="span">
-                  via {displayName(instrument)}
+                  {t("settings.audit.viaName", { name: displayName(instrument) })}
                 </Text>
               </span>
             )}
@@ -352,13 +353,13 @@ export function AuditLog() {
     },
     {
       key: "action",
-      header: "What",
+      header: t("settings.audit.what"),
       width: proportional(1),
       renderCell: (e: AuditEvent) => (
         <HStack gap={2} vAlign="center" style={{ minWidth: 0 }}>
           {e.status !== "ok" && (
             <HStack style={KEEP}>
-              <Token label="Refused" color="red" size="sm" />
+              <Token label={t("settings.audit.refused")} color="red" size="sm" />
             </HStack>
           )}
           <span title={e.action} style={CLAMP}>
@@ -369,13 +370,13 @@ export function AuditLog() {
     },
     {
       key: "target",
-      header: "Target",
+      header: t("settings.audit.target"),
       width: proportional(1),
       renderCell: (e: AuditEvent) => (
         <TargetCell event={e} onOpenItem={(id) => nav(`/doc/${id}`)} onNarrow={narrowToTarget} />
       ),
     },
-    { key: "source", header: "Via", width: pixel(120), renderCell: (e: AuditEvent) => sourceLabel(e.source) },
+    { key: "source", header: t("settings.audit.via"), width: pixel(120), renderCell: (e: AuditEvent) => sourceLabel(e.source) },
   ];
 
   const window = windowFor(range, from, to);
@@ -386,7 +387,7 @@ export function AuditLog() {
       const { blob, filename } = await Audit.export(filtersNow(), "csv");
       saveBlob(blob, filename);
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn’t export the audit log."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.audit.exportFailed")), type: "error" });
     } finally {
       setExporting(false);
     }
@@ -397,8 +398,8 @@ export function AuditLog() {
       <PageColumn width={920}>
         <EmptyState
           icon={<ScrollText size={28} />}
-          title="You can't see this workspace's audit log"
-          description="Ask an owner or admin of this workspace if you need it."
+          title={t("settings.audit.forbidden")}
+          description={t("settings.workspace.askAdmin")}
         />
       </PageColumn>
     );
@@ -408,7 +409,7 @@ export function AuditLog() {
       <PageColumn width={920}>
         <LoadFailed
           icon={<ScrollText size={28} />}
-          title="Couldn’t load the audit log"
+          title={t("settings.audit.loadFailed")}
           onRetry={() => {
             setError(null);
             setEvents(null);
@@ -423,7 +424,7 @@ export function AuditLog() {
     return (
       <PageColumn width={920}>
         <VStack gap={2} hAlign="center" style={{ paddingTop: "20vh" }}>
-          <Spinner label="Loading the audit log…" />
+          <Spinner label={t("settings.audit.loading")} />
         </VStack>
       </PageColumn>
     );
@@ -436,12 +437,12 @@ export function AuditLog() {
   return (
     <PageColumn width={920}>
       <VStack gap={3}>
-        <Heading level={2}>Audit log</Heading>
+        <Heading level={2}>{t("settings.audit.heading")}</Heading>
         <HStack gap={2} vAlign="end" justify="between" wrap="wrap">
           {/* The five widths plus gaps fit the 920px column; wider and the row breaks 4 + 1. */}
           <HStack gap={2} vAlign="end" wrap="wrap">
             <Selector
-              label="Who"
+              label={t("settings.audit.who")}
               size="sm"
               width={170}
               value={principal}
@@ -449,7 +450,7 @@ export function AuditLog() {
               options={principalOptions}
             />
             <Selector
-              label="Agent"
+              label={t("settings.audit.agent")}
               size="sm"
               width={170}
               value={actor}
@@ -457,7 +458,7 @@ export function AuditLog() {
               options={agentOptions}
             />
             <Selector
-              label="Action"
+              label={t("settings.audit.action")}
               size="sm"
               width={180}
               value={action}
@@ -465,7 +466,7 @@ export function AuditLog() {
               options={actionOptions}
             />
             <Selector
-              label="Result"
+              label={t("settings.audit.result")}
               size="sm"
               width={150}
               value={status}
@@ -473,16 +474,16 @@ export function AuditLog() {
               options={resultOptions}
             />
             <Selector
-              label="When"
+              label={t("settings.audit.when")}
               size="sm"
               width={150}
               value={range}
               onChange={(v: string) => setFilters(v === "custom" ? { range: v } : { range: v, from: "", to: "" })}
-              options={RANGES.map((r) => ({ value: r.value, label: r.label }))}
+              options={RANGES.map((r) => ({ value: r.value, label: t(r.label) }))}
             />
             {range === "custom" && (
               <DateRangeInput
-                label="Between"
+                label={t("settings.audit.between")}
                 size="sm"
                 width={260}
                 value={customRange}
@@ -492,7 +493,7 @@ export function AuditLog() {
           </HStack>
           {/* Streams every matching row; with no filters set, that's everything. */}
           <Button
-            label="Export matches (CSV)"
+            label={t("settings.audit.export")}
             variant="secondary"
             size="sm"
             icon={<Download size={15} />}
@@ -505,27 +506,27 @@ export function AuditLog() {
         {targetId && (
           <HStack gap={2} vAlign="center" wrap="wrap">
             <Text type="supporting" color="secondary">
-              Only this target:
+              {t("settings.audit.onlyThisTargetLabel")}
             </Text>
             <Token
               label={targetName}
               size="sm"
-              description={`${targetKind || "target"} ${targetId}`}
+              description={targetKind ? `${targetKind} ${targetId}` : t("settings.audit.targetWithId", { id: targetId })}
               onRemove={() => setFilters({ target_kind: "", target_id: "" })}
             />
           </HStack>
         )}
         {facets?.truncated && (
           <Text type="supporting" color="secondary">
-            Menus show only the most frequent values in this range.
+            {t("settings.audit.truncated")}
           </Text>
         )}
         {events.length === 0 ? (
           <HStack gap={2} vAlign="center" wrap="wrap">
             <Text type="supporting" color="secondary">
-              Nothing recorded {window.since || window.until ? "in this window" : "yet"} that matches the filters.
+              {window.since || window.until ? t("settings.audit.emptyWindow") : t("settings.audit.emptyYet")}
             </Text>
-            {updating && <Spinner size="sm" label="Updating…" />}
+            {updating && <Spinner size="sm" label={t("settings.audit.updating")} />}
           </HStack>
         ) : (
           <>
@@ -540,17 +541,17 @@ export function AuditLog() {
             {/* "May": a cursor only means this page came back full. */}
             <HStack gap={2} vAlign="center" wrap="wrap">
               {updating ? (
-                <Spinner size="sm" label="Updating…" />
+                <Spinner size="sm" label={t("settings.audit.updating")} />
               ) : (
                 <Text type="supporting" color="secondary">
                   {cursor
-                    ? `${fmtInt(events.length)} events loaded. There may be older ones.`
-                    : `${fmtInt(events.length)} events loaded. Nothing older in this window matches.`}
+                    ? t("settings.audit.loadedMore", { count: events.length })
+                    : t("settings.audit.loadedAll", { count: events.length })}
                 </Text>
               )}
               {cursor && !updating && (
                 <Button
-                  label="Load older"
+                  label={t("settings.audit.loadOlder")}
                   variant="secondary"
                   size="sm"
                   isLoading={loadingOlder}
@@ -561,7 +562,7 @@ export function AuditLog() {
           </>
         )}
         <Text type="supporting" color="secondary">
-          Retention is set in Node settings → Storage.
+          {t("settings.audit.retention")}
         </Text>
       </VStack>
     </PageColumn>
@@ -589,7 +590,7 @@ function TargetCell({
         {opensAsItem ? <Link onClick={() => onOpenItem(id)}>{head}</Link> : head}
       </span>
       {target_label && id && (
-        <span title="Only this target" style={CLAMP}>
+        <span title={t("settings.audit.onlyThisTarget")} style={CLAMP}>
           <Link onClick={() => onNarrow(target_kind ?? "", id)}>
             <Text type="supporting" color="secondary" as="span">
               {id}
@@ -616,27 +617,27 @@ function EventDetail({
   return (
     <VStack gap={3}>
       <MetadataList columns="multi">
-        <MetadataListItem label="When (this computer)">{absoluteTime(event.at)}</MetadataListItem>
-        <MetadataListItem label="When (UTC, as exported)">{utc}</MetadataListItem>
-        <MetadataListItem label="Result">{event.status === "ok" ? "Allowed" : "Refused"}</MetadataListItem>
-        <MetadataListItem label="Accountable">{name(accountable(event))}</MetadataListItem>
-        <MetadataListItem label="Actor">{name(event.actor)}</MetadataListItem>
-        <MetadataListItem label="Actor alias">{event.actor}</MetadataListItem>
-        <MetadataListItem label="On behalf of">
+        <MetadataListItem label={t("settings.audit.detail.whenLocal")}>{absoluteTime(event.at)}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.detail.whenUtc")}>{utc}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.result")}>{event.status === "ok" ? t("settings.audit.allowed") : t("settings.audit.refused")}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.detail.accountable")}>{name(accountable(event))}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.detail.actor")}>{name(event.actor)}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.detail.actorAlias")}>{event.actor}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.detail.onBehalfOf")}>
           {event.on_behalf_of ? `${name(event.on_behalf_of)} (${event.on_behalf_of})` : "—"}
         </MetadataListItem>
-        <MetadataListItem label="Action">{event.action}</MetadataListItem>
-        <MetadataListItem label="Via">{sourceLabel(event.source)}</MetadataListItem>
-        <MetadataListItem label="Target kind">{event.target_kind ?? "—"}</MetadataListItem>
-        <MetadataListItem label="Target id">{event.target_id ?? "—"}</MetadataListItem>
-        <MetadataListItem label="Target name when recorded">{event.target_label ?? "—"}</MetadataListItem>
-        <MetadataListItem label="Request id">{event.request_id ?? "—"}</MetadataListItem>
-        <MetadataListItem label="Row id">{String(event.id)}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.action")}>{event.action}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.via")}>{sourceLabel(event.source)}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.detail.targetKind")}>{event.target_kind ?? "—"}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.detail.targetId")}>{event.target_id ?? "—"}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.detail.targetName")}>{event.target_label ?? "—"}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.detail.requestId")}>{event.request_id ?? "—"}</MetadataListItem>
+        <MetadataListItem label={t("settings.audit.detail.rowId")}>{String(event.id)}</MetadataListItem>
       </MetadataList>
       {event.target_id && (
         <HStack>
           <Button
-            label="Show only this target"
+            label={t("settings.audit.showOnlyThisTarget")}
             variant="secondary"
             size="sm"
             onClick={() => onNarrow(event.target_kind ?? "", event.target_id!)}
@@ -646,7 +647,7 @@ function EventDetail({
       <CodeBlock
         code={JSON.stringify(event.detail ?? {}, null, 2)}
         language="json"
-        title="Detail"
+        title={t("settings.audit.detail.detail")}
         width="100%"
         isWrapped
       />

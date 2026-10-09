@@ -15,6 +15,8 @@ import { initials } from "../state/identity";
 import { useSharedEditor } from "../editor/editor-context";
 import { jumpTo } from "../editor/use-citation-jump";
 import type { StugaProvider } from "../sync/stuga-provider";
+import { t } from "../i18n/i18n";
+import { nameList } from "./name-list";
 
 /** The blocks jumpTo scrolls to, as for citations. */
 const BLOCKS = "p, li, blockquote, td, th, pre, h1, h2, h3, h4, h5, h6";
@@ -132,7 +134,7 @@ export function PresenceStack({ provider }: { provider: StugaProvider }) {
       const observed = gone.filter((label) => saidGoodbye.has(label));
       if (observed.length > 0) {
         for (const label of observed) announced.delete(label);
-        say(`${observed.join(", ")} left.`);
+        say(t("document.presence.left", { count: observed.length, names: nameList(observed) }));
       }
       const inferred = gone.filter((label) => !saidGoodbye.has(label));
       if (inferred.length > 0) {
@@ -143,7 +145,7 @@ export function PresenceStack({ provider }: { provider: StugaProvider }) {
             leaving.delete(label);
             announced.delete(label);
           }
-          if (left.length > 0) say(`${left.join(", ")} left.`);
+          if (left.length > 0) say(t("document.presence.left", { count: left.length, names: nameList(left) }));
         }, INFERRED_DEPARTURE_GRACE_MS);
         timers.add(timer);
         for (const label of inferred) leaving.set(label, timer);
@@ -151,7 +153,7 @@ export function PresenceStack({ provider }: { provider: StugaProvider }) {
       const joined = [...seen.keys()].filter((label) => !announced.has(label));
       if (joined.length > 0) {
         for (const label of joined) announced.add(label);
-        say(`${joined.join(", ")} joined.`);
+        say(t("document.presence.joined", { count: joined.length, names: nameList(joined) }));
       }
     };
 
@@ -188,7 +190,7 @@ export function PresenceStack({ provider }: { provider: StugaProvider }) {
         }
       }
       if (head === null) {
-        toast({ body: `${peer.label} doesn't have a cursor in this document right now.`, type: "info" });
+        toast({ body: t("document.presence.noCursor", { name: peer.label }), type: "info" });
         return;
       }
       if (editor.isEditable) {
@@ -218,7 +220,7 @@ export function PresenceStack({ provider }: { provider: StugaProvider }) {
   const extra = peers.length - shown.length;
   return (
     // aria-label is ignored without a role.
-    <div className="presence-stack" role="group" aria-label={`In this document: ${peers.map((p) => p.label).join(", ")}`}>
+    <div className="presence-stack" role="group" aria-label={t("document.presence.group", { names: nameList(peers.map((p) => p.label)) })}>
       {shown.map((p) => {
         const className = p.agent ? "presence-badge presence-badge--agent" : "presence-badge";
         const glyph = p.agent ? "✦" : initials(p.name);
@@ -244,7 +246,7 @@ export function PresenceStack({ provider }: { provider: StugaProvider }) {
                 type="button"
                 className={className}
                 style={{ background: p.color }}
-                aria-label={`Go to ${p.label}${p.agent ? " (AI agent)" : ""}`}
+                aria-label={p.agent ? t("document.presence.goToAgent", { name: p.label }) : t("document.presence.goTo", { name: p.label })}
                 onClick={() => goToPeer(p)}
               >
                 {glyph}

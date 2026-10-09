@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import type { DatabaseOpSummary } from "@stuga/protocol/databases/types";
@@ -13,6 +13,7 @@ vi.mock("../api", () => ({ Databases: databases, Users: users }));
 vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const { ActivityPanel } = await import("./ActivityPanel");
+const { loadUiLanguage } = await import("../i18n/i18n");
 
 function op(seq: number, over: Partial<DatabaseOpSummary> = {}): DatabaseOpSummary {
   return {
@@ -25,6 +26,7 @@ function op(seq: number, over: Partial<DatabaseOpSummary> = {}): DatabaseOpSumma
     kind: "rows.update",
     table_id: "t1",
     summary: `Change ${seq}`,
+    detail: null,
     reverted_by: null,
     reverts: null,
     revertible: true,
@@ -77,5 +79,50 @@ describe("ActivityPanel: who made a change", () => {
     await act(async () => answer({ users: [ada, bob] }));
     expect(actors()).toEqual(["AI co-author", "ci", "Ada"]);
     expect(fors()).toEqual(["for Bob", "for Ada"]);
+  });
+});
+
+/** What each op says, newest first. */
+const lines = () => [...host.querySelectorAll(".db-op__summary")].map((p) => p.textContent);
+
+describe("ActivityPanel: what a change did", () => {
+  const insert = { kind: "rows.insert", table: "Projects", rows: 3, imported: false } as const;
+  const ops = () => [
+    op(3, { actor: "carol", kind: "revert", summary: 'Reverted: Inserted 3 rows into "Projects"', detail: { kind: "revert", of: insert }, revertible: false }),
+    op(2, {
+      actor: "carol",
+      summary: 'Updated 1 row in "Projects" (Name, Due, Owner, …)',
+      detail: { kind: "rows.update", table: "Projects", rows: 1, columns: ["Name", "Due", "Owner"], more_columns: true },
+    }),
+    op(1, { actor: "carol", kind: "rows.insert", summary: 'Inserted 3 rows into "Projects"', detail: insert, reverted_by: "op_3" }),
+    op(0, { actor: "carol", summary: "Recorded before ops carried detail" }),
+  ];
+
+  afterEach(async () => {
+    await loadUiLanguage("en");
+  });
+
+  it("says each change from its detail, in English", async () => {
+    users.resolve.mockResolvedValue({ users: [] });
+    await mount(ops());
+    expect(lines()).toEqual([
+      "Reverted: Inserted 3 rows into “Projects”",
+      "Updated 1 row in “Projects” (Name, Due, Owner, …)",
+      "Inserted 3 rows into “Projects”",
+      "Recorded before ops carried detail",
+    ]);
+  });
+
+  it("says each change in the reader’s language, and an op without detail as recorded", async () => {
+    users.resolve.mockResolvedValue({ users: [] });
+    await loadUiLanguage("de");
+    await mount(ops());
+    expect(lines()).toEqual([
+      "Zurückgenommen: 3 Zeilen in „Projects“ eingefügt",
+      "1 Zeile in „Projects“ aktualisiert (Name, Due, Owner, …)",
+      "3 Zeilen in „Projects“ eingefügt",
+      "Recorded before ops carried detail",
+    ]);
+    expect([...host.querySelectorAll(".db-op__foot")].map((f) => f.textContent)).toEqual(["", "Zurücknehmen", "Zurückgenommen", "Zurücknehmen"]);
   });
 });

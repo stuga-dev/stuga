@@ -7,6 +7,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Ask, AskThreads, type AskThreadSummary, type AskTurn } from "../api";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
 import type { AskStep } from "@stuga/protocol/api/ask";
+import { t } from "../i18n/i18n";
+import { presentServerMessage } from "../lib/http/server-messages";
+import { askActivityText, askNoticeText } from "./turn-text";
 
 /** How long to keep looking for the turn the server persists after a Stop. */
 const STOP_SYNC_TRIES = 5;
@@ -18,9 +21,9 @@ export interface AskUiTurn {
   answer: string;
   citations: AiCitation[];
   steps: AskStep[];
-  /** The live activity label while streaming. */
+  /** What the agent is doing while streaming, worded. */
   status?: string;
-  /** The turn ended early or retrieval degraded; the answer still stands. */
+  /** The turn ended early or retrieval degraded, worded; the answer still stands. */
   notice?: string | null;
   error?: string | null;
   streaming?: boolean;
@@ -123,16 +126,16 @@ export function AskProvider({
       .then((r) => {
         if (!live) return;
         setTurns(
-          r.turns.map((t: AskTurn) => ({
-            question: t.question,
-            answer: t.answer,
-            citations: t.citations ?? [],
-            steps: t.steps ?? [],
+          r.turns.map((turn: AskTurn) => ({
+            question: turn.question,
+            answer: turn.answer,
+            citations: turn.citations ?? [],
+            steps: turn.steps ?? [],
           })),
         );
         setScope(r.thread.collection_id ?? "");
       })
-      .catch(() => live && setLoadError("Couldn’t load this conversation."))
+      .catch(() => live && setLoadError(t("ai.ask.loadFailed")))
       .finally(() => live && setLoading(false));
     return () => {
       live = false;
@@ -161,21 +164,21 @@ export function AskProvider({
         } catch {
           setTurns((all) => [
             ...all,
-            { question: q, answer: "", citations: [], steps: [], error: "Couldn't start a conversation." },
+            { question: q, answer: "", citations: [], steps: [], error: t("ai.ask.startFailed") },
           ]);
           return;
         }
       }
 
-      setTurns((all) => [...all, { question: q, answer: "", citations: [], steps: [], streaming: true, status: "Thinking…" }]);
+      setTurns((all) => [...all, { question: q, answer: "", citations: [], steps: [], streaming: true, status: t("ai.status.thinking") }]);
       setStreaming(true);
 
       abortRef.current = Ask.stream(
         q,
         { collectionId: scope || null, threadId: id },
         {
-          onToken: (t) => patchLast((x) => ({ ...x, answer: x.answer + t })),
-          onStatus: (label) => patchLast((x) => ({ ...x, status: label })),
+          onToken: (token) => patchLast((x) => ({ ...x, answer: x.answer + token })),
+          onStatus: (activity) => patchLast((x) => ({ ...x, status: askActivityText(activity) })),
           onStep: (s) => patchLast((x) => ({ ...x, steps: [...x.steps, s] })),
           // The agent answered from memory and was sent back to search; drop the uncited draft.
           onReset: () => patchLast((x) => ({ ...x, answer: "" })),
@@ -183,7 +186,7 @@ export function AskProvider({
             patchLast((x) => ({
               ...x,
               citations: r.citations as AiCitation[],
-              notice: r.notice,
+              notice: r.notice ? askNoticeText(r.notice) : null,
               status: undefined,
               streaming: false,
             }));
@@ -191,7 +194,7 @@ export function AskProvider({
             void refreshThreads();
           },
           onError: (message) => {
-            patchLast((x) => ({ ...x, error: message, status: undefined, streaming: false }));
+            patchLast((x) => ({ ...x, error: presentServerMessage(message), status: undefined, streaming: false }));
             setStreaming(false);
           },
         },
@@ -244,7 +247,7 @@ export function AskProvider({
     abortRef.current?.abort();
     abortRef.current = null;
     const question = turns[turns.length - 1]?.question;
-    patchLast((x) => ({ ...x, status: undefined, streaming: false, notice: x.notice ?? "Stopped." }));
+    patchLast((x) => ({ ...x, status: undefined, streaming: false, notice: x.notice ?? t("ai.notice.stopped") }));
     setStreaming(false);
     void refreshThreads();
     const seq = ++generationRef.current;

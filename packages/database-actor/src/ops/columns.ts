@@ -1,7 +1,7 @@
 import { validateSelectChoices } from "@stuga/protocol/databases/cells";
 import { DATABASE_MAX_COLUMNS } from "@stuga/protocol/databases/limits";
 import type { ColumnOptions, DatabaseColumnType, DbRunOpColumnsAdd } from "@stuga/protocol/databases/types";
-import { OpError, conflict, parseDescription, plural, requireDisplay, requireObject } from "../request.js";
+import { OpError, conflict, parseDescription, requireDisplay, requireObject } from "../request.js";
 import {
   addColumn,
   captureNonConforming,
@@ -97,7 +97,7 @@ export const columnsAdd: OpDef<DbRunOpColumnsAdd> = {
           now,
         ),
       },
-      summary: `Added column "${p.display}" to "${meta.display}"`,
+      detail: { kind: "columns.add", table: meta.display, column: p.display },
     };
   },
   proposal: {
@@ -124,7 +124,7 @@ export const columnsRename: OpDef<ColumnsRename> = {
     const prev = getColumn(sql, p.table_id, p.column_id);
     return {
       result: { column: renameColumn(sql, p.table_id, p.column_id, p.display) },
-      summary: `Renamed column "${prev.display}" to "${p.display}" in "${meta.display}"`,
+      detail: { kind: "columns.rename", table: meta.display, column: prev.display, to: p.display },
     };
   },
 };
@@ -154,10 +154,7 @@ export const columnsSetDescription: OpDef<ColumnsSetDescription> = {
     const col = getColumn(sql, p.table_id, p.column_id);
     return {
       result: { column: setColumnDescriptionMeta(sql, p.table_id, p.column_id, p.description) },
-      summary:
-        p.description === null
-          ? `Cleared the description of column "${col.display}" in "${meta.display}"`
-          : `Described column "${col.display}" in "${meta.display}"`,
+      detail: { kind: "columns.set_description", table: meta.display, column: col.display, cleared: p.description === null },
     };
   },
 };
@@ -194,7 +191,7 @@ export const columnsSetType: OpDef<ColumnsSetType> = {
     const coerced = coerceNonConforming(sql, meta.name, col.name, p.type, choices, cells, now);
     return {
       result: { column: getColumn(sql, p.table_id, p.column_id), coerced },
-      summary: `Changed column "${col.display}" in "${meta.display}" to ${p.type} (${plural(coerced, "cell")} coerced)`,
+      detail: { kind: "columns.set_type", table: meta.display, column: col.display, type: p.type, coerced },
     };
   },
 };
@@ -213,6 +210,6 @@ export const columnsDelete: OpDef<ColumnsDelete> = {
     const meta = getTable(sql, p.table_id);
     const col = getColumn(sql, p.table_id, p.column_id);
     dropColumn(sql, p.table_id, p.column_id, now);
-    return { result: { deleted: true }, summary: `Deleted column "${col.display}" from "${meta.display}"` };
+    return { result: { deleted: true }, detail: { kind: "columns.delete", table: meta.display, column: col.display } };
   },
 };

@@ -203,8 +203,7 @@ export async function requestAccess({ ctx, match }: WorkspaceCall): Promise<Resp
       workspaceId: ctx.workspaceId,
       eventType: "REQUEST_ACCESS",
       docId,
-      title: `${ctx.displayName || ctx.alias} requested access to "${doc.title || "Untitled"}"`,
-      body: "Open the share dialog to grant them access.",
+      params: { actor: ctx.displayName || ctx.alias, doc: doc.title },
       actor: ctx.alias,
     });
   }

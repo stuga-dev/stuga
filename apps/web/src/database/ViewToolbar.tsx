@@ -16,23 +16,25 @@ import { filterOpNeedsValue } from "@stuga/protocol/databases/filters";
 import type { ColumnSpec, RowFilter, RowFilterOp, RowSort } from "@stuga/protocol/databases/types";
 import { buildFilter, conditionCount, flattenFilter, type FlatFilter, type ViewShape } from "./model/view-shape";
 import { isComposingKey } from "../lib/ime";
+import { t, type MessageKey } from "../i18n/i18n";
 
-const FILTER_OPS: Array<{ value: RowFilterOp; label: string }> = [
-  { value: "contains", label: "contains" },
-  { value: "not_contains", label: "does not contain" },
-  { value: "eq", label: "is" },
-  { value: "ne", label: "is not" },
-  { value: "gt", label: "is greater than" },
-  { value: "gte", label: "is at least" },
-  { value: "lt", label: "is less than" },
-  { value: "lte", label: "is at most" },
-  { value: "empty", label: "is empty" },
-  { value: "not_empty", label: "is not empty" },
-];
+const FILTER_OP_LABELS: Record<RowFilterOp, MessageKey> = {
+  contains: "database.filter.op.contains",
+  not_contains: "database.filter.op.notContains",
+  eq: "database.filter.op.eq",
+  ne: "database.filter.op.ne",
+  gt: "database.filter.op.gt",
+  gte: "database.filter.op.gte",
+  lt: "database.filter.op.lt",
+  lte: "database.filter.op.lte",
+  empty: "database.filter.op.empty",
+  not_empty: "database.filter.op.notEmpty",
+};
+const FILTER_OPS = Object.keys(FILTER_OP_LABELS) as RowFilterOp[];
 
 /** A files cell is matched by the names of its files, or by having any; it has no order. */
 const FILES_OPS: ReadonlySet<RowFilterOp> = new Set(["contains", "not_contains", "empty", "not_empty"]);
-const opsFor = (col: ColumnSpec | undefined) => (col?.type === "files" ? FILTER_OPS.filter((o) => FILES_OPS.has(o.value)) : FILTER_OPS);
+const opsFor = (col: ColumnSpec | undefined) => (col?.type === "files" ? FILTER_OPS.filter((o) => FILES_OPS.has(o)) : FILTER_OPS);
 
 interface ViewToolbarProps {
   columns: ColumnSpec[];
@@ -54,13 +56,13 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
   const groupCol = columns.find((c) => c.column_id === shape.group_by);
   const hidden = shape.hidden_columns.filter((id) => columns.some((c) => c.column_id === id));
 
-  const chip = (label: string, icon: React.ReactNode, onClear: () => void, title: string) => (
+  const chip = (label: string, icon: React.ReactNode, onClear: () => void, title: string, clearLabel: string) => (
     <span className="db-chip" title={title}>
       {icon}
       <span className="db-chip__label">{label}</span>
       <button
         className="db-chip__x"
-        aria-label={`Clear ${title.toLowerCase()}`}
+        aria-label={clearLabel}
         onClick={(e) => {
           e.stopPropagation();
           onClear();
@@ -79,7 +81,7 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
         placement="below"
         alignment="end"
         width={420}
-        label="Filter rows"
+        label={t("database.filter.rows")}
         content={
           <FilterEditor
             // Re-seeds the draft whenever the applied filter changes under it.
@@ -96,13 +98,14 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
         <span className="db-toolbar__ctl">
           {nConditions > 0 ? (
             chip(
-              `${nConditions} filter${nConditions === 1 ? "" : "s"}`,
+              t("database.filter.chip", { count: nConditions }),
               <FilterIcon size={13} />,
               () => onShape({ ...shape, filter: null }),
-              "Filter",
+              t("database.filter.button"),
+              t("database.filter.clear"),
             )
           ) : (
-            <Button label="Filter" variant="ghost" size="sm" icon={<FilterIcon size={15} />} isIconOnly={compact} />
+            <Button label={t("database.filter.button")} variant="ghost" size="sm" icon={<FilterIcon size={15} />} isIconOnly={compact} />
           )}
         </span>
       </Popover>
@@ -113,7 +116,7 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
         placement="below"
         alignment="end"
         width={360}
-        label="Sort rows"
+        label={t("database.sort.rows")}
         content={<SortEditor columns={columns} sorts={shape.sorts} onChange={(sorts) => onShape({ ...shape, sorts })} />}
       >
         <span className="db-toolbar__ctl">
@@ -121,13 +124,14 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
             chip(
               shape.sorts.length === 1
                 ? `${columns.find((c) => c.column_id === shape.sorts[0]!.column_id)?.display ?? "?"} ${shape.sorts[0]!.dir === "desc" ? "↓" : "↑"}`
-                : `${shape.sorts.length} sorts`,
+                : t("database.sort.chip", { count: shape.sorts.length }),
               <ArrowDownUp size={13} />,
               () => onShape({ ...shape, sorts: [] }),
-              "Sort",
+              t("database.sort.button"),
+              t("database.sort.clear"),
             )
           ) : (
-            <Button label="Sort" variant="ghost" size="sm" icon={<ArrowDownUp size={15} />} isIconOnly={compact} />
+            <Button label={t("database.sort.button")} variant="ghost" size="sm" icon={<ArrowDownUp size={15} />} isIconOnly={compact} />
           )}
         </span>
       </Popover>
@@ -138,11 +142,11 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
         placement="below"
         alignment="end"
         width={280}
-        label="Group rows"
+        label={t("database.group.rows")}
         content={
           <div className="db-filter">
             <label className="db-filter__row">
-              <span className="db-filter__label">Group by</span>
+              <span className="db-filter__label">{t("database.group.by")}</span>
               <select
                 className="db-select"
                 value={shape.group_by ?? ""}
@@ -151,7 +155,7 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
                   setOpen(null);
                 }}
               >
-                <option value="">None</option>
+                <option value="">{t("database.group.none")}</option>
                 {columns
                   .filter((c) => c.type !== "files" || c.column_id === shape.group_by)
                   .map((c) => (
@@ -166,9 +170,15 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
       >
         <span className="db-toolbar__ctl">
           {groupCol ? (
-            chip(`Group: ${groupCol.display}`, <Layers size={13} />, () => onShape({ ...shape, group_by: null }), "Group")
+            chip(
+              t("database.group.chip", { name: groupCol.display }),
+              <Layers size={13} />,
+              () => onShape({ ...shape, group_by: null }),
+              t("database.group.button"),
+              t("database.group.clear"),
+            )
           ) : (
-            <Button label="Group" variant="ghost" size="sm" icon={<Layers size={15} />} isIconOnly={compact} />
+            <Button label={t("database.group.button")} variant="ghost" size="sm" icon={<Layers size={15} />} isIconOnly={compact} />
           )}
         </span>
       </Popover>
@@ -179,7 +189,7 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
         placement="below"
         alignment="end"
         width={280}
-        label="Show or hide columns"
+        label={t("database.columns.showHide")}
         content={
           <div className="db-filter">
             {columns.map((c) => {
@@ -201,7 +211,7 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
             })}
             {hidden.length > 0 && (
               <HStack gap={2} justify="end">
-                <Button label="Show all" variant="ghost" size="sm" onClick={() => onShape({ ...shape, hidden_columns: [] })} />
+                <Button label={t("database.columns.showAll")} variant="ghost" size="sm" onClick={() => onShape({ ...shape, hidden_columns: [] })} />
               </HStack>
             )}
           </div>
@@ -209,9 +219,15 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
       >
         <span className="db-toolbar__ctl">
           {hidden.length > 0 ? (
-            chip(`${hidden.length} hidden`, <Columns3 size={13} />, () => onShape({ ...shape, hidden_columns: [] }), "Hidden columns")
+            chip(
+              t("database.columns.hiddenChip", { count: hidden.length }),
+              <Columns3 size={13} />,
+              () => onShape({ ...shape, hidden_columns: [] }),
+              t("database.columns.hidden"),
+              t("database.columns.clearHidden"),
+            )
           ) : (
-            <Button label="Columns" variant="ghost" size="sm" icon={<Columns3 size={15} />} isIconOnly={compact} />
+            <Button label={t("database.columns.button")} variant="ghost" size="sm" icon={<Columns3 size={15} />} isIconOnly={compact} />
           )}
         </span>
       </Popover>
@@ -220,7 +236,7 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
         <HStack gap={1} vAlign="center">
           {!readOnly && (
             <Button
-              label={hasView ? "Save view" : "Save as view"}
+              label={hasView ? t("database.views.save") : t("database.views.saveAs")}
               variant="secondary"
               size="sm"
               icon={<Save size={14} />}
@@ -228,7 +244,7 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
               onClick={onSave}
             />
           )}
-          <IconButton label="Reset to the saved view" variant="ghost" size="sm" icon={<RotateCcw size={14} />} onClick={onReset} />
+          <IconButton label={t("database.views.reset")} variant="ghost" size="sm" icon={<RotateCcw size={14} />} onClick={onReset} />
         </HStack>
       )}
     </HStack>
@@ -249,14 +265,14 @@ function toDraft(leaf: RowFilter): DraftLeaf {
 /** A wire leaf, or why the draft cannot be one yet. */
 function leafFromDraft(columns: ColumnSpec[], d: DraftLeaf): RowFilter | { error: string } {
   const col = columns.find((c) => c.column_id === d.column_id);
-  if (!col) return { error: "Pick a column." };
+  if (!col) return { error: t("database.filter.pickColumn") };
   if (!filterOpNeedsValue(d.op)) return { column_id: col.column_id, op: d.op };
   if (col.type === "number" || col.type === "checkbox") {
     const n = parseFloat(d.value);
-    if (!Number.isFinite(n)) return { error: `Enter a number for “${col.display}”.` };
+    if (!Number.isFinite(n)) return { error: t("database.filter.enterNumber", { name: col.display }) };
     return { column_id: col.column_id, op: d.op, value: n };
   }
-  if (d.value === "") return { error: `Enter a value for “${col.display}”.` };
+  if (d.value === "") return { error: t("database.filter.enterValue", { name: col.display }) };
   return { column_id: col.column_id, op: d.op, value: d.value };
 }
 
@@ -278,10 +294,10 @@ function FilterEditor({
     return (
       <div className="db-filter">
         <Text type="supporting" color="secondary">
-          This API-created nested filter has {conditionCount(filter)} conditions. Clear it to build a new one here.
+          {t("database.filter.nested", { count: conditionCount(filter) })}
         </Text>
         <HStack gap={2} justify="end">
-          <Button label="Clear filter" variant="secondary" size="sm" onClick={() => onChange(null)} />
+          <Button label={t("database.filter.clear")} variant="secondary" size="sm" onClick={() => onChange(null)} />
         </HStack>
       </div>
     );
@@ -311,10 +327,10 @@ function FilterEditor({
     <div className="db-filter">
       {leaves.length > 1 && (
         <label className="db-filter__row db-filter__row--inline">
-          <span className="db-filter__label">Match</span>
+          <span className="db-filter__label">{t("database.filter.match")}</span>
           <select className="db-select" value={op} onChange={(e) => setOp(e.target.value as "and" | "or")}>
-            <option value="and">all conditions</option>
-            <option value="or">any condition</option>
+            <option value="and">{t("database.filter.matchAll")}</option>
+            <option value="or">{t("database.filter.matchAny")}</option>
           </select>
         </label>
       )}
@@ -331,7 +347,7 @@ function FilterEditor({
                 const next = columns.find((c) => c.column_id === e.target.value);
                 set({ column_id: e.target.value, value: "", ...(next?.type === "files" && !FILES_OPS.has(d.op) ? { op: "contains" } : {}) });
               }}
-              aria-label="Column"
+              aria-label={t("database.column.label")}
             >
               {columns.map((c) => (
                 <option key={c.column_id} value={c.column_id}>
@@ -339,22 +355,22 @@ function FilterEditor({
                 </option>
               ))}
             </select>
-            <select className="db-select" value={d.op} onChange={(e) => set({ op: e.target.value as RowFilterOp })} aria-label="Condition">
+            <select className="db-select" value={d.op} onChange={(e) => set({ op: e.target.value as RowFilterOp })} aria-label={t("database.filter.condition")}>
               {opsFor(col).map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
+                <option key={o} value={o}>
+                  {t(FILTER_OP_LABELS[o])}
                 </option>
               ))}
             </select>
             {needsValue &&
               (col?.type === "checkbox" ? (
-                <select className="db-select" value={d.value} onChange={(e) => set({ value: e.target.value })} aria-label="Value">
+                <select className="db-select" value={d.value} onChange={(e) => set({ value: e.target.value })} aria-label={t("database.value.label")}>
                   <option value="">—</option>
-                  <option value="1">Checked</option>
-                  <option value="0">Unchecked</option>
+                  <option value="1">{t("database.value.checked")}</option>
+                  <option value="0">{t("database.value.unchecked")}</option>
                 </select>
               ) : col?.type === "single_select" ? (
-                <select className="db-select" value={d.value} onChange={(e) => set({ value: e.target.value })} aria-label="Value">
+                <select className="db-select" value={d.value} onChange={(e) => set({ value: e.target.value })} aria-label={t("database.value.label")}>
                   <option value="">—</option>
                   {(col.options?.choices ?? []).map((c) => (
                     <option key={c} value={c}>
@@ -365,7 +381,7 @@ function FilterEditor({
               ) : (
                 <input
                   className="db-select"
-                  aria-label="Value"
+                  aria-label={t("database.value.label")}
                   type={col?.type === "number" ? "number" : col?.type === "date" ? "date" : "text"}
                   step={col?.type === "number" ? "any" : undefined}
                   value={d.value}
@@ -374,7 +390,7 @@ function FilterEditor({
                 />
               ))}
             <IconButton
-              label="Remove condition"
+              label={t("database.filter.removeCondition")}
               variant="ghost"
               size="sm"
               icon={<X size={14} />}
@@ -389,11 +405,11 @@ function FilterEditor({
         </Text>
       )}
       <HStack gap={2} justify="between" vAlign="center">
-        <Button label="Add condition" variant="ghost" size="sm" icon={<Plus size={14} />} onClick={addLeaf} />
+        <Button label={t("database.filter.addCondition")} variant="ghost" size="sm" icon={<Plus size={14} />} onClick={addLeaf} />
         <HStack gap={2}>
           {filter !== null && (
             <Button
-              label="Clear"
+              label={t("database.toolbar.clear")}
               variant="ghost"
               size="sm"
               onClick={() => {
@@ -403,7 +419,7 @@ function FilterEditor({
               }}
             />
           )}
-          <Button label="Apply" variant="primary" size="sm" onClick={apply} />
+          <Button label={t("database.filter.apply")} variant="primary" size="sm" onClick={apply} />
         </HStack>
       </HStack>
     </div>
@@ -418,7 +434,7 @@ function SortEditor({ columns: all, sorts, onChange }: { columns: ColumnSpec[]; 
     <div className="db-filter">
       {sorts.length === 0 && (
         <Text type="supporting" color="secondary">
-          Rows are in the order they were added.
+          {t("database.sort.unsorted")}
         </Text>
       )}
       {sorts.map((s, i) => (
@@ -426,7 +442,7 @@ function SortEditor({ columns: all, sorts, onChange }: { columns: ColumnSpec[]; 
           <select
             className="db-select"
             value={s.column_id}
-            aria-label="Column"
+            aria-label={t("database.column.label")}
             onChange={(e) => onChange(sorts.map((x, j) => (j === i ? { ...x, column_id: e.target.value } : x)))}
           >
             {columns
@@ -440,25 +456,25 @@ function SortEditor({ columns: all, sorts, onChange }: { columns: ColumnSpec[]; 
           <select
             className="db-select"
             value={s.dir}
-            aria-label="Direction"
+            aria-label={t("database.sort.direction")}
             onChange={(e) => onChange(sorts.map((x, j) => (j === i ? { ...x, dir: e.target.value as "asc" | "desc" } : x)))}
           >
-            <option value="asc">ascending</option>
-            <option value="desc">descending</option>
+            <option value="asc">{t("database.sort.ascending")}</option>
+            <option value="desc">{t("database.sort.descending")}</option>
           </select>
-          <IconButton label="Remove sort" variant="ghost" size="sm" icon={<X size={14} />} onClick={() => onChange(sorts.filter((_, j) => j !== i))} />
+          <IconButton label={t("database.sort.remove")} variant="ghost" size="sm" icon={<X size={14} />} onClick={() => onChange(sorts.filter((_, j) => j !== i))} />
         </div>
       ))}
       <HStack gap={2} justify="between">
         <Button
-          label="Add sort"
+          label={t("database.sort.add")}
           variant="ghost"
           size="sm"
           icon={<Plus size={14} />}
           isDisabled={unused.length === 0 || sorts.length >= 4}
           onClick={() => unused[0] && onChange([...sorts, { column_id: unused[0].column_id, dir: "asc" }])}
         />
-        {sorts.length > 0 && <Button label="Clear" variant="ghost" size="sm" onClick={() => onChange([])} />}
+        {sorts.length > 0 && <Button label={t("database.toolbar.clear")} variant="ghost" size="sm" onClick={() => onChange([])} />}
       </HStack>
     </div>
   );

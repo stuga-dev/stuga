@@ -8,6 +8,7 @@ import { blockDiffMarkdown, type BlockDiffMarkdown } from "@stuga/crdt-ops";
 import { Switch } from "@astryxdesign/core/Switch";
 import { renderImageCaptions } from "../editor/image-caption-markdown";
 import { renderTextDirection } from "../editor/text-direction-markdown";
+import { t } from "../i18n/i18n";
 
 // html:false escapes raw HTML in document text, so the output is safe to inject.
 const md = new MarkdownIt({ html: false, linkify: true });
@@ -45,17 +46,17 @@ export function BlockDiffView({
       <div className="vcompare-controls">
         <p className="vcompare-legend">
           <span className="vcompare-legend-swatch vcompare-legend-swatch--del" />
-          Removed {removedNote && <span className="vcompare-legend-note">{removedNote}</span>}
+          {t("review.diff.removed")} {removedNote && <span className="vcompare-legend-note">{removedNote}</span>}
           <span className="vcompare-legend-swatch vcompare-legend-swatch--ins" />
-          Added {addedNote && <span className="vcompare-legend-note">{addedNote}</span>}
+          {t("review.diff.added")} {addedNote && <span className="vcompare-legend-note">{addedNote}</span>}
         </p>
-        <Switch label="Only show changes" value={onlyDiff} onChange={setOnlyDiff} />
+        <Switch label={t("review.diff.onlyChanges")} value={onlyDiff} onChange={setOnlyDiff} />
       </div>
       <div className="vcompare-diff">
         {loading ? (
-          <p className="empty">Loading…</p>
+          <p className="empty">{t("common.loading")}</p>
         ) : failed ? (
-          <p className="empty">Couldn’t load these changes.</p>
+          <p className="empty">{t("review.diff.loadFailed")}</p>
         ) : !changed ? (
           <p className="empty">{unchangedText}</p>
         ) : (

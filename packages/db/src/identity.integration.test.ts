@@ -22,6 +22,9 @@ import {
   getSignInMethods,
   getUserAliasByHandle,
   getUsers,
+  getUiLanguage,
+  noteDetectedUiLanguage,
+  setUiLanguage,
   isNodeAdminAlias,
   linkIdentity,
   listNodeAdmins,
@@ -202,6 +205,17 @@ describe.skipIf(!URL)("app-owned display name", () => {
     await sql`TRUNCATE users, workspaces, workspace_members CASCADE`;
     await seedUser(sql, "alice", "Alice", null, "alice");
     await provisionWorkspace(sql, { workspaceId: "ws-a", name: "A", owner: "alice" });
+  });
+
+  it("keeps the interface language a person chose apart from the one their browser asked for", async () => {
+    expect(await getUiLanguage(sql, "alice")).toEqual({ chosen: null, detected: null });
+    await noteDetectedUiLanguage(sql, "alice", "zh-Hant");
+    await setUiLanguage(sql, "alice", "ja");
+    expect(await getUiLanguage(sql, "alice")).toEqual({ chosen: "ja", detected: "zh-Hant" });
+    await setUiLanguage(sql, "alice", null);
+    expect(await getUiLanguage(sql, "alice")).toEqual({ chosen: null, detected: "zh-Hant" });
+    expect(await getUiLanguage(sql, "nobody")).toBeNull();
+    await expect(setUiLanguage(sql, "alice", "not a tag")).rejects.toThrow();
   });
 
   it("keeps the name and the email the person set", async () => {

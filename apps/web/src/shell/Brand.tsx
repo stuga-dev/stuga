@@ -11,6 +11,7 @@ export function Brand() {
   return (
     <span className="brand__mark">
       <svg viewBox="8 13 84 84" fill="none" className="brand__glyph" aria-hidden="true">
+        {/* i18n-exempt: SVG attribute keywords */}
         <path d={STUGA_MARK_PATH} stroke="currentColor" strokeWidth={8} strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </span>

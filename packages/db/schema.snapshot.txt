@@ -741,10 +741,14 @@ TABLE users
   email text
   oidc_sub text
   passkey_offer_dismissed_at timestamp with time zone
+  ui_language text
+  ui_language_detected text
   updated_at timestamp with time zone NOT NULL DEFAULT now()
   username text NOT NULL
   CONSTRAINT users_oidc_sub_key UNIQUE (oidc_sub)
   CONSTRAINT users_pkey PRIMARY KEY (alias)
+  CONSTRAINT users_ui_language_check CHECK ((ui_language ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$'::text))
+  CONSTRAINT users_ui_language_detected_check CHECK ((ui_language_detected ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$'::text))
   CONSTRAINT users_username_check CHECK ((username ~ '^[a-z0-9][a-z0-9._-]{1,31}$'::text))
   CONSTRAINT users_username_key UNIQUE (username)
   INDEX users_oidc_sub_key CREATE UNIQUE INDEX users_oidc_sub_key ON public.users USING btree (oidc_sub)

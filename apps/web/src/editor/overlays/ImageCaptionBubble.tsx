@@ -5,6 +5,7 @@ import { NodeSelection } from "@tiptap/pm/state";
 import { captionOf } from "../image-caption";
 import { useEditorAnchor } from "../use-editor-anchor";
 import { isComposingKey } from "../../lib/ime";
+import { t } from "../../i18n/i18n";
 
 /** Debounce for writing the caption, so typing isn't one CRDT step and undo entry per character. */
 const COMMIT_DEBOUNCE_MS = 300;
@@ -99,16 +100,16 @@ export function ImageCaptionBubble({ editor }: { editor: Editor }) {
       className="image-caption-popover"
       style={{ top: target.top, left: target.left }}
       role="group"
-      aria-label="Image caption"
+      aria-label={t("editor.imageCaption.label")}
     >
       <label className="image-caption-popover__label" htmlFor="stuga-image-caption">
-        Caption
+        {t("editor.imageCaption.caption")}
       </label>
       <input
         id="stuga-image-caption"
         className="image-caption-popover__input"
         value={value}
-        placeholder="Describe this image…"
+        placeholder={t("editor.imageCaption.placeholder")}
         autoComplete="off"
         onChange={(e) => onChange(e.target.value)}
         onBlur={flush}

@@ -20,13 +20,32 @@ import { TextArea } from "@astryxdesign/core/TextArea";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { VStack } from "@astryxdesign/core/VStack";
 import { useToast } from "@astryxdesign/core/Toast";
+import { isWorkspaceEventType, type WorkspaceEventType } from "@stuga/protocol/domain/events";
 import { useSettingsScope } from "./SettingsLayout";
 import { PageColumn } from "../../ui/PageColumn";
-import { relativeTime, absoluteTime } from "../../lib/format";
+import { relativeTime, absoluteTime, listOf } from "../../lib/format";
 import { Folders, Webhooks, Workspaces, type Folder, type WebhookInfo } from "../../api";
 import { errorMessage } from "../../lib/http/client";
+import { t, type MessageKey } from "../../i18n/i18n";
+import { tRich } from "../../i18n/rich";
 
 const WHOLE_WORKSPACE = "";
+
+const EVENT_LABEL: Record<WorkspaceEventType, MessageKey> = {
+  "doc.created": "settings.agents.webhooks.event.docCreated",
+  "doc.updated": "settings.agents.webhooks.event.docUpdated",
+  "doc.trashed": "settings.agents.webhooks.event.docTrashed",
+  "run.proposed": "settings.agents.webhooks.event.runProposed",
+  "run.applied": "settings.agents.webhooks.event.runApplied",
+  "run.decided": "settings.agents.webhooks.event.runDecided",
+  "run.reverted": "settings.agents.webhooks.event.runReverted",
+  "run.reopened": "settings.agents.webhooks.event.runReopened",
+  "comment.added": "settings.agents.webhooks.event.commentAdded",
+  "database.changed": "settings.agents.webhooks.event.databaseChanged",
+};
+
+/** A webhook event in words; its id is what a receiver sees, so the picker shows it too. */
+const eventLabel = (type: string): string => (isWorkspaceEventType(type) ? t(EVENT_LABEL[type]) : type);
 
 export function AgentSettings() {
   const toast = useToast();
@@ -62,19 +81,19 @@ export function AgentSettings() {
   useEffect(() => {
     if (!workspace) return;
     setInstructions(workspace.agent_instructions ?? "");
-    void load().catch(() => toast({ body: "Couldn't load the agent settings.", type: "error" }));
+    void load().catch(() => toast({ body: t("settings.agents.loadFailed"), type: "error" }));
   }, [workspace?.workspace_id, load]);
 
   const folderName = useMemo(() => {
-    const byId = new Map(folders.map((f) => [f.folder_id, f.title || "Untitled folder"]));
-    return (id: string | null) => (id ? (byId.get(id) ?? id) : "Whole workspace");
+    const byId = new Map(folders.map((f) => [f.folder_id, f.title || t("common.untitledFolder")]));
+    return (id: string | null) => (id ? (byId.get(id) ?? id) : t("settings.agents.wholeWorkspace"));
   }, [folders]);
 
   if (!isReady || !workspace) {
     return (
       <PageColumn>
         <VStack gap={2} hAlign="center" style={{ paddingTop: "20vh" }}>
-          <Spinner label="Loading…" />
+          <Spinner label={t("common.loading")} />
         </VStack>
       </PageColumn>
     );
@@ -86,12 +105,9 @@ export function AgentSettings() {
     try {
       await Workspaces.update(workspace.workspace_id, { agent_instructions: instructions });
       await reload();
-      toast({
-        body: "Instructions saved. Agents use them from their next turn.",
-        type: "info",
-      });
+      toast({ body: t("settings.agents.instructions.saved"), type: "info" });
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't save the instructions."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.agents.instructions.saveFailed")), type: "error" });
     } finally {
       setSavingInstructions(false);
     }
@@ -107,7 +123,7 @@ export function AgentSettings() {
       setHookFolder(WHOLE_WORKSPACE);
       await load();
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't add the webhook."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.agents.webhooks.addFailed")), type: "error" });
     } finally {
       setSavingHook(false);
     }
@@ -118,7 +134,7 @@ export function AgentSettings() {
       const { webhook } = await Webhooks.update(h.webhook_id, { active });
       setHooks((prev) => prev?.map((x) => (x.webhook_id === h.webhook_id ? webhook : x)) ?? prev);
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't change the webhook."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.agents.webhooks.changeFailed")), type: "error" });
     }
   }
 
@@ -127,45 +143,46 @@ export function AgentSettings() {
       await Webhooks.remove(h.webhook_id);
       setHooks((prev) => prev?.filter((x) => x.webhook_id !== h.webhook_id) ?? prev);
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't remove the webhook."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.agents.webhooks.removeFailed")), type: "error" });
     }
   }
 
   const folderOptions = [
-    { value: WHOLE_WORKSPACE, label: "Whole workspace" },
-    ...folders.map((f) => ({ value: f.folder_id, label: f.title || "Untitled folder" })),
+    { value: WHOLE_WORKSPACE, label: t("settings.agents.wholeWorkspace") },
+    ...folders.map((f) => ({ value: f.folder_id, label: f.title || t("common.untitledFolder") })),
   ];
 
   const hookColumns = [
     {
       key: "url",
-      header: "URL",
+      header: t("settings.agents.webhooks.url"),
       width: proportional(2),
       renderCell: (h: WebhookInfo) => (
         <VStack gap={0}>
           <span style={{ wordBreak: "break-all" }}>{h.url}</span>
           <Text type="supporting" color="secondary">
-            {h.events.length === 0 ? "every event" : h.events.join(", ")} · {folderName(h.folder_id)}
+            {h.events.length === 0 ? t("settings.agents.webhooks.everyEvent") : listOf(h.events.map(eventLabel))} · {folderName(h.folder_id)}
           </Text>
         </VStack>
       ),
     },
     {
       key: "state",
-      header: "Deliveries",
+      header: t("settings.agents.webhooks.deliveries"),
       width: proportional(1),
       renderCell: (h: WebhookInfo) => (
         <HStack gap={2} vAlign="center">
-          {!h.active && <Badge variant="neutral" label="Paused" />}
-          {h.failures > 0 && <Badge variant="red" label={`${h.failures} failing`} />}
+          {!h.active && <Badge variant="neutral" label={t("settings.agents.webhooks.paused")} />}
+          {h.failures > 0 && <Badge variant="red" label={t("settings.agents.webhooks.failing", { count: h.failures })} />}
           <Text type="supporting" color="secondary" as="span">
             {h.last_delivery_at ? (
               <span title={absoluteTime(h.last_delivery_at)}>
-                last {relativeTime(h.last_delivery_at)}
-                {h.last_status !== null ? ` · HTTP ${h.last_status}` : " · unreachable"}
+                {h.last_status !== null
+                  ? t("settings.agents.webhooks.lastStatus", { time: relativeTime(h.last_delivery_at), status: h.last_status })
+                  : t("settings.agents.webhooks.lastUnreachable", { time: relativeTime(h.last_delivery_at) })}
               </span>
             ) : (
-              "nothing delivered yet"
+              t("settings.agents.webhooks.nothingDelivered")
             )}
           </Text>
         </HStack>
@@ -177,8 +194,8 @@ export function AgentSettings() {
       width: pixel(170),
       renderCell: (h: WebhookInfo) => (
         <HStack gap={1} justify="end">
-          <Button label={h.active ? "Pause" : "Resume"} variant="ghost" size="sm" onClick={() => void setHookActive(h, !h.active)} />
-          <Button label="Remove" variant="ghost" size="sm" onClick={() => void removeHook(h)} />
+          <Button label={h.active ? t("settings.agents.webhooks.pause") : t("settings.agents.webhooks.resume")} variant="ghost" size="sm" onClick={() => void setHookActive(h, !h.active)} />
+          <Button label={t("common.remove")} variant="ghost" size="sm" onClick={() => void removeHook(h)} />
         </HStack>
       ),
     },
@@ -188,22 +205,20 @@ export function AgentSettings() {
     <PageColumn width={920}>
       <VStack gap={6}>
         <VStack gap={3}>
-          <Heading level={2}>Instructions for agents</Heading>
-          <Text color="secondary">
-            Shared defaults for every agent. Add item-specific instructions from its ⋯ menu.
-          </Text>
+          <Heading level={2}>{t("settings.agents.instructions.heading")}</Heading>
+          <Text color="secondary">{t("settings.agents.instructions.intro")}</Text>
           <TextArea
-            label="Instructions"
+            label={t("settings.agents.instructions.label")}
             isLabelHidden
             rows={8}
             value={instructions}
             onChange={setInstructions}
             isReadOnly={!canManage}
-            placeholder={"Example:\n- Daily notes go in Journal/, one document per day, appended to.\n- Never edit anything under Contracts/.\n- Tasks live in the Tasks database; add rows, don't rewrite them."}
+            placeholder={t("settings.agents.instructions.placeholder")}
           />
           {canManage && (
             <HStack justify="end">
-              <Button label="Save instructions" variant="primary" onClick={() => void saveInstructions()} isLoading={savingInstructions} />
+              <Button label={t("settings.agents.instructions.save")} variant="primary" onClick={() => void saveInstructions()} isLoading={savingInstructions} />
             </HStack>
           )}
         </VStack>
@@ -211,13 +226,16 @@ export function AgentSettings() {
         <Divider />
 
         <VStack gap={3}>
-          <Heading level={2}>Agent changes</Heading>
+          <Heading level={2}>{t("settings.agents.changes.heading")}</Heading>
+          <Text color="secondary">{t("settings.agents.changes.wait")}</Text>
           <Text color="secondary">
-            Agent edits wait until someone accepts or rejects them.
-          </Text>
-          <Text color="secondary">
-            To let them apply directly on one item, choose <strong>Let AI edits apply directly</strong> from its ⋯ menu.
-            Check the agent’s record in <Link onClick={() => nav("/review")}>Review AI edits</Link> first.
+            {tRich("settings.agents.changes.direct", {
+              // The menu item and the page by the names they carry where they are.
+              menuItem: t("library.state.makeAuto"),
+              page: t("common.reviewAiEdits"),
+              strong: (chunks) => <strong>{chunks}</strong>,
+              link: (chunks) => <Link onClick={() => nav("/review")}>{chunks}</Link>,
+            })}
           </Text>
         </VStack>
 
@@ -225,41 +243,42 @@ export function AgentSettings() {
           <>
             <Divider />
             <VStack gap={3}>
-              <Heading level={2}>Webhooks</Heading>
+              <Heading level={2}>{t("settings.agents.webhooks.heading")}</Heading>
               <Text color="secondary">
-                Send workspace events to a URL. Each request includes an HMAC-SHA256 signature in{" "}
-                <code>X-Stuga-Signature</code>.
+                {tRich("settings.agents.webhooks.intro", {
+                  header: <code>X-Stuga-Signature</code>, // i18n-exempt: an HTTP header name
+                })}
               </Text>
               {newSecret && (
                 <VStack gap={2}>
                   <Banner
                     status="warning"
-                    title={`Copy the secret for ${newSecret.url}`}
-                    description="Shown once. Use it to verify X-Stuga-Signature against the raw body."
+                    title={t("settings.agents.webhooks.copySecret", { url: newSecret.url })}
+                    description={t("settings.agents.webhooks.shownOnce")}
                   />
-                  <CodeBlock code={newSecret.secret} title="Webhook secret" width="100%" isWrapped hasCopyButton size="sm" />
+                  <CodeBlock code={newSecret.secret} title={t("settings.agents.webhooks.secret")} width="100%" isWrapped hasCopyButton size="sm" />
                   <HStack justify="end">
-                    <Button label="I've copied it" variant="ghost" size="sm" onClick={() => setNewSecret(null)} />
+                    <Button label={t("settings.agents.webhooks.copiedIt")} variant="ghost" size="sm" onClick={() => setNewSecret(null)} />
                   </HStack>
                 </VStack>
               )}
               {hooks.length === 0 ? (
-                <Text type="supporting" color="secondary">No webhooks yet.</Text>
+                <Text type="supporting" color="secondary">{t("settings.agents.webhooks.none")}</Text>
               ) : (
                 <Table data={hooks} columns={hookColumns} dividers="rows" density="compact" />
               )}
               <VStack gap={2}>
-                <Text type="supporting" color="secondary">Add a webhook</Text>
+                <Text type="supporting" color="secondary">{t("settings.agents.webhooks.addHeading")}</Text>
                 <HStack gap={2} vAlign="end" style={{ flexWrap: "wrap", rowGap: 8 }}>
-                  <TextInput label="URL" size="sm" width={340} value={hookUrl} onChange={setHookUrl} placeholder="https://example.com/hooks/stuga" />
+                  <TextInput label={t("settings.agents.webhooks.url")} size="sm" width={340} value={hookUrl} onChange={setHookUrl} placeholder="https://example.com/hooks/stuga" />
                   <MultiSelector
-                    label="Events (empty = all)"
-                    options={eventTypes.map((t) => ({ value: t, label: t }))}
+                    label={t("settings.agents.webhooks.events")}
+                    options={eventTypes.map((type) => ({ value: type, label: eventLabel(type), description: type }))}
                     value={hookEvents}
                     onChange={(v: string[]) => setHookEvents(v)}
                   />
-                  <Selector label="Where" size="sm" width={200} value={hookFolder} onChange={setHookFolder} options={folderOptions} />
-                  <Button label="Add webhook" variant="secondary" size="sm" onClick={() => void addHook()} isDisabled={!hookUrl.trim()} isLoading={savingHook} />
+                  <Selector label={t("settings.agents.webhooks.where")} size="sm" width={200} value={hookFolder} onChange={setHookFolder} options={folderOptions} />
+                  <Button label={t("settings.agents.webhooks.add")} variant="secondary" size="sm" onClick={() => void addHook()} isDisabled={!hookUrl.trim()} isLoading={savingHook} />
                 </HStack>
               </VStack>
             </VStack>

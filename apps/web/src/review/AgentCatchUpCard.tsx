@@ -14,6 +14,8 @@ import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Button } from "@astryxdesign/core/Button";
 import { useToast } from "@astryxdesign/core/Toast";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
+import { runAgentLabel } from "../state/identity";
 
 interface RunRef {
   runId: string;
@@ -50,13 +52,13 @@ export function AgentCatchUpCard({ docId, ydoc }: { docId: string; ydoc: Y.Doc |
         toast({
           body:
             code === "nothing_to_revert"
-              ? "These changes were already undone — nothing left to revert."
-              : "Document has changed since — use version history instead.",
+              ? t("review.catchUp.alreadyUndone")
+              : t("review.catchUp.documentChanged"),
           type: "error",
         });
         return;
       }
-      toast({ body: errorMessage(e, "Couldn’t undo these changes."), type: "error" });
+      toast({ body: errorMessage(e, t("review.notice.undoChangesFailed")), type: "error" });
     }
   }
 
@@ -64,16 +66,21 @@ export function AgentCatchUpCard({ docId, ydoc }: { docId: string; ydoc: Y.Doc |
     <>
       {unseenApplied.map((run) => {
         const n = run.hunks.filter((h) => h.status === "auto_applied" || h.status === "accepted").length;
-        const ref = { runId: run.id, agent: run.agent };
+        const agent = runAgentLabel(run);
+        const ref = { runId: run.id, agent };
         return (
           <CatchUpBanner
             key={run.id}
-            title={n > 0 ? `${run.agent} made ${n} edit${n === 1 ? "" : "s"} to this document` : `${run.agent} edited this document`}
-            description="Applied directly, as this document is set to."
-            view={<Button label="View changes" variant="secondary" size="sm" onClick={() => openChanges(run.id, run.agent)} />}
+            title={
+              n > 0
+                ? t("review.catchUp.docTitle", { agent, count: n })
+                : t("review.catchUp.docTitleNoCount", { agent })
+            }
+            description={t("review.catchUp.docDescription")}
+            view={<Button label={t("review.catchUp.viewChanges")} variant="secondary" size="sm" onClick={() => openChanges(run.id, agent)} />}
             revert={
               !run.reverted && (
-                <Button label="Revert" variant="ghost" size="sm" isDisabled={busy} onClick={() => setReverting(ref)} />
+                <Button label={t("review.catchUp.revert")} variant="ghost" size="sm" isDisabled={busy} onClick={() => setReverting(ref)} />
               )
             }
             onDismiss={() => (run.reverted ? void ack(run.id) : setDismissing(ref))}
@@ -95,18 +102,26 @@ export function AgentCatchUpCard({ docId, ydoc }: { docId: string; ydoc: Y.Doc |
       <AlertDialog
         isOpen={reverting !== null}
         onOpenChange={(o) => !o && !busy && setReverting(null)}
-        title="Revert this agent’s changes?"
-        description={`Returns the document to before ${reverting?.agent ?? "the agent"}’s run. If it changed too much, use version history.`}
-        actionLabel="Revert"
+        title={t("review.catchUp.revertTitle")}
+        description={
+          reverting
+            ? t("review.catchUp.revertDescription", { agent: reverting.agent })
+            : t("review.catchUp.revertDescriptionAnyAgent")
+        }
+        actionLabel={t("review.catchUp.revert")}
         isActionLoading={busy}
         onAction={() => reverting && void doRevert(reverting.runId)}
       />
       <AlertDialog
         isOpen={dismissing !== null}
         onOpenChange={(o) => !o && setDismissing(null)}
-        title="Dismiss this notice?"
-        description={`${dismissing?.agent ?? "The agent"}’s changes stay. This also removes the quick Revert; version history remains.`}
-        actionLabel="Dismiss"
+        title={t("review.catchUp.dismissTitle")}
+        description={
+          dismissing
+            ? t("review.catchUp.dismissDescription", { agent: dismissing.agent })
+            : t("review.catchUp.dismissDescriptionAnyAgent")
+        }
+        actionLabel={t("common.dismiss")}
         actionVariant="primary"
         onAction={() => {
           if (dismissing) void ack(dismissing.runId);

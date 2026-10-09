@@ -27,17 +27,29 @@ import type { DatabaseRunSummary } from "@stuga/protocol/databases/types";
 import { AppTopNav } from "../shell/AppTopNav";
 import { LoadFailed } from "../ui/LoadFailed";
 import { PageColumn } from "../ui/PageColumn";
-import { AI_COAUTHOR_LABEL, absoluteTime, relativeTime } from "../lib/format";
+import { absoluteTime, fmtInt, relativeTime } from "../lib/format";
 import { DatabaseRuns, INBOX_PAGE_LIMIT, Inbox, Runs, type AgentStats, type InboxFilter, type InboxRun } from "../api";
 import { errorMessage } from "../lib/http/client";
 import { useRejectNote } from "../review/RejectNoteDialog";
+import { runAgentLabel } from "../state/identity";
+import { t, type MessageKey } from "../i18n/i18n";
 
-const FILTERS: Array<{ value: InboxFilter; label: string }> = [
-  { value: "attention", label: "Needs review" },
-  { value: "open", label: "In progress" },
-  { value: "closed", label: "Finished" },
-  { value: "all", label: "Everything" },
+const FILTERS: Array<{ value: InboxFilter; label: MessageKey }> = [
+  { value: "attention", label: "review.inbox.filter.attention" },
+  { value: "open", label: "review.inbox.filter.open" },
+  { value: "closed", label: "review.inbox.filter.closed" },
+  { value: "all", label: "review.inbox.filter.all" },
 ];
+
+type RunAction = "accept" | "reject" | "revert" | "dismiss";
+
+/** The toast after a whole-run action. */
+const DONE: Record<RunAction, MessageKey> = {
+  accept: "review.inbox.done.accept",
+  reject: "review.inbox.done.reject",
+  revert: "review.inbox.done.revert",
+  dismiss: "review.inbox.done.dismiss",
+};
 
 /** How long to wait for the mirror after an action before re-reading. */
 const MIRROR_SETTLE_MS = 1500;
@@ -94,10 +106,10 @@ export function runActions(run: InboxRun): { decide: boolean; revert: boolean; d
 /** What became of a run's changes, from its counts. */
 function outcomeOf(run: InboxRun): string {
   const parts: string[] = [];
-  if (run.accepted > 0) parts.push(`${run.accepted} kept`);
-  if (run.rejected > 0) parts.push(`${run.rejected} skipped`);
-  if (run.applied > 0) parts.push(`${run.applied} applied automatically`);
-  if (run.conflicts > 0) parts.push(`${run.conflicts} couldn’t be applied`);
+  if (run.accepted > 0) parts.push(t("review.inbox.outcome.kept", { count: run.accepted }));
+  if (run.rejected > 0) parts.push(t("review.inbox.outcome.skipped", { count: run.rejected }));
+  if (run.applied > 0) parts.push(t("review.inbox.outcome.applied", { count: run.applied }));
+  if (run.conflicts > 0) parts.push(t("review.inbox.outcome.conflicts", { count: run.conflicts }));
   return parts.join(" · ");
 }
 
@@ -108,20 +120,21 @@ function outcomeOf(run: InboxRun): string {
 export function runStatus(run: InboxRun): string {
   switch (runState(run)) {
     case "reverted":
-      return "Changes reverted";
+      return t("review.inbox.status.reverted");
     case "waiting":
-      return `${run.pending} change${run.pending === 1 ? "" : "s"} waiting for your decision`;
+      return t("review.inbox.status.waiting", { count: run.pending });
     case "unchecked":
-      return `${outcomeOf(run)} · Check the result`;
+      return t("review.inbox.status.unchecked", { outcome: outcomeOf(run) });
     case "settled":
-      return outcomeOf(run) || "No changes waiting";
+      return outcomeOf(run) || t("review.inbox.status.nothingWaiting");
   }
 }
 
-/** Who made a run: its agent, plus the co-author or client label when the name does not already say it. */
+/** Who made a run: its agent, plus the client label when the name does not already say it. */
 export function madeBy(run: InboxRun): string {
-  const name = run.agent_name || run.agent;
-  const via = run.source === "panel" ? AI_COAUTHOR_LABEL : run.client;
+  const name = runAgentLabel(run);
+  // The co-author's name already says how it was made.
+  const via = run.source === "panel" ? null : run.client;
   const key = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
   return via && !key(name).includes(key(via)) ? `${name} · ${via}` : name;
 }
@@ -167,15 +180,14 @@ export function ReviewPage() {
   }, [load]);
 
   const agentOptions = useMemo(
-    () => [{ value: "", label: "All agents" }, ...stats.map((s) => ({ value: s.agent_alias, label: s.agent_name || s.agent }))],
+    () => [{ value: "", label: t("review.inbox.allAgents") }, ...stats.map((s) => ({ value: s.agent_alias, label: runAgentLabel(s) }))],
     [stats],
   );
 
-  const shown = `${runs?.length ?? 0}${capped ? "+" : ""}`;
-  const single = runs?.length === 1 && !capped;
+  const shown = runs?.length ?? 0;
   const listHeading = filter === "attention"
-    ? `${shown} ${single ? "item needs" : "items need"} review`
-    : `${shown} AI ${single ? "update" : "updates"}`;
+    ? capped ? t("review.inbox.headingAttentionCapped", { count: shown }) : t("review.inbox.headingAttention", { count: shown })
+    : capped ? t("review.inbox.headingAllCapped", { count: shown }) : t("review.inbox.headingAll", { count: shown });
 
   function markBusy(runId: string, on: boolean) {
     setBusy((prev) => {
@@ -189,7 +201,7 @@ export function ReviewPage() {
   /** One whole-run action, patched into the row from the reply, then re-read. */
   async function act(
     row: InboxRun,
-    what: "accept" | "reject" | "revert" | "dismiss",
+    what: RunAction,
     note?: string,
   ): Promise<boolean> {
     markBusy(row.run_id, true);
@@ -211,12 +223,11 @@ export function ReviewPage() {
         });
         return filter === "attention" ? updated?.filter(needsAttention) ?? null : updated ?? null;
       });
-      const outcome = what === "accept" ? "Kept all suggestions" : what === "reject" ? "Skipped all suggestions" : what === "revert" ? "Reverted the changes" : "Marked as reviewed";
-      toast({ body: `${outcome} in “${row.doc_title || "Untitled"}”.`, type: "info" });
+      toast({ body: t(DONE[what], { title: row.doc_title || t("common.untitled") }), type: "info" });
       window.setTimeout(() => void load(), MIRROR_SETTLE_MS);
       return true;
     } catch (e) {
-      toast({ body: errorMessage(e, "That didn't go through."), type: "error" });
+      toast({ body: errorMessage(e, t("review.inbox.actionFailed")), type: "error" });
       return false;
     } finally {
       markBusy(row.run_id, false);
@@ -233,53 +244,55 @@ export function ReviewPage() {
   const closeRevert = () => !revertBusy && setRevertOpen(false);
 
   const statColumns = [
-    { key: "agent", header: "Agent", width: proportional(2), renderCell: (s: AgentStats) => s.agent_name || s.agent },
-    { key: "runs", header: "Runs", width: pixel(70), renderCell: (s: AgentStats) => String(s.runs) },
-    { key: "pending", header: "Waiting", width: pixel(80), renderCell: (s: AgentStats) => String(s.pending) },
-    { key: "accepted", header: "Kept", width: pixel(80), renderCell: (s: AgentStats) => String(s.accepted) },
-    { key: "rejected", header: "Skipped", width: pixel(80), renderCell: (s: AgentStats) => String(s.rejected) },
-    { key: "applied", header: "Applied automatically", width: pixel(150), renderCell: (s: AgentStats) => String(s.applied) },
-    { key: "reverted", header: "Reverted", width: pixel(90), renderCell: (s: AgentStats) => String(s.reverted_runs) },
+    { key: "agent", header: t("review.inbox.stats.agent"), width: proportional(2), renderCell: (s: AgentStats) => runAgentLabel(s) },
+    { key: "runs", header: t("review.inbox.stats.runs"), width: pixel(70), renderCell: (s: AgentStats) => fmtInt(s.runs) },
+    { key: "pending", header: t("review.inbox.stats.waiting"), width: pixel(80), renderCell: (s: AgentStats) => fmtInt(s.pending) },
+    { key: "accepted", header: t("review.inbox.stats.kept"), width: pixel(80), renderCell: (s: AgentStats) => fmtInt(s.accepted) },
+    { key: "rejected", header: t("review.inbox.stats.skipped"), width: pixel(80), renderCell: (s: AgentStats) => fmtInt(s.rejected) },
+    { key: "applied", header: t("review.inbox.stats.applied"), width: pixel(150), renderCell: (s: AgentStats) => fmtInt(s.applied) },
+    { key: "reverted", header: t("review.inbox.stats.reverted"), width: pixel(90), renderCell: (s: AgentStats) => fmtInt(s.reverted_runs) },
     {
       key: "last",
-      header: "Last active",
+      header: t("review.inbox.stats.lastActive"),
       width: pixel(110),
       renderCell: (s: AgentStats) => <span title={absoluteTime(s.last_active_at)}>{relativeTime(s.last_active_at)}</span>,
     },
   ];
 
   return (
-    <AppShell topNav={<AppTopNav title="Review AI edits" hasWorkspaceSwitcher />} contentPadding={0}>
+    <AppShell topNav={<AppTopNav title={t("common.reviewAiEdits")} hasWorkspaceSwitcher />} contentPadding={0}>
       <PageColumn width={960}>
         <VStack gap={6}>
           <VStack gap={3}>
             <HStack gap={4} vAlign="end" justify="between" wrap="wrap">
               <VStack gap={1}>
-                <PhoneTitle>Review AI edits</PhoneTitle>
-                <Text color="secondary">
-                  See what AI suggested, decide what stays, and check changes made automatically.
-                </Text>
+                <PhoneTitle>{t("common.reviewAiEdits")}</PhoneTitle>
+                <Text color="secondary">{t("review.inbox.intro")}</Text>
               </VStack>
               <HStack gap={2} vAlign="end" wrap="wrap">
-                <Selector label="Show" size="sm" width={150} presentation="adaptive" value={filter} onChange={(v) => setFilter(v as InboxFilter)} options={FILTERS} />
-                <Selector label="Agent" size="sm" width={190} presentation="adaptive" value={agent} onChange={setAgent} options={agentOptions} />
+                <Selector
+                  label={t("review.inbox.show")}
+                  size="sm"
+                  width={150}
+                  presentation="adaptive"
+                  value={filter}
+                  onChange={(v) => setFilter(v as InboxFilter)}
+                  options={FILTERS.map((f) => ({ value: f.value, label: t(f.label) }))}
+                />
+                <Selector label={t("review.inbox.agent")} size="sm" width={190} presentation="adaptive" value={agent} onChange={setAgent} options={agentOptions} />
               </HStack>
             </HStack>
             {failed ? (
-              <LoadFailed icon={<ListChecks size={24} />} title="Couldn’t load the review inbox" onRetry={() => void load()} />
+              <LoadFailed icon={<ListChecks size={24} />} title={t("review.inbox.loadFailed")} onRetry={() => void load()} />
             ) : runs === null ? (
               <VStack gap={2} hAlign="center" padding={6}>
-                <Spinner label="Loading edits…" />
+                <Spinner label={t("review.inbox.loading")} />
               </VStack>
             ) : runs.length === 0 ? (
               <EmptyState
                 icon={<ListChecks size={28} />}
-                title={filter === "attention" ? "All caught up" : "Nothing matches"}
-                description={
-                  filter === "attention"
-                    ? "New suggestions and automatic changes to check will appear here."
-                    : "Try another view or choose a different agent."
-                }
+                title={filter === "attention" ? t("review.inbox.caughtUp") : t("review.inbox.noMatch")}
+                description={filter === "attention" ? t("review.inbox.caughtUpNote") : t("review.inbox.noMatchNote")}
               />
             ) : (
               <List
@@ -292,51 +305,51 @@ export function ReviewPage() {
                   const isBusy = busy.has(row.run_id);
                   const attention = needsAttention(row);
                   const status = runStatus(row);
-                  const title = row.doc_title || "Untitled";
+                  const title = row.doc_title || t("common.untitled");
                   const items = [
                     ...(actions.decide ? [
-                      { label: "Accept all suggestions", onClick: () => void act(row, "accept"), isDisabled: isBusy },
-                      { label: "Reject all suggestions", onClick: () => void act(row, "reject"), isDisabled: isBusy },
+                      { label: t("review.inbox.acceptAll"), onClick: () => void act(row, "accept"), isDisabled: isBusy },
+                      { label: t("review.inbox.rejectAll"), onClick: () => void act(row, "reject"), isDisabled: isBusy },
                       {
-                        label: "Reject all with note…",
+                        label: t("review.note.rejectAllEllipsis"),
                         onClick: () =>
                           askNote({
-                            title: "Reject all with note",
-                            submitLabel: "Reject all with note",
+                            title: t("review.note.rejectAll"),
+                            submitLabel: t("review.note.rejectAll"),
                             onSubmit: (note) => void act(row, "reject", note),
                           }),
                         isDisabled: isBusy,
                       },
                     ] : []),
                     ...(actions.revert ? [
-                      { label: "Revert these changes", variant: "destructive" as const, onClick: () => openRevert(row), isDisabled: isBusy },
+                      { label: t("review.diff.revert"), variant: "destructive" as const, onClick: () => openRevert(row), isDisabled: isBusy },
                       {
-                        label: "Revert with note…",
+                        label: t("review.inbox.revertWithNoteEllipsis"),
                         variant: "destructive" as const,
                         onClick: () =>
                           askNote({
-                            title: "Revert with note",
-                            submitLabel: "Revert with note",
-                            quote: `The changes in “${title}” are taken back, and the agent is told why.`,
+                            title: t("review.inbox.revertWithNote"),
+                            submitLabel: t("review.inbox.revertWithNote"),
+                            quote: t("review.inbox.revertWithNoteQuote", { title }),
                             onSubmit: (note) => void act(row, "revert", note),
                           }),
                         isDisabled: isBusy,
                       },
                     ] : []),
                     ...(actions.dismiss ? [
-                      { label: "Mark as reviewed", onClick: () => void act(row, "dismiss"), isDisabled: isBusy },
+                      { label: t("review.inbox.markReviewed"), onClick: () => void act(row, "dismiss"), isDisabled: isBusy },
                     ] : []),
                   ];
                   return (
                     <ListItem
                       key={row.run_id}
                       label={title}
-                      startContent={<StatusDot variant={attention ? "warning" : "neutral"} label={attention ? "Needs review" : "No action needed"} />}
+                      startContent={<StatusDot variant={attention ? "warning" : "neutral"} label={attention ? t("review.inbox.needsReview") : t("review.inbox.noActionNeeded")} />}
                       description={
                         <VStack gap={1}>
                           <Text color="secondary">{status}</Text>
                           <Text type="supporting" color="secondary">
-                            {row.doc_kind === "database" ? "Database" : "Document"} · {madeBy(row)} ·{" "}
+                            {row.doc_kind === "database" ? t("common.database") : t("common.document")} · {madeBy(row)} ·{" "}
                             <span title={absoluteTime(row.updated_at)}>{relativeTime(row.updated_at)}</span>
                           </Text>
                         </VStack>
@@ -344,14 +357,14 @@ export function ReviewPage() {
                       endContent={
                         <HStack gap={1} vAlign="center">
                           <Button
-                            label={attention ? "Review changes" : "Open"}
+                            label={attention ? t("review.inbox.reviewChanges") : t("common.open")}
                             variant="secondary"
                             size="sm"
                             onClick={() => nav(`/doc/${row.doc_id}`)}
                           />
                           {items.length > 0 && (
                             <MoreMenu
-                              label={`Actions for ${title}`}
+                              label={t("common.actionsFor", { name: title })}
                               variant="ghost"
                               size="sm"
                               alignment="end"
@@ -370,9 +383,9 @@ export function ReviewPage() {
           </VStack>
 
           {stats.length > 0 && (
-            <Collapsible trigger={<Text weight="semibold">AI activity</Text>} defaultIsOpen={false}>
+            <Collapsible trigger={<Text weight="semibold">{t("review.inbox.stats.title")}</Text>} defaultIsOpen={false}>
               <VStack gap={2}>
-                <Text color="secondary">What each agent suggested and what your team chose.</Text>
+                <Text color="secondary">{t("review.inbox.stats.intro")}</Text>
                 <Table data={stats} columns={statColumns} dividers="rows" density="compact" />
               </VStack>
             </Collapsible>
@@ -382,15 +395,14 @@ export function ReviewPage() {
       <AlertDialog
         isOpen={revertOpen}
         onOpenChange={(open) => !open && closeRevert()}
-        title="Revert these AI changes?"
+        title={t("review.inbox.revertDialog.title")}
         description={
-          `This removes the changes from this AI edit in “${revertTarget?.doc_title || "Untitled"}”.` +
           // A document reverts all or nothing; a database undoes what it still can, over later edits.
-          (revertTarget?.doc_kind === "prose"
-            ? " Later document edits may prevent the revert."
-            : " Later edits to the same rows may be lost.")
+          revertTarget?.doc_kind === "prose"
+            ? t("review.inbox.revertDialog.document", { title: revertTarget.doc_title || t("common.untitled") })
+            : t("review.inbox.revertDialog.database", { title: revertTarget?.doc_title || t("common.untitled") })
         }
-        actionLabel="Revert changes"
+        actionLabel={t("review.inbox.revertDialog.action")}
         isActionLoading={revertBusy}
         onAction={() => {
           if (!revertTarget || revertBusy) return;

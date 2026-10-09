@@ -5,6 +5,7 @@
  */
 import * as Y from "yjs";
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } from "y-protocols/awareness";
+import type { CoauthorActivity, CoauthorError } from "@stuga/protocol/api/ai-turn";
 import type {
   AiRequest,
   AiResponseChunk,
@@ -54,8 +55,8 @@ type RunEvent =
 interface AiTurnHandlers {
   onChunk: (chunk: string) => void;
   /** What the agent is doing before it streams prose. */
-  onStatus?: (status: string) => void;
-  onDone: (error?: string) => void;
+  onStatus?: (status: CoauthorActivity) => void;
+  onDone: (error?: CoauthorError) => void;
   onEdits: (payload: AiEditsPayload) => void;
 }
 
@@ -349,9 +350,9 @@ export class StugaProvider {
     if (this.aiTurn) {
       const turn = this.aiTurn;
       this.aiTurn = null;
-      const message = "The connection dropped during this turn. Anything it staged will appear in the review bar.";
-      turn.onDone(message);
-      turn.onEdits({ staged: 0, applied: 0, run_id: null, cross_docs: [], error: message, notice: null });
+      const error: CoauthorError = { code: "dropped" };
+      turn.onDone(error);
+      turn.onEdits({ staged: 0, applied: 0, run_id: null, cross_docs: [], error, notices: [] });
     }
     if (code === CloseCode.ACCESS_REVOKED) {
       this.shouldReconnect = false;

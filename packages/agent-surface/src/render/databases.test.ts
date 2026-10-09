@@ -12,7 +12,7 @@ import {
 } from "./databases.js";
 
 function ops(...statuses: DatabaseRunOpStatus[]): DatabaseRunOp[] {
-  return statuses.map((status, i) => ({ id: `o${i + 1}`, kind: "rows.insert", table_id: "t1", summary: "Insert rows", status, review: "review" }));
+  return statuses.map((status, i) => ({ id: `o${i + 1}`, kind: "rows.insert", table_id: "t1", summary: "Insert rows", detail: null, status, review: "review" }));
 }
 
 function run(over: Partial<DatabaseRunSummary> = {}): DatabaseRunSummary {

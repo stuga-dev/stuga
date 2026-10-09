@@ -11,6 +11,7 @@ import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
 import { BlockDiffView, useBlockDiff } from "./BlockDiffView";
+import { t } from "../i18n/i18n";
 
 export function RunChangesDialog({
   docId,
@@ -60,7 +61,7 @@ export function RunChangesDialog({
   return (
     <Dialog isOpen onOpenChange={(o) => !o && onClose()} purpose="info" width={720}>
       <Layout
-        header={<DialogHeader title={`Changes by ${agent}`} onOpenChange={(o) => !o && onClose()} />}
+        header={<DialogHeader title={t("review.diff.title", { agent })} onOpenChange={(o) => !o && onClose()} />}
         content={
           <LayoutContent>
             <div className="vcompare">
@@ -69,7 +70,7 @@ export function RunChangesDialog({
                 changed={changed}
                 loading={loading}
                 failed={failed}
-                unchangedText="No differences — the document is unchanged."
+                unchangedText={t("review.diff.unchanged")}
               />
             </div>
           </LayoutContent>
@@ -77,10 +78,10 @@ export function RunChangesDialog({
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label="Close" variant="ghost" onClick={onClose} />
+              <Button label={t("common.close")} variant="ghost" onClick={onClose} />
               {/* With nothing differing, the server would answer a revert with 409. */}
               {canRevert && changed && !loading && !failed && (
-                <Button label="Revert these changes" variant="secondary" isDisabled={isReverting} onClick={onRevert} />
+                <Button label={t("review.diff.revert")} variant="secondary" isDisabled={isReverting} onClick={onRevert} />
               )}
             </HStack>
           </LayoutFooter>

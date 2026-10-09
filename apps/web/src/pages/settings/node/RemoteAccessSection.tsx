@@ -17,15 +17,24 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Globe } from "lucide-react";
-import type { ConnectorStatus, RemoteAccessStatus, RemoteError, RemoteErrorCode } from "@stuga/protocol/api/remote-access";
+import type {
+  ConnectorStatus,
+  RemoteAccessEnableErrorCode,
+  RemoteAccessStatus,
+  RemoteError,
+  RemoteErrorCode,
+} from "@stuga/protocol/api/remote-access";
 import { NodeSettings as NodeApi } from "../../../api";
 import { copyText } from "../../../lib/clipboard";
 import { atRemoteAddress, authConfig } from "../../../lib/session/auth-config";
 import { shortDate, timeOfDay, versionLabel } from "../../../lib/format";
-import { errorMessage } from "../../../lib/http/client";
+import { errorMessage, type ApiError } from "../../../lib/http/client";
 import { readStored, writeStored } from "../../../lib/storage";
 import { LoadFailed } from "../../../ui/LoadFailed";
 import { SectionStatusBanners, useSectionStatus } from "./status";
+import { t, type MessageKey } from "../../../i18n/i18n";
+import { tRich } from "../../../i18n/rich";
+import { presentServerMessage } from "../../../lib/http/server-messages";
 
 type Status = Extract<RemoteAccessStatus, { available: true }>;
 
@@ -40,35 +49,53 @@ const POLL_MS = 30_000;
 const CONNECTOR_SEEN_KEY = "stuga:remote-access:connector-seen";
 
 /** One sentence per problem that leaves the address working, or trying to. */
-const DEGRADED: Partial<Record<RemoteErrorCode, string>> = {
-  service_unreachable: "Couldn’t reach the remote access service.",
-  service_refused: "The remote access service refused a request.",
-  issuance_budget: "Too many certificates were issued for these addresses this week.",
-  acme_rate_limited: "The certificate authority asked the node to wait.",
-  acme_challenge_failed: "The certificate authority couldn’t verify this address.",
-  dns_not_visible: "The certificate check’s DNS record didn’t appear in time.",
-  acme_error: "Getting a certificate failed.",
-  connector_unreachable: "The address doesn’t reach this node. Check that the connector is running.",
-  wrong_certificate: "Another computer is using this address. Turn off remote access on the one you no longer use.",
-  certificate_expired: "The certificate expired. The node is getting a new one.",
-  connector_failed: "The connector couldn’t start.",
+const DEGRADED: Partial<Record<RemoteErrorCode, MessageKey>> = {
+  service_unreachable: "nodeAccess.remote.degraded.serviceUnreachable",
+  service_refused: "nodeAccess.remote.degraded.serviceRefused",
+  issuance_budget: "nodeAccess.remote.degraded.issuanceBudget",
+  acme_rate_limited: "nodeAccess.remote.degraded.acmeRateLimited",
+  acme_challenge_failed: "nodeAccess.remote.degraded.acmeChallengeFailed",
+  dns_not_visible: "nodeAccess.remote.degraded.dnsNotVisible",
+  acme_error: "nodeAccess.remote.degraded.acmeError",
+  connector_unreachable: "nodeAccess.remote.degraded.connectorUnreachable",
+  wrong_certificate: "nodeAccess.remote.degraded.wrongCertificate",
+  certificate_expired: "nodeAccess.remote.degraded.certificateExpired",
+  connector_failed: "nodeAccess.remote.degraded.connectorFailed",
 };
 
-/** Where the packaging runs the connector, nobody is asked to check on it. */
-const MANAGED_UNREACHABLE = "The connector is starting or can’t reach the relay.";
+/** A problem with this node's own files: a sentence, with the node's text, which names the path, beneath. */
+const LOCAL_PROBLEMS: Record<Extract<RemoteAccessEnableErrorCode, "remote_dir_unusable" | "socket_path_too_long" | "key_unreadable">, MessageKey> = {
+  remote_dir_unusable: "nodeAccess.remote.error.dirUnusable",
+  socket_path_too_long: "nodeAccess.remote.error.socketPathTooLong",
+  key_unreadable: "nodeAccess.remote.error.keyUnreadable",
+};
+
+function localProblem(code: string | undefined): MessageKey | undefined {
+  return code && Object.hasOwn(LOCAL_PROBLEMS, code) ? LOCAL_PROBLEMS[code as keyof typeof LOCAL_PROBLEMS] : undefined;
+}
+
+/** What the node says of a denied address when the service gives no reason of its own. */
+const NODE_DENIED = "Remote access is off for this address."; // i18n-exempt: the node's sentence, compared, never shown
+
+/** A degraded problem in words: the sentence for its code, or the node's own. */
+function degradedSentence(error: RemoteError): string {
+  const key = DEGRADED[error.code];
+  return key ? t(key) : presentServerMessage(error.message);
+}
 
 /** The connector's status line, where the packaging runs it: a reason where it has one. */
 function connectorLabel(status: ConnectorStatus | null): string {
-  if (!status) return "Starting…";
+  if (!status) return t("nodeAccess.remote.connector.starting");
   switch (status.state) {
     case "installing":
-      return "Installing…";
+      return t("nodeAccess.remote.connector.installing");
     case "running":
-      return "Running";
+      return t("nodeAccess.remote.connector.running");
     case "stopped":
-      return "Stopped";
+      return t("nodeAccess.remote.connector.stopped");
     default:
-      return status.message || (status.state === "unavailable" ? "Not included in this installation" : "Couldn’t start");
+      if (status.message) return presentServerMessage(status.message);
+      return status.state === "unavailable" ? t("nodeAccess.remote.connector.unavailable") : t("nodeAccess.remote.connector.failed");
   }
 }
 
@@ -81,10 +108,10 @@ const isFuture = (iso: string | null | undefined, now: number) => !!iso && Date.
 
 /** What a starting node is waiting on, in the order it gets there. */
 function progress(status: Status, now: number): string {
-  if (!isFuture(status.certificate?.expires_at, now)) return "Getting a certificate…";
-  if (!isFuture(status.credential?.expires_at, now)) return "Connecting to the relay…";
-  if (status.connector?.managed && status.connector.status?.state === "installing") return "Installing the connector…";
-  return "Checking the address…";
+  if (!isFuture(status.certificate?.expires_at, now)) return t("nodeAccess.remote.progress.certificate");
+  if (!isFuture(status.credential?.expires_at, now)) return t("nodeAccess.remote.progress.relay");
+  if (status.connector?.managed && status.connector.status?.state === "installing") return t("nodeAccess.remote.progress.connector");
+  return t("nodeAccess.remote.progress.address");
 }
 
 /** A path as one shell word. */
@@ -113,18 +140,18 @@ export function RemoteAccessSection() {
   // Hidden in its Activity, the section has no effects, so this polls only while it is shown.
   useEffect(() => {
     if (!status?.available || !status.enabled) return;
-    const t = setTimeout(
+    const timer = setTimeout(
       () => void load().catch(() => setMisses((n) => n + 1)),
       status.state === "starting" ? POLL_STARTING_MS : POLL_MS,
     );
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [status, misses, load]);
 
   if (failed && !status) {
-    return <LoadFailed isCompact icon={<Globe size={22} />} title="Couldn’t load remote access" onRetry={retry} />;
+    return <LoadFailed isCompact icon={<Globe size={22} />} title={t("nodeAccess.remote.loadFailed")} onRetry={retry} />;
   }
   if (!status) return <Spinner />;
-  if (!status.available) return <Text color="secondary">Remote access isn’t available on this node.</Text>;
+  if (!status.available) return <Text color="secondary">{t("nodeAccess.remote.unavailable")}</Text>;
   return <RemoteAccessPanel status={status} onStatus={setStatus} />;
 }
 
@@ -136,6 +163,8 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
   const [otherCode, setOtherCode] = useState(false);
   /** A refused turn-on that carried a code, shown under the code field. */
   const [codeError, setCodeError] = useState<string | null>(null);
+  /** The node's own text under a refusal worded here, naming the path it is about. */
+  const [detail, setDetail] = useState<string | null>(null);
   const [busy, setBusy] = useState<"" | "on" | "off" | "retry">("");
   const [confirmOff, setConfirmOff] = useState(false);
 
@@ -145,9 +174,14 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
   // The node keeps only an https link; checked here too, since it came from the CA's directory.
   const termsUrl = status.ca_terms?.url?.startsWith("https://") ? status.ca_terms.url : CA_TERMS_URL;
 
+  function clear() {
+    section.clear();
+    setDetail(null);
+  }
+
   async function turnOn(withCode: boolean) {
     setBusy("on");
-    section.clear();
+    clear();
     setCodeError(null);
     const sent = withCode ? code.trim() : "";
     try {
@@ -157,8 +191,13 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
       setOtherCode(false);
       onStatus(next);
     } catch (e) {
+      const local = localProblem((e as ApiError).code);
       const message = errorMessage(e, String(e));
-      if (sent) setCodeError(message);
+      if (local) {
+        // About this node's files, whatever code was sent: the node's text says which file.
+        section.setError(t(local));
+        setDetail(message);
+      } else if (sent) setCodeError(message);
       else section.setError(message);
     } finally {
       setBusy("");
@@ -167,7 +206,7 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
 
   async function turnOff() {
     setBusy("off");
-    section.clear();
+    clear();
     try {
       onStatus(await NodeApi.disableRemoteAccess());
     } catch (e) {
@@ -179,7 +218,7 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
 
   async function retryConnector() {
     setBusy("retry");
-    section.clear();
+    clear();
     try {
       onStatus(await NodeApi.retryRemoteConnector());
     } catch (e) {
@@ -191,7 +230,7 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
 
   const turnOffButton = (
     <Button
-      label="Turn off"
+      label={t("nodeAccess.remote.turnOff")}
       variant="secondary"
       size="sm"
       isDisabled={busy !== ""}
@@ -207,9 +246,9 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
   const turnOnForm = (codeRequired: boolean, beside?: ReactNode) => {
     const codeField = (
       <TextInput
-        label="Code"
+        label={t("nodeAccess.remote.code")}
         value={code}
-        placeholder="XXXX-XXXX-XXXX-XXXX"
+        placeholder="XXXX-XXXX-XXXX-XXXX" // i18n-exempt: the shape of a code, not words
         autoComplete="off"
         width="min(100%, 20rem)"
         status={codeError ? { type: "error", message: codeError } : undefined}
@@ -225,28 +264,30 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
         {codeRequired ? (
           codeField
         ) : (
-          <Collapsible trigger="Use a different code" isOpen={otherCode} onOpenChange={setOtherCode}>
+          <Collapsible trigger={t("nodeAccess.remote.otherCode")} isOpen={otherCode} onOpenChange={setOtherCode}>
             {codeField}
           </Collapsible>
         )}
         <HStack gap={2} vAlign="center">
           <CheckboxInput
-            label="I accept the Let’s Encrypt Subscriber Agreement."
+            label={t("nodeAccess.remote.acceptTerms")}
             isLabelHidden
             value={accepted}
             onChange={(v: boolean) => setAccepted(v)}
           />
           <Text>
-            I accept the{" "}
-            <Link href={termsUrl} isExternalLink>
-              Let’s Encrypt Subscriber Agreement
-            </Link>
-            .
+            {tRich("nodeAccess.remote.acceptTermsLink", {
+              link: (chunks) => (
+                <Link href={termsUrl} isExternalLink>
+                  {chunks}
+                </Link>
+              ),
+            })}
           </Text>
         </HStack>
         <HStack gap={2}>
           <Button
-            label="Turn on"
+            label={t("nodeAccess.remote.turnOn")}
             variant="primary"
             size="sm"
             isDisabled={!accepted || (codeRequired && !code.trim()) || busy !== ""}
@@ -266,16 +307,17 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
     // A moved address is forgotten here, so turning on again takes a code.
     body = (
       <>
-        {error?.code === "moved" && <Banner status="info" title="This address moved to another computer." />}
+        {error?.code === "moved" && <Banner status="info" title={t("nodeAccess.remote.moved")} />}
         {bound && <Text color="secondary">{status.address}</Text>}
         {turnOnForm(!bound)}
       </>
     );
   } else if (status.state === "denied") {
-    const title = "Remote access is off for this address.";
+    // The node's general sentence repeats the title; only a reason of the service's own goes beneath.
+    const reason = error && error.message !== NODE_DENIED ? presentServerMessage(error.message) : undefined;
     body = (
       <>
-        <Banner status="error" title={title} description={error && error.message !== title ? error.message : undefined} />
+        <Banner status="error" title={t("nodeAccess.remote.denied")} description={reason || undefined} />
         {turnOffRow}
       </>
     );
@@ -285,14 +327,20 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
         <Banner
           status="error"
           title={errorSentence(error)}
-          description={error.code === "connector_refused" && error.message ? error.message : undefined}
+          description={
+            error.code === "connector_refused" && error.message
+              ? presentServerMessage(error.message)
+              : localProblem(error.code)
+                ? error.message
+                : undefined
+          }
         />
         {error.code === "binding_rejected" ? (
           turnOnForm(true, turnOffButton)
         ) : error.code === "connector_refused" ? (
           <HStack gap={2}>
             <Button
-              label="Retry"
+              label={t("common.retry")}
               variant="primary"
               size="sm"
               isDisabled={busy !== ""}
@@ -314,7 +362,9 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
     // While starting, a reason to wait that progress() doesn't already give.
     const connectorLine = managed && (running || (reported !== null && reported.state !== "installing"));
     const expiredAt = status.certificate && !isFuture(status.certificate.expires_at, now) ? status.certificate.expires_at : null;
-    const title = error?.code === "connector_unreachable" && managed ? MANAGED_UNREACHABLE : error ? (DEGRADED[error.code] ?? error.message) : "";
+    // Where the packaging runs the connector, nobody is asked to check on it.
+    const title =
+      error?.code === "connector_unreachable" && managed ? t("nodeAccess.remote.managedUnreachable") : error ? degradedSentence(error) : "";
     body = (
       <>
         {status.address && <AddressRow address={status.address} canCopy={running} />}
@@ -327,26 +377,26 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
         )}
         {expiredAt ? (
           <Text type="supporting" color="secondary">
-            Certificate expired {shortDate(expiredAt)}.
+            {t("nodeAccess.remote.certificateExpired", { date: shortDate(expiredAt) })}
           </Text>
         ) : (
           running &&
           status.certificate?.renew_at && (
             <Text type="supporting" color="secondary">
-              Certificate renews {shortDate(status.certificate.renew_at)}.
+              {t("nodeAccess.remote.certificateRenews", { date: shortDate(status.certificate.renew_at) })}
             </Text>
           )
         )}
         {connectorLine && (
           <Text type="supporting" color="secondary">
-            Connector: {connectorLabel(reported)}
+            {t("nodeAccess.remote.connector.line", { status: connectorLabel(reported) })}
           </Text>
         )}
         {status.state === "degraded" && error && (
           <Banner
             status={error.code === "wrong_certificate" ? "error" : "warning"}
             title={title}
-            description={error.retry_at ? `Next try ${when(error.retry_at)}.` : undefined}
+            description={error.retry_at ? t("nodeAccess.remote.nextTry", { time: when(error.retry_at) }) : undefined}
           />
         )}
         {!managed && status.connector?.config_path && (
@@ -359,18 +409,27 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
 
   return (
     <VStack gap={3}>
-      <Heading level={2}>Remote access</Heading>
+      <Heading level={2}>{t("nodeAccess.remote.heading")}</Heading>
       <Text type="supporting" color="secondary">
-        Reach this node from anywhere at its own address.
+        {t("nodeAccess.remote.intro")}
       </Text>
       <SectionStatusBanners status={section} />
+      {section.error && detail && (
+        <Text type="supporting" color="secondary">
+          {detail}
+        </Text>
+      )}
       {body}
       <AlertDialog
         isOpen={confirmOff}
         onOpenChange={(o) => !o && setConfirmOff(false)}
-        title="Turn off remote access?"
-        description={`Nobody reaches this node at ${status.address ?? "its remote address"} until it is on again. The address is kept.`}
-        actionLabel="Turn off"
+        title={t("nodeAccess.remote.confirmOff.title")}
+        description={
+          status.address
+            ? t("nodeAccess.remote.confirmOff.description", { address: status.address })
+            : t("nodeAccess.remote.confirmOff.descriptionNoAddress")
+        }
+        actionLabel={t("nodeAccess.remote.turnOff")}
         onAction={() => {
           setConfirmOff(false);
           void turnOff();
@@ -384,17 +443,20 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
 function errorSentence(error: RemoteError): string {
   switch (error.code) {
     case "binding_rejected":
-      return "The remote access service no longer accepts this node’s key. Enter a restore code to keep this address.";
+      return t("nodeAccess.remote.error.bindingRejected");
     case "upgrade_required":
-      return "Update Stuga to use remote access.";
+      return t("nodeAccess.remote.error.upgradeRequired");
     case "acme_action_required":
-      return `The certificate authority needs attention: ${error.message}`;
+      return t("nodeAccess.remote.error.acmeActionRequired", { message: presentServerMessage(error.message) });
     case "connector_refused":
       // The packaging's reason goes beneath.
-      return "The connector didn’t pass its checks, so it isn’t running.";
+      return t("nodeAccess.remote.error.connectorRefused");
+    case "remote_dir_unusable":
+    case "socket_path_too_long":
+      // The node's message, which names the path and what is wrong with it, goes beneath.
+      return t(LOCAL_PROBLEMS[error.code]);
     default:
-      // The shared directory or the socket: the node's message names the path and what is wrong with it.
-      return error.message;
+      return presentServerMessage(error.message);
   }
 }
 
@@ -405,10 +467,10 @@ function ShareLines({ address }: { address: string }) {
   return (
     <VStack gap={1}>
       <Text type="supporting" color="secondary">
-        {`Share ${address}. Sign in there with a passkey or a password of 15 characters or more.`}
+        {t("nodeAccess.remote.share", { address })}
       </Text>
       <Text type="supporting" color="secondary">
-        {`Keep ${local ?? "this node’s own address"} on your network. The remote address is the one to share.`}
+        {local ? t("nodeAccess.remote.keepLocal", { address: local }) : t("nodeAccess.remote.keepLocalUnnamed")}
       </Text>
     </VStack>
   );
@@ -421,7 +483,7 @@ function AddressRow({ address, canCopy }: { address: string; canCopy: boolean })
       <Text>{address}</Text>
       {canCopy && (
         <Button
-          label={copied ? "Copied" : "Copy"}
+          label={copied ? t("common.copied") : t("common.copy")}
           variant="ghost"
           size="sm"
           onClick={() =>
@@ -456,17 +518,23 @@ function ConnectorHint({ configPath, changedAt }: { configPath: string; changedA
   return (
     <VStack gap={2}>
       <Text type="supporting" color="secondary">
-        Run the connector on this machine:
+        {t("nodeAccess.remote.runConnector")}
       </Text>
       {/* Without a title the copy button sits over a wrapped path's last characters. */}
-      <CodeBlock code={`frpc -c ${shellWord(configPath)}`} title="Connector" width="100%" isWrapped size="sm" />
+      <CodeBlock
+        code={`frpc -c ${shellWord(configPath)}`} // i18n-exempt: a shell command
+        title={t("nodeAccess.remote.connectorTitle")}
+        width="100%"
+        isWrapped
+        size="sm"
+      />
       {changed && (
         <Banner
           status="info"
-          title={`Its settings changed at ${when(changedAt)}.`}
-          description="Restart it if it was already running."
+          title={t("nodeAccess.remote.settingsChanged", { time: when(changedAt) })}
+          description={t("nodeAccess.remote.restartConnector")}
           isDismissable
-          dismissLabel="Dismiss"
+          dismissLabel={t("common.dismiss")}
           onDismiss={() => {
             writeStored("local", CONNECTOR_SEEN_KEY, changedAt);
             setSeen(changedAt);

@@ -9,6 +9,7 @@ import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
+import { t } from "../i18n/i18n";
 
 interface PromptDialogProps {
   isOpen: boolean;
@@ -25,7 +26,7 @@ export function PromptDialog({
   title,
   label,
   initialValue = "",
-  submitLabel = "Create",
+  submitLabel = t("common.create"),
   onSubmit,
   onClose,
 }: PromptDialogProps) {
@@ -60,7 +61,7 @@ export function PromptDialog({
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label="Cancel" variant="ghost" onClick={onClose} />
+              <Button label={t("common.cancel")} variant="ghost" onClick={onClose} />
               <Button label={submitLabel} variant="primary" onClick={submit} />
             </HStack>
           </LayoutFooter>

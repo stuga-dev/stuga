@@ -6,12 +6,20 @@
 import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
-import type { DatabaseRunSummary, TableSchema } from "@stuga/protocol/databases/types";
+import type { DatabaseRunOp, DatabaseRunSummary, TableSchema } from "@stuga/protocol/databases/types";
 import { pendingOps, useDbRuns } from "./db-runs-context";
 import { anchorOf, keepFocus, useRejectNote, type NoteAnchor } from "./RejectNoteDialog";
 import { RunBanner, RunNotices } from "./RunBanner";
 import { itemKey } from "./run-ledger";
 import { noteLabels } from "./note-mode";
+import { t } from "../i18n/i18n";
+import { describeProposal } from "../database/op-lines";
+import { runAgentLabel } from "../state/identity";
+
+/** What an op would do, in the reader's language; an op proposed before ops carried detail has only its English summary. */
+function opLine(op: DatabaseRunOp): string {
+  return op.detail ? describeProposal(op.detail) : op.summary;
+}
 
 export function DbRunBar({ tables, activeTableId }: { tables: TableSchema[]; activeTableId: string | null }) {
   const { openRuns, notices, dismissNotice } = useDbRuns();
@@ -51,35 +59,32 @@ function DbRunBanner({
   };
   const pending = pendingOps(run);
   const n = pending.length;
-  const tableName = (tableId: string) => tables.find((t) => t.table_id === tableId)?.display ?? "a new table";
+  const tableName = (tableId: string) => tables.find((table) => table.table_id === tableId)?.display ?? t("review.runBar.newTable");
   const offTable = pending.filter((op) => op.table_id !== activeTableId).length;
+  const agent = runAgentLabel(run);
 
   return (
     <>
       <RunBanner
         updatedAt={run.updated_at}
-        title={`${run.agent} proposes ${n} change${n === 1 ? "" : "s"}`}
-        hint={
-          offTable > 0
-            ? `${offTable} in ${offTable === 1 ? "another table" : "other tables"} — see “Review each”`
-            : "nothing is applied until you accept"
-        }
+        title={t("review.runBar.dbTitle", { agent, count: n })}
+        hint={offTable > 0 ? t("review.runBar.dbHintOffTable", { count: offTable }) : t("review.runBar.dbHint")}
         busy={busy}
         onDecide={(decision) => void decide(run.id, decision)}
         noteAction={{
           label: noteLabels("agent", true).trigger,
           onOpen: (anchor, returnFocus) =>
-            requestChanges(undefined, anchor, `All ${n} change${n === 1 ? "" : "s"} by ${run.agent}`, returnFocus),
+            requestChanges(undefined, anchor, t("review.runBar.dbQuoteAll", { count: n, agent }), returnFocus),
         }}
         list={
           n > 0 ? (
-            <ul className="db-run-list" aria-label={`Changes proposed by ${run.agent}`}>
+            <ul className="db-run-list" aria-label={t("review.changeList.label", { agent })}>
               {pending.map((op) => {
                 const flying = inFlight.has(itemKey(run.id, op.id));
                 return (
                   <li key={op.id} className={`db-run-list__row${flying ? " db-run-list__row--busy" : ""}`}>
                     <span className="db-run-list__summary">
-                      <Text type="supporting">{op.summary}</Text>
+                      <Text type="supporting">{opLine(op)}</Text>
                       {op.table_id !== activeTableId && (
                         <Text type="supporting" color="secondary">
                           {" "}
@@ -89,30 +94,30 @@ function DbRunBanner({
                     </span>
                     <HStack gap={1}>
                       <Button
-                        label="Accept this change"
+                        label={t("review.runBar.acceptOne")}
                         variant="secondary"
                         size="sm"
                         isDisabled={flying}
                         onClick={() => void decide(run.id, "accept", [op.id])}
                       >
-                        Accept
+                        {t("common.accept")}
                       </Button>
                       <Button
-                        label="Reject this change"
+                        label={t("review.runBar.rejectOne")}
                         variant="ghost"
                         size="sm"
                         isDisabled={flying}
                         onClick={() => void decide(run.id, "reject", [op.id])}
                       >
-                        Reject
+                        {t("common.reject")}
                       </Button>
                       <Button
-                        label="Reject this change with a note"
+                        label={t("review.runBar.rejectOneWithNote")}
                         variant="ghost"
                         size="sm"
                         isDisabled={flying}
                         onMouseDown={keepFocus}
-                        onClick={(e) => requestChanges([op.id], anchorOf(e), op.summary)}
+                        onClick={(e) => requestChanges([op.id], anchorOf(e), opLine(op))}
                       >
                         {noteLabels("agent").trigger}
                       </Button>

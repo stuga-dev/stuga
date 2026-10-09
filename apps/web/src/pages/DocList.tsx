@@ -39,6 +39,8 @@ import { Database, FileText, Files, Search, Users as UsersIcon, Star, Share2, Ex
 import { errorMessage } from "../lib/http/client";
 import { Marked, Snippet, hitHref, markTerms, queryTerms } from "../lib/snippet";
 import { readStored, writeStored } from "../lib/storage";
+import { fmtInt } from "../lib/format";
+import { formatLocale, t } from "../i18n/i18n";
 import "../styles/library.css";
 
 /** Results asked for at first and added by each Show more, up to the server's cap. */
@@ -214,7 +216,7 @@ export function DocList() {
       await Folders.create(title, currentFolder, instructions);
       setExplorerKey((k) => k + 1);
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn’t create the folder."), type: "error" });
+      toast({ body: errorMessage(e, t("pages.docList.createFolderFailed")), type: "error" });
     }
   }
 
@@ -230,11 +232,14 @@ export function DocList() {
     const failed = results.filter((r) => r.status === "rejected").length;
     if (failed === legal.length && failed > 0) {
       const first = results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
-      toast({ body: errorMessage(first?.reason, "Couldn’t move those items."), type: "error" });
+      toast({ body: errorMessage(first?.reason, t("pages.docList.moveFailed")), type: "error" });
     } else if (failed > 0) {
-      toast({ body: `Moved ${legal.length - failed} of ${legal.length}; ${failed} couldn’t be moved.`, type: "error" });
+      toast({
+        body: t("pages.docList.movePartial", { moved: legal.length - failed, total: legal.length, failed }),
+        type: "error",
+      });
     } else if (legal.length > 1) {
-      toast({ body: `Moved ${legal.length} items.`, type: "info" });
+      toast({ body: t("pages.docList.moved", { count: legal.length }), type: "info" });
     }
     setMovedAway((k) => k + 1);
     setExplorerKey((k) => k + 1);
@@ -267,7 +272,7 @@ export function DocList() {
         setResults([]);
         setSearchPage({ limit, full: false });
         setSearchDegraded(false);
-        setSearchError(errorMessage(e, "Search failed. Please try again."));
+        setSearchError(errorMessage(e, t("pages.docList.searchFailed")));
         setIsSearching(false);
       });
   }, []);
@@ -298,7 +303,7 @@ export function DocList() {
         if (gen !== searchGenRef.current) return;
         // The rows already found stay; the button stays to try again.
         setIsLoadingMore(false);
-        toast({ body: errorMessage(e, "Couldn’t load more results."), type: "error" });
+        toast({ body: errorMessage(e, t("pages.docList.loadMoreFailed")), type: "error" });
       });
   }
 
@@ -319,8 +324,8 @@ export function DocList() {
       runSearch(query, depthRef.current);
       return;
     }
-    const t = setTimeout(() => runSearch(query, depthRef.current), 400);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => runSearch(query, depthRef.current), 400);
+    return () => clearTimeout(timer);
   }, [query, runSearch]);
 
   // An answer still out when the page goes, a Show more's above all, must not write the URL from under a document.
@@ -353,10 +358,10 @@ export function DocList() {
 
   async function createItem(docType: "prose" | "database") {
     try {
-      const doc = await Docs.create("Untitled", currentFolder, docType);
+      const doc = await Docs.create(t("common.untitled"), currentFolder, docType);
       nav(`/doc/${doc.doc_id}`, docType === "prose" ? { state: { focusEditor: true } } : undefined);
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn’t create it."), type: "error" });
+      toast({ body: errorMessage(e, t("pages.docList.createFailed")), type: "error" });
     }
   }
   const create = () => createItem("prose");
@@ -373,7 +378,7 @@ export function DocList() {
 
   const topNav = (
     <TopNav
-      label="Documents"
+      label={t("pages.docList.nav")}
       startContent={
         <HStack gap={3} vAlign="center">
           <div className="brand">
@@ -390,7 +395,7 @@ export function DocList() {
           {/* The Kbd is hidden from the accessible name, which would otherwise
               change with the OS; the palette answers both modifiers everywhere. */}
           <Button
-            label="Search all documents"
+            label={t("pages.docList.searchAll")}
             icon={<Search size={16} />}
             endContent={<Kbd keys="mod+k" aria-hidden="true" />}
             aria-keyshortcuts="Meta+K Control+K"
@@ -410,14 +415,17 @@ export function DocList() {
   );
 
   const VIEW_HEADERS: Record<LibraryView, { title: string; description: string }> = {
-    browse: { title: "All documents", description: "Browse folders and documents in this workspace." },
-    favorites: { title: "Favorites", description: "Documents you’ve starred." },
-    shared: { title: "Shared with me", description: "Documents other people shared with you directly." },
+    browse: { title: t("common.allDocuments"), description: t("pages.docList.view.browseNote") },
+    favorites: { title: t("pages.docList.view.favorites"), description: t("pages.docList.view.favoritesNote") },
+    shared: { title: t("pages.docList.view.shared"), description: t("pages.docList.view.sharedNote") },
     collections: {
-      title: "Collections",
-      description: "Named sets of documents you can point the AI at when you ask a question.",
+      title: t("pages.docList.view.collections"),
+      description: t("pages.docList.view.collectionsNote"),
     },
-    trash: { title: "Trash", description: `Deleted documents are kept for ${TRASH_RETENTION_DAYS} days, then removed.` },
+    trash: {
+      title: t("pages.docList.view.trash"),
+      description: t("pages.docList.view.trashNote", { days: TRASH_RETENTION_DAYS }),
+    },
   };
   const header = VIEW_HEADERS[view];
 
@@ -429,7 +437,7 @@ export function DocList() {
           <Heading level={2} type="display-3">
             {header.title}
           </Heading>
-          {view === "trash" && <Badge variant="warning" label={`${TRASH_RETENTION_DAYS}-day retention`} />}
+          {view === "trash" && <Badge variant="warning" label={t("pages.docList.trashRetention", { days: TRASH_RETENTION_DAYS })} />}
         </HStack>
       </div>
     );
@@ -461,32 +469,32 @@ export function DocList() {
         <div className="doc-list" ref={listRef}>
           <header className="doc-list-head">
             <div className="doc-list-head__title">
-              <Heading level={1} type="display-3">Search results</Heading>
+              <Heading level={1} type="display-3">{t("pages.docList.search.title")}</Heading>
               <span className="doc-list-head__query">
-                <Text type="supporting" color="secondary">for “{query}”</Text>
+                <Text type="supporting" color="secondary">{t("pages.docList.search.forQuery", { query })}</Text>
               </span>
               {results && results.length > 0 && (
                 // A full answer is the top of a longer list, not a total.
-                <Badge variant="neutral" label={searchPage.full ? `Top ${results.length}` : String(results.length)} />
+                <Badge variant="neutral" label={searchPage.full ? t("pages.docList.search.top", { count: results.length }) : fmtInt(results.length)} />
               )}
             </div>
             {/* The way out: a shared `?q=` link has no history to go Back through. */}
-            <Button label="All documents" icon={<Files size={16} />} variant="ghost" size="sm" onClick={clearSearch} />
+            <Button label={t("common.allDocuments")} icon={<Files size={16} />} variant="ghost" size="sm" onClick={clearSearch} />
           </header>
           <VStack gap={2}>
             {results === null ? (
-              <Spinner label="Searching…" />
+              <Spinner label={t("pages.docList.search.searching")} />
             ) : (
               <>
                 {searchError && (
                   <Banner
                     status="error"
-                    title="Search failed"
+                    title={t("pages.docList.search.failedTitle")}
                     description={searchError}
                     // Spins on the button: swapping the banner for the page spinner would drop focus.
                     endContent={
                       <Button
-                        label="Retry"
+                        label={t("common.retry")}
                         variant="ghost"
                         size="sm"
                         isLoading={isSearching}
@@ -498,8 +506,8 @@ export function DocList() {
                 {searchDegraded && (
                   <Banner
                     status="warning"
-                    title="Matching words only"
-                    description="Semantic search is unavailable right now."
+                    title={t("pages.docList.search.degradedTitle")}
+                    description={t("pages.docList.search.degradedBody")}
                   />
                 )}
                 {/* Rows are links, so one opens in a new tab or copies its link; a plain click stays in the app. */}
@@ -514,7 +522,7 @@ export function DocList() {
                         label={
                           <span className="bidi-line search-hit">
                             {r.page_of && `${pageParentLabel(r.page_of)} › `}
-                            <Marked parts={markTerms(r.title || "Untitled", queryTerms(query))} />
+                            <Marked parts={markTerms(r.title || t("common.untitled"), queryTerms(query))} />
                           </span>
                         }
                         description={<Snippet text={r.snippet} />}
@@ -527,11 +535,15 @@ export function DocList() {
                 </LinkProvider>
                 {searchPage.full && searchPage.limit < SEARCH_MAX && !searchError && (
                   <HStack hAlign="center">
-                    <Button label="Show more" variant="secondary" size="sm" isLoading={isLoadingMore} onClick={showMore} />
+                    <Button label={t("pages.docList.search.showMore")} variant="secondary" size="sm" isLoading={isLoadingMore} onClick={showMore} />
                   </HStack>
                 )}
                 {results.length === 0 && !searchError && (
-                  <EmptyState title="No matches" description="Try a different search term." icon={<FileText size={28} />} />
+                  <EmptyState
+                    title={t("pages.docList.search.noMatches")}
+                    description={t("pages.docList.search.noMatchesHint")}
+                    icon={<FileText size={28} />}
+                  />
                 )}
               </>
             )}
@@ -555,8 +567,8 @@ export function DocList() {
               onShare={(id, kind) => setSharingDoc({ id, kind })}
               emptyState={
                 <EmptyState
-                  title="Nothing shared with you yet"
-                  description="When someone shares a document with you directly, it appears here."
+                  title={t("pages.docList.shared.emptyTitle")}
+                  description={t("pages.docList.shared.emptyBody")}
                   icon={<UsersIcon size={26} />}
                 />
               }
@@ -571,8 +583,8 @@ export function DocList() {
               onShare={(id, kind) => setSharingDoc({ id, kind })}
               emptyState={
                 <EmptyState
-                  title="No favorites yet"
-                  description="Star a document to keep it within reach here."
+                  title={t("pages.docList.favorites.emptyTitle")}
+                  description={t("pages.docList.favorites.emptyBody")}
                   icon={<Star size={26} />}
                 />
               }
@@ -667,10 +679,16 @@ function FlatDocTable({
   const rows = useMemo<LibraryRow[]>(() => {
     const mapped = (docs ?? []).map((raw) => docRow(stateEdits[raw.doc_id] ?? raw));
     const dir = sort.direction === "ascending" ? 1 : -1;
+    const locale = formatLocale();
     return mapped.sort((a, b) => {
-      const va = sort.key === "title" ? a.title.toLowerCase() : sort.key === "created_at" ? (a.created_at ?? "") : a.updated_at;
-      const vb = sort.key === "title" ? b.title.toLowerCase() : sort.key === "created_at" ? (b.created_at ?? "") : b.updated_at;
-      return va < vb ? -dir : va > vb ? dir : a.id.localeCompare(b.id);
+      let order: number;
+      if (sort.key === "title") order = a.title.localeCompare(b.title, locale);
+      else {
+        const va = sort.key === "created_at" ? (a.created_at ?? "") : a.updated_at;
+        const vb = sort.key === "created_at" ? (b.created_at ?? "") : b.updated_at;
+        order = va < vb ? -1 : va > vb ? 1 : 0;
+      }
+      return order !== 0 ? order * dir : a.id.localeCompare(b.id);
     });
   }, [docs, sort.key, sort.direction, stateEdits]);
 
@@ -688,13 +706,13 @@ function FlatDocTable({
         onActivate={(r) => onOpen(r.id)}
         onToggleFavorite={(id) => void favorites.toggle(id)}
         rowActions={(r) => [
-          { label: "Open", icon: <ExternalLink size={15} />, onClick: () => onOpen(r.id) },
-          { label: "Share…", icon: <Share2 size={15} />, onClick: () => onShare(r.id, shareKindOfDoc(r.doc)) },
+          { label: t("common.open"), icon: <ExternalLink size={15} />, onClick: () => onOpen(r.id) },
+          { label: t("pages.docList.row.share"), icon: <Share2 size={15} />, onClick: () => onShare(r.id, shareKindOfDoc(r.doc)) },
           ...(r.doc
             ? [
                 {
                   type: "section" as const,
-                  title: r.doc.doc_type === "database" ? "Database" : "Document",
+                  title: r.doc.doc_type === "database" ? t("common.database") : t("common.document"),
                   items: [
                     ...stateMenu(r.doc, (next) => setStateEdits((cur) => ({ ...cur, [next.doc_id]: next }))),
                     instructions.item({ kind: r.doc.doc_type === "database" ? "database" : "document", id: r.id, title: r.title }),

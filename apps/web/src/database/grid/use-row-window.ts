@@ -6,6 +6,7 @@ import type { RowGroup, RowRecord, RowValue } from "@stuga/protocol/databases/ty
 import { Databases } from "../../api";
 import type { ViewShape } from "../model/view-shape";
 import { errorMessage } from "../../lib/http/client";
+import { t } from "../../i18n/i18n";
 
 interface RowWindow {
   rows: RowRecord[];
@@ -60,7 +61,7 @@ export function useRowWindow(docId: string, tableId: string, shape: ViewShape, r
         if (!live) return;
         setLoading(false);
         setLoadError(true);
-        toast({ body: errorMessage(e, "Couldn't load rows."), type: "error" });
+        toast({ body: errorMessage(e, t("database.grid.loadRowsFailed")), type: "error" });
       });
     return () => {
       live = false;
@@ -81,7 +82,7 @@ export function useRowWindow(docId: string, tableId: string, shape: ViewShape, r
       setFetchedCount((c) => c + r.rows.length);
       if (r.groups) setGroups(r.groups);
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't load more rows."), type: "error" });
+      toast({ body: errorMessage(e, t("database.grid.loadMoreFailed")), type: "error" });
     } finally {
       setLoadingMore(false);
     }

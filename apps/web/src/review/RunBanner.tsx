@@ -9,6 +9,7 @@ import { useToast } from "@astryxdesign/core/Toast";
 import { ChevronDown, ChevronUp, Sparkles, Zap } from "lucide-react";
 import type { RunNotice } from "./use-run-ledger";
 import { anchorRect, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
+import { t } from "../i18n/i18n";
 
 /** How long after its last update a run still reads as streaming in. */
 const LIVE_WINDOW_MS = 5_000;
@@ -19,8 +20,8 @@ function useLiveWindow(updatedAt: number): boolean {
   useEffect(() => {
     const remaining = updatedAt + LIVE_WINDOW_MS - Date.now();
     if (remaining <= 0) return;
-    const t = setTimeout(() => tick((n) => n + 1), remaining);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => tick((n) => n + 1), remaining);
+    return () => clearTimeout(timer);
   }, [updatedAt]);
   return Date.now() - updatedAt < LIVE_WINDOW_MS;
 }
@@ -56,7 +57,7 @@ export function RunNotices({
             <UndoButton
               onUndo={() =>
                 onUndoDecision(runId, itemIds).catch((e: unknown) => {
-                  toast({ body: e instanceof Error && e.message ? e.message : "Couldn’t undo that.", type: "error" });
+                  toast({ body: e instanceof Error && e.message ? e.message : t("review.notice.undoFailed"), type: "error" });
                 })
               }
             />
@@ -76,7 +77,7 @@ export function RunNotices({
             <UndoButton
               onUndo={() =>
                 onUndo(runId).catch((e: unknown) => {
-                  toast({ body: e instanceof Error && e.message ? e.message : "Couldn’t undo these changes.", type: "error" });
+                  toast({ body: e instanceof Error && e.message ? e.message : t("review.notice.undoChangesFailed"), type: "error" });
                 })
               }
             />
@@ -100,7 +101,7 @@ function UndoButton({ onUndo }: { onUndo: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   return (
     <Button
-      label="Undo"
+      label={t("review.runBar.undo")}
       variant="ghost"
       size="sm"
       isDisabled={busy}
@@ -169,22 +170,22 @@ export function RunBanner({
             {controls}
             {list && (
               <Button
-                label={expanded ? "Hide the individual changes" : "Review each change"}
+                label={expanded ? t("review.runBar.hideEach") : t("review.runBar.reviewEachChange")}
                 variant="ghost"
                 size="sm"
                 icon={expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                 onClick={() => setExpanded((e) => !e)}
               >
-                Review each
+                {t("review.runBar.reviewEach")}
               </Button>
             )}
-            <Button label="Accept all" variant="primary" size="sm" isDisabled={busy} onClick={() => onDecide("accept")} />
+            <Button label={t("review.runBar.acceptAll")} variant="primary" size="sm" isDisabled={busy} onClick={() => onDecide("accept")} />
             {noteAction ? (
-              <ButtonGroup ref={rejectGroup} label="Reject all" size="sm">
-                <Button label="Reject all" variant="secondary" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
+              <ButtonGroup ref={rejectGroup} label={t("review.runBar.rejectAll")} size="sm">
+                <Button label={t("review.runBar.rejectAll")} variant="secondary" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
                 <DropdownMenu
                   button={{
-                    label: "More ways to reject",
+                    label: t("review.runBar.moreReject"),
                     variant: "secondary",
                     size: "sm",
                     isIconOnly: true,
@@ -204,7 +205,7 @@ export function RunBanner({
                 />
               </ButtonGroup>
             ) : (
-              <Button label="Reject all" variant="secondary" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
+              <Button label={t("review.runBar.rejectAll")} variant="secondary" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
             )}
           </HStack>
         }
@@ -241,7 +242,7 @@ export function CatchUpBanner({
         <HStack gap={2}>
           {view}
           {revert}
-          <Button label="Dismiss" variant="ghost" size="sm" onClick={onDismiss} />
+          <Button label={t("common.dismiss")} variant="ghost" size="sm" onClick={onDismiss} />
         </HStack>
       }
     />

@@ -96,7 +96,7 @@ describe("a co-author turn scoped to a collection", () => {
 
     expect(opened).toEqual([{ docId: "d_in", title: "Inside", markdown: "# Inside", instructions: [] }, { error: OUTSIDE }]);
     const edits = ws.frames().filter((f) => f.opcode === Opcode.AI_EDITS).map((f) => decodeJson<AiEditsPayload>(f.payload));
-    expect(edits.at(-1)!.cross_docs).toEqual([{ doc_id: "d_out", title: "Outside", staged: 0, mode: "error", message: OUTSIDE }]);
+    expect(edits.at(-1)!.cross_docs).toEqual([{ doc_id: "d_out", title: "Outside", staged: 0, mode: "error", error: { code: "no_access" } }]);
   });
 
   it("offers the model no other documents when the panel scope is this document only, and says so to the node", async () => {

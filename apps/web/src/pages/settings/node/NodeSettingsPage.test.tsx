@@ -589,7 +589,7 @@ describe("NodeSettingsPage", () => {
 
   it("sets reranking up on TypeSafe's defaults, saying what reranks until then", async () => {
     await renderWith(AI);
-    expect(host.textContent).toContain("Not set up: built-in ai reranks passages.");
+    expect(host.textContent).toContain("Not set up: built-in AI reranks passages.");
     savedAs(AI);
     await clickNth("Set up", 1);
     await typeInto(inputs("API key")[0], "ts-key");
@@ -683,7 +683,7 @@ describe("NodeSettingsPage", () => {
         calibration: { ...MEASURED.embed.calibration!, state: "failed", levels: null, message: "connect ECONNREFUSED", kind: "endpoint", next_attempt_at: null },
       },
     });
-    expect(host.textContent).toContain("Couldn't measure bge-m3");
+    expect(host.textContent).toContain("Couldn’t measure bge-m3");
     expect(host.textContent).toContain("Until then, nothing is dropped by distance.");
     expect(host.textContent).toContain("bge-m3 · Balanced · not measured");
     expect(visibleButtons("Measure again")).toHaveLength(1);
@@ -911,7 +911,7 @@ describe("NodeSettingsPage", () => {
   it("says why the last look failed", async () => {
     nodeApi.version.mockResolvedValue({ ...RELEASE, update: { ...RELEASE.update, error: "could not reach github.com" } });
     await mount("about");
-    expect(host.textContent).toContain("Couldn’t check: could not reach github.com.");
+    expect(host.textContent).toContain("Couldn’t check. Could not reach github.com.");
   });
 
   it("turns the look for new versions off at once, with nothing left to look with", async () => {

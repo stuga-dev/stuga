@@ -328,7 +328,7 @@ async function revertOp(db: Database, op: OpRow, actor: DatabaseActorIdentity, k
     const result = applyInverse(db.sql, inverse, now);
     pruned = recordOp(
       db.sql,
-      { opId: revertId, actor, kind: "revert", tableId: op.table_id, summary: `Reverted: ${op.summary}`, inline: null, blobKey: null, reverts: op.op_id, keep },
+      { opId: revertId, actor, kind: "revert", tableId: op.table_id, summary: `Reverted: ${op.summary}`, detail: { kind: "revert", of: op.detail?.kind === "revert" ? null : op.detail }, inline: null, blobKey: null, reverts: op.op_id, keep },
       now,
     );
     db.sql.exec(`UPDATE _ops SET reverted_by = ? WHERE op_id = ?`, revertId, op.op_id);

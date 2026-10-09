@@ -13,9 +13,11 @@ import {
   type NodeOperationalSettingsInput,
 } from "../../../api";
 import { copyText } from "../../../lib/clipboard";
+import type { ApiError } from "../../../lib/http/client";
 import { loadAuthConfig } from "../../../lib/session/auth-config";
 import { SectionStatusBanners, useSectionStatus } from "./status";
-import { StoredSecret } from "./StoredSecret";
+import { onFileBadge, StoredSecret } from "./StoredSecret";
+import { t, type MessageKey } from "../../../i18n/i18n";
 
 interface ProviderForm {
   issuer: string;
@@ -44,6 +46,17 @@ function providerInput(form: ProviderForm, secretRemoved: boolean): NodeOperatio
   };
 }
 
+/** Why the node would not take the issuer, by the code its discovery check refused with. */
+const DISCOVERY_REFUSALS: Record<string, MessageKey> = {
+  provider_discovery_unreachable: "nodeAccess.identity.discovery.unreachable",
+  provider_discovery_status: "nodeAccess.identity.discovery.status",
+  provider_discovery_invalid: "nodeAccess.identity.discovery.invalid",
+  provider_discovery_incomplete: "nodeAccess.identity.discovery.incomplete",
+  provider_discovery_issuer: "nodeAccess.identity.discovery.issuer",
+  provider_discovery_flow: "nodeAccess.identity.discovery.flow",
+  provider_discovery_pkce: "nodeAccess.identity.discovery.pkce",
+};
+
 /** What the button says by default: the host of the issuer being typed. */
 function hostOf(url: string): string | null {
   try {
@@ -62,19 +75,15 @@ function sameIssuer(a: string, b: string): boolean {
  * Who loses the only way in when every link to the provider is dropped. Nobody
  * is signed out, so whoever is still signed in can set a password first.
  */
-function lockedOut(withoutPassword: number): string | null {
-  if (withoutPassword === 0) return null;
-  const who = withoutPassword === 1 ? "1 person has" : `${withoutPassword} people have`;
-  return `${who} no password. Anyone still signed in can set one in Profile; the rest need a reset link.`;
-}
-
 function removeConsequence(withoutPassword: number): string {
-  return lockedOut(withoutPassword) ?? "People sign in with their password only.";
+  if (withoutPassword === 0) return t("nodeAccess.identity.passwordOnly");
+  return t("nodeAccess.identity.lockedOut", { count: withoutPassword });
 }
 
 /** A different issuer drops every link, as removing the provider does: a subject means nothing under another one. */
 function changeConsequence(withoutPassword: number): string {
-  return ["Everyone linked to the current provider has to link again.", lockedOut(withoutPassword)].filter(Boolean).join(" ");
+  if (withoutPassword === 0) return t("nodeAccess.identity.relink");
+  return t("nodeAccess.identity.relinkLockedOut", { count: withoutPassword });
 }
 
 /** The one identity provider the sign-in page offers beside passwords. */
@@ -93,6 +102,8 @@ export function IdentityProviderSection({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmChange, setConfirmChange] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  /** The node's own text under a discovery refusal: the URL or field it is about. */
+  const [detail, setDetail] = useState<string | null>(null);
 
   function applied(res: NodeOperationalSettings, message: string) {
     onSaved(res);
@@ -106,17 +117,23 @@ export function IdentityProviderSection({
   async function run(which: "save" | "remove", input: NodeOperationalSettingsInput, message: string) {
     setBusy(which);
     status.clear();
+    setDetail(null);
     try {
       applied(await NodeApi.saveSettings(input), message);
     } catch (e) {
-      status.fail(e);
+      const code = (e as ApiError).code;
+      const issuer = input.identity_provider?.issuer;
+      if (code && issuer && Object.hasOwn(DISCOVERY_REFUSALS, code)) {
+        status.setError(t(DISCOVERY_REFUSALS[code]!, { issuer }));
+        setDetail((e as Error).message);
+      } else status.fail(e);
     } finally {
       setBusy("");
     }
   }
 
   function save() {
-    void run("save", providerInput(form, secretRemoved), "Saved — live now, no restart.");
+    void run("save", providerInput(form, secretRemoved), t("common.savedLive"));
   }
 
   async function copy(url: string) {
@@ -127,52 +144,57 @@ export function IdentityProviderSection({
 
   return (
     <VStack gap={3}>
-      <Heading level={2}>Identity provider</Heading>
+      <Heading level={2}>{t("nodeAccess.identity.heading")}</Heading>
       <Text type="supporting" color="secondary">
-        Lets people sign in with an outside account as well as a password.
+        {t("nodeAccess.identity.intro")}
       </Text>
       <SectionStatusBanners status={status} />
+      {status.error && detail && (
+        <Text type="supporting" color="secondary">
+          {detail}
+        </Text>
+      )}
       {ip.client_secret_stale && (
         <Banner
           status="warning"
-          title="The client secret is missing from this node&apos;s files"
-          description="Paste it again to restore sign-in with the provider."
+          title={t("nodeAccess.identity.secretStale")}
+          description={t("nodeAccess.identity.secretStaleHelp")}
         />
       )}
       <TextInput
-        label="Issuer URL"
+        label={t("nodeAccess.identity.issuer")}
         value={form.issuer}
         placeholder="https://id.example.com"
         onChange={(v: string) => setForm({ ...form, issuer: v })}
       />
-      <TextInput label="Client ID" value={form.clientId} onChange={(v: string) => setForm({ ...form, clientId: v })} />
+      <TextInput label={t("nodeAccess.identity.clientId")} value={form.clientId} onChange={(v: string) => setForm({ ...form, clientId: v })} />
       <VStack gap={1}>
         <TextInput
-          label="Client secret"
+          label={t("nodeAccess.identity.clientSecret")}
           type="password"
           isOptional
           value={form.clientSecret}
           isDisabled={secretRemoved}
-          placeholder={ip.client_secret_set ? "Leave blank to keep the one on file" : "None for a public client"}
+          placeholder={ip.client_secret_set ? t("nodeAccess.secret.keepOnFile") : t("nodeAccess.identity.publicClient")}
           onChange={(v: string) => setForm({ ...form, clientSecret: v })}
         />
         <StoredSecret
-          onFile={ip.client_secret_set ? `On file · ${ip.client_secret_label ?? "set"}` : null}
+          onFile={ip.client_secret_set ? onFileBadge(ip.client_secret_label) : null}
           removed={secretRemoved}
           onRemove={() => setSecretRemoved(true)}
-          removeLabel="Remove"
-          removedNote="It will be removed when you save."
+          removeLabel={t("common.remove")}
+          removedNote={t("nodeAccess.secret.removedNote")}
         />
       </VStack>
       <TextInput
-        label="Button label"
+        label={t("nodeAccess.identity.buttonLabel")}
         isOptional
         value={form.label}
         placeholder={hostOf(form.issuer) ?? ip.default_label ?? ""}
         onChange={(v: string) => setForm({ ...form, label: v })}
       />
       <TextInput
-        label="Scopes"
+        label={t("nodeAccess.identity.scopes")}
         isOptional
         value={form.scopes}
         placeholder={ip.default_scopes}
@@ -181,19 +203,19 @@ export function IdentityProviderSection({
       {ip.callback_urls.length > 0 && (
         <VStack gap={1}>
           <Text size="sm" color="secondary">
-            Callback URLs · register each with the provider
+            {t("nodeAccess.identity.callbackUrls")}
           </Text>
           {ip.callback_urls.map((url) => (
             <HStack key={url} gap={2} vAlign="center">
               <Text>{url}</Text>
-              <Button label={copied === url ? "Copied" : "Copy"} variant="ghost" size="sm" onClick={() => void copy(url)} />
+              <Button label={copied === url ? t("common.copied") : t("common.copy")} variant="ghost" size="sm" onClick={() => void copy(url)} />
             </HStack>
           ))}
         </VStack>
       )}
       <HStack gap={2} vAlign="center">
         <Button
-          label="Save"
+          label={t("common.save")}
           variant="primary"
           size="sm"
           isDisabled={!form.issuer.trim() || !form.clientId.trim()}
@@ -202,7 +224,7 @@ export function IdentityProviderSection({
         />
         {ip.issuer !== null && (
           <Button
-            label="Remove provider"
+            label={t("nodeAccess.identity.removeProvider")}
             variant="ghost"
             size="sm"
             isLoading={busy === "remove"}
@@ -212,21 +234,21 @@ export function IdentityProviderSection({
       </HStack>
       <AlertDialog
         isOpen={confirmRemove}
-        title="Remove the identity provider?"
+        title={t("nodeAccess.identity.confirmRemove")}
         description={removeConsequence(ip.accounts_without_password)}
         onOpenChange={(open) => !open && setConfirmRemove(false)}
-        actionLabel="Remove"
+        actionLabel={t("common.remove")}
         onAction={() => {
           setConfirmRemove(false);
-          void run("remove", { identity_provider: null }, "Identity provider removed.");
+          void run("remove", { identity_provider: null }, t("nodeAccess.identity.removed"));
         }}
       />
       <AlertDialog
         isOpen={confirmChange}
-        title="Change the identity provider?"
+        title={t("nodeAccess.identity.confirmChange")}
         description={changeConsequence(ip.accounts_without_password)}
         onOpenChange={(open) => !open && setConfirmChange(false)}
-        actionLabel="Change"
+        actionLabel={t("nodeAccess.identity.change")}
         onAction={() => {
           setConfirmChange(false);
           save();

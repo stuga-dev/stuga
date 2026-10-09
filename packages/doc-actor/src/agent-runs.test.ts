@@ -254,8 +254,7 @@ describe("propose under an `auto` rule", () => {
       workspaceId: "ws1",
       eventType: "AGENT_EDITS_APPLIED",
       docId: DOC,
-      title: "Notes",
-      body: "Claude (Connector) edited this document — applied at once by policy",
+      params: { agent: "Claude (Connector)", doc: "Notes" },
       actor: "Claude (Connector)",
     });
 
@@ -1599,7 +1598,7 @@ describe("panel runs (the in-app co-author)", () => {
     const res = await panel(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha proposed." });
     expect(res.json.mode).toBe("proposed");
     expect(h.queued.filter((m) => (m as { kind?: string }).kind === "notify")).toMatchObject([
-      { recipient: "alice", eventType: "AGENT_EDITS_PROPOSED", body: "AI co-author proposed 1 change — waiting for your review" },
+      { recipient: "alice", eventType: "AGENT_EDITS_PROPOSED", params: { agent: "AI co-author", count: 1 } },
     ]);
   });
 

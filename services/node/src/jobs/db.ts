@@ -18,6 +18,7 @@ import {
   getNodeState,
   getReusableChunkEmbeddings,
   getUserDisplayName,
+  getUiLanguage,
   getUserEmail,
   getWebhook,
   getWorkspaceEvent,
@@ -85,6 +86,8 @@ export function jobsDb(sql: Sql) {
     recordDelivery: (id: string, outcome: { delivered: true } | { error: string }) => recordNotificationDelivery(sql, id, outcome),
     insertAuditEvents: (batch: AuditEventInsert[]) => insertAuditEvents(sql, batch),
     userEmail: (alias: string) => getUserEmail(sql, alias),
+    /** The language a person chose, and the one their browser last asked for at a sign-in. */
+    uiLanguage: (alias: string) => getUiLanguage(sql, alias),
     displayNameOf: (alias: string) => getUserDisplayName(sql, alias),
     /** Replace the document's mention set; the people not in it before. */
     syncDocMentions: (docId: string, aliases: string[]) => syncDocMentions(sql, docId, aliases),

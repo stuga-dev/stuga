@@ -14,7 +14,7 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { USERNAME_RULE, isValidUsername, normalizeUsername } from "@stuga/protocol/domain/username";
+import { isValidUsername, normalizeUsername } from "@stuga/protocol/domain/username";
 import { Brand, nodeName } from "../shell/Brand";
 import { AuthErrorBanner } from "../ui/AuthErrorBanner";
 import { readStored, removeStored, writeStored } from "../lib/storage";
@@ -37,6 +37,7 @@ import {
   type ProviderSession,
 } from "../lib/session/sign-in";
 import { setSession } from "../lib/session/tokens";
+import { t } from "../i18n/i18n";
 import "../styles/auth.css";
 
 /** Kept for the tab, so a reload still finds the ticket after the fragment is stripped. */
@@ -66,8 +67,8 @@ export function FirstVisit() {
     }
     let alive = true;
     peekTicket(ticket).then(
-      (t) => {
-        if (alive) setInfo(t);
+      (peeked) => {
+        if (alive) setInfo(peeked);
       },
       (err: unknown) => {
         if (alive) backToLogin(nav, describeError(err));
@@ -81,7 +82,7 @@ export function FirstVisit() {
   if (!info || !ticket) {
     return (
       <Center axis="both" className="auth-page">
-        <Spinner label="Signing you in…" />
+        <Spinner label={t("auth.signingIn")} />
       </Center>
     );
   }
@@ -155,7 +156,7 @@ function Choices({ ticket, info }: { ticket: string; info: FirstVisitTicket }) {
   function create() {
     const handle = normalizeUsername(username);
     if (!isValidUsername(handle)) {
-      setError(username.trim() ? USERNAME_RULE : "Choose a username.");
+      setError(username.trim() ? t("auth.username.rule") : t("auth.chooseUsername"));
       return;
     }
     // Creation redeemed the invite, so its /join link must not be visited to redeem it again.
@@ -181,7 +182,7 @@ function Choices({ ticket, info }: { ticket: string; info: FirstVisitTicket }) {
 
   function link() {
     if (!linkUsername.trim() || !password) {
-      setError("Enter your username and password.");
+      setError(t("auth.enterUsernameAndPassword"));
       return;
     }
     void run(() => linkWithPassword(ticket, normalizeUsername(linkUsername), password));
@@ -200,10 +201,10 @@ function Choices({ ticket, info }: { ticket: string; info: FirstVisitTicket }) {
 
           <VStack gap={1}>
             <Heading level={1} type="display-3">
-              {mode === "create" ? "Create your account" : "Link your account"}
+              {mode === "create" ? t("auth.createYourAccount") : t("auth.firstVisit.linkYourAccount")}
             </Heading>
             <Text type="supporting" color="secondary">
-              {who ? `Signed in with ${info.label} as ${who}.` : `Signed in with ${info.label}.`}
+              {who ? t("auth.firstVisit.signedInAs", { provider: info.label, who }) : t("auth.firstVisit.signedIn", { provider: info.label })}
             </Text>
           </VStack>
 
@@ -222,9 +223,9 @@ function Choices({ ticket, info }: { ticket: string; info: FirstVisitTicket }) {
           {mode === "create" ? (
             <VStack gap={4}>
               <VStack gap={3}>
-                <TextInput label="Full name" size="lg" isOptional value={name} onChange={setName} htmlName="name" />
+                <TextInput label={t("auth.fullName")} size="lg" isOptional value={name} onChange={setName} htmlName="name" />
                 <TextInput
-                  label="Username"
+                  label={t("common.username")}
                   size="lg"
                   isRequired
                   value={username}
@@ -234,13 +235,13 @@ function Choices({ ticket, info }: { ticket: string; info: FirstVisitTicket }) {
                   onEnter={create}
                 />
               </VStack>
-              <Button label="Create account" variant="primary" size="lg" width="100%" isLoading={busy} onClick={create} />
+              <Button label={t("auth.createAccount")} variant="primary" size="lg" width="100%" isLoading={busy} onClick={create} />
             </VStack>
           ) : (
             <VStack gap={4}>
               <VStack gap={3}>
                 <TextInput
-                  label="Username"
+                  label={t("common.username")}
                   size="lg"
                   value={linkUsername}
                   onChange={setLinkUsername}
@@ -248,7 +249,7 @@ function Choices({ ticket, info }: { ticket: string; info: FirstVisitTicket }) {
                   autoComplete="username"
                 />
                 <TextInput
-                  label="Password"
+                  label={t("common.password")}
                   type="password"
                   size="lg"
                   value={password}
@@ -257,14 +258,14 @@ function Choices({ ticket, info }: { ticket: string; info: FirstVisitTicket }) {
                   onEnter={link}
                 />
               </VStack>
-              <Button label="Link and sign in" variant="primary" size="lg" width="100%" isLoading={busy} onClick={link} />
+              <Button label={t("auth.firstVisit.linkAndSignIn")} variant="primary" size="lg" width="100%" isLoading={busy} onClick={link} />
             </VStack>
           )}
 
           <VStack gap={2} hAlign="stretch">
             {mode === "create" ? (
               <Button
-                label="I already have an account"
+                label={t("auth.firstVisit.haveAccount")}
                 variant="secondary"
                 size="lg"
                 width="100%"
@@ -273,7 +274,7 @@ function Choices({ ticket, info }: { ticket: string; info: FirstVisitTicket }) {
               />
             ) : invite ? (
               <Button
-                label="Create a new account"
+                label={t("auth.firstVisit.createNewAccount")}
                 variant="secondary"
                 size="lg"
                 width="100%"
@@ -282,12 +283,12 @@ function Choices({ ticket, info }: { ticket: string; info: FirstVisitTicket }) {
               />
             ) : (
               <Text type="supporting" color="secondary">
-                Creating an account here needs an invite link.
+                {t("auth.errors.inviteRequired")}
               </Text>
             )}
             <HStack gap={2} justify="center">
-              <Button label="Use a different account" variant="ghost" isDisabled={busy} onClick={chooseAnotherAccount} />
-              <Button label="Back to sign in" variant="ghost" isDisabled={busy} onClick={() => backToLogin(nav)} />
+              <Button label={t("auth.useDifferentAccount")} variant="ghost" isDisabled={busy} onClick={chooseAnotherAccount} />
+              <Button label={t("auth.backToSignIn")} variant="ghost" isDisabled={busy} onClick={() => backToLogin(nav)} />
             </HStack>
           </VStack>
         </VStack>

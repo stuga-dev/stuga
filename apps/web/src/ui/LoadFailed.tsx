@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { AlertCircle } from "lucide-react";
+import { t } from "../i18n/i18n";
 
 interface LoadFailedProps {
   /** Names what failed, e.g. "Couldn't load Trash". */
@@ -18,8 +19,8 @@ interface LoadFailedProps {
 }
 
 export function LoadFailed({
-  title = "Couldn’t load",
-  description = "Please try again in a moment.",
+  title = t("ui.loadFailed.title"),
+  description = t("ui.loadFailed.description"),
   icon,
   onRetry,
   isCompact = false,
@@ -30,7 +31,7 @@ export function LoadFailed({
       title={title}
       description={description}
       icon={icon ?? <AlertCircle size={isCompact ? 22 : 28} />}
-      actions={<Button label="Retry" variant="secondary" size="sm" onClick={onRetry} />}
+      actions={<Button label={t("common.retry")} variant="secondary" size="sm" onClick={onRetry} />}
     />
   );
 }

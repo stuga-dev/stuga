@@ -9,19 +9,24 @@ import { useToast } from "@astryxdesign/core/Toast";
 import { KeyRound } from "lucide-react";
 import { AgentKeys, Folders, type Folder, type KeyNarrowing } from "../api";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
-const ACCESS_OPTIONS = [
-  { value: "propose", label: "Read and propose edits", description: "Can read and search, and propose changes." },
-  { value: "read", label: "Read only", description: "Can read and search, but not make changes." },
-];
+function accessOptions() {
+  return [
+    { value: "propose", label: t("agents.key.accessPropose"), description: t("agents.key.accessProposeDescription") },
+    { value: "read", label: t("agents.key.accessRead"), description: t("agents.key.accessReadDescription") },
+  ];
+}
 
-const EXPIRY_OPTIONS = [
-  { value: "", label: "Never expires" },
-  { value: "7", label: "Expires in 7 days" },
-  { value: "30", label: "Expires in 30 days" },
-  { value: "90", label: "Expires in 90 days" },
-  { value: "365", label: "Expires in a year" },
-];
+function expiryOptions() {
+  return [
+    { value: "", label: t("agents.key.neverExpires") },
+    { value: "7", label: t("agents.key.expiresInDays", { days: 7 }) },
+    { value: "30", label: t("agents.key.expiresInDays", { days: 30 }) },
+    { value: "90", label: t("agents.key.expiresInDays", { days: 90 }) },
+    { value: "365", label: t("agents.key.expiresInYear") },
+  ];
+}
 
 /**
  * Minting a key for a config. The token lives only in this state: the node
@@ -52,10 +57,10 @@ export function useMintKey(onKeyCreated: () => void) {
       // The next key is another agent with its own reach.
       setName("");
       setNarrowing({});
-      toast({ body: `${key.name} created. Copy the config below — it carries the key.`, type: "info" });
+      toast({ body: t("agents.key.created", { name: key.name }), type: "info" });
       onKeyCreated();
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't create that key."), type: "error" });
+      toast({ body: errorMessage(e, t("agents.key.createFailed")), type: "error" });
     } finally {
       setMinting(false);
     }
@@ -79,8 +84,8 @@ export function MintKey({ mint, defaultName }: { mint: MintKeyState; defaultName
     <>
       {defaultName === undefined && (
         <TextInput
-          label="Agent name"
-          description="How this agent's edits are attributed in version history."
+          label={t("agents.key.agentName")}
+          description={t("agents.key.agentNameDescription")}
           placeholder="my-agent"
           value={name}
           onChange={setName}
@@ -89,25 +94,25 @@ export function MintKey({ mint, defaultName }: { mint: MintKeyState; defaultName
       )}
       <HStack gap={2} vAlign="end" style={{ flexWrap: "wrap", rowGap: 8 }}>
         <Selector
-          label="Access"
+          label={t("common.access")}
           size="sm"
           width={210}
           value={narrowing.access ?? "propose"}
           onChange={(v) => setNarrowing({ ...narrowing, access: v as "read" | "propose" })}
-          options={ACCESS_OPTIONS}
+          options={accessOptions()}
         />
         <Selector
-          label="Lifetime"
+          label={t("agents.key.lifetime")}
           size="sm"
           width={190}
           value={narrowing.expires_in_days ? String(narrowing.expires_in_days) : ""}
           onChange={(v) => setNarrowing({ ...narrowing, expires_in_days: v ? Number(v) : null })}
-          options={EXPIRY_OPTIONS}
+          options={expiryOptions()}
         />
         {folders.length > 0 && (
           <MultiSelector
-            label="Only these folders (empty = everything you can reach)"
-            options={folders.map((f) => ({ value: f.folder_id, label: f.title || "Untitled folder" }))}
+            label={t("agents.key.folders")}
+            options={folders.map((f) => ({ value: f.folder_id, label: f.title || t("common.untitledFolder") }))}
             value={narrowing.scope_folders ?? []}
             hasSearch
             onChange={(ids: string[]) => setNarrowing({ ...narrowing, scope_folders: ids.length ? ids : null })}
@@ -115,7 +120,7 @@ export function MintKey({ mint, defaultName }: { mint: MintKeyState; defaultName
         )}
         {/* In the same row as what it acts on, and last: the choices are made before the key exists. */}
         <Button
-          label="Create key"
+          label={t("agents.key.create")}
           variant="secondary"
           size="sm"
           icon={<KeyRound size={15} />}
@@ -127,8 +132,8 @@ export function MintKey({ mint, defaultName }: { mint: MintKeyState; defaultName
       {minted && (
         <Banner
           status="warning"
-          title={`Copy this config now — it carries ${minted.name}’s key`}
-          description="Shown once. Treat it like a password."
+          title={t("agents.key.copyTitle", { name: minted.name })}
+          description={t("agents.key.copyDescription")}
         />
       )}
     </>

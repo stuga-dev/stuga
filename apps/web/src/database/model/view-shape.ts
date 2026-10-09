@@ -5,6 +5,7 @@
  */
 import type { ColumnSpec, RowFilter, RowFilterNode, RowGroup, RowRecord, RowSort, RowValue, ViewSpec } from "@stuga/protocol/databases/types";
 import { filterGroupParts, isFilterGroup, makeFilterGroup } from "@stuga/protocol/databases/filters";
+import { t } from "../../i18n/i18n";
 
 export interface ViewShape {
   filter: RowFilterNode | null;
@@ -139,7 +140,7 @@ export function segmentGroups(rows: RowRecord[], groups: RowGroup[], keyOf: (row
 }
 
 export function groupLabel(value: RowValue, column: ColumnSpec | undefined): string {
-  if (value === null || value === undefined) return "(empty)";
-  if (column?.type === "checkbox") return value === 1 ? "Checked" : "Unchecked";
+  if (value === null || value === undefined) return t("database.value.empty");
+  if (column?.type === "checkbox") return value === 1 ? t("database.value.checked") : t("database.value.unchecked");
   return String(value);
 }

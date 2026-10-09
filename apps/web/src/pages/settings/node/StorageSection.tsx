@@ -12,6 +12,7 @@ import {
   type NodeOperationalSettingsInput,
   type NodeStorage,
 } from "../../../api";
+import { t } from "../../../i18n/i18n";
 import { byteSize } from "../../../lib/format";
 import { toOpsForm, type OpsForm } from "./ops-form";
 import { SectionStatusBanners, useSectionStatus } from "./status";
@@ -53,7 +54,7 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
       const res = await NodeApi.saveSettings(input);
       onSaved(res);
       setOpsForm(toOpsForm(res));
-      status.setNotice({ status: "success", message: "Saved — live now, no restart." });
+      status.setNotice({ status: "success", message: t("common.savedLive") });
     } catch (e) {
       status.fail(e);
     } finally {
@@ -65,18 +66,18 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
     <>
       <SectionStatusBanners status={status} />
       <VStack gap={3}>
-        <Heading level={2}>Disk</Heading>
-        <Text type="supporting" color="secondary">What this node takes, and what is left on its disk.</Text>
+        <Heading level={2}>{t("node.storage.disk")}</Heading>
+        <Text type="supporting" color="secondary">{t("node.storage.diskNote")}</Text>
         {disk ? (
           <MetadataList columns="single" label={{ position: "start" }}>
-            <MetadataListItem label="Database">{byteSize(disk.database_bytes)}</MetadataListItem>
-            <MetadataListItem label="Files">{byteSize(disk.files_bytes)}</MetadataListItem>
-            {disk.backups_bytes !== null && <MetadataListItem label="Backups">{byteSize(disk.backups_bytes)}</MetadataListItem>}
-            <MetadataListItem label="Free">{byteSize(disk.free_bytes)}</MetadataListItem>
+            <MetadataListItem label={t("common.database")}>{byteSize(disk.database_bytes)}</MetadataListItem>
+            <MetadataListItem label={t("node.storage.files")}>{byteSize(disk.files_bytes)}</MetadataListItem>
+            {disk.backups_bytes !== null && <MetadataListItem label={t("node.storage.backups")}>{byteSize(disk.backups_bytes)}</MetadataListItem>}
+            <MetadataListItem label={t("node.storage.free")}>{byteSize(disk.free_bytes)}</MetadataListItem>
           </MetadataList>
         ) : (
           <Text type="supporting" color="secondary">
-            Measuring…
+            {t("node.storage.measuring")}
           </Text>
         )}
       </VStack>
@@ -84,12 +85,12 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
       <Divider />
 
       <VStack gap={3}>
-        <Heading level={2}>Uploads</Heading>
-        <Text type="supporting" color="secondary">The largest file anyone may attach.</Text>
+        <Heading level={2}>{t("node.storage.uploads")}</Heading>
+        <Text type="supporting" color="secondary">{t("node.storage.uploadsNote")}</Text>
         <VStack gap={1}>
           <NumberInput
-            label="Maximum upload size"
-            units="MB"
+            label={t("node.storage.maxUpload")}
+            units={t("node.storage.mb")}
             min={1}
             max={ops.limits.ceiling_mb}
             isIntegerOnly
@@ -97,12 +98,12 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
             onChange={(v: number) => setOpsForm({ ...opsForm, maxUploadMb: v })}
           />
           <Text type="supporting" color="secondary">
-            At most {ops.limits.ceiling_mb} MB — each upload is held in memory while it arrives.
+            {t("node.storage.uploadCeiling", { mb: ops.limits.ceiling_mb })}
           </Text>
         </VStack>
         <HStack gap={2} vAlign="center">
           <Button
-            label="Save"
+            label={t("common.save")}
             variant="primary"
             size="sm"
             isLoading={opsBusy === "limits"}
@@ -114,56 +115,56 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
       <Divider />
 
       <VStack gap={3}>
-        <Heading level={2}>Audit retention</Heading>
+        <Heading level={2}>{t("node.storage.auditRetention")}</Heading>
         <Text type="supporting" color="secondary">
-          Days before audit history is purged. 0 keeps it forever.
+          {t("node.storage.auditRetentionNote")}
         </Text>
         <VStack gap={1}>
           <NumberInput
-            label="Keep audit history for"
-            units="days"
+            label={t("node.storage.auditKeep")}
+            units={t("node.storage.days")}
             min={0}
             isIntegerOnly
             value={opsForm.auditRetentionDays}
             onChange={(v: number) => setOpsForm({ ...opsForm, auditRetentionDays: v })}
           />
         </VStack>
-        <Heading level={2}>Database activity</Heading>
+        <Heading level={2}>{t("node.storage.databaseActivity")}</Heading>
         <Text type="supporting" color="secondary">
-          Changes kept per database. Dropped changes can’t be reverted. 0 keeps all.
+          {t("node.storage.databaseActivityNote")}
         </Text>
         <VStack gap={1}>
           <NumberInput
-            label="Keep the most recent"
-            units="changes"
+            label={t("node.storage.databaseKeep")}
+            units={t("node.storage.changes")}
             min={0}
             isIntegerOnly
             value={opsForm.databaseOpsKeep}
             onChange={(v: number) => setOpsForm({ ...opsForm, databaseOpsKeep: v })}
           />
         </VStack>
-        <Heading level={2}>AI usage history</Heading>
+        <Heading level={2}>{t("node.storage.aiUsage")}</Heading>
         <Text type="supporting" color="secondary">
-          Days to keep per-call usage records. 0 keeps them forever.
+          {t("node.storage.aiUsageNote")}
         </Text>
         <VStack gap={1}>
           <NumberInput
-            label="Keep AI usage records for"
-            units="days"
+            label={t("node.storage.aiUsageKeep")}
+            units={t("node.storage.days")}
             min={0}
             isIntegerOnly
             value={opsForm.aiUsageRetentionDays}
             onChange={(v: number) => setOpsForm({ ...opsForm, aiUsageRetentionDays: v })}
           />
         </VStack>
-        <Heading level={2}>Ask threads</Heading>
+        <Heading level={2}>{t("node.storage.askThreads")}</Heading>
         <Text type="supporting" color="secondary">
-          Days to keep idle conversations. 0 keeps them forever.
+          {t("node.storage.askThreadsNote")}
         </Text>
         <VStack gap={1}>
           <NumberInput
-            label="Keep idle Ask threads for"
-            units="days"
+            label={t("node.storage.askThreadsKeep")}
+            units={t("node.storage.days")}
             min={0}
             isIntegerOnly
             value={opsForm.askThreadRetentionDays}
@@ -172,7 +173,7 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
         </VStack>
         <HStack gap={2} vAlign="center">
           <Button
-            label="Save"
+            label={t("common.save")}
             variant="primary"
             size="sm"
             isLoading={opsBusy === "maintenance"}

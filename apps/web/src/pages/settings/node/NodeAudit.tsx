@@ -7,7 +7,8 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { Table, pixel, proportional } from "@astryxdesign/core/Table";
 import { Token } from "@astryxdesign/core/Token";
 import { VStack } from "@astryxdesign/core/VStack";
-import { absoluteTime, fmtInt, relativeTime } from "../../../lib/format";
+import { t } from "../../../i18n/i18n";
+import { absoluteTime, relativeTime } from "../../../lib/format";
 import { NodeSettings as NodeApi, type AuditCursor, type AuditEvent } from "../../../api";
 import { resolveNames, useNamesVersion } from "../../../state/identity";
 import { ActorName } from "../../../ui/ActorName";
@@ -36,7 +37,7 @@ export function NodeAudit() {
         resolveNames(r.events.map((e) => e.on_behalf_of ?? e.actor));
       })
       .catch(() => {
-        if (alive) setFailed("Couldn’t load the node’s audit log.");
+        if (alive) setFailed(t("node.audit.loadFailed"));
       });
     return () => {
       alive = false;
@@ -52,7 +53,7 @@ export function NodeAudit() {
       setCursor(r.next_before);
       resolveNames(r.events.map((e) => e.on_behalf_of ?? e.actor));
     } catch {
-      setFailed("Couldn’t load older events.");
+      setFailed(t("node.audit.olderFailed"));
     } finally {
       setLoadingOlder(false);
     }
@@ -61,30 +62,30 @@ export function NodeAudit() {
   const columns = [
     {
       key: "at",
-      header: "When",
+      header: t("node.audit.when"),
       width: pixel(110),
       renderCell: (e: AuditEvent) => <span title={absoluteTime(e.at)}>{relativeTime(e.at)}</span>,
     },
     {
       key: "who",
-      header: "Who",
+      header: t("node.audit.who"),
       width: proportional(1),
       renderCell: (e: AuditEvent) => (
         <ActorName
           alias={e.on_behalf_of ?? e.actor}
-          title={e.on_behalf_of ? `${e.actor} for ${e.on_behalf_of}` : e.actor}
+          title={e.on_behalf_of ? t("node.audit.actorFor", { actor: e.actor, principal: e.on_behalf_of }) : e.actor}
         />
       ),
     },
     {
       key: "action",
-      header: "What",
+      header: t("node.audit.what"),
       width: proportional(1),
       renderCell: (e: AuditEvent) => (
         <HStack gap={2} vAlign="center" style={{ minWidth: 0 }}>
           {e.status !== "ok" && (
             <HStack style={KEEP}>
-              <Token label="Refused" color="red" size="sm" />
+              <Token label={t("node.audit.refused")} color="red" size="sm" />
             </HStack>
           )}
           <span title={e.action} style={CLAMP}>
@@ -95,7 +96,7 @@ export function NodeAudit() {
     },
     {
       key: "target",
-      header: "Target",
+      header: t("node.audit.target"),
       width: proportional(1),
       renderCell: (e: AuditEvent) => (
         <span title={`${e.target_kind ?? "?"} · ${e.target_id ?? ""}`} style={CLAMP}>
@@ -107,19 +108,19 @@ export function NodeAudit() {
 
   return (
     <VStack gap={3}>
-      <Heading level={2}>Node audit</Heading>
+      <Heading level={2}>{t("node.audit.heading")}</Heading>
       <Text type="supporting" color="secondary">
-        Node settings, administrators, recovery links and rejected requests. Workspace events stay in each workspace’s log.
+        {t("node.audit.about")}
       </Text>
       {failed && (
         <Text type="supporting" color="secondary">
           {failed}
         </Text>
       )}
-      {!events && !failed && <Spinner label="Loading the node’s audit log…" />}
+      {!events && !failed && <Spinner label={t("node.audit.loading")} />}
       {events && events.length === 0 && (
         <Text type="supporting" color="secondary">
-          Nothing recorded yet.
+          {t("node.audit.empty")}
         </Text>
       )}
       {events && events.length > 0 && (
@@ -127,13 +128,11 @@ export function NodeAudit() {
           <Table data={events} columns={columns} idKey="id" dividers="rows" density="compact" />
           <HStack gap={2} vAlign="center" wrap="wrap">
             <Text type="supporting" color="secondary">
-              {cursor
-                ? `${fmtInt(events.length)} events loaded. There may be older ones.`
-                : `${fmtInt(events.length)} events loaded. Nothing older is recorded.`}
+              {cursor ? t("node.audit.loadedMore", { count: events.length }) : t("node.audit.loadedAll", { count: events.length })}
             </Text>
             {cursor && (
               <Button
-                label="Load older"
+                label={t("node.audit.loadOlder")}
                 variant="secondary"
                 size="sm"
                 isLoading={loadingOlder}

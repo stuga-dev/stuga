@@ -11,10 +11,13 @@ import { List } from "@astryxdesign/core/List";
 import { Item } from "@astryxdesign/core/Item";
 import { Text } from "@astryxdesign/core/Text";
 import { Bell } from "lucide-react";
+import { parseDeliveryError, type DeliveryErrorCode } from "@stuga/protocol/notify/events";
+import { renderNotification } from "@stuga/protocol/notify/render";
 import { getActiveWorkspace, setActiveWorkspace } from "../lib/session/workspace-pointer";
 import type { Notification } from "../api";
 import { useNotifications } from "../state/notifications";
 import { relativeTime } from "../lib/format";
+import { t, uiLanguage, type MessageKey } from "../i18n/i18n";
 
 /**
  * The path of a notification's stored URL. The host is dropped, so the
@@ -29,10 +32,19 @@ function safeInternalPath(raw: string): string | null {
   }
 }
 
+/** The language a notification is written in: the interface's, English under pseudo-text. */
+function notificationLanguage(): string {
+  const lang = uiLanguage();
+  return lang === "en-XA" ? "en" : lang;
+}
+
 function present(n: Notification): { label: string; to: string | null } {
-  // A row without a title is named by its event: "REQUEST_ACCESS" → "Request access".
-  const fallback = n.event_type.replace(/_/g, " ").toLowerCase();
-  const label = n.resource_title ?? fallback.charAt(0).toUpperCase() + fallback.slice(1);
+  // Written from the event and its params in the reader's language; an event this build does not
+  // know reads its resource's title, else its type.
+  const label =
+    renderNotification(n.event_type, n.payload ?? {}, notificationLanguage())?.title ??
+    n.resource_title ??
+    n.event_type; // i18n-exempt: an identifier, for an event no catalog knows
   const to = n.resource_id
     ? `/doc/${n.resource_id}`
     : n.resource_url
@@ -41,7 +53,41 @@ function present(n: Notification): { label: string; to: string | null } {
   return { label, to };
 }
 
-const CHANNELS: Record<string, string> = { email: "email", slack: "Slack", teams: "Teams", discord: "Discord", webhook: "webhook" };
+/** A channel as the tray names it: the services by their names, the rest in the reader's words. */
+function channelName(sink: string): string {
+  switch (sink) {
+    case "email":
+      return t("notifications.channel.email");
+    case "webhook":
+      return t("notifications.channel.webhook");
+    case "slack":
+      return "Slack"; // i18n-exempt: a product name
+    case "teams":
+      return "Teams"; // i18n-exempt: a product name
+    case "discord":
+      return "Discord"; // i18n-exempt: a product name
+    default:
+      return sink;
+  }
+}
+
+const NOT_SENT: Record<DeliveryErrorCode, MessageKey> = {
+  email_not_set_up: "notifications.delivery.emailNotSetUp",
+  no_email_address: "notifications.delivery.noEmailAddress",
+  no_sink: "notifications.delivery.noSink",
+  no_webhook_url: "notifications.delivery.noWebhookUrl",
+  channel_changed: "notifications.delivery.channelChanged",
+  node_restarted: "notifications.delivery.nodeRestarted",
+  not_sent: "notifications.delivery.notSent",
+};
+
+/** Why a delivery did not happen, from the code its row keeps. */
+function notSentLine(channel: string, stored: string): string {
+  const why = parseDeliveryError(stored);
+  if (why.code === "sink_answered") return t("notifications.delivery.sinkAnswered", { channel, status: why.status });
+  if (why.code === "failed") return t("notifications.delivery.failed", { channel, detail: why.detail.replace(/\.$/, "") });
+  return t(NOT_SENT[why.code], { channel });
+}
 
 /**
  * Whether a notification about the node or one's own account also went out by the node's channel:
@@ -50,11 +96,11 @@ const CHANNELS: Record<string, string> = { email: "email", slack: "Slack", teams
  */
 export function deliveryLine(n: Pick<Notification, "delivery_channel" | "delivered_at" | "delivery_error">): string | undefined {
   if (!n.delivery_channel) return undefined;
-  if (n.delivery_channel === "none") return "Shown in Stuga only.";
-  const channel = CHANNELS[n.delivery_channel] ?? n.delivery_channel;
-  if (n.delivered_at) return `Also sent by ${channel}.`;
-  if (n.delivery_error) return `Not sent by ${channel}: ${n.delivery_error.replace(/\.$/, "")}.`;
-  return `Sending by ${channel}…`;
+  if (n.delivery_channel === "none") return t("notifications.delivery.inStugaOnly");
+  const channel = channelName(n.delivery_channel);
+  if (n.delivered_at) return t("notifications.delivery.sent", { channel });
+  if (n.delivery_error) return notSentLine(channel, n.delivery_error);
+  return t("notifications.delivery.sending", { channel });
 }
 
 /** A target in another workspace switches there and reloads, like WorkspaceSwitcher. A row about the node is in none. */
@@ -109,9 +155,9 @@ export function NotificationsBell() {
       placement="below"
       alignment="end"
       width={340}
-      label="Notifications"
+      label={t("common.notifications")}
       content={
-        <List hasDividers header={<Text type="label">Notifications</Text>}>
+        <List hasDividers header={<Text type="label">{t("common.notifications")}</Text>}>
           {(notifications ?? []).map((n) => {
             const { label, to } = present(n);
             return (
@@ -148,10 +194,10 @@ export function NotificationsBell() {
             <li className="notif-empty">
               <Text type="supporting" color="secondary">
                 {rowsFailed
-                  ? "Couldn’t load notifications."
+                  ? t("notifications.tray.loadFailed")
                   : unread > 0
-                    ? "Couldn’t show these notifications."
-                    : "You’re all caught up."}
+                    ? t("notifications.tray.showFailed")
+                    : t("notifications.tray.allCaughtUp")}
               </Text>
             </li>
           )}
@@ -160,7 +206,7 @@ export function NotificationsBell() {
     >
       <span className="notif-trigger">
         <IconButton
-          label={`Notifications${unread ? ` (${unread} unread)` : ""}`}
+          label={unread ? t("notifications.tray.unreadLabel", { count: unread }) : t("common.notifications")}
           variant="ghost"
           icon={<Bell size={18} />}
         />

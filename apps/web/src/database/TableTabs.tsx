@@ -6,6 +6,7 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { Pencil, Plus, Table2, Trash2 } from "lucide-react";
 import type { TableSchema } from "@stuga/protocol/databases/types";
 import { MenuTab } from "./MenuTab";
+import { t } from "../i18n/i18n";
 
 export function TableTabs({
   tables,
@@ -26,32 +27,32 @@ export function TableTabs({
   onDelete: (table: TableSchema) => void;
 }) {
   return (
-    <div className="db-tabs db-tables" role="tablist" aria-label="Tables">
-      {tables.map((t) => {
-        const label = t.display || "Untitled table";
+    <div className="db-tabs db-tables" role="tablist" aria-label={t("database.tables.label")}>
+      {tables.map((table) => {
+        const label = table.display || t("database.tables.untitled");
         return (
           <MenuTab
-            key={t.table_id}
+            key={table.table_id}
             label={label}
             title={label}
             icon={<Table2 size={14} aria-hidden="true" />}
-            isActive={t.table_id === activeId}
+            isActive={table.table_id === activeId}
             menu={
               readOnly
                 ? undefined
                 : {
-                    label: `Actions for table ${label}`,
+                    label: t("database.tables.actions", { name: label }),
                     items: [
-                      { label: "Rename…", icon: <Pencil size={15} />, onClick: () => onRename(t) },
-                      { label: "Delete table…", icon: <Trash2 size={15} />, onClick: () => onDelete(t) },
+                      { label: t("common.renameEllipsis"), icon: <Pencil size={15} />, onClick: () => onRename(table) },
+                      { label: t("database.tables.delete"), icon: <Trash2 size={15} />, onClick: () => onDelete(table) },
                     ],
                   }
             }
-            onSelect={() => onSelect(t.table_id)}
+            onSelect={() => onSelect(table.table_id)}
           />
         );
       })}
-      {!readOnly && <IconButton label="New table" variant="ghost" size="sm" icon={<Plus size={15} />} onClick={onCreate} />}
+      {!readOnly && <IconButton label={t("database.tables.new")} variant="ghost" size="sm" icon={<Plus size={15} />} onClick={onCreate} />}
     </div>
   );
 }

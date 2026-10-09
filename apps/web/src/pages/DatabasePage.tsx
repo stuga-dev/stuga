@@ -42,16 +42,19 @@ import { Brand } from "../shell/Brand";
 import { DbRunsProvider } from "../review/db-runs-context";
 import { DatabaseSocket } from "../sync/database-socket";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
 /** Shown once the socket stops retrying, a state the link-health model has no phase for. */
-const LINK_GAVE_UP: IndicatorReadout = {
-  phase: "prolonged",
-  tone: "error",
-  label: "Not connected",
-  srText: "Live updates are off. Reload the page to reconnect.",
-  expanded: true,
-  persistent: true,
-};
+function linkGaveUpReadout(): IndicatorReadout {
+  return {
+    phase: "prolonged",
+    tone: "error",
+    label: t("pages.database.notConnected"),
+    srText: t("pages.database.notConnectedNote"),
+    expanded: true,
+    persistent: true,
+  };
+}
 
 export function DatabasePage({ doc }: { doc: DocSummary }) {
   const nav = useNavigate();
@@ -177,7 +180,7 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
         connSignals.onSyncDone();
         setLinkGaveUp(false);
       } else if (st === "gave_up") {
-        // The model's terminal event stops its clock; LINK_GAVE_UP hides its wording.
+        // The model's terminal event stops its clock; linkGaveUpReadout() hides its wording.
         connSignals.onRevoked();
         setLinkGaveUp(true);
       } else {
@@ -222,7 +225,7 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
       selectTable(r.table.table_id);
     } catch (e) {
       noteWriteError(e);
-      toast({ body: errorMessage(e, "Couldn't create the table."), type: "error" });
+      toast({ body: errorMessage(e, t("pages.database.createTableFailed")), type: "error" });
     }
   }
 
@@ -233,7 +236,7 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
       await loadSchema();
     } catch (e) {
       noteWriteError(e);
-      toast({ body: errorMessage(e, "Couldn't rename the table."), type: "error" });
+      toast({ body: errorMessage(e, t("pages.database.renameTableFailed")), type: "error" });
     }
   }
 
@@ -246,7 +249,7 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
       await loadSchema();
     } catch (e) {
       noteWriteError(e);
-      toast({ body: errorMessage(e, "Couldn't delete the table."), type: "error" });
+      toast({ body: errorMessage(e, t("pages.database.deleteTableFailed")), type: "error" });
     } finally {
       setDeleteTableBusy(false);
     }
@@ -313,14 +316,14 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
     <DbRunsProvider socket={socket} docId={docId} onApplied={() => void loadSchema()}>
     <div className="doc-page">
       <TopNav
-        label="Database"
+        label={t("common.database")}
         className="item-nav"
         startContent={
           <HStack gap={2} vAlign="center">
-            <button className="brand brand--link" onClick={() => nav("/")} title="All documents" aria-label="All documents">
+            <button className="brand brand--link" onClick={() => nav("/")} title={t("common.allDocuments")} aria-label={t("common.allDocuments")}>
               <Brand />
             </button>
-            <ItemTitle rename={rename} readOnly={readOnly} label="Database title" />
+            <ItemTitle rename={rename} readOnly={readOnly} label={t("pages.database.titleLabel")} />
             <DocStateChips
               locked={locked}
               searchHidden={searchHidden}
@@ -328,12 +331,12 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
               readOnly={readOnly}
               noun="database"
             />
-            <ConnectionStatus status={linkGaveUp ? LINK_GAVE_UP : connStatus} />
+            <ConnectionStatus status={linkGaveUp ? linkGaveUpReadout() : connStatus} />
           </HStack>
         }
         endContent={
           <HStack gap={1} vAlign="center">
-            <DockToggle isPressed={dock.state.visible} onToggle={dock.toggle} tooltip="Side panels — AI co-author, activity" />
+            <DockToggle isPressed={dock.state.visible} onToggle={dock.toggle} tooltip={t("pages.database.dockTooltip")} />
             <ItemOptionsMenu
               doc={docState}
               readOnly={readOnly}
@@ -341,14 +344,14 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
               onStateChanged={onStateChanged}
               extras={[
                 {
-                  label: "Import…",
+                  label: t("pages.database.import"),
                   icon: <Upload size={15} />,
                   isDisabled: readOnly || !activeTable,
                   onClick: () => setImportOpen(true),
                 },
               ]}
             />
-            <Button label="Share" variant="secondary" icon={<Share2 size={16} />} isIconOnly={isCompact} onClick={() => setShowShare(true)} />
+            <Button label={t("common.share")} variant="secondary" icon={<Share2 size={16} />} isIconOnly={isCompact} onClick={() => setShowShare(true)} />
             <NotificationsBell />
             <AccountMenu />
           </HStack>
@@ -357,22 +360,22 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
       {linkGaveUp && (
         <Banner
           status="warning"
-          title="Live updates are off"
-          description="Rows and agent proposals may be outdated. Reload to reconnect."
-          endContent={<Button label="Reload" variant="secondary" size="sm" onClick={() => window.location.reload()} />}
+          title={t("pages.database.liveOff.title")}
+          description={t("pages.database.liveOff.body")}
+          endContent={<Button label={t("pages.database.reload")} variant="secondary" size="sm" onClick={() => window.location.reload()} />}
         />
       )}
       <div className="doc-body">
         <main className="db-main">
           {schema === null && !schemaError && (
             <VStack gap={2} hAlign="center" style={{ paddingTop: "18vh" }}>
-              <Spinner label="Loading database…" />
+              <Spinner label={t("pages.database.loading")} />
             </VStack>
           )}
           {schemaError && (
             <VStack gap={3} hAlign="center" style={{ paddingTop: "18vh" }}>
               <LoadFailed
-                title="Couldn’t load this database"
+                title={t("pages.database.loadFailed")}
                 icon={<Database size={28} />}
                 onRetry={() => void loadSchema()}
               />
@@ -402,12 +405,12 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
               ) : (
                 <div className="db-grid-center">
                   <EmptyState
-                    title="No tables yet"
-                    description="Create a table to start entering data."
+                    title={t("pages.database.noTables.title")}
+                    description={t("pages.database.noTables.body")}
                     icon={<Table2 size={28} />}
                     actions={
                       !readOnly ? (
-                        <Button label="New table" variant="primary" size="sm" onClick={() => setNewTableOpen(true)} />
+                        <Button label={t("pages.database.newTable")} variant="primary" size="sm" onClick={() => setNewTableOpen(true)} />
                       ) : undefined
                     }
                   />
@@ -448,27 +451,27 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
       )}
       <PromptDialog
         isOpen={newTableOpen}
-        title="New table"
-        label="Table name"
-        submitLabel="Create"
+        title={t("pages.database.newTable")}
+        label={t("pages.database.tableName")}
+        submitLabel={t("common.create")}
         onSubmit={createTable}
         onClose={() => setNewTableOpen(false)}
       />
       <PromptDialog
         isOpen={renamingTable !== null}
-        title="Rename table"
-        label="Table name"
+        title={t("pages.database.renameTable")}
+        label={t("pages.database.tableName")}
         initialValue={renamingTable?.display ?? ""}
-        submitLabel="Rename"
+        submitLabel={t("common.rename")}
         onSubmit={renameTable}
         onClose={() => setRenamingTable(null)}
       />
       <AlertDialog
         isOpen={deletingTable !== null}
         onOpenChange={(o) => !o && !deleteTableBusy && setDeletingTable(null)}
-        title={`Delete table “${deletingTable?.display ?? ""}”?`}
-        description={`Its ${deletingTable?.row_count ?? 0} row${(deletingTable?.row_count ?? 0) === 1 ? "" : "s"} and columns are deleted permanently.`}
-        actionLabel="Delete table"
+        title={t("pages.database.deleteTable.title", { name: deletingTable?.display ?? "" })}
+        description={t("pages.database.deleteTable.body", { count: deletingTable?.row_count ?? 0 })}
+        actionLabel={t("pages.database.deleteTable.action")}
         isActionLoading={deleteTableBusy}
         onAction={deleteTable}
       />

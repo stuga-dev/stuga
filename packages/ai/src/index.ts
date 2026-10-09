@@ -1,7 +1,7 @@
 export type { AiConfig, AiModelChoice, AiProvider, ChatEndpoint } from "./config.js";
 export { resolveModel } from "./models.js";
 export { probeChat } from "./chat.js";
-export { failureReason, type ModelFailure } from "./failure.js";
+export type { ModelFailure } from "./failure.js";
 export { AiError } from "./transport.js";
 export { listModels } from "./list-models.js";
 export { EMBED_BATCH, embed, embedInputs, requestedDims, type EmbedResult } from "./retrieval/embed.js";

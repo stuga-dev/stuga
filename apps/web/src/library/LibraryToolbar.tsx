@@ -8,6 +8,7 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Check, Filter, ListFilter, User, X } from "lucide-react";
+import { t, type MessageKey } from "../i18n/i18n";
 
 export type OwnerFilter = "anyone" | "me";
 export type TypeFilter = "all" | "prose" | "database";
@@ -21,8 +22,12 @@ interface LibraryToolbarProps {
   onNameFilterChange: (v: string) => void;
 }
 
-const OWNER_LABEL: Record<OwnerFilter, string> = { anyone: "Anyone", me: "Me" };
-const TYPE_LABEL: Record<TypeFilter, string> = { all: "All types", prose: "Documents", database: "Databases" };
+const OWNER_LABEL: Record<OwnerFilter, MessageKey> = { anyone: "library.toolbar.ownerAnyone", me: "library.toolbar.ownerMe" };
+const TYPE_LABEL: Record<TypeFilter, MessageKey> = {
+  all: "library.toolbar.typeAll",
+  prose: "library.toolbar.typeDocuments",
+  database: "library.toolbar.typeDatabases",
+};
 
 export function LibraryToolbar({
   ownerFilter,
@@ -36,34 +41,34 @@ export function LibraryToolbar({
     <div className="library-toolbar">
       <div className="library-toolbar__filter">
         <TextInput
-          label="Filter this list"
+          label={t("library.toolbar.filterLabel")}
           isLabelHidden
           size="sm"
           value={nameFilter}
           onChange={onNameFilterChange}
-          placeholder="Filter this list…"
+          placeholder={t("library.toolbar.filterPlaceholder")}
           startIcon={<ListFilter size={15} />}
           hasClear
         />
       </div>
       <DropdownMenu
-        button={{ label: OWNER_LABEL[ownerFilter], variant: "ghost", size: "sm", icon: <User size={15} /> }}
+        button={{ label: t(OWNER_LABEL[ownerFilter]), variant: "ghost", size: "sm", icon: <User size={15} /> }}
         menuWidth={180}
         placement="below"
         hasChevron
         items={(["anyone", "me"] as OwnerFilter[]).map((v) => ({
-          label: OWNER_LABEL[v],
+          label: t(OWNER_LABEL[v]),
           icon: ownerFilter === v ? <Check size={15} /> : undefined,
           onClick: () => onOwnerFilterChange(v),
         }))}
       />
       <DropdownMenu
-        button={{ label: TYPE_LABEL[typeFilter], variant: "ghost", size: "sm", icon: <Filter size={15} /> }}
+        button={{ label: t(TYPE_LABEL[typeFilter]), variant: "ghost", size: "sm", icon: <Filter size={15} /> }}
         menuWidth={180}
         placement="below"
         hasChevron
         items={(["all", "prose", "database"] as TypeFilter[]).map((v) => ({
-          label: TYPE_LABEL[v],
+          label: t(TYPE_LABEL[v]),
           icon: typeFilter === v ? <Check size={15} /> : undefined,
           onClick: () => onTypeFilterChange(v),
         }))}
@@ -95,9 +100,9 @@ interface LibrarySelectionBarProps {
 export function LibrarySelectionBar({ count, onClear, actions, isBusy }: LibrarySelectionBarProps) {
   return (
     <div className="library-toolbar library-toolbar--selection">
-      <IconButton label="Clear selection" variant="ghost" size="sm" icon={<X size={16} />} onClick={onClear} />
+      <IconButton label={t("library.toolbar.clearSelection")} variant="ghost" size="sm" icon={<X size={16} />} onClick={onClear} />
       <Text weight="semibold" aria-live="polite">
-        {count} selected
+        {t("library.toolbar.selected", { count })}
       </Text>
       <span className="library-toolbar__spacer" />
       {actions.map((a) =>

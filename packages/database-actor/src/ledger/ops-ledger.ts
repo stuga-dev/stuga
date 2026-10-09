@@ -10,6 +10,7 @@ import type {
   ColumnSpec,
   DatabaseActor,
   DatabaseColumnType,
+  DatabaseOpDetail,
   DatabaseOpKind,
   DatabaseOpSummary,
   RowValue,
@@ -18,6 +19,7 @@ import type {
 } from "@stuga/protocol/databases/types";
 import type { BlobStore } from "@stuga/runtime";
 import { isLiveViewRef } from "../query/row-query.js";
+import { readOpDetail } from "./op-detail.js";
 import { OpError } from "../request.js";
 import {
   addColumn,
@@ -134,6 +136,7 @@ export interface OpRow {
   kind: DatabaseOpKind;
   table_id: string | null;
   summary: string;
+  detail: DatabaseOpDetail | null;
   inverse: string | null;
   blob_key: string | null;
   reverted_by: string | null;
@@ -151,6 +154,7 @@ function asOpRow(row: Record<string, unknown>): OpRow {
     kind: String(row.kind) as DatabaseOpKind,
     table_id: row.table_id == null ? null : String(row.table_id),
     summary: String(row.summary),
+    detail: readOpDetail(row.detail),
     inverse: row.inverse == null ? null : String(row.inverse),
     blob_key: row.blob_key == null ? null : String(row.blob_key),
     reverted_by: row.reverted_by == null ? null : String(row.reverted_by),
@@ -185,6 +189,7 @@ export function listOps(sql: SqlHandle, limit: number, beforeSeq: number | null)
       kind: op.kind,
       table_id: op.table_id,
       summary: op.summary,
+      detail: op.detail,
       reverted_by: op.reverted_by,
       reverts: op.reverts,
       revertible: isRevertible(op),
@@ -205,6 +210,7 @@ export function recordOp(
     kind: DatabaseOpKind;
     tableId: string | null;
     summary: string;
+    detail: DatabaseOpDetail;
     inline: string | null;
     blobKey: string | null;
     reverts: string | null;
@@ -214,8 +220,8 @@ export function recordOp(
 ): string[] {
   const seq = Number(sql.exec(`SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM _ops`).one().seq);
   sql.exec(
-    `INSERT INTO _ops (op_id, seq, ts, actor, is_agent, on_behalf_of, kind, table_id, summary, inverse, blob_key, reverted_by, reverts)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+    `INSERT INTO _ops (op_id, seq, ts, actor, is_agent, on_behalf_of, kind, table_id, summary, detail, inverse, blob_key, reverted_by, reverts)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
     draft.opId,
     seq,
     now,
@@ -225,6 +231,7 @@ export function recordOp(
     draft.kind,
     draft.tableId,
     draft.summary,
+    JSON.stringify(draft.detail),
     draft.inline,
     draft.blobKey,
     draft.reverts,

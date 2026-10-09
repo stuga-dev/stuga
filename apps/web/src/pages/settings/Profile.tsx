@@ -47,14 +47,16 @@ import { setSession } from "../../lib/session/tokens";
 import { usePageRestored } from "../../lib/use-page-restored";
 import { useRemoteStrength } from "../../lib/session/password-strength";
 import { PasswordStrengthHint } from "../../ui/PasswordStrengthHint";
+import { formatLocale, t, uiLanguage } from "../../i18n/i18n";
+import { tRich } from "../../i18n/rich";
 
 const PROFILE_PATH = "/settings/profile";
 
 /** How a link through the provider came back (?provider=), in words. */
-function linkOutcome(outcome: string, label: string): { body: string; type: "info" | "error" } | null {
-  if (outcome === "linked") return { body: `Linked to ${label}.`, type: "info" };
-  if (outcome === "taken") return { body: `That ${label} account is already linked to another account here.`, type: "error" };
-  if (outcome === "failed") return { body: `Couldn’t link ${label}. Try again.`, type: "error" };
+function linkOutcome(outcome: string, provider: string): { body: string; type: "info" | "error" } | null {
+  if (outcome === "linked") return { body: t("settings.profile.linked", { provider }), type: "info" };
+  if (outcome === "taken") return { body: t("settings.profile.linkTaken", { provider }), type: "error" };
+  if (outcome === "failed") return { body: t("settings.profile.linkFailed", { provider }), type: "error" };
   return null;
 }
 
@@ -114,7 +116,7 @@ export function Profile() {
     const outcome = new URLSearchParams(search).get("provider");
     if (!outcome || outcomeShown.current) return;
     outcomeShown.current = true;
-    const shown = linkOutcome(outcome, label ?? "the identity provider");
+    const shown = linkOutcome(outcome, label ?? t("settings.profile.identityProvider"));
     if (shown) toast(shown);
     // Out of the address bar, so a reload does not announce it again.
     nav(PROFILE_PATH, { replace: true });
@@ -139,9 +141,9 @@ export function Profile() {
         setSavedEmail(stored ?? "");
         setEmail(stored ?? "");
       }
-      toast({ body: "Profile updated.", type: "info" });
+      toast({ body: t("settings.profile.updated"), type: "info" });
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn’t save your profile."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.profile.saveFailed")), type: "error" });
     } finally {
       setSaving(false);
     }
@@ -151,7 +153,7 @@ export function Profile() {
     return (
       <PageColumn>
         <VStack gap={2} hAlign="center" style={{ paddingTop: "20vh" }}>
-          <Spinner label="Loading…" />
+          <Spinner label={t("common.loading")} />
         </VStack>
       </PageColumn>
     );
@@ -159,7 +161,7 @@ export function Profile() {
   if (failed) {
     return (
       <PageColumn>
-        <LoadFailed icon={<UserRound size={28} />} title="Couldn’t load your profile" onRetry={() => void load()} />
+        <LoadFailed icon={<UserRound size={28} />} title={t("settings.profile.loadFailed")} onRetry={() => void load()} />
       </PageColumn>
     );
   }
@@ -168,40 +170,40 @@ export function Profile() {
     <PageColumn>
       <VStack gap={5}>
         <VStack gap={3}>
-          <Heading level={2}>Profile</Heading>
+          <Heading level={2}>{t("settings.profile.heading")}</Heading>
           {/* Previews the unsaved name. */}
           <HStack gap={3} vAlign="center">
-            <Avatar name={name || username || "You"} size="lg" tooltip={false} />
+            <Avatar name={name || username || t("settings.profile.you")} size="lg" tooltip={false} />
             <Text size="sm" color="secondary">
-              Generated from your name.
+              {t("settings.profile.avatarNote")}
             </Text>
           </HStack>
           {username && (
             <VStack gap={0}>
-              <Text size="sm" color="secondary">Username</Text>
+              <Text size="sm" color="secondary">{t("common.username")}</Text>
               <Text>@{username}</Text>
               <Text size="sm" color="secondary">
-                Used to sign in and find you. It can’t be changed.
+                {t("settings.profile.usernameNote")}
               </Text>
             </VStack>
           )}
-          <TextInput label="Name" value={name} onChange={setName} onEnter={save} />
+          <TextInput label={t("common.name")} value={name} onChange={setName} onEnter={save} />
           <Text size="sm" color="secondary">
-            Shown to collaborators.
+            {t("settings.profile.nameNote")}
           </Text>
           <TextInput
-            label="Email"
+            label={t("settings.profile.email")}
             type="email"
             isOptional
             value={email}
             onChange={setEmail}
             onEnter={save}
-            description="Notifications only. Not verified or used to sign in."
-            {...(emailChanged && emailInvalid ? { status: { type: "error" as const, message: "Enter an email address, or leave it empty." } } : {})}
+            description={t("settings.profile.emailNote")}
+            {...(emailChanged && emailInvalid ? { status: { type: "error" as const, message: t("settings.profile.emailInvalid") } } : {})}
           />
           <HStack justify="end">
             <Button
-              label="Save"
+              label={t("common.save")}
               variant="primary"
               isDisabled={!(nameChanged || emailChanged) || (emailChanged && emailInvalid)}
               isLoading={saving}
@@ -259,7 +261,7 @@ function PasswordSection({ username, hasPassword, onSet }: { username: string; h
   async function submit() {
     if (!filled || busy) return;
     if (!passwordOk(next, strength.strong)) {
-      toast({ body: `Choose another password. ${passwordRulesText(strength.strong)}`, type: "error" });
+      toast({ body: t("settings.password.chooseAnother", { rules: passwordRulesText(strength.strong) }), type: "error" });
       return;
     }
     setBusy(true);
@@ -267,17 +269,17 @@ function PasswordSection({ username, hasPassword, onSet }: { username: string; h
       if (hasPassword) {
         // The node ends every other session and answers with this browser's next one.
         setSession(await changePassword(username, current, next));
-        toast({ body: "Password changed. You’re signed out everywhere else.", type: "info" });
+        toast({ body: t("settings.password.changed"), type: "info" });
       } else {
         await setFirstPassword(next);
-        toast({ body: "Password set.", type: "info" });
+        toast({ body: t("settings.password.set"), type: "info" });
         onSet();
       }
       setCurrent("");
       setNext("");
     } catch (err) {
       const wrongCurrent = askCurrent && err instanceof AuthError && err.message === "invalid_credentials";
-      toast({ body: wrongCurrent ? "That isn’t your current password." : describeError(err), type: "error" });
+      toast({ body: wrongCurrent ? t("settings.password.wrongCurrent") : describeError(err), type: "error" });
     } finally {
       setBusy(false);
     }
@@ -285,13 +287,13 @@ function PasswordSection({ username, hasPassword, onSet }: { username: string; h
 
   return (
     <VStack gap={3}>
-      <Heading level={2}>Password</Heading>
+      <Heading level={2}>{t("common.password")}</Heading>
       <Text type="supporting" color="secondary">
-        {hasPassword ? "Changing it signs you out everywhere else." : `Lets you sign in with @${username} and a password.`}
+        {hasPassword ? t("settings.password.changeNote") : t("settings.password.setNote", { username })}
       </Text>
       {askCurrent && (
         <TextInput
-          label="Current password"
+          label={t("settings.password.current")}
           type="password"
           value={current}
           onChange={setCurrent}
@@ -301,7 +303,7 @@ function PasswordSection({ username, hasPassword, onSet }: { username: string; h
         />
       )}
       <TextInput
-        label="New password"
+        label={t("settings.password.new")}
         type="password"
         value={next}
         onChange={setNext}
@@ -313,7 +315,7 @@ function PasswordSection({ username, hasPassword, onSet }: { username: string; h
       <PasswordStrengthHint password={next} strength={strength} />
       <HStack justify="end">
         <Button
-          label={hasPassword ? "Change password" : "Set password"}
+          label={hasPassword ? t("settings.password.change") : t("settings.password.setButton")}
           variant="secondary"
           isDisabled={!filled}
           isLoading={busy}
@@ -355,7 +357,7 @@ function ProviderSection({
     } catch (err) {
       // The sign-in page's wording offers a password instead, which someone signed in has no use for.
       const unreachable = err instanceof AuthError && err.message === "provider_unreachable";
-      toast({ body: unreachable ? `Couldn’t reach ${label}. Try again shortly.` : describeError(err), type: "error" });
+      toast({ body: unreachable ? t("settings.provider.unreachable", { provider: label }) : describeError(err), type: "error" });
       setBusy(false);
     }
   }
@@ -364,7 +366,7 @@ function ProviderSection({
     setBusy(true);
     try {
       await unlinkProvider();
-      toast({ body: `Unlinked ${label}.`, type: "info" });
+      toast({ body: t("settings.provider.unlinked", { provider: label }), type: "info" });
       onUnlinked();
     } catch (err) {
       toast({ body: describeError(err), type: "error" });
@@ -375,41 +377,39 @@ function ProviderSection({
 
   return (
     <VStack gap={3}>
-      <Heading level={2}>{`Sign-in with ${label}`}</Heading>
+      <Heading level={2}>{t("settings.provider.heading", { provider: label })}</Heading>
       <Text type="supporting" color="secondary">
-        {!linked ? `Sign in here with your ${label} account.` : hasPassword ? "Linked." : "Set a password first."}
+        {!linked ? t("settings.provider.notLinked", { provider: label }) : hasPassword ? t("settings.provider.linked") : t("settings.provider.setPasswordFirst")}
       </Text>
       <HStack justify="end">
         {linked ? (
-          <Button label="Unlink" variant="secondary" isDisabled={!hasPassword} isLoading={busy} onClick={() => void unlink()} />
+          <Button label={t("settings.provider.unlink")} variant="secondary" isDisabled={!hasPassword} isLoading={busy} onClick={() => void unlink()} />
         ) : (
-          <Button label="Link" variant="secondary" isLoading={busy} onClick={() => void link()} />
+          <Button label={t("common.link")} variant="secondary" isLoading={busy} onClick={() => void link()} />
         )}
       </HStack>
     </VStack>
   );
 }
 
-/** "a thing", "{n} things", or nothing for none. */
-function counted(n: number, one: string, many: string): string | null {
-  return n === 0 ? null : n === 1 ? `a ${one}` : `${n} ${many}`;
-}
-
-/** "a, b and c". */
-function listed(parts: string[]): string {
-  return parts.length <= 1 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
-}
-
 /** What the dialog says Revoke everything takes, from the node's count. */
 export function revokeSummary(counts: RevokeEverythingCounts, provider: string | null): string {
+  const links = counts.invites + counts.share_links;
   const parts = [
-    counted(counts.passkeys, "passkey", "passkeys"),
-    counts.provider ? `${provider ?? "identity provider"} sign-in` : null,
-    counted(counts.apps, "connected app", "connected apps"),
-    counts.api_keys === 1 ? "an API key" : counted(counts.api_keys, "API key", "API keys"),
-    counted(counts.invites + counts.share_links, "link you shared", "links you shared"),
+    counts.passkeys > 0 ? t("settings.revoke.passkeys", { count: counts.passkeys }) : null,
+    counts.provider
+      ? provider
+        ? t("settings.revoke.providerSignIn", { provider })
+        : t("settings.revoke.identityProviderSignIn")
+      : null,
+    counts.apps > 0 ? t("settings.revoke.apps", { count: counts.apps }) : null,
+    counts.api_keys > 0 ? t("settings.revoke.apiKeys", { count: counts.api_keys }) : null,
+    links > 0 ? t("settings.revoke.links", { count: links }) : null,
   ].filter((p): p is string => p !== null);
-  return `Signs you out everywhere${parts.length > 0 ? ` and removes ${listed(parts)}` : ""}. Choose a new password to sign in with.`;
+  if (parts.length === 0) return t("settings.revoke.summaryNone");
+  // The app's English lists without a serial comma ("a, b and c"), which en-GB's list format matches.
+  const items = new Intl.ListFormat(uiLanguage() === "en" ? "en-GB" : formatLocale(), { type: "conjunction" }).format(parts);
+  return t("settings.revoke.summary", { items });
 }
 
 /**
@@ -446,14 +446,14 @@ function RevokeEverythingSection({ username, onDone }: { username: string; onDon
   async function submit() {
     if (!next || busy) return;
     if (!passwordOk(next, strength.strong)) {
-      toast({ body: `Choose another password. ${passwordRulesText(strength.strong)}`, type: "error" });
+      toast({ body: t("settings.password.chooseAnother", { rules: passwordRulesText(strength.strong) }), type: "error" });
       return;
     }
     setBusy(true);
     try {
       setSession(await revokeEverything(next));
       setOpen(false);
-      toast({ body: "Everything was revoked. You’re signed in here with your new password.", type: "info" });
+      toast({ body: t("settings.revoke.done"), type: "info" });
       onDone();
     } catch (err) {
       toast({ body: describeError(err), type: "error" });
@@ -464,24 +464,24 @@ function RevokeEverythingSection({ username, onDone }: { username: string; onDon
 
   return (
     <VStack gap={3}>
-      <Heading level={2}>Security</Heading>
+      <Heading level={2}>{t("settings.revoke.heading")}</Heading>
       <Text type="supporting" color="secondary">
-        If something looks wrong, sign out everywhere and start again with a new password.
+        {t("settings.revoke.intro")}
       </Text>
       <HStack justify="end">
-        <Button label="Revoke everything" variant="secondary" onClick={show} />
+        <Button label={t("settings.revoke.button")} variant="secondary" onClick={show} />
       </HStack>
       <Dialog isOpen={open} onOpenChange={(o) => !o && !busy && setOpen(false)} purpose="form" width={440}>
         <Layout
-          header={<DialogHeader title="Revoke everything" onOpenChange={(o) => !o && !busy && setOpen(false)} />}
+          header={<DialogHeader title={t("settings.revoke.button")} onOpenChange={(o) => !o && !busy && setOpen(false)} />}
           content={
             <LayoutContent>
               <VStack gap={3}>
                 <Text type="supporting" color="secondary">
-                  {counts ? revokeSummary(counts, provider) : "Signs you out everywhere. Choose a new password to sign in with."}
+                  {counts ? revokeSummary(counts, provider) : t("settings.revoke.summaryNone")}
                 </Text>
                 <TextInput
-                  label="New password"
+                  label={t("settings.password.new")}
                   type="password"
                   value={next}
                   onChange={setNext}
@@ -497,8 +497,8 @@ function RevokeEverythingSection({ username, onDone }: { username: string; onDon
           footer={
             <LayoutFooter>
               <HStack gap={2} justify="end">
-                <Button label="Cancel" variant="ghost" onClick={() => setOpen(false)} isDisabled={busy} />
-                <Button label="Revoke everything" variant="primary" onClick={() => void submit()} isDisabled={!next} isLoading={busy} />
+                <Button label={t("common.cancel")} variant="ghost" onClick={() => setOpen(false)} isDisabled={busy} />
+                <Button label={t("settings.revoke.button")} variant="primary" onClick={() => void submit()} isDisabled={!next} isLoading={busy} />
               </HStack>
             </LayoutFooter>
           }
@@ -541,7 +541,7 @@ function PasskeysSection() {
     setBusy("add");
     try {
       const added = await withConfirmation(addPasskey);
-      toast({ body: `Passkey added: ${added.name}.`, type: "info" });
+      toast({ body: t("settings.passkeys.added", { name: added.name }), type: "info" });
       load();
     } catch (err) {
       toast({ body: err instanceof PasskeyCancelled ? err.message : describeError(err), type: "error" });
@@ -561,7 +561,7 @@ function PasskeysSection() {
       setRenaming(null);
       load();
     } catch (err) {
-      toast({ body: errorMessage(err, "Couldn’t rename that passkey."), type: "error" });
+      toast({ body: errorMessage(err, t("settings.passkeys.renameFailed")), type: "error" });
     } finally {
       setBusy(null);
     }
@@ -577,10 +577,10 @@ function PasskeysSection() {
         return;
       }
       setConfirming(null);
-      toast({ body: `Removed ${p.name}.`, type: "info" });
+      toast({ body: t("settings.passkeys.removed", { name: p.name }), type: "info" });
       load();
     } catch (err) {
-      toast({ body: errorMessage(err, "Couldn’t remove that passkey."), type: "error" });
+      toast({ body: errorMessage(err, t("settings.passkeys.removeFailed")), type: "error" });
     } finally {
       setBusy(null);
     }
@@ -590,21 +590,17 @@ function PasskeysSection() {
     passkeys.length > 0
       ? null
       : canAdd
-        ? `Sign in at ${host} with your face, fingerprint or screen lock.`
-        : `Add one at ${host}.`;
+        ? t("settings.passkeys.signInAt", { host })
+        : tRich("settings.passkeys.addAt", { host, link: (chunks) => <a href={`${remoteOrigin()}/settings/profile`}>{chunks}</a> });
 
   return (
     <>
       <Divider />
       <VStack gap={3}>
-        <Heading level={2}>Passkeys</Heading>
+        <Heading level={2}>{t("settings.passkeys.heading")}</Heading>
         {intro && (
           <Text type="supporting" color="secondary">
-            {canAdd || !host ? intro : (
-              <>
-                Add one at <a href={`${remoteOrigin()}/settings/profile`}>{host}</a>.
-              </>
-            )}
+            {intro}
           </Text>
         )}
         {passkeys.length > 0 && (
@@ -615,7 +611,7 @@ function PasskeysSection() {
                   <HStack gap={2} vAlign="center">
                     {renaming?.id === p.id ? (
                       <TextInput
-                        label="Passkey name"
+                        label={t("settings.passkeys.nameLabel")}
                         isLabelHidden
                         size="sm"
                         value={renaming.name}
@@ -626,22 +622,28 @@ function PasskeysSection() {
                       <Text>{p.name}</Text>
                     )}
                     {/* A name such as "Synced · Chrome" says it already. */}
-                    {p.synced && !p.name.startsWith("Synced") && <Badge variant="neutral" label="Synced" />}
+                    {p.synced && !p.name.startsWith("Synced") && <Badge variant="neutral" label={t("settings.passkeys.synced")} />}
                   </HStack>
                   <Text size="sm" color="secondary">
                     {confirming === p.id ? (
                       p.synced ? (
-                        `Remove ${p.name}? It is signed out on every device that shares it.`
+                        t("settings.passkeys.confirmSynced", { name: p.name })
+                      ) : host ? (
+                        t("settings.passkeys.confirmAt", { name: p.name, host })
                       ) : (
-                        `Remove ${p.name}? Anyone signed in with it${host ? ` at ${host}` : ""} is signed out.`
+                        t("settings.passkeys.confirm", { name: p.name })
                       )
                     ) : p.elsewhere ? (
-                      "Made for an earlier remote address. It signs in nowhere now."
+                      t("settings.passkeys.elsewhere")
                     ) : (
                       <>
-                        <span title={absoluteTime(p.created_at)}>Added {relativeTime(p.created_at)}</span>
+                        <span title={absoluteTime(p.created_at)}>{t("settings.passkeys.addedAgo", { time: relativeTime(p.created_at) })}</span>
                         {" · "}
-                        {p.last_used_at ? <span title={absoluteTime(p.last_used_at)}>Last used {relativeTime(p.last_used_at)}</span> : "Never used"}
+                        {p.last_used_at ? (
+                          <span title={absoluteTime(p.last_used_at)}>{t("settings.passkeys.lastUsed", { time: relativeTime(p.last_used_at) })}</span>
+                        ) : (
+                          t("settings.passkeys.neverUsed")
+                        )}
                       </>
                     )}
                   </Text>
@@ -649,18 +651,18 @@ function PasskeysSection() {
                 <HStack gap={2} vAlign="center">
                   {confirming === p.id ? (
                     <>
-                      <Button label="Cancel" variant="ghost" size="sm" onClick={() => setConfirming(null)} />
-                      <Button label="Remove" variant="destructive" size="sm" isLoading={busy === p.id} onClick={() => void remove(p)} />
+                      <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={() => setConfirming(null)} />
+                      <Button label={t("common.remove")} variant="destructive" size="sm" isLoading={busy === p.id} onClick={() => void remove(p)} />
                     </>
                   ) : renaming?.id === p.id ? (
                     <>
-                      <Button label="Cancel" variant="ghost" size="sm" onClick={() => setRenaming(null)} />
-                      <Button label="Save" variant="secondary" size="sm" isLoading={busy === p.id} onClick={() => void rename(p, renaming.name)} />
+                      <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={() => setRenaming(null)} />
+                      <Button label={t("common.save")} variant="secondary" size="sm" isLoading={busy === p.id} onClick={() => void rename(p, renaming.name)} />
                     </>
                   ) : (
                     <>
-                      <Button label="Rename" variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={() => setRenaming({ id: p.id, name: p.name })} />
-                      <Button label="Remove" variant="ghost" size="sm" onClick={() => setConfirming(p.id)} />
+                      <Button label={t("common.rename")} variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={() => setRenaming({ id: p.id, name: p.name })} />
+                      <Button label={t("common.remove")} variant="ghost" size="sm" onClick={() => setConfirming(p.id)} />
                     </>
                   )}
                 </HStack>
@@ -670,7 +672,7 @@ function PasskeysSection() {
         )}
         {canAdd && (
           <HStack justify="end">
-            <Button label="Add a passkey" variant="secondary" isLoading={busy === "add"} onClick={() => void add()} />
+            <Button label={t("settings.passkeys.add")} variant="secondary" isLoading={busy === "add"} onClick={() => void add()} />
           </HStack>
         )}
       </VStack>

@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Docs } from "../api";
+import { t } from "../i18n/i18n";
 
 export function NoAccessCard({ docId }: { docId: string }) {
   const nav = useNavigate();
@@ -25,13 +26,19 @@ export function NoAccessCard({ docId }: { docId: string }) {
   return (
     <div className="doc-noaccess">
       <div className="doc-noaccess__card">
-        <h1>You don’t have access</h1>
-        <p>Ask the document’s owner to share it with you.</p>
-        {state === "failed" && <p>Your request didn’t get through. Check your connection and try again.</p>}
+        <h1>{t("document.noAccess.title")}</h1>
+        <p>{t("document.noAccess.body")}</p>
+        {state === "failed" && <p>{t("document.noAccess.failed")}</p>}
         <HStack gap={2} justify="center">
-          <Button label="All documents" variant="secondary" onClick={() => nav("/")} />
+          <Button label={t("common.allDocuments")} variant="secondary" onClick={() => nav("/")} />
           <Button
-            label={state === "sent" ? "Request sent" : state === "failed" ? "Try again" : "Request access"}
+            label={
+              state === "sent"
+                ? t("document.noAccess.sent")
+                : state === "failed"
+                  ? t("document.noAccess.tryAgain")
+                  : t("document.noAccess.request")
+            }
             variant="primary"
             isDisabled={state === "sent"}
             isLoading={state === "sending"}

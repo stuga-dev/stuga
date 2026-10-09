@@ -1,0 +1,54 @@
+/* Stuga.app (zh-Hans). Keys are app/main.swift's and app/Health.swift's L("key", "English"). */
+
+/* The menu */
+"menu.open" = "打开 Stuga";
+"menu.setUp" = "设置 Stuga…";
+"menu.copyAddress" = "复制地址";
+"menu.copySetupLink" = "复制设置链接";
+"menu.addressQR" = "以二维码显示地址…";
+"menu.setupLinkQR" = "以二维码显示设置链接…";
+"menu.showLogs" = "显示日志";
+"menu.restart" = "重新启动 Stuga…";
+"menu.uninstall" = "卸载 Stuga…";
+"menu.quit" = "退出菜单";
+
+/* The menu's status line */
+"status.missing" = "未安装 Stuga";
+"status.starting" = "正在启动…";
+"status.running" = "正在运行：%@";
+"status.unclaimed" = "等待设置：%@";
+"status.installing" = "正在安装更新…";
+"status.restoring" = "正在恢复备份…";
+"status.uninstalling" = "正在卸载…";
+
+/* What has gone wrong, as the status line and an alert say it */
+"fault.nodeStopped" = "Stuga 已停止，且未再次启动";
+"fault.postgresStopped" = "Stuga 的数据库已停止，且未再次启动";
+"fault.databaseUnreachable" = "Stuga 无法连接到它的数据库";
+"fault.notResponding" = "Stuga 没有响应";
+"fault.refused" = "Stuga 的版本比它的数据旧";
+
+/* The alert that says Stuga has stopped working */
+"failure.refused" = "打开 Stuga 查看如何处理。";
+"failure.restart" = "重新启动 Stuga 通常可以解决此问题。日志记录了发生的情况。";
+
+/* Alert buttons */
+"button.ok" = "好";
+"button.cancel" = "取消";
+
+/* The QR code alert */
+"qr.setUp.title" = "在手机上设置 Stuga";
+"qr.setUp.text" = "请用同一网络中的手机扫描。其中包含设置码，请勿分享给他人。";
+"qr.open.title" = "在手机上打开 Stuga";
+"qr.open.text" = "请用同一网络中的手机扫描：%@";
+
+/* The uninstall alert */
+"uninstall.title" = "要卸载 Stuga 吗？";
+"uninstall.text" = "Stuga 会停止运行并从这台 Mac 上移除。你的文档和备份会保留在 %@ 中，除非你也将其删除。";
+"uninstall.keepData" = "卸载并保留数据";
+"uninstall.deleteData" = "卸载并删除数据";
+
+/* macOS's administrator password prompt */
+"prompt.setupCode" = "Stuga 需要管理员密码才能读取它的设置码。";
+"prompt.restart" = "Stuga 需要你的密码才能重新启动。";
+"prompt.uninstall" = "Stuga 需要你的密码才能卸载。";

@@ -36,6 +36,7 @@ import { useEditorTick } from "../use-editor-tick";
 import { historyCan, historyRedo, historyUndo } from "../run-preview/extension";
 import { BlockTypeMenu } from "./BlockTypeMenu";
 import { TableSizePicker } from "./TableSizePicker";
+import { t } from "../../i18n/i18n";
 
 const keepSelection = (e: React.MouseEvent) => e.preventDefault();
 
@@ -117,49 +118,49 @@ export function EditorToolbar({
 
   return (
     <Toolbar
-      label="Formatting"
+      label={t("editor.toolbar.label")}
       size="sm"
       startContent={
         <HStack gap={1} vAlign="center" wrap="wrap">
           <BlockTypeMenu editor={editor} />
           {sep}
 
-          <Mark onRun={() => chain().toggleBold().run()} active={editor.isActive("bold")} title="Bold (⌘B)" icon={<Bold size={16} />} />
-          <Mark onRun={() => chain().toggleItalic().run()} active={editor.isActive("italic")} title="Italic (⌘I)" icon={<Italic size={16} />} />
-          <Mark onRun={() => chain().toggleUnderline().run()} active={editor.isActive("underline")} title="Underline (⌘U)" icon={<Underline size={16} />} />
-          <Mark onRun={onEditLink} active={editor.isActive("link")} title="Link" icon={<Link2 size={16} />} />
+          <Mark onRun={() => chain().toggleBold().run()} active={editor.isActive("bold")} title={t("editor.toolbar.bold", { shortcut: "⌘B" })} icon={<Bold size={16} />} />
+          <Mark onRun={() => chain().toggleItalic().run()} active={editor.isActive("italic")} title={t("editor.toolbar.italic", { shortcut: "⌘I" })} icon={<Italic size={16} />} />
+          <Mark onRun={() => chain().toggleUnderline().run()} active={editor.isActive("underline")} title={t("editor.toolbar.underline", { shortcut: "⌘U" })} icon={<Underline size={16} />} />
+          <Mark onRun={onEditLink} active={editor.isActive("link")} title={t("common.link")} icon={<Link2 size={16} />} />
           {sep}
 
-          <Mark onRun={() => chain().toggleBulletList().run()} active={editor.isActive("bulletList")} title="Bullet list" icon={<ListIcon size={16} />} />
-          <Mark onRun={() => chain().toggleOrderedList().run()} active={editor.isActive("orderedList")} title="Numbered list" icon={<ListOrdered size={16} />} />
+          <Mark onRun={() => chain().toggleBulletList().run()} active={editor.isActive("bulletList")} title={t("editor.blocks.bulletList")} icon={<ListIcon size={16} />} />
+          <Mark onRun={() => chain().toggleOrderedList().run()} active={editor.isActive("orderedList")} title={t("editor.blocks.numberedList")} icon={<ListOrdered size={16} />} />
           {sep}
 
           {!inTable && <TableSizePicker editor={editor} />}
           <DropdownMenu
-            button={{ label: "Insert", variant: "ghost", size: "sm" }}
+            button={{ label: t("editor.toolbar.insert"), variant: "ghost", size: "sm" }}
             menuWidth={180}
             presentation="adaptive"
             items={[
-              { label: "Image…", icon: <ImageIcon size={16} />, onClick: () => imageRef.current?.click() },
-              { label: "File…", icon: <Paperclip size={16} />, onClick: () => fileRef.current?.click() },
-              { label: "Divider", icon: <Minus size={16} />, onClick: () => chain().setHorizontalRule().run() },
+              { label: t("editor.toolbar.insertImage"), icon: <ImageIcon size={16} />, onClick: () => imageRef.current?.click() },
+              { label: t("editor.toolbar.insertFile"), icon: <Paperclip size={16} />, onClick: () => fileRef.current?.click() },
+              { label: t("editor.blocks.divider"), icon: <Minus size={16} />, onClick: () => chain().setHorizontalRule().run() },
             ]}
           />
           <DropdownMenu
-            button={{ label: "More formatting", variant: "ghost", size: "sm", icon: <MoreHorizontal size={16} /> }}
+            button={{ label: t("editor.toolbar.moreFormatting"), variant: "ghost", size: "sm", icon: <MoreHorizontal size={16} /> }}
             menuWidth={210}
             presentation="adaptive"
             items={[
-              { label: "Strikethrough", icon: <Strikethrough size={16} />, endContent: editor.isActive("strike") ? <Check size={14} /> : undefined, onClick: () => chain().toggleStrike().run() },
-              { label: "Inline code", icon: <Code size={16} />, endContent: editor.isActive("code") ? <Check size={14} /> : undefined, onClick: () => chain().toggleCode().run() },
-              { label: "Quote", icon: <Quote size={16} />, endContent: editor.isActive("blockquote") ? <Check size={14} /> : undefined, onClick: () => chain().toggleBlockquote().run() },
+              { label: t("editor.toolbar.strikethrough"), icon: <Strikethrough size={16} />, endContent: editor.isActive("strike") ? <Check size={14} /> : undefined, onClick: () => chain().toggleStrike().run() },
+              { label: t("editor.toolbar.inlineCode"), icon: <Code size={16} />, endContent: editor.isActive("code") ? <Check size={14} /> : undefined, onClick: () => chain().toggleCode().run() },
+              { label: t("editor.blocks.quote"), icon: <Quote size={16} />, endContent: editor.isActive("blockquote") ? <Check size={14} /> : undefined, onClick: () => chain().toggleBlockquote().run() },
             ]}
           />
           {sep}
 
           {/* Through the review history, so an accept or reject undoes in turn with typing. */}
-          <Action onRun={() => historyUndo(editor)} disabled={!historyCan(editor, "undo")} title="Undo (⌘Z)" icon={<Undo2 size={16} />} />
-          <Action onRun={() => historyRedo(editor)} disabled={!historyCan(editor, "redo")} title="Redo (⌘⇧Z)" icon={<Redo2 size={16} />} />
+          <Action onRun={() => historyUndo(editor)} disabled={!historyCan(editor, "undo")} title={t("editor.toolbar.undo", { shortcut: "⌘Z" })} icon={<Undo2 size={16} />} />
+          <Action onRun={() => historyRedo(editor)} disabled={!historyCan(editor, "redo")} title={t("editor.toolbar.redo", { shortcut: "⌘⇧Z" })} icon={<Redo2 size={16} />} />
           <input ref={imageRef} type="file" accept="image/*" multiple hidden onChange={onPick} />
           <input ref={fileRef} type="file" multiple hidden onChange={onPick} />
 
@@ -167,22 +168,22 @@ export function EditorToolbar({
             <>
               {sep}
               <DropdownMenu
-                button={{ label: "Table tools", variant: "secondary", size: "sm" }}
+                button={{ label: t("editor.toolbar.tableTools"), variant: "secondary", size: "sm" }}
                 menuWidth={220}
                 presentation="adaptive"
                 items={[
-                  { label: "Add column before", icon: <ArrowLeftToLine size={16} />, onClick: () => chain().addColumnBefore().run() },
-                  { label: "Add column after", icon: <ArrowRightToLine size={16} />, onClick: () => chain().addColumnAfter().run() },
-                  { label: "Add row above", icon: <ArrowUpToLine size={16} />, onClick: () => chain().addRowBefore().run() },
-                  { label: "Add row below", icon: <ArrowDownToLine size={16} />, onClick: () => chain().addRowAfter().run() },
+                  { label: t("editor.toolbar.addColumnBefore"), icon: <ArrowLeftToLine size={16} />, onClick: () => chain().addColumnBefore().run() },
+                  { label: t("editor.toolbar.addColumnAfter"), icon: <ArrowRightToLine size={16} />, onClick: () => chain().addColumnAfter().run() },
+                  { label: t("editor.toolbar.addRowAbove"), icon: <ArrowUpToLine size={16} />, onClick: () => chain().addRowBefore().run() },
+                  { label: t("editor.toolbar.addRowBelow"), icon: <ArrowDownToLine size={16} />, onClick: () => chain().addRowAfter().run() },
                   { type: "divider" },
-                  { label: "Toggle header row", icon: <Rows3 size={16} />, onClick: () => chain().toggleHeaderRow().run() },
-                  { label: "Merge or split cells", icon: <TableCellsMerge size={16} />, onClick: () => chain().mergeOrSplit().run() },
+                  { label: t("editor.toolbar.toggleHeaderRow"), icon: <Rows3 size={16} />, onClick: () => chain().toggleHeaderRow().run() },
+                  { label: t("editor.toolbar.mergeOrSplit"), icon: <TableCellsMerge size={16} />, onClick: () => chain().mergeOrSplit().run() },
                   { type: "divider" },
-                  { label: "Delete row", variant: "destructive", onClick: () => chain().deleteRow().run() },
-                  { label: "Delete column", variant: "destructive", onClick: () => chain().deleteColumn().run() },
+                  { label: t("editor.toolbar.deleteRow"), variant: "destructive", onClick: () => chain().deleteRow().run() },
+                  { label: t("editor.toolbar.deleteColumn"), variant: "destructive", onClick: () => chain().deleteColumn().run() },
                   { type: "divider" },
-                  { label: "Delete table", icon: <Trash2 size={16} />, variant: "destructive", onClick: () => chain().deleteTable().run() },
+                  { label: t("editor.toolbar.deleteTable"), icon: <Trash2 size={16} />, variant: "destructive", onClick: () => chain().deleteTable().run() },
                 ]}
               />
             </>

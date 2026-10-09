@@ -1,4 +1,5 @@
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
+import type { AskActivity } from "@stuga/protocol/api/ai-turn";
 import type { AskDone, AskStep } from "@stuga/protocol/api/ask";
 import { api } from "../lib/http/client";
 import { openSse } from "../lib/http/sse";
@@ -45,8 +46,8 @@ export const AskThreads = {
 
 interface AskCallbacks {
   onToken: (text: string) => void;
-  /** Replaces the previous activity label. */
-  onStatus: (label: string) => void;
+  /** What the agent is doing now; replaces the previous activity. */
+  onStatus: (activity: AskActivity) => void;
   onStep: (step: AskStep) => void;
   /** Discard the streamed text: the agent answered without reading the documents and is being sent back. */
   onReset: () => void;
@@ -77,7 +78,7 @@ export const Ask = {
       {
         onEvent: (ev, data) => {
           if (ev === "token") cb.onToken(data.text as string);
-          else if (ev === "status") cb.onStatus(data.label as string);
+          else if (ev === "status") cb.onStatus(data as unknown as AskActivity);
           else if (ev === "step") cb.onStep(data as unknown as AskStep);
           else if (ev === "reset") cb.onReset();
           else if (ev === "done") cb.onDone(data as unknown as AskDone);
@@ -85,6 +86,5 @@ export const Ask = {
         },
         onError: cb.onError,
       },
-      "ask failed",
     ),
 };

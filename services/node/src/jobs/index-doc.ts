@@ -87,8 +87,7 @@ async function notifyNewMentions(
       workspaceId: doc.workspace_id,
       eventType: "MENTIONED_IN_DOC",
       docId: doc.doc_id,
-      title: actorName ? `${actorName} mentioned you in "${title}"` : `You were mentioned in "${title}"`,
-      body: mentionExcerpt(markdown, recipient),
+      params: { actor: actorName, doc: title, excerpt: mentionExcerpt(markdown, recipient) },
       actor: human ?? "",
     });
   }

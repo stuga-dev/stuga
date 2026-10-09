@@ -10,6 +10,8 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { StackItem } from "@astryxdesign/core/Stack";
 import { Files, Library, Settings, Sparkles, Star, Trash2, Users as UsersIcon, ListChecks } from "lucide-react";
 import { LibraryCreateMenu } from "./LibraryCreateMenu";
+import { t } from "../i18n/i18n";
+import { fmtInt } from "../lib/format";
 
 /** Which library view is showing. */
 export type LibraryView = "browse" | "shared" | "trash" | "favorites" | "collections";
@@ -48,9 +50,9 @@ export function LibraryNav({
       collapsible
       // The footer stays at the bottom of the nav, whatever the sections above it take.
       footer={
-        <SideNavSection title="More" isHeaderHidden>
-          <SideNavItem label="Trash" icon={<Trash2 size={16} />} isSelected={view === "trash"} onClick={() => onViewChange("trash")} />
-          <SideNavItem label="Settings" icon={<Settings size={16} />} onClick={onSettings} />
+        <SideNavSection title={t("library.nav.more")} isHeaderHidden>
+          <SideNavItem label={t("library.nav.trash")} icon={<Trash2 size={16} />} isSelected={view === "trash"} onClick={() => onViewChange("trash")} />
+          <SideNavItem label={t("common.settings")} icon={<Settings size={16} />} onClick={onSettings} />
         </SideNavSection>
       }
       topContent={
@@ -67,33 +69,33 @@ export function LibraryNav({
         </HStack>
       }
     >
-      <SideNavSection title="Library">
-        <SideNavItem label="All documents" icon={<Files size={16} />} isSelected={view === "browse"} onClick={() => onViewChange("browse")} />
+      <SideNavSection title={t("library.nav.library")}>
+        <SideNavItem label={t("common.allDocuments")} icon={<Files size={16} />} isSelected={view === "browse"} onClick={() => onViewChange("browse")} />
         <SideNavItem
-          label="Favorites"
+          label={t("library.nav.favorites")}
           icon={<Star size={16} />}
           isSelected={view === "favorites"}
           onClick={() => onViewChange("favorites")}
-          endContent={favoriteCount ? <Badge variant="neutral" label={String(favoriteCount)} /> : undefined}
+          endContent={favoriteCount ? <Badge variant="neutral" label={fmtInt(favoriteCount)} /> : undefined}
         />
         <SideNavItem
-          label="Shared with me"
+          label={t("library.nav.shared")}
           icon={<UsersIcon size={16} />}
           isSelected={view === "shared"}
           onClick={() => onViewChange("shared")}
-          endContent={sharedCount ? <Badge variant="neutral" label={String(sharedCount)} /> : undefined}
+          endContent={sharedCount ? <Badge variant="neutral" label={fmtInt(sharedCount)} /> : undefined}
         />
         <SideNavItem
-          label="Collections"
+          label={t("library.nav.collections")}
           icon={<Library size={16} />}
           isSelected={view === "collections"}
           onClick={() => onViewChange("collections")}
         />
       </SideNavSection>
 
-      <SideNavSection title="AI">
-        <SideNavItem label="Ask your documents" icon={<Sparkles size={16} />} onClick={onAsk} />
-        <SideNavItem label="Review AI edits" icon={<ListChecks size={16} />} onClick={onReview} />
+      <SideNavSection title={t("library.nav.ai")}>
+        <SideNavItem label={t("library.nav.ask")} icon={<Sparkles size={16} />} onClick={onAsk} />
+        <SideNavItem label={t("common.reviewAiEdits")} icon={<ListChecks size={16} />} onClick={onReview} />
       </SideNavSection>
     </SideNav>
   );

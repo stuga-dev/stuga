@@ -42,6 +42,7 @@ import { rememberWorkspaceReturn } from "./lib/session/return-path";
 import { ensureMediaTicket } from "./lib/session/tickets";
 import { useThemeMode } from "./state/theme";
 import { useBrandingVersion } from "./state/branding";
+import { t } from "./i18n/i18n";
 import "./styles/shell.css";
 
 // Lazy so the editor, the grid and markdown-it stay out of the login and library bundles.
@@ -58,8 +59,8 @@ function WorkspaceLayout() {
 
   useEffect(() => {
     setSlow(false);
-    const t = setTimeout(() => setSlow(true), 12_000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setSlow(true), 12_000);
+    return () => clearTimeout(timer);
   }, [attempt]);
 
   useEffect(() => {
@@ -92,13 +93,13 @@ function WorkspaceLayout() {
       <AppShell>
         <Section padding={6} variant="transparent">
           <VStack gap={3} hAlign="center" style={{ paddingTop: "20vh" }}>
-            <Spinner label="Loading workspace..." />
+            <Spinner label={t("ui.app.loadingWorkspace")} />
             {slow && (
               <>
                 <Text type="supporting" color="secondary">
-                  This is taking longer than usual. The database may be waking up.
+                  {t("ui.app.slow")}
                 </Text>
-                <Button label="Retry" variant="secondary" onClick={retry} />
+                <Button label={t("common.retry")} variant="secondary" onClick={retry} />
               </>
             )}
           </VStack>
@@ -115,8 +116,8 @@ function WorkspaceLayout() {
       <AppShell>
         <Section padding={6} variant="transparent">
           <VStack gap={3} hAlign="center" style={{ paddingTop: "20vh" }}>
-            <Banner status="error" title="Couldn't load your workspaces" />
-            <Button label="Retry" variant="secondary" onClick={retry} />
+            <Banner status="error" title={t("ui.app.loadFailed")} />
+            <Button label={t("common.retry")} variant="secondary" onClick={retry} />
           </VStack>
         </Section>
       </AppShell>

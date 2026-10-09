@@ -86,7 +86,7 @@ describe("review verdicts in the document actor", () => {
         eventType: "AGENT_EDITS_PROPOSED",
         recipient: "alice",
         docId: DOC,
-        body: "Claude (Connector) proposed 1 change — waiting for your review",
+        params: { agent: "Claude (Connector)", count: 1 },
       },
     ]);
 

@@ -17,6 +17,7 @@ import { Docs, Me, Workspaces } from "../api";
 import { setActiveWorkspace } from "../lib/session/workspace-pointer";
 import { logout } from "../lib/session/tokens";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
 interface LinkCopy {
   missingToken: string;
@@ -92,20 +93,20 @@ function RedeemLinkPage({ redeem, copy }: { redeem: Redeem; copy: LinkCopy }) {
                 {copy.failedHint}
               </Text>
               <Button
-                label={ownsWorkspace ? "All documents" : "Create your own workspace"}
+                label={ownsWorkspace ? t("common.allDocuments") : t("auth.join.createOwnWorkspace")}
                 variant="primary"
                 onClick={() => nav("/")}
               />
             </>
           ) : account === undefined ? (
-            <Spinner label="Checking your account…" />
+            <Spinner label={t("auth.join.checkingAccount")} />
           ) : (
             <>
               <Heading level={1}>{copy.title}</Heading>
               <Text color="secondary">{copy.consequence(account)}</Text>
               <HStack gap={2}>
                 <Button label={copy.confirm(account)} variant="primary" isLoading={busy} onClick={confirm} />
-                <Button label="Use a different account" variant="ghost" isDisabled={busy} onClick={logout} />
+                <Button label={t("auth.useDifferentAccount")} variant="ghost" isDisabled={busy} onClick={logout} />
               </HStack>
               <Text type="supporting" color="secondary">
                 {copy.switchHint}
@@ -119,17 +120,15 @@ function RedeemLinkPage({ redeem, copy }: { redeem: Redeem; copy: LinkCopy }) {
 }
 
 const WORKSPACE_COPY: LinkCopy = {
-  missingToken: "This invite link is missing its token.",
-  failedTitle: "Can’t join this workspace",
-  failedFallback: "This invite link is invalid or expired.",
-  failedHint: "Ask whoever sent you this link for a new one.",
-  title: "Join this workspace",
+  missingToken: t("auth.join.workspace.missingToken"),
+  failedTitle: t("auth.join.workspace.failedTitle"),
+  failedFallback: t("auth.join.workspace.failedFallback"),
+  failedHint: t("auth.join.workspace.failedHint"),
+  title: t("auth.join.workspace.title"),
   consequence: (account) =>
-    account
-      ? `Signed in as ${account}. This account will join and be visible to members.`
-      : "Your current account will join and be visible to members.",
-  confirm: (account) => (account ? `Join as ${account}` : "Join this workspace"),
-  switchHint: "To switch accounts, sign out and reopen this link.",
+    account ? t("auth.join.workspace.consequenceNamed", { account }) : t("auth.join.workspace.consequence"),
+  confirm: (account) => (account ? t("auth.join.workspace.confirmNamed", { account }) : t("auth.join.workspace.title")),
+  switchHint: t("auth.join.switchHint"),
 };
 
 const redeemInvite: Redeem = async (token) => {
@@ -143,17 +142,14 @@ export function JoinWorkspace() {
 }
 
 const DOC_COPY: LinkCopy = {
-  missingToken: "This link is missing its token.",
-  failedTitle: "Can’t open this document",
-  failedFallback: "This link is invalid or expired.",
-  failedHint: "Ask whoever shared it with you for a new link.",
-  title: "Open this shared document",
-  consequence: (account) =>
-    account
-      ? `Signed in as ${account}. This account will get access as a workspace guest.`
-      : "Your current account will get access as a workspace guest.",
-  confirm: (account) => (account ? `Open as ${account}` : "Open the document"),
-  switchHint: "To switch accounts, sign out and reopen this link.",
+  missingToken: t("auth.join.doc.missingToken"),
+  failedTitle: t("auth.join.doc.failedTitle"),
+  failedFallback: t("auth.join.doc.failedFallback"),
+  failedHint: t("auth.join.doc.failedHint"),
+  title: t("auth.join.doc.title"),
+  consequence: (account) => (account ? t("auth.join.doc.consequenceNamed", { account }) : t("auth.join.doc.consequence")),
+  confirm: (account) => (account ? t("auth.join.doc.confirmNamed", { account }) : t("auth.join.doc.confirm")),
+  switchHint: t("auth.join.switchHint"),
 };
 
 const redeemShareLink: Redeem = async (token) => {

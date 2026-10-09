@@ -13,6 +13,8 @@ import { saveBlob } from "../../lib/download";
 import { MintKey, type MintKeyState } from "../MintKey";
 import { errorMessage } from "../../lib/http/client";
 import { UninstallGuide } from "./UninstallGuide";
+import { t } from "../../i18n/i18n";
+import { tRich } from "../../i18n/rich";
 
 export function ClaudeDesktopTab({
   canBundle,
@@ -42,9 +44,9 @@ export function ClaudeDesktopTab({
     try {
       saveBlob(await Agents.bundle(), bundleFilename);
       setDownloaded(true);
-      toast({ body: `${bundleFilename} saved. Double-click it to install.`, type: "info" });
+      toast({ body: t("agents.claudeDesktop.saved", { file: bundleFilename }), type: "info" });
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn’t build the extension."), type: "error" });
+      toast({ body: errorMessage(e, t("agents.claudeDesktop.buildFailed")), type: "error" });
     } finally {
       setDownloading(false);
     }
@@ -56,7 +58,7 @@ export function ClaudeDesktopTab({
         <>
           <HStack gap={2}>
             <Button
-              label="Add to Claude Desktop"
+              label={t("agents.claudeDesktop.add")}
               variant="primary"
               icon={<Download size={15} />}
               onClick={downloadBundle}
@@ -64,31 +66,32 @@ export function ClaudeDesktopTab({
             />
           </HStack>
           <Text size="sm" color="secondary">
-            Open <code>{bundleFilename}</code>, click <strong>Install</strong>, then fully restart Claude.
+            {tRich("agents.claudeDesktop.install", { file: bundleFilename, code: (chunks) => <code>{chunks}</code>, strong: (chunks) => <strong>{chunks}</strong> })}
           </Text>
           {downloaded && (
             <Banner
               status="success"
-              title={`${bundleFilename} saved — install it, then restart Claude`}
-              description="The first time Claude uses it, approve Stuga in your browser."
+              title={t("agents.claudeDesktop.savedTitle", { file: bundleFilename })}
+              description={t("agents.claudeDesktop.savedDescription")}
             />
           )}
         </>
       ) : (
         <Text size="sm" color="secondary">
-          The MCP server wasn’t built for this development run.
+          {t("agents.claudeDesktop.notBuilt")}
         </Text>
       )}
       {desktopJson !== null && (
         <>
           {!showManual && (
             <HStack>
-              <Link onClick={() => setShowManual(true)}>Set it up by hand instead</Link>
+              <Link onClick={() => setShowManual(true)}>{t("agents.claudeDesktop.byHand")}</Link>
             </HStack>
           )}
           {/* Mounted while hidden, so a reader who opens it keeps their place. */}
           <div hidden={!showManual} data-testid="manual-setup">
             <VStack gap={2}>
+              {/* i18n-exempt: the client's name, which names its key */}
               <MintKey mint={mint} defaultName="Claude Desktop" />
               <CodeBlock
                 code={desktopJson}
@@ -101,7 +104,7 @@ export function ClaudeDesktopTab({
                 size="sm"
               />
               <Text size="sm" color="secondary">
-                In Claude Desktop, open Settings → Developer → <strong>Edit Config</strong>, paste this, then fully restart Claude.
+                {tRich("agents.claudeDesktop.paste", { strong: (chunks) => <strong>{chunks}</strong> })}
               </Text>
             </VStack>
           </div>
@@ -111,12 +114,12 @@ export function ClaudeDesktopTab({
         <UninstallGuide host="Claude Desktop">
           {canBundle && (
             <Text size="sm">
-              In Claude Desktop, open Settings → Extensions and remove <strong>Stuga</strong>.
+              {tRich("agents.claudeDesktop.removeExtension", { strong: (chunks) => <strong>{chunks}</strong> })}
             </Text>
           )}
           {desktopJson !== null && (
             <Text size="sm">
-              If you pasted the config instead, delete its <code>{serverKey}</code> entry.
+              {tRich("agents.claudeDesktop.removeConfig", { server: serverKey, code: (chunks) => <code>{chunks}</code> })}
             </Text>
           )}
         </UninstallGuide>

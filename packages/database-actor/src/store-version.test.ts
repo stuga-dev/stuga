@@ -24,6 +24,7 @@ import { HUMAN } from "../test/harness.js";
 const PINNED: Record<number, string> = {
   1: "20487a4d32855891",
   2: "8d9ed624efe89b80",
+  3: "d3f3a5ba37b6da61",
 };
 
 let dir = "";
@@ -125,6 +126,7 @@ describe("a database's store", () => {
         `INSERT INTO _run_ops (run_id, op_id, position, kind, table_id, summary, status, bytes, decided_by, review)
          VALUES ('run_1', 'o1', 1, 'rows.insert', 't1', 'Insert 1 row', 'rejected', 2, 'alice', 'review')`,
       );
+      v1.exec(`ALTER TABLE _run_ops DROP COLUMN detail`);
       v1.exec(`ALTER TABLE _run_ops DROP COLUMN feedback`);
       v1.exec(`PRAGMA user_version = 1`);
     } finally {
@@ -147,5 +149,66 @@ describe("a database's store", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("brings a version 2 store forward, keeping each op's summary, with no detail on ops it already held", async () => {
+    dir = mkdtempSync(join(tmpdir(), "stuga-db-store-"));
+    const file = join(dir, "db_test.sqlite");
+    const open = () =>
+      createActorNamespace(
+        DatabaseActor,
+        { snapshots: new MemoryBlobStore(), jobs: new MemoryJobQueue<IndexMessage>() },
+        {
+          name: "databases",
+          heartbeat: { request: Heartbeat.PING, response: Heartbeat.PONG },
+          dir,
+          storeVersion: DATABASE_STORE_VERSION,
+          storeUpgrades: DATABASE_STORE_UPGRADES,
+        },
+      );
+    const opsSql = () => {
+      const db = new DatabaseSync(file, { readOnly: true });
+      try {
+        return (db.prepare(`SELECT sql FROM sqlite_master WHERE name = '_ops'`).get() as { sql: string }).sql.replace(/\s+/g, " ");
+      } finally {
+        db.close();
+      }
+    };
+
+    const fresh = open();
+    try {
+      await post(fresh.get("db_test"), "/schema/init", {});
+    } finally {
+      await fresh.close();
+    }
+    const current = opsSql();
+
+    // The ledger as version 2 left it: the op init recorded, without its detail.
+    const v2 = new DatabaseSync(file);
+    try {
+      v2.exec(`ALTER TABLE _ops DROP COLUMN detail`);
+      v2.exec(`ALTER TABLE _run_ops DROP COLUMN detail`);
+      v2.exec(`PRAGMA user_version = 2`);
+    } finally {
+      v2.close();
+    }
+
+    const upgraded = open();
+    let listed: Array<{ kind: string; summary: string; detail: unknown }> = [];
+    try {
+      const actor = upgraded.get("db_test");
+      const { schema } = await post<{ schema: { tables: TableSchema[] } }>(actor, "/schema/init", {});
+      await post(actor, "/tables/rename", { table_id: schema.tables[0]!.table_id, display: "Renamed" });
+      const res = await actor.fetch(`http://actor/ops?dbId=db_test`);
+      listed = ((await res.json()) as { ops: typeof listed }).ops;
+    } finally {
+      await upgraded.close();
+    }
+    expect(opsSql()).toBe(current);
+    expect(listed.map((o) => [o.kind, o.detail === null])).toEqual([
+      ["tables.rename", false],
+      ["tables.create", true],
+    ]);
+    expect(listed[1]!.summary).toMatch(/^Created table /);
   });
 });

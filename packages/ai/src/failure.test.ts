@@ -1,6 +1,6 @@
 /** Failures classified from the messages Pi's clients and System One actually produce, and what a person is told. */
 import { describe, expect, it } from "vitest";
-import { classifyFailure, failureReason, requestFailure } from "./failure.js";
+import { classifyFailure, requestFailure } from "./failure.js";
 
 describe("classifyFailure", () => {
   it.each([
@@ -34,18 +34,5 @@ describe("requestFailure", () => {
   it("cuts the key from the message wherever the provider echoed it", () => {
     const f = requestFailure("openai-completions", "m", "400: key sk-live-0123456789 is not valid here", { key: "sk-live-0123456789" });
     expect(f).toEqual({ kind: "rejected", protocol: "openai-completions", model: "m", message: "400: key [key] is not valid here" });
-  });
-});
-
-describe("failureReason", () => {
-  it("names the trouble and who can fix it, never the provider's words", () => {
-    const reason = failureReason(requestFailure("openai-responses", "gpt-6-sol", "OpenAI API error (429): no credits for org-abc"));
-    expect(reason).toBe("The AI provider says the account is out of credit. An administrator can check Settings → This node → AI providers.");
-    expect(reason).not.toContain("org-abc");
-  });
-
-  it("has nothing plainer to say about an unclassified failure", () => {
-    expect(failureReason(requestFailure(null, "m", "no chat endpoint is configured"))).toBeNull();
-    expect(failureReason(undefined)).toBeNull();
   });
 });

@@ -8,6 +8,8 @@ import { CellEditor } from "../CellEditor";
 import { FilesCell } from "../FilesCell";
 import { pageStateOf } from "../model/row-ref";
 import type { GhostColumn } from "./pending-overlay";
+import { t } from "../../i18n/i18n";
+import { fmtInt } from "../../lib/format";
 
 /** Ghost rows painted for one pending insert before it collapses to a count. */
 const GHOST_PREVIEW_MAX = 50;
@@ -64,12 +66,12 @@ export function GridRow({
     <tr className={rowClass}>
       <td className="db-grid__check">
         <span className="db-row__start">
-          <CheckboxInput label="Select row" isLabelHidden size="sm" value={selected} onChange={(v) => onSelect(v === true)} />
+          <CheckboxInput label={t("database.row.select")} isLabelHidden size="sm" value={selected} onChange={(v) => onSelect(v === true)} />
           {/* Stays visible on a row that has a page, so those rows can be told apart. */}
           <button
             className={`db-row__open${hasPage ? " db-row__open--page" : ""}`}
-            title={hasPage ? "Open row — it has a page" : "Open row"}
-            aria-label={hasPage ? "Open row (has a page)" : "Open row"}
+            title={hasPage ? t("database.row.openWithPage") : t("database.row.open")}
+            aria-label={hasPage ? t("database.row.openHasPage") : t("database.row.open")}
             onClick={() => onOpenRow(row._id)}
           >
             {hasPage ? <FileText size={14} /> : <Maximize2 size={13} />}
@@ -85,7 +87,7 @@ export function GridRow({
             <td key={col.column_id} className="db-td db-td--proposed">
               <span
                 className="db-cell db-cell--proposed"
-                title={`Proposed by ${proposed!.agent} — currently: ${value === null ? "(empty)" : display(col, value)}`}
+                title={t("database.row.proposedCurrently", { agent: proposed!.agent, value: value === null ? t("database.value.empty") : display(col, value) })}
               >
                 {display(col, proposedValue)}
               </span>
@@ -125,10 +127,10 @@ export function GridRow({
                 onClick={() => onEdit(col.column_id)}
                 title={
                   proposedDelete
-                    ? "An agent proposed deleting this row — decide it in the banner above"
+                    ? t("database.row.proposedDelete")
                     : readOnly
                       ? undefined
-                      : "Click to edit"
+                      : t("database.row.clickToEdit")
                 }
               >
                 {value === null ? "" : String(value)}
@@ -143,7 +145,7 @@ export function GridRow({
         return (
           <td key={g.columnId} className="db-td db-td--ghostcol">
             {proposedValue !== undefined && (
-              <span className="db-cell db-cell--proposed" title={`Proposed by ${proposed!.agent}`}>
+              <span className="db-cell db-cell--proposed" title={t("database.row.proposedBy", { agent: proposed!.agent })}>
                 {display(undefined, proposedValue)}
               </span>
             )}
@@ -199,13 +201,14 @@ export function GhostInsertRows({
       <tr className="db-ghost-actions">
         <td colSpan={span}>
           <span className="db-ghost-actions__label">
-            {agent} proposes {n === 1 ? "this row" : `these ${n} rows`}
-            {n > shownRows.length ? ` (showing the first ${shownRows.length})` : ""}
+            {n > shownRows.length
+              ? t("database.row.ghostProposesSome", { agent, count: n, shown: shownRows.length })
+              : t("database.row.ghostProposes", { agent, count: n })}
           </span>
           {!readOnly && (
             <span className="db-ghost-actions__buttons">
-              <Button label="Accept" variant="primary" size="sm" isDisabled={busy} onClick={() => onDecide("accept")} />
-              <Button label="Reject" variant="ghost" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
+              <Button label={t("common.accept")} variant="primary" size="sm" isDisabled={busy} onClick={() => onDecide("accept")} />
+              <Button label={t("common.reject")} variant="ghost" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
             </span>
           )}
         </td>
@@ -239,7 +242,7 @@ export function GroupSection({
           <button className="db-group-row__btn" onClick={onToggle} aria-expanded={!collapsed}>
             {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
             <span className="db-group-row__label">{label}</span>
-            <span className="db-group-row__count">{loaded < count && !collapsed ? `${loaded} of ${count}` : count}</span>
+            <span className="db-group-row__count">{loaded < count && !collapsed ? t("database.grid.groupSomeRows", { loaded, count }) : fmtInt(count)}</span>
           </button>
         </td>
       </tr>

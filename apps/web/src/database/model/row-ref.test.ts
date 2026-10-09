@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ColumnSpec, RowRecord } from "@stuga/protocol/databases/types";
-import { UNTITLED_ROW, formatRowRef, pageHref, pageStateOf, parseRowRef, rowHref, rowTitle, pageRefOf } from "./row-ref";
+import { formatRowRef, pageHref, pageStateOf, parseRowRef, rowHref, rowTitle, pageRefOf } from "./row-ref";
 
 const col = (id: string, name: string, type: ColumnSpec["type"], position: number): ColumnSpec => ({
   column_id: id,
@@ -21,9 +21,9 @@ describe("rowTitle", () => {
   });
 
   it("falls back to a placeholder when no text column holds anything", () => {
-    expect(rowTitle(columns, row({ c_done: 1, c_n: 42, c_name: "   ", c_notes: null }))).toBe(UNTITLED_ROW);
-    expect(rowTitle(columns, null)).toBe(UNTITLED_ROW);
-    expect(rowTitle([], row({ c_name: "ignored: no columns" }))).toBe(UNTITLED_ROW);
+    expect(rowTitle(columns, row({ c_done: 1, c_n: 42, c_name: "   ", c_notes: null }))).toBe("Untitled row");
+    expect(rowTitle(columns, null)).toBe("Untitled row");
+    expect(rowTitle([], row({ c_name: "ignored: no columns" }))).toBe("Untitled row");
   });
 });
 

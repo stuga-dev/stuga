@@ -16,6 +16,7 @@ import { LinkPopover } from "./overlays/LinkPopover";
 import { SlashMenu } from "./overlays/SlashMenu";
 import { MentionMenu } from "./overlays/MentionMenu";
 import { UploadTray } from "./overlays/UploadTray";
+import { t } from "../i18n/i18n";
 
 export function Editor({ provider, alias, label, docId, readOnly, hasSynced, autoFocus }: { provider: StugaProvider; alias: string; label: string; docId: string; readOnly: boolean; hasSynced: boolean; autoFocus: boolean }) {
   const { setEditor } = useSharedEditor();
@@ -41,7 +42,7 @@ export function Editor({ provider, alias, label, docId, readOnly, hasSynced, aut
       onClickComment: (num) => clickRef.current?.(num),
     }),
     editorProps: {
-      attributes: { class: "stuga-editor", "aria-label": "Document content" },
+      attributes: { class: "stuga-editor", "aria-label": t("editor.content.label") },
       handlePaste(_view, event) {
         const files = filesFrom(event.clipboardData);
         if (files.length === 0) return false;
@@ -71,7 +72,7 @@ export function Editor({ provider, alias, label, docId, readOnly, hasSynced, aut
     return () => setEditor(null);
   }, [editor, setEditor]);
 
-  if (!editor) return <div className="editor-loading">Loading editor…</div>;
+  if (!editor) return <div className="editor-loading">{t("editor.content.loading")}</div>;
   return (
     <>
       {/* Outside .editor-shell so it ignores the page-width preference. Removed on

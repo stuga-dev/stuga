@@ -1,3 +1,4 @@
+import { t } from "../i18n/i18n";
 import { authHeaders, failureFrom, observeResponse } from "../lib/http/client";
 
 export const Media = {
@@ -33,13 +34,13 @@ export const Media = {
             onProgress(1);
             resolve(body as { url: string; hash: string });
           } else {
-            reject(new Error("upload succeeded but response was unreadable"));
+            reject(new Error(t("errors.client.uploadUnreadable")));
           }
         } else {
           reject(failureFrom(url, "POST", xhr.status, body as Parameters<typeof failureFrom>[3]));
         }
       };
-      xhr.onerror = () => reject(new Error("upload failed (network error)"));
+      xhr.onerror = () => reject(new Error(t("errors.client.uploadNetwork")));
       xhr.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
       if (signal) {
         if (signal.aborted) {

@@ -395,6 +395,6 @@ describe("going to a collaborator", () => {
     act(() => buttonFor("ada@acme.com").click());
 
     expect(editor.state.selection.from).toBe(before);
-    expect(toastBodies()).toEqual(["ada@acme.com doesn't have a cursor in this document right now."]);
+    expect(toastBodies()).toEqual(["ada@acme.com doesn’t have a cursor in this document right now."]);
   });
 });

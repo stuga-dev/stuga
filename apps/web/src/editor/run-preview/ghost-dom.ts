@@ -13,6 +13,26 @@ import {
 import { RUN_FEEDBACK_NOTE_MAX_CHARS } from "@stuga/protocol/domain/limits";
 import { noteLabels } from "../../review/note-mode";
 import { isComposingKey } from "../../lib/ime";
+import { t, type MessageKey } from "../../i18n/i18n";
+
+/** What a decision button, or a note's send button, does: each names its change in a sentence of its own. */
+type DecisionLabel = "accept" | "reject" | "revise" | "withNote";
+
+const CHANGE_LABELS: Record<DecisionLabel, MessageKey> = {
+  accept: "editor.runPreview.acceptChange",
+  reject: "editor.runPreview.rejectChange",
+  revise: "editor.runPreview.reviseChange",
+  withNote: "editor.runPreview.noteChange",
+};
+
+/** The note's own action, as `noteLabels` words its send button: Revise for the co-author's run, Reject with note otherwise. */
+function noteDecision(part: PreviewHunkPart): DecisionLabel {
+  return part.noteMode === "revise" ? "revise" : "withNote";
+}
+
+function changeLabel(decision: DecisionLabel, part: PreviewHunkPart, ordinal: number, total: number): string {
+  return t(CHANGE_LABELS[decision], { ordinal, total, summary: part.summary });
+}
 
 /** Blocks the body renders: footnote definitions are hidden there (FootnoteHide), so a ghost omits them too. */
 function visibleBlocks(nodes: PMNode[]): PMNode[] {
@@ -104,25 +124,25 @@ function decisionRow(
     scope = document.createElement("span");
     scope.className = "ai-preview-hunk-scope";
     scope.id = `ai-preview-scope-${part.key}`;
-    scope.textContent = parts === 2 ? "Applies to both parts" : `Applies to all ${parts} parts`;
+    scope.textContent = t("editor.runPreview.appliesToParts", { count: parts });
   }
   const note = noteLabels(part.noteMode ?? "agent");
-  const LABELS = {
-    accept: { text: "Accept", title: "Apply this change", verb: "Accept" },
-    reject: { text: "Reject", title: "Discard this change", verb: "Reject" },
+  const LABELS: Record<"accept" | "reject" | "request_changes", { text: string; title: string; label: DecisionLabel }> = {
+    accept: { text: t("common.accept"), title: t("editor.runPreview.acceptTitle"), label: "accept" },
+    reject: { text: t("common.reject"), title: t("editor.runPreview.rejectTitle"), label: "reject" },
     request_changes: {
       text: note.trigger,
-      title: part.noteMode === "revise" ? "Discard this change and have the AI rewrite it from your note" : "Discard this change with a note for the AI",
-      verb: note.submit,
+      title: part.noteMode === "revise" ? t("editor.runPreview.reviseTitle") : t("editor.runPreview.noteTitle"),
+      label: noteDecision(part),
     },
-  } as const;
+  };
   for (const decision of ["accept", "reject", "request_changes"] as const) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `ai-preview-hunk-btn ai-preview-hunk-btn--${decision}`;
     btn.textContent = LABELS[decision].text;
     btn.title = LABELS[decision].title;
-    btn.setAttribute("aria-label", `${LABELS[decision].verb} change ${ordinal} of ${total}: ${part.summary}`);
+    btn.setAttribute("aria-label", changeLabel(LABELS[decision].label, part, ordinal, total));
     if (scope) btn.setAttribute("aria-describedby", scope.id);
     if (pending) {
       btn.disabled = true;
@@ -154,14 +174,14 @@ function noteComposer(part: PreviewHunkPart, ordinal: number, total: number, clo
   const box = document.createElement("div");
   box.className = "ai-preview-hunk-note";
   box.setAttribute("role", "group");
-  box.setAttribute("aria-label", `${labels.submit} change ${ordinal} of ${total}: ${part.summary}`);
+  box.setAttribute("aria-label", changeLabel(noteDecision(part), part, ordinal, total));
 
   const field = document.createElement("textarea");
   field.className = "ai-preview-hunk-note__field";
   field.rows = 2;
   field.dir = "auto";
-  field.placeholder = "What should change?";
-  field.setAttribute("aria-label", "What should change?");
+  field.placeholder = t("editor.runPreview.notePlaceholder");
+  field.setAttribute("aria-label", t("editor.runPreview.notePlaceholder"));
   field.maxLength = RUN_FEEDBACK_NOTE_MAX_CHARS;
   field.value = draft.text;
   // The caret and selection of the field this one replaces, which a detached field still holds.
@@ -180,7 +200,7 @@ function noteComposer(part: PreviewHunkPart, ordinal: number, total: number, clo
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "ai-preview-hunk-btn ai-preview-hunk-btn--cancel";
-  cancel.textContent = "Cancel";
+  cancel.textContent = t("common.cancel");
   const submit = document.createElement("button");
   submit.type = "button";
   submit.className = "ai-preview-hunk-btn ai-preview-hunk-btn--submit";
@@ -263,11 +283,11 @@ function partNote(part: PreviewHunkPart, role: PartRole): HTMLElement {
   const note = document.createElement("div");
   note.className = "ai-preview-hunk-part";
   note.setAttribute("contenteditable", "false");
-  note.appendChild(document.createTextNode(`Part ${role.index} of ${role.parts} · `));
+  note.appendChild(document.createTextNode(t("editor.runPreview.part", { index: role.index, parts: role.parts })));
   const go = document.createElement("button");
   go.type = "button";
   go.className = "ai-preview-hunk-goto";
-  go.textContent = "Go to decision";
+  go.textContent = t("editor.runPreview.goToDecision");
   go.addEventListener("mousedown", (e) => e.preventDefault());
   go.addEventListener("click", (e) => {
     e.preventDefault();
@@ -383,8 +403,12 @@ function hunkPartDom(
   el.className = "ai-preview-hunk";
   el.dataset.hunkKey = part.key;
   el.setAttribute("role", "group");
-  const which = role.parts > 1 ? `, part ${role.index} of ${role.parts}` : "";
-  el.setAttribute("aria-label", `Change ${ordinal} of ${total}${which}: ${part.summary}`);
+  el.setAttribute(
+    "aria-label",
+    role.parts > 1
+      ? t("editor.runPreview.changePart", { ordinal, total, index: role.index, parts: role.parts, summary: part.summary })
+      : t("editor.runPreview.change", { ordinal, total, summary: part.summary }),
+  );
   if (pending) {
     el.classList.add("ai-preview-hunk--pending");
     el.setAttribute("aria-busy", "true");

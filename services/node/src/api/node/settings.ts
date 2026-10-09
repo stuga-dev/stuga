@@ -3,12 +3,14 @@ import { ProviderError, fetchProviderMetadata, sha256Hex } from "@stuga/auth";
 import {
   countAccountsWithoutPassword,
   getNodeSettings,
+  getUiLanguage,
   resetNodeSettings as resetSettingsRow,
   saveNodeSettings as saveSettingsRow,
   type NodeSettingsRow,
 } from "@stuga/db";
 import { MAX_NODE_NAME_CHARS, UNSAFE_TEXT, hasVisibleText } from "@stuga/protocol/domain/node-name";
 import { NOTIFY_SINKS } from "@stuga/protocol/domain/notify";
+import { recipientLanguage } from "@stuga/protocol/notify/render";
 import { SEARCH_LANGUAGES, parseSearchLanguages, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { nodeAuditCtx, recordAudit } from "../../audit/record.js";
 import type { Ctx } from "../../auth/context.js";
@@ -31,7 +33,7 @@ import { alertsFor, sameChannel } from "../../identity/alerts.js";
 import { deviceLabel } from "../../identity/devices.js";
 import { recentConfirmationRequired } from "../../identity/recency.js";
 import type { WorkspaceCall } from "../../http/router.js";
-import { deliver } from "../../jobs/sinks.js";
+import { UNSENT_ENGLISH, deliver } from "../../jobs/sinks.js";
 import { parseSmtpUrl } from "../../jobs/smtp.js";
 import { MAX_UPLOAD_BYTES_CEILING } from "../../media/media.js";
 import { isLoopbackHost } from "../../net/addresses.js";
@@ -44,8 +46,8 @@ interface NotifyProbe {
   message?: string;
 }
 
-/** Send one real notification through a candidate sink. */
-async function probeNotify(cfg: NotifyConfig, nodeUrl: string): Promise<NotifyProbe> {
+/** Send one real notification through a candidate sink, written in the administrator's language. */
+async function probeNotify(cfg: NotifyConfig, nodeUrl: string, languageOf: () => Promise<string>): Promise<NotifyProbe> {
   if (cfg.sink === "none") return { ok: true, sink: cfg.sink, message: "No sink is configured, so nothing was sent." };
   const incomplete = notifyIncomplete(cfg);
   if (incomplete) return { ok: false, sink: cfg.sink, message: incomplete };
@@ -53,11 +55,12 @@ async function probeNotify(cfg: NotifyConfig, nodeUrl: string): Promise<NotifyPr
     const unsent = await deliver(cfg, {
       recipient: "node-administrator",
       recipientEmail: cfg.emailFrom ?? null,
-      title: "Stuga test notification",
-      body: "This is a test from your node's settings page. If you are reading it, the sink works.",
+      eventType: "NODE_TEST_NOTIFICATION",
+      params: {},
+      language: await languageOf(),
       url: nodeUrl,
     });
-    return unsent === null ? { ok: true, sink: cfg.sink } : { ok: false, sink: cfg.sink, message: unsent };
+    return unsent === null ? { ok: true, sink: cfg.sink } : { ok: false, sink: cfg.sink, message: UNSENT_ENGLISH[unsent] };
   } catch (e) {
     return { ok: false, sink: cfg.sink, message: e instanceof Error ? e.message : String(e) };
   }
@@ -106,6 +109,18 @@ function nameProblem(v: string): string | null {
   return plainText(v, MAX_NODE_NAME_CHARS, "name") ?? (hasVisibleText(v) ? null : "the name must contain a visible character");
 }
 
+/** A refused save: an English sentence, and a code where the settings page words it by one. */
+interface Refusal {
+  error: string;
+  status: number;
+  code?: string;
+}
+
+/** `{ error }`, or `{ error: code, message }` where the refusal has a code. */
+function refusal(r: Refusal): Response {
+  return r.code ? json({ error: r.code, message: r.error }, { status: r.status }) : error(r.status, r.error);
+}
+
 /**
  * Validate the identity provider section: an issuer the node can reach and
  * that answers as an OpenID provider with the authorization-code flow. What is
@@ -114,7 +129,7 @@ function nameProblem(v: string): string | null {
 async function parseIdentityProvider(
   raw: unknown,
   stored: StoredIdentityProvider | null,
-): Promise<{ provider: StoredIdentityProvider | null; secret: string | null | undefined } | { error: string; status: number }> {
+): Promise<{ provider: StoredIdentityProvider | null; secret: string | null | undefined } | Refusal> {
   if (raw === null) return { provider: null, secret: null };
   if (typeof raw !== "object" || Array.isArray(raw)) return { error: "identity_provider must be an object or null", status: 400 };
   const body = raw as Record<string, unknown>;
@@ -164,7 +179,8 @@ async function parseIdentityProvider(
   try {
     issuer = (await fetchProviderMetadata(typedIssuer)).issuer;
   } catch (e) {
-    if (e instanceof ProviderError) return { error: `${e.message}. Check the issuer URL.`, status: 400 };
+    // The reason is the code the settings page words the refusal by, and the sentence its detail.
+    if (e instanceof ProviderError) return { error: `${e.message}. Check the issuer URL.`, status: 400, code: `provider_${e.reason}` };
     throw e;
   }
   return { provider: { issuer, clientId, label, scopes }, secret };
@@ -225,7 +241,7 @@ async function parseSettingsCandidate(
   ctx: Ctx,
   req: Request,
   opts: { probe?: boolean } = {},
-): Promise<SettingsCandidate | { error: string; status: number }> {
+): Promise<SettingsCandidate | Refusal> {
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body || typeof body !== "object") return { error: "expected a JSON body", status: 400 };
 
@@ -555,7 +571,7 @@ function applySecretFiles(ctx: Ctx, files: Array<[file: string, value: string | 
 
 async function saveNodeSettings(ctx: Ctx, req: Request): Promise<Response> {
   const parsed = await parseSettingsCandidate(ctx, req);
-  if ("error" in parsed) return error(parsed.status, parsed.error);
+  if ("error" in parsed) return refusal(parsed);
 
   const before = ctx.env.settings.current();
   const searchBefore = ctx.env.searchLanguages.status().languages;
@@ -717,8 +733,9 @@ async function resetNodeSettings(ctx: Ctx, req: Request): Promise<Response> {
 
 export async function testNotifySink({ ctx, req }: WorkspaceCall): Promise<Response> {
   const parsed = await parseSettingsCandidate(ctx, req, { probe: true });
-  if ("error" in parsed) return error(parsed.status, parsed.error);
-  const probe = await probeNotify(parsed.notify, ctx.env.publicOrigin);
+  if ("error" in parsed) return refusal(parsed);
+  const languageOf = async () => recipientLanguage(await getUiLanguage(ctx.sql, ctx.alias).catch(() => null));
+  const probe = await probeNotify(parsed.notify, ctx.env.publicOrigin, languageOf);
   recordAudit(nodeAuditCtx(ctx), {
     action: "node.settings.notify_test",
     targetKind: "node",

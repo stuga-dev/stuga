@@ -6,6 +6,7 @@
  * or which backup to restore. Only reads here; boot.ts parks the node on a
  * refusal (http/serving-gate.ts), and the operator commands that write exit 2.
  */
+import { renderGatePage, type GateRefusal } from "@stuga/protocol/notify/render";
 import { closeClients, createClient, lastNodeBoot, readSchemaVersion, SCHEMA_VERSION, type Sql } from "@stuga/db";
 import type { BackupEnv } from "../ops/env.js";
 import { listBackups, type BackupSummary } from "../ops/node-backups.js";
@@ -64,7 +65,12 @@ export function restoreCommandFor(template: string | null, name: string): string
 export interface RefusalText {
   /** The log line, after `[node] `. */
   log: string;
-  /** The page, which anyone who reaches the node reads: versions, never a path. */
+  /**
+   * What the page says, which anyone who reaches the node reads: versions, never a path. The page
+   * writes it in the browser's language (@stuga/protocol/notify/render renderGatePage).
+   */
+  why: GateRefusal;
+  /** The page's text in English. */
   title: string;
   body: string;
   /** Set only when the packaging names its restore command and a backup to restore is known. */
@@ -76,10 +82,11 @@ export function refusalText(r: DataRefusal, backup: string | null, restoreComman
   const restore = backup
     ? `restore ${backup} with this version: ${command ?? `stop this node first, then run stuga-node restore ${backup}`}`
     : `restore a backup of Stuga ${r.version}'s data with this version.`;
-  const page = (by: string) => ({
-    title: `Stuga ${by} last served this data`,
-    body: `This is Stuga ${r.version}, so it changed nothing. Start ${by} again, or restore the backup from before the update with this version.`,
-  });
+  const page = (by: string | null) => {
+    const why: GateRefusal = { servedBy: by, version: r.version };
+    const { title, body } = renderGatePage(why, "en");
+    return { why, title, body: body ?? "" };
+  };
   if (r.kind === "newer-release") {
     return {
       log:
@@ -98,12 +105,7 @@ export function refusalText(r: DataRefusal, backup: string | null, restoreComman
       `refusing this database: it is at schema ${r.schema}, and this build knows schema ${r.known}; ` +
       `${by ? `Stuga ${by} served it last` : "a newer Stuga changed it"}. Nothing was changed. ` +
       `Start ${by ? `Stuga ${by}` : "the newer version"} again, or ${restore}`,
-    ...(by
-      ? page(by)
-      : {
-          title: "A newer Stuga changed this data",
-          body: "This build changed nothing. Start the newer version again, or restore the backup from before the update with this version.",
-        }),
+    ...page(by),
     command,
   };
 }

@@ -4,6 +4,8 @@
  * run is keyed by id with a last-write-wins `updated_at` guard.
  */
 
+import { runAgentLabel } from "../state/identity";
+
 type LedgerItemStatus = "pending" | "accepted" | "rejected" | "conflict" | "auto_applied";
 
 export interface LedgerItem {
@@ -13,8 +15,12 @@ export interface LedgerItem {
 
 export interface LedgerRun {
   id: string;
-  /** Display name of the proposing agent. */
+  /** Who proposed: an agent over MCP, or the co-author panel. */
+  source: string;
+  /** Display name of the proposing agent, as the node stored it; people read `runAgentLabel`. */
   agent: string;
+  /** Alias of the proposing agent. */
+  agent_alias: string;
   /** Alias of the human who reviews. */
   reviewer: string;
   status: "open" | "applied" | "rejected" | "expired";
@@ -143,12 +149,15 @@ export function unseenAppliedOf<R extends LedgerRun>(runs: R[]): R[] {
   return runs.filter((r) => r.auto_applied && !r.acknowledged && r.status !== "expired");
 }
 
-/** Every open run's pending items, tagged with their run, in each run's own order. */
+/** Every open run's pending items, tagged with their run and its agent as people read it, in each run's own order. */
 export function pendingItemsOf<R extends LedgerRun, I extends LedgerItem>(
   shape: RunShape<R, I>,
   runs: R[],
 ): { runId: string; agent: string; item: I }[] {
-  return runs.flatMap((r) => pendingItems(shape, r).map((item) => ({ runId: r.id, agent: r.agent, item })));
+  return runs.flatMap((r) => {
+    const agent = runAgentLabel(r);
+    return pendingItems(shape, r).map((item) => ({ runId: r.id, agent, item }));
+  });
 }
 
 /** An item id restarts at 1 in every run, so keys pair it with its run. */

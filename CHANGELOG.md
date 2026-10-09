@@ -9,6 +9,10 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Added
+
+- Stuga speaks your language: the app, its notifications and alerts, and the Mac menu bar and installer come in English, 简体中文, 繁體中文, 日本語, 한국어, Deutsch, Français, Español and Português (Brasil). The app follows your browser until you pick a language in **Settings → Appearance**, which then goes with your account; the menu bar follows your Mac.
+
 ## [0.1.13] - 2026-10-08
 
 A security fix for search excerpts; Settings shows a model's full name and lists each of Ollama's

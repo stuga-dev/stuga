@@ -1,4 +1,9 @@
-/** Where a notification goes besides the in-app tray: one sink, chosen in node settings, shaped per channel. */
+/**
+ * Where a notification goes besides the in-app tray: one sink, chosen in node settings, shaped per
+ * channel, and written in the recipient's language.
+ */
+import type { DeliveryErrorCode } from "@stuga/protocol/notify/events";
+import { renderNotification, renderOpenAction } from "@stuga/protocol/notify/render";
 import type { NotifyConfig } from "../env.js";
 import { sendMail as smtpSendMail, type MailMessage } from "./smtp.js";
 
@@ -7,9 +12,35 @@ export interface NotificationPayload {
   recipient: string;
   /** The recipient's email, when the directory has one (the email sink needs it). */
   recipientEmail?: string | null;
-  title: string;
-  body: string;
+  /** What it says (@stuga/protocol/notify/events), written when it is sent. */
+  eventType: string;
+  params: Record<string, unknown>;
+  /** The recipient's language, which the message is written in. */
+  language: string;
   url: string;
+}
+
+/** Why nothing was sent, when trying again would change nothing: a code the notification keeps. */
+export type UnsentCode = Extract<DeliveryErrorCode, "email_not_set_up" | "no_email_address" | "no_webhook_url" | "no_sink">;
+
+/** The same in English, for the settings page's test, which answers as the API does. */
+export const UNSENT_ENGLISH: Record<UnsentCode, string> = {
+  email_not_set_up: "email is not set up",
+  no_email_address: "you have no email address in Stuga",
+  no_webhook_url: "no webhook URL is set",
+  no_sink: "no sink is set up",
+};
+
+/** A sink that answered with an error status, kept on the notification as `sink_answered:<status>`. */
+export class SinkAnsweredError extends Error {
+  constructor(readonly status: number) {
+    super(`notification sink answered ${status}`);
+  }
+}
+
+/** The title and body a notification reads in its recipient's language. */
+export function notificationText(n: Pick<NotificationPayload, "eventType" | "params" | "language">): { title: string; body: string } {
+  return renderNotification(n.eventType, n.params, n.language) ?? { title: n.eventType, body: "" };
 }
 
 export interface SinkIo {
@@ -24,13 +55,15 @@ const defaultIo: SinkIo = { fetch: (...args) => fetch(...args), sendMail: smtpSe
  * trying again; returns why nothing was sent when trying again would change nothing (no address to
  * send to), and null when it was sent.
  */
-export async function deliver(cfg: NotifyConfig, n: NotificationPayload, io: SinkIo = defaultIo): Promise<string | null> {
+export async function deliver(cfg: NotifyConfig, payload: NotificationPayload, io: SinkIo = defaultIo): Promise<UnsentCode | null> {
+  const n = { ...payload, ...notificationText(payload) };
+  const open = renderOpenAction(payload.language);
   switch (cfg.sink) {
     case "slack":
       return await postJson(io, cfg.webhookUrl, {
         blocks: [
           { type: "section", text: { type: "mrkdwn", text: `*${forSlack(n.title)}*\n${forSlack(n.body)}` } },
-          { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open" }, url: n.url }] },
+          { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: open }, url: n.url }] },
         ],
       });
     case "discord":
@@ -42,13 +75,22 @@ export async function deliver(cfg: NotifyConfig, n: NotificationPayload, io: Sin
       return await postJson(io, cfg.webhookUrl, {
         "@type": "MessageCard",
         summary: n.title,
-        text: `${forTeams(n.body)}\n\n[Open](${n.url})`,
+        text: `${forTeams(n.body)}\n\n[${forTeams(open)}](${n.url})`,
       });
     case "webhook":
-      return await postJson(io, cfg.webhookUrl, { recipient: n.recipient, title: n.title, body: n.body, url: n.url });
+      // The text for whoever reads it as it comes, and the event and its params for whatever acts on it.
+      return await postJson(io, cfg.webhookUrl, {
+        recipient: n.recipient,
+        event_type: n.eventType,
+        params: n.params,
+        language: n.language,
+        title: n.title,
+        body: n.body,
+        url: n.url,
+      });
     case "email": {
-      if (!cfg.smtpUrl || !cfg.emailFrom) return "email is not set up";
-      if (!n.recipientEmail) return "you have no email address in Stuga";
+      if (!cfg.smtpUrl || !cfg.emailFrom) return "email_not_set_up";
+      if (!n.recipientEmail) return "no_email_address";
       await io.sendMail(cfg.smtpUrl, {
         from: cfg.emailFrom,
         to: n.recipientEmail,
@@ -58,18 +100,18 @@ export async function deliver(cfg: NotifyConfig, n: NotificationPayload, io: Sin
       return null;
     }
     default:
-      return "no sink is set up";
+      return "no_sink";
   }
 }
 
-async function postJson(io: SinkIo, url: string | undefined, body: unknown): Promise<string | null> {
-  if (!url) return "no webhook URL is set";
+async function postJson(io: SinkIo, url: string | undefined, body: unknown): Promise<UnsentCode | null> {
+  if (!url) return "no_webhook_url";
   const res = await io.fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`notification sink answered ${res.status}`);
+  if (!res.ok) throw new SinkAnsweredError(res.status);
   return null;
 }
 

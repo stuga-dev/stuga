@@ -7,6 +7,7 @@ import { useMemo, useRef } from "react";
 import { Typeahead, TypeaheadItem, type SearchSource, type SearchableItem } from "@astryxdesign/core/Typeahead";
 import { Search } from "lucide-react";
 import type { MemberCandidate } from "../api";
+import { t } from "../i18n/i18n";
 import { Avatar, rememberUsers } from "../state/identity";
 
 /** A picker row: the account rides along so choosing it needs no second lookup. */
@@ -55,16 +56,17 @@ export function PersonPicker({ label, search, value, onChange, exclude, emptySea
   return (
     <Typeahead<PersonItem>
       label={label}
-      placeholder="Search by username or name"
+      placeholder={t("ui.personPicker.placeholder")}
       width="100%"
       startIcon={<Search size={15} />}
       searchSource={source}
       value={value}
       onChange={onChange}
-      emptySearchResultsText={emptySearchResultsText ?? "No one matches."}
+      emptySearchResultsText={emptySearchResultsText ?? t("ui.personPicker.noMatch")}
       renderItem={(item) => (
         <TypeaheadItem
           item={item}
+          // i18n-exempt: a principal id
           icon={<Avatar principal={`user:${item.id}`} size={24} />}
           description={
             item.auxiliaryData?.username && item.auxiliaryData.username !== item.label

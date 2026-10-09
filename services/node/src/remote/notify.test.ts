@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { NodeRemoteAccessRow } from "@stuga/db";
 import type { NotifyDeliverMessage } from "@stuga/protocol/internal/jobs";
+import { renderNotification } from "@stuga/protocol/notify/render";
 import { bindingNotice, certNotices, movedNotice, notifyRemoteAccess, recoveredNotice, type RemoteNotice } from "./notify.js";
 
 const HOST = "k7f3q2.mystuga.com";
@@ -23,6 +24,8 @@ function row(over: Partial<NodeRemoteAccessRow> = {}): NodeRemoteAccessRow {
 }
 
 const events = (notices: RemoteNotice[]) => notices.map((n) => `${n.event}:${n.key}`);
+/** A notice as it reads in English. */
+const english = (n: RemoteNotice) => renderNotification(n.event, n.params, "en")!;
 
 describe("the certificate warnings", () => {
   it("are none for a certificate with most of its life left, or none at all", () => {
@@ -52,8 +55,8 @@ describe("the certificate warnings", () => {
   it("say it expired, and no longer that it expires soon", () => {
     const [notice, ...rest] = certNotices(row({ cert_failures: 1 }), T0 + 90 * DAY);
     expect(rest).toEqual([]);
-    expect(notice).toMatchObject({ event: "REMOTE_CERT_EXPIRED", key: "87654321", title: "Remote access's certificate expired" });
-    expect(notice!.body).toBe(`https://${HOST} can't be reached until there is a new one.`);
+    expect(notice).toEqual({ event: "REMOTE_CERT_EXPIRED", key: "87654321", params: { address: `https://${HOST}` } });
+    expect(english(notice!)).toEqual({ title: "Remote access’s certificate expired", body: `https://${HOST} can’t be reached until there is a new one.` });
   });
 
   it("say renewing it fails after the third failure in a row, or at once when it waits for someone", () => {
@@ -63,10 +66,13 @@ describe("the certificate warnings", () => {
       {
         event: "REMOTE_CERT_RENEWAL_FAILED",
         key: "87654321",
-        title: "Remote access can't renew its certificate",
-        body: `The certificate for https://${HOST} expires 2026-12-31 00:00 UTC. The CA said no.`,
+        params: { address: `https://${HOST}`, expires: "2026-12-31T00:00:00.000Z", detail: "The CA said no." },
       },
     ]);
+    expect(english(failing[0]!)).toEqual({
+      title: "Remote access can’t renew its certificate",
+      body: `The certificate for https://${HOST} expires 2026-12-31 00:00 UTC. The CA said no.`,
+    });
     for (const code of ["acme_action_required", "issuance_budget"]) {
       expect(events(certNotices(row({ last_error: { code, message: "m", at: "" } }), T0 + 61 * DAY))).toEqual(["REMOTE_CERT_RENEWAL_FAILED:87654321"]);
     }
@@ -77,12 +83,13 @@ describe("the certificate warnings", () => {
   });
 
   it("end with one for the new certificate, keyed by the one warned about", () => {
-    expect(recoveredNotice("87654321", HOST, new Date(T0 + 180 * DAY))).toEqual({
+    const recovered = recoveredNotice("87654321", HOST, new Date(T0 + 180 * DAY));
+    expect(recovered).toEqual({
       event: "REMOTE_CERT_RECOVERED",
       key: "87654321",
-      title: "Remote access has a new certificate",
-      body: `The certificate for https://${HOST} is valid until 2027-03-31 00:00 UTC.`,
+      params: { address: `https://${HOST}`, expires: "2027-03-31T00:00:00.000Z" },
     });
+    expect(english(recovered).body).toBe(`The certificate for https://${HOST} is valid until 2027-03-31 00:00 UTC.`);
   });
 });
 
@@ -90,17 +97,25 @@ describe("the warning about the binding", () => {
   it("comes a day into the service's refusals, keyed by when they began", () => {
     const since = new Date(T0);
     expect(bindingNotice(row({ binding_failing_since: since }), T0 + DAY - 1)).toBeNull();
-    expect(bindingNotice(row({ binding_failing_since: since }), T0 + DAY)).toMatchObject({
+    const notice = bindingNotice(row({ binding_failing_since: since }), T0 + DAY)!;
+    expect(notice).toEqual({
       event: "REMOTE_BINDING_REJECTED",
       key: "2026-10-02T00:00:00.000Z",
+      params: { address: `https://${HOST}`, reason: "refused" },
+    });
+    expect(english(notice)).toEqual({
       title: "Remote access needs a restore code",
+      body: `The remote access service no longer accepts this node’s key. Enter a restore code to keep https://${HOST}.`,
     });
   });
 
   it("comes at once for a key the node lost or can't read, keyed by when it found that", () => {
     const at = "2026-10-03T04:05:06.000Z";
     const lost = row({ last_error: { code: "binding_rejected", message: "This node's key for its remote address is missing. Enter a restore code to keep the address.", at } });
-    expect(bindingNotice(lost, T0)).toMatchObject({ key: at, body: lost.last_error!.message });
+    expect(bindingNotice(lost, T0)).toEqual({ event: "REMOTE_BINDING_REJECTED", key: at, params: { address: `https://${HOST}`, reason: "key_unusable" } });
+    expect(english(bindingNotice(lost, T0)!).body).toBe(
+      `This node’s key for https://${HOST} is missing or can’t be read. Enter a restore code to keep the address.`,
+    );
     // The service's own, before a day of it: not yet.
     const refused = row({ binding_failing_since: new Date(T0), last_error: { code: "binding_rejected", message: "m", at, service_code: "unknown_key" } });
     expect(bindingNotice(refused, T0 + HOUR)).toBeNull();
@@ -110,9 +125,9 @@ describe("the warning about the binding", () => {
 
 describe("the notice of a move", () => {
   it("names the address that moved, keyed by when the node learned of it", () => {
-    expect(movedNotice(HOST, "2026-10-03T04:05:06.000Z")).toEqual({
-      event: "REMOTE_ADDRESS_MOVED",
-      key: "2026-10-03T04:05:06.000Z",
+    const moved = movedNotice(HOST, "2026-10-03T04:05:06.000Z");
+    expect(moved).toEqual({ event: "REMOTE_ADDRESS_MOVED", key: "2026-10-03T04:05:06.000Z", params: { address: `https://${HOST}` } });
+    expect(english(moved)).toEqual({
       title: "Remote access moved to another computer",
       body: `https://${HOST} now reaches another computer. Remote access is off on this one.`,
     });
@@ -121,7 +136,7 @@ describe("the notice of a move", () => {
 
 describe("telling the administrators", () => {
   function setup(sink: "none" | "slack") {
-    const rows: Array<{ id: string; event_type: string; recipient_alias: string; workspace_id: string | null; resource_url: string | null; resource_title: string | null }> = [];
+    const rows: Array<{ id: string; event_type: string; recipient_alias: string; workspace_id: string | null; resource_url: string | null; resource_title: string | null; payload: unknown }> = [];
     const deliveries: Array<NotifyDeliverMessage | null> = [];
     const db = {
       listNodeAdmins: async () => [{ alias: "liv" }, { alias: "sam" }],
@@ -135,18 +150,18 @@ describe("telling the administrators", () => {
     const env = { sql: null as never, publicOrigin: "http://livs-air.local:8787", settings: { current: () => ({ notify: { sink } }) } } as never;
     return { rows, deliveries, send: (n: RemoteNotice) => notifyRemoteAccess(env, n, db as never) };
   }
-  const notice: RemoteNotice = { event: "REMOTE_CERT_EXPIRED", key: "87654321", title: "t", body: "b" };
+  const notice: RemoteNotice = { event: "REMOTE_CERT_EXPIRED", key: "87654321", params: { address: "https://x.test" } };
 
   it("writes one for each node administrator, about no workspace, linking to the remote access settings", async () => {
     const { rows, deliveries, send } = setup("slack");
     await send(notice);
     expect(rows).toMatchObject([
-      { id: "REMOTE_CERT_EXPIRED:87654321:liv", event_type: "REMOTE_CERT_EXPIRED", recipient_alias: "liv", workspace_id: null, resource_title: "t" },
+      { id: "REMOTE_CERT_EXPIRED:87654321:liv", event_type: "REMOTE_CERT_EXPIRED", recipient_alias: "liv", workspace_id: null, resource_title: null, payload: { address: "https://x.test" } },
       { id: "REMOTE_CERT_EXPIRED:87654321:sam", recipient_alias: "sam" },
     ]);
     expect(rows[0]!.resource_url).toBe("http://livs-air.local:8787/settings/node/remote");
     expect(deliveries[0]).toEqual({ kind: "notify_deliver", channel: "slack", channelKey: expect.stringMatching(/^[0-9a-f]{16}$/),
-      recipient: "liv", title: "t", body: "b", url: "http://livs-air.local:8787/settings/node/remote" });
+      recipient: "liv", eventType: "REMOTE_CERT_EXPIRED", params: { address: "https://x.test" }, url: "http://livs-air.local:8787/settings/node/remote" });
     await send(notice);
     expect(rows).toHaveLength(2);
   });

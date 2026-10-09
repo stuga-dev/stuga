@@ -84,12 +84,17 @@ describe("POST /api/docs/:id/comments", () => {
   it("names the commenter by display name in the owner's notification", async () => {
     const res = await comment(ctx(), { body: "Looks good" });
     expect(res.status).toBe(201);
-    expect(ownerNotice()).toMatchObject({ recipient: "owner-1", title: 'Ada Lovelace commented on "Roadmap"', actor: "human-7f3a" });
+    expect(ownerNotice()).toMatchObject({
+      recipient: "owner-1",
+      eventType: "COMMENT_ON_OWNED_DOC",
+      params: { actor: "Ada Lovelace", doc: "Roadmap", kind: "comment", excerpt: "Looks good" },
+      actor: "human-7f3a",
+    });
   });
 
   it("falls back to the alias for a commenter with no display name", async () => {
     await comment(ctx({ displayName: "" }), { body: "Looks good" });
-    expect(ownerNotice()).toMatchObject({ title: 'human-7f3a commented on "Roadmap"' });
+    expect(ownerNotice()).toMatchObject({ params: { actor: "human-7f3a" } });
   });
 
   it("does not notify an owner commenting on their own document", async () => {
@@ -104,7 +109,7 @@ describe("POST /api/docs/:id/comments", () => {
     expect(mentionNotices()).toEqual([
       expect.objectContaining({
         recipient: "u_bob",
-        title: 'Ada Lovelace mentioned you in a comment on "Roadmap"',
+        params: expect.objectContaining({ actor: "Ada Lovelace", doc: "Roadmap" }),
         docId: "d1",
         actor: "human-7f3a",
       }),

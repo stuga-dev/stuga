@@ -3,6 +3,7 @@
  * one that sends it carry the same words, so the reviewer confirms the action they chose.
  */
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
+import { t } from "../i18n/i18n";
 
 /**
  * - `revise`: the co-author's own run, with AI chat on: it rewrites the rejected text at once.
@@ -27,12 +28,13 @@ export interface NoteLabels {
 
 /** Labels for one change, or for every change of a run (`all`). */
 export function noteLabels(mode: NoteMode, all = false): NoteLabels {
-  const action = mode === "revise" ? (all ? "Revise all" : "Revise") : all ? "Reject all with note" : "Reject with note";
-  const hint =
-    mode === "revise"
-      ? null
-      : mode === "next_turn"
-        ? "The co-author gets your note on its next turn."
-        : "The agent gets your note the next time it works here.";
-  return { trigger: `${action}…`, submit: action, hint };
+  if (mode === "revise") {
+    return all
+      ? { trigger: t("review.note.reviseAllEllipsis"), submit: t("review.note.reviseAll"), hint: null }
+      : { trigger: t("review.note.reviseEllipsis"), submit: t("review.note.revise"), hint: null };
+  }
+  const hint = mode === "next_turn" ? t("review.note.nextTurnHint") : t("review.note.agentHint");
+  return all
+    ? { trigger: t("review.note.rejectAllEllipsis"), submit: t("review.note.rejectAll"), hint }
+    : { trigger: t("review.note.rejectEllipsis"), submit: t("review.note.reject"), hint };
 }

@@ -192,6 +192,35 @@ export type DatabaseOpKind =
   | "views.delete"
   | "revert";
 
+/**
+ * What an op did, as data, so the web can say it in the reader's language; `summary` says the same
+ * in English for agents. Names are as they were when the op ran.
+ */
+export type DatabaseOpDetail =
+  | { kind: "tables.create"; table: string; columns: number }
+  | { kind: "tables.rename"; table: string; to: string }
+  /** `captured` false: too large to keep for revert. */
+  | { kind: "tables.delete"; table: string; rows: number; captured: boolean }
+  | { kind: "columns.add"; table: string; column: string }
+  | { kind: "columns.rename"; table: string; column: string; to: string }
+  | { kind: "columns.set_type"; table: string; column: string; type: DatabaseColumnType; coerced: number }
+  | { kind: "columns.set_description"; table: string; column: string; cleared: boolean }
+  | { kind: "columns.delete"; table: string; column: string }
+  | { kind: "rows.insert"; table: string; rows: number; imported: boolean }
+  /** `columns`: the first few columns the update touched; `more_columns` when it touched others too. */
+  | { kind: "rows.update"; table: string; rows: number; columns: string[]; more_columns: boolean }
+  | { kind: "rows.delete"; table: string; rows: number }
+  | { kind: "rows.link_page"; table: string }
+  | { kind: "rows.link_pages"; table: string; pages: number }
+  | { kind: "views.create"; table: string; view: string }
+  | { kind: "views.update"; table: string; view: string; renamed_to: string | null }
+  | { kind: "views.delete"; table: string; view: string }
+  /** `of`: the reverted op's detail, null when that op has none. */
+  | { kind: "revert"; of: DatabaseOpChangeDetail | null };
+
+/** The detail of an op that changed the database, which every kind but a revert is. */
+export type DatabaseOpChangeDetail = Exclude<DatabaseOpDetail, { kind: "revert" }>;
+
 export interface DatabaseOpSummary {
   op_id: string;
   seq: number;
@@ -203,8 +232,10 @@ export interface DatabaseOpSummary {
   on_behalf_of: string | null;
   kind: DatabaseOpKind;
   table_id: string | null;
-  /** Human-readable one-liner, e.g. `Inserted 3 rows into "Projects"`. */
+  /** English one-liner for agents, e.g. `Inserted 3 rows into "Projects"`. */
   summary: string;
+  /** The same as data; null for an op recorded before ops carried it. */
+  detail: DatabaseOpDetail | null;
   /** op_id of the revert that undid this op, else null. */
   reverted_by: string | null;
   /** For kind "revert": the op_id it undid. */
@@ -300,8 +331,10 @@ export interface DatabaseRunOp {
   kind: DatabaseRunOpKind;
   /** The table this op targets (for tables.create, the pre-minted id). */
   table_id: string;
-  /** Human one-liner, e.g. `Insert 3 rows into "Tasks"`. */
+  /** English one-liner for agents, e.g. `Insert 3 rows into "Tasks"`. */
   summary: string;
+  /** What the op would do, as data, so the web says it in the reader's language; null for an op proposed before ops carried it. */
+  detail: DatabaseOpChangeDetail | null;
   status: DatabaseRunOpStatus;
   /** The review mode the op was proposed under (see AgentRunHunk.review). */
   review: ReviewMode;

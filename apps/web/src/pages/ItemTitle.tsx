@@ -5,6 +5,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { useToast } from "@astryxdesign/core/Toast";
 import { Docs } from "../api";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
 interface TitleRename {
   title: string;
@@ -21,7 +22,7 @@ export function useTitleRename(docId: string, serverTitle: string, readOnly: boo
   /** Outranks `serverTitle` until the rename is refused. */
   const [renamed, setRenamed] = useState<string | null>(null);
   const toast = useToast();
-  const current = renamed ?? (serverTitle || "Untitled");
+  const current = renamed ?? (serverTitle || t("common.untitled"));
 
   async function commit() {
     if (draft === null) return;
@@ -35,7 +36,7 @@ export function useTitleRename(docId: string, serverTitle: string, readOnly: boo
       await Docs.rename(docId, next);
     } catch (e) {
       onError?.(e);
-      toast({ body: errorMessage(e, "Couldn’t rename it."), type: "error" });
+      toast({ body: errorMessage(e, t("pages.itemTitle.renameFailed")), type: "error" });
       setRenamed(before);
     }
   }
@@ -68,7 +69,7 @@ export function ItemTitle({ rename, readOnly, label }: { rename: TitleRename; re
       className="doc-title-btn"
       onClick={() => !readOnly && rename.startEditing()}
       disabled={readOnly}
-      title={readOnly ? rename.title : "Click to rename"}
+      title={readOnly ? rename.title : t("pages.itemTitle.clickToRename")}
     >
       <Text type="large" weight="semibold" maxLines={1} className="bidi-line">
         {rename.title}

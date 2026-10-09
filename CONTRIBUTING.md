@@ -259,6 +259,11 @@ their administrators.
   while a save is in flight. A Tooltip on a popover trigger throws, so a header cell explains itself
   with a native `title`. Dialog tests run in jsdom, which has no `HTMLDialogElement.showModal`; the
   setup file `apps/web/src/test/dom-setup.ts` polyfills it for every test.
+- **Interface text is translated.** Every string a person reads in the web app goes through the
+  catalog in `apps/web/src/i18n` (its README has the rules): an English message in
+  `messages/en`, the same key in every other language, whole sentences with ICU arguments and
+  plurals. `literals.test.ts` fails on new English outside the catalog. Text sent to agents and
+  models stays English.
 - **One home per setting.** Bootstrap, network and secret settings come from the environment.
   Everything the Settings page edits lives in the database. No setting is read from both.
 - **Pins live in `packaging/versions.env`**, and every other copy must agree with it

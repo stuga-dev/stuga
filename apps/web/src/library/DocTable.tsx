@@ -22,6 +22,7 @@ import { DocStateMarks } from "./doc-state";
 import { movableTo, type LibraryDragItem } from "./move-items";
 import { pageParentLabel, usePageParents } from "../database/model/row-ref";
 import { useIsNarrow } from "../ui/narrow";
+import { t } from "../i18n/i18n";
 
 /** A type alias, not an interface: Astryx Table requires rows with an implicit index signature. */
 export type LibraryRow = {
@@ -202,7 +203,7 @@ export function DocTable({
   const allColumns: Record<LibraryColumn, TableColumn<LibraryRow>> = {
     name: {
       key: "name",
-      header: "Name",
+      header: t("common.name"),
       width: proportional(3),
       sortable: { sortKey: "title" },
       renderCell: (r) => (
@@ -228,14 +229,18 @@ export function DocTable({
                 }}
               >
                 {/* Link and its Text are flex boxes, so the direction and the ellipsis go on the text's own box. */}
-                <span className="bidi-line">{r.title || "Untitled"}</span>
+                <span className="bidi-line">{r.title || t("common.untitled")}</span>
               </Link>
             ) : (
-              r.title || (r.kind === "folder" ? "Untitled folder" : "Untitled")
+              r.title || (r.kind === "folder" ? t("common.untitledFolder") : t("common.untitled"))
             )}
           </span>
           {r.doc?.page_of && (
-            <span className="doc-table__page-mark" title={`Page of a row in ${pageParentLabel(r.doc.page_of)}`} aria-label={`Page of a row in ${pageParentLabel(r.doc.page_of)}`}>
+            <span
+              className="doc-table__page-mark"
+              title={t("library.table.pageOf", { name: pageParentLabel(r.doc.page_of) })}
+              aria-label={t("library.table.pageOf", { name: pageParentLabel(r.doc.page_of) })}
+            >
               <Database size={12} />
               <span className="doc-table__page-mark-name">{pageParentLabel(r.doc.page_of)}</span>
             </span>
@@ -247,7 +252,7 @@ export function DocTable({
     },
     updated: {
       key: "updated",
-      header: "Last edited",
+      header: t("library.table.lastEdited"),
       // Fits the longest relative form ("Jun 24, 2025").
       width: pixel(120),
       sortable: { sortKey: "updated_at" },
@@ -259,7 +264,7 @@ export function DocTable({
     },
     owner: {
       key: "owner",
-      header: "Owner",
+      header: t("library.table.owner"),
       width: pixel(190),
       // Not sortable: the server has no owner sort.
       renderCell: (r) => {
@@ -276,7 +281,7 @@ export function DocTable({
     },
     location: {
       key: "location",
-      header: "Location",
+      header: t("library.table.location"),
       width: proportional(1),
       renderCell: (r) => (
         <span className="doc-table__muted" data-col="location">
@@ -286,13 +291,13 @@ export function DocTable({
     },
     expires: {
       key: "expires",
-      header: "Deletes in",
+      header: t("library.table.deletesIn"),
       width: pixel(140),
       renderCell: (r) => {
         if (r.expiresInDays === undefined) return <span className="doc-table__muted">—</span>;
-        const left = r.expiresInDays === 1 ? "1 day" : `${r.expiresInDays} days`;
+        const left = t("library.table.days", { count: r.expiresInDays });
         return r.expiresInDays <= 3 ? (
-          <Badge variant="warning" label={r.expiresInDays <= 0 ? "Deletes soon" : left} />
+          <Badge variant="warning" label={r.expiresInDays <= 0 ? t("library.table.deletesSoon") : left} />
         ) : (
           <span className="doc-table__muted" data-col="expires">{left}</span>
         );
@@ -318,10 +323,10 @@ export function DocTable({
               onToggleFavorite(r.id);
             }}
             onDoubleClick={(e) => e.stopPropagation()}
-            title={on ? "Remove from favorites" : "Add to favorites"}
+            title={on ? t("library.favorites.remove") : t("library.favorites.add")}
             aria-pressed={on}
           >
-            <Star size={15} fill={on ? "currentColor" : "none"} />
+            <Star size={15} fill={on ? "currentColor" : "none"} /* i18n-exempt: an SVG paint value */ />
           </button>
         );
       },
@@ -336,7 +341,7 @@ export function DocTable({
         if (items.length === 0) return null;
         return (
           <span className="doc-table__more" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-            <MoreMenu ref={outOfTabOrder} label={`Actions for ${r.title || "Untitled"}`} variant="ghost" size="sm" alignment="end" items={items} />
+            <MoreMenu ref={outOfTabOrder} label={t("common.actionsFor", { name: r.title || t("common.untitled") })} variant="ghost" size="sm" alignment="end" items={items} />
           </span>
         );
       },

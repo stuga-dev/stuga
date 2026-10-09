@@ -18,6 +18,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { DEFAULT_DOC_ACCESS, type DocAccessMode } from "@stuga/protocol/domain/workspaces";
 import { Workspaces, type CreatedWorkspace, type HeldImport } from "../api";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 import {
   ARCHIVE_NAME_PLACEHOLDER,
   ImportMayFinish,
@@ -78,7 +79,7 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
       await work();
     } catch (err) {
       if (err instanceof ImportMayFinish) setMayFinish(true);
-      else setError(errorMessage(err, "Something went wrong. Try again."));
+      else setError(errorMessage(err, t("shell.createWorkspace.failedFallback")));
     } finally {
       setBusy(false);
     }
@@ -111,16 +112,16 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
   const banners = (
     <>
       {mayFinish && (
-        <Banner ref={mayFinishRef} status="info" title="The import may still finish" description="The workspace switcher lists it once it does." />
+        <Banner ref={mayFinishRef} status="info" title={t("shell.createWorkspace.mayFinishTitle")} description={t("shell.createWorkspace.mayFinishBody")} />
       )}
-      {error && <Banner ref={errorRef} status="error" title="Couldn’t create the workspace" description={error} />}
+      {error && <Banner ref={errorRef} status="error" title={t("shell.createWorkspace.failedTitle")} description={error} />}
     </>
   );
 
   return (
     <Dialog isOpen={isOpen} onOpenChange={(o) => !o && close()} purpose="form" width={420}>
       <Layout
-        header={<DialogHeader title="Create a workspace" onOpenChange={(o) => !o && close()} />}
+        header={<DialogHeader title={t("shell.createWorkspace.title")} onOpenChange={(o) => !o && close()} />}
         content={
           <LayoutContent>
             {held?.left_out ? (
@@ -133,8 +134,8 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
                 {banners}
                 <StartWith value={start} onChange={setStart} samples={samples} isDisabled={busy} />
                 <TextInput
-                  label="Workspace name"
-                  placeholder={nameOptional ? ARCHIVE_NAME_PLACEHOLDER : "For example, Team notes"}
+                  label={t("shell.createWorkspace.name")}
+                  placeholder={nameOptional ? ARCHIVE_NAME_PLACEHOLDER : t("shell.createWorkspace.namePlaceholder")}
                   value={name}
                   onChange={setName}
                   isRequired={!nameOptional}
@@ -143,7 +144,7 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
                   onEnter={submit}
                 />
                 <Selector
-                  label="Who can use new documents?"
+                  label={t("shell.createWorkspace.access")}
                   description={WORKSPACE_ACCESS_HELP}
                   value={access}
                   onChange={(v) => setAccess(v as DocAccessMode)}
@@ -159,13 +160,13 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
             <HStack gap={2} justify="end">
               {held ? (
                 <>
-                  <Button label="Cancel" variant="ghost" onClick={letGo} isDisabled={busy} />
-                  <Button label="Import" variant="primary" isDisabled={busy || mayFinish} isLoading={busy} onClick={importHeld} />
+                  <Button label={t("common.cancel")} variant="ghost" onClick={letGo} isDisabled={busy} />
+                  <Button label={t("common.import")} variant="primary" isDisabled={busy || mayFinish} isLoading={busy} onClick={importHeld} />
                 </>
               ) : (
                 <>
-                  <Button label="Cancel" variant="ghost" onClick={close} isDisabled={busy} />
-                  <Button label="Create workspace" variant="primary" isDisabled={busy || !ready || mayFinish} isLoading={busy} onClick={submit} />
+                  <Button label={t("common.cancel")} variant="ghost" onClick={close} isDisabled={busy} />
+                  <Button label={t("shell.createWorkspace.submit")} variant="primary" isDisabled={busy || !ready || mayFinish} isLoading={busy} onClick={submit} />
                 </>
               )}
             </HStack>

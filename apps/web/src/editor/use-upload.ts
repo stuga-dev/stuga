@@ -8,6 +8,8 @@ import { useCallback, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { SAFE_IMAGE_MIMES } from "@stuga/protocol/api/media";
 import { Media } from "../api";
+import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
 interface UploadItem {
   id: string;
@@ -50,7 +52,7 @@ export function useUpload(editor: Editor | null, docId: string): Uploader {
         const image = isShownImage(file);
         const row: UploadItem = {
           id,
-          name: file.name || (image ? "image" : "file"),
+          name: file.name || (image ? t("editor.upload.defaultImageName") : t("editor.upload.defaultFileName")),
           progress: 0,
           status: "uploading",
           cancel: () => controller.abort(),
@@ -79,7 +81,7 @@ export function useUpload(editor: Editor | null, docId: string): Uploader {
               return;
             }
             setItems((xs) =>
-              xs.map((x) => (x.id === id ? { ...x, status: "error", error: (err as Error).message } : x)),
+              xs.map((x) => (x.id === id ? { ...x, status: "error", error: errorMessage(err, t("editor.upload.failed")) } : x)),
             );
           });
       }

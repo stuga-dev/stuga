@@ -15,6 +15,8 @@ const mockAgentTurn = runAgentTurn as unknown as ReturnType<typeof vi.fn>;
 
 import { encodeJson, decodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
+import type { CoauthorError } from "@stuga/protocol/api/ai-turn";
+import type { AiEditsPayload, AiResponseChunk } from "@stuga/protocol/wire/doc-socket";
 import type { AiConfig } from "@stuga/ai";
 import { DocActor } from "./doc-actor.js";
 import { harness, makeActor, connect, disabledAi, frameBuffer, type Harness, type MemorySocket } from "../test/harness.js";
@@ -67,13 +69,13 @@ function payloads<T>(ws: MemorySocket, opcode: number): T[] {
 }
 
 /** Drive one co-author turn against a harness and return what the socket saw. */
-async function turn(h: Harness): Promise<{ error?: string; editsError?: string }> {
+async function turn(h: Harness): Promise<{ error?: CoauthorError | null; editsError?: CoauthorError | null }> {
   const dobj = makeActor(h);
   await seed(dobj);
   const ws = await connect(dobj, h, { docId: DOC, alias: "alice", workspaceId: WS_ID });
   await askAi(dobj, ws);
-  const responses = payloads<{ done: boolean; error?: string }>(ws, Opcode.AI_RESPONSE);
-  const edits = payloads<{ error?: string }>(ws, Opcode.AI_EDITS);
+  const responses = payloads<AiResponseChunk>(ws, Opcode.AI_RESPONSE);
+  const edits = payloads<AiEditsPayload>(ws, Opcode.AI_EDITS);
   return { error: responses.at(-1)?.error, editsError: edits.at(-1)?.error };
 }
 
@@ -99,21 +101,21 @@ describe("the andon cord", () => {
     const h = harness(); // ai.enabled === false
     const out = await turn(h);
 
-    expect(out.error).toBe("AI chat is disabled on this node");
+    expect(out.error).toEqual({ code: "ai_disabled" });
     expect(mockAgentTurn).not.toHaveBeenCalled();
     // No usage row is enqueued for a turn that never ran — a phantom ledger
     // entry would make a refused turn look like a spending one.
     expect(h.queued.filter((m) => m.kind === "ai_usage")).toHaveLength(0);
   });
 
-  it("ALSO sends an AI_EDITS frame carrying the message", async () => {
+  it("ALSO sends an AI_EDITS frame carrying the error", async () => {
     // Load-bearing, and easy to "tidy" away: the panel ignores the error
-    // argument on onDone and reads the message off the AI_EDITS payload
+    // argument on onDone and reads the error off the AI_EDITS payload
     // (`proposeError`). Stop sending this frame and the co-author fails SILENTLY
     // — a blank panel, no explanation.
     const h = harness();
     const out = await turn(h);
-    expect(out.editsError).toBe("AI chat is disabled on this node");
+    expect(out.editsError).toEqual({ code: "ai_disabled" });
   });
 
   it("runs the turn once AI is enabled, against the configured endpoints", async () => {
@@ -136,8 +138,8 @@ describe("the andon cord", () => {
     mockAgentTurn.mockRejectedValue(new Error("endpoint unreachable"));
     const h = aiHarness();
     const out = await turn(h);
-    expect(out.error).toBe("endpoint unreachable");
-    expect(out.editsError).toBe("endpoint unreachable");
+    expect(out.error).toEqual({ code: "failed", failure: null, detail: "endpoint unreachable" });
+    expect(out.editsError).toEqual(out.error);
     expect(h.queued.find((m) => m.kind === "ai_usage")).toMatchObject({ status: "error", model: "auto" });
   });
 });
@@ -151,8 +153,8 @@ describe("gate ordering is preserved", () => {
     const agentWs = await connect(dobj, h, { docId: DOC, alias: "alice", agent: "claude", agentAuth: "1", workspaceId: WS_ID });
     await askAi(dobj, agentWs);
 
-    const replies = payloads<{ error?: string }>(agentWs, Opcode.AI_RESPONSE);
-    expect(replies.at(-1)?.error).toMatch(/MCP tools/);
+    const replies = payloads<AiResponseChunk>(agentWs, Opcode.AI_RESPONSE);
+    expect(replies.at(-1)?.error).toEqual({ code: "agent" });
     expect(h.apiCalls).toBe(0);
     expect(mockAgentTurn).not.toHaveBeenCalled();
   });
@@ -162,7 +164,7 @@ describe("gate ordering is preserved", () => {
     const internal = vi.fn(async () => new Response("not found", { status: 404 }));
     h.env.internal = { fetch: internal };
     const out = await turn(h);
-    expect(out.error).toBe("AI chat is disabled on this node");
+    expect(out.error).toEqual({ code: "ai_disabled" });
     expect(internal).not.toHaveBeenCalled();
     expect(mockAgentTurn).not.toHaveBeenCalled();
   });

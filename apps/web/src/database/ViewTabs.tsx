@@ -6,6 +6,7 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import type { ViewSpec } from "@stuga/protocol/databases/types";
 import { MenuTab } from "./MenuTab";
+import { t } from "../i18n/i18n";
 
 export function ViewTabs({
   views,
@@ -26,29 +27,29 @@ export function ViewTabs({
   onDelete: (view: ViewSpec) => void;
 }) {
   return (
-    <div className="db-tabs db-views" role="tablist" aria-label="Views">
+    <div className="db-tabs db-views" role="tablist" aria-label={t("database.views.label")}>
       <MenuTab
-        label="All rows"
-        title="Every row, unfiltered"
+        label={t("database.views.allRows")}
+        title={t("database.views.allRowsTitle")}
         isActive={activeId === null}
         onSelect={() => onSelect(null)}
       />
       {views.map((v) => {
-        const label = v.name || "Untitled view";
+        const label = v.name || t("database.views.untitled");
         return (
           <MenuTab
             key={v.view_id}
             label={label}
             title={label}
-                isActive={v.view_id === activeId}
+            isActive={v.view_id === activeId}
             menu={
               readOnly
                 ? undefined
                 : {
-                    label: `Actions for view ${label}`,
+                    label: t("database.views.actions", { name: label }),
                     items: [
-                      { label: "Rename…", icon: <Pencil size={15} />, onClick: () => onRename(v) },
-                      { label: "Delete view…", icon: <Trash2 size={15} />, onClick: () => onDelete(v) },
+                      { label: t("common.renameEllipsis"), icon: <Pencil size={15} />, onClick: () => onRename(v) },
+                      { label: t("database.views.delete"), icon: <Trash2 size={15} />, onClick: () => onDelete(v) },
                     ],
                   }
             }
@@ -56,7 +57,7 @@ export function ViewTabs({
           />
         );
       })}
-      {!readOnly && <IconButton label="Save current settings as a new view" variant="ghost" size="sm" icon={<Plus size={15} />} onClick={onCreate} />}
+      {!readOnly && <IconButton label={t("database.views.saveNew")} variant="ghost" size="sm" icon={<Plus size={15} />} onClick={onCreate} />}
     </div>
   );
 }

@@ -319,6 +319,15 @@ describe("the user directory", () => {
     expect(authorLabel("agent-sample")).toBe("Sample agent");
   });
 
+  it("names a run's agent from the catalog for the co-author and the sample agent, else by its own name", async () => {
+    const { runAgentLabel } = await directory();
+    expect(runAgentLabel({ source: "panel", agent: "stored", agent_alias: "panel:u_ada" })).toBe("AI co-author");
+    expect(runAgentLabel({ agent: "stored", agent_alias: "panel:u_ada" })).toBe("AI co-author");
+    expect(runAgentLabel({ source: "connector", agent: "stored", agent_alias: "agent-sample" })).toBe("Sample agent");
+    expect(runAgentLabel({ source: "connector", agent: "Claude (Connector)", agent_alias: "agent-1", agent_name: "Research bot" })).toBe("Research bot");
+    expect(runAgentLabel({ source: "connector", agent: "Claude (Connector)", agent_alias: "agent-1", agent_name: "" })).toBe("Claude (Connector)");
+  });
+
   it("reads an imported author as its archive named it, never as an account, and never looks it up", async () => {
     const { resolveNames, nameLoading, authorLabel } = await directory();
     resolveNames(["u_ada"]);

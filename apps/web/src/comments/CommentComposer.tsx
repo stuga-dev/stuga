@@ -10,6 +10,7 @@ import { useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
 import { MentionTextArea } from "../mentions/MentionTextArea";
+import { t } from "../i18n/i18n";
 import { isComposingKey } from "../lib/ime";
 import { useComments } from "./comments-context";
 
@@ -37,7 +38,7 @@ export function CommentComposer() {
       className="comment-composer"
       style={{ top, left }}
       role="dialog"
-      aria-label="Add a comment"
+      aria-label={t("comments.composer.label")}
       onKeyDown={(e) => {
         // Container-level Escape so it works from the buttons too, not just the textarea.
         if (e.key === "Escape") {
@@ -50,11 +51,11 @@ export function CommentComposer() {
         “{pending.anchor.quote}”
       </div>
       <MentionTextArea
-        label="Comment text"
+        label={t("comments.composer.text")}
         isLabelHidden
         hasAutoFocus
         value={body}
-        placeholder="Add a comment… Type @ to mention someone"
+        placeholder={t("comments.composer.placeholder")}
         rows={2}
         onChange={setBody}
         onKeyDown={(e: React.KeyboardEvent) => {
@@ -65,8 +66,8 @@ export function CommentComposer() {
         }}
       />
       <HStack gap={2} justify="end">
-        <Button label="Cancel" variant="ghost" size="sm" onMouseDown={(e) => e.preventDefault()} onClick={cancel} />
-        <Button label="Comment" variant="primary" size="sm" onMouseDown={(e) => e.preventDefault()} onClick={() => void onSubmit()} isDisabled={!body.trim() || busy} />
+        <Button label={t("common.cancel")} variant="ghost" size="sm" onMouseDown={(e) => e.preventDefault()} onClick={cancel} />
+        <Button label={t("common.comment")} variant="primary" size="sm" onMouseDown={(e) => e.preventDefault()} onClick={() => void onSubmit()} isDisabled={!body.trim() || busy} />
       </HStack>
     </div>
   );

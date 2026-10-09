@@ -232,11 +232,7 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
     const pending = pendingOf(runBody).length;
     // The reviewer is usually not looking when an agent writes; a parked proposal nobody hears about is a silent queue.
     if (input.notifyReviewer !== false) {
-      await ledger.notify(
-        stored,
-        "AGENT_EDITS_PROPOSED",
-        `${stored.agent} proposed ${pending === 1 ? "1 change" : `${pending} changes`} — waiting for your review`,
-      );
+      await ledger.notify(stored, { eventType: "AGENT_EDITS_PROPOSED", count: pending });
     }
     ledger.sendUpdated(stored, runBody);
     ledger.emitEvent("run.proposed", stored, agentActorOf(agentAlias), "agent", {
@@ -260,7 +256,7 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
   // The run stays open, so a whole `auto` session groups into one catch-up card.
   await ledger.save(stored, runBody);
   if (input.notifyReviewer !== false) {
-    await ledger.notify(stored, "AGENT_EDITS_APPLIED", `${stored.agent} edited this document — applied at once by policy`);
+    await ledger.notify(stored, { eventType: "AGENT_EDITS_APPLIED" });
   }
   const applied = plan!.applied.size;
   ledger.emitEvent("run.applied", stored, agentActorOf(agentAlias), "agent", {

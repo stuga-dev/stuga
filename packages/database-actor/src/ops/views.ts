@@ -59,7 +59,7 @@ export const viewsCreate: OpDef<ViewsCreate> = {
     if (count >= DATABASE_MAX_VIEWS) throw viewCapError(meta.display, count);
     requireLiveColumns(sql, meta.table_id, p.view);
     const view = insertView(sql, meta.table_id, { viewId: p.view_id, kind: p.view.kind, name: p.view.name, position: p.position, shape: p.view }, now);
-    return { result: { view }, summary: `Created view "${p.view.name}" on "${meta.display}"` };
+    return { result: { view }, detail: { kind: "views.create", table: meta.display, view: p.view.name } };
   },
   proposal: {
     describe: (p, view) => `Create view "${p.view.name}" on "${view.displayOf(p.table_id)}" (${describeViewShape(p.view)})`,
@@ -95,10 +95,10 @@ export const viewsUpdate: OpDef<DbRunOpViewsUpdate> = {
     const meta = getTable(sql, p.table_id);
     const cur = getView(sql, meta.table_id, p.view_id);
     requireLiveColumns(sql, meta.table_id, p.changes);
-    const renamed = p.changes.name !== undefined && p.changes.name !== cur.name ? ` (renamed to "${p.changes.name}")` : "";
+    const renamed = p.changes.name !== undefined && p.changes.name !== cur.name ? p.changes.name : null;
     return {
       result: { view: writeView(sql, mergeView(cur, p.changes), now) },
-      summary: `Changed view "${cur.name}" on "${meta.display}"${renamed}`,
+      detail: { kind: "views.update", table: meta.display, view: cur.name, renamed_to: renamed },
     };
   },
   proposal: {
@@ -119,6 +119,6 @@ export const viewsDelete: OpDef<ViewsDelete> = {
     const meta = getTable(sql, p.table_id);
     const view = getView(sql, meta.table_id, p.view_id);
     deleteView(sql, view.view_id);
-    return { result: { deleted: true }, summary: `Deleted view "${view.name}" from "${meta.display}"` };
+    return { result: { deleted: true }, detail: { kind: "views.delete", table: meta.display, view: view.name } };
   },
 };

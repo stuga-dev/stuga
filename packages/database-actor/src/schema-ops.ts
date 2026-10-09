@@ -43,7 +43,7 @@ export function ident(name: string): string {
  * table is laid out. The host stamps each store with it and refuses one stamped higher. A change
  * to either raises it, together with the step in the host that brings an older store forward.
  */
-export const DATABASE_STORE_VERSION = 2;
+export const DATABASE_STORE_VERSION = 3;
 
 /** The steps that bring an older store forward, keyed by the version each reaches. */
 export const DATABASE_STORE_UPGRADES: Record<number, StoreUpgrade> = {
@@ -52,6 +52,14 @@ export const DATABASE_STORE_UPGRADES: Record<number, StoreUpgrade> = {
   2: (db) => {
     const columns = db.prepare(`PRAGMA table_info(_run_ops)`).all() as Array<{ name: string }>;
     if (columns.length > 0 && !columns.some((c) => c.name === "feedback")) db.exec(`ALTER TABLE _run_ops ADD COLUMN feedback TEXT`);
+  },
+  // 3: what each op did, and what each proposed op would do, as data beside its English summary, so a
+  // person reads it in their language. Ops recorded or proposed before keep only the summary.
+  3: (db) => {
+    for (const table of ["_ops", "_run_ops"]) {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (columns.length > 0 && !columns.some((c) => c.name === "detail")) db.exec(`ALTER TABLE ${table} ADD COLUMN detail TEXT`);
+    }
   },
 };
 
@@ -81,7 +89,7 @@ export function ensureSchema(sql: SqlHandle): void {
     `CREATE TABLE IF NOT EXISTS _ops (
        op_id TEXT PRIMARY KEY, seq INTEGER NOT NULL, ts INTEGER NOT NULL, actor TEXT NOT NULL,
        is_agent INTEGER NOT NULL, on_behalf_of TEXT, kind TEXT NOT NULL, table_id TEXT, summary TEXT NOT NULL,
-       inverse TEXT, blob_key TEXT, reverted_by TEXT, reverts TEXT)`,
+       inverse TEXT, blob_key TEXT, reverted_by TEXT, reverts TEXT, detail TEXT)`,
   );
   sql.exec(`CREATE INDEX IF NOT EXISTS _ops_seq ON _ops (seq DESC)`);
   sql.exec(
@@ -113,7 +121,7 @@ export function ensureSchema(sql: SqlHandle): void {
        run_id TEXT NOT NULL, op_id TEXT NOT NULL, position INTEGER NOT NULL,
        kind TEXT NOT NULL, table_id TEXT NOT NULL, summary TEXT NOT NULL,
        status TEXT NOT NULL, payload TEXT, blob_key TEXT, bytes INTEGER NOT NULL,
-       decided_by TEXT, ledger_op_id TEXT, error TEXT, review TEXT NOT NULL, feedback TEXT,
+       decided_by TEXT, ledger_op_id TEXT, error TEXT, review TEXT NOT NULL, feedback TEXT, detail TEXT,
        PRIMARY KEY (run_id, op_id))`,
   );
 }

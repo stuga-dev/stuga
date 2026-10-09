@@ -1,0 +1,20 @@
+{
+  "tray.unreadLabel": "通知（{count, plural, other {# 則未讀}}）",
+  "tray.loadFailed": "無法載入通知。",
+  "tray.showFailed": "無法顯示這些通知。",
+  "tray.allCaughtUp": "你已看完所有通知。",
+  "channel.email": "電子郵件",
+  "channel.webhook": "Webhook",
+  "delivery.inStugaOnly": "僅在 Stuga 中顯示。",
+  "delivery.sent": "也已透過 {channel} 傳送。",
+  "delivery.sending": "正在透過 {channel} 傳送…",
+  "delivery.notSent": "未透過 {channel} 傳送。",
+  "delivery.emailNotSetUp": "未透過 {channel} 傳送：尚未設定電子郵件。",
+  "delivery.noEmailAddress": "未透過 {channel} 傳送：你在 Stuga 中沒有電子郵件地址。",
+  "delivery.noSink": "未透過 {channel} 傳送：尚未設定通知管道。",
+  "delivery.noWebhookUrl": "未透過 {channel} 傳送：尚未設定 Webhook URL。",
+  "delivery.channelChanged": "未透過 {channel} 傳送：傳送前通知管道已變更。",
+  "delivery.nodeRestarted": "未透過 {channel} 傳送：傳送前節點已重新啟動。",
+  "delivery.sinkAnswered": "未透過 {channel} 傳送：對方回應了 {status}。",
+  "delivery.failed": "未透過 {channel} 傳送：{detail}。"
+}

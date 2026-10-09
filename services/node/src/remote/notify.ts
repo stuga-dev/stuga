@@ -6,6 +6,7 @@
  * run of refusals or the move it is about.
  */
 import type { NodeRemoteAccessRow } from "@stuga/db";
+import { notification, type NotificationParams } from "@stuga/protocol/notify/events";
 import { sinkDelivery } from "../jobs/notify.js";
 import { jobsDb, type JobsDb } from "../jobs/db.js";
 import type { JobsEnv } from "../jobs/deps.js";
@@ -20,15 +21,26 @@ export const BINDING_REJECTED_EVENT = "REMOTE_BINDING_REJECTED";
 
 export const MOVED_EVENT = "REMOTE_ADDRESS_MOVED";
 
-export const certEvent = (kind: CertNoticeKind): string => `REMOTE_CERT_${kind.toUpperCase()}`;
+const CERT_EVENTS = {
+  renewal_failed: "REMOTE_CERT_RENEWAL_FAILED",
+  expiring: "REMOTE_CERT_EXPIRING",
+  expired: "REMOTE_CERT_EXPIRED",
+  recovered: "REMOTE_CERT_RECOVERED",
+} as const;
 
-export interface RemoteNotice {
-  event: string;
-  /** Which certificate or run of refusals it is about: the id is `<event>:<key>:<alias>`. */
-  key: string;
-  title: string;
-  body: string;
-}
+export const certEvent = (kind: CertNoticeKind): string => CERT_EVENTS[kind];
+
+type RemoteEvent = (typeof CERT_EVENTS)[CertNoticeKind] | typeof BINDING_REJECTED_EVENT | typeof MOVED_EVENT;
+
+/** One notice: its event and params (@stuga/protocol/notify/events), which each reader's language words. */
+export type RemoteNotice = {
+  [E in RemoteEvent]: {
+    event: E;
+    /** Which certificate or run of refusals it is about: the id is `<event>:<key>:<alias>`. */
+    key: string;
+    params: NotificationParams[E];
+  };
+}[RemoteEvent];
 
 /** Failed renewals in a row before the administrators hear of it. */
 export const RENEWAL_FAILURES_TOLD = 3;
@@ -39,20 +51,18 @@ const RENEWAL_STOPPED = new Set(["acme_action_required", "issuance_budget"]);
 /** Errors under which the node does not try to renew at all. */
 const RENEWAL_BLOCKED = new Set([...RENEWAL_STOPPED, "denied", "retired", "upgrade_required", "binding_rejected"]);
 
-const when = (d: Date): string => `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
-
 function certNotice(kind: CertNoticeKind, serial: string, hostname: string, notAfter: Date, detail?: string): RemoteNotice {
   const address = `https://${hostname}`;
-  const copy: Record<CertNoticeKind, [title: string, body: string]> = {
-    renewal_failed: ["Remote access can't renew its certificate", `The certificate for ${address} expires ${when(notAfter)}.${detail ? ` ${detail}` : ""}`],
-    expiring: ["Remote access's certificate expires soon", `The certificate for ${address} expires ${when(notAfter)}.`],
-    expired: ["Remote access's certificate expired", `${address} can't be reached until there is a new one.`],
-    recovered: ["Remote access has a new certificate", `The certificate for ${address} is valid until ${when(notAfter)}.`],
-  };
-  const [title, body] = copy[kind];
-  return { event: certEvent(kind), key: serial, title, body };
+  const expires = notAfter.toISOString();
+  switch (kind) {
+    case "renewal_failed":
+      return { event: CERT_EVENTS[kind], key: serial, params: { address, expires, detail: detail || null } };
+    case "expired":
+      return { event: CERT_EVENTS[kind], key: serial, params: { address } };
+    default:
+      return { event: CERT_EVENTS[kind], key: serial, params: { address, expires } };
+  }
 }
-
 /**
  * The warnings the certificate the row describes calls for now: that renewing it keeps failing,
  * and that it runs short or has run out. Short or out only once renewing it has failed or can't be
@@ -86,32 +96,21 @@ export function recoveredNotice(alerted: string, hostname: string, notAfter: Dat
  */
 export function bindingNotice(row: NodeRemoteAccessRow, now: number): RemoteNotice | null {
   const since = row.binding_failing_since;
-  const address = row.hostname ? `https://${row.hostname}` : "the remote address";
-  const title = "Remote access needs a restore code";
+  const address = row.hostname ? `https://${row.hostname}` : null;
   if (since && now - since.getTime() >= BINDING_REJECTED_AFTER_MS) {
-    return {
-      event: BINDING_REJECTED_EVENT,
-      key: since.toISOString(),
-      title,
-      body: `The remote access service no longer accepts this node's key. Enter a restore code to keep ${address}.`,
-    };
+    return { event: BINDING_REJECTED_EVENT, key: since.toISOString(), params: { address, reason: "refused" } };
   }
   // The node's own finding, not the service's refusal, which names the code it refused with.
   const error = row.last_error;
   if (error?.code === "binding_rejected" && !error.service_code) {
-    return { event: BINDING_REJECTED_EVENT, key: error.at, title, body: error.message };
+    return { event: BINDING_REJECTED_EVENT, key: error.at, params: { address, reason: "key_unusable" } };
   }
   return null;
 }
 
 /** A restore code moved `hostname` to another computer, which this node learned at `at`. */
 export function movedNotice(hostname: string, at: string): RemoteNotice {
-  return {
-    event: MOVED_EVENT,
-    key: at,
-    title: "Remote access moved to another computer",
-    body: `https://${hostname} now reaches another computer. Remote access is off on this one.`,
-  };
+  return { event: MOVED_EVENT, key: at, params: { address: `https://${hostname}` } };
 }
 
 /** One notification per administrator, in the app and through the sink; one already written is left alone. */
@@ -121,8 +120,9 @@ export async function notifyRemoteAccess(
   db: Pick<JobsDb, "listNodeAdmins" | "insertNotification"> = jobsDb(env.sql),
 ): Promise<void> {
   const url = `${env.publicOrigin}${REMOTE_ACCESS_PATH}`;
+  const what = notification(n.event, n.params);
   for (const admin of await db.listNodeAdmins()) {
-    const delivery = sinkDelivery(env.settings.current().notify, { recipient: admin.alias, title: n.title, body: n.body, url });
+    const delivery = sinkDelivery(env.settings.current().notify, { recipient: admin.alias, ...what, url });
     await db.insertNotification(
       {
         id: `${n.event}:${n.key}:${admin.alias}`,
@@ -130,10 +130,10 @@ export async function notifyRemoteAccess(
         recipient_alias: admin.alias,
         event_type: n.event,
         resource_id: null,
-        resource_title: n.title,
+        resource_title: null,
         resource_url: url,
         actor_alias: null,
-        payload: { message: n.body },
+        payload: what.params,
       },
       delivery,
     );

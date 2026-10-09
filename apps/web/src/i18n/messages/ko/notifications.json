@@ -1,0 +1,20 @@
+{
+  "tray.unreadLabel": "알림(읽지 않음 {count, plural, other {#개}})",
+  "tray.loadFailed": "알림을 불러오지 못했어요.",
+  "tray.showFailed": "이 알림을 표시하지 못했어요.",
+  "tray.allCaughtUp": "새 알림이 없어요.",
+  "channel.email": "이메일",
+  "channel.webhook": "웹훅",
+  "delivery.inStugaOnly": "Stuga에만 표시했어요.",
+  "delivery.sent": "{channel} 채널로도 보냈어요.",
+  "delivery.sending": "{channel} 채널로 보내는 중…",
+  "delivery.notSent": "{channel} 채널로 보내지 못했어요.",
+  "delivery.emailNotSetUp": "{channel} 채널로 보내지 못했어요: 이메일이 설정되지 않았어요.",
+  "delivery.noEmailAddress": "{channel} 채널로 보내지 못했어요: Stuga에 이메일 주소가 없어요.",
+  "delivery.noSink": "{channel} 채널로 보내지 못했어요: 알림 채널이 설정되지 않았어요.",
+  "delivery.noWebhookUrl": "{channel} 채널로 보내지 못했어요: 웹훅 URL이 설정되지 않았어요.",
+  "delivery.channelChanged": "{channel} 채널로 보내지 못했어요: 보내기 전에 알림 채널이 바뀌었어요.",
+  "delivery.nodeRestarted": "{channel} 채널로 보내지 못했어요: 보내기 전에 노드가 다시 시작됐어요.",
+  "delivery.sinkAnswered": "{channel} 채널로 보내지 못했어요: 응답 코드 {status}.",
+  "delivery.failed": "{channel} 채널로 보내지 못했어요: {detail}."
+}

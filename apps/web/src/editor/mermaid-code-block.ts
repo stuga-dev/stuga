@@ -6,6 +6,7 @@
 import CodeBlock from "@tiptap/extension-code-block";
 import type { NodeViewRendererProps } from "@tiptap/react";
 import type { NodeView } from "@tiptap/pm/view";
+import { t } from "../i18n/i18n";
 
 let mermaidModule: Promise<typeof import("mermaid")["default"]> | null = null;
 function getMermaid() {
@@ -65,6 +66,13 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string) {
   return element;
 }
 
+/** A one-line note in place of the diagram, set as text. */
+function note(className: string, text: string): HTMLElement {
+  const span = el("span", className);
+  span.textContent = text;
+  return span;
+}
+
 /**
  * The diagram, with the editable source (the contentDOM, so the text stays in
  * the CRDT) shown above a live preview while the caret is inside the block.
@@ -83,7 +91,7 @@ function mermaidNodeView(props: NodeViewRendererProps): NodeView {
   // The attribute, not the IDL property, which jsdom lacks.
   const preview = el("div", "mermaid-preview");
   preview.setAttribute("contenteditable", "false");
-  preview.title = editor.isEditable ? "Double-click to edit" : "";
+  preview.title = editor.isEditable ? t("editor.mermaid.editHint") : "";
 
   wrap.append(sourceEl, preview);
 
@@ -118,7 +126,8 @@ function mermaidNodeView(props: NodeViewRendererProps): NodeView {
     lastSource = source;
     lastDark = isDark();
     if (!trimmed) {
-      preview.innerHTML = editing ? `<span class="mermaid-hint">Mermaid diagram — type below…</span>` : "";
+      if (editing) preview.replaceChildren(note("mermaid-hint", t("editor.mermaid.emptyHint")));
+      else preview.replaceChildren();
       return;
     }
     // Debounced renders can overlap.
@@ -134,7 +143,7 @@ function mermaidNodeView(props: NodeViewRendererProps): NodeView {
       preview.querySelector("svg")?.removeAttribute("width");
     } catch {
       if (seq !== renderSeq) return;
-      preview.innerHTML = `<span class="mermaid-error">Invalid Mermaid syntax</span>`;
+      preview.replaceChildren(note("mermaid-error", t("editor.mermaid.invalid")));
     }
   }
 

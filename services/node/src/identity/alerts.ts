@@ -12,11 +12,15 @@
  * The person's own rows are `ACCOUNT_*`, which reach them whether or not they administer the node;
  * the administrators' copies are `MEMBER_*`, node rows. An administrator who is the person gets the
  * person's row only. A new device reaches each administrator at most once an hour per person.
+ *
+ * Each stores its event and params (@stuga/protocol/notify/events), never a sentence: the tray and
+ * the message sent outside the app are written in their reader's language.
  */
 import { randomUUID } from "node:crypto";
 import { failUnfinishedDeliveries, type CredentialArrival, type Sql } from "@stuga/db";
+import { notification, type ChannelParams, type NotificationEvent, type NotificationParams } from "@stuga/protocol/notify/events";
 import { jobsDb, type JobsDb } from "../jobs/db.js";
-import { deliveryErrorText, sinkDelivery } from "../jobs/notify.js";
+import { deliveryErrorText, payloadFor, sinkDelivery } from "../jobs/notify.js";
 import { deliver, type NotificationPayload } from "../jobs/sinks.js";
 import type { NodeEnv, NotifyConfig } from "../env.js";
 
@@ -96,7 +100,7 @@ export interface SecurityAlerts {
 }
 
 export interface SecurityAlertsDeps {
-  db: Pick<JobsDb, "listNodeAdmins" | "insertNotification" | "recordDelivery" | "userEmail">;
+  db: Pick<JobsDb, "listNodeAdmins" | "insertNotification" | "recordDelivery" | "userEmail" | "uiLanguage">;
   /** The channel an administrator set up, sink "none" for none. */
   channel: () => NotifyConfig;
   /** Where the links in a delivered message point. */
@@ -107,33 +111,22 @@ export interface SecurityAlertsDeps {
   onError?: (err: unknown) => void;
 }
 
-/** A channel as a person names it, with which webhook or which sender, never the secret itself. */
-export function channelText(cfg: NotifyConfig): string {
-  const named: Record<string, string> = { slack: "Slack", teams: "Teams", discord: "Discord", webhook: "a webhook", email: "email" };
-  const name = named[cfg.sink];
-  if (!name) return "Stuga only";
-  if (cfg.sink === "email") return cfg.emailFrom ? `email from ${cfg.emailFrom}` : "email";
-  if (!cfg.webhookUrl) return name;
-  try {
-    const url = new URL(cfg.webhookUrl);
-    return `${name} (${url.host})`;
-  } catch {
-    return name;
-  }
+/** A channel as an alert names it (@stuga/protocol/notify/render renderChannel): which service, and where, never its secret. */
+export function channelParams(cfg: NotifyConfig): ChannelParams {
+  if (cfg.sink === "email") return { sink: "email", host: null, from: cfg.emailFrom ?? null };
+  if (!["slack", "teams", "discord", "webhook"].includes(cfg.sink)) return { sink: "none", host: null, from: null };
+  return { sink: cfg.sink, host: cfg.webhookUrl ? safeHost(cfg.webhookUrl) : null, from: null };
 }
 
 /**
  * The channel a change moved to, as the alert names it: told apart from the one it had when only the
  * webhook or the mail server, which are secrets, changed.
  */
-export function channelChangedTo(before: NotifyConfig, after: NotifyConfig): string {
-  const text = channelText(after);
-  if (sameChannel(before, after) || text !== channelText(before)) return text;
-  if (after.sink === "email") return `${text}, through another mail server`;
-  const named: Record<string, string> = { slack: "Slack", teams: "Teams", discord: "Discord", webhook: "" };
-  const host = after.webhookUrl ? safeHost(after.webhookUrl) : null;
-  const kind = named[after.sink] ? `${named[after.sink]} webhook` : "webhook";
-  return host ? `another ${kind} (${host})` : `another ${kind}`;
+export function changedChannelParams(before: NotifyConfig, after: NotifyConfig): ChannelParams {
+  const was = channelParams(before);
+  const now = channelParams(after);
+  const looksSame = was.sink === now.sink && was.host === now.host && was.from === now.from;
+  return looksSame && !sameChannel(before, after) && now.sink !== "none" ? { ...now, another: true } : now;
 }
 
 function safeHost(url: string): string | null {
@@ -159,18 +152,16 @@ export function sameChannel(a: NotifyConfig, b: NotifyConfig): boolean {
   return a.sink === b.sink && (a.webhookUrl ?? "") === (b.webhookUrl ?? "") && (a.smtpUrl ?? "") === (b.smtpUrl ?? "") && (a.emailFrom ?? "") === (b.emailFrom ?? "");
 }
 
-/** The moment, as a delivered message states it. */
-export function alertTime(d: Date): string {
-  return `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
-}
-
 export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
-  async function send(input: {
+  /**
+   * One alert: its event and params, never a sentence, so the tray and the message sent outside the
+   * app are each written in their reader's language. It names no resource.
+   */
+  async function send<E extends NotificationEvent>(input: {
     id: string;
     recipient: string;
-    eventType: string;
-    title: string;
-    body: string;
+    eventType: E;
+    params: NotificationParams[E];
     path: string;
     /** An address to email in place of the recipient's own; null for none, when only that one would do. */
     to?: string | null;
@@ -181,10 +172,10 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
     const channel = deps.channel();
     const { sink } = channel;
     const unsendable = (input.to === null && sink === "email") || (input.emailOnly === true && sink !== "email");
+    const what = notification(input.eventType, input.params);
     const delivery = sinkDelivery(unsendable ? { sink: "none" } : channel, {
       recipient: input.recipient,
-      title: input.title,
-      body: input.body,
+      ...what,
       url,
       ...(input.to ? { to: input.to } : {}),
     });
@@ -195,22 +186,26 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
         recipient_alias: input.recipient,
         event_type: input.eventType,
         resource_id: null,
-        resource_title: input.title,
+        resource_title: null,
         resource_url: url,
         actor_alias: null,
-        payload: { message: input.body },
+        payload: what.params,
       },
       delivery,
     );
   }
 
   /** One attempt through `cfg` for notification `id`, its outcome recorded on the row; never retried. */
-  async function sendThrough(cfg: NotifyConfig, id: string, m: Omit<NotificationPayload, "recipientEmail">): Promise<void> {
-    const payload: NotificationPayload = { ...m };
+  async function sendThrough(
+    cfg: NotifyConfig,
+    id: string,
+    m: { recipient: string; eventType: string; params: Record<string, unknown>; url: string },
+  ): Promise<void> {
     try {
+      const payload: NotificationPayload = await payloadFor(deps.db, m);
       if (cfg.sink === "email") payload.recipientEmail = await deps.db.userEmail(m.recipient);
       const unsent = await (deps.deliverThrough ?? deliver)(cfg, payload);
-      await deps.db.recordDelivery(id, unsent === null ? { delivered: true } : { error: deliveryErrorText(unsent) });
+      await deps.db.recordDelivery(id, unsent === null ? { delivered: true } : { error: unsent });
     } catch (err) {
       await deps.db.recordDelivery(id, { error: deliveryErrorText(err) }).catch(() => {});
     }
@@ -234,13 +229,12 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
 
   return {
     newDevice: safely(async (i) => {
-      const where = `${i.device} · ${alertTime(i.at)} · from ${i.from}`;
+      const at = i.at.toISOString();
       await send({
         id: `${ACCOUNT_NEW_SIGN_IN}:${i.alias}:${i.deviceHash.slice(0, 16)}`,
         recipient: i.alias,
         eventType: ACCOUNT_NEW_SIGN_IN,
-        title: `New sign-in at ${i.remoteHost}: ${i.device}`,
-        body: `New sign-in at ${i.remoteHost}: ${where}. Not you? Revoke everything.`,
+        params: { host: i.remoteHost, device: i.device, at, from: i.from },
         path: OWN_REVOKE_PATH,
       });
       const hour = Math.floor(i.at.getTime() / HOUR_MS);
@@ -249,30 +243,24 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
           id: `${MEMBER_NEW_SIGN_IN}:${i.alias}:${hour}:${admin}`,
           recipient: admin,
           eventType: MEMBER_NEW_SIGN_IN,
-          title: `${i.name} signed in at ${i.remoteHost}: ${i.device}`,
-          body: `${i.name} signed in at ${i.remoteHost}: ${where}.`,
+          params: { name: i.name, host: i.remoteHost, device: i.device, at, from: i.from },
           path: memberRevokePath(i.username),
         });
       }
     }),
 
     passwordChanged: safely(async (i) => {
-      const verb = i.how === "reset" ? "reset" : "changed";
       const key = randomUUID();
+      const at = i.at.toISOString();
       // A new password ends every other sign-in, so whoever it was not can no longer sign in to act:
       // an administrator acts for them, and the only administrator gets back in on the node's machine.
       const all = (await deps.db.listNodeAdmins()).map((a) => a.alias);
       const others = all.filter((alias) => alias !== i.alias);
-      const recourse =
-        others.length > 0
-          ? "Ask an administrator to revoke everything for you."
-          : "Run reset-password on the node's machine to get back in, then revoke everything.";
       await send({
         id: `${ACCOUNT_PASSWORD_CHANGED}:${i.alias}:${key}`,
         recipient: i.alias,
         eventType: ACCOUNT_PASSWORD_CHANGED,
-        title: `Your password was ${verb}`,
-        body: `Your password was ${verb} on ${i.device} · ${alertTime(i.at)}. Not you? ${recourse}`,
+        params: { how: i.how, device: i.device, at, recourse: others.length > 0 ? "administrator" : "machine" },
         path: OWN_REVOKE_PATH,
       });
       if (!i.remoteHost) return;
@@ -281,8 +269,7 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
           id: `${MEMBER_PASSWORD_CHANGED}:${i.alias}:${key}:${admin}`,
           recipient: admin,
           eventType: MEMBER_PASSWORD_CHANGED,
-          title: `${i.name}'s password was ${verb} at ${i.remoteHost}`,
-          body: `${i.name}'s password was ${verb} at ${i.remoteHost} on ${i.device} · ${alertTime(i.at)}.`,
+          params: { name: i.name, how: i.how, host: i.remoteHost, device: i.device, at },
           path: memberRevokePath(i.username),
         });
       }
@@ -290,25 +277,21 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
 
     revokedEverything: safely(async (i) => {
       const key = randomUUID();
+      const at = i.at.toISOString();
       await send({
         id: `${ACCOUNT_EVERYTHING_REVOKED}:${i.alias}:${key}`,
         recipient: i.alias,
         eventType: ACCOUNT_EVERYTHING_REVOKED,
-        title: i.by ? `${i.by.name} revoked everything for you` : "Everything was revoked",
-        body: i.by
-          ? `${i.by.name} revoked everything for you · ${alertTime(i.at)}.`
-          : `Everything was revoked on ${i.device} · ${alertTime(i.at)}.`,
+        params: { by: i.by?.name ?? null, device: i.device, at },
         path: OWN_REVOKE_PATH,
       });
-      const what = i.by ? `${i.by.name} revoked everything for ${i.name}` : `${i.name} revoked everything`;
       for (const admin of await admins(i.alias)) {
         if (admin === i.by?.alias) continue;
         await send({
           id: `${MEMBER_EVERYTHING_REVOKED}:${i.alias}:${key}:${admin}`,
           recipient: admin,
           eventType: MEMBER_EVERYTHING_REVOKED,
-          title: what,
-          body: `${what} · ${alertTime(i.at)}.`,
+          params: { name: i.name, by: i.by?.name ?? null, at },
           path: memberRevokePath(i.username),
         });
       }
@@ -319,8 +302,7 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
         id: `${ACCOUNT_API_KEY_CREATED}:${i.keyId}`,
         recipient: i.alias,
         eventType: ACCOUNT_API_KEY_CREATED,
-        title: `API key created: ${i.keyName}`,
-        body: `API key created: ${i.keyName}. Not you? Revoke everything.`,
+        params: { key: i.keyName },
         path: OWN_REVOKE_PATH,
       });
     }),
@@ -330,9 +312,8 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
         id: `${ACCOUNT_PASSKEY_ADDED}:${i.alias}:${randomUUID()}`,
         recipient: i.alias,
         eventType: ACCOUNT_PASSKEY_ADDED,
-        title: `Passkey added at ${i.remoteHost}: ${quoted(i.name)}`,
         // The name follows what the adding browser says it is: where and when it was added are the node's.
-        body: `Passkey added at ${i.remoteHost}: ${quoted(i.name)} · ${i.device} · ${alertTime(i.at)} · from ${i.from}. Not you? Revoke everything.`,
+        params: { host: i.remoteHost, passkey: quoted(i.name), device: i.device, at: i.at.toISOString(), from: i.from },
         path: OWN_REVOKE_PATH,
       });
     }),
@@ -342,8 +323,7 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
         id: `${ACCOUNT_PASSKEY_REMOVED}:${i.alias}:${randomUUID()}`,
         recipient: i.alias,
         eventType: ACCOUNT_PASSKEY_REMOVED,
-        title: `Passkey removed: ${i.name}`,
-        body: `Passkey removed: ${i.name}. Not you? Revoke everything.`,
+        params: { passkey: i.name },
         path: OWN_REVOKE_PATH,
       });
     }),
@@ -354,22 +334,19 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
         recipient: i.alias,
         eventType: ACCOUNT_APP_CONNECTED,
         // The name is the app's own to choose: where it is known to be is the node's.
-        title: `App connected at ${i.remoteHost}: ${quoted(i.app)} (${i.appHost})`,
-        body: `App connected at ${i.remoteHost}: ${quoted(i.app)} (${i.appHost}). Not you? Revoke everything.`,
+        params: { host: i.remoteHost, app: quoted(i.app), appHost: i.appHost },
         path: OWN_REVOKE_PATH,
       });
     }),
 
     emailChanged: safely(async (i) => {
       const key = randomUUID();
-      const when = `${i.device} · ${alertTime(i.at)}`;
-      const what = i.to ? `changed to ${i.to}` : "removed";
+      const at = i.at.toISOString();
       await send({
         id: `${ACCOUNT_EMAIL_CHANGED}:${i.alias}:${key}`,
         recipient: i.alias,
         eventType: ACCOUNT_EMAIL_CHANGED,
-        title: `Your email was ${what}`,
-        body: `Your email was ${what} on ${when}. Not you? Revoke everything.`,
+        params: { to: i.to, device: i.device, at },
         path: OWN_REVOKE_PATH,
         // By email only, to the address it was, or to none: whoever changed it is not who should hear
         // of it, and a shared channel is no place for someone's address.
@@ -381,8 +358,7 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
           id: `${MEMBER_EMAIL_CHANGED}:${i.alias}:${key}:${admin}`,
           recipient: admin,
           eventType: MEMBER_EMAIL_CHANGED,
-          title: `${i.name}'s email was ${i.to ? "changed" : "removed"}`,
-          body: `${i.name}'s email was ${i.to ? "changed" : "removed"} on ${when}.`,
+          params: { name: i.name, how: i.to ? "changed" : "removed", device: i.device, at },
           path: memberRevokePath(i.username),
         });
       }
@@ -390,8 +366,13 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
 
     channelChanged: safely(async (i) => {
       const key = randomUUID();
-      const title = `${i.by.name} changed where Stuga sends notifications`;
-      const body = `${i.by.name} changed where Stuga sends notifications: ${channelText(i.before)} to ${channelChangedTo(i.before, i.after)} · ${i.device} · ${alertTime(i.at)}.`;
+      const what = notification(NODE_NOTIFY_CHANNEL_CHANGED, {
+        by: i.by.name,
+        before: channelParams(i.before),
+        after: changedChannelParams(i.before, i.after),
+        device: i.device,
+        at: i.at.toISOString(),
+      });
       const url = `${deps.publicOrigin}${NOTIFY_SETTINGS_PATH}`;
       const old = i.before.sink === "none" ? null : i.before;
       for (const admin of (await deps.db.listNodeAdmins()).map((a) => a.alias)) {
@@ -404,26 +385,24 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
             recipient_alias: admin,
             event_type: NODE_NOTIFY_CHANNEL_CHANGED,
             resource_id: null,
-            resource_title: title,
+            resource_title: null,
             resource_url: url,
             actor_alias: i.by.alias,
-            payload: { message: body },
+            payload: what.params,
             delivery_channel: old?.sink ?? "none",
           },
           null,
         );
-        if (isNew && old) void sendThrough(old, id, { recipient: admin, title, body, url });
+        if (isNew && old) void sendThrough(old, id, { recipient: admin, ...what, url });
       }
     }),
 
     signInsPaused: safely(async (i) => {
-      const where = i.remoteHost ? ` at ${i.remoteHost}` : " on this node's network";
       await send({
         id: `${ACCOUNT_SIGN_INS_PAUSED}:${i.alias}:${i.arrival}:${Math.floor(Date.now() / DAY_MS)}`,
         recipient: i.alias,
         eventType: ACCOUNT_SIGN_INS_PAUSED,
-        title: `Many wrong passwords for @${i.username}${where}`,
-        body: `Many wrong passwords for @${i.username}${where}. Sign-ins are paused for an hour at a time. A browser you signed in with before still signs you in.`,
+        params: { username: i.username, host: i.remoteHost },
         path: OWN_REVOKE_PATH,
       });
     }),
@@ -435,7 +414,7 @@ export function createSecurityAlerts(deps: SecurityAlertsDeps): SecurityAlerts {
  * short is marked not sent rather than left "Sending by …".
  */
 export async function settleChannelNotices(sql: Sql): Promise<number> {
-  return failUnfinishedDeliveries(sql, NODE_NOTIFY_CHANNEL_CHANGED, "the node restarted before it was sent");
+  return failUnfinishedDeliveries(sql, NODE_NOTIFY_CHANNEL_CHANGED, "node_restarted");
 }
 
 /** The node's alerts, through its database and its sink as set up now. */

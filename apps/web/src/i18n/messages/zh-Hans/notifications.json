@@ -1,0 +1,20 @@
+{
+  "tray.unreadLabel": "通知（{count, plural, other {# 条未读}}）",
+  "tray.loadFailed": "无法加载通知。",
+  "tray.showFailed": "无法显示这些通知。",
+  "tray.allCaughtUp": "你已看完所有通知。",
+  "channel.email": "电子邮件",
+  "channel.webhook": "Webhook",
+  "delivery.inStugaOnly": "仅在 Stuga 中显示。",
+  "delivery.sent": "也已通过 {channel} 发送。",
+  "delivery.sending": "正在通过 {channel} 发送…",
+  "delivery.notSent": "未通过 {channel} 发送。",
+  "delivery.emailNotSetUp": "未通过 {channel} 发送：未设置电子邮件。",
+  "delivery.noEmailAddress": "未通过 {channel} 发送：你在 Stuga 中没有电子邮件地址。",
+  "delivery.noSink": "未通过 {channel} 发送：未设置通知渠道。",
+  "delivery.noWebhookUrl": "未通过 {channel} 发送：未设置 Webhook URL。",
+  "delivery.channelChanged": "未通过 {channel} 发送：发送前通知渠道已更改。",
+  "delivery.nodeRestarted": "未通过 {channel} 发送：发送前节点已重启。",
+  "delivery.sinkAnswered": "未通过 {channel} 发送：对方返回了 {status}。",
+  "delivery.failed": "未通过 {channel} 发送：{detail}。"
+}

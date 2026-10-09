@@ -6,6 +6,7 @@ import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
 import { Text } from "@astryxdesign/core/Text";
 import { FileText } from "lucide-react";
 import { citationHref, readableExcerpt, sectionLabel } from "../citations";
+import { t } from "../../i18n/i18n";
 
 export function AskSources({ citations, renumber }: { citations: AiCitation[]; renumber: Map<number, number> }) {
   const shown = citations
@@ -22,7 +23,7 @@ export function AskSources({ citations, renumber }: { citations: AiCitation[]; r
   return (
     <div className="ask-sources-block">
       <Text type="label" as="div">
-        Sources
+        {t("ai.ask.sources")}
       </Text>
       <div className="ask-source-grid">
         {shown.map(({ c, display, section, excerpt }) => (
@@ -33,12 +34,12 @@ export function AskSources({ citations, renumber }: { citations: AiCitation[]; r
             href={citationHref(c)}
             target="_blank"
             rel="noopener noreferrer"
-            title={`Open “${c.title || "Untitled"}” at this passage`}
+            title={t("ai.ask.openAtPassage", { title: c.title || t("common.untitled") })}
           >
             <span className="ask-source-card__head">
               <span className="ask-source-card__n">[{display}]</span>
               <FileText size={13} aria-hidden />
-              <span className="ask-source-card__title">{c.title || "Untitled"}</span>
+              <span className="ask-source-card__title">{c.title || t("common.untitled")}</span>
             </span>
             {section && <span className="ask-source-card__section">{section}</span>}
             {excerpt && <span className="ask-source-card__excerpt">{excerpt}</span>}

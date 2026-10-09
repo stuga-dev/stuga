@@ -987,7 +987,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       key = await pendingBindingKey(config.dataDir);
     } catch (e) {
       // Never deleted by the node, so set aside by hand.
-      if (e instanceof UnreadableKey) throw new RemoteAccessRefusal(409, undefined, `${e.message}. Move it aside, then try again.`);
+      if (e instanceof UnreadableKey) throw new RemoteAccessRefusal(409, "key_unreadable", `${e.message}. Move it aside, then try again.`);
       throw e;
     }
     const base = row!.api_url ?? config.service;

@@ -22,6 +22,7 @@ import type { InviteRole } from "@stuga/protocol/domain/roles";
 import { errorMessage } from "../../lib/http/client";
 import { copyText } from "../../lib/clipboard";
 import { atRemoteAddress } from "../../lib/session/auth-config";
+import { t } from "../../i18n/i18n";
 import { LinkAddressSwitch, LocalOnlyNote, useLinkAddresses, type LinkAddress } from "../../ui/LinkAddress";
 
 /** How long a new link works, in days; "never" keeps it working until someone revokes it. */
@@ -29,33 +30,34 @@ type LinkExpiry = "1" | "7" | "30" | "never";
 /** How many people a new link admits; "unlimited" admits anyone holding it. */
 type LinkUses = "1" | "5" | "10" | "25" | "unlimited";
 
-const ROLE_OPTIONS: { value: InviteRole; label: string; description: string }[] = [
-  { value: "member", label: "Member", description: "Sees what is shared with the workspace." },
-  { value: "guest", label: "Guest", description: "Sees only what is shared with them." },
-  { value: "admin", label: "Admin", description: "A member who also manages people and links." },
-];
+function roleOptions(): { value: InviteRole; label: string; description: string }[] {
+  return [
+    { value: "member", label: t("settings.roles.member"), description: t("settings.invite.memberNote") },
+    { value: "guest", label: t("settings.roles.guest"), description: t("settings.invite.guestNote") },
+    { value: "admin", label: t("settings.roles.admin"), description: t("settings.invite.adminNote") },
+  ];
+}
 
-const USES_OPTIONS: { value: LinkUses; label: string }[] = [
-  { value: "1", label: "Once" },
-  { value: "5", label: "5 times" },
-  { value: "10", label: "10 times" },
-  { value: "25", label: "25 times" },
-  { value: "unlimited", label: "No limit" },
-];
+const USES: readonly LinkUses[] = ["1", "5", "10", "25", "unlimited"];
+const EXPIRIES: readonly LinkExpiry[] = ["1", "7", "30", "never"];
 
-const EXPIRY_OPTIONS: { value: LinkExpiry; label: string }[] = [
-  { value: "1", label: "1 day" },
-  { value: "7", label: "7 days" },
-  { value: "30", label: "30 days" },
-  { value: "never", label: "Never" },
-];
+function usesLabel(uses: LinkUses): string {
+  return uses === "unlimited" ? t("settings.invite.noLimit") : t("settings.invite.uses", { count: Number(uses) });
+}
+
+function expiryLabel(expiry: LinkExpiry): string {
+  return expiry === "never" ? t("settings.invite.never") : t("settings.invite.days", { count: Number(expiry) });
+}
 
 /** What a link does, in one sentence: "Admits one person as a member. Expires in 7 days." */
 function linkSummary(role: InviteRole, uses: LinkUses, expiry: LinkExpiry): string {
-  const who = uses === "1" ? "one person" : uses === "unlimited" ? "anyone with the link" : `up to ${uses} people`;
-  const as = role === "admin" ? "an admin" : `a ${role}`;
-  const lapses = expiry === "never" ? "Works until revoked." : `Expires in ${expiry === "1" ? "1 day" : `${expiry} days`}.`;
-  return `Admits ${who} as ${as}. ${lapses}`;
+  return t("settings.invite.summary", {
+    who: uses === "1" ? "one" : uses === "unlimited" ? "unlimited" : "other",
+    count: uses === "unlimited" ? 0 : Number(uses),
+    role,
+    expiry: expiry === "never" ? "never" : "days",
+    days: expiry === "never" ? 0 : Number(expiry),
+  });
 }
 
 interface InviteLinkDialogProps {
@@ -110,8 +112,9 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
   // An admin link admits one person; the node refuses any other.
   const effectiveUses = role === "admin" ? "1" : uses;
   const remote = address === "remote";
-  const usesOptions = remote ? USES_OPTIONS.filter((o) => o.value !== "unlimited") : USES_OPTIONS;
-  const expiryOptions = remote ? EXPIRY_OPTIONS.filter((o) => o.value !== "never") : EXPIRY_OPTIONS;
+  const usesOptions = USES.filter((u) => !remote || u !== "unlimited").map((u) => ({ value: u, label: usesLabel(u) }));
+  const expiryOptions = EXPIRIES.filter((e) => !remote || e !== "never").map((e) => ({ value: e, label: expiryLabel(e) }));
+  const roles = roleOptions();
 
   function close() {
     if (!creating) onClose();
@@ -131,7 +134,7 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
       onCreated();
       await copy(join_url);
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't create invite link."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.invite.createFailed")), type: "error" });
     } finally {
       setCreating(false);
     }
@@ -147,7 +150,7 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
       <Layout
         header={
           <DialogHeader
-            title={created ? "Invite link created" : "Create invite link"}
+            title={created ? t("settings.invite.createdTitle") : t("settings.invite.createTitle")}
             subtitle={created?.summary}
             onOpenChange={(o) => !o && close()}
           />
@@ -158,10 +161,10 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
               <VStack gap={2}>
                 <HStack gap={2} vAlign="center">
                   <StackItem size="fill">
-                    <TextInput label="Invite link" isLabelHidden width="100%" value={created.url} onChange={() => {}} isReadOnly />
+                    <TextInput label={t("settings.invite.linkLabel")} isLabelHidden width="100%" value={created.url} onChange={() => {}} isReadOnly />
                   </StackItem>
                   <Button
-                    label={copied ? "Copied" : "Copy"}
+                    label={copied ? t("common.copied") : t("common.copy")}
                     variant="secondary"
                     icon={copied ? <Check size={15} /> : <Copy size={15} />}
                     onClick={() => void copy(created.url)}
@@ -169,33 +172,33 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
                 </HStack>
                 <LocalOnlyNote addresses={addresses} address={created.address} />
                 <Text size="sm" color="secondary">
-                  This link isn’t shown again once you close this.
+                  {t("settings.invite.notShownAgain")}
                 </Text>
               </VStack>
             ) : (
               <VStack gap={4}>
                 <LinkAddressSwitch addresses={addresses} value={address} onChange={pick} isDisabled={creating} />
                 <Selector
-                  label="Joins as"
+                  label={t("settings.invite.joinsAs")}
                   value={role}
                   onChange={(v) => setRole(v as InviteRole)}
-                  options={canInviteAdmin ? ROLE_OPTIONS : ROLE_OPTIONS.filter((o) => o.value !== "admin")}
+                  options={canInviteAdmin ? roles : roles.filter((o) => o.value !== "admin")}
                 />
                 <HStack gap={3}>
                   <StackItem size="fill">
                     <Selector
-                      label="Can be used"
+                      label={t("settings.invite.canBeUsed")}
                       width="100%"
                       value={effectiveUses}
                       onChange={(v) => setUses(v as LinkUses)}
                       options={usesOptions}
                       isDisabled={role === "admin"}
-                      disabledMessage="An admin link can be used once."
+                      disabledMessage={t("settings.invite.adminOnce")}
                     />
                   </StackItem>
                   <StackItem size="fill">
                     <Selector
-                      label="Expires after"
+                      label={t("settings.invite.expiresAfter")}
                       width="100%"
                       value={expiry}
                       onChange={(v) => setExpiry(v as LinkExpiry)}
@@ -211,11 +214,11 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
           <LayoutFooter>
             <HStack gap={2} justify="end">
               {created ? (
-                <Button label="Done" variant="primary" onClick={close} />
+                <Button label={t("common.done")} variant="primary" onClick={close} />
               ) : (
                 <>
-                  <Button label="Cancel" variant="ghost" onClick={close} isDisabled={creating} />
-                  <Button label="Create link" variant="primary" onClick={() => void create()} isLoading={creating} />
+                  <Button label={t("common.cancel")} variant="ghost" onClick={close} isDisabled={creating} />
+                  <Button label={t("settings.invite.createLink")} variant="primary" onClick={() => void create()} isLoading={creating} />
                 </>
               )}
             </HStack>

@@ -5,6 +5,8 @@
  * validated on read, since anything can write the key.
  */
 import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { t } from "../i18n/i18n";
+import { fmtInt } from "../lib/format";
 import { readStored, writeStored } from "../lib/storage";
 import { ResizeHandle } from "./ResizeHandle";
 import { COMPACT_QUERY, useIsCompact } from "./narrow";
@@ -132,7 +134,7 @@ export function useDockState<Id extends string>(
 export function DockToggle({ isPressed, onToggle, tooltip }: { isPressed: boolean; onToggle: () => void; tooltip: string }) {
   return (
     <ToggleButton
-      label="Side panels"
+      label={t("ui.dock.sidePanels")}
       tooltip={tooltip}
       isIconOnly
       icon={<PanelRight size={18} />}
@@ -165,25 +167,25 @@ export function Dock<Id extends string>({
   const isCompact = useIsCompact();
   const { active, visible } = dock.state;
   if (!visible || active === null) return null;
-  const shown = tabs.filter((t) => dock.available.includes(t.id));
-  const front = shown.find((t) => t.id === active);
-  const closeLabel = front?.close?.label ?? "Close side panels";
+  const shown = tabs.filter((tab) => dock.available.includes(tab.id));
+  const front = shown.find((tab) => tab.id === active);
+  const closeLabel = front?.close?.label ?? t("ui.dock.close");
 
   return (
     <>
-      {!isCompact && onResize && <ResizeHandle width={width} onResize={onResize} dir={-1} label="Resize side panels" />}
-      <aside className="side-panel dock" style={isCompact ? undefined : { width }} aria-label="Side panels">
+      {!isCompact && onResize && <ResizeHandle width={width} onResize={onResize} dir={-1} label={t("ui.dock.resize")} />}
+      <aside className="side-panel dock" style={isCompact ? undefined : { width }} aria-label={t("ui.dock.sidePanels")}>
         <HStack vAlign="center" hAlign="between" gap={1} paddingInlineEnd={1}>
-          <TabList value={active} onChange={(v) => dock.open(v as Id)} size="sm" layout="hug" aria-label="Panels">
-            {shown.map((t) => (
+          <TabList value={active} onChange={(v) => dock.open(v as Id)} size="sm" layout="hug" aria-label={t("ui.dock.tabs")}>
+            {shown.map((tab) => (
               <Tab
-                key={t.id}
-                value={t.id}
-                label={t.label}
-                icon={t.icon}
+                key={tab.id}
+                value={tab.id}
+                label={tab.label}
+                icon={tab.icon}
                 // Only the tab in front shows its label, so every panel fits a narrow dock.
-                isLabelHidden={t.id !== active}
-                endContent={t.badge ? <Badge variant="neutral" label={String(t.badge)} /> : undefined}
+                isLabelHidden={tab.id !== active}
+                endContent={tab.badge ? <Badge variant="neutral" label={fmtInt(tab.badge)} /> : undefined}
               />
             ))}
           </TabList>

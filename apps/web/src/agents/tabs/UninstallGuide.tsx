@@ -4,6 +4,8 @@ import { Text } from "@astryxdesign/core/Text";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Link } from "@astryxdesign/core/Link";
 import { Banner } from "@astryxdesign/core/Banner";
+import { t } from "../../i18n/i18n";
+import { tRich } from "../../i18n/rich";
 
 /**
  * Removing a client, kept collapsed under the setup it undoes. What each host
@@ -13,16 +15,16 @@ import { Banner } from "@astryxdesign/core/Banner";
 export function UninstallGuide({ host, children }: { host: string; children: ReactNode }) {
   return (
     // Collapsible hides with CSS, so the code blocks inside do not rebuild when the guide opens.
-    <Collapsible trigger={`Uninstall from ${host}`} defaultIsOpen={false}>
+    <Collapsible trigger={t("agents.uninstall.trigger", { host })} defaultIsOpen={false}>
       <VStack gap={2}>
         <Banner
           status="warning"
-          title="Local removal does not revoke access"
-          description="Also revoke the connection under Connected agents."
+          title={t("agents.uninstall.warningTitle")}
+          description={t("agents.uninstall.warningDescription", { section: t("agents.connected.title") })}
         />
         {children}
         <Text size="sm" color="secondary">
-          Then <Link href="#connected-agents">revoke the connection</Link> and restart {host}.
+          {tRich("agents.uninstall.then", { host, link: (chunks) => <Link href="#connected-agents">{chunks}</Link> })}
         </Text>
       </VStack>
     </Collapsible>

@@ -22,7 +22,7 @@ import { MEDIA_GET_PATH } from "@stuga/protocol/api/media";
 export type IngestEnv = Pick<NodeEnv, "media" | "publicOrigin" | "extraOrigins" | "remote" | "settings">;
 
 /** Images fetched per edit; past it destinations are left alone and reported. */
-const MAX_INGEST_PER_EDIT = 8;
+export const MAX_INGEST_PER_EDIT = 8;
 
 export interface HostedImage {
   from: string;

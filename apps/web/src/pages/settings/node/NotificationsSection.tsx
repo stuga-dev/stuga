@@ -10,16 +10,20 @@ import { isWebhookSink } from "@stuga/protocol/domain/notify";
 import { NodeSettings as NodeApi, type NodeOperationalSettings, type NotifyProbe } from "../../../api";
 import { notifyInput, toOpsForm, type OpsForm } from "./ops-form";
 import { SectionStatusBanners, useSectionStatus } from "./status";
-import { StoredSecret } from "./StoredSecret";
+import { onFileBadge, StoredSecret } from "./StoredSecret";
+import { t } from "../../../i18n/i18n";
+import { presentServerMessage } from "../../../lib/http/server-messages";
 
-const NOTIFY_OPTIONS = [
-  { value: "none", label: "Off", description: "Notifications stay in the app." },
-  { value: "slack", label: "Slack", description: "Needs an incoming webhook URL." },
-  { value: "teams", label: "Microsoft Teams", description: "Needs an incoming webhook URL." },
-  { value: "discord", label: "Discord", description: "Needs an incoming webhook URL." },
-  { value: "webhook", label: "Plain webhook", description: "Posts JSON to a URL you choose." },
-  { value: "email", label: "Email", description: "Needs an SMTP URL and a From address." },
-];
+function notifyOptions() {
+  return [
+    { value: "none", label: t("nodeAccess.notify.off"), description: t("nodeAccess.notify.offHelp") },
+    { value: "slack", label: "Slack", description: t("nodeAccess.notify.webhookHelp") }, // i18n-exempt: a product name
+    { value: "teams", label: "Microsoft Teams", description: t("nodeAccess.notify.webhookHelp") }, // i18n-exempt: a product name
+    { value: "discord", label: "Discord", description: t("nodeAccess.notify.webhookHelp") }, // i18n-exempt: a product name
+    { value: "webhook", label: t("nodeAccess.notify.plainWebhook"), description: t("nodeAccess.notify.plainWebhookHelp") },
+    { value: "email", label: t("nodeAccess.notify.email"), description: t("nodeAccess.notify.emailHelp") },
+  ];
+}
 
 export function NotificationsSection({ ops, onSaved }: { ops: NodeOperationalSettings; onSaved: (ops: NodeOperationalSettings) => void }) {
   const status = useSectionStatus();
@@ -37,7 +41,7 @@ export function NotificationsSection({ ops, onSaved }: { ops: NodeOperationalSet
       onSaved(res);
       setOpsForm(toOpsForm(res));
       setClearedSecret({ webhook: false, smtp: false });
-      status.setNotice({ status: "success", message: "Saved — live now, no restart." });
+      status.setNotice({ status: "success", message: t("common.savedLive") });
     } catch (e) {
       status.fail(e);
     } finally {
@@ -61,21 +65,21 @@ export function NotificationsSection({ ops, onSaved }: { ops: NodeOperationalSet
     <>
       <SectionStatusBanners status={status} />
       <VStack gap={3}>
-        <Heading level={2}>Notifications</Heading>
+        <Heading level={2}>{t("common.notifications")}</Heading>
         <Text type="supporting" color="secondary">
-          Send shares, requests, comments and agent edits outside the app.
+          {t("nodeAccess.notify.intro")}
         </Text>
         {(ops.notify.webhook_stale || ops.notify.smtp_stale) && (
           <Banner
             status="warning"
-            title="A notification credential is missing from this node&apos;s files"
-            description="Paste the credential again to restore delivery."
+            title={t("nodeAccess.notify.credentialStale")}
+            description={t("nodeAccess.notify.credentialStaleHelp")}
           />
         )}
         <VStack gap={1}>
           <Selector
-            label="Deliver to"
-            options={NOTIFY_OPTIONS}
+            label={t("nodeAccess.notify.deliverTo")}
+            options={notifyOptions()}
             value={opsForm.notifySink}
             onChange={(v: string) => {
               // A URL typed for one sink must not travel with a save
@@ -90,18 +94,18 @@ export function NotificationsSection({ ops, onSaved }: { ops: NodeOperationalSet
         {isWebhookSink(opsForm.notifySink) && (
           <VStack gap={1}>
             <TextInput
-              label="Webhook URL"
+              label={t("nodeAccess.notify.webhookUrl")}
               value={opsForm.webhookUrl}
               isDisabled={clearedSecret.webhook}
-              placeholder={ops.notify.webhook_set ? "Leave blank to keep the one on file" : "https://hooks.slack.com/services/…"}
+              placeholder={ops.notify.webhook_set ? t("nodeAccess.secret.keepOnFile") : "https://hooks.slack.com/services/…"}
               onChange={(v: string) => setOpsForm({ ...opsForm, webhookUrl: v })}
             />
             <StoredSecret
-              onFile={ops.notify.webhook_set ? `On file · ${ops.notify.webhook_label ?? "set"}` : null}
+              onFile={ops.notify.webhook_set ? onFileBadge(ops.notify.webhook_label) : null}
               removed={clearedSecret.webhook}
               onRemove={() => setClearedSecret({ ...clearedSecret, webhook: true })}
-              removeLabel="Remove"
-              removedNote="It will be removed when you save."
+              removeLabel={t("common.remove")}
+              removedNote={t("nodeAccess.secret.removedNote")}
             />
           </VStack>
         )}
@@ -110,22 +114,22 @@ export function NotificationsSection({ ops, onSaved }: { ops: NodeOperationalSet
           <>
             <VStack gap={1}>
               <TextInput
-                label="SMTP URL"
+                label={t("nodeAccess.notify.smtpUrl")}
                 value={opsForm.smtpUrl}
                 isDisabled={clearedSecret.smtp}
-                placeholder={ops.notify.smtp_set ? "Leave blank to keep the one on file" : "smtp://user:password@mail.example.com:587"}
+                placeholder={ops.notify.smtp_set ? t("nodeAccess.secret.keepOnFile") : "smtp://user:password@mail.example.com:587"}
                 onChange={(v: string) => setOpsForm({ ...opsForm, smtpUrl: v })}
               />
               <StoredSecret
-                onFile={ops.notify.smtp_set ? `On file · ${ops.notify.smtp_label ?? "set"}` : null}
+                onFile={ops.notify.smtp_set ? onFileBadge(ops.notify.smtp_label) : null}
                 removed={clearedSecret.smtp}
                 onRemove={() => setClearedSecret({ ...clearedSecret, smtp: true })}
-                removeLabel="Remove"
-                removedNote="It will be removed when you save."
+                removeLabel={t("common.remove")}
+                removedNote={t("nodeAccess.secret.removedNote")}
               />
             </VStack>
             <TextInput
-              label="From address"
+              label={t("nodeAccess.notify.fromAddress")}
               value={opsForm.emailFrom}
               onChange={(v: string) => setOpsForm({ ...opsForm, emailFrom: v })}
             />
@@ -133,19 +137,19 @@ export function NotificationsSection({ ops, onSaved }: { ops: NodeOperationalSet
         )}
 
         <Text type="supporting" color="secondary">
-          Credentials live in the data directory, not database backups.
+          {t("nodeAccess.notify.credentialsWhere")}
         </Text>
 
         <HStack gap={2} vAlign="center">
           <Button
-            label="Save"
+            label={t("common.save")}
             variant="primary"
             size="sm"
             isLoading={opsBusy === "notify"}
             onClick={() => void runOpsSave()}
           />
           <Button
-            label="Send a test"
+            label={t("nodeAccess.notify.sendTest")}
             variant="secondary"
             size="sm"
             isDisabled={opsForm.notifySink === "none"}
@@ -154,15 +158,15 @@ export function NotificationsSection({ ops, onSaved }: { ops: NodeOperationalSet
           />
           {opsForm.notifySink === "none" && (
             <Text type="supporting" color="secondary">
-              In-app only.
+              {t("nodeAccess.notify.inAppOnly")}
             </Text>
           )}
         </HStack>
         {notifyProbe && (
           <Banner
             status={notifyProbe.ok ? "success" : "error"}
-            title={notifyProbe.ok ? `Sent to ${notifyProbe.sink}` : `${notifyProbe.sink} did not accept it`}
-            {...(notifyProbe.message ? { description: notifyProbe.message } : {})}
+            title={notifyProbe.ok ? t("nodeAccess.notify.sent", { sink: notifyProbe.sink }) : t("nodeAccess.notify.refused", { sink: notifyProbe.sink })}
+            {...(notifyProbe.message ? { description: presentServerMessage(notifyProbe.message) } : {})}
           />
         )}
       </VStack>

@@ -2,6 +2,12 @@ import { Badge } from "@astryxdesign/core/Badge";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
+import { t } from "../../../i18n/i18n";
+
+/** The badge for a credential on file, named by the label the node keeps for it when it has one. */
+export function onFileBadge(label: string | null | undefined): string {
+  return label ? t("nodeAccess.secret.onFile", { label }) : t("nodeAccess.secret.onFileUnlabelled");
+}
 
 /** The line under a write-only credential: what is on file, and a Remove that takes effect on save. */
 export function StoredSecret({

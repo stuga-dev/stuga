@@ -460,15 +460,18 @@ describe("the identity provider section", () => {
     expect(detail.after).not.toHaveProperty("identity_provider_unlinked_accounts");
   });
 
-  it.each<[string, unknown, RegExp]>([
+  it.each<[string, unknown, RegExp, string?]>([
     ["plain http off this machine", { issuer: "http://id.example.test", client_id: "c" }, /https/],
     ["no client ID", { issuer: "https://id.example.test" }, /client ID/],
     ["scopes without openid", { issuer: "http://127.0.0.1:1", client_id: "c", scopes: "profile email" }, /openid/],
-    ["a provider that does not answer", { issuer: "http://127.0.0.1:1", client_id: "c" }, /could not be reached/],
-  ])("refuses %s", async (_what, provider, message) => {
+    // The discovery check's reason is the code the settings page words it by.
+    ["a provider that does not answer", { issuer: "http://127.0.0.1:1", client_id: "c" }, /could not be reached/, "provider_discovery_unreachable"],
+  ])("refuses %s", async (_what, provider, message, code) => {
     const res = (await put(ctx(), { identity_provider: provider }))!;
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toMatch(message);
+    const body = (await res.json()) as { error: string; message?: string };
+    expect(code ? body.message : body.error).toMatch(message);
+    if (code) expect(body.error).toBe(code);
     expect(save).not.toHaveBeenCalled();
   });
 

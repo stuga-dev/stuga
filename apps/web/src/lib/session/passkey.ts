@@ -17,6 +17,7 @@ import { authConfig } from "./auth-config";
 import { authRequest } from "./auth-request";
 import { AuthError } from "./errors";
 import { authPost, ensureFreshToken, type Session } from "./tokens";
+import { t } from "../../i18n/i18n";
 
 /** Passkeys are offered here: the node says so (its remote address), and this browser has WebAuthn. */
 export function passkeysOffered(): boolean {
@@ -31,7 +32,7 @@ export function passkeyAutofillAvailable(): Promise<boolean> {
 /** A ceremony the person ended, or that another took over: nothing to say about it. */
 export class PasskeyCancelled extends Error {
   constructor() {
-    super("The passkey prompt closed. Try again.");
+    super(t("auth.errors.passkeyCancelled"));
     this.name = "PasskeyCancelled";
   }
 }
@@ -54,7 +55,7 @@ async function bearer(): Promise<string> {
 
 async function requestOptions(purpose: "sign-in" | "reauth", token?: string): Promise<PublicKeyCredentialRequestOptionsJSON> {
   const res = await authRequest<{ publicKey: PublicKeyCredentialRequestOptionsJSON }>("/auth/passkey/options", { purpose }, token);
-  if (!res?.publicKey) throw new AuthError(200, "The server returned no passkey challenge.");
+  if (!res?.publicKey) throw new AuthError(200, t("auth.errors.noPasskeyChallenge"));
   return res.publicKey;
 }
 
@@ -71,8 +72,8 @@ export async function signInWithPasskey(opts: { autofill?: boolean } = {}): Prom
   } catch (err) {
     throw fromBrowser(err);
   }
-  const t = await authPost("/auth/passkey/sign-in", { credential });
-  return { accessToken: t.access_token, refreshToken: t.refresh_token, expiresIn: t.expires_in };
+  const tokens = await authPost("/auth/passkey/sign-in", { credential });
+  return { accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresIn: tokens.expires_in };
 }
 
 /** Stop a waiting autofill sign-in, as leaving the page does. */
@@ -108,7 +109,7 @@ export interface AddedPasskey {
 export async function addPasskey(): Promise<AddedPasskey> {
   const token = await bearer();
   const res = await authRequest<{ publicKey: PublicKeyCredentialCreationOptionsJSON }>("/auth/passkey/options", { purpose: "add" }, token);
-  if (!res?.publicKey) throw new AuthError(200, "The server returned no passkey challenge.");
+  if (!res?.publicKey) throw new AuthError(200, t("auth.errors.noPasskeyChallenge"));
   let credential;
   try {
     credential = await startRegistration({ optionsJSON: res.publicKey });
@@ -116,6 +117,6 @@ export async function addPasskey(): Promise<AddedPasskey> {
     throw fromBrowser(err);
   }
   const added = await authRequest<AddedPasskey>("/auth/passkey/add", { credential }, token);
-  if (!added) throw new AuthError(200, "The server did not add the passkey.");
+  if (!added) throw new AuthError(200, t("auth.errors.passkeyNotAddedByServer"));
   return added;
 }

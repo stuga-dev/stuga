@@ -4,6 +4,8 @@ import { useState } from "react";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { History, PanelRightOpen, RefreshCw, Sparkles } from "lucide-react";
 import { Dock, useDockState, type DockController } from "../ui/Dock";
+import { t } from "../i18n/i18n";
+import { aiCoauthorLabel } from "../lib/format";
 import { ActivityPanel } from "./ActivityPanel";
 import { RowPanel } from "./RowPanel";
 import { TableAiPanel } from "./TableAiPanel";
@@ -63,18 +65,18 @@ export function DatabaseDock({
       tabs={[
         {
           id: "ai",
-          label: "AI co-author",
+          label: aiCoauthorLabel(),
           icon: <Sparkles size={15} />,
           render: () => <TableAiPanel docId={docId} activeTable={table?.display ?? null} agentAuto={agentAuto} />,
         },
         {
           id: "activity",
-          label: "Activity",
+          label: t("database.dock.activity"),
           icon: <History size={15} />,
           actions: (
             <IconButton
-              label="Refresh activity"
-              tooltip="Refresh activity"
+              label={t("database.dock.refreshActivity")}
+              tooltip={t("database.dock.refreshActivity")}
               variant="ghost"
               size="sm"
               icon={<RefreshCw size={15} />}
@@ -94,10 +96,10 @@ export function DatabaseDock({
         },
         {
           id: "row",
-          label: "Row",
+          label: t("common.row"),
           icon: <PanelRightOpen size={15} />,
           // Closing the row withholds this tab, and the dock goes back to what the row replaced.
-          close: { label: "Close row", onClose: onRowClosed },
+          close: { label: t("database.dock.closeRow"), onClose: onRowClosed },
           render: () =>
             table && rowId ? (
               <RowPanel

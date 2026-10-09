@@ -5,6 +5,7 @@
 import type { NodeViewRendererProps } from "@tiptap/react";
 import { FootnoteReference } from "@stuga/crdt-ops";
 import { anchorBelow, type CitationAnchor } from "../ai/CitationPopover";
+import { t } from "../i18n/i18n";
 
 /** Fired by a reference chip; FootnotePopover opens the citation on it. */
 export const FOOTNOTE_CLICK_EVENT = "stuga:footnote-click";
@@ -24,7 +25,7 @@ export const FootnoteReferenceView = FootnoteReference.extend({
       dom.setAttribute("data-n", String(n));
       dom.setAttribute("contenteditable", "false");
       dom.textContent = `[${n}]`;
-      dom.title = `Citation ${n}`;
+      dom.title = t("editor.footnote.citation", { n });
       dom.addEventListener("mousedown", (e) => {
         // Keep ProseMirror from moving the selection into the atom.
         e.preventDefault();

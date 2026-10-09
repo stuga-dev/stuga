@@ -17,6 +17,7 @@
  * is done.
  */
 import { getNodeState, recordBackupAttempt, type Sql } from "@stuga/db";
+import { notification } from "@stuga/protocol/notify/events";
 import { sinkDelivery } from "../jobs/notify.js";
 import { lastScheduled, nextScheduled } from "../config/time-zone.js";
 import { jobDeps, type JobsEnv } from "../jobs/deps.js";
@@ -250,11 +251,11 @@ export function createNodeBackups(d: NodeBackupsDeps): NodeBackups {
 /** One notification per administrator per failed day, in the app and through the sink. */
 export async function notifyBackupFailed(env: JobsEnv, message: string, at: Date): Promise<void> {
   const db = jobDeps(env, {}).db;
-  const title = "The scheduled backup failed";
+  const what = notification("BACKUP_FAILED", { error: message });
   const url = `${env.publicOrigin}${BACKUPS_PATH}`;
   const day = at.toISOString().slice(0, 10);
   for (const admin of await db.listNodeAdmins()) {
-    const delivery = sinkDelivery(env.settings.current().notify, { recipient: admin.alias, title, body: message, url });
+    const delivery = sinkDelivery(env.settings.current().notify, { recipient: admin.alias, ...what, url });
     await db.insertNotification(
       {
         id: `${BACKUP_FAILED_EVENT}:${day}:${admin.alias}`,
@@ -262,10 +263,10 @@ export async function notifyBackupFailed(env: JobsEnv, message: string, at: Date
         recipient_alias: admin.alias,
         event_type: BACKUP_FAILED_EVENT,
         resource_id: null,
-        resource_title: title,
+        resource_title: null,
         resource_url: url,
         actor_alias: null,
-        payload: { error: message },
+        payload: what.params,
       },
       delivery,
     );

@@ -2,6 +2,9 @@ import { useCallback, useRef, useState } from "react";
 import { TableAi } from "../api";
 import { citedSources } from "../ai/citations";
 import type { ChatTurn } from "../ai/ChatTranscript";
+import { t } from "../i18n/i18n";
+import { presentServerMessage } from "../lib/http/server-messages";
+import { failureText, tableActivityText, tableNoticeText } from "../ai/turn-text";
 
 /**
  * Conversation state for a database's AI co-author. The turn streams over SSE;
@@ -15,7 +18,7 @@ export function useTableAi(docId: string, activeTable: string | null) {
   const [collectionId, setCollectionId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const patchLast = useCallback((fn: (t: ChatTurn) => ChatTurn) => {
+  const patchLast = useCallback((fn: (turn: ChatTurn) => ChatTurn) => {
     setTurns((ts) => {
       const last = ts[ts.length - 1];
       return last?.role === "assistant" ? [...ts.slice(0, -1), fn(last)] : ts;
@@ -32,31 +35,31 @@ export function useTableAi(docId: string, activeTable: string | null) {
       if (!prompt || streaming) return;
       setStreaming(true);
       // A blank assistant turn (stopped before the first token) would fail every later model call.
-      const history = turns.filter((t) => t.text.trim() !== "").map((t) => ({ role: t.role, content: t.text }));
-      setTurns((ts) => [...ts, { role: "user", text: prompt }, { role: "assistant", text: "", status: "Thinking…" }]);
+      const history = turns.filter((turn) => turn.text.trim() !== "").map((turn) => ({ role: turn.role, content: turn.text }));
+      setTurns((ts) => [...ts, { role: "user", text: prompt }, { role: "assistant", text: "", status: t("database.ai.thinking") }]);
 
       abortRef.current = TableAi.stream(
         docId,
         { prompt, activeTable, history, model, collectionId },
         {
-          onToken: (text) => patchLast((t) => ({ ...t, text: t.text + text, status: undefined })),
-          onStatus: (label) => patchLast((t) => (t.text ? t : { ...t, status: label })),
+          onToken: (text) => patchLast((turn) => ({ ...turn, text: turn.text + text, status: undefined })),
+          onStatus: (activity) => patchLast((turn) => (turn.text ? turn : { ...turn, status: tableActivityText(activity) })),
           onDone: ({ staged, applied, citations, notice }) => {
             finish();
             const sources = citedSources(citations);
-            patchLast((t) => ({
-              ...t,
+            patchLast((turn) => ({
+              ...turn,
               status: undefined,
               ...(staged > 0 ? { staged } : {}),
               ...(applied > 0 ? { applied } : {}),
               ...(sources.length > 0 ? { sources, citations } : {}),
-              ...(notice ? { notice } : {}),
+              ...(notice ? { notice: tableNoticeText(notice) } : {}),
             }));
           },
-          onError: (message) => {
+          onError: (message, failure) => {
             finish();
-            const note = `⚠ ${message}`;
-            patchLast((t) => ({ ...t, status: undefined, text: t.text ? `${t.text}\n\n${note}` : note }));
+            const note = `⚠ ${failureText(failure) ?? presentServerMessage(message)}`;
+            patchLast((turn) => ({ ...turn, status: undefined, text: turn.text ? `${turn.text}\n\n${note}` : note }));
           },
         },
       );
@@ -67,7 +70,7 @@ export function useTableAi(docId: string, activeTable: string | null) {
   const stop = useCallback(() => {
     abortRef.current?.abort();
     finish();
-    patchLast((t) => ({ ...t, status: undefined }));
+    patchLast((turn) => ({ ...turn, status: undefined }));
   }, [finish, patchLast]);
 
   return { turns, streaming, model, setModel, collectionId, setCollectionId, send, stop };

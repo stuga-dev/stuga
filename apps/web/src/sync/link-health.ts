@@ -11,6 +11,7 @@
  * Durability is a separate, server-sourced axis (PERSIST_DEGRADED): a receipt
  * proves acceptance, never storage, so no wording here says "saved".
  */
+import { t } from "../i18n/i18n";
 
 /** An outage shows a label only after this long, past the first reconnect attempts. */
 export const SHOW_RECONNECT_LABEL_AFTER_MS = 3_000;
@@ -174,8 +175,8 @@ export function readout(h: LinkHealth, transportUp: boolean, at: number): Indica
     return {
       phase: "revoked",
       tone: "error",
-      label: "No access",
-      srText: "You no longer have access to this document",
+      label: t("ui.linkHealth.noAccess"),
+      srText: t("ui.linkHealth.noAccessDetail"),
       expanded: true,
       persistent: true,
     };
@@ -187,10 +188,8 @@ export function readout(h: LinkHealth, transportUp: boolean, at: number): Indica
     return {
       phase: loud ? "prolonged" : "at-risk",
       tone: loud ? "error" : "warning",
-      label: loud ? "Changes are not reaching the server" : "Changes are waiting for connection",
-      srText: loud
-        ? "Changes are not reaching the server. Keep this tab open; it keeps retrying."
-        : "Changes are waiting for connection. Keep this tab open so they can be sent when the connection returns.",
+      label: loud ? t("ui.linkHealth.notReaching") : t("ui.linkHealth.waiting"),
+      srText: loud ? t("ui.linkHealth.notReachingDetail") : t("ui.linkHealth.waitingDetail"),
       expanded: true,
       persistent: true,
     };
@@ -202,10 +201,8 @@ export function readout(h: LinkHealth, transportUp: boolean, at: number): Indica
     return {
       phase: loud ? "undurable-prolonged" : "undurable",
       tone: loud ? "error" : "warning",
-      label: loud ? "The server still can’t store changes" : "The server can’t store changes",
-      srText: loud
-        ? "The server has been unable to store changes for a while. Keep this tab open, and tell your administrator."
-        : "Your changes reached the server, but it can’t store them right now. Keep this tab open while it retries.",
+      label: loud ? t("ui.linkHealth.stillCantStore") : t("ui.linkHealth.cantStore"),
+      srText: loud ? t("ui.linkHealth.stillCantStoreDetail") : t("ui.linkHealth.cantStoreDetail"),
       expanded: true,
       persistent: true,
     };
@@ -216,8 +213,8 @@ export function readout(h: LinkHealth, transportUp: boolean, at: number): Indica
     return {
       phase: flashing ? "recovered" : "connected",
       tone: "success",
-      label: flashing ? "Connected" : null,
-      srText: "Live sync is connected",
+      label: flashing ? t("ui.linkHealth.connected") : null,
+      srText: t("ui.linkHealth.connectedDetail"),
       expanded: flashing,
       persistent: false,
     };
@@ -228,7 +225,7 @@ export function readout(h: LinkHealth, transportUp: boolean, at: number): Indica
       phase: "connecting",
       tone: "neutral",
       label: null,
-      srText: "Connecting to live sync",
+      srText: t("ui.linkHealth.connectingDetail"),
       expanded: false,
       persistent: false,
     };
@@ -239,8 +236,8 @@ export function readout(h: LinkHealth, transportUp: boolean, at: number): Indica
   return {
     phase: labelled ? "delayed" : "reconnecting",
     tone: "warning",
-    label: labelled ? "Reconnecting" : null,
-    srText: labelled ? "Live updates are paused until the connection returns" : "Connection interrupted; reconnecting",
+    label: labelled ? t("ui.linkHealth.reconnecting") : null,
+    srText: labelled ? t("ui.linkHealth.pausedDetail") : t("ui.linkHealth.interruptedDetail"),
     expanded: labelled,
     persistent: false,
   };

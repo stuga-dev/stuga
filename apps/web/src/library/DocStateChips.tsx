@@ -7,6 +7,7 @@ import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Eye } from "lucide-react";
 import { DOC_STATE_FLAGS } from "./doc-state";
+import { t } from "../i18n/i18n";
 
 export function DocStateChips({
   locked,
@@ -33,8 +34,8 @@ export function DocStateChips({
         </Tooltip>
       ))}
       {viewOnly && (
-        <Tooltip content={`You don’t have edit access to this ${noun}.`} placement="below">
-          <Token size="sm" color="yellow" icon={<Eye size={12} />} label="View only" />
+        <Tooltip content={t("library.state.viewOnlyTooltip", { noun })} placement="below">
+          <Token size="sm" color="yellow" icon={<Eye size={12} />} label={t("library.state.viewOnly")} />
         </Tooltip>
       )}
     </HStack>

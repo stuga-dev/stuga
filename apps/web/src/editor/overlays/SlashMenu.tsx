@@ -6,29 +6,48 @@ import { useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { useEditorAnchor } from "../use-editor-anchor";
 import { isComposingKey } from "../../lib/ime";
+import { t, type MessageKey } from "../../i18n/i18n";
+import { EN } from "../../i18n/en";
 
 interface SlashItem {
   id: string;
-  label: string;
+  labelKey: MessageKey;
   hint: string;
-  /** Match terms for filtering (besides the label). */
+  /** Match terms for filtering (besides the label, translated and English). */
   terms: string[];
   run: (e: Editor) => void;
 }
 
 const ITEMS: SlashItem[] = [
-  { id: "h1", label: "Heading 1", hint: "H1", terms: ["title", "h1"], run: (e) => e.chain().focus().toggleHeading({ level: 1 }).run() },
-  { id: "h2", label: "Heading 2", hint: "H2", terms: ["h2"], run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run() },
-  { id: "h3", label: "Heading 3", hint: "H3", terms: ["h3"], run: (e) => e.chain().focus().toggleHeading({ level: 3 }).run() },
-  { id: "bullet", label: "Bullet list", hint: "•", terms: ["ul", "unordered", "list"], run: (e) => e.chain().focus().toggleBulletList().run() },
-  { id: "ordered", label: "Numbered list", hint: "1.", terms: ["ol", "ordered", "number", "list"], run: (e) => e.chain().focus().toggleOrderedList().run() },
-  { id: "quote", label: "Quote", hint: "❝", terms: ["blockquote", "citation"], run: (e) => e.chain().focus().toggleBlockquote().run() },
-  { id: "code", label: "Code block", hint: "{ }", terms: ["pre", "snippet", "fence"], run: (e) => e.chain().focus().toggleCodeBlock().run() },
+  { id: "h1", labelKey: "editor.blocks.heading1", hint: "H1", terms: ["title", "h1"], run: (e) => e.chain().focus().toggleHeading({ level: 1 }).run() }, // i18n-exempt: H1–H3 are heading-level glyphs
+  { id: "h2", labelKey: "editor.blocks.heading2", hint: "H2", terms: ["h2"], run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run() }, // i18n-exempt: H1–H3 are heading-level glyphs
+  { id: "h3", labelKey: "editor.blocks.heading3", hint: "H3", terms: ["h3"], run: (e) => e.chain().focus().toggleHeading({ level: 3 }).run() }, // i18n-exempt: H1–H3 are heading-level glyphs
+  { id: "bullet", labelKey: "editor.blocks.bulletList", hint: "•", terms: ["ul", "unordered", "list"], run: (e) => e.chain().focus().toggleBulletList().run() },
+  { id: "ordered", labelKey: "editor.blocks.numberedList", hint: "1.", terms: ["ol", "ordered", "number", "list"], run: (e) => e.chain().focus().toggleOrderedList().run() },
+  { id: "quote", labelKey: "editor.blocks.quote", hint: "❝", terms: ["blockquote", "citation"], run: (e) => e.chain().focus().toggleBlockquote().run() },
+  { id: "code", labelKey: "editor.blocks.codeBlock", hint: "{ }", terms: ["pre", "snippet", "fence"], run: (e) => e.chain().focus().toggleCodeBlock().run() },
   // setCodeBlock, not toggle, so it also works from an empty block.
-  { id: "mermaid", label: "Mermaid diagram", hint: "◇", terms: ["diagram", "flowchart", "graph", "chart", "sequence"], run: (e) => e.chain().focus().setCodeBlock({ language: "mermaid" }).run() },
-  { id: "divider", label: "Divider", hint: "―", terms: ["hr", "horizontal", "rule", "separator"], run: (e) => e.chain().focus().setHorizontalRule().run() },
-  { id: "table", label: "Table", hint: "⊞", terms: ["grid", "rows", "columns"], run: (e) => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+  { id: "mermaid", labelKey: "editor.blocks.mermaid", hint: "◇", terms: ["diagram", "flowchart", "graph", "chart", "sequence"], run: (e) => e.chain().focus().setCodeBlock({ language: "mermaid" }).run() },
+  { id: "divider", labelKey: "editor.blocks.divider", hint: "―", terms: ["hr", "horizontal", "rule", "separator"], run: (e) => e.chain().focus().setHorizontalRule().run() },
+  { id: "table", labelKey: "editor.blocks.table", hint: "⊞", terms: ["grid", "rows", "columns"], run: (e) => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
 ];
+
+/**
+ * The query after a `/` at the very start of a block: letters, marks and digits of any script, so
+ * `/标题` filters as `/heading` does. A `/` mid-sentence never opens the menu.
+ */
+const SLASH_QUERY = /^\/([\p{L}\p{M}\p{N}_-]*)$/u;
+
+/** Whether an item answers a query, by its label in the interface language, its English label, or its terms. */
+function slashItemMatches(item: Pick<SlashItem, "labelKey" | "terms">, query: string): boolean {
+  const q = query.toLowerCase();
+  if (!q) return true;
+  return (
+    t(item.labelKey).toLowerCase().includes(q) ||
+    (EN[item.labelKey] ?? "").toLowerCase().includes(q) ||
+    item.terms.some((term) => term.includes(q))
+  );
+}
 
 interface SlashState {
   /** Doc position of the block start, where the `/` is. */
@@ -57,8 +76,8 @@ export function SlashMenu({
 
   const allItems: SlashItem[] = [
     ...ITEMS,
-    { id: "image", label: "Image", hint: "▣", terms: ["img", "photo", "picture", "upload"], run: () => imageRef.current?.click() },
-    { id: "file", label: "File", hint: "⎘", terms: ["attachment", "attach", "pdf", "document", "upload"], run: () => fileRef.current?.click() },
+    { id: "image", labelKey: "editor.blocks.image", hint: "▣", terms: ["img", "photo", "picture", "upload"], run: () => imageRef.current?.click() },
+    { id: "file", labelKey: "editor.blocks.file", hint: "⎘", terms: ["attachment", "attach", "pdf", "document", "upload"], run: () => fileRef.current?.click() },
   ];
 
   const [state, hide] = useEditorAnchor(editor, (): SlashState | null => {
@@ -68,8 +87,7 @@ export function SlashMenu({
     const $from = sel.$from;
     if (!$from.parent.isTextblock || $from.parent.type.name === "codeBlock") return null;
     const blockStart = $from.start();
-    // Only `/` plus a word at the very start of the block, so a `/` mid-sentence never opens it.
-    const m = /^\/([\w-]*)$/.exec(s.doc.textBetween(blockStart, sel.from, "\n", "\n"));
+    const m = SLASH_QUERY.exec(s.doc.textBetween(blockStart, sel.from, "\n", "\n"));
     if (!m) return null;
     const coords = view.coordsAtPos(sel.from);
     if (stateRef.current?.from !== blockStart || stateRef.current.query !== (m[1] ?? "")) setActive(0);
@@ -77,11 +95,7 @@ export function SlashMenu({
   });
 
   const filtered = state
-    ? allItems.filter((it) => {
-        const q = state.query.toLowerCase();
-        if (!q) return true;
-        return it.label.toLowerCase().includes(q) || it.terms.some((t) => t.includes(q));
-      })
+    ? allItems.filter((it) => slashItemMatches(it, state.query))
     : [];
   filteredRef.current = filtered;
   stateRef.current = state;
@@ -147,11 +161,11 @@ export function SlashMenu({
       <input ref={imageRef} type="file" accept="image/*" multiple hidden onChange={onPick} />
       <input ref={fileRef} type="file" multiple hidden onChange={onPick} />
       {state && (
-        <div className="slash-menu" style={{ top, left }} role="listbox" aria-label="Insert block">
+        <div className="slash-menu" style={{ top, left }} role="listbox" aria-label={t("editor.slash.label")}>
           {filtered.length === 0 && (
             <div className="slash-item slash-item--empty" role="presentation">
               <span className="slash-item__label">
-                {state.query ? `No blocks match “${state.query}”` : "No blocks available"}
+                {state.query ? t("editor.slash.noMatch", { query: state.query }) : t("editor.slash.empty")}
               </span>
             </div>
           )}
@@ -167,7 +181,7 @@ export function SlashMenu({
               onClick={() => choose(it)}
             >
               <span className="slash-item__hint" aria-hidden="true">{it.hint}</span>
-              <span className="slash-item__label">{it.label}</span>
+              <span className="slash-item__label">{t(it.labelKey)}</span>
             </button>
           ))}
         </div>

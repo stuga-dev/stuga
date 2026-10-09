@@ -1,6 +1,7 @@
 /** Ask: saved research threads, and the streamed cross-document agentic answer. */
-import { type AskAgentActivity, failureReason, type ModelFailure, runAskAgentTurn } from "@stuga/ai";
-import type { AskStopReason } from "@stuga/protocol/api/ask";
+import { type ModelFailure, runAskAgentTurn } from "@stuga/ai";
+import type { AskActivity, AskNotice } from "@stuga/protocol/api/ai-turn";
+import type { AskDone, AskStopReason } from "@stuga/protocol/api/ask";
 import {
   appendAskTurn,
   createAskThread,
@@ -30,29 +31,11 @@ async function authorizedAskThread(ctx: Ctx, threadId: string) {
   return thread;
 }
 
-/** One-line label for what the ask agent is doing, for the panel's status line. */
-function activityLabel(a: AskAgentActivity): string {
-  switch (a.kind) {
-    case "searching":
-      return `Searching “${a.query}”…`;
-    case "reading":
-      return `Reading “${a.title || "a document"}”…`;
-    case "listing":
-      return "Looking through your documents…";
-    case "querying":
-      return "Querying a database…";
-    default:
-      return "Thinking…";
-  }
-}
-
 /** The caveat shown under an answer that was not a clean, fully grounded finish; null when there is none. */
-function turnNotice(stop: AskStopReason, degraded: boolean, failure?: ModelFailure): string | null {
-  if (stop === "max_rounds") return "I stopped after the maximum number of research steps — ask a follow-up to continue.";
-  if (stop === "budget") return "The AI budget ran out part-way through the answer.";
-  if (stop === "aborted") return "Stopped.";
-  if (stop === "error") return failureReason(failure) ?? "Something failed part-way through; this answer may be incomplete.";
-  if (degraded) return "Semantic search was unavailable, so this matched words only. Results may be less relevant.";
+function turnNotice(stop: AskStopReason, degraded: boolean, failure?: ModelFailure): AskNotice | null {
+  if (stop === "max_rounds" || stop === "budget" || stop === "aborted") return { code: stop };
+  if (stop === "error") return { code: "error", failure: failure?.kind ?? null };
+  if (degraded) return { code: "degraded" };
   return null;
 }
 
@@ -169,7 +152,7 @@ export async function ask({ ctx, req }: WorkspaceCall): Promise<Response> {
       runner,
       {
         onChunk: (text) => send("token", { text }),
-        onStatus: (a) => send("status", { label: activityLabel(a) }),
+        onStatus: (a) => send("status", a satisfies AskActivity),
         onStep: (step) => send("step", step),
         // The model answered from memory and is sent back to search: drop the uncited draft.
         onReset: () => send("reset", {}),
@@ -213,6 +196,6 @@ export async function ask({ ctx, req }: WorkspaceCall): Promise<Response> {
       rounds: result.rounds,
       stop_reason: result.stopReason,
       notice: turnNotice(result.stopReason, degraded(), result.failure),
-    });
+    } satisfies AskDone);
   });
 }

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import type { ConnectorStatus, RemoteAccessStatus, RemoteError } from "@stuga/protocol/api/remote-access";
 import { shortDate } from "../../../lib/format";
+import { failureFrom } from "../../../lib/http/client";
 import { mountInto, typeInto } from "../../../test/form-input";
 
 const nodeApi = vi.hoisted(() => ({
@@ -283,7 +284,21 @@ describe("RemoteAccessSection", () => {
 
     const dir = "/Users/liv/.stuga-remote can't be used for remote access: other users can write to it";
     await mount({ ...ON, state: "error", last_error: problem("remote_dir_unusable", dir) });
+    expect(text()).toContain("This node’s folder for remote access can’t be used.");
     expect(text()).toContain(dir);
+  });
+
+  it("words a refusal about this node's files, with the node's text beneath, wherever a code was typed", async () => {
+    const why = "/Users/liv/.stuga-remote/s.sock is 120 bytes; a unix socket's path can be at most 104";
+    nodeApi.enableRemoteAccess.mockRejectedValue(failureFrom("/api/node/remote-access/enable", "POST", 409, { error: "socket_path_too_long", message: why }));
+    await mount(OFF);
+    await typeInto(field("Code"), "7K2M-9QXD-4TZB-H8PN");
+    await click(checkbox());
+    await click(buttons("Turn on")[0]);
+    await settle();
+    expect(field("Code")!.getAttribute("aria-invalid")).not.toBe("true");
+    expect(text()).toContain("The path to this node’s folder for remote access is too long.");
+    expect(text()).toContain(why);
   });
 
   it("points out the connector's new settings once this browser has seen earlier ones", async () => {
@@ -360,7 +375,8 @@ describe("RemoteAccessSection", () => {
         connector: { ...MANAGED.connector!, status: helper("unavailable", message) },
         last_error: problem("connector_unavailable", message),
       });
-      expect(text()).toContain(message);
+      // The node's sentence, as the catalog words it.
+      expect(text()).toContain("This installation doesn’t include the connector.");
       expect(buttons("Retry")).toHaveLength(0);
       expect(buttons("Turn off")).toHaveLength(1);
     });

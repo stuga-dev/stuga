@@ -6,30 +6,36 @@
 import { Code } from "@astryxdesign/core/Code";
 import type { AskStep } from "@stuga/protocol/api/ask";
 import { Database, FileText, List, Search } from "lucide-react";
+import { t } from "../../i18n/i18n";
 
 function stepLine(s: AskStep): { icon: React.ReactNode; text: string } {
   if (s.kind === "search") {
     return {
       icon: <Search size={13} aria-hidden />,
-      text: `Searched for “${s.query}” — ${s.hits} result${s.hits === 1 ? "" : "s"}`,
+      text: t("ai.trace.searched", { query: s.query, hits: s.hits }),
     };
   }
   if (s.kind === "read") {
     return {
       icon: <FileText size={13} aria-hidden />,
-      text: `Read “${s.title || "Untitled"}”`,
+      text: t("ai.trace.read", { title: s.title || t("common.untitled") }),
     };
   }
   if (s.kind === "query") {
     return {
       icon: <Database size={13} aria-hidden />,
-      text: `Checked “${s.title || "Untitled"}” — ${s.rows} row${s.rows === 1 ? "" : "s"}`,
+      text: t("ai.trace.checked", { title: s.title || t("common.untitled"), rows: s.rows }),
     };
   }
-  const scope = s.query ? ` matching “${s.query}”` : "";
-  const docs = `${s.count} document${s.count === 1 ? "" : "s"}`;
-  const folders = s.folders ? ` and ${s.folders} folder${s.folders === 1 ? "" : "s"}` : "";
-  return { icon: <List size={13} aria-hidden />, text: `Looked through ${docs}${folders}${scope}` };
+  const values = { count: s.count, folders: s.folders, query: s.query };
+  const text = s.folders
+    ? s.query
+      ? t("ai.trace.listedWithFoldersMatching", values)
+      : t("ai.trace.listedWithFolders", values)
+    : s.query
+      ? t("ai.trace.listedMatching", values)
+      : t("ai.trace.listed", values);
+  return { icon: <List size={13} aria-hidden />, text };
 }
 
 export function AskTrace({ steps, isWorking }: { steps: AskStep[]; isWorking?: boolean }) {
@@ -37,7 +43,7 @@ export function AskTrace({ steps, isWorking }: { steps: AskStep[]; isWorking?: b
 
   return (
     <details className="ask-trace">
-      <summary>{isWorking ? "Looking through your documents…" : "How this answer was found"}</summary>
+      <summary>{isWorking ? t("ai.trace.working") : t("ai.trace.done")}</summary>
       <ul>
         {steps.map((s, i) => {
           const { icon, text } = stepLine(s);

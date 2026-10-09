@@ -9,6 +9,7 @@ import { INDEX_ALLOWANCE_MS } from "../use-refresh-after-indexing";
 import { VersionCompareDialog, currentMarkdown } from "./VersionCompareDialog";
 import { VersionHistory } from "./VersionHistory";
 import { useToast } from "@astryxdesign/core/Toast";
+import { t } from "../../i18n/i18n";
 
 /** A version owed by the interval is recorded minutes after the last edit, with no update to announce it. */
 const POLL_INTERVAL_MS = 60_000;
@@ -98,7 +99,7 @@ export function VersionsPanel({ docId, ydoc }: { docId: string; ydoc: Y.Doc | nu
   useEffect(() => {
     if (compareSeq === null || versions.some((v) => v.seq === compareSeq)) return;
     setCompareSeq(null);
-    toast({ body: "That version is no longer in the history.", type: "info" });
+    toast({ body: t("document.versions.gone"), type: "info" });
   }, [versions, compareSeq, toast]);
 
   async function restoreVersion(seq: number) {
@@ -110,13 +111,13 @@ export function VersionsPanel({ docId, ydoc }: { docId: string; ydoc: Y.Doc | nu
     } catch (err) {
       setBusy(false);
       const status = (err as { status?: number }).status;
-      const reason =
+      const body =
         status === 403
-          ? "Only the owner or a workspace admin can restore a version."
+          ? t("document.versions.restoreForbidden")
           : status === 404
-            ? "That version is no longer available."
-            : "Please try again.";
-      toast({ body: `Restore failed. ${reason}`, type: "error" });
+            ? t("document.versions.restoreGone")
+            : t("document.versions.restoreFailed");
+      toast({ body, type: "error" });
       // Gone: closed here, so the refresh that drops the row adds no second toast.
       if (status === 404) {
         setCompareSeq(null);
@@ -132,18 +133,21 @@ export function VersionsPanel({ docId, ydoc }: { docId: string; ydoc: Y.Doc | nu
     try {
       await Docs.deleteVersion(docId, seq);
       setCompareSeq(null);
-      toast({ body: `${label ? versionLabel(label) : "That version"} deleted from history.`, type: "info" });
+      toast({
+        body: label ? t("document.versions.deleted", { version: versionLabel(label) }) : t("document.versions.deletedUnnamed"),
+        type: "info",
+      });
     } catch (err) {
       const status = (err as { status?: number }).status;
-      const reason =
+      const body =
         status === 403
-          ? "Only the owner or a workspace admin can delete a version."
+          ? t("document.versions.deleteForbidden")
           : status === 409
-            ? "You can't delete the current version."
+            ? t("document.versions.deleteCurrent")
             : status === 404
-              ? "That version is no longer available."
-              : "Please try again.";
-      toast({ body: `Delete failed. ${reason}`, type: "error" });
+              ? t("document.versions.deleteGone")
+              : t("document.versions.deleteFailed");
+      toast({ body, type: "error" });
       // Gone: closed here, so the refresh below adds no second toast.
       if (status === 404) setCompareSeq(null);
     } finally {

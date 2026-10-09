@@ -5,6 +5,8 @@ import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { PI_INSTALL_COMMAND, PI_REMOVE_COMMAND } from "../client-configs";
 import { MintKey, type MintKeyState } from "../MintKey";
 import { UninstallGuide } from "./UninstallGuide";
+import { t } from "../../i18n/i18n";
+import { tRich } from "../../i18n/rich";
 
 /**
  * pi-mcp-adapter signs in through the browser at any address, http included,
@@ -16,23 +18,24 @@ export function PiTab({ piUrlEnv, piKeyEnv, mint }: { piUrlEnv: string; piKeyEnv
   return (
     <VStack gap={2}>
       <Text size="sm" color="secondary">
-        1. Install the adapter and the Stuga package:
+        {t("agents.pi.step1")}
       </Text>
       <CodeBlock code={PI_INSTALL_COMMAND} language="bash" width="100%" isWrapped hasCopyButton size="sm" />
       <Text size="sm" color="secondary">
-        2. Point Pi at this node, in the shell that starts it:
+        {t("agents.pi.step2")}
       </Text>
       <CodeBlock code={piUrlEnv} language="bash" width="100%" isWrapped hasCopyButton size="sm" />
       <Text size="sm" color="secondary">
-        3. Start Pi, run <code>/mcp-auth stuga</code>, then approve in your browser.
+        {tRich("agents.pi.step3", { command: "/mcp-auth stuga", code: (chunks) => <code>{chunks}</code> })}
       </Text>
       {/* Collapsible hides with CSS, so a minted key survives closing it. */}
-      <Collapsible trigger="Use an agent key instead" defaultIsOpen={false}>
+      <Collapsible trigger={t("agents.setup.useKeyInstead")} defaultIsOpen={false}>
         <VStack gap={2}>
+          {/* i18n-exempt: the client's name, which names its key */}
           <MintKey mint={mint} defaultName="Pi" />
           <CodeBlock
             code={piKeyEnv}
-            title={mint.minted ? `Key for ${mint.minted.name}` : "Key"}
+            title={mint.minted ? t("agents.setup.keyFor", { name: mint.minted.name }) : t("agents.setup.key")}
             language="bash"
             width="100%"
             isWrapped
@@ -40,7 +43,7 @@ export function PiTab({ piUrlEnv, piKeyEnv, mint }: { piUrlEnv: string; piKeyEnv
             size="sm"
           />
           <Text size="sm" color="secondary">
-            Set it beside <code>STUGA_URL</code> and skip step 3.
+            {tRich("agents.pi.keyBeside", { variable: "STUGA_URL", code: (chunks) => <code>{chunks}</code> })}
           </Text>
         </VStack>
       </Collapsible>

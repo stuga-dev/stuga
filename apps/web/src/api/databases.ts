@@ -1,3 +1,4 @@
+import type { ModelFailureKind, TableAiActivity, TableAiNotice } from "@stuga/protocol/api/ai-turn";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
 import type {
   ColumnSpec,
@@ -18,7 +19,8 @@ import type {
   ViewInput,
   ViewSpec,
 } from "@stuga/protocol/databases/types";
-import { api, apiFailure, type ApiError } from "../lib/http/client";
+import { t } from "../i18n/i18n";
+import { api, apiFailure, networkFailure, type ApiError } from "../lib/http/client";
 import { openSse } from "../lib/http/sse";
 
 /**
@@ -144,11 +146,15 @@ export const Databases = {
     const format: DatabaseImportFormat = /\.(jsonl|ndjson|json)$/i.test(file.name) ? "jsonl" : "csv";
     const ticket = await Databases.createImport(id, tableId, format);
     if (file.size > ticket.max_bytes) {
-      const e = new Error(`This file is too large (max ${Math.floor(ticket.max_bytes / (1024 * 1024))} MB).`) as ApiError;
+      const e = new Error(t("errors.server.fileTooLargeMb", { max: Math.floor(ticket.max_bytes / (1024 * 1024)) })) as ApiError;
       e.status = 413;
       throw e;
     }
-    const put = await fetch(ticket.upload_path, { method: "PUT", body: file, headers: { "content-type": "application/octet-stream" } });
+    const put = await fetch(ticket.upload_path, { method: "PUT", body: file, headers: { "content-type": "application/octet-stream" } }).catch(
+      (e: unknown) => {
+        throw networkFailure(e);
+      },
+    );
     if (!put.ok) throw await apiFailure(ticket.upload_path, "PUT", put);
     return ticket;
   },
@@ -204,10 +210,11 @@ export const DatabaseRuns = {
 
 interface TableAiCallbacks {
   onToken: (text: string) => void;
-  onStatus: (label: string) => void;
+  onStatus: (activity: TableAiActivity) => void;
   /** `notice` marks a turn that ended incomplete yet made changes; show it even when both counts are 0. */
-  onDone: (done: { staged: number; applied: number; runId: string | null; citations: AiCitation[]; notice: string | null }) => void;
-  onError: (message: string) => void;
+  onDone: (done: { staged: number; applied: number; runId: string | null; citations: AiCitation[]; notice: TableAiNotice | null }) => void;
+  /** `failure` says what kind of model failure ended the turn, when one did; `message` is the node's own. */
+  onError: (message: string, failure?: ModelFailureKind | null) => void;
 }
 
 /** A table co-author turn over SSE. Its changes arrive as run frames on the database socket; `onDone` only counts them. */
@@ -237,19 +244,18 @@ export const TableAi = {
       {
         onEvent: (ev, data) => {
           if (ev === "token") cb.onToken(data.text as string);
-          else if (ev === "status") cb.onStatus(data.label as string);
+          else if (ev === "status") cb.onStatus(data as unknown as TableAiActivity);
           else if (ev === "done")
             cb.onDone({
               staged: data.staged as number,
               applied: (data.applied as number | undefined) ?? 0,
               runId: (data.run_id as string | null) ?? null,
               citations: data.citations as AiCitation[],
-              notice: (data.notice as string | undefined) ?? null,
+              notice: (data.notice as TableAiNotice | null | undefined) ?? null,
             });
-          else if (ev === "error") cb.onError(data.message as string);
+          else if (ev === "error") cb.onError(data.message as string, (data.failure as ModelFailureKind | null | undefined) ?? null);
         },
         onError: cb.onError,
       },
-      "request failed",
     ),
 };

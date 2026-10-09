@@ -14,6 +14,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { VStack } from "@astryxdesign/core/VStack";
 import { useToast } from "@astryxdesign/core/Toast";
+import { t } from "../i18n/i18n";
 import { providerLabel } from "../lib/session/auth-config";
 import { AuthError, describeError } from "../lib/session/errors";
 import { PasskeyCancelled, confirmWithPasskey, passkeysOffered } from "../lib/session/passkey";
@@ -60,8 +61,14 @@ export function ConfirmIdentity() {
 
   useEffect(() => {
     const outcome = takeProviderOutcome();
-    if (outcome === "confirmed") toast({ body: "Confirmed. Try that again.", type: "info" });
-    else if (outcome === "failed") toast({ body: `Couldn’t confirm with ${providerLabel() ?? "the identity provider"}. Try again.`, type: "error" });
+    if (outcome === "confirmed") toast({ body: t("ui.confirmIdentity.confirmed"), type: "info" });
+    else if (outcome === "failed") {
+      const provider = providerLabel();
+      toast({
+        body: provider === null ? t("ui.confirmIdentity.providerFailedUnnamed") : t("ui.confirmIdentity.providerFailed", { provider }),
+        type: "error",
+      });
+    }
   }, [toast]);
 
   function finish(confirmed: boolean) {
@@ -78,7 +85,7 @@ export function ConfirmIdentity() {
       await confirmWithPassword(password);
       finish(true);
     } catch (err) {
-      setError(err instanceof AuthError && err.message === "invalid_credentials" ? "That isn’t your password." : describeError(err));
+      setError(err instanceof AuthError && err.message === "invalid_credentials" ? t("ui.confirmIdentity.wrongPassword") : describeError(err));
       setBusy(false);
     }
   }
@@ -117,21 +124,21 @@ export function ConfirmIdentity() {
   return (
     <Dialog isOpen={asking !== null} onOpenChange={(open) => !open && !busy && finish(false)} purpose="form" width={400}>
       <Layout
-        header={<DialogHeader title="Confirm it’s you" onOpenChange={(open) => !open && !busy && finish(false)} />}
+        header={<DialogHeader title={t("ui.confirmIdentity.title")} onOpenChange={(open) => !open && !busy && finish(false)} />}
         content={
           <LayoutContent>
             <VStack gap={3}>
               {byPasskey ? (
                 <Text type="supporting" color="secondary">
-                  Use your passkey to continue.
+                  {t("ui.confirmIdentity.byPasskey")}
                 </Text>
               ) : byPassword ? (
                 <>
                   <Text type="supporting" color="secondary">
-                    Enter your password to continue.
+                    {t("ui.confirmIdentity.byPassword")}
                   </Text>
                   <TextInput
-                    label="Password"
+                    label={t("common.password")}
                     type="password"
                     value={password}
                     onChange={setPassword}
@@ -142,15 +149,15 @@ export function ConfirmIdentity() {
                   />
                 </>
               ) : byProvider ? (
-                <Text type="supporting" color="secondary">{`Sign in with ${label} again to continue.`}</Text>
+                <Text type="supporting" color="secondary">{t("ui.confirmIdentity.byProvider", { provider: label })}</Text>
               ) : (
                 <Text type="supporting" color="secondary">
-                  Sign out and sign in again to continue.
+                  {t("ui.confirmIdentity.signInAgain")}
                 </Text>
               )}
               {!byPassword && error && <Banner status="error" title={error} />}
               {byPasskey && methods.includes("password") && (
-                <Button label="Use password instead" variant="ghost" size="sm" onClick={() => setUsePassword(true)} isDisabled={busy} />
+                <Button label={t("ui.confirmIdentity.usePassword")} variant="ghost" size="sm" onClick={() => setUsePassword(true)} isDisabled={busy} />
               )}
             </VStack>
           </LayoutContent>
@@ -158,16 +165,16 @@ export function ConfirmIdentity() {
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label="Cancel" variant="ghost" onClick={() => finish(false)} isDisabled={busy} />
+              <Button label={t("common.cancel")} variant="ghost" onClick={() => finish(false)} isDisabled={busy} />
               {(byPassword || byPasskey) && byProvider && (
-                <Button label={`Use ${label}`} variant="secondary" onClick={() => void withProvider()} isDisabled={busy} />
+                <Button label={t("ui.confirmIdentity.useProvider", { provider: label })} variant="secondary" onClick={() => void withProvider()} isDisabled={busy} />
               )}
               {byPasskey ? (
-                <Button label="Continue" variant="primary" onClick={() => void withPasskey()} isLoading={busy} />
+                <Button label={t("ui.confirmIdentity.continue")} variant="primary" onClick={() => void withPasskey()} isLoading={busy} />
               ) : byPassword ? (
-                <Button label="Continue" variant="primary" onClick={() => void withPassword()} isDisabled={!password} isLoading={busy} />
+                <Button label={t("ui.confirmIdentity.continue")} variant="primary" onClick={() => void withPassword()} isDisabled={!password} isLoading={busy} />
               ) : byProvider ? (
-                <Button label={`Continue with ${label}`} variant="primary" onClick={() => void withProvider()} isLoading={busy} />
+                <Button label={t("ui.confirmIdentity.continueWithProvider", { provider: label })} variant="primary" onClick={() => void withProvider()} isLoading={busy} />
               ) : null}
             </HStack>
           </LayoutFooter>

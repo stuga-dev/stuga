@@ -406,6 +406,6 @@ export async function insertImportedRows(
   const body = (await res.json().catch(() => null)) as { row_ids?: string[]; message?: string } | null;
   if (!res.ok) return { ok: false, status: actorRefusalStatus(res), message: body?.message ?? "could not import rows" };
   if (!Array.isArray(body?.row_ids)) return { ok: false, status: 502, message: "could not import rows" };
-  await afterDatabaseMutation(ctx, doc, `Imported ${rows.length} row${rows.length === 1 ? "" : "s"} into "${table.display}".`);
+  await afterDatabaseMutation(ctx, doc, { kind: "rows_imported", count: rows.length, table: table.display });
   return { ok: true, row_ids: body.row_ids };
 }

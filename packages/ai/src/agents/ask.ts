@@ -18,7 +18,7 @@ import { filterCited, runAgentLoop, textTool } from "./loop.js";
 import { appendCitations, MAX_OUTPUT_TOKENS, queryOf, READ_CHUNK_MAX } from "./tools.js";
 import { workspaceInstructionsBlock } from "./agent-instructions.js";
 
-/** The one "don't know" reply, used by both the system prompt and the nudge. */
+/** The one "don't know" reply, used by both the system prompt and the nudge; the model says it in the question's language. */
 export const DONT_KNOW = "I couldn't find an answer to that in your documents.";
 
 /** What the loop is doing between prose bursts, for the panel's activity line. */
@@ -120,13 +120,14 @@ Rules:
 - SEARCH BEFORE YOU ANSWER. Do not answer from memory, even if the question looks like general knowledge — the user is asking about THEIR documents.
 - Cite every asserted fact with a [^n] marker right after it, where n is the passage number from a search result. Multiple sources: [^1][^3].
 - Write only the [^n] marker — do NOT write a "[^n]: ..." definition line; the app builds the source list.
-- If the tools do not turn up an answer, say exactly: "${DONT_KNOW}" Do not pad it with guesses or with what you know generally.
+- Write every reply in the language the question is written in, whatever language the documents are in; a quotation stays in its own language.
+- If the tools do not turn up an answer, say only that you could not find an answer in their documents, as one sentence in the question's language (for an English question, exactly "${DONT_KNOW}"). Do not pad it with guesses or with what you know generally.
 - Be concise and synthesize; do not paste passages back verbatim.`;
 
 /** Sent at most once, when the model answers before any tool returned material. */
 const NO_SEARCH_NUDGE =
   "You answered without searching the user's documents. You must not answer from your own knowledge. " +
-  `Call search_documents now and base your answer only on what it returns; if it returns nothing relevant, reply exactly: "${DONT_KNOW}"`;
+  `Call search_documents now and base your answer only on what it returns; if it returns nothing relevant, say only that you could not find an answer in their documents, in the question's language (in English: "${DONT_KNOW}").`;
 
 /** Streaming callbacks. */
 export interface AskAgentHandlers {

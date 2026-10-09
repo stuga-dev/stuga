@@ -7,6 +7,7 @@ import { imageFilesFrom } from "../editor/use-upload";
 import { isComposingKey } from "../lib/ime";
 import { useAiChat } from "../state/model-options";
 import { AiSetupNotice } from "./AiSetupNotice";
+import { t } from "../i18n/i18n";
 
 /**
  * The prompt box under a chat transcript: Enter sends, and Stop takes Send's
@@ -20,7 +21,7 @@ export function ChatComposer({
   onStop,
   streaming,
   placeholder,
-  sendLabel = "Send",
+  sendLabel = t("ai.composer.send"),
   canSend,
   header,
   tools,
@@ -68,7 +69,7 @@ export function ChatComposer({
         onDrop={(e) => takeImages(e.dataTransfer, e)}
       >
         <TextArea
-          label="Message"
+          label={t("ai.composer.message")}
           isLabelHidden
           value={value}
           onChange={onChange}
@@ -86,7 +87,7 @@ export function ChatComposer({
         {tools}
         <div style={{ flex: 1 }} />
         {streaming ? (
-          <Button label="Stop" variant="secondary" icon={<Square size={14} />} onClick={onStop} />
+          <Button label={t("common.stop")} variant="secondary" icon={<Square size={14} />} onClick={onStop} />
         ) : (
           <Button label={sendLabel} variant="primary" onClick={onSend} isDisabled={!canSend} />
         )}

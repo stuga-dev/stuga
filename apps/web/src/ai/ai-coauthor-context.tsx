@@ -5,11 +5,14 @@
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { StugaProvider } from "../sync/stuga-provider";
-import type { AiAttachment, AiRequest, RevisionScope } from "@stuga/protocol/wire/doc-socket";
+import type { AiAttachment, RevisionScope } from "@stuga/protocol/wire/doc-socket";
 import { useSharedEditor } from "../editor/editor-context";
 import { useAiChat } from "../state/model-options";
 import { Media } from "../api";
 import { citedSources } from "./citations";
+import { coauthorActivityText, coauthorErrorText, coauthorNoticesText } from "./turn-text";
+import { t } from "../i18n/i18n";
+import { errorMessage } from "../lib/http/client";
 import type { ChatTurn } from "./ChatTranscript";
 
 /**
@@ -39,9 +42,22 @@ interface QueuedRevision {
 
 /** The turn that answers queued rejections: one turn for all of them, each note under its own change server-side. */
 function revisionPrompt(list: QueuedRevision[]): string {
+  // i18n-exempt: a prompt sent to the model
   return list.length === 1
     ? `Revise the edits I rejected, as my note says, and change nothing else: ${list[0]!.note}`
     : `Revise the edits I rejected, as my notes say, and change nothing else:\n${list.map((r) => `- ${r.note}`).join("\n")}`;
+}
+
+/** What the transcript shows for that turn: the person's own notes, introduced in their language. */
+function revisionShown(list: QueuedRevision[]): string {
+  const notes = list.length === 1 ? list[0]!.note : list.map((r) => `- ${r.note}`).join("\n");
+  return t("ai.coauthor.revisionShown", { count: list.length, notes });
+}
+
+/** A turn's options. `shown` is what the transcript shows for an English prompt the person never typed. */
+interface TurnOptions {
+  shown?: string;
+  revise?: RevisionScope[];
 }
 
 /** A selection-scoped edit being composed: the quoted text and where to float the composer. */
@@ -61,8 +77,11 @@ interface AiCoauthorCtx {
   /** A Collection (or ALL_DOCUMENTS_SCOPE) the turn may search and cite; null = this document only. */
   collectionId: string | null;
   setCollectionId: (id: string | null) => void;
-  /** Send a chat turn, scoped to the editor's live selection if there is one. */
-  send: (prompt: string) => void;
+  /**
+   * Send a chat turn, scoped to the editor's live selection if there is one. `shown` replaces
+   * `prompt` in the transcript when the prompt is English written for the model.
+   */
+  send: (prompt: string, shown?: string) => void;
   /** Ask the server to end the turn; `streaming` clears on its receipt, which still reports what was proposed. */
   stop: () => void;
   /**
@@ -87,8 +106,8 @@ interface AiCoauthorCtx {
   selectionEdit: SelectionEdit | null;
   /** Capture the current selection as the target of an "Edit with AI" instruction. */
   startSelectionEdit: () => void;
-  /** Send the captured selection with an instruction, revealing the panel. */
-  submitSelectionEdit: (instruction: string) => void;
+  /** Send the captured selection with an instruction, revealing the panel; `shown` as for `send`. */
+  submitSelectionEdit: (instruction: string, shown?: string) => void;
   cancelSelectionEdit: () => void;
 }
 
@@ -156,7 +175,7 @@ export function AiCoauthorProvider({
           ...xs,
           {
             id,
-            name: file.name || "image",
+            name: file.name || "image", // i18n-exempt: a file name sent to the model
             mime: file.type,
             previewUrl: URL.createObjectURL(file),
             progress: 0,
@@ -186,7 +205,7 @@ export function AiCoauthorProvider({
               return;
             }
             setAttachments((xs) =>
-              xs.map((x) => (x.id === id ? { ...x, error: (err as Error).message } : x)),
+              xs.map((x) => (x.id === id ? { ...x, error: errorMessage(err, t("ai.panel.uploadFailed")) } : x)),
             );
           });
       }
@@ -195,28 +214,29 @@ export function AiCoauthorProvider({
   );
 
   const runTurn = useCallback(
-    async (prompt: string, selectedText: string | null, extra?: Pick<AiRequest, "revise">) => {
+    async (prompt: string, selectedText: string | null, opts: TurnOptions = {}) => {
       if (!provider || !editor) return;
-      const history = turns.map((t) => ({ role: t.role, content: t.text }));
+      const history = turns.map((turn) => ({ role: turn.role, content: turn.text }));
       // Only uploaded attachments have a media path the model can reference. A revision is the
       // reviewer's note, not their next message, so images staged for that message stay staged.
-      const ready = extra?.revise ? [] : attachments.filter((a) => a.path && !a.error);
+      const ready = opts.revise ? [] : attachments.filter((a) => a.path && !a.error);
       const quote = selectedText?.trim() || undefined;
-      setTurns((t) => [
-        ...t,
+      setTurns((ts) => [
+        ...ts,
         {
           role: "user",
           text: prompt,
+          shown: opts.shown,
           quote,
           images: ready.length ? ready.map((a) => ({ url: a.previewUrl, name: a.name })) : undefined,
         },
-        { role: "assistant", text: "", status: "Thinking…" },
+        { role: "assistant", text: "", status: t("ai.status.thinking") },
       ]);
       setStreaming(true);
       turnOpen.current = true;
       stopped.current = false;
       // Cleared at send, not on the reply, so a second message can't re-send them.
-      if (!extra?.revise) setAttachments([]);
+      if (!opts.revise) setAttachments([]);
       provider.sendAiRequest(
         {
           prompt,
@@ -227,39 +247,39 @@ export function AiCoauthorProvider({
           attachments: ready.map(
             (a): AiAttachment => ({ url: a.path!, name: a.name, mime: a.mime }),
           ),
-          ...extra,
+          ...(opts.revise ? { revise: opts.revise } : {}),
         },
         {
           onChunk: (chunk) =>
-            setTurns((t) => {
-              const copy = [...t];
+            setTurns((ts) => {
+              const copy = [...ts];
               const last = copy[copy.length - 1];
               if (last && last.role === "assistant") copy[copy.length - 1] = { ...last, text: last.text + chunk, status: undefined };
               return copy;
             }),
-          onStatus: (status) =>
-            setTurns((t) => {
-              const copy = [...t];
+          onStatus: (activity) =>
+            setTurns((ts) => {
+              const copy = [...ts];
               const last = copy[copy.length - 1];
-              if (last && last.role === "assistant" && !last.text) copy[copy.length - 1] = { ...last, status };
+              if (last && last.role === "assistant" && !last.text) copy[copy.length - 1] = { ...last, status: coauthorActivityText(activity) };
               return copy;
             }),
           onDone: () => {
             setStreaming(false);
-            setTurns((t) => {
-              const last = t[t.length - 1];
-              if (!last || last.role !== "assistant" || !last.status) return t;
-              const copy = [...t];
+            setTurns((ts) => {
+              const last = ts[ts.length - 1];
+              if (!last || last.role !== "assistant" || !last.status) return ts;
+              const copy = [...ts];
               copy[copy.length - 1] = { ...last, status: undefined };
               return copy;
             });
           },
           onEdits: (payload) => {
             // The receipt: the edits already reached the run ledger over the socket.
-            setTurns((t) => {
-              const copy = [...t];
+            setTurns((ts) => {
+              const copy = [...ts];
               const last = copy[copy.length - 1];
-              if (!last || last.role !== "assistant") return t;
+              if (!last || last.role !== "assistant") return ts;
               const next: ChatTurn = { ...last };
               if (payload.citations?.length) {
                 next.sources = citedSources(payload.citations);
@@ -268,8 +288,9 @@ export function AiCoauthorProvider({
               if (payload.staged > 0) next.staged = payload.staged;
               if (payload.applied > 0) next.applied = payload.applied;
               if (payload.cross_docs?.length) next.crossDocs = payload.cross_docs;
-              if (payload.error) next.proposeError = payload.error;
-              if (payload.notice) next.notice = payload.notice;
+              if (payload.error) next.proposeError = coauthorErrorText(payload.error);
+              const notice = coauthorNoticesText(payload.notices);
+              if (notice) next.notice = notice;
               copy[copy.length - 1] = next;
               return copy;
             });
@@ -285,12 +306,12 @@ export function AiCoauthorProvider({
   );
 
   const send = useCallback(
-    (prompt: string) => {
+    (prompt: string, shown?: string) => {
       const text = prompt.trim();
       if (!text || streaming || !editor) return;
       const sel = !editor.state.selection.empty ? editor.state.selection : null;
       const selectedText = sel ? editor.state.doc.textBetween(sel.from, sel.to, "\n") : null;
-      runTurn(text, selectedText);
+      runTurn(text, selectedText, { shown });
     },
     [streaming, editor, runTurn],
   );
@@ -298,7 +319,7 @@ export function AiCoauthorProvider({
   const startRevisions = (list: QueuedRevision[]) => {
     setQueue([]);
     const scopes: RevisionScope[] = list.map((r) => ({ run_id: r.runId, feedback_id: r.feedbackId }));
-    void runTurn(revisionPrompt(list), null, { revise: scopes });
+    void runTurn(revisionPrompt(list), null, { shown: revisionShown(list), revise: scopes });
   };
   /**
    * A turn's receipt arrived. Its queued revisions run now, in one turn, unless the user stopped it
@@ -343,11 +364,11 @@ export function AiCoauthorProvider({
     if (!streaming || !provider) return;
     stopped.current = true;
     provider.cancelAiRequest();
-    setTurns((t) => {
-      const last = t[t.length - 1];
-      if (!last || last.role !== "assistant" || last.text) return t;
-      const copy = [...t];
-      copy[copy.length - 1] = { ...last, status: "Stopping…" };
+    setTurns((ts) => {
+      const last = ts[ts.length - 1];
+      if (!last || last.role !== "assistant" || last.text) return ts;
+      const copy = [...ts];
+      copy[copy.length - 1] = { ...last, status: t("ai.status.stopping") };
       return copy;
     });
   }, [streaming, provider]);
@@ -371,13 +392,13 @@ export function AiCoauthorProvider({
   }, [editor]);
 
   const submitSelectionEdit = useCallback(
-    (instruction: string) => {
+    (instruction: string, shown?: string) => {
       const text = instruction.trim();
       const target = selEditTarget.current;
       if (!text || !target || streaming) return;
       setSelectionEdit(null);
       onRequestOpen();
-      runTurn(text, target);
+      runTurn(text, target, { shown });
     },
     [streaming, onRequestOpen, runTurn],
   );

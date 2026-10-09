@@ -155,7 +155,7 @@ export async function openRowPage(
   // brings back an ordinary document rather than a second page nobody can
   // reach. Best-effort: the new page is already the row's.
   if (existing) await detachPage(ctx.sql, ctx.workspaceId, doc.doc_id, existing).catch(() => undefined);
-  await afterDatabaseMutation(ctx, doc, `Created a page for a row.`);
+  await afterDatabaseMutation(ctx, doc, { kind: "row_page_created" });
   return { kind: "ok", doc_id: pageDoc.doc_id, created: true, restored: false };
 }
 
@@ -199,7 +199,7 @@ export async function openRowPages(
       return pageRefusal(linked, (await linked.json().catch(() => null)) as { message?: string } | null, "could not link the pages") as PageRefusal;
     }
     docIds.push(...created.map((doc) => doc.doc_id));
-    await afterDatabaseMutation(ctx, db, `Created ${batch.length} page${batch.length === 1 ? "" : "s"} for rows.`);
+    await afterDatabaseMutation(ctx, db, { kind: "row_pages_created", count: batch.length });
   }
   return { kind: "ok", doc_ids: docIds };
 }

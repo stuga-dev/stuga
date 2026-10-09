@@ -20,7 +20,8 @@ vi.mock("../api", async (orig) => ({
 vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const { ConnectAgent } = await import("./ConnectAgent");
-const { TAB_LABEL } = await import("./client-configs");
+const { tabLabel } = await import("./client-configs");
+type ClientTab = import("./client-configs").ClientTab;
 
 const URL_ = "https://stuga.team.example.com/mcp";
 const PAGE_MCP = `${location.origin}/mcp`;
@@ -92,11 +93,11 @@ function offered(): string[] {
 }
 
 /** Picks a client in the picker. */
-function clickTab(value: keyof typeof TAB_LABEL): void {
+function clickTab(value: ClientTab): void {
   const trigger = pickerTrigger();
   expect(trigger, "no client picker").toBeTruthy();
   act(() => trigger!.click());
-  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.trim() === TAB_LABEL[value]);
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.trim() === tabLabel(value));
   expect(option, `no option for ${value}`).toBeTruthy();
   act(() => option!.click());
 }

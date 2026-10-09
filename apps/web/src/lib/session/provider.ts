@@ -9,6 +9,7 @@ import { nodeUnclaimed, providerLabel } from "./auth-config";
 import { authRequest } from "./auth-request";
 import { usableDestination } from "./return-path";
 import { AuthError } from "./errors";
+import { t } from "../../i18n/i18n";
 
 /** Set by a sign-in through the provider, so the login page can try one without a prompt. */
 const HINT_KEY = "stuga_sso_hint";
@@ -122,7 +123,7 @@ export async function startProviderSignIn(opts: {
   const body: Record<string, unknown> = { return_to: opts.returnTo };
   if (opts.prompt) body.prompt = opts.prompt;
   const res = await authRequest<{ url?: unknown }>("/auth/oidc/start", body, opts.bearer);
-  if (typeof res?.url !== "string") throw new AuthError(200, "The server returned no sign-in address.");
+  if (typeof res?.url !== "string") throw new AuthError(200, t("auth.errors.noSignInAddress"));
   if (opts.prompt === "none") {
     writeStored("session", SILENT_KEY, "1");
     window.location.replace(res.url);

@@ -79,8 +79,7 @@ export async function addDocComment({ ctx, req, match }: WorkspaceCall): Promise
       workspaceId: ctx.workspaceId,
       eventType: "MENTIONED_IN_COMMENT",
       docId,
-      title: `${actorName} mentioned you in a comment on "${cdoc.title}"`,
-      body: commentBody.slice(0, 140),
+      params: { actor: actorName, doc: cdoc.title, excerpt: commentBody.slice(0, 140) },
       actor: ctx.alias,
     });
   }
@@ -96,8 +95,7 @@ export async function addDocComment({ ctx, req, match }: WorkspaceCall): Promise
       workspaceId: ctx.workspaceId,
       eventType: "COMMENT_ON_OWNED_DOC",
       docId,
-      title: `${actorName} ${parentNum === null ? "commented on" : "replied on"} "${cdoc.title}"`,
-      body: commentBody.slice(0, 140),
+      params: { actor: actorName, doc: cdoc.title, kind: parentNum === null ? "comment" : "reply", excerpt: commentBody.slice(0, 140) },
       actor: ctx.alias,
     });
   }

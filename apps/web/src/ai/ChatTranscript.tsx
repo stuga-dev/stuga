@@ -5,15 +5,20 @@ import { FileText, Files, Zap } from "lucide-react";
 import type { AiCitation, AiCrossDocProposal } from "@stuga/protocol/wire/doc-socket";
 import { renderAssistantHtml } from "./render-markdown";
 import { useCitationPopover } from "./CitationPopover";
+import { t } from "../i18n/i18n";
+import { crossDocErrorText } from "./turn-text";
 
 export interface ChatTurn {
   role: "user" | "assistant";
+  /** What the model receives as this turn, in history too. */
   text: string;
+  /** User turns: what the transcript shows instead of `text`, which is then English written for the model. */
+  shown?: string;
   /** User turns: the passage the turn was scoped to. */
   quote?: string;
   /** User turns: images sent with the message. */
   images?: { url: string; name: string }[];
-  /** Assistant turns: what the agent is doing while it has no prose yet. */
+  /** Assistant turns: what the agent is doing while it has no prose yet, worded. */
   status?: string;
   /** Assistant turns: cited documents, one per document. */
   sources?: { doc_id: string; title: string }[];
@@ -25,11 +30,14 @@ export interface ChatTurn {
   applied?: number;
   /** Assistant turns: proposals raised in other documents. */
   crossDocs?: AiCrossDocProposal[];
-  /** Assistant turns: the reply finished but its edits could not be proposed. */
+  /** Assistant turns: the reply finished but its edits could not be proposed, worded. */
   proposeError?: string;
-  /** Assistant turns: the turn ended early; anything it made is kept. */
+  /** Assistant turns: the turn ended early; anything it made is kept. Worded. */
   notice?: string;
 }
+
+/** Where a turn's proposed changes are reviewed: in the document, or in the banner above a database grid. */
+export type ReviewPlace = "document" | "grid";
 
 /** Distance from the bottom within which new content keeps the thread scrolled to the end. */
 const FOLLOW_PX = 48;
@@ -38,14 +46,14 @@ export function ChatTranscript({
   turns,
   streaming,
   empty,
-  reviewWhere,
+  reviewIn = "document",
 }: {
   turns: ChatTurn[];
   streaming: boolean;
   /** Shown while the thread is empty. */
   empty: ReactNode;
-  /** Where proposed changes are reviewed, e.g. "in the document". */
-  reviewWhere: string;
+  /** Where proposed changes are reviewed. */
+  reviewIn?: ReviewPlace;
 }) {
   const nav = useNavigate();
   const { onChipClick, popover } = useCitationPopover();
@@ -54,7 +62,7 @@ export function ChatTranscript({
 
   // The panel re-renders on every editor tick; markdown is parsed only when the turns change.
   const rendered = useMemo(
-    () => turns.map((t) => (t.role === "assistant" && t.text ? renderAssistantHtml(t.text, t.citations) : null)),
+    () => turns.map((turn) => (turn.role === "assistant" && turn.text ? renderAssistantHtml(turn.text, turn.citations) : null)),
     [turns],
   );
 
@@ -77,96 +85,102 @@ export function ChatTranscript({
           {empty}
         </Text>
       )}
-      {turns.map((t, i) => (
-        <div key={i} className={`ai-turn ai-turn-${t.role}`}>
-          {t.quote && (
-            <div className="ai-turn-quote" dir="auto" title={t.quote}>
-              {t.quote}
+      {turns.map((turn, i) => (
+        <div key={i} className={`ai-turn ai-turn-${turn.role}`}>
+          {turn.quote && (
+            <div className="ai-turn-quote" dir="auto" title={turn.quote}>
+              {turn.quote}
             </div>
           )}
-          {t.images && t.images.length > 0 && (
+          {turn.images && turn.images.length > 0 && (
             <div className="ai-turn-images">
-              {t.images.map((img) => (
+              {turn.images.map((img) => (
                 <img key={img.url} className="ai-attachment__thumb" src={img.url} alt={img.name} title={img.name} />
               ))}
             </div>
           )}
-          {t.role === "user" ? (
-            t.text
-          ) : t.text ? (
+          {turn.role === "user" ? (
+            (turn.shown ?? turn.text)
+          ) : turn.text ? (
             <div
               className="ai-md"
-              onClick={(e) => onChipClick(e, t.citations)}
+              onClick={(e) => onChipClick(e, turn.citations)}
               dangerouslySetInnerHTML={{ __html: rendered[i] ?? "" }}
             />
           ) : streaming && i === turns.length - 1 ? (
             <div className="ai-activity">
               <span className="ai-activity__dot" />
-              <span className="ai-activity__label">{t.status || "Working…"}</span>
+              <span className="ai-activity__label">{turn.status || t("ai.status.working")}</span>
             </div>
           ) : null}
-          {t.sources && t.sources.length > 0 && (
+          {turn.sources && turn.sources.length > 0 && (
             <div className="ai-sources">
-              <span className="ai-sources-label">Sources</span>
-              {t.sources.map((s) => (
-                <button key={s.doc_id} className="ai-source" title={`Open “${s.title}”`} onClick={() => nav(`/doc/${s.doc_id}`)}>
+              <span className="ai-sources-label">{t("ai.transcript.sources")}</span>
+              {turn.sources.map((s) => (
+                <button key={s.doc_id} className="ai-source" title={t("ai.transcript.openDoc", { title: s.title || t("common.untitled") })} onClick={() => nav(`/doc/${s.doc_id}`)}>
                   <FileText size={12} />
-                  <span className="ai-source__title">{s.title || "Untitled"}</span>
+                  <span className="ai-source__title">{s.title || t("common.untitled")}</span>
                 </button>
               ))}
             </div>
           )}
-          {t.staged !== undefined && t.staged > 0 && (
+          {turn.staged !== undefined && turn.staged > 0 && (
             <div className="ai-staged">
               <Zap size={13} aria-hidden />
               <Text type="supporting" color="secondary">
-                Proposed {t.staged} change{t.staged === 1 ? "" : "s"} — review {t.staged === 1 ? "it" : "them"} {reviewWhere}.
+                {reviewIn === "grid"
+                  ? t("ai.transcript.stagedInGrid", { count: turn.staged })
+                  : t("ai.transcript.stagedInDocument", { count: turn.staged })}
               </Text>
             </div>
           )}
-          {t.applied !== undefined && t.applied > 0 && (
+          {turn.applied !== undefined && turn.applied > 0 && (
             <div className="ai-staged">
               <Zap size={13} aria-hidden />
               <Text type="supporting" color="secondary">
-                Applied {t.applied} change{t.applied === 1 ? "" : "s"}.
+                {t("ai.transcript.applied", { count: turn.applied })}
               </Text>
             </div>
           )}
-          {t.crossDocs?.map((d) =>
+          {turn.crossDocs?.map((d) =>
             d.mode === "error" ? (
               <div key={d.doc_id} className="ai-staged ai-staged--error">
                 <Text type="supporting" color="secondary">
-                  Couldn’t propose changes in “{d.title || "Untitled"}”{d.message ? ` — ${d.message}` : "."}
+                  {crossDocErrorText(d.error, d.title || t("common.untitled"))}
                 </Text>
               </div>
             ) : (
               <button
                 key={d.doc_id}
                 className="ai-staged ai-staged--crossdoc"
-                title={d.mode === "applied" ? `Open “${d.title || "Untitled"}”` : `Open “${d.title || "Untitled"}” to review`}
+                title={
+                  d.mode === "applied"
+                    ? t("ai.transcript.openDoc", { title: d.title || t("common.untitled") })
+                    : t("ai.transcript.openDocToReview", { title: d.title || t("common.untitled") })
+                }
                 onClick={() => nav(`/doc/${d.doc_id}`)}
               >
                 <Files size={13} aria-hidden />
                 <Text type="supporting" color="secondary">
                   {d.mode === "applied"
-                    ? `Applied ${d.staged} change${d.staged === 1 ? "" : "s"} in “${d.title || "Untitled"}”.`
-                    : `Proposed ${d.staged} change${d.staged === 1 ? "" : "s"} in “${d.title || "Untitled"}” — open it to review.`}
+                    ? t("ai.transcript.crossDocApplied", { count: d.staged, title: d.title || t("common.untitled") })
+                    : t("ai.transcript.crossDocProposed", { count: d.staged, title: d.title || t("common.untitled") })}
                 </Text>
               </button>
             ),
           )}
-          {t.proposeError && (
+          {turn.proposeError && (
             <div className="ai-staged ai-staged--error">
               <Text type="supporting" color="secondary">
-                {t.proposeError}
+                {turn.proposeError}
               </Text>
             </div>
           )}
           {/* Not the error style: whatever the turn proposed before it stopped is real. */}
-          {t.notice && (
+          {turn.notice && (
             <div className="ai-staged">
               <Text type="supporting" color="secondary">
-                {t.notice}
+                {turn.notice}
               </Text>
             </div>
           )}

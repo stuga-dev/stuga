@@ -15,10 +15,9 @@ const message: NotifyMessage = {
   kind: "notify",
   recipient: "rosa",
   workspaceId: WS,
-  eventType: "DOC_SHARED",
+  eventType: "DIRECT_DOC_PERMISSIONS",
   docId: "d1",
-  title: "Q3 plan",
-  body: "Ada shared a document with you",
+  params: { actor: "Ada", doc: "Q3 plan" },
   actor: "ada",
 };
 
@@ -79,7 +78,9 @@ describe.skipIf(!URL)("notification delivery on the job queue", () => {
       },
       async () => delivered.length > 0 && (await queued()) === 0,
     );
-    expect(delivered).toEqual([{ recipient: "rosa", title: "Q3 plan", body: "Ada shared a document with you", url: "https://node.test/doc/d1" }]);
+    expect(delivered).toEqual([
+      { recipient: "rosa", eventType: "DIRECT_DOC_PERMISSIONS", params: { actor: "Ada", doc: "Q3 plan" }, language: "en", url: "https://node.test/doc/d1" },
+    ]);
     expect(await stored()).toBe(1);
     expect(await queued()).toBe(0);
     // The row says it went, and the failures before it no longer show.
@@ -100,7 +101,7 @@ describe.skipIf(!URL)("notification delivery on the job queue", () => {
     expect(attempts).toBeGreaterThan(0);
     const row = await delivery();
     expect(row).toMatchObject({ delivery_channel: "webhook", delivered_at: null });
-    expect(row!.delivery_error).toBe("could not reach the configured address");
+    expect(row!.delivery_error).toBe("failed:could not reach <address>");
   });
 
   it("records a delivery that cannot be made, and does not try it again", async () => {
@@ -109,12 +110,12 @@ describe.skipIf(!URL)("notification delivery on the job queue", () => {
     await drain(
       async () => {
         attempts++;
-        return "you have no email address in Stuga";
+        return "no_email_address";
       },
       async () => (await queued()) === 0 && (await delivery())?.delivery_error != null,
     );
     expect(attempts).toBe(1);
-    expect(await delivery()).toMatchObject({ delivered_at: null, delivery_error: "you have no email address in Stuga" });
+    expect(await delivery()).toMatchObject({ delivered_at: null, delivery_error: "no_email_address" });
   });
 
   it("stamps the channel as the row is written, before any attempt", async () => {
@@ -130,7 +131,7 @@ describe.skipIf(!URL)("notification delivery on the job queue", () => {
       actor_alias: null,
       payload: {},
     };
-    await db.insertNotification(row, { kind: "notify_deliver", channel: "email", recipient: "rosa", title: "t", body: "b", url: "u" });
+    await db.insertNotification(row, { kind: "notify_deliver", channel: "email", recipient: "rosa", eventType: "BACKUP_FAILED", params: { error: "e" }, url: "u" });
     expect(await delivery()).toMatchObject({ delivery_channel: "email", delivered_at: null, delivery_error: null });
     const [job] = await sql<{ body: { notificationId?: string } }[]>`SELECT body FROM jobs`;
     expect(job!.body.notificationId).toBe("n-stamp");
@@ -164,9 +165,9 @@ describe.skipIf(!URL)("notification delivery on the job queue", () => {
     expect(await db.insertNotification(row, null)).toBe(true);
     expect(await queued()).toBe(0);
     expect(await delivery()).toMatchObject({ delivery_channel: "none" });
-    expect(await db.insertNotification({ ...row, id: "n-sink" }, { kind: "notify_deliver", channel: "webhook", recipient: "rosa", title: "t", body: "b", url: "u" })).toBe(true);
+    expect(await db.insertNotification({ ...row, id: "n-sink" }, { kind: "notify_deliver", channel: "webhook", recipient: "rosa", eventType: "BACKUP_FAILED", params: { error: "e" }, url: "u" })).toBe(true);
     expect(await queued()).toBe(1);
-    expect(await db.insertNotification({ ...row, id: "n-sink" }, { kind: "notify_deliver", channel: "webhook", recipient: "rosa", title: "t", body: "b", url: "u" })).toBe(false);
+    expect(await db.insertNotification({ ...row, id: "n-sink" }, { kind: "notify_deliver", channel: "webhook", recipient: "rosa", eventType: "BACKUP_FAILED", params: { error: "e" }, url: "u" })).toBe(false);
     expect(await queued()).toBe(1);
   });
 });

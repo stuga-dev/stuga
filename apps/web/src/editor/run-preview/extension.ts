@@ -65,7 +65,7 @@ export interface ReviewHistoryHandle {
 const runPreviewKey = new PluginKey("runPreview");
 
 export const RunPreview = Extension.create<RunPreviewOptions, RunPreviewStorage>({
-  name: "runPreview",
+  name: "runPreview", // i18n-exempt: extension identifier
   // Ahead of Collaboration (1000), whose Mod-Z runs when the history leaves typing to it.
   priority: 1100,
 

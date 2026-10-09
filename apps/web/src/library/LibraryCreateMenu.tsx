@@ -2,6 +2,7 @@
 import { DropdownMenu } from "@astryxdesign/core/DropdownMenu";
 import type { LayerAlignment } from "@astryxdesign/core/Layer";
 import { Database, FileText, FileUp, FolderPlus, Plus } from "lucide-react";
+import { t } from "../i18n/i18n";
 
 interface LibraryCreateMenuProps {
   onNewDoc: () => void;
@@ -16,17 +17,17 @@ interface LibraryCreateMenuProps {
 export function LibraryCreateMenu({ onNewDoc, onNewDatabase, onNewFolder, onImport, fill = false, alignment }: LibraryCreateMenuProps) {
   return (
     <DropdownMenu
-      button={{ label: "New", variant: "primary", size: "sm", icon: <Plus size={15} />, width: fill ? "100%" : undefined }}
+      button={{ label: t("library.create.new"), variant: "primary", size: "sm", icon: <Plus size={15} />, width: fill ? "100%" : undefined }}
       menuWidth={220}
       placement="below"
       alignment={alignment}
       presentation="adaptive"
       items={[
-        { label: "New document", icon: <FileText size={15} />, onClick: onNewDoc },
-        { label: "New database", icon: <Database size={15} />, onClick: onNewDatabase },
-        { label: "New folder", icon: <FolderPlus size={15} />, onClick: onNewFolder },
+        { label: t("library.create.newDocument"), icon: <FileText size={15} />, onClick: onNewDoc },
+        { label: t("library.create.newDatabase"), icon: <Database size={15} />, onClick: onNewDatabase },
+        { label: t("library.create.newFolder"), icon: <FolderPlus size={15} />, onClick: onNewFolder },
         { type: "divider" },
-        { label: "Import from Markdown", icon: <FileUp size={15} />, onClick: onImport },
+        { label: t("library.create.importMarkdown"), icon: <FileUp size={15} />, onClick: onImport },
       ]}
     />
   );

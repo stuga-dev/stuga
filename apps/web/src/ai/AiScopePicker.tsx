@@ -5,6 +5,7 @@ import { Files, Library } from "lucide-react";
 import { ALL_DOCUMENTS_SCOPE } from "@stuga/protocol/wire/doc-socket";
 import { useModelOptions } from "../state/model-options";
 import { useCollections } from "./use-collections";
+import { t } from "../i18n/i18n";
 
 /**
  * Model and search-scope pickers above an AI composer. `scope` null means the
@@ -27,17 +28,17 @@ export function AiScopePicker({
   const { collections } = useCollections();
   const scopeOptions = [
     { value: "", label: base.label, icon: base.icon },
-    { value: ALL_DOCUMENTS_SCOPE, label: "All documents in this workspace", icon: <Files size={15} /> },
+    { value: ALL_DOCUMENTS_SCOPE, label: t("ai.scope.allDocuments"), icon: <Files size={15} /> },
     ...(collections ?? []).map((c) => ({ value: c.collection_id, label: c.name, icon: <Library size={15} /> })),
   ];
   return (
     <HStack gap={2}>
       <div style={{ width: 110 }}>
-        <Selector label="Model" isLabelHidden size="sm" value={model} onChange={onModelChange} options={modelOptions} />
+        <Selector label={t("ai.scope.model")} isLabelHidden size="sm" value={model} onChange={onModelChange} options={modelOptions} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <Selector
-          label="Search scope"
+          label={t("ai.scope.searchScope")}
           isLabelHidden
           size="sm"
           value={scope ?? ""}

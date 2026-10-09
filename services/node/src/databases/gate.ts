@@ -5,6 +5,8 @@
  */
 import { type DocRow, getDoc, touchDoc } from "@stuga/db";
 import type { DatabaseActor as DatabaseActorIdentity, DatabaseSchema, TableSchema } from "@stuga/protocol/databases/types";
+import type { DatabaseChange } from "@stuga/protocol/notify/events";
+import { renderDatabaseChange } from "@stuga/protocol/notify/render";
 import type { ActorHandle } from "@stuga/runtime";
 import { recordAudit, recordEvent } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
@@ -102,7 +104,7 @@ export function findTable(schema: DatabaseSchema, ref: string): { table: TableSc
 }
 
 /** Tell the human their agent changed a database; the notify job collapses a busy session to one per hour. */
-async function notifyDatabaseEdit(ctx: Ctx, doc: DocRow, summary: string): Promise<void> {
+async function notifyDatabaseEdit(ctx: Ctx, doc: DocRow, change: DatabaseChange): Promise<void> {
   if (!ctx.isAgent) return;
   await ctx.env.jobs.send({
     kind: "notify",
@@ -110,16 +112,20 @@ async function notifyDatabaseEdit(ctx: Ctx, doc: DocRow, summary: string): Promi
     workspaceId: ctx.workspaceId,
     eventType: "DATABASE_AGENT_EDIT",
     docId: doc.doc_id,
-    title: `${ctx.displayName || ctx.alias} edited "${doc.title || "Untitled"}"`,
-    body: `${summary} You can review and revert from the database's Activity panel.`,
+    params: { actor: ctx.displayName || ctx.alias, doc: doc.title, change },
     actor: ctx.alias,
   }).catch(() => {});
 }
 
-/** One mutation's bookkeeping: recency, the agent notification, the audit row and the event. */
-export async function afterDatabaseMutation(ctx: Ctx, doc: DocRow, summary: string): Promise<void> {
+/**
+ * One mutation's bookkeeping: recency, the agent notification, the audit row and the event. The
+ * audit row and the event say the change in English, which is what agents and webhooks read:
+ * `summary` when the caller has a closer one than the change's own words.
+ */
+export async function afterDatabaseMutation(ctx: Ctx, doc: DocRow, change: DatabaseChange, english?: string): Promise<void> {
+  const summary = english ?? renderDatabaseChange(change, "en"); // i18n-exempt: read by agents and webhooks
   await touchDoc(ctx.sql, doc.doc_id).catch(() => {});
-  await notifyDatabaseEdit(ctx, doc, summary);
+  await notifyDatabaseEdit(ctx, doc, change);
   recordAudit(ctx, {
     action: "database.mutate",
     targetKind: "database",

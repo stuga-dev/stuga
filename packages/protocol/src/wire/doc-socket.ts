@@ -1,3 +1,4 @@
+import type { CoauthorActivity, CoauthorError, CoauthorNotice, CrossDocError } from "../api/ai-turn.js";
 import type { ReviewMode } from "../domain/events.js";
 import type { RunFeedback } from "../domain/runs.js";
 import type { WriteRejectedKind } from "./opcodes.js";
@@ -56,10 +57,10 @@ export const ALL_DOCUMENTS_SCOPE = "__all__";
 
 export interface AiResponseChunk {
   chunk?: string;
-  /** Activity label while no prose is streaming, e.g. "Thinking…". Carries no document data. */
-  status?: string;
+  /** What the turn is doing while no prose is streaming. */
+  status?: CoauthorActivity;
   done: boolean;
-  error?: string | null;
+  error?: CoauthorError | null;
 }
 
 /**
@@ -78,9 +79,10 @@ export interface AiEditsPayload {
   /** Proposals raised in other documents this turn. */
   cross_docs: AiCrossDocProposal[];
   citations?: AiCitation[];
-  error: string | null;
-  /** The turn ended incomplete but still staged work (round cap, or a later round failed). */
-  notice: string | null;
+  /** The turn failed, or its edits could not be staged. */
+  error: CoauthorError | null;
+  /** What the person should know about a turn that stands: it ended incomplete, was stopped, or an image stayed external. */
+  notices: CoauthorNotice[];
 }
 
 /** A pointer to proposals in another document's ledger. */
@@ -92,7 +94,8 @@ export interface AiCrossDocProposal {
   staged: number;
   /** `applied`: that document applies agent changes at once. */
   mode: "proposed" | "applied" | "error";
-  message?: string;
+  /** With `error`: why, for the app to word. */
+  error?: CrossDocError;
 }
 
 /** One find/replace edit, the unit a run hunk is built from. */

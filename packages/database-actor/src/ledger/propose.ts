@@ -27,6 +27,7 @@ import {
   openRunOf,
   pendingCountOf,
   pendingPayloads,
+  proposalDetail,
   pruneRuns,
   setOpStatus,
   setRunReviewMode,
@@ -87,6 +88,7 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
   const view = SchemaView.projected(db.sql, run ? (await pendingPayloads(db.sql, db.bucket, run.run_id)).map((p) => p.payload) : []);
   const payload = def.parse(op, view);
   const summary = def.proposal.describe(payload, view);
+  const detail = proposalDetail(payload, view);
 
   const mintRun = (): RunRow => {
     const runId = newRunId();
@@ -117,7 +119,7 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
   db.requireUnlocked(lockedMessage);
   const reloaded = getRun(db.sql, run.run_id);
   run = reloaded !== null && reloaded.status === "open" ? reloaded : mintRun();
-  const opId = insertRunOp(db.sql, { runId: run.run_id, kind: payload.kind, tableId: payload.table_id, summary, ...fin, review });
+  const opId = insertRunOp(db.sql, { runId: run.run_id, kind: payload.kind, tableId: payload.table_id, summary, detail, ...fin, review });
   touchRun(db.sql, run.run_id, now);
   setRunReviewMode(db.sql, run.run_id, stricterReviewMode(run.review_mode, review));
   const minted = def.proposal.minted(payload);

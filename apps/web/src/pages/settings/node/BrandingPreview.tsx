@@ -14,6 +14,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { Files, Star } from "lucide-react";
 import { brandColor } from "../../../state/branding";
 import { Brand, PRODUCT_NAME } from "../../../shell/Brand";
+import { t } from "../../../i18n/i18n";
 
 /** `--brand` for a valid hex; anything else leaves the card's default marker. */
 function cardVars(accentColor: string, mode: "light" | "dark"): CSSProperties {
@@ -32,13 +33,13 @@ export function BrandingPreview({
 }) {
   return (
     <VStack gap={1}>
-      <Text type="supporting" weight="medium">Preview</Text>
+      <Text type="supporting" weight="medium">{t("nodeAccess.branding.preview")}</Text>
       <HStack gap={2} wrap="wrap">
         <PreviewCard mode="light" accentColor={accentColor} nodeName={nodeName} />
         <PreviewCard mode="dark" accentColor={accentColor} nodeName={nodeName} />
       </HStack>
       {!brandColor(accentColor, "light") && (
-        <Text type="supporting" color="secondary">No custom color — showing the default marker.</Text>
+        <Text type="supporting" color="secondary">{t("nodeAccess.branding.defaultMarker")}</Text>
       )}
     </VStack>
   );
@@ -56,7 +57,7 @@ function PreviewCard({
   return (
     <Theme theme={neutralTheme} mode={mode}>
       <VStack gap={2} padding={3} className="brand-preview" style={cardVars(accentColor, mode)}>
-      <Text type="supporting" color="secondary">{mode === "light" ? "Light" : "Dark"}</Text>
+      <Text type="supporting" color="secondary">{mode === "light" ? t("nodeAccess.branding.light") : t("nodeAccess.branding.dark")}</Text>
 
       {/* The header identity, monochrome whatever the brand colour. */}
       <HStack gap={2} vAlign="center">
@@ -65,31 +66,31 @@ function PreviewCard({
       </HStack>
 
       <HStack gap={2} vAlign="center" wrap="wrap">
-        <Button label="New" variant="primary" size="sm" />
-        <Button label="Share" variant="secondary" size="sm" />
+        <Button label={t("nodeAccess.branding.new")} variant="primary" size="sm" />
+        <Button label={t("common.share")} variant="secondary" size="sm" />
       </HStack>
 
       <VStack gap={0} className="brand-preview__nav">
         <HStack className="brand-preview__nav-item brand-preview__nav-item--current" gap={2} paddingBlock={1} paddingInline={2} vAlign="center">
           <Files size={14} />
-          <Text type="supporting" maxLines={1}>All documents</Text>
+          <Text type="supporting" maxLines={1}>{t("common.allDocuments")}</Text>
         </HStack>
         <HStack className="brand-preview__nav-item" gap={2} paddingBlock={1} paddingInline={2} vAlign="center">
           <Star size={14} />
-          <Text type="supporting" color="secondary" maxLines={1}>Favorites</Text>
+          <Text type="supporting" color="secondary" maxLines={1}>{t("nodeAccess.branding.favorites")}</Text>
         </HStack>
       </VStack>
 
       {/* The selected row sits in the middle: the rounded block would clip a bar on the first or last. */}
       <VStack gap={0} className="brand-preview__rows">
         <HStack className="brand-preview__row" paddingBlock={1} paddingInline={2} vAlign="center">
-          <Text type="supporting" color="secondary" maxLines={1}>A document</Text>
+          <Text type="supporting" color="secondary" maxLines={1}>{t("nodeAccess.branding.aDocument")}</Text>
         </HStack>
         <HStack className="brand-preview__row brand-preview__row--selected" paddingBlock={1} paddingInline={2} vAlign="center">
-          <Text type="supporting" maxLines={1}>Selected document</Text>
+          <Text type="supporting" maxLines={1}>{t("nodeAccess.branding.selectedDocument")}</Text>
         </HStack>
         <HStack className="brand-preview__row" paddingBlock={1} paddingInline={2} vAlign="center">
-          <Text type="supporting" color="secondary" maxLines={1}>Another document</Text>
+          <Text type="supporting" color="secondary" maxLines={1}>{t("nodeAccess.branding.anotherDocument")}</Text>
         </HStack>
       </VStack>
       </VStack>

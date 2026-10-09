@@ -45,6 +45,8 @@ import {
 } from "./model/view-shape";
 import { errorMessage } from "../lib/http/client";
 import { useElementWidth } from "../lib/use-element-width";
+import { t } from "../i18n/i18n";
+import { cellProblem } from "./model/cell-problems";
 
 /** Below this the view bar's buttons drop their labels, as when the dock takes half the page. */
 const COMPACT_BAR_WIDTH = 640;
@@ -144,7 +146,7 @@ export function DatabaseGrid({
   function commitCell(rowId: string, col: ColumnSpec, input: RowInputValue): boolean {
     const v = validateCellValue(col.type, col.options, input);
     if (!v.ok) {
-      toast({ body: v.reason, type: "error" });
+      toast({ body: cellProblem(v.reason), type: "error" });
       return false;
     }
     setEditing(null);
@@ -155,13 +157,13 @@ export function DatabaseGrid({
       .then((r) => {
         onRowsMutated();
         if (r.missing.length > 0) {
-          toast({ body: "That row was deleted by someone else.", type: "error" });
+          toast({ body: t("database.row.deletedElsewhere"), type: "error" });
           win.refetch();
         }
       })
       .catch((e) => {
         // Refetch instead of restoring the old value, which could clobber a newer save that raced this one.
-        surfaceError(e, "Couldn't save the change.");
+        surfaceError(e, t("database.row.saveFailed"));
         win.refetch();
       });
     return true;
@@ -176,7 +178,7 @@ export function DatabaseGrid({
       if (!isEmptyShape({ ...effShape, hidden_columns: [] })) {
         win.refetch();
         toast({
-          body: filtered ? "Row added. The current filter may not include it." : "Row added. The sort or grouping decides where it lands.",
+          body: filtered ? t("database.grid.rowAddedFiltered") : t("database.grid.rowAddedSorted"),
           type: "info",
         });
         return;
@@ -187,7 +189,7 @@ export function DatabaseGrid({
       const first = columns.find((c) => c.type !== "checkbox" && c.type !== "files");
       if (first) setEditing({ rowId: id, columnId: first.column_id });
     } catch (e) {
-      surfaceError(e, "Couldn't add a row.");
+      surfaceError(e, t("database.grid.addRowFailed"));
     }
   }
 
@@ -200,7 +202,7 @@ export function DatabaseGrid({
       win.removeRows(selected, r.deleted);
       setSelected(new Set());
     } catch (e) {
-      surfaceError(e, "Couldn't delete the rows.");
+      surfaceError(e, t("database.grid.deleteRowsFailed"));
     } finally {
       setBulkBusy(false);
     }
@@ -213,7 +215,7 @@ export function DatabaseGrid({
       if (colDialog.retypeOf) {
         const r = await Databases.setColumnType(docId, table.table_id, colDialog.retypeOf.column_id, spec.type, spec.choices);
         toast({
-          body: r.coerced ? `Type changed — ${r.coerced} value${r.coerced === 1 ? "" : "s"} coerced.` : "Type changed.",
+          body: r.coerced ? t("database.grid.typeChangedCoerced", { count: r.coerced }) : t("database.grid.typeChanged"),
           type: "info",
         });
       } else {
@@ -222,7 +224,7 @@ export function DatabaseGrid({
       setColDialog(null);
       onSchemaChange();
     } catch (e) {
-      surfaceError(e, "Couldn't save the column.");
+      surfaceError(e, t("database.grid.saveColumnFailed"));
     } finally {
       setColBusy(false);
     }
@@ -234,7 +236,7 @@ export function DatabaseGrid({
       await Databases.renameColumn(docId, table.table_id, renamingCol.column_id, display);
       onSchemaChange();
     } catch (e) {
-      surfaceError(e, "Couldn't rename the column.");
+      surfaceError(e, t("database.grid.renameColumnFailed"));
     }
   }
 
@@ -246,7 +248,7 @@ export function DatabaseGrid({
       setDeletingCol(null);
       onSchemaChange();
     } catch (e) {
-      surfaceError(e, "Couldn't delete the column.");
+      surfaceError(e, t("database.grid.deleteColumnFailed"));
     } finally {
       setDeleteColBusy(false);
     }
@@ -262,7 +264,7 @@ export function DatabaseGrid({
       await Databases.updateView(docId, table.table_id, view.view_id, effShape);
       onSchemaChange();
     } catch (e) {
-      surfaceError(e, "Couldn't save the view.");
+      surfaceError(e, t("database.grid.saveViewFailed"));
     }
   }
 
@@ -272,7 +274,7 @@ export function DatabaseGrid({
       onSchemaChange();
       onSelectView(r.view.view_id);
     } catch (e) {
-      surfaceError(e, "Couldn't create the view.");
+      surfaceError(e, t("database.grid.createViewFailed"));
     }
   }
 
@@ -282,7 +284,7 @@ export function DatabaseGrid({
       await Databases.updateView(docId, table.table_id, renamingView.view_id, { name });
       onSchemaChange();
     } catch (e) {
-      surfaceError(e, "Couldn't rename the view.");
+      surfaceError(e, t("database.grid.renameViewFailed"));
     }
   }
 
@@ -295,7 +297,7 @@ export function DatabaseGrid({
       setDeletingView(null);
       onSchemaChange();
     } catch (e) {
-      surfaceError(e, "Couldn't delete the view.");
+      surfaceError(e, t("database.grid.deleteViewFailed"));
     } finally {
       setDeleteViewBusy(false);
     }
@@ -350,10 +352,10 @@ export function DatabaseGrid({
         {selected.size > 0 && !readOnly ? (
           <HStack gap={1} vAlign="center" wrap="nowrap">
             <Text type="supporting" color="secondary">
-              {selected.size} selected
+              {t("database.grid.selected", { count: selected.size })}
             </Text>
-            <Button label="Delete" variant="secondary" size="sm" icon={<Trash2 size={15} />} onClick={() => setConfirmDelete(true)} />
-            <IconButton label="Clear selection" variant="ghost" size="sm" icon={<X size={15} />} onClick={() => setSelected(new Set())} />
+            <Button label={t("common.delete")} variant="secondary" size="sm" icon={<Trash2 size={15} />} onClick={() => setConfirmDelete(true)} />
+            <IconButton label={t("database.grid.clearSelection")} variant="ghost" size="sm" icon={<X size={15} />} onClick={() => setSelected(new Set())} />
           </HStack>
         ) : (
           columns.length > 0 && (
@@ -377,12 +379,12 @@ export function DatabaseGrid({
           <div className="db-grid-center">
             <EmptyState
               isCompact
-              title="No columns yet"
-              description="Add a column to start entering data."
+              title={t("database.grid.noColumns")}
+              description={t("database.grid.noColumnsHelp")}
               icon={<Columns3 size={22} />}
               actions={
                 !readOnly ? (
-                  <Button label="Add column" variant="primary" size="sm" onClick={() => setColDialog({ retypeOf: null })} />
+                  <Button label={t("database.column.add")} variant="primary" size="sm" onClick={() => setColDialog({ retypeOf: null })} />
                 ) : undefined
               }
             />
@@ -394,7 +396,7 @@ export function DatabaseGrid({
                 <tr>
                   <th className="db-grid__check">
                     <CheckboxInput
-                      label="Select all loaded rows"
+                      label={t("database.grid.selectAll")}
                       isLabelHidden
                       size="sm"
                       value={headerCheck}
@@ -422,14 +424,14 @@ export function DatabaseGrid({
                     </th>
                   ))}
                   {overlay.ghostCols.map((g) => (
-                    <th key={g.columnId} className="db-th--ghost" title={`Proposed by ${g.agent} — accept it in the banner above`}>
+                    <th key={g.columnId} className="db-th--ghost" title={t("database.grid.proposedColumn", { agent: g.agent })}>
                       <span className="db-col-head__label">{g.display}</span>
-                      <span className="db-ghost-tag">proposed</span>
+                      <span className="db-ghost-tag">{t("database.grid.proposedTag")}</span>
                     </th>
                   ))}
                   {!readOnly && (
                     <th className="db-grid__addcol">
-                      <IconButton label="Add column" variant="ghost" size="sm" icon={<Plus size={15} />} onClick={() => setColDialog({ retypeOf: null })} />
+                      <IconButton label={t("database.column.add")} variant="ghost" size="sm" icon={<Plus size={15} />} onClick={() => setColDialog({ retypeOf: null })} />
                     </th>
                   )}
                 </tr>
@@ -481,33 +483,33 @@ export function DatabaseGrid({
             </table>
             {win.loading && (
               <div className="db-grid-center">
-                <Spinner label="Loading rows…" />
+                <Spinner label={t("database.grid.loadingRows")} />
               </div>
             )}
             {!win.loading && win.loadError && (
               <div className="db-grid-center">
-                <EmptyState isCompact title="Couldn't load rows" description="Please try again." />
-                <Button label="Retry" variant="secondary" size="sm" onClick={win.refetch} />
+                <EmptyState isCompact title={t("database.grid.loadFailedTitle")} description={t("database.grid.tryAgain")} />
+                <Button label={t("common.retry")} variant="secondary" size="sm" onClick={win.refetch} />
               </div>
             )}
             {/* An empty grid offers New row as its primary action; the appender strip waits for a first row. */}
             {isEmpty ? (
               <div className="db-grid-center">
                 <EmptyState
-                  title={filtered ? "No rows match this filter" : "No rows yet"}
+                  title={filtered ? t("database.grid.noMatches") : t("database.grid.noRows")}
                   description={
                     filtered
-                      ? "Try a different filter, or clear it to see every row."
+                      ? t("database.grid.noMatchesHelp")
                       : readOnly
-                        ? "Rows added by an editor show up here."
-                        : "Add your first row — it opens with the cursor in the first cell, ready to type."
+                        ? t("database.grid.noRowsReader")
+                        : t("database.grid.noRowsWriter")
                   }
                   icon={filtered ? <FilterIcon size={26} /> : <Rows3 size={26} />}
                   actions={
                     filtered ? (
-                      <Button label="Clear filter" variant="secondary" size="sm" onClick={() => setShape((sh) => ({ ...sh, filter: null }))} />
+                      <Button label={t("database.filter.clear")} variant="secondary" size="sm" onClick={() => setShape((sh) => ({ ...sh, filter: null }))} />
                     ) : readOnly ? undefined : (
-                      <Button label="New row" variant="primary" size="sm" icon={<Plus size={15} />} onClick={addRow} />
+                      <Button label={t("database.grid.newRow")} variant="primary" size="sm" icon={<Plus size={15} />} onClick={addRow} />
                     )
                   }
                 />
@@ -517,12 +519,12 @@ export function DatabaseGrid({
                 <div className="db-foot">
                   {!readOnly && (
                     <button className="db-newrow" onClick={addRow}>
-                      <Plus size={14} /> New row
+                      <Plus size={14} /> {t("database.grid.newRow")}
                     </button>
                   )}
                   {!win.loadError && (
                     <span className="db-foot__count">
-                      {rows.length < total ? `${rows.length} of ${total} rows` : `${total} row${total === 1 ? "" : "s"}`}
+                      {rows.length < total ? t("database.grid.someRows", { loaded: rows.length, total }) : t("database.grid.rows", { count: total })}
                     </span>
                   )}
                 </div>
@@ -531,14 +533,14 @@ export function DatabaseGrid({
             {win.groupsTruncated && (
               <div className="db-grid-center">
                 <Text type="supporting" color="secondary">
-                  Only the first {win.groups?.length ?? 0} groups are listed; narrow the filter to see the rest.
+                  {t("database.grid.groupsTruncated", { count: win.groups?.length ?? 0 })}
                 </Text>
               </div>
             )}
             {!win.loading && rows.length < total && (
               <div className="db-loadmore">
                 <Button
-                  label={win.loadingMore ? "Loading…" : "Load more"}
+                  label={win.loadingMore ? t("common.loading") : t("database.grid.loadMore")}
                   variant="secondary"
                   size="sm"
                   isDisabled={win.loadingMore}
@@ -568,54 +570,54 @@ export function DatabaseGrid({
       />
       <PromptDialog
         isOpen={renamingCol !== null}
-        title="Rename column"
-        label="Column name"
+        title={t("database.column.rename")}
+        label={t("database.column.name")}
         initialValue={renamingCol?.display ?? ""}
-        submitLabel="Rename"
+        submitLabel={t("common.rename")}
         onSubmit={renameColumn}
         onClose={() => setRenamingCol(null)}
       />
       <AlertDialog
         isOpen={deletingCol !== null}
         onOpenChange={(o) => !o && !deleteColBusy && setDeletingCol(null)}
-        title={`Delete column “${deletingCol?.display ?? ""}”?`}
-        description="Every value in this column is deleted permanently."
-        actionLabel="Delete column"
+        title={t("database.column.deleteTitle", { name: deletingCol?.display ?? "" })}
+        description={t("database.column.deleteBody")}
+        actionLabel={t("database.column.delete")}
         isActionLoading={deleteColBusy}
         onAction={deleteColumn}
       />
       <PromptDialog
         isOpen={newViewOpen}
-        title="Save as view"
-        label="View name"
-        submitLabel="Save"
+        title={t("database.views.saveAs")}
+        label={t("database.views.name")}
+        submitLabel={t("common.save")}
         onSubmit={createView}
         onClose={() => setNewViewOpen(false)}
       />
       <PromptDialog
         isOpen={renamingView !== null}
-        title="Rename view"
-        label="View name"
+        title={t("database.views.rename")}
+        label={t("database.views.name")}
         initialValue={renamingView?.name ?? ""}
-        submitLabel="Rename"
+        submitLabel={t("common.rename")}
         onSubmit={renameView}
         onClose={() => setRenamingView(null)}
       />
       <AlertDialog
         isOpen={deletingView !== null}
         onOpenChange={(o) => !o && !deleteViewBusy && setDeletingView(null)}
-        title={`Delete view “${deletingView?.name ?? ""}”?`}
-        description="The view's filter, sort and grouping are removed for everyone. Rows are not affected."
-        actionLabel="Delete view"
+        title={t("database.views.deleteTitle", { name: deletingView?.name ?? "" })}
+        description={t("database.views.deleteBody")}
+        actionLabel={t("database.views.deleteAction")}
         isActionLoading={deleteViewBusy}
         onAction={deleteView}
       />
       <AlertDialog
         isOpen={confirmDelete}
         onOpenChange={(o) => !o && !bulkBusy && setConfirmDelete(false)}
-        title={`Delete ${selected.size} row${selected.size === 1 ? "" : "s"}?`}
-        description="The selected rows are deleted permanently."
-        actionLabel="Delete rows"
+        title={t("database.grid.deleteRowsTitle", { count: selected.size })}
+        description={t("database.grid.deleteRowsBody")}
+        actionLabel={t("database.grid.deleteRows")}
         isActionLoading={bulkBusy}
         onAction={deleteSelected}
       />

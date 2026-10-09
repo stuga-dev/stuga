@@ -7,6 +7,7 @@ import { MoreMenu } from "@astryxdesign/core/MoreMenu";
 import { ArrowDown, ArrowUp, EyeOff, Info, Pencil, Trash2, Type } from "lucide-react";
 import type { ColumnSpec } from "@stuga/protocol/databases/types";
 import { columnTypeLabel } from "./model/column-types";
+import { t } from "../i18n/i18n";
 
 interface ColumnMenuProps {
   column: ColumnSpec;
@@ -33,7 +34,7 @@ export function ColumnMenu({
   onDelete,
 }: ColumnMenuProps) {
   // A native title, not a Tooltip: the trigger beside it is a popover, and the two fight (see AccountMenu).
-  const head = `${column.display} (${columnTypeLabel(column.type)}) — click to sort`;
+  const head = t("database.column.sortTitle", { name: column.display, type: columnTypeLabel(column.type) });
   const description = column.description?.trim();
   return (
     <span className="db-col-head">
@@ -41,27 +42,27 @@ export function ColumnMenu({
         className="db-col-head__sort"
         onClick={onSortCycle}
         title={description ? `${head}\n\n${description}` : head}
-        aria-label={`Sort by ${column.display}`}
+        aria-label={t("database.column.sortBy", { name: column.display })}
       >
         <span className="db-col-head__label">{column.display}</span>
-        {dir === "asc" && <ArrowUp size={13} aria-label="sorted ascending" />}
-        {dir === "desc" && <ArrowDown size={13} aria-label="sorted descending" />}
+        {dir === "asc" && <ArrowUp size={13} aria-label={t("database.column.sortedAscending")} />}
+        {dir === "desc" && <ArrowDown size={13} aria-label={t("database.column.sortedDescending")} />}
       </button>
       <span className="db-col-head__menu">
         <MoreMenu
-          label={`Actions for column ${column.display}`}
+          label={t("database.column.actions", { name: column.display })}
           variant="ghost"
           size="sm"
           alignment="end"
           items={[
-            { label: "Hide in this view", icon: <EyeOff size={15} />, onClick: onHide },
+            { label: t("database.column.hide"), icon: <EyeOff size={15} />, onClick: onHide },
             ...(readOnly
               ? []
               : [
-                  { label: "Rename…", icon: <Pencil size={15} />, onClick: onRename },
-                  { label: "Change type…", icon: <Type size={15} />, onClick: onChangeType },
-                  { label: "Describe…", icon: <Info size={15} />, onClick: onDescribe },
-                  { label: "Delete column…", icon: <Trash2 size={15} />, onClick: onDelete },
+                  { label: t("common.renameEllipsis"), icon: <Pencil size={15} />, onClick: onRename },
+                  { label: t("database.column.changeTypeEllipsis"), icon: <Type size={15} />, onClick: onChangeType },
+                  { label: t("database.column.describe"), icon: <Info size={15} />, onClick: onDescribe },
+                  { label: t("database.column.deleteEllipsis"), icon: <Trash2 size={15} />, onClick: onDelete },
                 ]),
           ]}
         />

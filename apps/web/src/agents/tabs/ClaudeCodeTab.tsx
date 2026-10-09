@@ -3,6 +3,8 @@ import { Text } from "@astryxdesign/core/Text";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import { MintKey, type MintKeyState } from "../MintKey";
 import { UninstallGuide } from "./UninstallGuide";
+import { t } from "../../i18n/i18n";
+import { tRich } from "../../i18n/rich";
 
 /**
  * One command either way. Claude Code's browser sign-in requires the node's
@@ -25,30 +27,32 @@ export function ClaudeCodeTab({
       {needsKey ? (
         <>
           <Text size="sm" color="secondary">
-            Signing in through the browser needs an https node, so the command carries a key instead.
+            {t("agents.claudeCode.needsKey")}
           </Text>
+          {/* i18n-exempt: the client's name, which names its key */}
           <MintKey mint={mint} defaultName="Claude Code" />
           <CodeBlock code={cliCommand} language="bash" width="100%" isWrapped hasCopyButton size="sm" />
           <Text size="sm" color="secondary">
-            Run it in your terminal. The next Claude Code session has the node.
+            {t("agents.claudeCode.runWithKey")}
           </Text>
         </>
       ) : (
         <>
           <Text size="sm" color="secondary">
-            1. Run this in your terminal:
+            {t("agents.claudeCode.step1")}
           </Text>
           <CodeBlock code={cliCommand} language="bash" width="100%" isWrapped hasCopyButton size="sm" />
           <Text size="sm" color="secondary">
-            2. Run <code>/mcp</code>, choose <strong>{serverKey}</strong>, then Authenticate in your browser.
+            {tRich("agents.claudeCode.step2", { command: "/mcp", server: serverKey, code: (chunks) => <code>{chunks}</code>, strong: (chunks) => <strong>{chunks}</strong> })}
           </Text>
         </>
       )}
       <Text size="sm" color="secondary">
-        To have Claude launch the server, use the Claude Desktop setup.
+        {t("agents.claudeCode.desktopHint")}
       </Text>
       <UninstallGuide host="Claude Code">
         <CodeBlock
+          // i18n-exempt: a shell command
           code={`claude mcp remove -s user ${serverKey}`}
           language="bash"
           width="100%"

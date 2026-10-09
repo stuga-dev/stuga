@@ -3,21 +3,22 @@
  * also signs in there. Only a hint; it never stops the form.
  */
 import { Text } from "@astryxdesign/core/Text";
+import { t } from "../i18n/i18n";
 import { atRemoteAddress, remoteOrigin } from "../lib/session/auth-config";
 import { passkeysOffered } from "../lib/session/passkey";
 import type { RemoteStrength } from "../lib/session/password-strength";
 
-export const WORKS_ANYWHERE = "Works from anywhere.";
-export const WORKS_HERE_ONLY = "Works on this network only. Use 15 or more characters to sign in from anywhere.";
-export const GUESSABLE_HERE_ONLY = "Works on this network only. Use one that’s harder to guess to sign in from anywhere.";
-export const USE_LONGER_HERE = "Use 15 or more characters to sign in here again.";
-export const GUESSABLE_HERE = "Use one that’s harder to guess to sign in here again.";
-/** The same, where this browser can add a passkey. */
-export const USE_LONGER_OR_PASSKEY = "Use 15 or more characters to sign in here again, or add a passkey.";
-export const GUESSABLE_OR_PASSKEY = "Use one that’s harder to guess to sign in here again, or add a passkey.";
-
 /** Long enough for the remote address: a password short of it is told to be longer, one past it to be harder to guess. */
 const REMOTE_LENGTH = 15;
+
+export const WORKS_ANYWHERE = t("ui.passwordHint.worksAnywhere");
+export const WORKS_HERE_ONLY = t("ui.passwordHint.worksHereOnly", { count: REMOTE_LENGTH });
+export const GUESSABLE_HERE_ONLY = t("ui.passwordHint.guessableHereOnly");
+export const USE_LONGER_HERE = t("ui.passwordHint.useLongerHere", { count: REMOTE_LENGTH });
+export const GUESSABLE_HERE = t("ui.passwordHint.guessableHere");
+/** The same, where this browser can add a passkey. */
+export const USE_LONGER_OR_PASSKEY = t("ui.passwordHint.useLongerOrPasskey", { count: REMOTE_LENGTH });
+export const GUESSABLE_OR_PASSKEY = t("ui.passwordHint.guessableOrPasskey");
 
 export function PasswordStrengthHint({ password, strength }: { password: string; strength: RemoteStrength }) {
   if (remoteOrigin() === null || password === "" || !strength.settled) return null;

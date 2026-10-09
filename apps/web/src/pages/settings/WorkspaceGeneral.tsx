@@ -18,6 +18,7 @@ import { Workspaces } from "../../api";
 import { setActiveWorkspace } from "../../lib/session/workspace-pointer";
 import { saveBlob } from "../../lib/download";
 import { errorMessage } from "../../lib/http/client";
+import { t } from "../../i18n/i18n";
 
 export function WorkspaceGeneral() {
   const toast = useToast();
@@ -39,7 +40,7 @@ export function WorkspaceGeneral() {
     return (
       <PageColumn>
         <VStack gap={2} hAlign="center" style={{ paddingTop: "20vh" }}>
-          <Spinner label="Loading…" />
+          <Spinner label={t("common.loading")} />
         </VStack>
       </PageColumn>
     );
@@ -51,9 +52,9 @@ export function WorkspaceGeneral() {
     try {
       await Workspaces.update(workspace.workspace_id, { name: name.trim(), default_doc_access: defaultAccess });
       await reload();
-      toast({ body: "Workspace settings saved.", type: "info" });
+      toast({ body: t("settings.general.saved"), type: "info" });
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't save settings."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.general.saveFailed")), type: "error" });
     } finally {
       setBusy(false);
     }
@@ -66,7 +67,7 @@ export function WorkspaceGeneral() {
       const { blob, filename } = await Workspaces.exportArchive(workspace.workspace_id);
       saveBlob(blob, filename);
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't export the workspace."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.general.exportFailed")), type: "error" });
     } finally {
       setExporting(false);
     }
@@ -81,7 +82,7 @@ export function WorkspaceGeneral() {
       setActiveWorkspace(null);
       window.location.assign("/");
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't delete the workspace."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.general.deleteFailed")), type: "error" });
       setBusy(false);
     }
   }
@@ -90,12 +91,12 @@ export function WorkspaceGeneral() {
     <PageColumn>
       <VStack gap={6}>
         <VStack gap={3}>
-          <Heading level={2}>General</Heading>
-          <TextInput label="Workspace name" value={name} onChange={setName} isDisabled={!canManage} />
+          <Heading level={2}>{t("settings.general.heading")}</Heading>
+          <TextInput label={t("settings.general.name")} value={name} onChange={setName} isDisabled={!canManage} />
           <VStack gap={0}>
-            <Text color="secondary">Default access for new documents and folders</Text>
+            <Text color="secondary">{t("settings.general.defaultAccess")}</Text>
             <Selector
-              label="Default document access"
+              label={t("settings.general.defaultAccessLabel")}
               isLabelHidden
               value={defaultAccess}
               onChange={(v) => setDefaultAccess(v as DocAccessMode)}
@@ -103,12 +104,12 @@ export function WorkspaceGeneral() {
               isDisabled={!canManage}
             />
             <Text size="sm" color="secondary">
-              Guests only see items shared with them.
+              {t("settings.general.guestsNote")}
             </Text>
           </VStack>
           {canManage && (
             <HStack justify="end">
-              <Button label="Save" variant="primary" onClick={save} isLoading={busy} />
+              <Button label={t("common.save")} variant="primary" onClick={save} isLoading={busy} />
             </HStack>
           )}
         </VStack>
@@ -117,10 +118,10 @@ export function WorkspaceGeneral() {
           <>
             <Divider />
             <VStack gap={3}>
-              <Heading level={2}>Export</Heading>
-              <Text color="secondary">Everything you can open, as one .stuga.zip file.</Text>
+              <Heading level={2}>{t("settings.general.exportHeading")}</Heading>
+              <Text color="secondary">{t("settings.general.exportNote")}</Text>
               <HStack justify="end">
-                <Button label="Export workspace" onClick={exportWorkspace} isLoading={exporting} />
+                <Button label={t("settings.general.exportButton")} onClick={exportWorkspace} isLoading={exporting} />
               </HStack>
             </VStack>
           </>
@@ -130,14 +131,12 @@ export function WorkspaceGeneral() {
           <>
             <Divider />
             <VStack gap={3}>
-              <Heading level={2}>Danger zone</Heading>
-              <Text color="secondary">
-                Permanently deletes all content, members and agent keys. Type the workspace name to confirm.
-              </Text>
+              <Heading level={2}>{t("settings.general.dangerHeading")}</Heading>
+              <Text color="secondary">{t("settings.general.dangerNote")}</Text>
               <HStack gap={2} vAlign="end">
                 <StackItem size="fill">
                   <TextInput
-                    label="Workspace name"
+                    label={t("settings.general.name")}
                     isLabelHidden
                     width="100%"
                     value={deleteConfirm}
@@ -146,7 +145,7 @@ export function WorkspaceGeneral() {
                   />
                 </StackItem>
                 <Button
-                  label="Delete workspace"
+                  label={t("settings.general.delete")}
                   variant="destructive"
                   isDisabled={deleteConfirm !== workspace.name}
                   onClick={deleteWorkspace}

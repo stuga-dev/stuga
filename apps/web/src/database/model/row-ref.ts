@@ -7,14 +7,13 @@
 import { useEffect, useState } from "react";
 import { Docs } from "../../api";
 import type { ColumnSpec, RowRecord } from "@stuga/protocol/databases/types";
+import { t } from "../../i18n/i18n";
 
 interface RowRef {
   database_id: string;
   table_id: string;
   row_id: string;
 }
-
-export const UNTITLED_ROW = "Untitled row";
 
 /** Where a row's page stands, from the listing's `_doc_id` and `_doc_trashed`. A trashed page is offered back, not opened. */
 type PageState = { kind: "none" } | { kind: "live"; doc_id: string } | { kind: "trashed"; doc_id: string };
@@ -27,13 +26,13 @@ export function pageStateOf(row: Pick<RowRecord, "_doc_id" | "_doc_trashed"> | n
 
 /** The row's first non-empty text column by position, else a placeholder; the node titles a new page by the same rule. */
 export function rowTitle(columns: ColumnSpec[], row: RowRecord | null): string {
-  if (!row) return UNTITLED_ROW;
+  if (!row) return t("database.row.untitled");
   for (const col of [...columns].sort((a, b) => a.position - b.position)) {
     if (col.type !== "text") continue;
     const v = row[col.column_id];
     if (typeof v === "string" && v.trim() !== "") return v.trim();
   }
-  return UNTITLED_ROW;
+  return t("database.row.untitled");
 }
 
 export function formatRowRef(ref: RowRef): string {
@@ -81,7 +80,7 @@ function fetchParentTitle(id: string): Promise<void> {
 /** The label a page's database is known by in a list: its title, or the generic word. */
 export function pageParentLabel(id: string | null | undefined): string {
   const title = id ? parentTitles.get(id) : undefined;
-  return title ? title : "Database";
+  return title ? title : t("common.database");
 }
 
 /** Fetch the titles `pageParentLabel` needs; the returned counter changes as they arrive, re-rendering the caller. */

@@ -339,7 +339,7 @@ describe("FileExplorer breadcrumb", () => {
       // A screen reader hears the words, not the glyph.
       const glyph = [...(crumb?.querySelectorAll<HTMLElement>("*") ?? [])].find((el) => el.textContent === "…");
       expect(glyph?.getAttribute("aria-hidden")).toBe("true");
-      expect(crumb?.textContent).toContain("Folder you can't open");
+      expect(crumb?.textContent).toContain("Folder you can’t open");
       await click(glyph);
     }
     expect(onPathChange).not.toHaveBeenCalled();

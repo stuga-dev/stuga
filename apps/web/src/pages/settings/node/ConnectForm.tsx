@@ -22,6 +22,7 @@ import {
   withConnectedProvider,
   type Preset,
 } from "./ai-form";
+import { t } from "../../../i18n/i18n";
 
 export interface Connected {
   settings: NodeAiSettings;
@@ -33,17 +34,17 @@ export interface Connected {
 function saveFailure(label: string, model: string, e: unknown): string {
   const message = errorMessage(e, "");
   if (/not a chat model|not supported in the v1\/chat\/completions|only supported in v1\/responses|does not support chat/i.test(message)) {
-    return `${model} doesn’t take chat requests. Choose another model.`;
+    return t("nodeAccess.connect.notChat", { model });
   }
-  if (/\b(401|403)\b|unauthori[sz]ed|invalid.{0,20}key/i.test(message)) return `${label} didn’t accept that key.`;
-  return message || `Couldn’t connect to ${label}.`;
+  if (/\b(401|403)\b|unauthori[sz]ed|invalid.{0,20}key/i.test(message)) return t("nodeAccess.connect.keyRefused", { service: label });
+  return message || t("nodeAccess.connect.failed", { service: label });
 }
 
 /** What semantic search's model must do, and where to get one when the service lists none. */
 function embedHint(preset: Preset, width: number, listed: boolean): string {
   const pull = suggestedOllamaEmbedModel(width);
-  if (listed || preset.provider !== "ollama" || !pull) return `It must return ${width} dimensions or fewer.`;
-  return `No embedding model here yet. Pull one, such as ${pull}.`;
+  if (listed || preset.provider !== "ollama" || !pull) return t("nodeAccess.connect.embedWidth", { width });
+  return t("nodeAccess.connect.pullEmbedModel", { model: pull });
 }
 
 export function ConnectForm({
@@ -102,7 +103,7 @@ export function ConnectForm({
       setListed({ for: signature, models: found.models });
       setModel("");
     } catch (e) {
-      setError(errorMessage(e, `Couldn’t reach ${preset.label}.`));
+      setError(errorMessage(e, t("nodeAccess.connect.unreachable", { service: preset.label })));
     } finally {
       setLoading(false);
     }
@@ -147,12 +148,12 @@ export function ConnectForm({
         );
         // The save sends a one-token request to the new provider and refuses what does not answer.
         const res = await NodeApi.saveAi(input);
-        onConnected({ settings: res.settings, ...(res.settings.chat.running ? {} : { message: "Connected. Built-in AI is switched off." }) });
+        onConnected({ settings: res.settings, ...(res.settings.chat.running ? {} : { message: t("nodeAccess.connect.builtInOff") }) });
       } else {
         const res = await NodeApi.saveAi({
           embed: { provider: preset.provider, base_url: url, model: chosen, ...(key.trim() ? { api_key: key.trim() } : {}) },
         });
-        onConnected({ settings: res.settings, message: `Semantic search is on with ${chosen}. Indexing your documents.` });
+        onConnected({ settings: res.settings, message: t("nodeAccess.connect.searchOn", { model: chosen }) });
       }
     } catch (e) {
       setError(saveFailure(preset.label, chosen, e));
@@ -166,15 +167,15 @@ export function ConnectForm({
 
   return (
     <VStack gap={3}>
-      {error && <Banner status="error" title="Not connected" description={error} />}
-      <Selector label="Service" options={presets.map((o) => ({ value: o.value, label: o.label }))} value={service} onChange={pick} />
+      {error && <Banner status="error" title={t("nodeAccess.connect.notConnected")} description={error} />}
+      <Selector label={t("nodeAccess.connect.service")} options={presets.map((o) => ({ value: o.value, label: o.label }))} value={service} onChange={pick} />
       {!isLocal && (
         <TextInput
-          label="API key"
+          label={t("nodeAccess.connect.apiKey")}
           type="password"
           value={key}
           isOptional={!needsKey}
-          description={inheritsKey ? "Uses the chat provider’s key when empty." : undefined}
+          description={inheritsKey ? t("nodeAccess.connect.inheritsKey") : undefined}
           onChange={setKey}
           onBlur={() => void load()}
           onEnter={onEnter}
@@ -182,7 +183,7 @@ export function ConnectForm({
       )}
       {asksAddress && (
         <TextInput
-          label={isLocal ? "Ollama address" : "Base URL"}
+          label={isLocal ? t("nodeAccess.connect.ollamaAddress") : t("nodeAccess.connect.baseUrl")}
           value={address}
           placeholder={preset.baseUrl || "https://llm.example.com/v1"}
           onChange={setAddress}
@@ -192,16 +193,24 @@ export function ConnectForm({
       )}
       {models && models.length === 0 ? (
         <TextInput
-          label="Model"
+          label={t("nodeAccess.connect.model")}
           value={model}
-          description={half === "chat" ? "The service lists no models. Enter one." : embedHint(preset, width, false)}
+          description={half === "chat" ? t("nodeAccess.connect.noModelsListed") : embedHint(preset, width, false)}
           onChange={setModel}
           onEnter={onEnter}
         />
       ) : (
         <Selector
-          label="Model"
-          placeholder={loading ? "Listing models…" : models ? "Choose a model" : needsKey ? "Enter the key to list models" : "Enter the address to list models"}
+          label={t("nodeAccess.connect.model")}
+          placeholder={
+            loading
+              ? t("nodeAccess.connect.listingModels")
+              : models
+                ? t("nodeAccess.connect.chooseModel")
+                : needsKey
+                  ? t("nodeAccess.connect.enterKey")
+                  : t("nodeAccess.connect.enterAddress")
+          }
           description={half === "search" ? embedHint(preset, width, true) : undefined}
           options={(models ?? []).map((id) => ({ value: id, label: id }))}
           value={model}
@@ -211,8 +220,8 @@ export function ConnectForm({
         />
       )}
       <HStack gap={2} vAlign="center">
-        <Button label="Connect" variant="primary" size="sm" isLoading={saving} isDisabled={!model.trim() || loading} onClick={() => void connect()} />
-        {onCancel && <Button label="Cancel" variant="ghost" size="sm" isDisabled={saving} onClick={onCancel} />}
+        <Button label={t("nodeAccess.connect.connect")} variant="primary" size="sm" isLoading={saving} isDisabled={!model.trim() || loading} onClick={() => void connect()} />
+        {onCancel && <Button label={t("common.cancel")} variant="ghost" size="sm" isDisabled={saving} onClick={onCancel} />}
       </HStack>
     </VStack>
   );

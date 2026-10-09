@@ -20,6 +20,8 @@ import { Workspaces, type WorkspaceInfo } from "../api";
 import { Brand, nodeName } from "../shell/Brand";
 import { authHeaders } from "../lib/http/client";
 import { REAUTH_HEADER, confirmIdentity, reauthMethods } from "../lib/session/reauth";
+import { t } from "../i18n/i18n";
+import { tRich } from "../i18n/rich";
 
 export interface ConsentRequest {
   clientId: string;
@@ -134,7 +136,7 @@ export function OAuthAuthorize() {
   const redirectHost = hostOf(request.redirectUri);
   const valid = Boolean(request.clientId && redirectHost && request.codeChallenge);
   // The app's own name is self-asserted unless the node fetched it from a host that vouches for it.
-  const appName = client?.client_name || "An app";
+  const appName = client?.client_name || null;
   const canAllow = later || chosen.length > 0;
 
   async function allow() {
@@ -145,7 +147,7 @@ export function OAuthAuthorize() {
       window.location.assign(redirect);
       return;
     }
-    setErr("Connection failed. Try again or restart it from the app.");
+    setErr(t("auth.oauth.failed"));
     setBusy(false);
   }
 
@@ -163,54 +165,52 @@ export function OAuthAuthorize() {
         </div>
         {!valid ? (
           <>
-            <Heading level={2}>Incomplete request</Heading>
-            <Text color="secondary">This link is missing app details. Restart the connection from the app.</Text>
+            <Heading level={2}>{t("auth.oauth.incomplete")}</Heading>
+            <Text color="secondary">{t("auth.oauth.incompleteBody")}</Text>
             <HStack gap={2}>
-              <Button label="All documents" variant="primary" onClick={() => nav("/")} />
+              <Button label={t("common.allDocuments")} variant="primary" onClick={() => nav("/")} />
             </HStack>
           </>
         ) : workspaces !== null && workspaces.length === 0 ? (
           <>
-            <Heading level={2}>No workspace to connect</Heading>
-            <Text color="secondary">Create or join a workspace first, then connect the app again.</Text>
+            <Heading level={2}>{t("auth.oauth.noWorkspace")}</Heading>
+            <Text color="secondary">{t("auth.oauth.noWorkspaceBody")}</Text>
             <HStack gap={2}>
-              <Button label="Deny" variant="ghost" isDisabled={busy} onClick={deny} />
+              <Button label={t("auth.oauth.deny")} variant="ghost" isDisabled={busy} onClick={deny} />
             </HStack>
           </>
         ) : (
           <>
-            <Heading level={2}>Connect {appName}</Heading>
+            <Heading level={2}>{appName ? t("auth.oauth.connect", { app: appName }) : t("auth.oauth.connectUnnamed")}</Heading>
             <Text type="supporting" color="secondary">
-              {client?.verified_host ? (
-                <>
-                  Verified by <strong>{client.verified_host}</strong>. You’ll return to {redirectHost}.
-                </>
-              ) : (
-                <>
-                  Unverified app. You’ll return to <strong>{redirectHost}</strong> — deny if you don’t recognize it.
-                </>
-              )}
+              {client?.verified_host
+                ? tRich("auth.oauth.verified", { host: client.verified_host, redirect: redirectHost, strong: (chunks) => <strong>{chunks}</strong> })
+                : tRich("auth.oauth.unverified", { redirect: redirectHost, strong: (chunks) => <strong>{chunks}</strong> })}
             </Text>
             {workspaces && (
               <VStack gap={2}>
-                <CheckboxList label="Workspaces" value={chosen} onChange={setChosen} density="compact" isDisabled={later}>
+                <CheckboxList label={t("auth.oauth.workspaces")} value={chosen} onChange={setChosen} density="compact" isDisabled={later}>
                   {workspaces.map((w) => (
                     <CheckboxListItem key={w.workspace_id} value={w.workspace_id} label={w.name} />
                   ))}
                 </CheckboxList>
-                <CheckboxInput label="Also workspaces I join later" value={later} onChange={setLater} />
+                <CheckboxInput label={t("auth.oauth.joinLater")} value={later} onChange={setLater} />
               </VStack>
             )}
-            <RadioList label="Access" value={access} onChange={(v) => setAccess(v === "read" ? "read" : "propose")}>
-              <RadioListItem value="propose" label="Read and suggest changes" description="Changes wait for review unless an item lets AI edits apply directly." />
-              <RadioListItem value="read" label="Read only" />
+            <RadioList label={t("common.access")} value={access} onChange={(v) => setAccess(v === "read" ? "read" : "propose")}>
+              <RadioListItem value="propose" label={t("auth.oauth.readAndSuggest")} description={t("auth.oauth.readAndSuggestHint")} />
+              <RadioListItem value="read" label={t("auth.oauth.readOnly")} />
             </RadioList>
             <Text type="supporting" color="secondary">
-              Revoke anytime in{" "}
-              <Link href="/settings/agents" target="_blank" rel="noopener noreferrer" type="supporting">
-                Settings → Your AI agents
-              </Link>
-              .
+              {tRich("auth.oauth.revoke", {
+                settings: t("common.settings"),
+                agents: t("common.yourAiAgents"),
+                link: (chunks) => (
+                  <Link href="/settings/agents" target="_blank" rel="noopener noreferrer" type="supporting">
+                    {chunks}
+                  </Link>
+                ),
+              })}
             </Text>
             {err && (
               <Text type="supporting" color="secondary">
@@ -218,8 +218,8 @@ export function OAuthAuthorize() {
               </Text>
             )}
             <HStack gap={2}>
-              <Button label={busy ? "Connecting…" : "Allow"} variant="primary" isDisabled={busy || !canAllow} onClick={allow} />
-              <Button label="Deny" variant="ghost" isDisabled={busy} onClick={deny} />
+              <Button label={busy ? t("auth.oauth.connecting") : t("auth.oauth.allow")} variant="primary" isDisabled={busy || !canAllow} onClick={allow} />
+              <Button label={t("auth.oauth.deny")} variant="ghost" isDisabled={busy} onClick={deny} />
             </HStack>
           </>
         )}

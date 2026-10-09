@@ -1,6 +1,7 @@
 /** One-line summaries of run hunks for the change list, as plain text. */
 import type { AgentRunHunk } from "@stuga/protocol/wire/doc-socket";
 import type { HunkKey, UnpaintableReason } from "../editor/run-preview/plan";
+import { t, type MessageKey } from "../i18n/i18n";
 
 type HunkKind = "add" | "remove" | "change";
 
@@ -72,10 +73,10 @@ export function summarizeHunk(hunk: { old_string: string; new_string: string }):
   /** The whole line, when it says more than the span. */
   const within = (line: string, part: string) => (line && line !== part ? { context: clip(line, SUMMARY_MAX * 2) } : {});
   if (span.before && !span.after) {
-    return { kind: "remove", marker: "−", text: clip(span.before), detail: `Removes: ${clip(span.before, 200)}`, ...within(old, span.before) };
+    return { kind: "remove", marker: "−", text: clip(span.before), detail: t("review.hunk.removes", { text: clip(span.before, 200) }), ...within(old, span.before) };
   }
   if (span.after && !span.before) {
-    return { kind: "add", marker: "+", text: clip(span.after), detail: `Adds: ${clip(span.after, 200)}`, ...within(next, span.after) };
+    return { kind: "add", marker: "+", text: clip(span.after), detail: t("review.hunk.adds", { text: clip(span.after, 200) }), ...within(next, span.after) };
   }
   // A reword, or a whitespace-only edit where the full pair is the description.
   const after = span.after || next;
@@ -91,14 +92,18 @@ export function summarizeHunk(hunk: { old_string: string; new_string: string }):
 }
 
 /** Why a change has no ghost in the document, as the banner and the change list word it. */
-export const UNSHOWN_REASON: Record<UnpaintableReason, string> = {
-  missing: "its text is no longer there",
-  ambiguous: "its text appears in more than one place",
-  chained: "it edits text an earlier change adds; accept that one first",
-  invisible: "it changes only the Markdown, not how the page looks",
-  unmatched: "the preview would mark more than this change touches",
-  moved: "the text it changes was just edited",
+const UNSHOWN_REASON: Record<UnpaintableReason, MessageKey> = {
+  missing: "review.reason.missing",
+  ambiguous: "review.reason.ambiguous",
+  chained: "review.reason.chained",
+  invisible: "review.reason.invisible",
+  unmatched: "review.reason.unmatched",
+  moved: "review.reason.moved",
 };
+
+export function unshownReason(reason: UnpaintableReason): string {
+  return t(UNSHOWN_REASON[reason]);
+}
 
 interface ReviewRow {
   hunk: AgentRunHunk;

@@ -8,6 +8,7 @@
  */
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
 import { MCP_BUNDLE_FILENAME, MCP_SERVER_KEY } from "@stuga/protocol/domain/node-name";
+import { t, type MessageKey } from "../i18n/i18n";
 
 export type ClientTab =
   | "claude"
@@ -24,7 +25,8 @@ export type ClientTab =
   | "dsh"
   | "other";
 
-export const TAB_LABEL: Record<ClientTab, string> = {
+/** Each client's name as its maker writes it, the same in every language. */
+export const CLIENT_NAME: Record<Exclude<ClientTab, "other">, string> = {
   claude: "Claude",
   "claude-desktop": "Claude Desktop",
   lmstudio: "LM Studio",
@@ -37,14 +39,18 @@ export const TAB_LABEL: Record<ClientTab, string> = {
   goose: "Goose",
   pi: "Pi",
   dsh: "DeepSeek Harness",
-  other: "Other clients",
 };
 
+/** What the picker calls a client: its name, or "Other clients" in the reader's language. */
+export function tabLabel(tab: ClientTab): string {
+  return tab === "other" ? t("agents.picker.otherClients") : CLIENT_NAME[tab];
+}
+
 /** How the picker groups the clients, in the order it lists them; "Other clients" comes last, on its own. */
-export const CLIENT_GROUPS: ReadonlyArray<{ title: string; clients: readonly ClientTab[] }> = [
-  { title: "Chat apps", clients: ["claude", "claude-desktop", "lmstudio"] },
-  { title: "Editors", clients: ["cursor", "vscode", "antigravity", "kiro"] },
-  { title: "Coding agents", clients: ["claude-code", "codex", "goose", "pi", "dsh"] },
+export const CLIENT_GROUPS: ReadonlyArray<{ titleKey: MessageKey; clients: readonly ClientTab[] }> = [
+  { titleKey: "agents.picker.chatApps", clients: ["claude", "claude-desktop", "lmstudio"] },
+  { titleKey: "agents.picker.editors", clients: ["cursor", "vscode", "antigravity", "kiro"] },
+  { titleKey: "agents.picker.codingAgents", clients: ["claude-code", "codex", "goose", "pi", "dsh"] },
 ];
 
 /** A config carries this until a key is minted. */
@@ -135,6 +141,7 @@ function installLinks(mcpUrl: string, name: string, key: string): Record<LinkCli
     kiro: { signIn: kiro({ url: mcpUrl }), withKey: kiro({ url: mcpUrl, headers }) },
     lmstudio: { signIn: lmstudio({ url: mcpUrl }), withKey: lmstudio({ url: mcpUrl, headers }) },
     goose: {
+      // i18n-exempt: an install link; the description is Goose's stored config for the server.
       signIn: `goose://extension?url=${q(mcpUrl)}&type=streamable_http&id=${q(name)}&name=Stuga&description=${q("Documents and databases in Stuga")}`,
       withKey: null,
     },

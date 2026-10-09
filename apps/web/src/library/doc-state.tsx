@@ -9,6 +9,7 @@ import { Lock, LockOpen, Eye, EyeOff, ShieldCheck, Sparkles, type LucideIcon } f
 import { useToast } from "@astryxdesign/core/Toast";
 import { Docs, type DocSummary } from "../api";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
+import { t, type MessageKey } from "../i18n/i18n";
 
 interface DocState {
   locked: boolean;
@@ -34,35 +35,46 @@ interface DocStateFlag {
   tooltip: (noun: Noun) => string;
 }
 
+// Getters, so each read is in the language the page loaded.
 export const DOC_STATE_FLAGS: readonly DocStateFlag[] = [
   {
     isOn: (s) => s.locked,
-    label: "Locked",
+    get label() {
+      return t("library.state.locked");
+    },
     icon: Lock,
-    mark: "Locked — content is frozen",
+    get mark() {
+      return t("library.state.lockedMark");
+    },
     badge: "warning",
     chip: "gray",
-    tooltip: (noun) => `This ${noun} is locked for everyone. Unlock it from the ⋯ menu.`,
+    tooltip: (noun) => t("library.state.lockedTooltip", { noun }),
   },
   {
     isOn: (s) => s.searchHidden,
-    label: "Hidden from search",
+    get label() {
+      return t("library.state.hidden");
+    },
     icon: EyeOff,
-    mark: "Hidden from search — excluded from search and AI results",
+    get mark() {
+      return t("library.state.hiddenMark");
+    },
     badge: "neutral",
     chip: "gray",
-    tooltip: (noun) =>
-      `This ${noun} is excluded from search and AI. Change it from the ⋯ menu.`,
+    tooltip: (noun) => t("library.state.hiddenTooltip", { noun }),
   },
   {
     isOn: (s) => s.agentAuto,
-    label: "AI edits apply directly",
+    get label() {
+      return t("library.state.agentAuto");
+    },
     icon: Sparkles,
-    mark: "AI edits apply here directly — no review before they land",
+    get mark() {
+      return t("library.state.agentAutoMark");
+    },
     badge: "warning",
     chip: "yellow",
-    tooltip: (_noun) =>
-      `AI edits land without waiting for review, and stay recorded and revertible. Change it from the ⋯ menu.`,
+    tooltip: () => t("library.state.agentAutoTooltip"),
   },
 ];
 
@@ -99,9 +111,10 @@ export function useDocStateMenu(): (doc: DocSummary, onChanged: (next: DocSummar
     (doc: DocSummary, onChanged: (next: DocSummary) => void): StateMenuItem[] => {
       const noun: Noun = doc.doc_type === "database" ? "database" : "document";
       const agentAuto = doc.agent_mode === "auto";
+      /** The refusal and the failure for one change, each naming the item. */
       async function apply(
         patch: { locked?: boolean; search_hidden?: boolean; agent_mode?: ReviewMode },
-        what: string,
+        refusal: { denied: MessageKey; failed: MessageKey },
         /** Shown only once the server agreed. */
         okBody?: string,
       ) {
@@ -112,38 +125,43 @@ export function useDocStateMenu(): (doc: DocSummary, onChanged: (next: DocSummar
         } catch (err) {
           onChanged(doc);
           const status = (err as { status?: number }).status;
-          toast({
-            body: status === 403 ? `Only the owner or a workspace admin can ${what}.` : `Couldn't ${what}. Please try again.`,
-            type: "error",
-          });
+          toast({ body: t(status === 403 ? refusal.denied : refusal.failed, { noun }), type: "error" });
         }
       }
       return [
         {
-          label: doc.locked ? "Unlock" : "Lock",
+          label: doc.locked ? t("library.state.unlock") : t("library.state.lock"),
           icon: doc.locked ? <LockOpen size={15} /> : <Lock size={15} />,
-          onClick: () => void apply({ locked: !doc.locked }, `${doc.locked ? "unlock" : "lock"} this ${noun}`),
+          onClick: () =>
+            void apply(
+              { locked: !doc.locked },
+              doc.locked
+                ? { denied: "library.state.unlockDenied", failed: "library.state.unlockFailed" }
+                : { denied: "library.state.lockDenied", failed: "library.state.lockFailed" },
+            ),
         },
         {
-          label: doc.search_hidden ? "Show in search" : "Hide from search",
+          label: doc.search_hidden ? t("library.state.showInSearch") : t("library.state.hideFromSearch"),
           icon: doc.search_hidden ? <Eye size={15} /> : <EyeOff size={15} />,
           onClick: () =>
             void apply(
               { search_hidden: !doc.search_hidden },
-              doc.search_hidden ? `show this ${noun} in search` : `hide this ${noun} from search`,
+              doc.search_hidden
+                ? { denied: "library.state.showDenied", failed: "library.state.showFailed" }
+                : { denied: "library.state.hideDenied", failed: "library.state.hideFailed" },
             ),
         },
         {
-          label: agentAuto ? "Make AI edits wait for review" : "Let AI edits apply directly",
+          label: agentAuto ? t("library.state.makeReview") : t("library.state.makeAuto"),
           icon: agentAuto ? <ShieldCheck size={15} /> : <Sparkles size={15} />,
           onClick: () =>
             void apply(
               { agent_mode: agentAuto ? "review" : "auto" },
-              agentAuto ? `make AI edits to this ${noun} wait for review` : `let AI edits to this ${noun} apply directly`,
-              // Only the permissive direction is confirmed: it is the one that gives something away.
               agentAuto
-                ? undefined
-                : `AI edits now apply directly, and stay recorded and revertible.`,
+                ? { denied: "library.state.reviewDenied", failed: "library.state.reviewFailed" }
+                : { denied: "library.state.autoDenied", failed: "library.state.autoFailed" },
+              // Only the permissive direction is confirmed: it is the one that gives something away.
+              agentAuto ? undefined : t("library.state.agentAutoDone"),
             ),
         },
       ];

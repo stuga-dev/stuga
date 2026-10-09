@@ -14,6 +14,7 @@ import { nodeLabel } from "./Brand";
 import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { OtherNodesDialog } from "./OtherNodesDialog";
 import { createWorkspaceFrom, landingPath } from "./StartWith";
+import { t } from "../i18n/i18n";
 
 /**
  * Paths that carry no tenant's ids, so a switch stays on them; any other path
@@ -73,7 +74,7 @@ export function WorkspaceSwitcher() {
   }, []);
 
   const activeWs = workspaces.find((w) => w.workspace_id === active);
-  const activeName = activeWs?.name ?? "Workspace";
+  const activeName = activeWs?.name ?? t("shell.switcher.workspace");
 
   function switchTo(workspaceId: string) {
     if (workspaceId === active) return;
@@ -105,14 +106,14 @@ export function WorkspaceSwitcher() {
       })),
     },
     { type: "divider" },
-    { id: "create", label: "Create workspace", icon: <Plus size={15} />, onClick: () => setShowCreate(true) },
+    { id: "create", label: t("shell.switcher.createWorkspace"), icon: <Plus size={15} />, onClick: () => setShowCreate(true) },
     ...(hasOtherNodes
       ? ([
           { type: "divider" },
           {
             type: "section",
             id: "other-nodes",
-            title: "Other nodes",
+            title: t("shell.switcher.otherNodes"),
             items: [
               ...otherNodes.map((node) => {
                 const origin = openableOrigin(node.origin);
@@ -127,11 +128,11 @@ export function WorkspaceSwitcher() {
                   },
                 };
               }),
-              { id: "manage-nodes", label: "Add or remove nodes…", icon: <Settings2 size={15} />, onClick: () => setShowNodes(true) },
+              { id: "manage-nodes", label: t("shell.switcher.manageNodes"), icon: <Settings2 size={15} />, onClick: () => setShowNodes(true) },
             ],
           },
         ] satisfies DropdownMenuOption[])
-      : [{ id: "add-node", label: "Add another node…", icon: <ServerPlus size={15} />, onClick: () => setShowNodes(true) }]),
+      : [{ id: "add-node", label: t("shell.switcher.addNode"), icon: <ServerPlus size={15} />, onClick: () => setShowNodes(true) }]),
   ];
 
   return (

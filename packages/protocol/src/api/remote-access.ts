@@ -106,10 +106,12 @@ export type RemoteAccessEnableErrorCode =
   | "upgrade_required"
   | "service_unreachable"
   | "remote_dir_unusable"
-  | "socket_path_too_long";
+  | "socket_path_too_long"
+  /** The node's key for its remote address can't be read; `message` names the file. */
+  | "key_unreadable";
 
-/** A refused enable: an English sentence and, where the page has something to key on, a code. */
-export interface RemoteAccessEnableError {
-  error: string;
-  code?: RemoteAccessEnableErrorCode;
-}
+/**
+ * A refused enable: `{ error: code, message }` where the page has something to key on, the code
+ * and its English sentence; otherwise `{ error }`, the sentence alone.
+ */
+export type RemoteAccessEnableError = { error: RemoteAccessEnableErrorCode; message: string } | { error: string; message?: never };

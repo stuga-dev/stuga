@@ -47,6 +47,7 @@ import {
   type LibraryDragItem,
   type LibraryItemRef,
 } from "./move-items";
+import { t } from "../i18n/i18n";
 
 interface FileExplorerProps {
   /** Bumped by the parent to force a reload. */
@@ -218,7 +219,7 @@ export function FileExplorer({
 
   async function toggleFav(docId: string) {
     if (!(await favorites.toggle(docId))) {
-      toast({ body: "Couldn’t update that favorite.", type: "error" });
+      toast({ body: t("library.explorer.favoriteFailed"), type: "error" });
     }
   }
 
@@ -233,7 +234,7 @@ export function FileExplorer({
         setPreviewDoc((cur) => (cur?.doc_id === id ? { ...cur, title } : cur));
       }
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn’t rename that item."), type: "error" });
+      toast({ body: errorMessage(e, t("library.explorer.renameFailed")), type: "error" });
     }
     bump();
   }
@@ -242,7 +243,7 @@ export function FileExplorer({
     try {
       await Docs.trash(row.id, true);
     } catch (e) {
-      toast({ body: errorMessage(e, `Couldn’t move “${row.title || "Untitled"}” to Trash.`), type: "error" });
+      toast({ body: errorMessage(e, t("library.explorer.trashFailed", { title: row.title || t("common.untitled") })), type: "error" });
       return;
     }
     forget(new Set([row.id]));
@@ -269,14 +270,14 @@ export function FileExplorer({
       toast({
         body:
           res.docs_trashed > 0
-            ? `Deleted “${title}”. ${res.docs_trashed} document${res.docs_trashed === 1 ? "" : "s"} moved to Trash.`
-            : `Deleted “${title}”.`,
+            ? t("library.explorer.deletedWithDocs", { title, count: res.docs_trashed })
+            : t("library.explorer.deleted", { title }),
         type: "info",
       });
       bump();
     } catch (e) {
       setDeleting(null);
-      toast({ body: errorMessage(e, `Couldn’t delete “${title}”.`), type: "error" });
+      toast({ body: errorMessage(e, t("library.explorer.deleteFailed", { title })), type: "error" });
     } finally {
       setDeleteBusy(false);
     }
@@ -311,27 +312,27 @@ export function FileExplorer({
   }, [selectedRows, bump, toast, forget]);
 
   function rowActions(row: LibraryRow) {
-    const addToCollection = { type: "section" as const, title: "Add to collection", items: collectionsMenu.menuItems(refsOf([row])) };
+    const addToCollection = { type: "section" as const, title: t("library.item.addToCollection"), items: collectionsMenu.menuItems(refsOf([row])) };
     const instructionsItem = (kind: "folder" | "document" | "database") => instructions.item({ kind, id: row.id, title: row.title });
     if (row.kind === "folder") {
       return [
-        { label: "Share…", icon: <Share2 size={15} />, onClick: () => onShareFolder(row.id) },
-        { label: "Rename…", icon: <Pencil size={15} />, onClick: () => setRenaming({ kind: "folder", id: row.id, title: row.title }) },
+        { label: t("library.item.share"), icon: <Share2 size={15} />, onClick: () => onShareFolder(row.id) },
+        { label: t("common.renameEllipsis"), icon: <Pencil size={15} />, onClick: () => setRenaming({ kind: "folder", id: row.id, title: row.title }) },
         instructionsItem("folder"),
-        { label: "Move to folder…", icon: <FolderInput size={15} />, onClick: () => onMoveFolder(row.id) },
+        { label: t("library.item.moveToFolder"), icon: <FolderInput size={15} />, onClick: () => onMoveFolder(row.id) },
         addToCollection,
-        { label: "Delete folder…", icon: <Trash2 size={15} />, onClick: () => askDelete(row.id, row.title) },
+        { label: t("library.item.deleteFolder"), icon: <Trash2 size={15} />, onClick: () => askDelete(row.id, row.title) },
       ];
     }
     return [
-      { label: "Share…", icon: <Share2 size={15} />, onClick: () => onShareDoc(row.id, shareKindOfDoc(row.doc)) },
-      { label: "Rename…", icon: <Pencil size={15} />, onClick: () => setRenaming({ kind: "doc", id: row.id, title: row.title }) },
-      { label: "Move to folder…", icon: <FolderInput size={15} />, onClick: () => onMoveDoc(row.id) },
+      { label: t("library.item.share"), icon: <Share2 size={15} />, onClick: () => onShareDoc(row.id, shareKindOfDoc(row.doc)) },
+      { label: t("common.renameEllipsis"), icon: <Pencil size={15} />, onClick: () => setRenaming({ kind: "doc", id: row.id, title: row.title }) },
+      { label: t("library.item.moveToFolder"), icon: <FolderInput size={15} />, onClick: () => onMoveDoc(row.id) },
       ...(row.doc
         ? [
             {
               type: "section" as const,
-              title: row.doc.doc_type === "database" ? "Database" : "Document",
+              title: row.doc.doc_type === "database" ? t("common.database") : t("common.document"),
               items: [
                 ...stateMenu(row.doc, applyDocState),
                 instructionsItem(row.doc.doc_type === "database" ? "database" : "document"),
@@ -340,7 +341,7 @@ export function FileExplorer({
           ]
         : []),
       addToCollection,
-      { label: "Move to Trash", icon: <Trash2 size={15} />, onClick: () => void trashRow(row) },
+      { label: t("library.item.moveToTrash"), icon: <Trash2 size={15} />, onClick: () => void trashRow(row) },
     ];
   }
 
@@ -386,12 +387,12 @@ export function FileExplorer({
   const emptyActions = sideNavHidden ? undefined : createMenu();
   const emptyState = filtering ? (
     <EmptyState
-      title="No matches"
-      description="No item here matches the current filters."
+      title={t("library.explorer.noMatches")}
+      description={t("library.explorer.noMatchesBody")}
       icon={<FileText size={26} />}
       actions={
         <Button
-          label="Clear filters"
+          label={t("library.explorer.clearFilters")}
           variant="secondary"
           size="sm"
           onClick={() => {
@@ -404,15 +405,15 @@ export function FileExplorer({
     />
   ) : currentFolder === null ? (
     <EmptyState
-      title="No documents yet"
-      description="Create your first document to start writing. You can bring in existing notes later."
+      title={t("library.explorer.noDocs")}
+      description={t("library.explorer.noDocsBody")}
       icon={<FileText size={26} />}
       actions={emptyActions}
     />
   ) : (
     <EmptyState
-      title="Empty folder"
-      description="Create a document here, or move one from another folder."
+      title={t("library.explorer.emptyFolder")}
+      description={t("library.explorer.emptyFolderBody")}
       icon={<FolderIcon size={26} />}
       actions={emptyActions}
     />
@@ -423,16 +424,16 @@ export function FileExplorer({
       <HStack className="explorer-heading" gap={2} vAlign="center" justify="between" wrap="wrap">
         <VStack gap={1}>
           {path.length > 0 && (
-            <Breadcrumbs label="Folder path" variant="supporting">
+            <Breadcrumbs label={t("library.explorer.folderPath")} variant="supporting">
               <BreadcrumbItem onClick={() => onPathChange([])} startIcon={<Files size={14} />} {...crumbDropProps(-1)}>
-                All documents
+                {t("common.allDocuments")}
               </BreadcrumbItem>
               {path.map((id, i) =>
                 crumbTitles[id] === null ? (
                   // A folder the caller cannot read is a place in the chain, nowhere to open or drop into.
                   <BreadcrumbItem key={id} isCurrent={i === path.length - 1}>
                     <span aria-hidden="true">…</span>
-                    <VisuallyHidden>Folder you can't open</VisuallyHidden>
+                    <VisuallyHidden>{t("library.explorer.folderNoAccess")}</VisuallyHidden>
                   </BreadcrumbItem>
                 ) : (
                   <BreadcrumbItem key={id} isCurrent={i === path.length - 1} onClick={() => onPathChange(path.slice(0, i + 1))} {...crumbDropProps(i)}>
@@ -443,7 +444,7 @@ export function FileExplorer({
             </Breadcrumbs>
           )}
           <Heading level={1} maxLines={1}>
-            {currentFolder ? (crumbTitles[currentFolder] ?? "Folder") : "All documents"}
+            {currentFolder ? (crumbTitles[currentFolder] ?? t("common.folder")) : t("common.allDocuments")}
           </Heading>
         </VStack>
         {sideNavHidden && createMenu("end")}
@@ -455,10 +456,10 @@ export function FileExplorer({
           isBusy={bulkBusy}
           onClear={() => select([], null)}
           actions={[
-            { label: "Add to collection…", icon: <Library size={15} />, items: collectionsMenu.menuItems(refsOf(selectedRows)) },
-            { label: "Move to folder…", icon: <FolderInput size={15} />, onClick: () => onMoveMany(refsOf(selectedRows)) },
+            { label: t("library.item.addToCollectionEllipsis"), icon: <Library size={15} />, items: collectionsMenu.menuItems(refsOf(selectedRows)) },
+            { label: t("library.item.moveToFolder"), icon: <FolderInput size={15} />, onClick: () => onMoveMany(refsOf(selectedRows)) },
             ...(selectedRows.some((r) => r.kind === "doc")
-              ? [{ label: "Move to Trash", icon: <Trash2 size={15} />, onClick: () => void trashSelected() }]
+              ? [{ label: t("library.item.moveToTrash"), icon: <Trash2 size={15} />, onClick: () => void trashSelected() }]
               : []),
           ]}
         />
@@ -478,17 +479,17 @@ export function FileExplorer({
           {atCap && (
             <Banner
               status="info"
-              title={`Showing the first ${LIBRARY_LIST_CAP} documents`}
-              description="Narrow this down with the filters, or open a folder."
+              title={t("library.explorer.capTitle", { count: LIBRARY_LIST_CAP })}
+              description={t("library.explorer.capBody")}
             />
           )}
           {loadState === "error" ? (
             <div className="explorer-center">
               <EmptyState
-                title="Couldn’t load"
-                description="This folder’s contents failed to load."
+                title={t("library.explorer.loadFailed")}
+                description={t("library.explorer.loadFailedBody")}
                 icon={<FolderIcon size={26} />}
-                actions={<Button label="Retry" variant="secondary" size="sm" onClick={bump} />}
+                actions={<Button label={t("common.retry")} variant="secondary" size="sm" onClick={bump} />}
               />
             </div>
           ) : loadState === "loading" ? (
@@ -523,7 +524,7 @@ export function FileExplorer({
         {railVisible && previewDoc && !isNarrow && (
           <>
             {/* At compact widths the stylesheet lays the rail over the table at a fixed width. */}
-            {!isCompact && <ResizeHandle width={railWidth} onResize={setRailWidth} dir={-1} label="Resize details" />}
+            {!isCompact && <ResizeHandle width={railWidth} onResize={setRailWidth} dir={-1} label={t("library.explorer.resizeDetails")} />}
             <Section
               padding={0}
               variant="muted"
@@ -548,10 +549,10 @@ export function FileExplorer({
 
       <PromptDialog
         isOpen={renaming !== null}
-        title={renaming?.kind === "folder" ? "Rename folder" : "Rename document"}
-        label={renaming?.kind === "folder" ? "Folder name" : "Document title"}
+        title={renaming?.kind === "folder" ? t("library.explorer.renameFolder") : t("library.explorer.renameDocument")}
+        label={renaming?.kind === "folder" ? t("library.explorer.folderName") : t("library.explorer.documentTitle")}
         initialValue={renaming?.title ?? ""}
-        submitLabel="Rename"
+        submitLabel={t("common.rename")}
         onSubmit={doRename}
         onClose={() => setRenaming(null)}
       />
@@ -560,9 +561,9 @@ export function FileExplorer({
       <AlertDialog
         isOpen={deleting !== null}
         onOpenChange={(o) => !o && !deleteBusy && setDeleting(null)}
-        title={`Delete “${deleting?.title || "Untitled folder"}”?`}
+        title={t("common.deleteNamed", { name: deleting?.title || t("common.untitledFolder") })}
         description={describeDelete(deleting?.counts ?? null)}
-        actionLabel="Delete folder"
+        actionLabel={t("library.explorer.deleteAction")}
         isActionLoading={deleteBusy}
         onAction={doDelete}
       />
@@ -571,16 +572,13 @@ export function FileExplorer({
 }
 
 function describeDelete(counts: { docs: number; folders: number } | null): string {
-  if (!counts) return "Checking what’s inside this folder…";
-  const parts: string[] = [];
-  if (counts.docs > 0) parts.push(`${counts.docs} document${counts.docs === 1 ? "" : "s"}`);
-  if (counts.folders > 0) parts.push(`${counts.folders} subfolder${counts.folders === 1 ? "" : "s"}`);
-  if (parts.length === 0) return "This folder is empty. The folder will be deleted.";
-  return `Contains ${parts.join(" and ")}. ${
-    counts.docs > 0
-      ? `The documents move to Trash, where you can restore them for ${TRASH_RETENTION_DAYS} days.`
-      : "The subfolders will be deleted."
-  }`;
+  if (!counts) return t("library.explorer.deleteChecking");
+  const { docs, folders } = counts;
+  const days = TRASH_RETENTION_DAYS;
+  if (docs > 0 && folders > 0) return t("library.explorer.deleteBoth", { docs, folders, days });
+  if (docs > 0) return t("library.explorer.deleteDocs", { docs, days });
+  if (folders > 0) return t("library.explorer.deleteFolders", { folders });
+  return t("library.explorer.deleteEmpty");
 }
 
 /** Shaped like the table, header included, so a slow load does not look like a different component. */

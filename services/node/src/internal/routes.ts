@@ -13,7 +13,7 @@ import { proposeDocEdit } from "../agents/edits.js";
 import { agentReviewMode } from "../authz/review-mode.js";
 import { json } from "../http/respond.js";
 import { matchRoute, type PathMatch, type Route } from "../http/router.js";
-import { hostExternalImages, ingestWarning, type HostedImage } from "../media/media-ingest.js";
+import { hostExternalImages, MAX_INGEST_PER_EDIT, type HostedImage } from "../media/media-ingest.js";
 import { isKeySafeWorkspaceId } from "../media/media.js";
 import { MEDIA_GET_PATH } from "@stuga/protocol/api/media";
 import { serveMedia } from "../media/serve.js";
@@ -257,10 +257,10 @@ async function handleInternalMediaIngest(req: Request, env: NodeEnv): Promise<Re
       truncated ||= r.truncated;
       out.push(r.markdown);
     }
-    return json({ markdown: out, warning: ingestWarning(failures, truncated) });
+    return json({ markdown: out, failures, truncated_after: truncated ? MAX_INGEST_PER_EDIT : null });
   } catch {
     // Image hosting never fails the turn: the edit stages with its original destinations.
-    return json({ markdown, warning: "" });
+    return json({ markdown, failures: [], truncated_after: null });
   }
 }
 

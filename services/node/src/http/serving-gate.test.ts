@@ -43,8 +43,7 @@ describe("the serving gate", () => {
   it("refuses for good once the node refused its database: a page that says why, readiness that says so, nothing to retry", async () => {
     const gate = createServingGate();
     gate.refuse({
-      title: "Stuga 1.1.0 last served this data",
-      body: "This is <b>Stuga</b> 1.0.0 & it changed nothing.",
+      why: { servedBy: "1.1.0", version: "<b>1.0.0</b>&" },
       command: `sudo "/Library/Application Support/Stuga/current/bin/stuga" restore '2026-10-04T030000Z'`,
     });
     expect(gate.state()).toBe("refused");
@@ -61,7 +60,7 @@ describe("the serving gate", () => {
     expect(page.headers.get("content-type")).toMatch(/^text\/html/);
     const html = await page.text();
     expect(html).toContain("<strong>Stuga 1.1.0 last served this data</strong>");
-    expect(html).toContain("This is &#60;b&#62;Stuga&#60;/b&#62; 1.0.0 &#38; it changed nothing.");
+    expect(html).toContain("This is Stuga &#60;b&#62;1.0.0&#60;/b&#62;&#38;, so it changed nothing.");
     expect(html).not.toContain("<b>");
     expect(html).toContain(
       "<pre><code>sudo &#34;/Library/Application Support/Stuga/current/bin/stuga&#34; restore &#39;2026-10-04T030000Z&#39;</code></pre>",
@@ -82,10 +81,31 @@ describe("the serving gate", () => {
 
   it("leaves the code block out of a refusal with no command to run", async () => {
     const gate = createServingGate();
-    gate.refuse({ title: "A newer Stuga changed this data", body: "This build changed nothing.", command: null });
+    gate.refuse({ why: { servedBy: null, version: "1.0.0" }, command: null });
     const html = await (await gate.handler(get("/", "text/html"))).text();
     expect(html).toContain("<strong>A newer Stuga changed this data</strong>");
     expect(html).not.toContain("<pre>");
+  });
+
+  it("writes the page and the message in the language the browser asks for", async () => {
+    const gate = createServingGate();
+    const zh = (accept: string) => new Request(ORIGIN + "/", { headers: { accept, "accept-language": "zh-CN,zh;q=0.9,en;q=0.8" } });
+    const page = await gate.handler(zh("text/html"));
+    expect(page.headers.get("vary")).toBe("accept-language");
+    const html = await page.text();
+    expect(html).toContain('<html lang="zh-Hans">');
+    expect(html).toContain("<p>Stuga 正在启动。</p>");
+    expect(html).not.toContain("This page reloads by itself.");
+    expect(await (await gate.handler(zh("application/json"))).json()).toMatchObject({ status: "starting", message: "Stuga 正在启动。" });
+    // A language the node is not written in reads English.
+    const other = new Request(ORIGIN + "/", { headers: { accept: "text/html", "accept-language": "sv-SE" } });
+    expect(await (await gate.handler(other)).text()).toContain('<html lang="en">');
+
+    gate.refuse({ why: { servedBy: "1.1.0", version: "1.0.0" }, command: null });
+    const refused = await (await gate.handler(zh("text/html"))).text();
+    expect(refused).toContain('<html lang="zh-Hans">');
+    expect(refused).toContain("1.1.0");
+    expect(refused).not.toContain("last served this data");
   });
 
   it("serves through the live handlers once open, and stops again on a pause", async () => {

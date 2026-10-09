@@ -26,6 +26,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { Building2, Folder, Link as LinkIcon, Search, Users as UsersIcon } from "lucide-react";
 import { errorMessage } from "../lib/http/client";
 import { copyText } from "../lib/clipboard";
+import { t, type MessageKey } from "../i18n/i18n";
 
 type Role = "editor" | "commenter" | "viewer";
 
@@ -37,10 +38,10 @@ export function shareKindOfDoc(doc: { doc_type?: "prose" | "database" } | undefi
   return doc?.doc_type === "database" ? "database" : "doc";
 }
 
-const ROLE_LABELS: Record<Role, string> = {
-  editor: "Can edit",
-  commenter: "Can comment",
-  viewer: "Can view",
+const ROLE_LABELS: Record<Role, MessageKey> = {
+  editor: "library.share.canEdit",
+  commenter: "library.share.canComment",
+  viewer: "library.share.canView",
 };
 
 /** The workspace's `org:<id>` grant: the General access floor. */
@@ -203,7 +204,7 @@ export function ShareDialog({
       }
       onClose();
     } catch (e) {
-      setError(errorMessage(e, "Couldn’t save these access changes."));
+      setError(errorMessage(e, t("library.share.saveFailed")));
     } finally {
       setSaving(false);
     }
@@ -224,52 +225,52 @@ export function ShareDialog({
         setTimeout(() => setCopied(false), 2500);
       }
     } catch (e) {
-      setError(errorMessage(e, "Couldn’t create a share link."));
+      setError(errorMessage(e, t("library.share.linkFailed")));
     }
   }
 
   const tiers: Role[] = hasComments ? ["editor", "commenter", "viewer"] : ["editor", "viewer"];
   // A person's menu ends in removal, so every row has one control in one column.
   const personOptions = [
-    ...tiers.map((r) => ({ value: r, label: ROLE_LABELS[r] })),
+    ...tiers.map((r) => ({ value: r, label: t(ROLE_LABELS[r]) })),
     { type: "divider" as const },
-    { value: "remove", label: "Remove access" },
+    { value: "remove", label: t("library.share.removeAccess") },
   ];
 
   const linkTiers: Role[] = hasComments ? ["viewer", "commenter", "editor"] : ["viewer", "editor"];
-  const linkOptions = linkTiers.map((r) => ({ value: r, label: ROLE_LABELS[r] }));
+  const linkOptions = linkTiers.map((r) => ({ value: r, label: t(ROLE_LABELS[r]) }));
 
   const generalOptions = [
-    { value: "invited", label: "No access" },
-    { value: "workspace_view", label: "Can view" },
-    { value: "workspace_edit", label: "Can edit" },
+    { value: "invited", label: t("library.share.noAccess") },
+    { value: "workspace_view", label: t("library.share.canView") },
+    { value: "workspace_edit", label: t("library.share.canEdit") },
   ];
 
-  const parentName = parent?.title ?? "the parent folder";
+  const parentName = parent?.title ?? null;
   const thing = isFolder ? "folder" : kind === "database" ? "database" : "document";
-  const everyone = workspaceName ? `Everyone in ${workspaceName}` : "Everyone in this workspace";
+  const everyone = workspaceName ? t("library.share.everyoneIn", { workspace: workspaceName }) : t("library.share.everyoneInThis");
 
   useUserNames([...(owner ? [owner] : []), ...grants, ...inherited]);
 
   return (
     <Dialog isOpen onOpenChange={(o) => !o && onClose()} purpose="form" width={480}>
       <Layout
-        header={<DialogHeader title="Share" onOpenChange={(o) => !o && onClose()} />}
+        header={<DialogHeader title={t("common.share")} onOpenChange={(o) => !o && onClose()} />}
         content={
           <LayoutContent>
             <VStack gap={4}>
               {/* Picking a row adds it at once; the field clears for the next person. */}
               <Typeahead<RecipientItem>
-                label="Add people"
+                label={t("library.share.addPeople")}
                 isLabelHidden
-                placeholder="Add by username, name, or group:…"
+                placeholder={t("library.share.addPlaceholder")}
                 width="100%"
                 startIcon={<Search size={15} />}
                 searchSource={recipientSource}
                 value={null}
                 onChange={(item) => item && addPrincipal(item.id)}
                 minQueryLength={2}
-                emptySearchResultsText="No one matches. They must have an account here before you can share with them."
+                emptySearchResultsText={t("library.share.noMatches")}
                 renderItem={(item) => {
                   const u = item.auxiliaryData;
                   const handle = u ? (u.username ? `@${u.username}` : u.email) : null;
@@ -282,10 +283,10 @@ export function ShareDialog({
                   );
                 }}
               />
-              {error && <Banner status="error" title="Couldn’t share" description={error} />}
+              {error && <Banner status="error" title={t("library.share.failed")} description={error} />}
 
               <VStack gap={1}>
-                <Text size="sm" weight="semibold">People with access</Text>
+                <Text size="sm" weight="semibold">{t("library.share.peopleWithAccess")}</Text>
                 <List className="grant-list">
                   {owner && (
                     <ListItem
@@ -294,7 +295,7 @@ export function ShareDialog({
                       startContent={<Avatar principal={owner} size={28} />}
                       endContent={
                         <Text size="sm" color="secondary" className="share-row-note">
-                          Owner
+                          {t("library.table.owner")}
                         </Text>
                       }
                     />
@@ -307,7 +308,7 @@ export function ShareDialog({
                       startContent={<Avatar principal={g} size={28} />}
                       endContent={
                         <Selector
-                          label={nameLoading(g) ? "Access" : `Access for ${principalLabel(g)}`}
+                          label={nameLoading(g) ? t("common.access") : t("library.share.accessFor", { name: principalLabel(g) })}
                           isLabelHidden
                           variant="ghost"
                           size="sm"
@@ -332,7 +333,11 @@ export function ShareDialog({
                           color="secondary"
                           className={inherits ? "share-row-note" : "share-row-note share-row-note--revoked"}
                         >
-                          {inherits ? (parent?.title ? `From ${parent.title}` : "Inherited") : "Removed on save"}
+                          {inherits
+                            ? parent?.title
+                              ? t("library.share.from", { folder: parent.title })
+                              : t("library.share.inherited")
+                            : t("library.share.removedOnSave")}
                         </Text>
                       }
                     />
@@ -343,22 +348,22 @@ export function ShareDialog({
               <Divider />
 
               <VStack gap={1}>
-                <Text size="sm" weight="semibold">General access</Text>
+                <Text size="sm" weight="semibold">{t("library.share.general")}</Text>
                 <List>
                   {parent && (
                     <ListItem
-                      label={`Everyone with access to ${parentName}`}
+                      label={parentName ? t("library.share.parentEveryone", { name: parentName }) : t("library.share.parentEveryoneUnnamed")}
                       description={
                         !inherits
-                          ? "Only the people above can open it"
+                          ? t("library.share.onlyPeopleAbove")
                           : loadedInherits
-                            ? "Keeps the access the folder gives them"
-                            : "Saving gives them access here too"
+                            ? t("library.share.keepsFolderAccess")
+                            : t("library.share.savingGrants")
                       }
                       startContent={<RowIcon icon={<Folder size={16} />} />}
                       endContent={
                         <Selector
-                          label="Parent folder access"
+                          label={t("library.share.parentAccess")}
                           isLabelHidden
                           variant="ghost"
                           size="sm"
@@ -367,8 +372,8 @@ export function ShareDialog({
                           // Granting needs no warning; revoking waits for the confirmation below.
                           onChange={(v) => (v === "none" ? setConfirmingStop(true) : setInherits(true))}
                           options={[
-                            { value: "inherit", label: "Inherited" },
-                            { value: "none", label: "No access" },
+                            { value: "inherit", label: t("library.share.inherited") },
+                            { value: "none", label: t("library.share.noAccess") },
                           ]}
                         />
                       }
@@ -378,13 +383,15 @@ export function ShareDialog({
                     label={everyone}
                     description={
                       general === "invited"
-                        ? "Only the people above can open it"
-                        : `Every member can ${general === "workspace_edit" ? "edit" : "view"} it`
+                        ? t("library.share.onlyPeopleAbove")
+                        : general === "workspace_edit"
+                          ? t("library.share.membersEdit")
+                          : t("library.share.membersView")
                     }
                     startContent={<RowIcon icon={<Building2 size={16} />} />}
                     endContent={
                       <Selector
-                        label="General access"
+                        label={t("library.share.general")}
                         isLabelHidden
                         variant="ghost"
                         size="sm"
@@ -397,12 +404,12 @@ export function ShareDialog({
                   />
                   {!isFolder && (
                     <ListItem
-                      label="Anyone with the link"
-                      description="They sign in and join as a guest"
+                      label={t("library.share.anyoneWithLink")}
+                      description={t("library.share.guestHint")}
                       startContent={<RowIcon icon={<LinkIcon size={16} />} />}
                       endContent={
                         <Selector
-                          label="Link role"
+                          label={t("library.share.linkRole")}
                           isLabelHidden
                           variant="ghost"
                           size="sm"
@@ -419,20 +426,20 @@ export function ShareDialog({
                   )}
                 </List>
                 {!isFolder && shareLink && (
-                  <TextInput label="Share link" isLabelHidden value={shareLink} onChange={() => {}} isDisabled />
+                  <TextInput label={t("library.share.linkLabel")} isLabelHidden value={shareLink} onChange={() => {}} isDisabled />
                 )}
               </VStack>
             </VStack>
             <AlertDialog
               isOpen={confirmingStop}
               onOpenChange={(o) => !o && setConfirmingStop(false)}
-              title={`Stop inheriting from ${parentName}?`}
-              description={`${
-                inherited.size === 0
-                  ? ""
-                  : `${inherited.size === 1 ? "1 person loses" : `${inherited.size} people lose`} access when you save. `
-              }Later changes to ${parentName}’s sharing no longer reach this ${thing}; only the people listed here keep access.`}
-              actionLabel="Stop inheriting"
+              title={parentName ? t("library.share.stopTitle", { name: parentName }) : t("library.share.stopTitleUnnamed")}
+              description={
+                parentName
+                  ? t("library.share.stopBody", { lost: inherited.size, name: parentName, thing })
+                  : t("library.share.stopBodyUnnamed", { lost: inherited.size, thing })
+              }
+              actionLabel={t("library.share.stopAction")}
               actionVariant="destructive"
               onAction={() => {
                 setInherits(false);
@@ -449,15 +456,15 @@ export function ShareDialog({
                 <span />
               ) : (
                 <Button
-                  label={copied ? "Copied" : "Copy link"}
+                  label={copied ? t("common.copied") : t("library.options.copyLink")}
                   variant="secondary"
                   icon={<LinkIcon size={15} />}
                   onClick={copyShareLink}
                 />
               )}
               <HStack gap={2}>
-                <Button label="Cancel" variant="ghost" onClick={onClose} />
-                <Button label="Save" variant="primary" onClick={save} isLoading={saving} />
+                <Button label={t("common.cancel")} variant="ghost" onClick={onClose} />
+                <Button label={t("common.save")} variant="primary" onClick={save} isLoading={saving} />
               </HStack>
             </HStack>
           </LayoutFooter>

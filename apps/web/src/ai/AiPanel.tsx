@@ -15,8 +15,10 @@ import { useEditorTick } from "../editor/use-editor-tick";
 import { AiScopePicker } from "./AiScopePicker";
 import { ChatComposer } from "./ChatComposer";
 import { ChatTranscript } from "./ChatTranscript";
+import { t } from "../i18n/i18n";
 
 /** Sent when the user attaches an image without typing anything. */
+// i18n-exempt: a prompt sent to the model
 const IMAGE_ONLY_PROMPT = "Insert the attached image at a suitable place in this document.";
 
 /** The dock strip's action for this panel. An empty thread has nothing to start over from. */
@@ -25,8 +27,8 @@ export function AiNewChatButton() {
   if (turns.length === 0) return null;
   return (
     <IconButton
-      label="New chat"
-      tooltip="New chat"
+      label={t("ai.panel.newChat")}
+      tooltip={t("ai.panel.newChat")}
       variant="ghost"
       size="sm"
       icon={<SquarePen size={16} />}
@@ -71,29 +73,27 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
     const prompt = input.trim();
     if (streaming || uploading || (!prompt && !ready)) return;
     setInput("");
-    send(prompt || IMAGE_ONLY_PROMPT);
+    // An image-only turn shows just the image, not the English prompt it is sent with.
+    if (prompt) send(prompt);
+    else send(IMAGE_ONLY_PROMPT, "");
   }
 
   const placeholder =
     collectionId === null
-      ? "Ask the AI co-author…"
+      ? t("ai.panel.placeholderDocument")
       : collectionId === ALL_DOCUMENTS_SCOPE
-        ? "Ask or instruct using every document in this workspace…"
-        : "Ask or instruct using the collection…";
+        ? t("ai.panel.placeholderAllDocuments")
+        : t("ai.panel.placeholderCollection");
 
   return (
     <aside className="ai-panel">
       <ChatTranscript
         turns={turns}
         streaming={streaming}
-        reviewWhere="in the document"
+        reviewIn="document"
         empty={
           <>
-            Ask for changes to this document — “tighten the opening paragraph”, “add a summary at the top”, “turn the
-            notes at the end into a table”.{" "}
-            {agentAuto
-              ? "AI edits to this document apply directly: they land when a turn ends, recorded and revertible. This chat is private."
-              : "Every edit appears in the document as a suggestion you accept or reject there. This chat is private: only edits you accept reach version history."}
+            {t("ai.panel.emptyIntro")} {agentAuto ? t("ai.panel.emptyAuto") : t("ai.panel.emptyReview")}
           </>
         }
       />
@@ -104,7 +104,7 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
         onStop={stop}
         streaming={streaming}
         placeholder={placeholder}
-        sendLabel={uploading ? "Uploading…" : "Send"}
+        sendLabel={uploading ? t("ai.panel.uploading") : t("ai.composer.send")}
         canSend={!uploading && (input.trim() !== "" || ready)}
         onImages={attachImages}
         header={
@@ -112,16 +112,17 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
             {queuedRevisions > 0 && (
               <div className="ai-revision-queue" role="status">
                 <span className="ai-revision-queue__text">
-                  {revisionPaused ? "Revision paused" : "Revision queued"}
-                  {queuedRevisions > 1 ? ` · ${queuedRevisions} requests` : ""}
+                  {revisionPaused
+                    ? t("ai.panel.revisionPaused", { count: queuedRevisions })
+                    : t("ai.panel.revisionQueued", { count: queuedRevisions })}
                 </span>
-                {revisionPaused && <Button label="Revise now" variant="secondary" size="sm" onClick={reviseNow} isDisabled={streaming} />}
-                <Button label="Cancel" variant="ghost" size="sm" onClick={cancelRevisions} />
+                {revisionPaused && <Button label={t("ai.panel.reviseNow")} variant="secondary" size="sm" onClick={reviseNow} isDisabled={streaming} />}
+                <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={cancelRevisions} />
               </div>
             )}
             {selectedText && (
               <div className="ai-input-quote" title={selectedText}>
-                <span className="ai-input-quote__label">Selected</span>
+                <span className="ai-input-quote__label">{t("ai.panel.selected")}</span>
                 <span className="ai-input-quote__text">{selectedText}</span>
               </div>
             )}
@@ -130,7 +131,7 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
               onModelChange={setModel}
               scope={collectionId}
               onScopeChange={setCollectionId}
-              base={{ label: "This document only", icon: <FileText size={15} /> }}
+              base={{ label: t("ai.panel.thisDocumentOnly"), icon: <FileText size={15} /> }}
             />
             {attachments.length > 0 && (
               <div className="ai-attachments">
@@ -140,7 +141,7 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
                     {!a.path && !a.error && (
                       <span className="ai-attachment__progress" style={{ ["--p" as string]: `${Math.round(a.progress * 100)}%` }} />
                     )}
-                    <button type="button" className="ai-attachment__remove" aria-label={`Remove ${a.name}`} onClick={() => removeAttachment(a.id)}>
+                    <button type="button" className="ai-attachment__remove" aria-label={t("ai.panel.removeAttachment", { name: a.name })} onClick={() => removeAttachment(a.id)}>
                       <X size={11} />
                     </button>
                   </div>
@@ -152,8 +153,8 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
         tools={
           <>
             <IconButton
-              label="Attach image"
-              tooltip="Attach an image (or paste / drop one here)"
+              label={t("ai.panel.attachImage")}
+              tooltip={t("ai.panel.attachImageTooltip")}
               variant="ghost"
               size="sm"
               icon={<ImagePlus size={16} />}

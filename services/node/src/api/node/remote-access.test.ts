@@ -66,7 +66,7 @@ describe("where the packaging offers no remote access", () => {
     for (const path of ["/api/node/remote-access/enable", "/api/node/remote-access/disable", "/api/node/remote-access/connector/retry"]) {
       const res = await call(ctx, "POST", path, { accept_ca_terms: true, code: "7K2M-9QXD-4TZB-H8PN" });
       expect(res.status, path).toBe(409);
-      expect(await res.json(), path).toEqual({ error: "Remote access isn't set up in this node's packaging.", code: "unavailable" });
+      expect(await res.json(), path).toEqual({ error: "unavailable", message: "Remote access isn't set up in this node's packaging." });
     }
   });
 });
@@ -125,7 +125,7 @@ describe("POST /api/node/remote-access/enable", () => {
     expect(remote.enable).toHaveBeenCalledWith({ acceptCaTerms: true, by: "admin-1" });
   });
 
-  it("answers a refusal with its status, sentence and code", async () => {
+  it("answers a refusal with its status, code and sentence", async () => {
     const remote = remoteAccess({
       enable: vi.fn(async () => {
         throw new RemoteAccessRefusal(400, "enroll_code_used", "That code has already been used.");
@@ -133,7 +133,7 @@ describe("POST /api/node/remote-access/enable", () => {
     });
     const res = await call(node(remote), "POST", "/api/node/remote-access/enable", { code: "7K2M-9QXD-4TZB-H8PN", accept_ca_terms: true });
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "That code has already been used.", code: "enroll_code_used" });
+    expect(await res.json()).toEqual({ error: "enroll_code_used", message: "That code has already been used." });
   });
 
   it("is not for agents", async () => {
@@ -184,7 +184,7 @@ describe("POST /api/node/remote-access/connector/retry", () => {
     });
     const res = await call(node(remote), "POST", "/api/node/remote-access/connector/retry");
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: "The connector isn't run by this node's packaging.", code: "unavailable" });
+    expect(await res.json()).toEqual({ error: "unavailable", message: "The connector isn't run by this node's packaging." });
   });
 
   it("is not for agents, and takes only POST", async () => {

@@ -49,11 +49,16 @@ func fetch(_ url: URL) -> (status: Int, body: Data)? {
     return answer
 }
 
+/// `text` as an AppleScript string literal.
+func appleScriptString(_ text: String) -> String {
+    "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+}
+
 /// Run a shell command as root, after macOS asks for an administrator's password. Nil when refused.
 @discardableResult
 func asAdministrator(_ command: String, prompt: String) -> String? {
-    let quoted = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-    let source = "do shell script \"\(quoted)\" with prompt \"\(prompt)\" with administrator privileges"
+    // A translated prompt is quoted like the command, so its quotes cannot end the string.
+    let source = "do shell script \(appleScriptString(command)) with prompt \(appleScriptString(prompt)) with administrator privileges"
     var error: NSDictionary?
     let result = NSAppleScript(source: source)?.executeAndReturnError(&error)
     return error == nil ? (result?.stringValue ?? "") : nil
@@ -138,10 +143,10 @@ let mark: NSImage = {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    let openItem = NSMenuItem(title: "Open Stuga", action: #selector(openStuga), keyEquivalent: "o")
-    let copyItem = NSMenuItem(title: "Copy Address", action: #selector(copyAddress), keyEquivalent: "c")
-    let qrItem = NSMenuItem(title: "Show Address as QR Code…", action: #selector(showQRCode), keyEquivalent: "")
-    let restartItem = NSMenuItem(title: "Restart Stuga…", action: #selector(restart), keyEquivalent: "")
+    let openItem = NSMenuItem(title: L("menu.open", "Open Stuga"), action: #selector(openStuga), keyEquivalent: "o")
+    let copyItem = NSMenuItem(title: L("menu.copyAddress", "Copy Address"), action: #selector(copyAddress), keyEquivalent: "c")
+    let qrItem = NSMenuItem(title: L("menu.addressQR", "Show Address as QR Code…"), action: #selector(showQRCode), keyEquivalent: "")
+    let restartItem = NSMenuItem(title: L("menu.restart", "Restart Stuga…"), action: #selector(restart), keyEquivalent: "")
     var state: State = .starting {
         didSet {
             // Claimed, stopped or reinstalled: whatever code was read is no longer this node's.
@@ -174,13 +179,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        for item in [NSMenuItem(title: "Show Logs", action: #selector(showLogs), keyEquivalent: ""), restartItem,
-                     NSMenuItem(title: "Uninstall Stuga…", action: #selector(uninstall), keyEquivalent: "")] {
+        for item in [NSMenuItem(title: L("menu.showLogs", "Show Logs"), action: #selector(showLogs), keyEquivalent: ""), restartItem,
+                     NSMenuItem(title: L("menu.uninstall", "Uninstall Stuga…"), action: #selector(uninstall), keyEquivalent: "")] {
             item.target = self
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Menu", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L("menu.quit", "Quit Menu"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.autoenablesItems = false
         statusItem.menu = menu
         refresh()
@@ -240,22 +245,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if unclaimed, let node, let link = self.setupLink(node, ask: false) { NSWorkspace.shared.open(link) }
                 }
                 // From the run loop, so the alert does not hold up the main queue.
-                if let announce { self.perform(#selector(self.announce(_:)), with: announce.title, afterDelay: 0) }
+                if let announce { RunLoop.main.perform(inModes: [.default]) { self.announce(announce) } }
             }
         }
     }
 
     /// The menu shows the state; this makes sure someone sees it, once per failure.
-    @objc func announce(_ title: String) {
+    func announce(_ fault: Fault) {
         // A restart changes nothing for a node refusing its data; its page says what does.
-        let refused = title == Fault.refused.title
+        let refused = fault == .refused
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = title
-        alert.informativeText = refused ? "Open Stuga to see what to do." : "Restarting Stuga often fixes this. The logs say what happened."
-        alert.addButton(withTitle: refused ? "Open Stuga" : "Restart Stuga…")
-        alert.addButton(withTitle: "Show Logs")
-        alert.addButton(withTitle: "OK")
+        alert.messageText = fault.title
+        alert.informativeText = refused
+            ? L("failure.refused", "Open Stuga to see what to do.")
+            : L("failure.restart", "Restarting Stuga often fixes this. The logs say what happened.")
+        alert.addButton(withTitle: refused ? L("menu.open", "Open Stuga") : L("menu.restart", "Restart Stuga…"))
+        alert.addButton(withTitle: L("menu.showLogs", "Show Logs"))
+        alert.addButton(withTitle: L("button.ok", "OK"))
         NSApp.activate(ignoringOtherApps: true)
         switch alert.runModal() {
         case .alertFirstButtonReturn: if refused { openStuga() } else { restart() }
@@ -289,13 +296,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem?.button else { return }
         let address = node?.origin.absoluteString ?? ""
         switch state {
-        case .missing: statusLine.title = "Stuga is not installed"
-        case .starting: statusLine.title = "Starting…"
-        case .running: statusLine.title = "Running at \(address)"
-        case .unclaimed: statusLine.title = "Ready to set up at \(address)"
-        case .installing: statusLine.title = "Installing an update…"
-        case .restoring: statusLine.title = "Restoring a backup…"
-        case .uninstalling: statusLine.title = "Uninstalling…"
+        case .missing: statusLine.title = L("status.missing", "Stuga is not installed")
+        case .starting: statusLine.title = L("status.starting", "Starting…")
+        case .running: statusLine.title = L("status.running", "Running at %@", address)
+        case .unclaimed: statusLine.title = L("status.unclaimed", "Ready to set up at %@", address)
+        case .installing: statusLine.title = L("status.installing", "Installing an update…")
+        case .restoring: statusLine.title = L("status.restoring", "Restoring a backup…")
+        case .uninstalling: statusLine.title = L("status.uninstalling", "Uninstalling…")
         case .down(let fault): statusLine.title = fault.title
         }
         if case .down = state {
@@ -305,10 +312,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.image = mark
         }
         button.appearsDisabled = !(state == .running || state == .unclaimed)
-        openItem.title = state == .unclaimed ? "Set Up Stuga…" : "Open Stuga"
+        openItem.title = state == .unclaimed ? L("menu.setUp", "Set Up Stuga…") : L("menu.open", "Open Stuga")
         // Before setup the plain address only asks for the code, so both hand out the setup link instead.
-        copyItem.title = state == .unclaimed ? "Copy Setup Link" : "Copy Address"
-        qrItem.title = state == .unclaimed ? "Show Setup Link as QR Code…" : "Show Address as QR Code…"
+        copyItem.title = state == .unclaimed ? L("menu.copySetupLink", "Copy Setup Link") : L("menu.copyAddress", "Copy Address")
+        qrItem.title = state == .unclaimed
+            ? L("menu.setupLinkQR", "Show Setup Link as QR Code…") : L("menu.addressQR", "Show Address as QR Code…")
         // A node refusing its data serves the page that says what to do.
         openItem.isEnabled = state == .running || state == .unclaimed || state == .down(.refused)
         copyItem.isEnabled = node != nil && state != .uninstalling
@@ -333,7 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Only a code is kept: a refused password or an empty read asks again next time.
         if setupCode == nil,
            let read = ((try? String(contentsOfFile: setupCodeFile, encoding: .utf8))
-               ?? (ask ? asAdministrator("cat '\(setupCodeFile)'", prompt: "Stuga needs an administrator's password to read its setup code.") : nil))?
+               ?? (ask ? asAdministrator("cat '\(setupCodeFile)'", prompt: L("prompt.setupCode", "Stuga needs an administrator's password to read its setup code.")) : nil))?
                .trimmingCharacters(in: .whitespacesAndNewlines), !read.isEmpty {
             setupCode = read
         }
@@ -360,11 +368,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let node, let link = linkToShare(node), let image = qrCode(link.absoluteString) else { return }
         let alert = NSAlert()
         if state == .unclaimed {
-            alert.messageText = "Set up Stuga on your phone"
-            alert.informativeText = "Scan this on a phone on the same network. It carries the setup code, so keep it to yourself."
+            alert.messageText = L("qr.setUp.title", "Set up Stuga on your phone")
+            alert.informativeText = L("qr.setUp.text", "Scan this on a phone on the same network. It carries the setup code, so keep it to yourself.")
         } else {
-            alert.messageText = "Open Stuga on your phone"
-            alert.informativeText = "Scan this on a phone on the same network: \(node.origin.absoluteString)"
+            alert.messageText = L("qr.open.title", "Open Stuga on your phone")
+            alert.informativeText = L("qr.open.text", "Scan this on a phone on the same network: %@", node.origin.absoluteString)
         }
         let view = NSImageView(frame: NSRect(x: 0, y: 0, width: 220, height: 220))
         view.image = image
@@ -393,7 +401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard state != .uninstalling, health.mayRestart, !installing(), !restoring() else { return }
         state = .starting
         DispatchQueue.global().async {
-            let restarted = asAdministrator("launchctl kickstart -k system/dev.stuga.postgres; launchctl kickstart -k system/dev.stuga.node", prompt: "Stuga needs your password to restart.") != nil
+            let restarted = asAdministrator("launchctl kickstart -k system/dev.stuga.postgres; launchctl kickstart -k system/dev.stuga.node", prompt: L("prompt.restart", "Stuga needs your password to restart.")) != nil
             DispatchQueue.main.async {
                 // Restarted on purpose, not a crash.
                 if restarted { self.watch.reset() }
@@ -405,11 +413,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func uninstall() {
         guard state != .uninstalling else { return }
         let alert = NSAlert()
-        alert.messageText = "Uninstall Stuga?"
-        alert.informativeText = "Stuga stops and is removed from this Mac. Your documents and backups stay in \(root)/data unless you delete them too."
-        alert.addButton(withTitle: "Uninstall, Keep Data")
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Uninstall and Delete Data")
+        alert.messageText = L("uninstall.title", "Uninstall Stuga?")
+        alert.informativeText = L("uninstall.text", "Stuga stops and is removed from this Mac. Your documents and backups stay in %@ unless you delete them too.", root + "/data")
+        alert.addButton(withTitle: L("uninstall.keepData", "Uninstall, Keep Data"))
+        alert.addButton(withTitle: L("button.cancel", "Cancel")).keyEquivalent = "\u{1b}"
+        alert.addButton(withTitle: L("uninstall.deleteData", "Uninstall and Delete Data"))
         NSApp.activate(ignoringOtherApps: true)
         let choice = alert.runModal()
         if choice == .alertSecondButtonReturn { return }
@@ -419,7 +427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state = .uninstalling
         // Off the main thread, so the menu says what is happening while it does.
         DispatchQueue.global().async {
-            let removed = asAdministrator(script, prompt: "Stuga needs your password to uninstall.") != nil
+            let removed = asAdministrator(script, prompt: L("prompt.uninstall", "Stuga needs your password to uninstall.")) != nil
             DispatchQueue.main.async {
                 if removed { return NSApp.terminate(nil) }
                 self.state = before

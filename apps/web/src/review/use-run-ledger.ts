@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Dispatch } from "react";
 import { getAlias } from "../lib/http/client";
+import { t } from "../i18n/i18n";
+import { runAgentLabel } from "../state/identity";
 import {
   emptyLedger,
   itemKey,
@@ -51,18 +53,21 @@ export interface LedgerApi<R> {
 }
 
 function blockedMessage(n: number): string {
-  return n === 1
-    ? "That change builds on an earlier one in this run — accept that first (or use Accept all)."
-    : `${n} of those changes build on earlier ones in this run — accept those first (or use Accept all).`;
+  return t("review.notice.blocked", { count: n });
 }
 
 function decidedMessage(decision: Decision, n: number, agent: string): string {
-  return `${decision === "accept" ? "Accepted" : "Rejected"} ${n} change${n === 1 ? "" : "s"} from ${agent}.`;
+  return decision === "accept"
+    ? t("review.notice.accepted", { count: n, agent })
+    : t("review.notice.rejected", { count: n, agent });
 }
 
 function errorMessage(e: unknown, decision: Decision): string {
   const detail = e instanceof Error && e.message ? e.message : "";
-  return detail ? `Couldn’t ${decision} that change: ${detail}` : `Couldn’t ${decision} that change.`;
+  if (decision === "accept") {
+    return detail ? t("review.notice.acceptFailedDetail", { detail }) : t("review.notice.acceptFailed");
+  }
+  return detail ? t("review.notice.rejectFailedDetail", { detail }) : t("review.notice.rejectFailed");
 }
 
 function withKeys(set: ReadonlySet<string>, keys: string[], add: boolean): ReadonlySet<string> {
@@ -135,7 +140,7 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
       .catch((e: { status?: number }) => {
         // Without access to the ledger the item itself still works, so that stays quiet.
         if (cancelled || e?.status === 403 || e?.status === 404) return;
-        notify("error", "Couldn’t load agent changes for this item. Reload to try again.");
+        notify("error", t("review.notice.ledgerFailed"));
       });
     return () => {
       cancelled = true;
@@ -161,7 +166,7 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
         if (res.conflicts > 0) notify("conflict", hooks.current.conflictMessage(res.conflicts));
         if (res.blocked > 0) notify("blocked", blockedMessage(res.blocked));
         if (res.deferred) {
-          notify("error", "Some proposals couldn’t be read just now — they stay pending; try again shortly.");
+          notify("error", t("review.notice.deferred"));
         }
         hooks.current.onDecided?.(res, runId, decision, notify);
         // A rejection with a note goes to the agent at once, so only a plain decision offers Undo.
@@ -171,7 +176,7 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
           if (done.length > 0) {
             const ids = done.map((i) => i.id);
             hooks.current.onUndoable?.(runId, ids, decision);
-            notify("decided", decidedMessage(decision, done.length, res.run.agent), runId, ids);
+            notify("decided", decidedMessage(decision, done.length, runAgentLabel(res.run)), runId, ids);
           }
         }
         return res.run;

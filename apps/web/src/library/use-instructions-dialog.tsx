@@ -1,6 +1,7 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { BotMessageSquare } from "lucide-react";
 import { InstructionsDialog, type InstructionsTarget } from "./InstructionsDialog";
+import { t } from "../i18n/i18n";
 
 /**
  * "Instructions for agents…" for any menu: `item` is the menu entry for one
@@ -16,7 +17,7 @@ export function useInstructionsDialog(): {
 
   const item = useCallback(
     (next: InstructionsTarget) => ({
-      label: "Instructions for agents…",
+      label: t("library.instructions.menuItem"),
       icon: <BotMessageSquare size={15} />,
       onClick: () => {
         setTarget(next);

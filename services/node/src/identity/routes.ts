@@ -43,6 +43,7 @@ import {
 } from "@stuga/protocol/domain/username";
 import { hostLabel } from "@stuga/protocol/domain/node-name";
 import { SEARCH_LANGUAGES, parseSearchLanguages } from "@stuga/protocol/domain/search-languages";
+import { negotiateUiLanguage, parseAcceptLanguage } from "@stuga/protocol/domain/ui-languages";
 import type { IdentityProviderSettings } from "../config/settings/node.js";
 import type { RateLimiter } from "../platform/rate-limit.js";
 import { arrivalOf, clientBucket, servedOrigin, tokenArrival } from "../http/arrival.js";
@@ -407,6 +408,9 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
   ): Promise<SignedIn | null> {
     const tokens = await issueTokens(req, account, signedInWith, opts.displayName, requires, opts.passkeyId);
     if (!tokens) return null;
+    const asked = parseAcceptLanguage(req.headers.get("accept-language"));
+    // Only a hint for what the node sends outside the app; a sign-in never waits on or fails over it.
+    if (asked.length > 0) void db.noteDetectedUiLanguage(account.alias, negotiateUiLanguage(asked)).catch(() => {});
     const cookie = await rememberBrowser(req, account, opts);
     // Asked of a person who signed in with a password at the remote address, never after the provider.
     const offerable = arrivalOf(req) === "remote" && OFFERED_AFTER.has(signedInWith) && !opts.noOffer;

@@ -4,8 +4,9 @@
  * ledger under the panel identity, where the database's own setting decides, as
  * for any agent, whether they wait for the person or apply at once.
  */
-import { type AiConfig, failureReason, type TableToolRunner, runTableAgentTurn } from "@stuga/ai";
+import { type AiConfig, type TableToolRunner, runTableAgentTurn } from "@stuga/ai";
 import { type DocRow, insertAiUsage, touchDoc } from "@stuga/db";
+import type { TableAiActivity, TableAiDone, TableAiError } from "@stuga/protocol/api/ai-turn";
 import { selectOnlyViolation } from "@stuga/protocol/databases/sql-guard";
 import type { DatabaseRunSummary } from "@stuga/protocol/databases/types";
 import { ALL_DOCUMENTS_SCOPE } from "@stuga/protocol/wire/doc-socket";
@@ -168,19 +169,7 @@ export async function databaseCoauthor({ ctx, doc, docId, writeRefusal, body }: 
         },
         runner,
         (text) => send("token", { text }),
-        (activity) => {
-          const label =
-            activity.kind === "reading"
-              ? "Reading the schema…"
-              : activity.kind === "querying"
-                ? "Querying the table…"
-                : activity.kind === "searching"
-                  ? `Searching for “${activity.query}”…`
-                  : activity.kind === "proposing"
-                    ? "Proposing changes…"
-                    : "Thinking…";
-          send("status", { label });
-        },
+        (activity) => send("status", activity satisfies TableAiActivity),
       );
       if (result.failure) console.warn("table assistant model call failed", { workspaceId: ctx.workspaceId, docId: doc.doc_id, ...result.failure });
       if (result.modelId) {
@@ -202,7 +191,7 @@ export async function databaseCoauthor({ ctx, doc, docId, writeRefusal, body }: 
 
       // A failed turn that staged ops still reports them: they are parked awaiting review, or applied.
       if (result.stopReason === "error" && result.staged === 0 && result.applied === 0) {
-        send("error", { message: failureReason(result.failure) ?? "the AI turn failed" });
+        send("error", { message: "the AI turn failed", failure: result.failure?.kind ?? null } satisfies TableAiError);
         return;
       }
       send("done", {
@@ -212,16 +201,11 @@ export async function databaseCoauthor({ ctx, doc, docId, writeRefusal, body }: 
         citations: result.citations,
         notice:
           result.stopReason === "max_rounds"
-            ? `Stopped after ${result.rounds} rounds of work. Ask me to continue if there's more to do.`
+            ? { code: "max_rounds", rounds: result.rounds }
             : result.stopReason === "error"
-              ? [
-                  `The turn ended early, but the changes above ${result.staged > 0 ? "are staged for review" : "were applied"}.`,
-                  failureReason(result.failure),
-                ]
-                  .filter(Boolean)
-                  .join(" ")
-              : undefined,
-      });
+              ? { code: "ended_early", kept: result.staged > 0 ? "staged" : "applied", failure: result.failure?.kind ?? null }
+              : null,
+      } satisfies TableAiDone);
     } catch (e) {
       await insertAiUsage(ctx.sql, {
         alias: ctx.alias,
@@ -231,7 +215,7 @@ export async function databaseCoauthor({ ctx, doc, docId, writeRefusal, body }: 
         model: "",
         status: "error",
       }).catch(() => {});
-      send("error", { message: e instanceof Error ? e.message : "the AI turn failed" });
+      send("error", { message: e instanceof Error ? e.message : "the AI turn failed", failure: null } satisfies TableAiError);
     }
   });
 }

@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import type { CoauthorActivity, CoauthorError } from "@stuga/protocol/api/ai-turn";
 import type { AiEditsPayload, AiRequest } from "@stuga/protocol/wire/doc-socket";
 import type { StugaProvider } from "../sync/stuga-provider";
 import { AiCoauthorProvider, useAiCoauthor } from "./ai-coauthor-context";
@@ -14,7 +15,8 @@ vi.mock("../editor/editor-context", () => ({ useSharedEditor: () => ({ editor: {
 
 interface Handlers {
   onChunk: (c: string) => void;
-  onDone: (e?: string) => void;
+  onStatus: (a: CoauthorActivity) => void;
+  onDone: (e?: CoauthorError) => void;
   onEdits: (p: AiEditsPayload) => void;
 }
 
@@ -40,7 +42,7 @@ function Probe() {
   return null;
 }
 
-const receipt = (over: Partial<AiEditsPayload> = {}): AiEditsPayload => ({ staged: 1, applied: 0, run_id: "run_a", cross_docs: [], error: null, notice: null, ...over });
+const receipt = (over: Partial<AiEditsPayload> = {}): AiEditsPayload => ({ staged: 1, applied: 0, run_id: "run_a", cross_docs: [], error: null, notices: [], ...over });
 
 /** The turn in flight ends: "done", then its receipt, as the provider delivers them. */
 async function endTurn(over: Partial<AiEditsPayload> = {}) {
@@ -99,6 +101,17 @@ describe("Reject and revise", () => {
     expect(ctx.queuedRevisions).toBe(0);
   });
 
+  it("shows the person’s notes in the transcript and sends the model its English prompt", async () => {
+    await act(async () => ctx.revise("Shorter.", { runId: "run_a", feedbackId: "fb_1" }));
+    const turn = ctx.turns.at(-2)!;
+    expect(turn.shown).toBe("Revise the rejected edits as my note says:\nShorter.");
+    expect(turn.text).toBe(sent[0]!.prompt);
+    await endTurn();
+    await act(async () => ctx.send("Insert the attached image.", ""));
+    expect(ctx.turns.at(-2)!.shown).toBe("");
+    expect(sent[1]!.history[0]!.content).toBe(sent[0]!.prompt);
+  });
+
   it("queues behind a turn whose prose is done but whose receipt hasn't arrived", async () => {
     await act(async () => ctx.send("Tighten the intro."));
     await act(async () => handlers!.onDone());
@@ -114,7 +127,8 @@ describe("Reject and revise", () => {
     await act(async () => ctx.revise("Shorter.", { runId: "run_a", feedbackId: "fb_1" }));
     await act(async () => ctx.stop());
     expect(cancelled).toBe(1);
-    await endTurn({ notice: "Stopped." });
+    await endTurn({ notices: [{ code: "stopped", kept: "staged" }] });
+    expect(ctx.turns.at(-1)!.notice).toBe("Stopped. The changes it had already made are staged for review.");
     expect(sent).toHaveLength(1);
     expect(ctx.revisionPaused).toBe(true);
 
@@ -133,11 +147,30 @@ describe("Reject and revise", () => {
   it("pauses after a failed turn, and Cancel drops the queue", async () => {
     await act(async () => ctx.send("Tighten the intro."));
     await act(async () => ctx.revise("Shorter.", { runId: "run_a", feedbackId: "fb_1" }));
-    await endTurn({ staged: 0, run_id: null, error: "The AI turn failed." });
+    await endTurn({ staged: 0, run_id: null, error: { code: "failed", failure: "rate_limit" } });
+    expect(ctx.turns.at(-1)!.proposeError).toBe("The AI provider is limiting requests. Try again in a minute.");
     expect(ctx.revisionPaused).toBe(true);
     await act(async () => ctx.cancelRevisions());
     expect(ctx.queuedRevisions).toBe(0);
     expect(ctx.revisionPaused).toBe(false);
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe("what the turn reports", () => {
+  it("words the activity and every notice of the receipt", async () => {
+    await act(async () => ctx.send("Add the chart."));
+    await act(async () => handlers!.onStatus({ kind: "searching", query: "Q3 revenue" }));
+    expect(ctx.turns.at(-1)!.status).toBe("Searching for “Q3 revenue”…");
+
+    await endTurn({
+      notices: [
+        { code: "max_rounds", rounds: 1 },
+        { code: "image_not_downloaded", url: "https://e.test/x.png", reason: "HTTP 404" },
+      ],
+    });
+    expect(ctx.turns.at(-1)!.notice).toBe(
+      "Stopped after 1 round of work. Ask me to continue if there’s more to do. Couldn’t download https://e.test/x.png (HTTP 404), so its link was left as-is.",
+    );
   });
 });

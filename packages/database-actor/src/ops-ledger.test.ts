@@ -4,6 +4,8 @@ import {
   DATABASE_OP_INLINE_MAX_BYTES,
   DATABASE_REVERT_MAX_ROWS,
 } from "@stuga/protocol/databases/limits";
+import type { DatabaseOpDetail } from "@stuga/protocol/databases/types";
+import { describeOp } from "./ledger/op-detail.js";
 import { AGENT, DB_ID, HUMAN, blobKeys, clearBlobs, colId, doFetch, doJson, hasBlob, initStarter, makeActor } from "../test/harness.js";
 
 type Op = {
@@ -55,6 +57,25 @@ describe("what gets ledgered", () => {
       revertible: true,
     });
     expect(after[0]!.op_id.startsWith("op_")).toBe(true);
+  });
+
+  it("carries each op's detail as data beside its English summary, a revert the detail it undid", async () => {
+    const { actor } = makeActor();
+    const starter = await initStarter(actor);
+    await doJson(actor, "/rows/insert", { table_id: starter.table_id, rows: [{ Name: "a" }, { Name: "b" }], actor: AGENT });
+    const [insert] = await ops(actor);
+    await doJson(actor, "/ops/revert", { op_id: insert!.op_id, actor: HUMAN });
+    await doJson(actor, "/tables/rename", { table_id: starter.table_id, display: "Projects", actor: HUMAN });
+
+    const listed = (await ops(actor)) as Array<Op & { detail: DatabaseOpDetail | null }>;
+    const insertDetail = { kind: "rows.insert", table: "Table 1", rows: 2, imported: false };
+    expect(listed.map((o) => [o.summary, o.detail])).toEqual([
+      ['Renamed table "Table 1" to "Projects"', { kind: "tables.rename", table: "Table 1", to: "Projects" }],
+      ['Reverted: Inserted 2 rows into "Table 1"', { kind: "revert", of: insertDetail }],
+      ['Inserted 2 rows into "Table 1"', insertDetail],
+      [expect.stringMatching(/^Created table "Table 1" with \d+ columns$/), expect.objectContaining({ kind: "tables.create", table: "Table 1" })],
+    ]);
+    for (const o of listed) if (o.detail && o.detail.kind !== "revert") expect(describeOp(o.detail)).toBe(o.summary);
   });
 
   it("records no op when the mutation fails mid-transaction", async () => {

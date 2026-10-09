@@ -25,6 +25,9 @@ import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Link } from "@astryxdesign/core/Link";
 import type { SearchStrictness } from "@stuga/protocol/domain/search-strictness";
 import { NodeSettings as NodeApi, type AiProbe, type NodeAiSettings } from "../../../api";
+import { t } from "../../../i18n/i18n";
+import { tRich } from "../../../i18n/rich";
+import { presentServerMessage } from "../../../lib/http/server-messages";
 import { invalidateModelOptions } from "../../../state/model-options";
 import {
   HALF_COPY,
@@ -59,6 +62,10 @@ import { ConnectForm, type Connected } from "./ConnectForm";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 import { StoredSecret } from "./StoredSecret";
 
+/** The badge for a stored key: its fingerprint, or that one is on file. */
+const keyOnFile = (fingerprint: string | null | undefined) =>
+  fingerprint ? t("node.ai.keySet", { fingerprint }) : t("node.ai.keySetOnFile");
+
 type ProbeRow = { ok: boolean; model?: string; latency_ms?: number; dims?: number; message?: string; skipped?: boolean };
 
 /** While the node measures its embedding model, how often Settings follows along. */
@@ -68,10 +75,22 @@ const CALIBRATION_POLL_MS = 2000;
 function ProbeBanner({ probe, labels, level }: { probe: AiProbe; labels: Record<string, string>; level: SearchStrictness }) {
   const line = (label: string, r: ProbeRow) =>
     r.ok
-      ? `${label}: ok${r.model ? ` · ${r.model}` : ""}${r.latency_ms ? ` · ${r.latency_ms}ms` : ""}${r.dims ? ` · ${r.dims} dimensions` : ""}`
-      : `${label}: ${r.message ?? "failed"}`;
+      ? [
+          t("node.ai.probe.ok", { service: label }),
+          r.model,
+          r.latency_ms ? t("node.ai.probe.latency", { ms: r.latency_ms }) : null,
+          r.dims ? t("node.ai.probe.dimensions", { count: r.dims }) : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : r.message
+        ? t("node.ai.probe.failedWith", { service: label, message: presentServerMessage(r.message) })
+        : t("node.ai.probe.failed", { service: label });
   // A model measured before shows where the chosen level sits for it.
-  const cutoff = probe.embed.cutoffs && level !== "off" ? ` · ${STRICTNESS_COPY[level].label} ${probe.embed.cutoffs[level].toFixed(2)}` : "";
+  const cutoff =
+    probe.embed.cutoffs && level !== "off"
+      ? ` · ${t("node.ai.probe.cutoff", { level: STRICTNESS_COPY[level].label, distance: probe.embed.cutoffs[level] })}`
+      : "";
   // A skipped row made no request, so it says nothing about the service.
   const rows = [
     ...probe.chat.filter((r) => !r.skipped).map((r) => line(labels[r.id] ?? r.id, r)),
@@ -82,7 +101,7 @@ function ProbeBanner({ probe, labels, level }: { probe: AiProbe; labels: Record<
   return (
     <Banner
       status={probe.ok ? "success" : "error"}
-      title={probe.ok ? "Answered" : "Did not answer as expected"}
+      title={probe.ok ? t("node.ai.probe.answered") : t("node.ai.probe.unexpected")}
       description={
         <VStack gap={1}>
           {rows.map((r, i) => (
@@ -118,7 +137,7 @@ function NotSetUp({ note, onSetUp }: { note: string; onSetUp: () => void }) {
       <Text type="supporting" color="secondary">
         {note}
       </Text>
-      <Button label="Set up" variant="secondary" size="sm" onClick={onSetUp} />
+      <Button label={t("node.ai.setUp")} variant="secondary" size="sm" onClick={onSetUp} />
     </HStack>
   );
 }
@@ -194,7 +213,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   useEffect(() => {
     if (!measuring) return;
     let alive = true;
-    const t = setInterval(() => {
+    const timer = setInterval(() => {
       const asked = savedAt.current;
       void NodeApi.ai()
         .then((next) => alive && asked === savedAt.current && onSaved(next))
@@ -202,7 +221,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
     }, CALIBRATION_POLL_MS);
     return () => {
       alive = false;
-      clearInterval(t);
+      clearInterval(timer);
     };
   }, [measuring, onSaved]);
 
@@ -249,7 +268,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       // With no key typed, the node uses the saved provider's own.
       const r = await NodeApi.discoverModels("chat", ep.provider, ep.baseUrl || baseUrls[ep.provider] || "", ep.key || undefined);
       setFound((f) => ({ ...f, [ep.id]: r.models }));
-      if (r.models.length === 0) status.setNotice({ status: "warning", message: "That service lists no models. Type the model id instead." });
+      if (r.models.length === 0) status.setNotice({ status: "warning", message: t("node.ai.noModelsListed") });
     } catch (e) {
       status.fail(e);
     } finally {
@@ -315,7 +334,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
     try {
       const r = await NodeApi.discoverModels("embed", form.embedProvider, form.embedBaseUrl, form.embedKey);
       setFoundEmbed(r.models);
-      if (r.models.length === 0) status.setNotice({ status: "warning", message: "That service lists no embedding models. Type the model id instead." });
+      if (r.models.length === 0) status.setNotice({ status: "warning", message: t("node.ai.noEmbeddingModelsListed") });
     } catch (e) {
       status.fail(e);
     } finally {
@@ -340,7 +359,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       setProbe(res.probe);
       setEditingSearch(false);
       if (res.reembed?.armed) {
-        status.setNotice({ status: "success", message: `Re-indexing with ${res.settings.embed.model}. Search matches words until it finishes.` });
+        status.setNotice({ status: "success", message: t("node.ai.reindexing", { model: res.settings.embed.model ?? "" }) });
       }
     });
 
@@ -390,7 +409,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
     });
 
   /** What reranks passages while no reranker is set up. */
-  const rerankFallback = settings.chat.running ? "Built-in AI reranks passages." : "Passages keep their search order.";
+  const chatReranks = settings.chat.running;
   const rerankLabel = (baseUrl: string) => RERANK_PRESETS.find((p) => p.value === rerankPresetFor(baseUrl) && p.value !== "custom")?.label ?? baseUrl;
 
   // ---- the page ----
@@ -402,9 +421,14 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
     <>
       {/* Someone with their own subscription looks here first, and needs nothing on this page. */}
       <Text type="supporting" color="secondary">
-        Using Claude, Codex or another AI on your own subscription? Connect it in{" "}
-        {/* In-app navigation: a full page load would drop the in-memory session. */}
-        <Link type="supporting" onClick={() => nav("/settings/agents")}>Your AI agents</Link>.
+        {tRich("node.ai.ownSubscription", {
+          // In-app navigation: a full page load would drop the in-memory session.
+          link: (chunks) => (
+            <Link type="supporting" onClick={() => nav("/settings/agents")}>
+              {chunks}
+            </Link>
+          ),
+        })}
       </Text>
       <SectionStatusBanners status={status} />
       {probe && <ProbeBanner probe={probe} labels={labels} level={level} />}
@@ -425,7 +449,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
               <ConnectForm half="chat" settings={settings} onConnected={connected} onCancel={() => setAdding(false)} />
             </Card>
           ) : (
-            <NotSetUp note="Not set up." onSetUp={() => setAdding(true)} />
+            <NotSetUp note={t("node.ai.notSetUp")} onSetUp={() => setAdding(true)} />
           ))}
 
         {providers.map((ep) =>
@@ -433,7 +457,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
             <Card key={ep.id} variant="muted">
               <VStack gap={3}>
                 <Selector
-                  label="Service"
+                  label={t("node.ai.service")}
                   options={presets.map((o) => ({ value: o.value, label: o.label }))}
                   value={presetFor(presets, draft.provider, draft.baseUrl)}
                   onChange={(v: string) => {
@@ -447,18 +471,18 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                 {asksKey(draft.provider, draft.baseUrl, ep.api_key_set) && (
                   <VStack gap={1}>
                     <TextInput
-                      label="API key"
+                      label={t("node.ai.apiKey")}
                       type="password"
                       value={draft.key}
-                      placeholder={ep.api_key_set ? "Leave blank to keep the current key" : "Not set"}
+                      placeholder={ep.api_key_set ? t("node.ai.keepKey") : t("node.ai.keyNotSet")}
                       onChange={(v: string) => setDraft({ ...draft, key: v })}
                     />
                     <StoredSecret
-                      onFile={ep.api_key_set ? `Key set · ${ep.api_key_fingerprint ?? "on file"}` : null}
+                      onFile={ep.api_key_set ? keyOnFile(ep.api_key_fingerprint) : null}
                       removed={draftKeyCleared}
                       onRemove={() => setDraftKeyCleared(true)}
-                      removeLabel="Remove key"
-                      removedNote="The key will be removed when you save."
+                      removeLabel={t("node.ai.removeKey")}
+                      removedNote={t("node.ai.keyRemovedOnSave")}
                     />
                   </VStack>
                 )}
@@ -466,7 +490,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                   <StackItem size="fill">
                     {found[ep.id]?.length ? (
                       <MultiSelector
-                        label="Models offered"
+                        label={t("node.ai.modelsOffered")}
                         width="100%"
                         options={modelOptions(found[ep.id]!, modelIds(draft.models))}
                         value={modelIds(draft.models)}
@@ -475,26 +499,26 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                       />
                     ) : (
                       <TextInput
-                        label="Models offered"
+                        label={t("node.ai.modelsOffered")}
                         width="100%"
                         value={draft.models}
-                        placeholder="gpt-4.1=GPT-4.1, o3-mini=o3 mini"
+                        placeholder="gpt-4.1=GPT-4.1, o3-mini=o3 mini" // i18n-exempt: model ids, the format typed
                         onChange={(v: string) => setDraft({ ...draft, models: v })}
                       />
                     )}
                   </StackItem>
-                  <Button label="Fetch models" variant="secondary" size="sm" isLoading={fetching === ep.id} onClick={() => void discover(draft)} />
+                  <Button label={t("node.ai.fetchModels")} variant="secondary" size="sm" isLoading={fetching === ep.id} onClick={() => void discover(draft)} />
                 </HStack>
-                <Collapsible trigger="Advanced" defaultIsOpen={presetFor(presets, draft.provider, draft.baseUrl) === "custom"}>
+                <Collapsible trigger={t("node.ai.advanced")} defaultIsOpen={presetFor(presets, draft.provider, draft.baseUrl) === "custom"}>
                   <VStack gap={3}>
-                    <Selector label="API protocol" options={PROVIDERS} value={draft.provider} onChange={(v: string) => setProviderDraft({ ...draft, provider: v }, ep.api_key_set)} />
-                    <TextInput label="Base URL" value={draft.baseUrl} placeholder={baseUrls[draft.provider]} onChange={(v: string) => setProviderDraft({ ...draft, baseUrl: v }, ep.api_key_set)} />
+                    <Selector label={t("node.ai.apiProtocol")} options={PROVIDERS} value={draft.provider} onChange={(v: string) => setProviderDraft({ ...draft, provider: v }, ep.api_key_set)} />
+                    <TextInput label={t("node.ai.baseUrl")} value={draft.baseUrl} placeholder={baseUrls[draft.provider]} onChange={(v: string) => setProviderDraft({ ...draft, baseUrl: v }, ep.api_key_set)} />
                   </VStack>
                 </Collapsible>
                 <HStack gap={2}>
-                  <Button label="Save" variant="primary" size="sm" isLoading={busy === "save-provider"} onClick={() => void saveProvider()} />
-                  <Button label="Test" variant="secondary" size="sm" isLoading={busy === "test-provider"} onClick={() => void testProvider()} />
-                  <Button label="Cancel" variant="ghost" size="sm" onClick={() => setDraft(null)} />
+                  <Button label={t("common.save")} variant="primary" size="sm" isLoading={busy === "save-provider"} onClick={() => void saveProvider()} />
+                  <Button label={t("node.ai.test")} variant="secondary" size="sm" isLoading={busy === "test-provider"} onClick={() => void testProvider()} />
+                  <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={() => setDraft(null)} />
                 </HStack>
               </VStack>
             </Card>
@@ -502,11 +526,11 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
             <ServiceRow
               key={ep.id}
               title={labels[ep.id] ?? ep.base_url}
-              detail={[ep.models.map((m) => m.name).join(", ") || "No models offered", ep.api_key_stale ? "key file missing" : null].filter(Boolean).join(" · ")}
+              detail={[ep.models.map((m) => m.name).join(", ") || t("node.ai.noModelsOffered"), ep.api_key_stale ? t("node.ai.keyFileMissing") : null].filter(Boolean).join(" · ")}
             >
-              <Button label="Edit" variant="ghost" size="sm" onClick={() => edit(ep.id)} />
+              <Button label={t("node.ai.edit")} variant="ghost" size="sm" onClick={() => edit(ep.id)} />
               <Button
-                label="Remove"
+                label={t("common.remove")}
                 variant="ghost"
                 size="sm"
                 isLoading={busy === "remove-provider" && removingProvider === ep.id}
@@ -524,7 +548,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
           ) : (
             <HStack>
               <Button
-                label="Connect another provider"
+                label={t("node.ai.connectAnother")}
                 variant="secondary"
                 size="sm"
                 onClick={() => {
@@ -537,7 +561,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
 
         {offered.length > 1 && (
           <Selector
-            label="Default model"
+            label={t("node.ai.defaultModel")}
             options={modelOptions(offered, settings.chat.default_model)}
             value={settings.chat.default_model}
             hasSearch
@@ -571,7 +595,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
               <ConnectForm half="search" settings={settings} onConnected={connected} onCancel={() => setSettingUpSearch(false)} />
             </Card>
           ) : (
-            <NotSetUp note="Not set up: search matches words only." onSetUp={() => setSettingUpSearch(true)} />
+            <NotSetUp note={t("node.ai.searchNotSetUp")} onSetUp={() => setSettingUpSearch(true)} />
           ))}
 
         {searchSetUp && banner && (
@@ -579,17 +603,17 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
             status={banner.status}
             title={banner.title}
             description={banner.description}
-            endContent={banner.retry ? <Button label="Measure again" variant="secondary" size="sm" isLoading={busy === "measure"} onClick={() => void measureAgain()} /> : undefined}
+            endContent={banner.retry ? <Button label={t("node.ai.measureAgain")} variant="secondary" size="sm" isLoading={busy === "measure"} onClick={() => void measureAgain()} /> : undefined}
           />
         )}
 
         {searchSetUp && !editingSearch && (
           <ServiceRow
             title={endpointLabel(presets, settings.embed.provider, settings.embed.base_url)}
-            detail={[settings.embed.model, searchServiceDetail(settings), settings.embed.api_key_stale ? "key file missing" : null].filter(Boolean).join(" · ")}
+            detail={[settings.embed.model, searchServiceDetail(settings), settings.embed.api_key_stale ? t("node.ai.keyFileMissing") : null].filter(Boolean).join(" · ")}
           >
-            <Button label="Edit" variant="ghost" size="sm" onClick={editSearch} />
-            <Button label="Remove" variant="ghost" size="sm" isLoading={busy === "remove-search"} onClick={() => setConfirm({ kind: "remove-search" })} />
+            <Button label={t("node.ai.edit")} variant="ghost" size="sm" onClick={editSearch} />
+            <Button label={t("common.remove")} variant="ghost" size="sm" isLoading={busy === "remove-search"} onClick={() => setConfirm({ kind: "remove-search" })} />
           </ServiceRow>
         )}
 
@@ -597,7 +621,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
           <Card variant="muted">
             <VStack gap={3}>
               <Selector
-                label="Service"
+                label={t("node.ai.service")}
                 options={presets.filter((o) => o.embeddings).map((o) => ({ value: o.value, label: o.label }))}
                 value={presetFor(presets, form.embedProvider, form.embedBaseUrl)}
                 onChange={(v: string) => {
@@ -610,18 +634,18 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
               {asksKey(form.embedProvider, form.embedBaseUrl, settings.embed.api_key_set) && (
                 <VStack gap={1}>
                   <TextInput
-                    label="API key"
+                    label={t("node.ai.apiKey")}
                     type="password"
                     value={form.embedKey}
-                    placeholder={settings.embed.api_key_set ? "Leave blank to keep the current key" : "Not set"}
+                    placeholder={settings.embed.api_key_set ? t("node.ai.keepKey") : t("node.ai.keyNotSet")}
                     onChange={(v: string) => setForm({ ...form, embedKey: v })}
                   />
                   <StoredSecret
-                    onFile={settings.embed.api_key_set ? `Key set · ${settings.embed.api_key_fingerprint ?? "on file"}` : null}
+                    onFile={settings.embed.api_key_set ? keyOnFile(settings.embed.api_key_fingerprint) : null}
                     removed={embedKeyCleared}
                     onRemove={() => setEmbedKeyCleared(true)}
-                    removeLabel="Remove key"
-                    removedNote="The key will be removed when you save."
+                    removeLabel={t("node.ai.removeKey")}
+                    removedNote={t("node.ai.keyRemovedOnSave")}
                   />
                 </VStack>
               )}
@@ -629,24 +653,24 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                 <StackItem size="fill">
                   {foundEmbed.length > 0 ? (
                     <Selector
-                      label="Model"
+                      label={t("node.ai.model")}
                       width="100%"
-                      placeholder="Choose a model"
+                      placeholder={t("node.ai.chooseModel")}
                       options={modelOptions(foundEmbed, form.embedModel)}
                       value={form.embedModel}
                       hasSearch
                       onChange={(v: string) => setForm({ ...form, embedModel: v })}
                     />
                   ) : (
-                    <TextInput label="Model" width="100%" value={form.embedModel} onChange={(v: string) => setForm({ ...form, embedModel: v })} />
+                    <TextInput label={t("node.ai.model")} width="100%" value={form.embedModel} onChange={(v: string) => setForm({ ...form, embedModel: v })} />
                   )}
                 </StackItem>
-                <Button label="Fetch models" variant="secondary" size="sm" isLoading={fetching === "embed"} onClick={() => void discoverEmbed()} />
+                <Button label={t("node.ai.fetchModels")} variant="secondary" size="sm" isLoading={fetching === "embed"} onClick={() => void discoverEmbed()} />
               </HStack>
               <VStack gap={1}>
-                <Text type="label">Search strictness</Text>
+                <Text type="label">{t("node.ai.strictness.label")}</Text>
                 <SegmentedControl
-                  label="Search strictness"
+                  label={t("node.ai.strictness.label")}
                   size="sm"
                   layout="fill"
                   value={level}
@@ -670,7 +694,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                       <>
                         {" · "}
                         <Link type="supporting" onClick={() => void measureAgain()}>
-                          Measure again
+                          {t("node.ai.measureAgain")}
                         </Link>
                       </>
                     )}
@@ -682,27 +706,27 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                   </Text>
                 )}
               </VStack>
-              <Collapsible trigger="Advanced" defaultIsOpen={presetFor(presets, form.embedProvider, form.embedBaseUrl) === "custom"}>
+              <Collapsible trigger={t("node.ai.advanced")} defaultIsOpen={presetFor(presets, form.embedProvider, form.embedBaseUrl) === "custom"}>
                 <VStack gap={3}>
                   <Selector
-                    label="API protocol"
+                    label={t("node.ai.apiProtocol")}
                     options={PROVIDERS.filter((o) => o.value !== "anthropic")}
                     value={form.embedProvider}
                     onChange={(v: string) => setSearchForm({ ...form, embedProvider: v })}
                   />
-                  <TextInput label="Base URL" value={form.embedBaseUrl} placeholder={baseUrls[form.embedProvider]} onChange={(v: string) => setSearchForm({ ...form, embedBaseUrl: v })} />
+                  <TextInput label={t("node.ai.baseUrl")} value={form.embedBaseUrl} placeholder={baseUrls[form.embedProvider]} onChange={(v: string) => setSearchForm({ ...form, embedBaseUrl: v })} />
                 </VStack>
               </Collapsible>
               <HStack gap={2}>
                 <Button
-                  label="Save"
+                  label={t("common.save")}
                   variant="primary"
                   size="sm"
                   isLoading={busy === "save-search"}
                   onClick={() => (embeddingChanged() ? setConfirm({ kind: "reembed" }) : void saveSearch())}
                 />
-                <Button label="Test" variant="secondary" size="sm" isLoading={busy === "test-search"} onClick={() => void testSearch()} />
-                <Button label="Cancel" variant="ghost" size="sm" onClick={() => setEditingSearch(false)} />
+                <Button label={t("node.ai.test")} variant="secondary" size="sm" isLoading={busy === "test-search"} onClick={() => void testSearch()} />
+                <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={() => setEditingSearch(false)} />
               </HStack>
             </VStack>
           </Card>
@@ -727,15 +751,15 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
           }
         />
 
-        {!rerankSetUp && !rerankDraft && <NotSetUp note={`Not set up: ${rerankFallback.toLowerCase()}`} onSetUp={editRerank} />}
+        {!rerankSetUp && !rerankDraft && <NotSetUp note={chatReranks ? t("node.ai.rerankNotSetUpChat") : t("node.ai.rerankNotSetUpOrder")} onSetUp={editRerank} />}
 
         {rerankSetUp && !rerankDraft && (
           <ServiceRow
             title={rerankLabel(settings.rerank.base_url)}
-            detail={[settings.rerank.model, settings.rerank.api_key_stale ? "key file missing" : null].filter(Boolean).join(" · ")}
+            detail={[settings.rerank.model, settings.rerank.api_key_stale ? t("node.ai.keyFileMissing") : null].filter(Boolean).join(" · ")}
           >
-            <Button label="Edit" variant="ghost" size="sm" onClick={editRerank} />
-            <Button label="Remove" variant="ghost" size="sm" isLoading={busy === "remove-rerank"} onClick={() => setConfirm({ kind: "remove-rerank" })} />
+            <Button label={t("node.ai.edit")} variant="ghost" size="sm" onClick={editRerank} />
+            <Button label={t("common.remove")} variant="ghost" size="sm" isLoading={busy === "remove-rerank"} onClick={() => setConfirm({ kind: "remove-rerank" })} />
           </ServiceRow>
         )}
 
@@ -743,7 +767,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
           <Card variant="muted">
             <VStack gap={3}>
               <Selector
-                label="Service"
+                label={t("node.ai.service")}
                 options={RERANK_PRESETS.map((o) => ({ value: o.value, label: o.label }))}
                 value={rerankPresetFor(rerankDraft.baseUrl)}
                 onChange={(v: string) => {
@@ -753,28 +777,28 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
               />
               <VStack gap={1}>
                 <TextInput
-                  label="API key"
+                  label={t("node.ai.apiKey")}
                   type="password"
                   value={rerankDraft.key}
-                  placeholder={settings.rerank.api_key_set ? "Leave blank to keep the current key" : "Not set"}
+                  placeholder={settings.rerank.api_key_set ? t("node.ai.keepKey") : t("node.ai.keyNotSet")}
                   onChange={(v: string) => setRerankDraft({ ...rerankDraft, key: v })}
                 />
                 <StoredSecret
-                  onFile={settings.rerank.api_key_set ? `Key set · ${settings.rerank.api_key_fingerprint ?? "on file"}` : null}
+                  onFile={settings.rerank.api_key_set ? keyOnFile(settings.rerank.api_key_fingerprint) : null}
                   removed={rerankKeyCleared}
                   onRemove={() => setRerankKeyCleared(true)}
-                  removeLabel="Remove key"
-                  removedNote="The key will be removed when you save."
+                  removeLabel={t("node.ai.removeKey")}
+                  removedNote={t("node.ai.keyRemovedOnSave")}
                 />
               </VStack>
-              <TextInput label="Model" value={rerankDraft.model} onChange={(v: string) => setRerankDraft({ ...rerankDraft, model: v })} />
-              <Collapsible trigger="Advanced" defaultIsOpen={rerankPresetFor(rerankDraft.baseUrl) === "custom"}>
-                <TextInput label="Base URL" value={rerankDraft.baseUrl} onChange={(v: string) => setRerankDraft({ ...rerankDraft, baseUrl: v })} />
+              <TextInput label={t("node.ai.model")} value={rerankDraft.model} onChange={(v: string) => setRerankDraft({ ...rerankDraft, model: v })} />
+              <Collapsible trigger={t("node.ai.advanced")} defaultIsOpen={rerankPresetFor(rerankDraft.baseUrl) === "custom"}>
+                <TextInput label={t("node.ai.baseUrl")} value={rerankDraft.baseUrl} onChange={(v: string) => setRerankDraft({ ...rerankDraft, baseUrl: v })} />
               </Collapsible>
               <HStack gap={2}>
-                <Button label="Save" variant="primary" size="sm" isLoading={busy === "save-rerank"} onClick={() => void saveRerank()} />
-                <Button label="Test" variant="secondary" size="sm" isLoading={busy === "test-rerank"} onClick={() => void testRerank()} />
-                <Button label="Cancel" variant="ghost" size="sm" onClick={() => setRerankDraft(null)} />
+                <Button label={t("common.save")} variant="primary" size="sm" isLoading={busy === "save-rerank"} onClick={() => void saveRerank()} />
+                <Button label={t("node.ai.test")} variant="secondary" size="sm" isLoading={busy === "test-rerank"} onClick={() => void testRerank()} />
+                <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={() => setRerankDraft(null)} />
               </HStack>
             </VStack>
           </Card>
@@ -783,10 +807,14 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
 
       <AlertDialog
         isOpen={removingProvider !== null}
-        title={`Remove ${removingProvider ? (labels[removingProvider] ?? "this provider") : "this provider"}?`}
-        description={providers.length === 1 ? "Built-in AI stops until you connect another provider." : "Its models leave every model picker."}
+        title={
+          removingProvider && labels[removingProvider]
+            ? t("node.ai.removeProviderNamed", { name: labels[removingProvider] })
+            : t("node.ai.removeProviderThis")
+        }
+        description={providers.length === 1 ? t("node.ai.removeLastProvider") : t("node.ai.removeProviderBody")}
         onOpenChange={(open) => !open && setConfirm(null)}
-        actionLabel="Remove"
+        actionLabel={t("common.remove")}
         onAction={() => {
           const id = removingProvider;
           setConfirm(null);
@@ -795,10 +823,10 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       />
       <AlertDialog
         isOpen={confirm?.kind === "remove-search"}
-        title="Remove embeddings?"
-        description="Search goes back to matching words, and its index is deleted."
+        title={t("node.ai.removeSearchTitle")}
+        description={t("node.ai.removeSearchBody")}
         onOpenChange={(open) => !open && setConfirm(null)}
-        actionLabel="Remove"
+        actionLabel={t("common.remove")}
         onAction={() => {
           setConfirm(null);
           void removeSearch();
@@ -806,10 +834,10 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       />
       <AlertDialog
         isOpen={confirm?.kind === "remove-rerank"}
-        title="Remove reranking?"
-        description={`Its key is deleted. ${rerankFallback}`}
+        title={t("node.ai.removeRerankTitle")}
+        description={chatReranks ? t("node.ai.removeRerankBodyChat") : t("node.ai.removeRerankBodyOrder")}
         onOpenChange={(open) => !open && setConfirm(null)}
-        actionLabel="Remove"
+        actionLabel={t("common.remove")}
         onAction={() => {
           setConfirm(null);
           void removeRerank();
@@ -817,10 +845,10 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       />
       <AlertDialog
         isOpen={confirm?.kind === "reembed"}
-        title="Re-index every document?"
-        description="Vectors from two models cannot be compared, so saving clears them and re-embeds every document. Search matches words until that finishes, and strictness is measured for the new model."
+        title={t("node.ai.reembedTitle")}
+        description={t("node.ai.reembedBody")}
         onOpenChange={(open) => !open && setConfirm(null)}
-        actionLabel="Save and re-index"
+        actionLabel={t("node.ai.reembedAction")}
         onAction={() => {
           setConfirm(null);
           void saveSearch();

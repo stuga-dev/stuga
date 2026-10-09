@@ -12,6 +12,7 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
 import { useToast } from "@astryxdesign/core/Toast";
 import { Me } from "../api";
+import { t } from "../i18n/i18n";
 import { remoteOrigin } from "../lib/session/auth-config";
 import { describeError } from "../lib/session/errors";
 import { PasskeyCancelled, addPasskey } from "../lib/session/passkey";
@@ -46,7 +47,7 @@ export function PasskeyOffer() {
     try {
       const added = await withConfirmation(addPasskey);
       close();
-      toast({ body: `Passkey added: ${added.name}.`, type: "info" });
+      toast({ body: t("ui.passkeyOffer.added", { name: added.name }), type: "info" });
     } catch (err) {
       setError(err instanceof PasskeyCancelled ? err.message : describeError(err));
       setBusy(false);
@@ -61,11 +62,11 @@ export function PasskeyOffer() {
   return (
     <Dialog isOpen={open} onOpenChange={(next) => !next && notNow()} purpose="form" width={420}>
       <Layout
-        header={<DialogHeader title="Sign in faster next time" onOpenChange={(next) => !next && notNow()} />}
+        header={<DialogHeader title={t("ui.passkeyOffer.title")} onOpenChange={(next) => !next && notNow()} />}
         content={
           <LayoutContent>
             <Text type="supporting" color="secondary">
-              {`Add a passkey for ${host}. Your face, fingerprint or screen lock signs you in.`}
+              {t("ui.passkeyOffer.body", { host })}
             </Text>
             {error && <Banner status="error" title={error} />}
           </LayoutContent>
@@ -73,8 +74,8 @@ export function PasskeyOffer() {
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label="Not now" variant="ghost" onClick={notNow} isDisabled={busy} />
-              <Button label="Add passkey" variant="primary" onClick={() => void add()} isLoading={busy} />
+              <Button label={t("ui.passkeyOffer.notNow")} variant="ghost" onClick={notNow} isDisabled={busy} />
+              <Button label={t("ui.passkeyOffer.add")} variant="primary" onClick={() => void add()} isLoading={busy} />
             </HStack>
           </LayoutFooter>
         }

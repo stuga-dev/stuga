@@ -26,6 +26,8 @@ import { useKeepReadingPosition } from "../editor/use-keep-reading-position";
 import { useRefreshAfterIndexing } from "../document/use-refresh-after-indexing";
 import { Docs, type DocSummary } from "../api";
 import { getDisplayName } from "../lib/http/client";
+import { MAX_TABLE_COLS, MAX_TABLE_ROWS } from "@stuga/protocol/domain/limits";
+import { t } from "../i18n/i18n";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { readStored, writeStored } from "../lib/storage";
 import { DocStateChips } from "../library/DocStateChips";
@@ -71,7 +73,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
     }
     let cancelled = false;
     Docs.get(rowRef.database_id)
-      .then((d) => !cancelled && setCrumb({ database_id: d.doc_id, title: d.title || "Untitled" }))
+      .then((d) => !cancelled && setCrumb({ database_id: d.doc_id, title: d.title || t("common.untitled") }))
       // A database the reader cannot open gets no crumb; the page still opens.
       .catch(() => !cancelled && setCrumb(null));
     return () => {
@@ -99,7 +101,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
   // At 330 the strip still fits its four tabs beside New chat and close; narrower, the last tab scrolls out of sight.
   const [dockW, setDockW] = usePanelWidth("stuga_dock_w", 360, 330, 720);
   // The name collaborators see on this cursor: the display name, an email cut to its local part.
-  const rawName = getDisplayName() ?? "you";
+  const rawName = getDisplayName() ?? t("pages.doc.cursorFallback");
   const alias = rawName.includes("@") ? rawName.slice(0, rawName.indexOf("@")) : rawName;
   const keepReadingPosition = useKeepReadingPosition();
 
@@ -149,8 +151,11 @@ export function DocPage({ doc }: { doc: DocSummary }) {
         // A lock sets only `locked`, so unlocking restores editing without a reload.
         if (payload.kind === "locked") setLocked(true);
         // One refused update; the document stays editable. "epoch" is already reloading the page.
-        if (payload.kind === "table-cap" || payload.kind === "structural-rate") {
-          toast({ body: payload.message, type: "error" });
+        // The doc actor's sentence is English for agents; a person reads the same refusal from the catalog.
+        if (payload.kind === "table-cap") {
+          toast({ body: t("pages.doc.tableCap", { cols: MAX_TABLE_COLS, rows: MAX_TABLE_ROWS }), type: "error" });
+        } else if (payload.kind === "structural-rate") {
+          toast({ body: t("pages.doc.structuralRate"), type: "error" });
         }
       },
     });
@@ -177,20 +182,20 @@ export function DocPage({ doc }: { doc: DocSummary }) {
       <AgentRunsProvider provider={provider} docId={docId}>
       <div className="doc-page" data-show-citations={showCitations ? "true" : "false"} data-doc-width={width} style={{ ["--doc-width" as string]: WIDTHS[width], ["--doc-zoom" as string]: zoom === 100 ? undefined : String(zoom / 100) }}>
         <TopNav
-          label="Document"
+          label={t("common.document")}
           className="item-nav"
           startContent={
             <HStack gap={2} vAlign="center">
-              <button className="brand brand--link" onClick={() => nav("/")} title="All documents" aria-label="All documents">
+              <button className="brand brand--link" onClick={() => nav("/")} title={t("common.allDocuments")} aria-label={t("common.allDocuments")}>
                 <Brand />
               </button>
               {rowRef && crumb && crumb.database_id === rowRef.database_id && (
-                <button className="doc-crumb" onClick={() => nav(rowHref(rowRef))} title={`Back to ${crumb.title}`} aria-label={`Back to ${crumb.title}`}>
+                <button className="doc-crumb" onClick={() => nav(rowHref(rowRef))} title={t("pages.doc.backTo", { title: crumb.title })} aria-label={t("pages.doc.backTo", { title: crumb.title })}>
                   <Text type="body" color="secondary" maxLines={1}>{crumb.title}</Text>
                   <ChevronRight size={14} aria-hidden="true" />
                 </button>
               )}
-              <ItemTitle rename={rename} readOnly={editorReadOnly} label="Document title" />
+              <ItemTitle rename={rename} readOnly={editorReadOnly} label={t("pages.doc.titleLabel")} />
               <DocStateChips
                 locked={locked}
                 searchHidden={searchHidden}
@@ -206,8 +211,8 @@ export function DocPage({ doc }: { doc: DocSummary }) {
               {!isCompact && (
                 <>
                   <ToggleButton
-                    label="Outline"
-                    tooltip="Outline"
+                    label={t("pages.doc.outline")}
+                    tooltip={t("pages.doc.outline")}
                     isIconOnly
                     icon={<TableOfContents size={18} />}
                     size="sm"
@@ -224,7 +229,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
                   />
                 </>
               )}
-              <DockToggle isPressed={dock.state.visible} onToggle={dock.toggle} tooltip="Side panels — AI co-author, comments, versions, sources" />
+              <DockToggle isPressed={dock.state.visible} onToggle={dock.toggle} tooltip={t("pages.doc.dockTooltip")} />
               {!isCompact && <Divider orientation="vertical" />}
               <ItemOptionsMenu
                 doc={{ ...docMeta, locked, search_hidden: searchHidden, agent_mode: agentMode }}
@@ -239,7 +244,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
                   setAgentMode(next.agent_mode);
                 }}
               />
-              <Button label="Share" variant="secondary" icon={<Share2 size={16} />} isIconOnly={isCompact} onClick={() => setShowShare(true)} />
+              <Button label={t("common.share")} variant="secondary" icon={<Share2 size={16} />} isIconOnly={isCompact} onClick={() => setShowShare(true)} />
               <NotificationsBell />
               <AccountMenu />
             </HStack>
@@ -251,7 +256,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
           {showOutline && !isCompact && (
             <>
               <Outline width={outlineW} />
-              <ResizeHandle width={outlineW} onResize={setOutlineW} dir={1} label="Resize outline panel" />
+              <ResizeHandle width={outlineW} onResize={setOutlineW} dir={1} label={t("pages.doc.resizeOutline")} />
             </>
           )}
           <main className="doc-main">
@@ -259,7 +264,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
               <Editor provider={provider} alias={alias} label={rawName} docId={docId} readOnly={editorReadOnly} hasSynced={hasSynced} autoFocus={autoFocus} />
             ) : (
               <VStack gap={2} hAlign="center" style={{ paddingTop: "18vh" }}>
-                <Spinner label="Loading document…" />
+                <Spinner label={t("pages.doc.loading")} />
               </VStack>
             )}
           </main>
@@ -276,7 +281,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
           )}
         </div>
         {showShare && <ShareDialog docId={docId} onClose={() => setShowShare(false)} />}
-        {connStatus.phase === "revoked" && <div className="toast">You no longer have access to this document.</div>}
+        {connStatus.phase === "revoked" && <div className="toast">{t("pages.doc.revoked")}</div>}
       </div>
       </AgentRunsProvider>
       </AiCoauthorProvider>

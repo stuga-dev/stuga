@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { USERNAME_RULE } from "@stuga/protocol/domain/username";
+import { t } from "../../i18n/i18n";
 import { AuthError, describeError } from "./errors";
 
 describe("the sign-in refusals a remote address and its limits bring", () => {
@@ -13,9 +15,16 @@ describe("the sign-in refusals a remote address and its limits bring", () => {
     expect(describeError(new AuthError(503, "service unavailable"))).toBe("Stuga is busy. Try again in a few seconds.");
     // The serving gate's 503 says why, as it always did.
     expect(describeError(new AuthError(503, "unavailable", { detail: "Stuga is upgrading." }))).toBe("Stuga is upgrading.");
-    expect(describeError(new AuthError(403, "invite_local_only", { detail: "x" }))).toBe("This invite link works only on this node's network.");
+    expect(describeError(new AuthError(403, "invite_local_only", { detail: "x" }))).toBe("This invite link works only on this node’s network.");
+    // Not the invitation-only sentence every other 403 gets.
+    expect(describeError(new AuthError(403, "setup_not_remote", { detail: "x" }))).toBe(
+      "Set up this node from its own network, not its remote address.",
+    );
     const off = "Passwords work here only from this node's network. From anywhere else, use https://k7f3q2.mystuga.com.";
-    expect(describeError(new AuthError(403, "password_off_network", { detail: off }))).toBe(off);
+    // The node's sentence, read through the catalog: the same words, with the catalog's apostrophe.
+    expect(describeError(new AuthError(403, "password_off_network", { detail: off }))).toBe(
+      "Passwords work here only from this node’s network. From anywhere else, use https://k7f3q2.mystuga.com.",
+    );
     expect(describeError(new AuthError(403, "wrong_account"))).toBe("That isn’t the account signed in here.");
     expect(describeError(new AuthError(401, "reauth_required"))).toBe("Confirm it’s you to continue.");
     expect(describeError(new AuthError(401, "passkey_invalid", { detail: "x" }))).toBe("That passkey didn’t sign in here. Choose another, or use your password.");
@@ -23,5 +32,12 @@ describe("the sign-in refusals a remote address and its limits bring", () => {
     expect(describeError(new AuthError(400, "passkey_not_added", { detail: "x" }))).toBe("That passkey wasn’t added. Try again.");
     expect(describeError(new AuthError(409, "passkey_exists"))).toBe("That passkey is added already.");
     expect(describeError(new AuthError(409, "remote_off"))).toBe("Remote access is off, so the link can only open on this network.");
+  });
+});
+
+describe("the username rule", () => {
+  it("reads in English as @stuga/protocol states it, which the node sends too", () => {
+    expect(t("auth.username.rule")).toBe(USERNAME_RULE);
+    expect(describeError(new AuthError(400, "invalid_username"))).toBe(USERNAME_RULE);
   });
 });

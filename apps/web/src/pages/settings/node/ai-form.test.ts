@@ -140,7 +140,7 @@ describe("search strictness copy", () => {
 
   it("offers no retry for a model that cannot be measured", () => {
     const s = measured({ calibration: { ...measured().embed.calibration!, state: "failed", levels: null, kind: "inseparable", message: "alike" }, cutoff: { level: "balanced", source: "unmeasured", short: null, question: null } });
-    expect(strictnessNote(s, toForm(s))).toEqual({ text: "This model can't be measured.", measureAgain: false });
+    expect(strictnessNote(s, toForm(s))).toEqual({ text: "This model can’t be measured.", measureAgain: false });
     expect(calibrationBanner(s)?.retry).toBe(false);
   });
 
@@ -152,7 +152,7 @@ describe("search strictness copy", () => {
 
   it("shows no failure banner while strictness is off", () => {
     const failed = { ...measured().embed.calibration!, state: "failed" as const, levels: null, kind: "endpoint" as const, message: "connect ECONNREFUSED" };
-    expect(calibrationBanner(measured({ calibration: failed, cutoff: { level: "balanced", source: "unmeasured", short: null, question: null } }))?.title).toBe("Couldn't measure bge-m3");
+    expect(calibrationBanner(measured({ calibration: failed, cutoff: { level: "balanced", source: "unmeasured", short: null, question: null } }))?.title).toBe("Couldn’t measure bge-m3");
     expect(calibrationBanner(measured({ calibration: failed, cutoff: { level: "off", source: "off", short: null, question: null } }))).toBeNull();
   });
 

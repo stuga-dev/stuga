@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { Text } from "@astryxdesign/core/Text";
 import { Me, type LinkAddresses } from "../api";
+import { t } from "../i18n/i18n";
 
 export type LinkAddress = LinkAddresses["default"];
 
@@ -40,9 +41,9 @@ export function LinkAddressSwitch({
 }) {
   if (!addresses?.remote) return null;
   return (
-    <SegmentedControl label="Who the link is for" value={value} onChange={(v) => onChange(v as LinkAddress)} isDisabled={isDisabled}>
-      <SegmentedControlItem value="local" label={addresses.local === "computer" ? "For someone on this computer" : "For someone on this network"} />
-      <SegmentedControlItem value="remote" label="For someone anywhere" />
+    <SegmentedControl label={t("ui.linkAddress.label")} value={value} onChange={(v) => onChange(v as LinkAddress)} isDisabled={isDisabled}>
+      <SegmentedControlItem value="local" label={addresses.local === "computer" ? t("ui.linkAddress.thisComputer") : t("ui.linkAddress.thisNetwork")} />
+      <SegmentedControlItem value="remote" label={t("ui.linkAddress.anywhere")} />
     </SegmentedControl>
   );
 }
@@ -50,8 +51,8 @@ export function LinkAddressSwitch({
 /** "Opens only on this network." under a link to the node's own address, when that is not obvious. */
 export function localOnlyNote(addresses: LinkAddresses | null, address: LinkAddress): string | null {
   if (!addresses || address !== "local") return null;
-  if (addresses.local === "computer") return "Opens only on this computer.";
-  return addresses.remote ? "Opens only on this network." : null;
+  if (addresses.local === "computer") return t("ui.linkAddress.onlyComputer");
+  return addresses.remote ? t("ui.linkAddress.onlyNetwork") : null;
 }
 
 export function LocalOnlyNote({ addresses, address }: { addresses: LinkAddresses | null; address: LinkAddress }) {

@@ -9,6 +9,7 @@ import { CitationPopover, type CitationAnchor } from "../../ai/CitationPopover";
 import type { CitationDetail } from "../../ai/citations";
 import { FOOTNOTE_CLICK_EVENT, type FootnoteClickDetail } from "../footnote-node-view";
 import { readDefinition } from "../footnote-detail";
+import { t } from "../../i18n/i18n";
 
 export function FootnotePopover({ editor }: { editor: Editor }) {
   const [popover, setPopover] = useState<{ citation: CitationDetail; anchor: CitationAnchor } | null>(null);
@@ -27,7 +28,7 @@ export function FootnotePopover({ editor }: { editor: Editor }) {
         }
         return true;
       });
-      const citation: CitationDetail = found ? readDefinition(found, n) : { n, doc_id: "", title: "Untitled" };
+      const citation: CitationDetail = found ? readDefinition(found, n) : { n, doc_id: "", title: t("common.untitled") };
       setPopover({ citation, anchor });
     };
     dom.addEventListener(FOOTNOTE_CLICK_EVENT, onClick);

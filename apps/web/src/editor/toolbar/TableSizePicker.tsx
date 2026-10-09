@@ -4,6 +4,7 @@ import type { Editor } from "@tiptap/react";
 import { Popover } from "@astryxdesign/core/Popover";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Table as TableIcon } from "lucide-react";
+import { t } from "../../i18n/i18n";
 
 const MAX_ROWS = 8;
 const MAX_COLS = 10;
@@ -22,15 +23,15 @@ export function TableSizePicker({ editor }: { editor: Editor }) {
     close();
   }
 
-  const label = hover.rows > 0 ? `${hover.rows} × ${hover.cols}` : "Insert table";
+  const label = hover.rows > 0 ? t("editor.tableSize.dimensions", { rows: hover.rows, cols: hover.cols }) : t("editor.tableSize.insert");
 
   return (
     <Popover
       isOpen={open}
       onOpenChange={(o) => (o ? setOpen(true) : close())}
-      label="Table size"
+      label={t("editor.tableSize.label")}
       content={
-        <div className="tb-grid-pop" role="dialog" aria-label="Table size">
+        <div className="tb-grid-pop" role="dialog" aria-label={t("editor.tableSize.label")}>
           <div className="tb-grid-label">{label}</div>
           <div
             className="tb-grid"
@@ -58,8 +59,8 @@ export function TableSizePicker({ editor }: { editor: Editor }) {
       {({ ref, onClick }) => (
         <IconButton
           ref={ref as React.Ref<HTMLButtonElement>}
-          label="Insert table"
-          tooltip="Insert table"
+          label={t("editor.tableSize.insert")}
+          tooltip={t("editor.tableSize.insert")}
           variant="ghost"
           size="sm"
           icon={<TableIcon size={16} />}

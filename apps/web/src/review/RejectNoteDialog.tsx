@@ -11,6 +11,7 @@ import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { RUN_FEEDBACK_NOTE_MAX_CHARS } from "@stuga/protocol/domain/limits";
 import { isComposingKey } from "../lib/ime";
+import { t } from "../i18n/i18n";
 
 /** The viewport box of the control that opened a floating composer. */
 export interface NoteAnchor {
@@ -56,7 +57,7 @@ export interface RejectNoteRequest {
 }
 
 /** Where an agent outside the app finds the note: with its next read or proposal here. */
-const AGENT_HINT = "The agent gets your note the next time it works here.";
+const agentHint = () => t("review.note.agentHint");
 
 /** Composer width, as Edit with AI's composer has, and the room kept below its top. */
 const COMPOSER_WIDTH = 300;
@@ -132,13 +133,13 @@ function RequestChangesComposer({
         </div>
       )}
       <TextArea
-        label="What should change?"
-        description={request.hint === undefined ? AGENT_HINT : (request.hint ?? undefined)}
+        label={t("review.note.label")}
+        description={request.hint === undefined ? agentHint() : (request.hint ?? undefined)}
         hasAutoFocus
         value={note}
         rows={2}
         size="sm"
-        status={tooLong ? { type: "error", message: `Keep it under ${RUN_FEEDBACK_NOTE_MAX_CHARS} characters.` } : undefined}
+        status={tooLong ? { type: "error", message: t("review.note.tooLong", { count: RUN_FEEDBACK_NOTE_MAX_CHARS }) } : undefined}
         onChange={setNote}
         onKeyDown={(e: React.KeyboardEvent) => {
           if (e.key === "Enter" && !e.shiftKey && !isComposingKey(e)) {
@@ -148,9 +149,9 @@ function RequestChangesComposer({
         }}
       />
       <HStack gap={2} justify="end">
-        <Button label="Cancel" variant="ghost" size="sm" onMouseDown={keepFocus} onClick={() => onClose()} />
+        <Button label={t("common.cancel")} variant="ghost" size="sm" onMouseDown={keepFocus} onClick={() => onClose()} />
         <Button
-          label={request.submitLabel ?? "Reject with note"}
+          label={request.submitLabel ?? t("review.note.reject")}
           variant="primary"
           size="sm"
           onMouseDown={keepFocus}
@@ -181,8 +182,8 @@ function RejectNoteDialog({ request, onClose }: { request: RejectNoteRequest; on
         content={
           <LayoutContent>
             <TextArea
-              label="What should change?"
-              description={request.hint === undefined ? AGENT_HINT : (request.hint ?? undefined)}
+              label={t("review.note.label")}
+              description={request.hint === undefined ? agentHint() : (request.hint ?? undefined)}
               value={note}
               onChange={setNote}
               rows={4}
@@ -194,8 +195,8 @@ function RejectNoteDialog({ request, onClose }: { request: RejectNoteRequest; on
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label="Cancel" variant="ghost" onClick={onClose} />
-              <Button label={request.submitLabel ?? "Reject with note"} variant="primary" isDisabled={!text || tooLong} onClick={submit} />
+              <Button label={t("common.cancel")} variant="ghost" onClick={onClose} />
+              <Button label={request.submitLabel ?? t("review.note.reject")} variant="primary" isDisabled={!text || tooLong} onClick={submit} />
             </HStack>
           </LayoutFooter>
         }

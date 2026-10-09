@@ -27,8 +27,9 @@ import {
 import { safeReturn, takeLoginReturn } from "../lib/session/return-path";
 import { redeemHandoff, type ProviderSession } from "../lib/session/sign-in";
 import { setSession } from "../lib/session/tokens";
+import { t } from "../i18n/i18n";
 
-export const HANDOFF_FAILED_NOTICE = "That sign-in didn’t complete. Try again.";
+export const HANDOFF_FAILED_NOTICE = t("auth.errors.handoffInvalid");
 
 /** Keyed by code: StrictMode runs the effect twice, and a code works once. */
 const handoffs = new Map<string, Promise<ProviderSession>>();
@@ -92,12 +93,12 @@ export function AuthComplete() {
           </HStack>
           {error ? (
             <>
-              <Heading level={2}>Couldn’t sign you in</Heading>
+              <Heading level={2}>{t("auth.authComplete.failed")}</Heading>
               <Text color="secondary">{error}</Text>
-              <Button label="Back to sign in" variant="primary" onClick={() => nav("/login", { replace: true })} />
+              <Button label={t("auth.backToSignIn")} variant="primary" onClick={() => nav("/login", { replace: true })} />
             </>
           ) : (
-            <Spinner label="Signing you in…" />
+            <Spinner label={t("auth.signingIn")} />
           )}
         </VStack>
       </Section>

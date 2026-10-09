@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The notifications store is a module-level cache; each test resets it rather
 // than re-importing, which would give the component a second React.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -15,6 +15,7 @@ import {
 } from "../state/notifications";
 import { NotificationsBell, deliveryLine } from "./NotificationsBell";
 import { mountInto } from "../test/form-input";
+import { loadUiLanguage } from "../i18n/i18n";
 
 const T0 = "2026-08-19T10:00:00.000Z";
 
@@ -25,9 +26,10 @@ function notif(id: string, over: Partial<Notification> = {}): Notification {
     workspace_name: "Acme",
     event_type: "DIRECT_DOC_PERMISSIONS",
     resource_id: "d1",
-    resource_title: `alice shared "Plan" with you`,
+    resource_title: "Plan",
     resource_url: null,
     actor_alias: "alice",
+    payload: { actor: "alice", doc: "Plan" },
     read: false,
     created_at: T0,
     ...over,
@@ -89,9 +91,7 @@ async function releaseGets(): Promise<void> {
 }
 
 function bell(): HTMLElement {
-  const el = [...document.querySelectorAll<HTMLElement>("button")].find((b) =>
-    b.getAttribute("aria-label")?.startsWith("Notifications"),
-  );
+  const el = document.querySelector<HTMLElement>(".notif-trigger button");
   if (!el) throw new Error("no bell rendered");
   return el;
 }
@@ -140,7 +140,7 @@ describe("NotificationsBell", () => {
     const post = calls.find((c) => c.method === "POST");
     expect(post?.url).toBe("/api/notifications/read");
     expect(post?.body).toEqual({ before: T0 });
-    expect(document.body.textContent).toContain('alice shared "Plan" with you');
+    expect(document.body.textContent).toContain('alice shared “Plan” with you');
     expect(document.querySelector(".notif-dot")).toBeNull();
   });
 
@@ -189,7 +189,7 @@ describe("NotificationsBell", () => {
     await releaseGets();
 
     expect(document.querySelector(".notif-dot")).toBeNull();
-    expect(document.body.textContent).toContain('alice shared "Plan" with you');
+    expect(document.body.textContent).toContain('alice shared “Plan” with you');
     // The same rows again, still unread server-side.
     await act(async () => {
       refreshNotificationRows();
@@ -255,7 +255,7 @@ describe("NotificationsBell", () => {
     await click(bell());
 
     const row = [...document.querySelectorAll<HTMLElement>("li, [role='listitem']")].find((el) =>
-      el.textContent?.includes('alice shared "Plan" with you'),
+      el.textContent?.includes('alice shared “Plan” with you'),
     );
     expect(row).toBeTruthy();
     const target = row!.querySelector<HTMLElement>("button, [role='button'], a") ?? row!;
@@ -265,8 +265,8 @@ describe("NotificationsBell", () => {
 
   it("names the workspace only on rows from another one", async () => {
     responder = serve([
-      notif("here", { resource_title: "Here row" }),
-      notif("there", { resource_title: "There row", workspace_id: "ws2", workspace_name: "Side project" }),
+      notif("here", { payload: { actor: "alice", doc: "Here row" } }),
+      notif("there", { payload: { actor: "alice", doc: "There row" }, workspace_id: "ws2", workspace_name: "Side project" }),
     ]);
     await mount();
     await click(bell());
@@ -284,7 +284,8 @@ describe("NotificationsBell", () => {
         workspace_name: null,
         event_type: "SECURITY_UPDATE_AVAILABLE",
         resource_id: null,
-        resource_title: "Security update available: Stuga 1.10.0",
+        resource_title: null,
+        payload: { running: "1.9.0", latest: "1.10.0", securityVersion: "1.9.1" },
         resource_url: "https://node.example/settings/node/about",
         delivery_channel: "none",
       }),
@@ -330,11 +331,37 @@ describe("whether an alert also went out", () => {
     expect(deliveryLine({})).toBeUndefined();
     expect(deliveryLine({ delivery_channel: "email", delivered_at: null, delivery_error: null })).toBe("Sending by email…");
     expect(deliveryLine({ delivery_channel: "slack", delivered_at: "2026-09-30T10:00:00Z", delivery_error: null })).toBe("Also sent by Slack.");
-    expect(deliveryLine({ delivery_channel: "email", delivered_at: null, delivery_error: "you have no email address in Stuga" })).toBe(
+    expect(deliveryLine({ delivery_channel: "email", delivered_at: null, delivery_error: "no_email_address" })).toBe(
       "Not sent by email: you have no email address in Stuga.",
     );
-    expect(deliveryLine({ delivery_channel: "webhook", delivered_at: null, delivery_error: "notification sink answered 500." })).toBe(
-      "Not sent by webhook: notification sink answered 500.",
+    expect(deliveryLine({ delivery_channel: "webhook", delivered_at: null, delivery_error: "sink_answered:500" })).toBe(
+      "Not sent by webhook: it answered 500.",
     );
+    expect(deliveryLine({ delivery_channel: "teams", delivered_at: null, delivery_error: "failed:connect ECONNREFUSED." })).toBe(
+      "Not sent by Teams: connect ECONNREFUSED.",
+    );
+    expect(deliveryLine({ delivery_channel: "slack", delivered_at: null, delivery_error: "channel_changed" })).toBe(
+      "Not sent by Slack: the notification channel changed before it was sent.",
+    );
+  });
+});
+
+describe("in the reader’s language", () => {
+  afterEach(async () => {
+    await loadUiLanguage("en");
+  });
+
+  it("writes each row from its event and params, and says how it went out", async () => {
+    await loadUiLanguage("de");
+    responder = serve([notif("n1")]);
+    await mount();
+    await click(bell());
+    expect(document.body.textContent).toContain("alice hat „Plan“ mit dir geteilt");
+    expect(bell().getAttribute("aria-label")).toBe("Benachrichtigungen");
+    expect(deliveryLine({ delivery_channel: "email", delivered_at: null, delivery_error: "email_not_set_up" })).toBe(
+      "Nicht per E-Mail gesendet: E-Mail ist nicht eingerichtet.",
+    );
+    await loadUiLanguage("ja");
+    expect(deliveryLine({ delivery_channel: "slack", delivered_at: "2026-09-30T10:00:00Z", delivery_error: null })).toBe("Slackでも送信しました。");
   });
 });

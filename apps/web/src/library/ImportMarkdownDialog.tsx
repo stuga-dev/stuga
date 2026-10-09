@@ -17,6 +17,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Check, AlertTriangle } from "lucide-react";
+import { t } from "../i18n/i18n";
 
 const ACCEPT = ".md,.markdown,.mdown,.mkd,.txt,text/markdown,text/plain";
 
@@ -81,7 +82,7 @@ export function ImportMarkdownDialog({ isOpen, parentId, onImported, onClose }: 
 
     if (mode === "paste") {
       if (markdownByteLength(pasted) > MAX_IMPORT_MARKDOWN_BYTES) {
-        setError(sizeMessage("The pasted text"));
+        setError(t("library.import.pastedTooLarge", { kb: LIMIT_KB }));
         setBusy(false);
         return;
       }
@@ -109,7 +110,7 @@ export function ImportMarkdownDialog({ isOpen, parentId, onImported, onClose }: 
       try {
         if (file.size > MAX_IMPORT_MARKDOWN_BYTES) {
           failed.push(file);
-          finish("error", sizeMessage("This file"));
+          finish("error", t("library.import.fileTooLarge", { kb: LIMIT_KB }));
           continue;
         }
         const text = await file.text();
@@ -139,26 +140,26 @@ export function ImportMarkdownDialog({ isOpen, parentId, onImported, onClose }: 
     unreported.current = created;
     setFiles(failed);
     setPartial(created.length > 0);
-    if (created.length === 0) setError("Nothing could be imported.");
-    else setError(`Imported ${created.length} of ${queue.length}. The rest are still listed — press Import to retry them.`);
+    if (created.length === 0) setError(t("library.import.nothing"));
+    else setError(t("library.import.partial", { done: created.length, total: queue.length }));
   }
 
   return (
     <Dialog isOpen={isOpen} onOpenChange={(o) => !o && requestClose()} purpose="form" width={520}>
       <Layout
-        header={<DialogHeader title="Import from Markdown" onOpenChange={(o) => !o && requestClose()} />}
+        header={<DialogHeader title={t("library.create.importMarkdown")} onOpenChange={(o) => !o && requestClose()} />}
         content={
           <LayoutContent>
             <VStack gap={3}>
-              <SegmentedControl label="Import source" value={mode} onChange={(v) => setMode(v as Mode)} isDisabled={busy}>
-                <SegmentedControlItem value="upload" label="Upload files" />
-                <SegmentedControlItem value="paste" label="Paste Markdown" />
+              <SegmentedControl label={t("library.import.source")} value={mode} onChange={(v) => setMode(v as Mode)} isDisabled={busy}>
+                <SegmentedControlItem value="upload" label={t("library.import.upload")} />
+                <SegmentedControlItem value="paste" label={t("library.import.paste")} />
               </SegmentedControl>
 
               {mode === "upload" ? (
                 <FileInput
-                  label="Markdown files"
-                  description="Each file becomes its own document. The title comes from the file's first heading."
+                  label={t("library.import.filesLabel")}
+                  description={t("library.import.filesHint")}
                   mode="dropzone"
                   accept={ACCEPT}
                   isMultiple
@@ -170,9 +171,9 @@ export function ImportMarkdownDialog({ isOpen, parentId, onImported, onClose }: 
                 />
               ) : (
                 <TextArea
-                  label="Markdown"
-                  description="The title comes from the first heading."
-                  placeholder="Paste Markdown here…"
+                  label={t("library.import.markdownLabel")}
+                  description={t("library.import.pasteHint")}
+                  placeholder={t("library.import.pastePlaceholder")}
                   rows={12}
                   hasAutoFocus
                   isDisabled={busy}
@@ -188,8 +189,13 @@ export function ImportMarkdownDialog({ isOpen, parentId, onImported, onClose }: 
                       {r.status === "done" && <Check size={14} />}
                       {r.status === "error" && <AlertTriangle size={14} />}
                       <Text type="supporting" color={r.status === "error" ? "primary" : "secondary"}>
-                        {r.name}
-                        {r.status === "error" ? ` — ${r.error ?? "failed"}` : r.status === "pending" ? " — importing…" : ""}
+                        {r.status === "error"
+                          ? r.error
+                            ? t("library.import.rowFailed", { name: r.name, error: r.error })
+                            : t("library.import.rowFailedPlain", { name: r.name })
+                          : r.status === "pending"
+                            ? t("library.import.rowImporting", { name: r.name })
+                            : r.name}
                       </Text>
                     </HStack>
                   ))}
@@ -199,7 +205,7 @@ export function ImportMarkdownDialog({ isOpen, parentId, onImported, onClose }: 
               {error && (
                 <Banner
                   status={partial ? "warning" : "error"}
-                  title={partial ? "Some files didn’t import" : "Import failed"}
+                  title={partial ? t("library.import.someFailed") : t("library.import.failed")}
                   description={error}
                 />
               )}
@@ -209,9 +215,9 @@ export function ImportMarkdownDialog({ isOpen, parentId, onImported, onClose }: 
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label={busy ? "Stop" : "Cancel"} variant="ghost" onClick={requestClose} />
+              <Button label={busy ? t("common.stop") : t("common.cancel")} variant="ghost" onClick={requestClose} />
               <Button
-                label={busy ? "Importing…" : "Import"}
+                label={busy ? t("library.import.importing") : t("common.import")}
                 variant="primary"
                 onClick={submit}
                 isDisabled={!canSubmit}
@@ -225,10 +231,8 @@ export function ImportMarkdownDialog({ isOpen, parentId, onImported, onClose }: 
   );
 }
 
-function sizeMessage(subject: string): string {
-  return `${subject} is larger than the ${Math.floor(MAX_IMPORT_MARKDOWN_BYTES / 1024)} KB import limit.`;
-}
+const LIMIT_KB = Math.floor(MAX_IMPORT_MARKDOWN_BYTES / 1024);
 
 function messageOf(e: unknown): string {
-  return e instanceof Error && e.message ? e.message : "Import failed. Please try again.";
+  return e instanceof Error && e.message ? e.message : t("library.import.failedRetry");
 }

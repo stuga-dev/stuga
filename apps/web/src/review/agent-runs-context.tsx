@@ -20,6 +20,7 @@ import { ReviewHistory, type LocalUndoManager } from "./review-history";
 import { noteModeOf } from "./note-mode";
 import { useOptionalAiCoauthor } from "../ai/ai-coauthor-context";
 import type { ApiError } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
 const DOC_RUN: RunShape<AgentRunSummary, AgentRunHunk> = {
   items: (run) => run.hunks,
@@ -39,7 +40,7 @@ function isTextField(target: EventTarget | null): boolean {
 }
 
 function undoneMessage(n: number): string {
-  return n === 1 ? "That change is back up for review." : `Those ${n} changes are back up for review.`;
+  return t("review.notice.undone", { count: n });
 }
 
 function errorText(e: unknown, fallback: string): string {
@@ -102,9 +103,7 @@ export interface AgentRunsCtx {
 const Ctx = createContext<AgentRunsCtx | null>(null);
 
 function conflictMessage(n: number): string {
-  return n === 1
-    ? "That change no longer matches the document — it wasn’t applied."
-    : `${n} of those changes no longer match the document — they weren’t applied.`;
+  return t("review.notice.docConflict", { count: n });
 }
 
 export function AgentRunsProvider({
@@ -149,7 +148,7 @@ export function AgentRunsProvider({
           actions.current.notify("undone", undoneMessage(hunkIds.length), runId);
           return "done";
         } catch (e) {
-          actions.current.notify("error", errorText(e, "Couldn’t undo that."));
+          actions.current.notify("error", errorText(e, t("review.notice.undoFailed")));
           // A 409 never succeeds later (the document or the agent moved on); anything else may.
           return (e as ApiError).status === 409 ? "refused" : "failed";
         }
@@ -248,14 +247,19 @@ export function AgentRunsProvider({
         const detail = await Runs.detail(docId, runId, { full: true });
         const hunks = detail.hunks ?? [];
         if (hunks.length === 0) {
-          notify("error", "Couldn’t load the individual changes for this run — you can still decide it as a whole.");
+          notify("error", t("review.notice.hunksFailed"));
           return;
         }
         const { hunks_truncated: _elided, ...rest } = stateRef.current.runs.get(runId) ?? known;
         dispatch({ type: "replaced", run: { ...rest, hunks } });
       } catch (e) {
         fetchedAt.current.delete(runId);
-        notify("error", e instanceof Error && e.message ? `Couldn’t load these changes: ${e.message}` : "Couldn’t load these changes.");
+        notify(
+          "error",
+          e instanceof Error && e.message
+            ? t("review.notice.loadChangesFailedDetail", { detail: e.message })
+            : t("review.diff.loadFailed"),
+        );
       } finally {
         setLoadingHunks((prev) => {
           const next = new Set(prev);

@@ -21,6 +21,7 @@ import { Badge } from "@astryxdesign/core/Badge";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { useToast } from "@astryxdesign/core/Toast";
 import { Pencil, Trash2, Plus, Library } from "lucide-react";
+import { t } from "../i18n/i18n";
 
 interface CollectionsPaneProps {
   /** From the URL, so the selection is linkable. */
@@ -70,14 +71,14 @@ export function CollectionsPane({ selectedId, onSelect }: CollectionsPaneProps) 
   };
 
   async function createCollection(name: string) {
-    const c = await Collections.create(name).catch(failed("Couldn’t create that collection."));
+    const c = await Collections.create(name).catch(failed(t("library.collections.createFailed")));
     reloadList();
     if (c) onSelect(c.collection_id);
   }
 
   async function doRename(name: string) {
     if (!renaming) return;
-    await Collections.rename(renaming, name).catch(failed("Couldn’t rename that collection."));
+    await Collections.rename(renaming, name).catch(failed(t("library.collections.renameFailed")));
     reloadList();
   }
 
@@ -85,7 +86,7 @@ export function CollectionsPane({ selectedId, onSelect }: CollectionsPaneProps) 
     const id = deleting;
     setDeleting(null);
     if (!id) return;
-    const removed = await Collections.remove(id).catch(failed("Couldn’t delete that collection."));
+    const removed = await Collections.remove(id).catch(failed(t("library.collections.deleteFailed")));
     if (removed && selectedId === id) onSelect(null);
     reloadList();
   }
@@ -107,7 +108,7 @@ export function CollectionsPane({ selectedId, onSelect }: CollectionsPaneProps) 
         <div className="collections-page__master-inner">
           <div className="collections-page__new">
             <Button
-              label="New collection"
+              label={t("library.collections.new")}
               variant="secondary"
               size="sm"
               icon={<Plus size={15} />}
@@ -120,22 +121,22 @@ export function CollectionsPane({ selectedId, onSelect }: CollectionsPaneProps) 
               <div className="collections-page__center">
                 <LoadFailed
                   isCompact
-                  title="Couldn’t load collections"
-                  description="Your collections are still there — this list didn’t load."
+                  title={t("library.collections.loadFailed")}
+                  description={t("library.collections.loadFailedBody")}
                   icon={<Library size={22} />}
                   onRetry={reloadList}
                 />
               </div>
             ) : collections === null ? (
               <div className="collections-page__center">
-                <Spinner label="Loading" />
+                <Spinner label={t("library.collections.loading")} />
               </div>
             ) : collections.length === 0 ? (
               <div className="collections-page__center">
                 <EmptyState
                   isCompact
-                  title="No collections"
-                  description="Group documents into a scope the AI can search."
+                  title={t("library.collections.empty")}
+                  description={t("library.collections.emptyBody")}
                   icon={<Library size={22} />}
                 />
               </div>
@@ -153,13 +154,13 @@ export function CollectionsPane({ selectedId, onSelect }: CollectionsPaneProps) 
                       <span className="list-row__end" onClick={(e) => e.stopPropagation()}>
                         <span className="list-row__more">
                           <MoreMenu
-                            label={`Actions for ${c.name}`}
+                            label={t("common.actionsFor", { name: c.name })}
                             variant="ghost"
                             size="sm"
                             alignment="end"
                             items={[
-                              { label: "Rename…", icon: <Pencil size={15} />, onClick: () => setRenaming(c.collection_id) },
-                              { label: "Delete…", icon: <Trash2 size={15} />, onClick: () => setDeleting(c.collection_id) },
+                              { label: t("common.renameEllipsis"), icon: <Pencil size={15} />, onClick: () => setRenaming(c.collection_id) },
+                              { label: t("library.collections.deleteEllipsis"), icon: <Trash2 size={15} />, onClick: () => setDeleting(c.collection_id) },
                             ]}
                           />
                         </span>
@@ -179,16 +180,16 @@ export function CollectionsPane({ selectedId, onSelect }: CollectionsPaneProps) 
           collections === null || listFailed ? null : (
             <div className="collections-page__center">
               <EmptyState
-                title={collections.length ? "Select a collection" : "Create your first collection"}
+                title={collections.length ? t("library.collections.selectTitle") : t("library.collections.firstTitle")}
                 description={
                   collections.length
-                    ? "Pick a collection to choose which documents and folders the AI may draw on."
-                    : "A collection is a named set of documents you can point the AI at when you ask a question."
+                    ? t("library.collections.selectBody")
+                    : t("library.collections.firstBody")
                 }
                 icon={<Library size={28} />}
                 actions={
                   collections.length ? undefined : (
-                    <Button label="New collection" variant="primary" size="sm" onClick={() => setCreating(true)} />
+                    <Button label={t("library.collections.new")} variant="primary" size="sm" onClick={() => setCreating(true)} />
                   )
                 }
               />
@@ -203,27 +204,27 @@ export function CollectionsPane({ selectedId, onSelect }: CollectionsPaneProps) 
                 {items && (
                   <Badge
                     variant="neutral"
-                    label={`${items.length} item${items.length === 1 ? "" : "s"}`}
+                    label={t("library.collections.items", { count: items.length })}
                   />
                 )}
               </HStack>
               <Text type="supporting" color="secondary">
-                Choose what the AI may draw on when you scope a question to this collection.
+                {t("library.collections.scopeHint")}
               </Text>
             </div>
             {itemsFailed ? (
               // No picker without the membership: saving from an empty seed would remove real items.
               <div className="collections-page__center">
                 <LoadFailed
-                  title="Couldn’t load what’s in this collection"
-                  description="Nothing has changed — retry to see and edit its documents."
+                  title={t("library.collections.itemsFailed")}
+                  description={t("library.collections.itemsFailedBody")}
                   icon={<Library size={28} />}
                   onRetry={() => reloadItems(selected.collection_id)}
                 />
               </div>
             ) : items === null ? (
               <div className="collections-page__center">
-                <Spinner label="Loading" />
+                <Spinner label={t("library.collections.loading")} />
               </div>
             ) : (
               <CollectionEditor
@@ -245,26 +246,26 @@ export function CollectionsPane({ selectedId, onSelect }: CollectionsPaneProps) 
 
       <PromptDialog
         isOpen={creating}
-        title="New collection"
-        label="Collection name"
+        title={t("library.collections.new")}
+        label={t("library.collections.nameLabel")}
         onSubmit={createCollection}
         onClose={() => setCreating(false)}
       />
       <PromptDialog
         isOpen={renaming !== null}
-        title="Rename collection"
-        label="Collection name"
+        title={t("library.collections.renameTitle")}
+        label={t("library.collections.nameLabel")}
         initialValue={renamingName}
-        submitLabel="Rename"
+        submitLabel={t("common.rename")}
         onSubmit={doRename}
         onClose={() => setRenaming(null)}
       />
       <AlertDialog
         isOpen={deleting !== null}
         onOpenChange={(o) => !o && setDeleting(null)}
-        title={`Delete “${deletingName || "collection"}”?`}
-        description="The documents themselves are not deleted — only this scope."
-        actionLabel="Delete"
+        title={deletingName ? t("common.deleteNamed", { name: deletingName }) : t("library.collections.deleteUnnamed")}
+        description={t("library.collections.deleteBody")}
+        actionLabel={t("common.delete")}
         actionVariant="destructive"
         onAction={doDelete}
       />

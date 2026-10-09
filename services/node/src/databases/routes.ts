@@ -117,7 +117,7 @@ export async function createTable({ ctx, doc, docId, writeRefusal, body, propose
     return proposeEnvelope(await proposeTableWithColumns(ctx, doc, b.display, specs.columns, "stdio"));
   }
   const res = await callDatabaseActor(ctx, docId, "tables/create", { display: b.display, columns: specs.columns });
-  if (res.ok) await afterDatabaseMutation(ctx, doc, `Created a table.`);
+  if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "table_created" });
   return proxyActor(res, "could not create the table");
 }
 
@@ -127,7 +127,7 @@ export async function renameTable({ ctx, match, doc, docId, writeRefusal, body, 
   if (r) return r;
   const b = await body();
   const res = await callDatabaseActor(ctx, docId, "tables/rename", { table_id: tableId, display: b.display });
-  if (res.ok) await afterDatabaseMutation(ctx, doc, `Renamed a table.`);
+  if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "table_renamed" });
   return proxyActor(res, "could not rename the table");
 }
 
@@ -137,7 +137,7 @@ export async function deleteTable({ ctx, match, doc, docId, writeRefusal, agentS
   if (r) return r;
   const res = await callDatabaseActor(ctx, docId, "tables/delete", { table_id: tableId });
   if (res.ok) {
-    await afterDatabaseMutation(ctx, doc, `Deleted a table.`);
+    await afterDatabaseMutation(ctx, doc, { kind: "table_deleted" });
     await reconcileDocLinks(ctx, doc); // its rows' pages go to the trash
   }
   return proxyActor(res, "could not delete the table");
@@ -157,7 +157,7 @@ export async function addColumn({ ctx, match, doc, docId, writeRefusal, body, pr
     choices: b.choices,
     description: b.description,
   });
-  if (res.ok) await afterDatabaseMutation(ctx, doc, `Added a column.`);
+  if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "column_added" });
   return proxyActor(res, "could not add the column");
 }
 
@@ -176,7 +176,7 @@ export async function updateColumn({ ctx, match, doc, docId, writeRefusal, body,
       column_id: columnId,
       description: b.description,
     });
-    if (res.ok) await afterDatabaseMutation(ctx, doc, `Described a column.`);
+    if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "column_described" });
     return proxyActor(res, "could not describe the column");
   }
   if (b.type !== undefined) {
@@ -186,7 +186,7 @@ export async function updateColumn({ ctx, match, doc, docId, writeRefusal, body,
       type: b.type,
       choices: b.choices,
     });
-    if (res.ok) await afterDatabaseMutation(ctx, doc, `Changed a column's type.`);
+    if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "column_type_changed" });
     return proxyActor(res, "could not change the column type");
   }
   const res = await callDatabaseActor(ctx, docId, "columns/rename", {
@@ -194,7 +194,7 @@ export async function updateColumn({ ctx, match, doc, docId, writeRefusal, body,
     column_id: columnId,
     display: b.display,
   });
-  if (res.ok) await afterDatabaseMutation(ctx, doc, `Renamed a column.`);
+  if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "column_renamed" });
   return proxyActor(res, "could not rename the column");
 }
 
@@ -203,7 +203,7 @@ export async function deleteColumn({ ctx, match, doc, docId, writeRefusal, agent
   const r = writeRefusal() ?? agentSchemaRefusal();
   if (r) return r;
   const res = await callDatabaseActor(ctx, docId, "columns/delete", { table_id: tableId, column_id: columnId });
-  if (res.ok) await afterDatabaseMutation(ctx, doc, `Deleted a column.`);
+  if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "column_deleted" });
   return proxyActor(res, "could not delete the column");
 }
 
@@ -215,7 +215,7 @@ export async function createView({ ctx, match, doc, docId, writeRefusal, body, p
   const tableId = match[2]!;
   if (ctx.isAgent) return proposeOrError({ kind: "views.create", table: tableId, ...viewOpFields(b) });
   const res = await callDatabaseActor(ctx, docId, "views/create", { table_id: tableId, ...viewFields(b) });
-  if (res.ok) await afterDatabaseMutation(ctx, doc, `Created a view.`);
+  if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "view_created" });
   return proxyActor(res, "could not create the view");
 }
 
@@ -226,7 +226,7 @@ export async function updateView({ ctx, match, doc, docId, writeRefusal, body, p
   const b = await body();
   if (ctx.isAgent) return proposeOrError({ kind: "views.update", table: tableId, view: viewId, ...viewOpFields(b) });
   const res = await callDatabaseActor(ctx, docId, "views/update", { table_id: tableId, view_id: viewId, ...viewFields(b) });
-  if (res.ok) await afterDatabaseMutation(ctx, doc, `Changed a view.`);
+  if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "view_changed" });
   return proxyActor(res, "could not change the view");
 }
 
@@ -236,7 +236,7 @@ export async function deleteView({ ctx, match, doc, docId, writeRefusal }: Datab
   if (r) return r;
   if (ctx.isAgent) return error(403, "agents cannot delete views — ask the user to remove it");
   const res = await callDatabaseActor(ctx, docId, "views/delete", { table_id: tableId, view_id: viewId });
-  if (res.ok) await afterDatabaseMutation(ctx, doc, `Deleted a view.`);
+  if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "view_deleted" });
   return proxyActor(res, "could not delete the view");
 }
 
@@ -279,7 +279,7 @@ export async function insertRows({ ctx, match, doc, docId, writeRefusal, body, p
   const out = (await res.json().catch(() => null)) as { inserted?: number } | null;
   if (!out) return error(502, "could not insert rows");
   const n = out.inserted ?? 0;
-  await afterDatabaseMutation(ctx, doc, `Inserted ${n} row${n === 1 ? "" : "s"}.`);
+  await afterDatabaseMutation(ctx, doc, { kind: "rows_inserted", count: n });
   return json(out);
 }
 
@@ -295,7 +295,7 @@ export async function updateRows({ ctx, match, doc, docId, writeRefusal, body, p
   const out = (await res.json().catch(() => null)) as { updated?: number } | null;
   if (!out) return error(502, "could not update rows");
   const n = out.updated ?? 0;
-  await afterDatabaseMutation(ctx, doc, `Updated ${n} row${n === 1 ? "" : "s"}.`);
+  await afterDatabaseMutation(ctx, doc, { kind: "rows_updated", count: n });
   return json(out);
 }
 
@@ -310,7 +310,7 @@ export async function deleteRows({ ctx, match, doc, docId, writeRefusal, body, p
   const out = (await res.json().catch(() => null)) as { deleted?: number } | null;
   if (!out) return error(502, "could not delete rows");
   const n = out.deleted ?? 0;
-  await afterDatabaseMutation(ctx, doc, `Deleted ${n} row${n === 1 ? "" : "s"}.`);
+  await afterDatabaseMutation(ctx, doc, { kind: "rows_deleted", count: n });
   await reconcileDocLinks(ctx, doc); // the deleted rows' pages go to the trash
   return json(out);
 }

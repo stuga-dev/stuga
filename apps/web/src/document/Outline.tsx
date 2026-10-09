@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Item } from "@astryxdesign/core/Item";
 import { Text } from "@astryxdesign/core/Text";
 import { useSharedEditor } from "../editor/editor-context";
+import { t } from "../i18n/i18n";
 
 interface Heading {
   level: number;
@@ -31,7 +32,7 @@ export function Outline({ width }: { width?: number }) {
       const out: Heading[] = [];
       editor.state.doc.descendants((node, pos) => {
         if (node.type.name === "heading") {
-          out.push({ level: node.attrs.level as number, text: node.textContent || "Untitled heading", pos });
+          out.push({ level: node.attrs.level as number, text: node.textContent || t("document.outline.untitledHeading"), pos });
         }
         return true;
       });
@@ -129,10 +130,10 @@ export function Outline({ width }: { width?: number }) {
       style={width ? { flexBasis: width } : undefined}
     >
       {/* Astryx Text is inline whatever its tag. */}
-      <Text type="label" as="div" display="block">Outline</Text>
+      <Text type="label" as="div" display="block">{t("document.outline.title")}</Text>
       {items.length === 0 ? (
         <Text type="supporting" color="secondary" as="p" display="block">
-          No headings yet. Use H1–H3 to structure the doc.
+          {t("document.outline.empty")}
         </Text>
       ) : (
         <nav className="outline-list">

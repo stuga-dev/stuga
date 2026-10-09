@@ -6,6 +6,7 @@ import { useCollections } from "../ai/use-collections";
 import { PromptDialog } from "../ui/PromptDialog";
 import type { LibraryItemRef } from "./move-items";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
 interface MenuLeaf {
   label: string;
@@ -40,15 +41,15 @@ export function useCollectionsMenu({ refreshKey, setBusy }: { refreshKey: number
         toast({
           body:
             added === 0
-              ? `Nothing added to “${name}” — those items are already in it.`
+              ? t("library.collections.alreadyIn", { name })
               : skipped > 0
-                ? `Added ${added} to “${name}”; ${skipped} already there.`
-                : `Added ${added} to “${name}”.`,
+                ? t("library.collections.addedSome", { added, name, skipped })
+                : t("library.collections.added", { added, name }),
           type: "info",
         });
         reload();
       } catch (e) {
-        toast({ body: errorMessage(e, "Couldn’t add to that collection."), type: "error" });
+        toast({ body: errorMessage(e, t("library.collections.addFailed")), type: "error" });
       } finally {
         setBusy(false);
       }
@@ -64,34 +65,34 @@ export function useCollectionsMenu({ refreshKey, setBusy }: { refreshKey: number
       const created = await Collections.create(name);
       await addTo(created.collection_id, created.name, items);
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn’t create that collection."), type: "error" });
+      toast({ body: errorMessage(e, t("library.collections.createFailed")), type: "error" });
     }
   }
 
   function menuItems(items: LibraryItemRef[]): MenuLeaf[] {
     const placeholder =
       collections === null
-        ? [{ label: "Loading…", onClick: () => {}, isDisabled: true }]
+        ? [{ label: t("common.loading"), onClick: () => {}, isDisabled: true }]
         : collections.length === 0
-          ? [{ label: "No collections yet", onClick: () => {}, isDisabled: true }]
+          ? [{ label: t("library.collections.none"), onClick: () => {}, isDisabled: true }]
           : [];
     return [
       ...placeholder,
       ...(collections ?? []).map((c) => ({
-        label: `${c.name} (${c.item_count})`,
+        label: t("library.collections.menuItem", { name: c.name, count: c.item_count }),
         icon: <Library size={15} />,
         onClick: () => void addTo(c.collection_id, c.name, items),
       })),
-      { label: "New collection…", icon: <Plus size={15} />, onClick: () => setNewCollectionFor(items) },
+      { label: t("library.collections.newEllipsis"), icon: <Plus size={15} />, onClick: () => setNewCollectionFor(items) },
     ];
   }
 
   const dialog = (
     <PromptDialog
       isOpen={newCollectionFor !== null}
-      title="New collection"
-      label="Collection name"
-      submitLabel="Create and add"
+      title={t("library.collections.new")}
+      label={t("library.collections.nameLabel")}
+      submitLabel={t("library.collections.createAndAdd")}
       onSubmit={createWith}
       onClose={() => setNewCollectionFor(null)}
     />

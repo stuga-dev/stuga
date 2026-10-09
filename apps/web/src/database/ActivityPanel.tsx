@@ -1,7 +1,9 @@
 /**
  * The database's ops ledger, newest first: people's edits and agents' writes
  * alike, with Revert on ops that carry an inverse. Reverts skip rows that
- * changed since, so the confirmation promises "where possible".
+ * changed since, so the confirmation promises "where possible". Each op is
+ * said from its detail in the reader's language; its English summary is what
+ * agents read, and what an op recorded without detail shows.
  */
 import { useEffect, useState } from "react";
 import { Badge } from "@astryxdesign/core/Badge";
@@ -13,8 +15,10 @@ import { useToast } from "@astryxdesign/core/Toast";
 import { Databases } from "../api";
 import type { DatabaseOpSummary } from "@stuga/protocol/databases/types";
 import { authorLabel, nameLoading, useUserNames } from "../state/identity";
-import { AI_COAUTHOR_LABEL, absoluteTime, principalHuman, relativeTime } from "../lib/format";
+import { aiCoauthorLabel, absoluteTime, principalHuman, relativeTime } from "../lib/format";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
+import { describeChange } from "./op-lines";
 
 interface ActivityPanelProps {
   docId: string;
@@ -32,9 +36,17 @@ interface ActivityPanelProps {
  * Null while a person's name loads, so no raw alias shows.
  */
 function actorLabel(op: DatabaseOpSummary): string | null {
-  if (op.is_agent && principalHuman(op.actor) !== null) return AI_COAUTHOR_LABEL;
+  if (op.is_agent && principalHuman(op.actor) !== null) return aiCoauthorLabel();
   if (op.is_agent) return op.actor.replace(/^agent:/, "");
   return nameLoading(`user:${op.actor}`) ? null : authorLabel(op.actor);
+}
+
+/** What an op did, in the reader's language; an op recorded without detail has only its English summary. */
+function opLine(op: DatabaseOpSummary): string {
+  const d = op.detail;
+  if (!d) return op.summary;
+  if (d.kind === "revert") return d.of ? t("activity.op.reverted", { change: describeChange(d.of) }) : op.summary;
+  return describeChange(d);
 }
 
 /** `ts` is epoch milliseconds. */
@@ -89,7 +101,7 @@ export function ActivityPanel({ docId, refreshKey, readOnly, onReverted, onWrite
       setOps((cur) => mergeOps(cur ?? [], r.ops));
       setHasMore(r.ops.length >= PAGE);
     } catch {
-      toast({ body: "Couldn't load older activity.", type: "error" });
+      toast({ body: t("activity.olderFailed"), type: "error" });
     } finally {
       setLoadingMore(false);
     }
@@ -110,17 +122,14 @@ export function ActivityPanel({ docId, refreshKey, readOnly, onReverted, onWrite
       const r = await Databases.revertOp(docId, reverting.op_id);
       setReverting(null);
       toast({
-        body:
-          r.missing > 0
-            ? `Reverted — ${r.restored} restored, ${r.missing} couldn't be (changed since).`
-            : "Reverted.",
+        body: r.missing > 0 ? t("activity.revertPartly", { restored: r.restored, missing: r.missing }) : t("activity.revertDone"),
         type: "info",
       });
       setReloadKey((k) => k + 1);
       onReverted();
     } catch (e) {
       if ((e as { status?: number }).status === 403) onWriteDenied();
-      toast({ body: errorMessage(e, "Couldn't revert that change."), type: "error" });
+      toast({ body: errorMessage(e, t("activity.revertFailed")), type: "error" });
     } finally {
       setBusy(false);
     }
@@ -131,15 +140,15 @@ export function ActivityPanel({ docId, refreshKey, readOnly, onReverted, onWrite
       <div className="side-body">
         {ops === null ? (
           <div className="db-grid-center">
-            <Spinner label="Loading activity…" />
+            <Spinner label={t("activity.loading")} />
           </div>
         ) : error && ops.length === 0 ? (
           <Text type="supporting" color="secondary">
-            Couldn’t load the activity feed.
+            {t("activity.loadFailed")}
           </Text>
         ) : ops.length === 0 ? (
           <Text type="supporting" color="secondary">
-            Changes to this database will appear here.
+            {t("activity.empty")}
           </Text>
         ) : (
           <ul className="db-ops">
@@ -147,7 +156,7 @@ export function ActivityPanel({ docId, refreshKey, readOnly, onReverted, onWrite
               <li key={op.op_id} className="db-op">
                 <div className="db-op__head">
                   <span className="db-op__actor">
-                    {op.is_agent && <Badge variant="purple" label="agent" />}
+                    {op.is_agent && <Badge variant="purple" label={t("activity.agent")} />}
                     {/* A blank keeps the row's height until the name arrives. */}
                     <strong title={op.actor}>{actorLabel(op) ?? "\u00a0"}</strong>
                   </span>
@@ -155,20 +164,20 @@ export function ActivityPanel({ docId, refreshKey, readOnly, onReverted, onWrite
                     {relativeTime(opIso(op.ts))}
                   </span>
                 </div>
-                <p className="db-op__summary">{op.summary}</p>
+                <p className="db-op__summary">{opLine(op)}</p>
                 <div className="db-op__foot">
                   {/* A blank keeps Revert in place until the name arrives. */}
                   {op.on_behalf_of && (
                     <span className="db-op__for">
-                      {nameLoading(`user:${op.on_behalf_of}`) ? "\u00a0" : `for ${authorLabel(op.on_behalf_of)}`}
+                      {nameLoading(`user:${op.on_behalf_of}`) ? "\u00a0" : t("activity.forPerson", { name: authorLabel(op.on_behalf_of) })}
                     </span>
                   )}
                   {op.reverted_by ? (
-                    <Badge variant="neutral" label="Reverted" />
+                    <Badge variant="neutral" label={t("activity.reverted")} />
                   ) : (
                     op.revertible &&
                     !readOnly && (
-                      <Button label="Revert" variant="ghost" size="sm" onClick={() => setReverting(op)} />
+                      <Button label={t("activity.revert")} variant="ghost" size="sm" onClick={() => setReverting(op)} />
                     )
                   )}
                 </div>
@@ -178,16 +187,16 @@ export function ActivityPanel({ docId, refreshKey, readOnly, onReverted, onWrite
         )}
         {ops !== null && ops.length > 0 && hasMore && (
           <div className="db-ops-more">
-            <Button label="Show older" variant="ghost" size="sm" isLoading={loadingMore} onClick={() => void loadOlder()} />
+            <Button label={t("activity.showOlder")} variant="ghost" size="sm" isLoading={loadingMore} onClick={() => void loadOlder()} />
           </div>
         )}
       </div>
       <AlertDialog
         isOpen={reverting !== null}
         onOpenChange={(o) => !o && !busy && setReverting(null)}
-        title="Revert this change?"
-        description={`Undoes “${reverting?.summary ?? ""}” where possible. Rows edited since keep their newer values.`}
-        actionLabel="Revert"
+        title={t("activity.revertTitle")}
+        description={t("activity.revertDescription", { change: reverting ? opLine(reverting) : "" })}
+        actionLabel={t("activity.revert")}
         isActionLoading={busy}
         onAction={doRevert}
       />

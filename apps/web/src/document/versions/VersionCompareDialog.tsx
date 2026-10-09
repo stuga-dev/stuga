@@ -3,7 +3,7 @@
  * Restore and Delete for those who manage the document. Delete lives here, not
  * in the list, so a version is only thrown away after it has been seen.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type * as Y from "yjs";
 import { yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import { Docs, type Version } from "../../api";
@@ -15,6 +15,8 @@ import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
 import { BlockDiffView, useBlockDiff } from "../../review/BlockDiffView";
 import { authorsOf } from "./VersionHistory";
+import { t } from "../../i18n/i18n";
+import { tRich } from "../../i18n/rich";
 
 /** The live document is re-read at most this often while edits arrive. */
 const FOLLOW_MS = 300;
@@ -24,6 +26,11 @@ const FOLLOW_BUDGET_MS = 100;
 /** The live document's Markdown. The server serializes versions with the same crdt-ops function, so unchanged content diffs as equal. */
 export function currentMarkdown(ydoc: Y.Doc | null): string {
   return ydoc ? yXmlFragmentToMarkdown(ydoc.getXmlFragment("default")) : "";
+}
+
+/** The span a "Saved" line puts its time in, with the full timestamp on hover. */
+function savedAt(iso: string) {
+  return (chunks: ReactNode[]) => <span title={absoluteTime(iso)}>{chunks}</span>;
 }
 
 /** The live document's Markdown and how long serializing it took. */
@@ -128,12 +135,12 @@ export function VersionCompareDialog({
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const viewed = versions.find((v) => v.seq === seq);
-  const viewedLabel = viewed ? versionLabel(viewed.ts) : "this version";
+  const viewedLabel = viewed ? versionLabel(viewed.ts) : t("document.versions.thisVersion");
   const viewedAuthors = viewed ? authorsOf(viewed, versions) : null;
   // A baseline a refresh dropped from the listing falls back to the current document.
   const baseVersion = versions.find((v) => String(v.seq) === chosen);
   const baseline = baseVersion ? chosen : "current";
-  const baselineLabel = baseVersion ? versionLabel(baseVersion.ts) : "the current document";
+  const baselineLabel = baseVersion ? versionLabel(baseVersion.ts) : null;
   const current = useCurrentMarkdown(ydoc, baseline === "current", targetText);
   // The baseline version's text, once loaded.
   const [versionText, setVersionText] = useState<{ baseline: string; text: string } | null>(null);
@@ -143,7 +150,7 @@ export function VersionCompareDialog({
     setLoading(true);
     Docs.versionContent(docId, seq)
       .then((r) => live && setTargetText(r.text))
-      .catch(() => live && setTargetText("(could not load this version)"))
+      .catch(() => live && setTargetText(t("document.versions.couldNotLoad")))
       .finally(() => live && setLoading(false));
     return () => {
       live = false;
@@ -155,7 +162,7 @@ export function VersionCompareDialog({
     let live = true;
     Docs.versionContent(docId, Number(baseline))
       .then((r) => live && setVersionText({ baseline, text: r.text }))
-      .catch(() => live && setVersionText({ baseline, text: "(could not load this version)" }));
+      .catch(() => live && setVersionText({ baseline, text: t("document.versions.couldNotLoad") }));
     return () => {
       live = false;
     };
@@ -166,7 +173,7 @@ export function VersionCompareDialog({
   const { blocks, changed } = useBlockDiff(baseText, targetText);
 
   const baselineOptions = [
-    { value: "current", label: "Current document" },
+    { value: "current", label: t("document.versions.currentDocument") },
     ...versions
       .filter((v) => v.seq !== seq)
       .map((v) => ({ value: String(v.seq), label: `${versionLabel(v.ts)} · ${relativeTime(v.ts)}` })),
@@ -182,15 +189,20 @@ export function VersionCompareDialog({
               <div className="vcompare-head">
                 {viewed && (
                   <p className="vcompare-meta">
-                    Saved <span title={absoluteTime(viewed.ts)}>{relativeTime(viewed.ts)}</span>
-                    {viewedAuthors !== null && ` by ${viewedAuthors}`}
+                    {viewedAuthors === null
+                      ? tRich("document.versions.saved", { when: relativeTime(viewed.ts), time: savedAt(viewed.ts) })
+                      : tRich("document.versions.savedBy", {
+                          when: relativeTime(viewed.ts),
+                          authors: viewedAuthors,
+                          time: savedAt(viewed.ts),
+                        })}
                   </p>
                 )}
                 <div className="vcompare-baseline">
-                  <span className="vcompare-baseline-label">Compare with</span>
+                  <span className="vcompare-baseline-label">{t("document.versions.compareWith")}</span>
                   <div style={{ minWidth: 220 }}>
                     <Selector
-                      label="Compare with"
+                      label={t("document.versions.compareWith")}
                       isLabelHidden
                       size="sm"
                       value={baseline}
@@ -200,11 +212,11 @@ export function VersionCompareDialog({
                   </div>
                   {current.behind && (
                     <Button
-                      label="Show latest"
+                      label={t("document.versions.showLatest")}
                       variant="ghost"
                       size="sm"
                       onClick={current.showLatest}
-                      tooltip="The document has changed since this was shown"
+                      tooltip={t("document.versions.behind")}
                     />
                   )}
                 </div>
@@ -214,9 +226,21 @@ export function VersionCompareDialog({
                 blocks={blocks}
                 changed={changed}
                 loading={loading || baseText === null}
-                unchangedText={`No differences — this version is identical to ${baselineLabel}.`}
-                removedNote={`(in ${baselineLabel}, not here)`}
-                addedNote={`(here, not in ${baselineLabel})`}
+                unchangedText={
+                  baselineLabel === null
+                    ? t("document.versions.identicalToCurrent")
+                    : t("document.versions.identicalTo", { version: baselineLabel })
+                }
+                removedNote={
+                  baselineLabel === null
+                    ? t("document.versions.removedNoteCurrent")
+                    : t("document.versions.removedNote", { version: baselineLabel })
+                }
+                addedNote={
+                  baselineLabel === null
+                    ? t("document.versions.addedNoteCurrent")
+                    : t("document.versions.addedNote", { version: baselineLabel })
+                }
               />
             </div>
           </LayoutContent>
@@ -227,11 +251,13 @@ export function VersionCompareDialog({
               {!canManage ? null : confirmDelete ? (
                 <HStack gap={2} vAlign="center">
                   <span className="vcompare-confirm">
-                    Delete this version ({viewedLabel}) permanently? The document itself is unchanged.
+                    {viewed === undefined
+                      ? t("document.versions.confirmDeleteUnnamed")
+                      : t("document.versions.confirmDelete", { version: viewedLabel })}
                   </span>
-                  <Button label="Cancel" variant="ghost" size="sm" onClick={() => setConfirmDelete(false)} />
+                  <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={() => setConfirmDelete(false)} />
                   <Button
-                    label="Delete"
+                    label={t("common.delete")}
                     variant="destructive"
                     size="sm"
                     isLoading={busy}
@@ -241,26 +267,26 @@ export function VersionCompareDialog({
                 </HStack>
               ) : (
                 <Button
-                  label="Delete"
+                  label={t("common.delete")}
                   variant="ghost"
                   size="sm"
                   isDisabled={busy || isHead}
                   onClick={() => setConfirmDelete(true)}
                   tooltip={
-                    isHead ? "The current version can't be deleted" : "Remove this version from the history"
+                    isHead ? t("document.versions.cannotDeleteCurrent") : t("document.versions.deleteHint")
                   }
                 />
               )}
               <HStack gap={2}>
-                <Button label="Close" variant="ghost" onClick={onClose} />
+                <Button label={t("common.close")} variant="ghost" onClick={onClose} />
                 {canManage && (
                   <Button
-                    label="Restore this version"
+                    label={t("document.versions.restore")}
                     variant="primary"
                     isDisabled={busy || loading}
                     isLoading={busy}
                     onClick={() => onRestore(seq)}
-                    tooltip="Roll the document back to this version"
+                    tooltip={t("document.versions.restoreHint")}
                   />
                 )}
               </HStack>

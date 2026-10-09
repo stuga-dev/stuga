@@ -3,6 +3,7 @@
  * which answers 503 when the node cannot reach its database. The component owns
  * the timers and the fetch.
  */
+import { t } from "../i18n/i18n";
 
 /** What one probe of /ready found. */
 export type Probe =
@@ -71,15 +72,13 @@ export function notice(h: NodeHealth): NodeNotice | null {
   if (h.last === "unready") {
     return {
       status: "error",
-      title: "This server can’t reach its database",
-      description:
-        "It’s still running, so pages load — but the part that stores your work isn’t answering. Keep this tab open, and tell whoever runs this server.",
+      title: t("ui.nodeHealth.databaseTitle"),
+      description: t("ui.nodeHealth.databaseDescription"),
     };
   }
   return {
     status: "warning",
-    title: "Can’t reach the server",
-    description:
-      "This tab has lost contact with the server and keeps retrying. Keep it open so anything you’ve typed isn’t lost.",
+    title: t("ui.nodeHealth.unreachableTitle"),
+    description: t("ui.nodeHealth.unreachableDescription"),
   };
 }

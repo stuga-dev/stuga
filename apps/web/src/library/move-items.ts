@@ -1,6 +1,7 @@
 /** Moving and trashing library items, and what a batch of them reports. */
 import { Docs, Folders } from "../api";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
 export interface LibraryItemRef {
   kind: "folder" | "doc";
@@ -47,16 +48,16 @@ export async function trashEach(docIds: readonly string[]): Promise<number> {
 /** Silent for a single item that moved; a partial failure says how many landed. */
 export function moveReport(total: number, failures: readonly unknown[]): BatchReport | null {
   const failed = failures.length;
-  if (failed === 0) return total > 1 ? { body: `Moved ${total} items.`, type: "info" } : null;
+  if (failed === 0) return total > 1 ? { body: t("library.move.moved", { count: total }), type: "info" } : null;
   if (failed === total) {
     const reason = failures[0];
-    return { body: errorMessage(reason, "Couldn’t move those items."), type: "error" };
+    return { body: errorMessage(reason, t("library.move.failed")), type: "error" };
   }
-  return { body: `Moved ${total - failed} of ${total}; ${failed} couldn’t be moved.`, type: "error" };
+  return { body: t("library.move.partial", { moved: total - failed, total, failed }), type: "error" };
 }
 
 export function trashReport(total: number, failed: number): BatchReport {
   return failed === 0
-    ? { body: `Moved ${total} to Trash.`, type: "info" }
-    : { body: `${total - failed} of ${total} moved to Trash.`, type: "error" };
+    ? { body: t("library.move.trashed", { count: total }), type: "info" }
+    : { body: t("library.move.trashedPartial", { moved: total - failed, total }), type: "error" };
 }

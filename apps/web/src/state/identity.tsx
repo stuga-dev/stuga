@@ -6,9 +6,10 @@
  * in from an archive names its author `imported:<name>`, which no directory knows.
  */
 import { useEffect } from "react";
-import { SAMPLE_AGENT_ALIAS, SAMPLE_AGENT_NAME } from "@stuga/protocol/domain/workspaces";
+import { SAMPLE_AGENT_ALIAS } from "@stuga/protocol/domain/workspaces";
 import { Users } from "../api";
-import { AI_COAUTHOR_LABEL, importedAuthor, principalHuman } from "../lib/format";
+import { t } from "../i18n/i18n";
+import { aiCoauthorLabel, importedAuthor, principalHuman } from "../lib/format";
 import { createStore, useStore } from "../lib/store";
 
 /** alias → display name */
@@ -52,8 +53,8 @@ function isAccountAlias(alias: string): boolean {
 
 /** A principal's full name from the cache. Emails stay whole, so two people sharing a local part stay distinct. */
 export function principalName(principal: string): string {
-  if (principal.startsWith("org:")) return "Everyone";
-  if (principal.startsWith("group:")) return `${principal.slice("group:".length)} (group)`;
+  if (principal.startsWith("org:")) return t("ui.principal.everyone");
+  if (principal.startsWith("group:")) return t("ui.principal.group", { name: principal.slice("group:".length) });
   if (principal.startsWith("user:")) {
     const alias = principal.slice("user:".length);
     return names.get(alias) ?? (isAccountAlias(alias) ? `${alias.slice(0, 6)}…` : alias);
@@ -71,7 +72,7 @@ export function principalLabel(principal: string): string {
 
 /** A ledger alias: the co-author label, an agent's id, or a person's name. */
 export function actorName(alias: string): string {
-  if (principalHuman(alias) !== null) return AI_COAUTHOR_LABEL;
+  if (principalHuman(alias) !== null) return aiCoauthorLabel();
   if (alias.startsWith("agent:")) return alias.slice("agent:".length);
   const person = alias.startsWith("user:") ? alias.slice("user:".length) : alias;
   return names.get(person) ?? person;
@@ -95,11 +96,21 @@ export function nameLoading(principal: string): boolean {
 
 /** A version or comment author: a bare alias, a `restore:<version>` marker, or an `imported:<name>` author. */
 export function authorLabel(author: string): string {
-  if (author.startsWith("restore:")) return `restored from ${author.slice("restore:".length)}`;
-  if (author === SAMPLE_AGENT_ALIAS) return SAMPLE_AGENT_NAME;
+  if (author.startsWith("restore:")) return t("ui.author.restored", { version: author.slice("restore:".length) });
+  if (author === SAMPLE_AGENT_ALIAS) return t("ui.author.sampleAgent");
   const imported = importedAuthor(author);
-  if (imported !== null) return `${imported} · imported`;
+  if (imported !== null) return t("ui.author.imported", { name: imported });
   return principalLabel(`user:${author}`);
+}
+
+/**
+ * Who proposed a run, as people read it: the co-author and the sample agent in the reader's
+ * language, any other agent by its own name (the key's name, where the inbox has one).
+ */
+export function runAgentLabel(run: { source?: string; agent: string; agent_alias: string; agent_name?: string }): string {
+  if (run.source === "panel" || principalHuman(run.agent_alias) !== null) return aiCoauthorLabel();
+  if (run.agent_alias === SAMPLE_AGENT_ALIAS) return t("ui.author.sampleAgent");
+  return run.agent_name || run.agent;
 }
 
 /**

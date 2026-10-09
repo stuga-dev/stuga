@@ -1,0 +1,20 @@
+{
+  "tray.unreadLabel": "Notificações ({count, plural, one {# não lida} many {# não lidas} other {# não lidas}})",
+  "tray.loadFailed": "Não foi possível carregar as notificações.",
+  "tray.showFailed": "Não foi possível mostrar estas notificações.",
+  "tray.allCaughtUp": "Você está em dia.",
+  "channel.email": "e-mail",
+  "channel.webhook": "webhook",
+  "delivery.inStugaOnly": "Mostrada somente no Stuga.",
+  "delivery.sent": "Também enviada por {channel}.",
+  "delivery.sending": "Enviando por {channel}…",
+  "delivery.notSent": "Não enviada por {channel}.",
+  "delivery.emailNotSetUp": "Não enviada por {channel}: o e-mail não está configurado.",
+  "delivery.noEmailAddress": "Não enviada por {channel}: você não tem um endereço de e-mail no Stuga.",
+  "delivery.noSink": "Não enviada por {channel}: nenhum canal de notificação está configurado.",
+  "delivery.noWebhookUrl": "Não enviada por {channel}: nenhuma URL de webhook está definida.",
+  "delivery.channelChanged": "Não enviada por {channel}: o canal de notificação mudou antes do envio.",
+  "delivery.nodeRestarted": "Não enviada por {channel}: o nó foi reiniciado antes do envio.",
+  "delivery.sinkAnswered": "Não enviada por {channel}: respondeu {status}.",
+  "delivery.failed": "Não enviada por {channel}: {detail}."
+}

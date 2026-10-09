@@ -15,8 +15,10 @@ import { TextArea } from "@astryxdesign/core/TextArea";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { VStack } from "@astryxdesign/core/VStack";
 import { MAX_AGENT_INSTRUCTIONS_CHARS } from "@stuga/protocol/domain/limits";
-import { instructionLevelLabel, type InstructionLevel } from "@stuga/protocol/domain/instructions";
+import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
 import { Folders } from "../api";
+import { t } from "../i18n/i18n";
+import { levelLabel } from "./InstructionsDialog";
 
 interface NewFolderDialogProps {
   isOpen: boolean;
@@ -60,19 +62,19 @@ export function NewFolderDialog({ isOpen, parentId = null, onSubmit, onClose }: 
   return (
     <Dialog isOpen={isOpen} onOpenChange={(o) => !o && onClose()} purpose="form" width={480}>
       <Layout
-        header={<DialogHeader title="New folder" onOpenChange={(o) => !o && onClose()} />}
+        header={<DialogHeader title={t("library.create.newFolder")} onOpenChange={(o) => !o && onClose()} />}
         content={
           <LayoutContent>
             <VStack gap={4}>
-              <TextInput label="Folder name" value={title} onChange={setTitle} hasAutoFocus onEnter={submit} />
+              <TextInput label={t("library.explorer.folderName")} value={title} onChange={setTitle} hasAutoFocus onEnter={submit} />
               <VStack gap={3}>
                 {inherited.length > 0 && (
                   <VStack gap={2}>
-                    <Text type="label">Already applies here</Text>
+                    <Text type="label">{t("library.folder.alreadyApplies")}</Text>
                     {inherited.map((level) => (
                       <VStack key={`${level.kind}:${level.id}`} gap={1}>
                         <Text type="supporting" color="secondary">
-                          {instructionLevelLabel(level)}
+                          {levelLabel(level)}
                         </Text>
                         <Blockquote>
                           <Text as="p" display="block" color="secondary" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
@@ -84,17 +86,17 @@ export function NewFolderDialog({ isOpen, parentId = null, onSubmit, onClose }: 
                   </VStack>
                 )}
                 <TextArea
-                  label="Instructions for agents"
+                  label={t("library.instructions.title")}
                   isOptional
                   rows={4}
                   value={instructions}
                   onChange={setInstructions}
                   description={
                     inherited.length > 0
-                      ? "What this folder adds. Agents read it after the above."
-                      : "What agents working in this folder should follow."
+                      ? t("library.folder.instructionsAdds")
+                      : t("library.folder.instructionsHint")
                   }
-                  status={tooLong ? { type: "error", message: `Too long: at most ${MAX_AGENT_INSTRUCTIONS_CHARS} characters.` } : undefined}
+                  status={tooLong ? { type: "error", message: t("library.folder.instructionsTooLong", { limit: MAX_AGENT_INSTRUCTIONS_CHARS }) } : undefined}
                 />
               </VStack>
             </VStack>
@@ -103,8 +105,8 @@ export function NewFolderDialog({ isOpen, parentId = null, onSubmit, onClose }: 
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label="Cancel" variant="ghost" onClick={onClose} />
-              <Button label="Create" variant="primary" onClick={submit} isDisabled={!title.trim() || tooLong} />
+              <Button label={t("common.cancel")} variant="ghost" onClick={onClose} />
+              <Button label={t("common.create")} variant="primary" onClick={submit} isDisabled={!title.trim() || tooLong} />
             </HStack>
           </LayoutFooter>
         }

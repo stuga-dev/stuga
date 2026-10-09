@@ -94,6 +94,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$version</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array><string>en</string><string>zh-Hans</string><string>zh-Hant</string><string>ja</string><string>ko</string><string>de</string><string>fr</string><string>es</string><string>pt-BR</string></array>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
@@ -108,6 +111,11 @@ for size in 16 32 128 256 512; do
   sips -z $((size * 2)) $((size * 2)) -s format png "$macos/local-trial/AppIcon.svg" --out "$iconset/icon_${size}x${size}@2x.png" > /dev/null
 done
 iconutil -c icns -o "$app/Contents/Resources/AppIcon.icns" "$iconset"
+# The menu's text in each language CFBundleLocalizations names; plain .strings need no compiling.
+for lproj in "$macos/app/"*.lproj; do
+  plutil -lint -s "$lproj/Localizable.strings"
+  cp -R "$lproj" "$app/Contents/Resources/"
+done
 
 # ---- signatures: every Mach-O with the hardened runtime, Node with only allow-jit
 sign_one() { # sign_one <file> [entitlements]
@@ -165,7 +173,8 @@ pkgbuild --root "$payload" --component-plist "$work/components.plist" --scripts 
   --identifier dev.stuga.node --version "$version" --install-location / "$work/stuga-node.pkg" > /dev/null
 sed "s/@VERSION@/$version/g" "$here/distribution.xml.in" > "$work/distribution.xml"
 mkdir -p "$work/resources"
-cp "$here/resources/"*.html "$work/resources/"
+# The root pages are the English fallback; Installer picks the <lang>.lproj folder of its language.
+cp -R "$here/resources/"*.html "$here/resources/"*.lproj "$work/resources/"
 cp "$repo/LICENSE" "$work/resources/LICENSE.txt"
 product=("$out/Stuga-$version.pkg")
 productbuild_args=(--distribution "$work/distribution.xml" --package-path "$work" --resources "$work/resources")

@@ -15,6 +15,7 @@ import type { DecorationAttrs, DecorationSet, EditorView } from "@tiptap/pm/view
 import { yCursorPlugin, yCursorPluginKey } from "@tiptap/y-tiptap";
 import type { Awareness } from "y-protocols/awareness";
 import { PEER_PALETTE } from "../state/identity";
+import { t } from "../i18n/i18n";
 
 /** How long a peer's name tag stays up once it is armed. */
 export const PEER_LABEL_LINGER_MS = 2500;
@@ -55,7 +56,7 @@ export function peerColor(user: PeerUser, clientId: number): string {
 /** Coerced: a name off the wire may not be a string, and a peer that published one still named itself. */
 export function peerName(user: PeerUser, clientId: number): string {
   const published = user.name == null ? "" : String(user.name);
-  return published !== "" ? published : `User ${clientId}`;
+  return published !== "" ? published : t("editor.peers.fallbackName", { id: String(clientId) });
 }
 
 /** The caret widget for one peer. Shape and classes are the contract with styles/editor.css. */

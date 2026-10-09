@@ -6,6 +6,8 @@ import { CommentsPanel } from "./CommentsPanel";
 import { VersionsPanel } from "./versions/VersionsPanel";
 import { SourcesPanel, useSourceCount } from "./SourcesPanel";
 import { AiNewChatButton, AiPanel } from "../ai/AiPanel";
+import { t } from "../i18n/i18n";
+import { aiCoauthorLabel } from "../lib/format";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { History, MessageSquare, Quote, Sparkles } from "lucide-react";
@@ -49,7 +51,7 @@ export function DocDock({
       tabs={[
         {
           id: "ai",
-          label: "AI co-author",
+          label: aiCoauthorLabel(),
           icon: <Sparkles size={15} />,
           actions: <AiNewChatButton />,
           render: () =>
@@ -57,13 +59,13 @@ export function DocDock({
               <AiPanel agentAuto={agentAuto} />
             ) : (
               <VStack gap={2} hAlign="center" paddingBlock={8}>
-                <Spinner label="Connecting…" />
+                <Spinner label={t("document.dock.connecting")} />
               </VStack>
             ),
         },
-        { id: "comments", label: "Comments", icon: <MessageSquare size={15} />, render: () => <CommentsPanel docId={docId} /> },
-        { id: "versions", label: "Versions", icon: <History size={15} />, render: () => <VersionsPanel docId={docId} ydoc={ydoc} /> },
-        { id: "sources", label: "Sources", icon: <Quote size={15} />, badge: sourceCount, render: () => <SourcesPanel /> },
+        { id: "comments", label: t("document.dock.comments"), icon: <MessageSquare size={15} />, render: () => <CommentsPanel docId={docId} /> },
+        { id: "versions", label: t("document.dock.versions"), icon: <History size={15} />, render: () => <VersionsPanel docId={docId} ydoc={ydoc} /> },
+        { id: "sources", label: t("document.dock.sources"), icon: <Quote size={15} />, badge: sourceCount, render: () => <SourcesPanel /> },
       ]}
     />
   );

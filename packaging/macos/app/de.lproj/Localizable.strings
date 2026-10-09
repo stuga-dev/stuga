@@ -1,0 +1,54 @@
+/* Stuga.app (de). Keys are app/main.swift's and app/Health.swift's L("key", "English"). */
+
+/* The menu */
+"menu.open" = "Stuga öffnen";
+"menu.setUp" = "Stuga einrichten…";
+"menu.copyAddress" = "Adresse kopieren";
+"menu.copySetupLink" = "Einrichtungslink kopieren";
+"menu.addressQR" = "Adresse als QR-Code zeigen…";
+"menu.setupLinkQR" = "Einrichtungslink als QR-Code zeigen…";
+"menu.showLogs" = "Protokolle anzeigen";
+"menu.restart" = "Stuga neu starten…";
+"menu.uninstall" = "Stuga deinstallieren…";
+"menu.quit" = "Menü beenden";
+
+/* The menu's status line */
+"status.missing" = "Stuga ist nicht installiert";
+"status.starting" = "Wird gestartet…";
+"status.running" = "Läuft unter %@";
+"status.unclaimed" = "Bereit zur Einrichtung unter %@";
+"status.installing" = "Update wird installiert…";
+"status.restoring" = "Backup wird wiederhergestellt…";
+"status.uninstalling" = "Wird deinstalliert…";
+
+/* What has gone wrong, as the status line and an alert say it */
+"fault.nodeStopped" = "Stuga wurde beendet und nicht wieder gestartet";
+"fault.postgresStopped" = "Die Datenbank von Stuga wurde beendet und nicht wieder gestartet";
+"fault.databaseUnreachable" = "Stuga erreicht seine Datenbank nicht";
+"fault.notResponding" = "Stuga reagiert nicht";
+"fault.refused" = "Stuga ist älter als seine Daten";
+
+/* The alert that says Stuga has stopped working */
+"failure.refused" = "Öffne Stuga, um zu sehen, was zu tun ist.";
+"failure.restart" = "Ein Neustart von Stuga behebt das oft. Die Protokolle zeigen, was passiert ist.";
+
+/* Alert buttons */
+"button.ok" = "OK";
+"button.cancel" = "Abbrechen";
+
+/* The QR code alert */
+"qr.setUp.title" = "Stuga auf dem Smartphone einrichten";
+"qr.setUp.text" = "Scanne den Code mit einem Smartphone im selben Netzwerk. Er enthält den Einrichtungscode, also behalte ihn für dich.";
+"qr.open.title" = "Stuga auf dem Smartphone öffnen";
+"qr.open.text" = "Scanne den Code mit einem Smartphone im selben Netzwerk: %@";
+
+/* The uninstall alert */
+"uninstall.title" = "Stuga deinstallieren?";
+"uninstall.text" = "Stuga wird beendet und von diesem Mac entfernt. Deine Dokumente und Backups bleiben in %@, sofern du sie nicht ebenfalls löschst.";
+"uninstall.keepData" = "Deinstallieren, Daten behalten";
+"uninstall.deleteData" = "Deinstallieren und Daten löschen";
+
+/* macOS's administrator password prompt */
+"prompt.setupCode" = "Stuga benötigt das Passwort eines Administrators, um seinen Einrichtungscode zu lesen.";
+"prompt.restart" = "Stuga benötigt dein Passwort für den Neustart.";
+"prompt.uninstall" = "Stuga benötigt dein Passwort für die Deinstallation.";

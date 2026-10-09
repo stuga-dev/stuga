@@ -112,9 +112,9 @@ describe("a refusal at the gate ends the turn on the panel, not only on the page
 
     const end = ending(ws);
     expect(end.refusals).toEqual(["locked"]);
-    expect(end.done).toMatchObject({ done: true, error: expect.stringContaining("locked") });
+    expect(end.done).toMatchObject({ done: true, error: { code: "locked" } });
     expect(end.edits).toHaveLength(1);
-    expect(end.edits[0]!.error).toContain("locked");
+    expect(end.edits[0]!.error).toEqual({ code: "locked" });
     expect(mockAgentTurn).not.toHaveBeenCalled();
   });
 
@@ -128,8 +128,8 @@ describe("a refusal at the gate ends the turn on the panel, not only on the page
 
     const end = ending(bob);
     expect(end.refusals).toEqual(["acl"]);
-    expect(end.done).toMatchObject({ done: true, error: expect.stringContaining("view-only") });
-    expect(end.edits.map((e) => e.error)).toEqual([expect.stringContaining("view-only")]);
+    expect(end.done).toMatchObject({ done: true, error: { code: "view_only" } });
+    expect(end.edits.map((e) => e.error)).toEqual([{ code: "view_only" }]);
     expect(mockAgentTurn).not.toHaveBeenCalled();
   });
 
@@ -148,7 +148,7 @@ describe("a refusal at the gate ends the turn on the panel, not only on the page
     const end = ending(ws);
     expect(end.refusals).toEqual(["rate-limit"]);
     expect(end.edits).toHaveLength(11);
-    expect(end.edits.at(-1)!.error).toContain("Too many AI requests");
+    expect(end.edits.at(-1)!.error).toEqual({ code: "rate_limited" });
   });
 });
 
@@ -177,8 +177,7 @@ describe("AI_CANCEL", () => {
     expect(end.done!.error).toBeUndefined();
     expect(end.edits).toHaveLength(1);
     // Stopped is not failed: the edit the finished round staged was proposed.
-    expect(end.edits[0]).toMatchObject({ staged: 1, error: null, notice: expect.stringContaining("Stopped") });
-    expect(end.edits[0]!.notice).toContain("staged for review");
+    expect(end.edits[0]).toMatchObject({ staged: 1, error: null, notices: [{ code: "stopped", kept: "staged" }] });
     // The spend was real and is attributed like any other turn's.
     expect(h.queued.find((m) => m.kind === "ai_usage")).toMatchObject({ alias: "alice", model: "test-model" });
   });
@@ -212,8 +211,8 @@ describe("a turn the provider failed", () => {
     await askAi(dobj, ws);
 
     const end = ending(ws);
-    expect(end.done).toMatchObject({ done: true, error: expect.stringContaining("out of credit") });
-    expect(end.edits.map((e) => e.error)).toEqual([expect.stringContaining("out of credit")]);
+    expect(end.done).toMatchObject({ done: true, error: { code: "failed", failure: "quota" } });
+    expect(end.edits.map((e) => e.error)).toEqual([{ code: "failed", failure: "quota" }]);
     expect(JSON.stringify(end)).not.toContain("org-abc");
     expect(warn).toHaveBeenCalledWith("co-author model call failed", { docId: DOC, ...failure });
     warn.mockRestore();
@@ -229,8 +228,38 @@ describe("a turn the provider failed", () => {
 
     await askAi(dobj, ws);
 
-    expect(ending(ws).edits[0]).toMatchObject({ staged: 1, error: null, notice: expect.stringMatching(/^The turn ended early\. The AI provider says the account is out of credit\./) });
+    expect(ending(ws).edits[0]).toMatchObject({ staged: 1, error: null, notices: [{ code: "ended_early", failure: "quota" }] });
     warn.mockRestore();
+  });
+});
+
+describe("what the panel is told", () => {
+  it("sends the activity and the notices as data, the image ones from the node's answer", async () => {
+    mockAgentTurn.mockImplementation(async (_cfg, _input, _runner, _onChunk, onStatus: (a: unknown) => void) => {
+      onStatus({ kind: "searching", query: "pricing" });
+      return { ...emptyTurn(), stopReason: "max_rounds", rounds: 12, strEdits: [{ old_string: "Alpha.", new_string: "![x](https://e.test/x.png)" }] };
+    });
+    const h = aiHarness();
+    h.env.internal = {
+      fetch: vi.fn(async (path: string) =>
+        path === "/internal/media-ingest"
+          ? Response.json({ markdown: ["![x](https://e.test/x.png)"], failures: [{ url: "https://e.test/x.png", reason: "HTTP 404" }], truncated_after: 8 })
+          : Response.json({ docs: [] }),
+      ),
+    };
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const ws = await connect(dobj, h, { docId: DOC, alias: "alice", workspaceId: WS_ID });
+
+    await askAi(dobj, ws);
+
+    const statuses = payloads<AiResponseChunk>(ws, Opcode.AI_RESPONSE).flatMap((c) => (c.status ? [c.status] : []));
+    expect(statuses).toEqual([{ kind: "searching", query: "pricing" }, { kind: "proposing" }]);
+    expect(ending(ws).edits[0]!.notices).toEqual([
+      { code: "max_rounds", rounds: 12 },
+      { code: "image_not_downloaded", url: "https://e.test/x.png", reason: "HTTP 404" },
+      { code: "images_truncated", count: 8 },
+    ]);
   });
 });
 
@@ -270,7 +299,7 @@ describe("what the loop is handed", () => {
     await askAi(dobj, ws, { prompt: "   " });
 
     expect(mockAgentTurn).not.toHaveBeenCalled();
-    expect(ending(ws).edits.map((e) => e.error)).toEqual([expect.stringMatching(/what you'd like/)]);
+    expect(ending(ws).edits.map((e) => e.error)).toEqual([{ code: "empty_prompt" }]);
   });
 
   it("an unreadable payload ends the turn rather than taking the actor down", async () => {
@@ -282,6 +311,6 @@ describe("what the loop is handed", () => {
     await dobj.webSocketMessage(ws, frameBuffer(encodeBinary(Opcode.AI_REQUEST, new TextEncoder().encode("not json"))));
 
     expect(mockAgentTurn).not.toHaveBeenCalled();
-    expect(ending(ws).edits.map((e) => e.error)).toEqual([expect.stringContaining("could not be read")]);
+    expect(ending(ws).edits.map((e) => e.error)).toEqual([{ code: "unreadable" }]);
   });
 });

@@ -9,6 +9,7 @@ function pending(id: string, payload: DatabaseRunOpPayload | undefined, agent = 
     kind: kind ?? "rows.insert",
     table_id: "tbl_1",
     summary: id,
+    detail: null,
     status: "pending",
     review: "review",
     ...(payload ? { payload } : {}),

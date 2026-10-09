@@ -1,0 +1,54 @@
+/* Stuga.app (es). Keys are app/main.swift's and app/Health.swift's L("key", "English"). */
+
+/* The menu */
+"menu.open" = "Abrir Stuga";
+"menu.setUp" = "Configurar Stuga…";
+"menu.copyAddress" = "Copiar la dirección";
+"menu.copySetupLink" = "Copiar el enlace de configuración";
+"menu.addressQR" = "Mostrar la dirección como código QR…";
+"menu.setupLinkQR" = "Mostrar el enlace de configuración como código QR…";
+"menu.showLogs" = "Mostrar registros";
+"menu.restart" = "Reiniciar Stuga…";
+"menu.uninstall" = "Desinstalar Stuga…";
+"menu.quit" = "Salir del menú";
+
+/* The menu's status line */
+"status.missing" = "Stuga no está instalado";
+"status.starting" = "Iniciando…";
+"status.running" = "En ejecución en %@";
+"status.unclaimed" = "Listo para configurar en %@";
+"status.installing" = "Instalando una actualización…";
+"status.restoring" = "Restaurando una copia de seguridad…";
+"status.uninstalling" = "Desinstalando…";
+
+/* What has gone wrong, as the status line and an alert say it */
+"fault.nodeStopped" = "Stuga se detuvo y no se ha vuelto a iniciar";
+"fault.postgresStopped" = "La base de datos de Stuga se detuvo y no se ha vuelto a iniciar";
+"fault.databaseUnreachable" = "Stuga no puede conectar con su base de datos";
+"fault.notResponding" = "Stuga no responde";
+"fault.refused" = "Stuga es más antiguo que sus datos";
+
+/* The alert that says Stuga has stopped working */
+"failure.refused" = "Abre Stuga para ver qué hacer.";
+"failure.restart" = "Reiniciar Stuga suele solucionarlo. Los registros indican lo que ha pasado.";
+
+/* Alert buttons */
+"button.ok" = "Aceptar";
+"button.cancel" = "Cancelar";
+
+/* The QR code alert */
+"qr.setUp.title" = "Configura Stuga en tu teléfono";
+"qr.setUp.text" = "Escanéalo con un teléfono de la misma red. Contiene el código de configuración, así que no lo compartas.";
+"qr.open.title" = "Abre Stuga en tu teléfono";
+"qr.open.text" = "Escanéalo con un teléfono de la misma red: %@";
+
+/* The uninstall alert */
+"uninstall.title" = "¿Desinstalar Stuga?";
+"uninstall.text" = "Stuga se detiene y se elimina de este Mac. Tus documentos y copias de seguridad se quedan en %@, salvo que también los elimines.";
+"uninstall.keepData" = "Desinstalar y conservar datos";
+"uninstall.deleteData" = "Desinstalar y eliminar datos";
+
+/* macOS's administrator password prompt */
+"prompt.setupCode" = "Stuga necesita la contraseña de un administrador para leer su código de configuración.";
+"prompt.restart" = "Stuga necesita tu contraseña para reiniciarse.";
+"prompt.uninstall" = "Stuga necesita tu contraseña para desinstalarse.";

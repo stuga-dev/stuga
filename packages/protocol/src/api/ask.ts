@@ -1,4 +1,5 @@
 import type { AiCitation } from "../wire/doc-socket.js";
+import type { AskNotice } from "./ai-turn.js";
 
 /** One research step the ask agent took, streamed as it completes and stored with the turn. */
 export type AskStep =
@@ -17,5 +18,5 @@ export interface AskDone {
   rounds: number;
   stop_reason: AskStopReason;
   /** What an incomplete or degraded answer is missing; not an error. */
-  notice: string | null;
+  notice: AskNotice | null;
 }

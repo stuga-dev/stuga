@@ -83,7 +83,7 @@ function applyFlash(tr: Transaction, prev: FlashState): FlashState {
 }
 
 export const PassageFlash = Extension.create({
-  name: "passageFlash",
+  name: "passageFlash", // i18n-exempt: extension identifier
 
   addProseMirrorPlugins() {
     return [

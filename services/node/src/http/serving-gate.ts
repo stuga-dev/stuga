@@ -9,25 +9,21 @@
  * is stopped: `/ready` says `refused` with nothing to retry, and the page says
  * which version to start or which backup to restore.
  *
+ * The page and the message are written in the language the browser asks for (Accept-Language).
+ *
  * Once open, requests go to the live handlers, and the gate counts the ones
  * still being answered, so a pause can wait for them to finish. A response
  * whose body is still being written counts until that is done, when its
  * handler says so (answeredUntil).
  */
+import { negotiateUiLanguage, parseAcceptLanguage, type UiLanguage } from "@stuga/protocol/domain/ui-languages";
+import { renderGatePage, type GateRefusal, type GateWaiting } from "@stuga/protocol/notify/render";
 import type { FrontDoor, RequestHandler } from "../platform/http-server.js";
 import { applyRemoteHeaders, applySecurityHeaders } from "./security-headers.js";
 
 /** Why the node does not serve for now. */
-type Waiting = "starting" | "backing_up" | "upgrading" | "maintenance";
+type Waiting = GateWaiting;
 export type Pause = Waiting | "refused";
-
-/** What a person reads while the node does not serve. */
-const SAY: Record<Waiting, string> = {
-  starting: "Stuga is starting.",
-  backing_up: "Stuga is backing up before an upgrade.",
-  upgrading: "Stuga is upgrading.",
-  maintenance: "Stuga is making a backup.",
-};
 
 const RETRY_SECONDS = 5;
 /** A refusal lasts until someone acts on the machine; the page only looks again now and then. */
@@ -35,8 +31,7 @@ const REFUSED_RELOAD_SECONDS = 30;
 
 /** Why the node refused its database, for the page that says so. */
 export interface Refusal {
-  title: string;
-  body: string;
+  why: GateRefusal;
   /** What to run on the machine; null when the packaging names no way to run it. */
   command: string | null;
 }
@@ -144,44 +139,56 @@ export function createServingGate(): ServingGate {
   };
 }
 
+/** The language a request reads in: the first of its Accept-Language the gate is written in, else English. */
+function languageOf(req: Request): UiLanguage {
+  return negotiateUiLanguage(parseAcceptLanguage(req.headers.get("accept-language")));
+}
+
+/** A page varies with the language asked for. */
+const VARY = { vary: "accept-language" };
+
 function notServing(req: Request, why: Waiting): Response {
   const headers = { "retry-after": String(RETRY_SECONDS), "cache-control": "no-store" };
   const path = new URL(req.url).pathname;
   if (path === "/ready") return Response.json({ ok: false, status: why }, { status: 503, headers });
+  const lang = languageOf(req);
+  const text = renderGatePage(why, lang);
   const wantsPage = req.method === "GET" && (req.headers.get("accept") ?? "").includes("text/html");
   if (wantsPage) {
-    return new Response(page(`<p>${SAY[why]}</p>`, RETRY_SECONDS), {
+    return new Response(page(lang, `<p>${escapeHtml(text.title)}</p>`, text.reloads, RETRY_SECONDS), {
       status: 503,
-      headers: { ...headers, "content-type": "text/html; charset=utf-8" },
+      headers: { ...headers, ...VARY, "content-type": "text/html; charset=utf-8" },
     });
   }
-  return Response.json({ error: "unavailable", status: why, message: SAY[why] }, { status: 503, headers });
+  return Response.json({ error: "unavailable", status: why, message: text.title }, { status: 503, headers: { ...headers, ...VARY } });
 }
 
 /** No retry-after: waiting does not end a refusal. */
-function refused(req: Request, text: Refusal): Response {
+function refused(req: Request, refusal: Refusal): Response {
   const headers = { "cache-control": "no-store" };
   const path = new URL(req.url).pathname;
   if (path === "/ready") return Response.json({ ok: false, status: "refused" }, { status: 503, headers });
+  const lang = languageOf(req);
+  const text = renderGatePage(refusal.why, lang);
   const wantsPage = req.method === "GET" && (req.headers.get("accept") ?? "").includes("text/html");
   if (wantsPage) {
-    const command = text.command === null ? "" : `\n<pre><code>${escapeHtml(text.command)}</code></pre>`;
-    const body = `<p><strong>${escapeHtml(text.title)}</strong></p>\n<p>${escapeHtml(text.body)}</p>${command}`;
-    return new Response(page(body, REFUSED_RELOAD_SECONDS), {
+    const command = refusal.command === null ? "" : `\n<pre><code>${escapeHtml(refusal.command)}</code></pre>`;
+    const body = `<p><strong>${escapeHtml(text.title)}</strong></p>\n<p>${escapeHtml(text.body ?? "")}</p>${command}`;
+    return new Response(page(lang, body, text.reloads, REFUSED_RELOAD_SECONDS), {
       status: 503,
-      headers: { ...headers, "content-type": "text/html; charset=utf-8" },
+      headers: { ...headers, ...VARY, "content-type": "text/html; charset=utf-8" },
     });
   }
-  return Response.json({ error: "refused", status: "refused", message: text.title }, { status: 503, headers });
+  return Response.json({ error: "refused", status: "refused", message: text.title }, { status: 503, headers: { ...headers, ...VARY } });
 }
 
 function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
-function page(content: string, reloadSeconds: number): string {
+function page(lang: UiLanguage, content: string, reloads: string, reloadSeconds: number): string {
   return `<!doctype html>
-<html lang="en">
+<html lang="${lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -199,7 +206,7 @@ function page(content: string, reloadSeconds: number): string {
 <body>
 <main>
 ${content}
-<p class="quiet">This page reloads by itself.</p>
+<p class="quiet">${escapeHtml(reloads)}</p>
 </main>
 </body>
 </html>

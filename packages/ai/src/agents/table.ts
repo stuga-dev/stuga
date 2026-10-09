@@ -92,7 +92,7 @@ Reading:
 A files cell holds links to files stored with the database, one per line. You cannot upload a file: keep the links a cell holds, and never write one you did not read from this database.
 - create_table(name): a new empty table (add columns next).
 Making a change means CALLING a tool — describing it in prose stages nothing and the user sees nothing to accept.
-Guidance: read before you write (query for _ids, get_schema for column names and types); batch related rows into ONE insert_rows/update_rows call rather than many; make the smallest set of changes that satisfies the request; briefly say what you proposed and why. A tool error means that one change was refused — fix the input and retry that change, or explain why it cannot be done.`;
+Guidance: read before you write (query for _ids, get_schema for column names and types); batch related rows into ONE insert_rows/update_rows call rather than many; make the smallest set of changes that satisfies the request; briefly say what you proposed and why, in the language of the request; new cell text follows the language the table already uses. A tool error means that one change was refused — fix the input and retry that change, or explain why it cannot be done.`;
 
 const REVIEW_LINE =
   "Proposing changes (each call stages ONE change for the user to Accept or Reject in their grid — changes are NOT applied until accepted):";

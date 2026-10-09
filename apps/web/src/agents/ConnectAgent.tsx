@@ -15,7 +15,8 @@ import { Plug } from "lucide-react";
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
 import { Agents } from "../api";
 import { LoadFailed } from "../ui/LoadFailed";
-import { CLIENT_GROUPS, TAB_LABEL, clientConfigs, clientTabs, type ClientTab } from "./client-configs";
+import { t } from "../i18n/i18n";
+import { CLIENT_GROUPS, clientConfigs, clientTabs, type ClientTab, tabLabel } from "./client-configs";
 import { useMintKey } from "./MintKey";
 import { ClaudeCodeTab } from "./tabs/ClaudeCodeTab";
 import { ClaudeConnectorTab } from "./tabs/ClaudeConnectorTab";
@@ -35,11 +36,8 @@ export function ConnectAgent({ onKeyCreated }: AgentClientsProps) {
   return (
     <Card>
       <VStack gap={3} style={{ padding: 20 }}>
-        <Heading level={2}>Connect an agent</Heading>
-        <Text color="secondary">
-          Agents act with your access, and their changes appear in version history. An app that signs in reaches the
-          workspaces you choose.
-        </Text>
+        <Heading level={2}>{t("agents.connect.title")}</Heading>
+        <Text color="secondary">{t("agents.connect.intro")}</Text>
         <AgentClients onKeyCreated={onKeyCreated} />
       </VStack>
     </Card>
@@ -85,11 +83,11 @@ export function AgentClients({ onKeyCreated }: AgentClientsProps) {
   }, []);
   useEffect(load, [load]);
 
-  if (failed) return <LoadFailed isCompact icon={<Plug size={22} />} title="Couldn’t load connection options" onRetry={load} />;
+  if (failed) return <LoadFailed isCompact icon={<Plug size={22} />} title={t("agents.connect.loadFailed")} onRetry={load} />;
   if (setup === null) {
     return (
       <VStack gap={2} hAlign="center" style={{ padding: "1.5rem 0" }}>
-        <Spinner label="Loading…" />
+        <Spinner label={t("common.loading")} />
       </VStack>
     );
   }
@@ -113,21 +111,21 @@ function ClientTabs({
   const options: SelectorProps["options"] = [
     ...CLIENT_GROUPS.map((group) => ({
       type: "section" as const,
-      title: group.title,
-      options: group.clients.filter((t) => tabs.includes(t)).map((t) => ({ value: t, label: TAB_LABEL[t] })),
+      title: t(group.titleKey),
+      options: group.clients.filter((c) => tabs.includes(c)).map((c) => ({ value: c, label: tabLabel(c) })),
     })),
     { type: "divider" as const },
-    { value: "other", label: TAB_LABEL.other },
+    { value: "other", label: tabLabel("other") },
   ];
   return (
     <>
       <Selector
-        label="App"
+        label={t("agents.connect.appLabel")}
         options={options}
         value={active}
         onChange={(v) => onTab(v as ClientTab)}
         hasSearch
-        searchPlaceholder="Search apps"
+        searchPlaceholder={t("agents.connect.searchApps")}
         width="min(100%, 20rem)"
       />
       {active === "claude" && <ClaudeConnectorTab mcpUrl={configs.hostedMcpUrl} />}
@@ -148,7 +146,7 @@ function ClientTabs({
         <InstallerTab
           host="Antigravity"
           commands={configs.installers.antigravity}
-          signIn="Installs Stuga. Antigravity has no command that starts its sign-in, so authenticate it under Settings → Customizations → Installed MCP Servers."
+          afterRun={t("agents.installer.antigravityAfterRun")}
         />
       )}
       {active === "cursor" && <LinkTab host="Cursor" link={configs.links.cursor} mint={mint} />}

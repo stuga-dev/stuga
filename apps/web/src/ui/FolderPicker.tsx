@@ -1,6 +1,7 @@
 /** Pick a destination folder, or the top level, for a move. Each level loads when it is expanded. */
 import { useCallback, useEffect, useState } from "react";
 import { Folders, type Folder } from "../api";
+import { t } from "../i18n/i18n";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { Button } from "@astryxdesign/core/Button";
@@ -21,14 +22,14 @@ export function FolderPicker({ excludeSubtreeOf, onPick, onClose }: Props) {
   return (
     <Dialog isOpen onOpenChange={(o) => !o && onClose()} purpose="form" width={420}>
       <Layout
-        header={<DialogHeader title="Move to…" onOpenChange={(o) => !o && onClose()} />}
+        header={<DialogHeader title={t("ui.folderPicker.title")} onOpenChange={(o) => !o && onClose()} />}
         content={
           <LayoutContent>
             <div className="folder-picker-tree">
               <Item
                 as="div"
                 density="compact"
-                label="Top level"
+                label={t("ui.folderPicker.topLevel")}
                 startContent={<FileText size={15} />}
                 isSelected={selected === null}
                 onClick={() => setSelected(null)}
@@ -46,8 +47,8 @@ export function FolderPicker({ excludeSubtreeOf, onPick, onClose }: Props) {
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label="Cancel" variant="ghost" onClick={onClose} />
-              <Button label="Move here" variant="primary" onClick={() => onPick(selected)} />
+              <Button label={t("common.cancel")} variant="ghost" onClick={onClose} />
+              <Button label={t("ui.folderPicker.moveHere")} variant="primary" onClick={() => onPick(selected)} />
             </HStack>
           </LayoutFooter>
         }
@@ -105,7 +106,7 @@ function PickerLevel({
                 isSelected={selected === f.folder_id}
                 onClick={() => onSelect(f.folder_id)}
                 marker={
-                  <button className="folder-caret" onClick={toggle} title={open ? "Collapse" : "Expand"}>
+                  <button className="folder-caret" onClick={toggle} title={open ? t("ui.folderPicker.collapse") : t("ui.folderPicker.expand")}>
                     {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   </button>
                 }

@@ -3,8 +3,9 @@
  * apply. Every mutation commits through `commitOp`, so an accepted proposal is
  * ledgered and reverts exactly like a direct write.
  */
-import type { DatabaseActor as DatabaseActorIdentity, DatabaseOpKind, DatabaseRunOpPayload } from "@stuga/protocol/databases/types";
+import type { DatabaseActor as DatabaseActorIdentity, DatabaseOpChangeDetail, DatabaseOpKind, DatabaseRunOpPayload } from "@stuga/protocol/databases/types";
 import type { Database } from "../database.js";
+import { describeOp } from "../ledger/op-detail.js";
 import { finalizeInverse, recordOp, type InverseJson } from "../ledger/ops-ledger.js";
 import { setOpStatus } from "../ledger/runs.js";
 import { OpError, type Body } from "../request.js";
@@ -36,8 +37,11 @@ export interface OpDef<P extends OpPayload = OpPayload> {
    * without one. It runs again after a spill await, so it must be a pure read.
    */
   capture(sql: SqlHandle, p: P): InverseJson | null;
-  /** Re-verify against live state and write, inside the transaction. The result is the route's response body. */
-  apply(sql: SqlHandle, p: P, opts: ApplyOptions): { result: Record<string, unknown>; summary: string };
+  /**
+   * Re-verify against live state and write, inside the transaction. The result is the route's
+   * response body; the detail is what the ledger records, in English as its summary.
+   */
+  apply(sql: SqlHandle, p: P, opts: ApplyOptions): { result: Record<string, unknown>; detail: DatabaseOpChangeDetail };
   /** The answer when the op would change nothing, which records no op. */
   unchanged?(sql: SqlHandle, p: P): Record<string, unknown> | null;
   /** Present on kinds an agent may propose. */
@@ -127,7 +131,8 @@ export async function commitOp(
         actor: args.actor,
         kind: p.kind,
         tableId: p.table_id,
-        summary: applied.summary,
+        summary: describeOp(applied.detail),
+        detail: applied.detail,
         inline: inverse?.inline ?? null,
         blobKey: inverse?.blobKey ?? null,
         reverts: null,

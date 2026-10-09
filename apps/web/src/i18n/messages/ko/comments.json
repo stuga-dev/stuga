@@ -1,0 +1,5 @@
+{
+  "composer.label": "댓글 추가",
+  "composer.text": "댓글 내용",
+  "composer.placeholder": "댓글 추가… @를 입력하면 멘션할 수 있어요"
+}

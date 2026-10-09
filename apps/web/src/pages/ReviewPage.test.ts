@@ -32,6 +32,7 @@ vi.mock("@astryxdesign/core/MoreMenu", async () => {
 const run = (overrides: Partial<InboxRun> = {}) => ({
   source: "connector",
   agent: "Research bot",
+  agent_alias: "agent-research",
   agent_name: "Research bot",
   client: null,
   status: "open",
@@ -120,7 +121,11 @@ describe("review inbox actions", () => {
 
 describe("who made a run", () => {
   it("names the co-author once", () => {
-    expect(madeBy(run({ source: "panel", agent: "AI co-author", agent_name: "AI co-author" }))).toBe("AI co-author");
+    expect(madeBy(run({ source: "panel", agent: "stored", agent_alias: "panel:u_ada", agent_name: "stored" }))).toBe("AI co-author");
+  });
+
+  it("names the sample agent from the catalog", () => {
+    expect(madeBy(run({ agent: "stored", agent_alias: "agent-sample", agent_name: "stored" }))).toBe("Sample agent");
   });
 
   it("adds the client label only when the agent's name does not already say it", () => {

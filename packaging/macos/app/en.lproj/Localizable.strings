@@ -1,0 +1,54 @@
+/* Stuga.app (en). Keys are app/main.swift's and app/Health.swift's L("key", "English"). */
+
+/* The menu */
+"menu.open" = "Open Stuga";
+"menu.setUp" = "Set Up Stuga…";
+"menu.copyAddress" = "Copy Address";
+"menu.copySetupLink" = "Copy Setup Link";
+"menu.addressQR" = "Show Address as QR Code…";
+"menu.setupLinkQR" = "Show Setup Link as QR Code…";
+"menu.showLogs" = "Show Logs";
+"menu.restart" = "Restart Stuga…";
+"menu.uninstall" = "Uninstall Stuga…";
+"menu.quit" = "Quit Menu";
+
+/* The menu's status line */
+"status.missing" = "Stuga is not installed";
+"status.starting" = "Starting…";
+"status.running" = "Running at %@";
+"status.unclaimed" = "Ready to set up at %@";
+"status.installing" = "Installing an update…";
+"status.restoring" = "Restoring a backup…";
+"status.uninstalling" = "Uninstalling…";
+
+/* What has gone wrong, as the status line and an alert say it */
+"fault.nodeStopped" = "Stuga stopped and has not started again";
+"fault.postgresStopped" = "Stuga's database stopped and has not started again";
+"fault.databaseUnreachable" = "Stuga cannot reach its database";
+"fault.notResponding" = "Stuga is not responding";
+"fault.refused" = "Stuga is older than its data";
+
+/* The alert that says Stuga has stopped working */
+"failure.refused" = "Open Stuga to see what to do.";
+"failure.restart" = "Restarting Stuga often fixes this. The logs say what happened.";
+
+/* Alert buttons */
+"button.ok" = "OK";
+"button.cancel" = "Cancel";
+
+/* The QR code alert */
+"qr.setUp.title" = "Set up Stuga on your phone";
+"qr.setUp.text" = "Scan this on a phone on the same network. It carries the setup code, so keep it to yourself.";
+"qr.open.title" = "Open Stuga on your phone";
+"qr.open.text" = "Scan this on a phone on the same network: %@";
+
+/* The uninstall alert */
+"uninstall.title" = "Uninstall Stuga?";
+"uninstall.text" = "Stuga stops and is removed from this Mac. Your documents and backups stay in %@ unless you delete them too.";
+"uninstall.keepData" = "Uninstall, Keep Data";
+"uninstall.deleteData" = "Uninstall and Delete Data";
+
+/* macOS's administrator password prompt */
+"prompt.setupCode" = "Stuga needs an administrator's password to read its setup code.";
+"prompt.restart" = "Stuga needs your password to restart.";
+"prompt.uninstall" = "Stuga needs your password to uninstall.";

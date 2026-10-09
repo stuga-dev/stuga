@@ -1,5 +1,6 @@
 import type { DocAccessMode } from "@stuga/protocol/domain/workspaces";
 import type { InviteRole, WorkspaceRole } from "@stuga/protocol/domain/roles";
+import { t } from "../i18n/i18n";
 import { api, apiFailure, authedFetch } from "../lib/http/client";
 import { cachedResource } from "../lib/store";
 
@@ -195,7 +196,7 @@ export const Workspaces = {
       blob = await res.blob();
     } catch {
       // The node breaks the download when it cannot finish the archive; the browser's own words say less.
-      throw new Error("The export stopped before it finished.");
+      throw new Error(t("errors.client.exportStopped"));
     }
     return { blob, filename: attachmentName(res) ?? "workspace.stuga.zip" };
   },

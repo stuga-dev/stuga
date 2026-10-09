@@ -20,12 +20,15 @@ import { useToast } from "@astryxdesign/core/Toast";
 import { MAX_AGENT_INSTRUCTIONS_CHARS } from "@stuga/protocol/domain/limits";
 import {
   MAX_AGENT_INSTRUCTIONS_STACK_CHARS,
-  instructionLevelLabel,
   instructionStackChars,
+  instructionTitle,
+  type InstructionLevel,
+  type InstructionLevelKind,
 } from "@stuga/protocol/domain/instructions";
 import { Docs, Folders, type ItemInstructions } from "../api";
 import { errorMessage } from "../lib/http/client";
 import { LoadFailed } from "../ui/LoadFailed";
+import { t, type MessageKey } from "../i18n/i18n";
 
 export interface InstructionsTarget {
   kind: "folder" | "document" | "database";
@@ -33,11 +36,24 @@ export interface InstructionsTarget {
   title: string;
 }
 
-const INTRO: Record<InstructionsTarget["kind"], string> = {
-  folder: "Agents working in this folder",
-  document: "Agents working on this document",
-  database: "Agents working on this database and its row pages",
+const INTRO: Record<InstructionsTarget["kind"], MessageKey> = {
+  folder: "library.instructions.introFolder",
+  document: "library.instructions.introDocument",
+  database: "library.instructions.introDatabase",
 };
+
+const LEVEL: Record<InstructionLevelKind, MessageKey> = {
+  workspace: "library.instructions.levelWorkspace",
+  folder: "library.instructions.levelFolder",
+  database: "library.instructions.levelDatabase",
+  document: "library.instructions.levelDocument",
+};
+
+/** An inherited level as a person reads it: `Folder "Contracts"`, in the interface language. */
+export function levelLabel(level: Pick<InstructionLevel, "kind" | "title">): string {
+  const blank = level.title.replace(/[\s\p{Cc}]+/gu, "") === "";
+  return t(LEVEL[level.kind], { title: blank ? t("common.untitled") : instructionTitle(level.title) });
+}
 
 interface InstructionsDialogProps {
   isOpen: boolean;
@@ -68,7 +84,7 @@ export function InstructionsDialog({ isOpen, target, onClose }: InstructionsDial
         setLoaded(r);
         setText(r.own);
       })
-      .catch((e) => live && setLoadError(errorMessage(e, "Please try again in a moment.")));
+      .catch((e) => live && setLoadError(errorMessage(e, t("library.instructions.loadFallback"))));
     return () => {
       live = false;
     };
@@ -86,15 +102,13 @@ export function InstructionsDialog({ isOpen, target, onClose }: InstructionsDial
     try {
       if (target.kind === "folder") await Folders.setInstructions(target.id, text);
       else await Docs.setState(target.id, { agent_instructions: text });
-      toast({ body: "Instructions saved. Agents read them on their next turn.", type: "info" });
+      toast({ body: t("library.instructions.saved"), type: "info" });
       onClose();
     } catch (e) {
       const status = (e as { status?: number }).status;
       toast({
         body:
-          status === 403
-            ? "Only the owner or a workspace admin can change these instructions."
-            : "Couldn’t save the instructions. Please try again.",
+          status === 403 ? t("library.instructions.denied") : t("library.instructions.saveFailed"),
         type: "error",
       });
     } finally {
@@ -107,30 +121,29 @@ export function InstructionsDialog({ isOpen, target, onClose }: InstructionsDial
   let content: ReactNode;
   if (loadError !== null) {
     content = (
-      <LoadFailed isCompact title="Couldn’t load the instructions" description={loadError} onRetry={() => setAttempt((n) => n + 1)} />
+      <LoadFailed isCompact title={t("library.instructions.loadFailed")} description={loadError} onRetry={() => setAttempt((n) => n + 1)} />
     );
   } else if (loaded === null) {
     content = (
       <VStack gap={2} hAlign="center">
-        <Spinner label="Loading…" />
+        <Spinner label={t("common.loading")} />
       </VStack>
     );
   } else {
     content = (
       <VStack gap={4}>
         <Text as="p" display="block" color="secondary">
-          {INTRO[target.kind]} read these after inherited instructions.
-          {target.kind === "document" ? "" : ` Only people with access to this ${target.kind} receive them.`}
+          {t(INTRO[target.kind])}
         </Text>
         <VStack gap={3}>
           {loaded.inherited.length === 0 ? (
             <Text type="supporting" color="secondary">
-              Nothing is inherited from above.
+              {t("library.instructions.noneInherited")}
             </Text>
           ) : (
             loaded.inherited.map((level) => (
               <VStack key={`${level.kind}:${level.id}`} gap={1}>
-                <Text type="label">{instructionLevelLabel(level)}</Text>
+                <Text type="label">{levelLabel(level)}</Text>
                 <Blockquote>
                   <Text as="p" display="block" color="secondary" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                     {level.text}
@@ -141,8 +154,8 @@ export function InstructionsDialog({ isOpen, target, onClose }: InstructionsDial
           )}
         </VStack>
         <TextArea
-          label={`Instructions for this ${target.kind}`}
-          description={canEdit ? undefined : "Only the owner or a workspace admin can change them."}
+          label={t("library.instructions.fieldLabel", { kind: target.kind })}
+          description={canEdit ? undefined : t("library.instructions.readOnly")}
           rows={8}
           value={text}
           onChange={setText}
@@ -152,7 +165,7 @@ export function InstructionsDialog({ isOpen, target, onClose }: InstructionsDial
             tooLong
               ? {
                   type: "error",
-                  message: `Too long: ${text.length.toLocaleString()} characters, and the limit is ${MAX_AGENT_INSTRUCTIONS_CHARS.toLocaleString()}.`,
+                  message: t("common.tooLong", { count: text.length, limit: MAX_AGENT_INSTRUCTIONS_CHARS }),
                 }
               : undefined
           }
@@ -160,8 +173,8 @@ export function InstructionsDialog({ isOpen, target, onClose }: InstructionsDial
         {stackTooLong && (
           <Banner
             status="warning"
-            title="Agents won’t read all of this"
-            description={`The ${MAX_AGENT_INSTRUCTIONS_STACK_CHARS.toLocaleString()}-character stack limit will truncate the nearest instructions.`}
+            title={t("library.instructions.stackWarning")}
+            description={t("library.instructions.stackWarningBody", { limit: MAX_AGENT_INSTRUCTIONS_STACK_CHARS })}
           />
         )}
       </VStack>
@@ -177,8 +190,8 @@ export function InstructionsDialog({ isOpen, target, onClose }: InstructionsDial
       <Layout
         header={
           <DialogHeader
-            title="Instructions for agents"
-            subtitle={target.title.trim() || "Untitled"}
+            title={t("library.instructions.title")}
+            subtitle={target.title.trim() || t("common.untitled")}
             onOpenChange={(o) => !o && close()}
           />
         }
@@ -188,11 +201,11 @@ export function InstructionsDialog({ isOpen, target, onClose }: InstructionsDial
             <HStack gap={2} justify="end">
               {canEdit ? (
                 <>
-                  <Button label="Cancel" variant="ghost" onClick={close} isDisabled={saving} />
-                  <Button label="Save" variant="primary" onClick={() => void save()} isDisabled={!canSave} isLoading={saving} />
+                  <Button label={t("common.cancel")} variant="ghost" onClick={close} isDisabled={saving} />
+                  <Button label={t("common.save")} variant="primary" onClick={() => void save()} isDisabled={!canSave} isLoading={saving} />
                 </>
               ) : (
-                <Button label="Close" variant="ghost" onClick={onClose} />
+                <Button label={t("common.close")} variant="ghost" onClick={onClose} />
               )}
             </HStack>
           </LayoutFooter>

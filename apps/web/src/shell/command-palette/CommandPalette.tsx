@@ -15,6 +15,7 @@ import { Dialog } from "@astryxdesign/core/Dialog";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Item } from "@astryxdesign/core/Item";
 import { Text } from "@astryxdesign/core/Text";
+import { VisuallyHidden } from "@astryxdesign/core/VisuallyHidden";
 import { Kbd } from "@astryxdesign/core/Kbd";
 import { CommandPaletteFooter, CommandPaletteGroup } from "@astryxdesign/core/CommandPalette";
 import { useAnnounce } from "@astryxdesign/core/hooks";
@@ -44,6 +45,8 @@ import { Marked, Snippet, hitHref, markTerms, queryTerms } from "../../lib/snipp
 import { forgetRecentDoc, recentDocIds } from "../../lib/recent-docs";
 import { getActiveWorkspace } from "../../lib/session/workspace-pointer";
 import { isComposingKey } from "../../lib/ime";
+import { t, type MessageKey } from "../../i18n/i18n";
+import { EN } from "../../i18n/en";
 
 interface Cmd {
   id: string;
@@ -51,7 +54,7 @@ interface Cmd {
   description?: ReactNode;
   hint?: string;
   icon: ReactNode;
-  /** Words it matches besides its label. */
+  /** Words it matches besides its label, in English. */
   terms?: string[];
   /** Runs without closing the palette. */
   keepsOpen?: boolean;
@@ -73,14 +76,39 @@ type DocSearch =
   | { status: "done"; hits: SearchResult[]; degraded: boolean }
   | { status: "error" };
 
-type Action = Cmd & { label: string };
+/** `label` in the interface language, `english` as the catalog writes it, so either finds the action. */
+type Action = Cmd & { label: string; english: string };
 
-/** An action matches where one of its words, or its terms' words, starts with the query. */
+/** An action from its catalog key: shown translated, matched in both languages. */
+function action(key: MessageKey, cmd: Omit<Action, "label" | "english">): Action {
+  return { ...cmd, label: t(key), english: EN[key] ?? key };
+}
+
+/**
+ * An action matches where its translated label contains the query (a language written without
+ * spaces has no word starts), or where a word of its English label or terms starts with it.
+ */
 function matchesAction(cmd: Action, needle: string): boolean {
-  return [cmd.label, ...(cmd.terms ?? [])].some((t) => {
-    const hay = t.toLowerCase();
+  if (cmd.label !== cmd.english && cmd.label.toLowerCase().includes(needle)) return true;
+  return [cmd.english, ...(cmd.terms ?? [])].some((text) => {
+    const hay = text.toLowerCase();
     return hay.startsWith(needle) || hay.includes(` ${needle}`);
   });
+}
+
+/** A key's glyphs, named for a screen reader in the reader's language (Kbd's own name is English). */
+function KeyHint({ keys, spoken }: { keys: string; spoken: string }) {
+  return (
+    <>
+      <Kbd keys={keys} aria-hidden="true" />
+      <VisuallyHidden>{spoken}</VisuallyHidden>
+    </>
+  );
+}
+
+/** Whether the mod key is Command, as Kbd decides it. */
+function isMac(): boolean {
+  return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 }
 
 export function CommandPalette() {
@@ -205,7 +233,7 @@ export function CommandPalette() {
           hybridShown = true;
           show(r.results, r.degraded);
           const n = Math.min(r.results.length, DOC_HITS);
-          announce(n ? `${n} documents found` : "No documents found");
+          announce(t("shell.palette.found", { count: n }));
         })
         // With keyword hits on screen, a failed second pass leaves them be.
         .catch(() => current && !keywordShown && setDocSearch({ status: "error" }));
@@ -218,142 +246,128 @@ export function CommandPalette() {
     };
   }, [trimmed, open, searchRun, announce]);
 
-  const actions = useMemo<Action[]>(
-    () => [
-      {
+  const actions = useMemo<Action[]>(() => {
+    const create = t("shell.palette.hintCreate");
+    const navigate = t("shell.palette.hintNavigate");
+    return [
+      action("shell.palette.newDocument", {
         id: "new-doc",
-        label: "New document",
-        hint: "Create",
+        hint: create,
         icon: <FilePlus size={16} />,
         run: async () => {
-          const d = await Docs.create("Untitled");
+          const d = await Docs.create(t("common.untitled"));
           nav(`/doc/${d.doc_id}`, { state: { focusEditor: true } });
         },
-      },
-      {
+      }),
+      action("shell.palette.newDatabase", {
         id: "new-database",
-        label: "New database",
-        hint: "Create",
+        hint: create,
         icon: <Database size={16} />,
         terms: ["table", "grid", "rows", "spreadsheet"],
         // The palette has no folder context, so what it creates lands at the top level.
         run: async () => {
-          const d = await Docs.create("Untitled", undefined, "database");
+          const d = await Docs.create(t("common.untitled"), undefined, "database");
           nav(`/doc/${d.doc_id}`);
         },
-      },
-      {
+      }),
+      action("shell.palette.newFolder", {
         id: "new-folder",
-        label: "New folder",
-        hint: "Create",
+        hint: create,
         icon: <FolderPlus size={16} />,
         run: () => setShowNewFolder(true),
-      },
-      {
+      }),
+      action("shell.palette.importMarkdown", {
         id: "import-markdown",
-        label: "Import from Markdown",
-        hint: "Create",
+        hint: create,
         icon: <FileUp size={16} />,
         run: () => setShowImport(true),
-      },
-      {
+      }),
+      action("shell.palette.ask", {
         id: "ask",
-        label: "Ask your documents",
-        hint: "Navigate",
+        hint: navigate,
         icon: <Sparkles size={16} />,
         run: () => nav("/ask"),
-      },
-      {
+      }),
+      action("common.allDocuments", {
         id: "home",
-        label: "All documents",
-        hint: "Navigate",
+        hint: navigate,
         icon: <Files size={16} />,
         terms: ["home", "my documents", "library"],
         run: () => nav("/"),
-      },
-      {
+      }),
+      action("common.yourAiAgents", {
         id: "agents",
-        label: "Your AI agents",
-        hint: "Navigate",
+        hint: navigate,
         icon: <Plug size={16} />,
         terms: ["agents", "connect", "mcp", "claude", "codex", "antigravity", "subscription"],
         run: () => nav("/settings/agents"),
-      },
-      {
+      }),
+      action("common.reviewAiEdits", {
         id: "review",
-        label: "Review AI edits",
-        hint: "Navigate",
+        hint: navigate,
         icon: <ListChecks size={16} />,
         terms: ["inbox", "runs", "proposals", "approve", "pending", "agent edits"],
         run: () => nav("/review"),
-      },
-      {
+      }),
+      action("common.settings", {
         id: "settings",
-        label: "Settings",
-        hint: "Navigate",
+        hint: navigate,
         icon: <Settings size={16} />,
         terms: ["preferences", "account", "profile", "name", "avatar", "email"],
         run: () => nav("/settings/profile"),
-      },
-      {
+      }),
+      action("shell.palette.appearance", {
         id: "appearance",
-        label: "Appearance",
-        hint: "Navigate",
+        hint: navigate,
         icon: <Palette size={16} />,
         terms: ["theme", "dark mode", "light mode", "colour", "color"],
         run: () => nav("/settings/appearance"),
-      },
-      {
+      }),
+      action("shell.palette.workspaceSettings", {
         id: "workspace-settings",
-        label: "Workspace settings",
-        hint: "Navigate",
+        hint: navigate,
         icon: <SlidersHorizontal size={16} />,
         terms: ["rename workspace", "default access", "delete workspace", "tenant"],
         run: () => nav("/settings/workspace"),
-      },
-      {
+      }),
+      action("shell.palette.members", {
         id: "workspace-members",
-        label: "Members",
-        hint: "Navigate",
+        hint: navigate,
         icon: <Users size={16} />,
         terms: ["invite", "invite people", "people", "team", "roles", "remove member"],
         run: () => nav("/settings/workspace/members"),
-      },
+      }),
       ...(canSeeLedger
         ? [
-            {
+            action("shell.palette.auditLog", {
               id: "audit-log",
-              label: "Audit log",
-              hint: "Navigate",
+              hint: navigate,
               icon: <ScrollText size={16} />,
               terms: ["history", "who did what", "audit", "ledger"],
               run: () => nav("/settings/workspace/audit"),
-            },
-            {
+            }),
+            action("shell.palette.aiUsage", {
               id: "ai-usage",
-              label: "AI usage",
-              hint: "Navigate",
+              hint: navigate,
               icon: <Gauge size={16} />,
               terms: ["tokens", "usage", "spend", "cost"],
               run: () => nav("/settings/workspace/usage"),
-            },
+            }),
           ]
         : []),
       ...(isNodeAdmin
         ? [
-            {
+            action("shell.palette.nodeSettings", {
               id: "node-settings",
-              label: "Node settings",
-              hint: "Navigate",
+              hint: navigate,
               icon: <Server size={16} />,
               terms: ["model", "provider", "api key", "embedding", "branding", "smtp", "admin", "machine"],
               run: () => nav("/settings/node"),
-            },
+            }),
           ]
         : []),
-    ],
-    [nav, canSeeLedger, isNodeAdmin],
-  );
+    ];
+  }, [nav, canSeeLedger, isNodeAdmin]);
 
   const needle = trimmed.toLowerCase();
   const filteredActions = useMemo(() => actions.filter((a) => matchesAction(a, needle)), [actions, needle]);
@@ -369,7 +383,7 @@ export function CommandPalette() {
             label: (
               <span className="bidi-line">
                 {d.page_of && <span className="cmdk-parent">{pageParentLabel(d.page_of)} › </span>}
-                {d.title || "Untitled"}
+                {d.title || t("common.untitled")}
               </span>
             ),
             icon: d.doc_type === "database" ? <Database size={16} /> : <FileText size={16} />,
@@ -384,7 +398,7 @@ export function CommandPalette() {
       label: (
         <span className="bidi-line">
           {d.page_of && <span className="cmdk-parent">{pageParentLabel(d.page_of)} › </span>}
-          <Marked parts={markTerms(d.title || "Untitled", terms)} />
+          <Marked parts={markTerms(d.title || t("common.untitled"), terms)} />
         </span>
       ),
       description: d.snippet ? <Snippet text={d.snippet} lead={SNIPPET_LEAD} className="cmdk-snippet" /> : undefined,
@@ -400,7 +414,7 @@ export function CommandPalette() {
         ? [
             {
               id: "retry-search",
-              label: "Search again",
+              label: t("shell.palette.searchAgain"),
               icon: <RotateCw size={16} />,
               keepsOpen: true,
               run: () => setSearchRun((n) => n + 1),
@@ -417,7 +431,7 @@ export function CommandPalette() {
     return [
       {
         id: "search-all",
-        label: <span className="bidi-line">Search all documents for “{trimmed}”</span>,
+        label: <span className="bidi-line">{t("shell.palette.searchAll", { query: trimmed })}</span>,
         icon: <Search size={16} />,
         run: () => nav(`/?${sp}`),
       },
@@ -453,7 +467,7 @@ export function CommandPalette() {
     try {
       await cmd.run();
     } catch (e) {
-      toast({ body: errorMessage(e, "That didn’t work. Please try again."), type: "error" });
+      toast({ body: errorMessage(e, t("shell.palette.runFailed")), type: "error" });
     }
   }
 
@@ -480,10 +494,10 @@ export function CommandPalette() {
   };
 
   let docStatus: string | null = null;
-  if (docSearch.status === "loading" && docCmds.length === 0) docStatus = "Searching…";
-  else if (docSearch.status === "done" && docSearch.hits.length === 0) docStatus = "No documents match.";
-  else if (docSearch.status === "done" && docSearch.degraded) docStatus = "Matching words only: semantic search is unavailable.";
-  else if (docSearch.status === "error") docStatus = "Couldn’t search documents.";
+  if (docSearch.status === "loading" && docCmds.length === 0) docStatus = t("shell.palette.searching");
+  else if (docSearch.status === "done" && docSearch.hits.length === 0) docStatus = t("shell.palette.noMatch");
+  else if (docSearch.status === "done" && docSearch.degraded) docStatus = t("shell.palette.degraded");
+  else if (docSearch.status === "error") docStatus = t("shell.palette.searchFailed");
 
   return (
     <>
@@ -491,10 +505,10 @@ export function CommandPalette() {
       <Dialog isOpen={open} onOpenChange={setOpen} purpose="info" width={640} position={{ top: "12vh", start: "calc(50% - 320px)" }}>
         <div className="cmdk">
           <TextInput
-            label="Search documents or run a command"
+            label={t("shell.palette.input")}
             isLabelHidden
             hasAutoFocus
-            placeholder="Search documents or run a command…"
+            placeholder={t("shell.palette.placeholder")}
             role="combobox"
             aria-autocomplete="list"
             aria-expanded={all.length > 0}
@@ -520,13 +534,13 @@ export function CommandPalette() {
               }
             }}
           />
-          <div className="cmdk-list" id={listId} role="listbox" aria-label="Results" aria-busy={isLoading}>
+          <div className="cmdk-list" id={listId} role="listbox" aria-label={t("shell.palette.results")} aria-busy={isLoading}>
             {trimmed ? (
               <>
                 {filteredActions.length > 0 && (
-                  <CommandPaletteGroup heading="Actions">{filteredActions.map(option)}</CommandPaletteGroup>
+                  <CommandPaletteGroup heading={t("shell.palette.actions")}>{filteredActions.map(option)}</CommandPaletteGroup>
                 )}
-                <CommandPaletteGroup heading="Documents">
+                <CommandPaletteGroup heading={t("shell.palette.documents")}>
                   {isLoading &&
                     docCmds.map((c) => (
                       <Item
@@ -553,8 +567,8 @@ export function CommandPalette() {
               </>
             ) : recentCmds.length > 0 ? (
               <>
-                <CommandPaletteGroup heading="Recent">{recentCmds.map(option)}</CommandPaletteGroup>
-                <CommandPaletteGroup heading="Actions">{filteredActions.map(option)}</CommandPaletteGroup>
+                <CommandPaletteGroup heading={t("shell.palette.recent")}>{recentCmds.map(option)}</CommandPaletteGroup>
+                <CommandPaletteGroup heading={t("shell.palette.actions")}>{filteredActions.map(option)}</CommandPaletteGroup>
               </>
             ) : (
               filteredActions.map(option)
@@ -562,23 +576,23 @@ export function CommandPalette() {
           </div>
           <CommandPaletteFooter className="cmdk-footer">
             <span className="cmdk-hint">
-              <Kbd keys="up" />
-              <Kbd keys="down" />
-              Move
+              <KeyHint keys="up" spoken={t("shell.palette.keyUp")} />
+              <KeyHint keys="down" spoken={t("shell.palette.keyDown")} />
+              {t("shell.palette.keyMove")}
             </span>
             <span className="cmdk-hint">
-              <Kbd keys="enter" />
-              Open
+              <KeyHint keys="enter" spoken={t("shell.palette.keyEnter")} />
+              {t("common.open")}
             </span>
             {trimmed && (
               <span className="cmdk-hint">
-                <Kbd keys="mod+enter" />
-                Search all
+                <KeyHint keys="mod+enter" spoken={t("shell.palette.keyModEnter", { mod: isMac() ? "mac" : "other" })} />
+                {t("shell.palette.keySearchAll")}
               </span>
             )}
             <span className="cmdk-hint">
-              <Kbd keys="esc" />
-              Close
+              <KeyHint keys="esc" spoken={t("shell.palette.keyEscape")} />
+              {t("common.close")}
             </span>
           </CommandPaletteFooter>
         </div>
@@ -589,7 +603,7 @@ export function CommandPalette() {
           try {
             await Folders.create(title, null, instructions);
           } catch (e) {
-            toast({ body: errorMessage(e, "Couldn’t create that folder."), type: "error" });
+            toast({ body: errorMessage(e, t("shell.palette.folderFailed")), type: "error" });
             return;
           }
           nav("/");

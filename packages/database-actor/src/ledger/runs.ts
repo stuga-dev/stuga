@@ -11,6 +11,7 @@ import {
   DATABASE_RUN_WIRE_MAX_BYTES,
 } from "@stuga/protocol/databases/limits";
 import type {
+  DatabaseOpChangeDetail,
   DatabaseRunOp,
   DatabaseRunOpKind,
   DatabaseRunOpPayload,
@@ -24,6 +25,7 @@ import { closedStatus, feedbackExcerpt, type AgentFeedback, type RunFeedback } f
 import { RUN_FEEDBACK_LOOKBACK_DAYS, RUN_FEEDBACK_MAX_CHANGES } from "@stuga/protocol/domain/limits";
 import type { RunIndexEntry } from "@stuga/protocol/internal/jobs";
 import type { BlobStore } from "@stuga/runtime";
+import type { SchemaView } from "../ops/schema-view.js";
 import { OpError } from "../request.js";
 import type { SqlHandle } from "../schema-ops.js";
 
@@ -54,6 +56,8 @@ export interface RunOpRow {
   kind: DatabaseRunOpKind;
   table_id: string;
   summary: string;
+  /** What the op would do, as data; null for an op proposed before ops carried it. */
+  detail: DatabaseOpChangeDetail | null;
   status: DatabaseRunOpStatus;
   /** Inline payload JSON, or null when spilled to blob_key. */
   payload: string | null;
@@ -100,6 +104,7 @@ function asRunOpRow(row: Record<string, unknown>): RunOpRow {
     kind: String(row.kind) as DatabaseRunOpKind,
     table_id: String(row.table_id),
     summary: String(row.summary),
+    detail: row.detail == null ? null : (JSON.parse(String(row.detail)) as DatabaseOpChangeDetail),
     status: String(row.status) as DatabaseRunOpStatus,
     payload: nullable(row.payload),
     blob_key: nullable(row.blob_key),
@@ -286,23 +291,64 @@ export async function finalizeRunPayload(
   return { inline: null, blobKey: key, bytes };
 }
 
+/**
+ * What a proposed op would do, as data, named as the run's projected schema names things; the web
+ * says it in the reader's language, as the English `summary` says it to agents.
+ */
+export function proposalDetail(payload: DatabaseRunOpPayload, view: SchemaView): DatabaseOpChangeDetail {
+  const table = view.displayOf(payload.table_id);
+  switch (payload.kind) {
+    case "tables.create":
+      return { kind: "tables.create", table: payload.display, columns: 0 };
+    case "columns.add":
+      return { kind: "columns.add", table, column: payload.display };
+    case "rows.insert":
+      return { kind: "rows.insert", table, rows: payload.rows.length, imported: payload.import === true };
+    case "rows.update": {
+      const names = new Map(view.table({ table: payload.table_id, table_id: payload.table_id }).columns.map((c) => [c.column_id, c.display]));
+      const touched = [...new Set(payload.updates.flatMap((u) => Object.keys(u.values)))].map((id) => names.get(id) ?? id);
+      return { kind: "rows.update", table, rows: payload.updates.length, columns: touched.slice(0, 3), more_columns: touched.length > 3 };
+    }
+    case "rows.delete":
+      return { kind: "rows.delete", table, rows: payload.row_ids.length };
+    case "views.create":
+      return { kind: "views.create", table, view: payload.view.name };
+    case "views.update": {
+      const name = view.viewNameOf(payload.table_id, payload.view_id);
+      const renamed = payload.changes.name !== undefined && payload.changes.name !== name ? payload.changes.name : null;
+      return { kind: "views.update", table, view: name, renamed_to: renamed };
+    }
+  }
+}
+
 /** Append a pending op at the run's next position; returns its id ("o<position>"). */
 export function insertRunOp(
   sql: SqlHandle,
-  d: { runId: string; kind: DatabaseRunOpKind; tableId: string; summary: string; inline: string | null; blobKey: string | null; bytes: number; review: ReviewMode },
+  d: {
+    runId: string;
+    kind: DatabaseRunOpKind;
+    tableId: string;
+    summary: string;
+    detail: DatabaseOpChangeDetail;
+    inline: string | null;
+    blobKey: string | null;
+    bytes: number;
+    review: ReviewMode;
+  },
 ): string {
   const position = Number(sql.exec(`SELECT COALESCE(MAX(position) + 1, 1) AS p FROM _run_ops WHERE run_id = ?`, d.runId).one().p);
   const opId = `o${position}`;
   sql.exec(
-    `INSERT INTO _run_ops (run_id, op_id, position, kind, table_id, summary, status, payload, blob_key, bytes,
+    `INSERT INTO _run_ops (run_id, op_id, position, kind, table_id, summary, detail, status, payload, blob_key, bytes,
        decided_by, ledger_op_id, error, review)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL, NULL, NULL, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL, NULL, NULL, ?)`,
     d.runId,
     opId,
     position,
     d.kind,
     d.tableId,
     d.summary,
+    JSON.stringify(d.detail),
     d.inline,
     d.blobKey,
     d.bytes,
@@ -518,7 +564,15 @@ export async function toRunSummary(
     opts.full === true || opts.sample !== undefined || (total <= DATABASE_RUN_WIRE_MAX_BYTES && rows.every((r) => r.blob_key === null));
   const ops: DatabaseRunOp[] = [];
   for (const r of rows) {
-    const op: DatabaseRunOp = { id: r.op_id, kind: r.kind, table_id: r.table_id, summary: r.summary, status: r.status, review: r.review };
+    const op: DatabaseRunOp = {
+      id: r.op_id,
+      kind: r.kind,
+      table_id: r.table_id,
+      summary: r.summary,
+      detail: r.detail,
+      status: r.status,
+      review: r.review,
+    };
     if (withPayloads) {
       const json = r.payload ?? (r.blob_key !== null ? await loadRunPayloadText(bucket, r.blob_key) : null);
       if (json !== null) {

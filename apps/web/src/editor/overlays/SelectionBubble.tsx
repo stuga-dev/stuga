@@ -11,6 +11,7 @@ import { useComments } from "../../comments/comments-context";
 import { useAiCoauthor } from "../../ai/ai-coauthor-context";
 import { useAiChat } from "../../state/model-options";
 import { clampCentre, useEditorAnchor } from "../use-editor-anchor";
+import { t } from "../../i18n/i18n";
 
 /** Generous half-width of the bubble. */
 const HALF = 110;
@@ -47,10 +48,10 @@ export function SelectionBubble({
   const keep = (e: ReactMouseEvent) => e.preventDefault();
 
   return (
-    <div className="selection-bubble" style={{ top: rect.top, left: rect.left }} role="toolbar" aria-label="Selection actions">
-      <Button label="Comment" variant="ghost" size="sm" icon={<MessageSquarePlus size={15} />} onMouseDown={keep} onClick={startForSelection} />
+    <div className="selection-bubble" style={{ top: rect.top, left: rect.left }} role="toolbar" aria-label={t("editor.selection.label")}>
+      <Button label={t("common.comment")} variant="ghost" size="sm" icon={<MessageSquarePlus size={15} />} onMouseDown={keep} onClick={startForSelection} />
       {!readOnly && !aiOff && (
-        <Button label="Edit with AI" variant="ghost" size="sm" icon={<Sparkles size={15} />} onMouseDown={keep} onClick={startSelectionEdit} />
+        <Button label={t("editor.selection.editWithAi")} variant="ghost" size="sm" icon={<Sparkles size={15} />} onMouseDown={keep} onClick={startSelectionEdit} />
       )}
     </div>
   );

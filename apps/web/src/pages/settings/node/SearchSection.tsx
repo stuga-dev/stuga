@@ -6,6 +6,8 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 import { NodeSettings as NodeApi, type NodeOperationalSettings } from "../../../api";
+import { t } from "../../../i18n/i18n";
+import { presentServerMessage } from "../../../lib/http/server-messages";
 import { SEARCH_LANGUAGES_LABEL, SearchLanguageList } from "../../../ui/SearchLanguageList";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 
@@ -50,7 +52,7 @@ export function SearchSection({ ops, onSaved }: { ops: NodeOperationalSettings; 
       const res = await NodeApi.saveSettings({ search: { languages } });
       onSaved(res);
       setLanguages(res.search.languages);
-      status.setNotice({ status: "success", message: "Saved." });
+      status.setNotice({ status: "success", message: t("node.search.saved") });
     } catch (e) {
       status.fail(e);
     } finally {
@@ -61,18 +63,18 @@ export function SearchSection({ ops, onSaved }: { ops: NodeOperationalSettings; 
   return (
     <VStack gap={5}>
       <SectionStatusBanners status={status} />
-      {error && !rebuilding && !status.error && <Banner status="warning" title="The search index wasn’t rebuilt" description={error} />}
+      {error && !rebuilding && !status.error && <Banner status="warning" title={t("node.search.rebuildFailed")} description={presentServerMessage(error)} />}
       <VStack gap={3}>
         <Heading level={2}>{SEARCH_LANGUAGES_LABEL}</Heading>
         <SearchLanguageList choices={ops.search.choices} value={languages} onChange={setLanguages} isDisabled={busy} isLabelHidden />
         <HStack gap={3} vAlign="center" wrap="wrap">
-          <Button label="Save" variant="primary" size="sm" isLoading={busy} onClick={() => void save()} />
+          <Button label={t("common.save")} variant="primary" size="sm" isLoading={busy} onClick={() => void save()} />
           {/* Beside Save, on its line: a labelled Spinner would stack its label under the ring. */}
           {rebuilding && (
             <HStack gap={2} vAlign="center">
               <Spinner size="sm" shade="subtle" aria-labelledby={rebuildingId} />
               <Text id={rebuildingId} type="supporting" color="secondary">
-                Rebuilding the search index…
+                {t("node.search.rebuilding")}
               </Text>
             </HStack>
           )}

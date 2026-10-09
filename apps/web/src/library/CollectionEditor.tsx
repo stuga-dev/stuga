@@ -18,6 +18,7 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
 import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { ChevronRight, ChevronDown, Folder as FolderIcon, FileText, Search } from "lucide-react";
+import { formatLocale, t } from "../i18n/i18n";
 
 type Kind = "doc" | "folder";
 const keyOf = (kind: Kind, id: string) => `${kind}:${id}`;
@@ -135,48 +136,48 @@ export function CollectionEditor({
     }
   }
 
-  const q = filter.trim().toLowerCase();
+  const q = filter.trim().toLocaleLowerCase(formatLocale());
 
   const body = (
             <div className={isInline ? "collection-tree" : "collection-tree collection-tree--dialog"}>
               <Banner
                 status="info"
                 container="section"
-                title="Select documents or whole folders. Whole folders include future items."
+                title={t("library.collectionEditor.intro")}
               />
               {saveErr && (
                 <Banner
                   status="error"
                   container="section"
-                  title="Nothing was saved"
-                  description="Your ticks are still here. Press Save to try again."
+                  title={t("library.collectionEditor.saveFailed")}
+                  description={t("library.collectionEditor.saveFailedBody")}
                 />
               )}
               {truncated && (
                 <Banner
                   status="warning"
                   container="section"
-                  title={`Showing your ${LIBRARY_LIST_CAP} most-recently-updated documents`}
-                  description="Some older documents aren’t listed. Select their whole folder instead."
+                  title={t("library.collectionEditor.truncated", { count: LIBRARY_LIST_CAP })}
+                  description={t("library.collectionEditor.truncatedBody")}
                 />
               )}
               <div className="collection-tree__search">
                 <TextInput
-                  label="Filter documents and folders"
+                  label={t("library.collectionEditor.filterLabel")}
                   isLabelHidden
                   value={filter}
                   onChange={setFilter}
-                  placeholder="Filter documents and folders…"
+                  placeholder={t("library.collectionEditor.filterPlaceholder")}
                   startIcon={<Search size={16} />}
                   hasClear
                 />
               </div>
 
-              <div className="collection-tree__tree" role="tree" aria-label="Documents and folders">
-                {!roots && !loadErr && <div className="collection-tree__center"><Spinner label="Loading" /></div>}
-                {loadErr && <div className="collection-tree__center"><EmptyState isCompact title="Couldn’t load" description="Please try again." /></div>}
+              <div className="collection-tree__tree" role="tree" aria-label={t("library.collectionEditor.treeLabel")}>
+                {!roots && !loadErr && <div className="collection-tree__center"><Spinner label={t("library.collections.loading")} /></div>}
+                {loadErr && <div className="collection-tree__center"><EmptyState isCompact title={t("library.explorer.loadFailed")} description={t("library.collectionEditor.loadFailedBody")} /></div>}
                 {roots && (roots.folders.length === 0 && roots.docs.length === 0) && (
-                  <div className="collection-tree__center"><EmptyState isCompact title="Nothing here yet" description="Create documents or folders first." icon={<FileText size={22} />} /></div>
+                  <div className="collection-tree__center"><EmptyState isCompact title={t("library.collectionEditor.empty")} description={t("library.collectionEditor.emptyBody")} icon={<FileText size={22} />} /></div>
                 )}
                 {roots && (roots.folders.length > 0 || roots.docs.length > 0) && (
                   <TreeLevel
@@ -196,15 +197,17 @@ export function CollectionEditor({
               <div className="collection-tree__summary">
                 <Text type="supporting" color="secondary">
                   {selected.size === 0
-                    ? "Nothing selected"
-                    : `${individualDocs + wholeFolders} selected` +
-                      (wholeFolders ? ` · ${wholeFolders} whole folder${wholeFolders > 1 ? "s" : ""}` : "")}
+                    ? t("library.collectionEditor.nothingSelected")
+                    : wholeFolders
+                      ? t("library.collectionEditor.selectedWithFolders", { count: individualDocs + wholeFolders, folders: wholeFolders })
+                      : t("library.toolbar.selected", { count: individualDocs + wholeFolders })}
                 </Text>
               </div>
             </div>
   );
 
-  const saveLabel = dirty ? `Save (+${addKeys.length} / −${removeKeys.length})` : "Saved";
+  const saveCount = t("library.collectionEditor.saveCount", { added: addKeys.length, removed: removeKeys.length });
+  const saveLabel = dirty ? saveCount : t("library.collectionEditor.saved");
 
   if (isInline) {
     return (
@@ -213,7 +216,7 @@ export function CollectionEditor({
         <div className="collection-tree-inline__actions">
           <HStack gap={2} justify="end" vAlign="center">
             {dirty && (
-              <Button label="Discard changes" variant="ghost" onClick={onClose} />
+              <Button label={t("library.collectionEditor.discard")} variant="ghost" onClick={onClose} />
             )}
             <Button
               label={saveLabel}
@@ -231,14 +234,14 @@ export function CollectionEditor({
   return (
     <Dialog isOpen onOpenChange={(o) => !o && onClose()} purpose="form" width={560}>
       <Layout
-        header={<DialogHeader title={`Edit “${collectionName}”`} onOpenChange={(o) => !o && onClose()} />}
+        header={<DialogHeader title={t("library.collectionEditor.editTitle", { name: collectionName })} onOpenChange={(o) => !o && onClose()} />}
         content={<LayoutContent padding={0}>{body}</LayoutContent>}
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              <Button label="Cancel" variant="ghost" onClick={onClose} />
+              <Button label={t("common.cancel")} variant="ghost" onClick={onClose} />
               <Button
-                label={dirty ? `Save (+${addKeys.length} / −${removeKeys.length})` : "Done"}
+                label={dirty ? saveCount : t("common.done")}
                 variant="primary"
                 isLoading={applying}
                 onClick={apply}
@@ -308,11 +311,11 @@ function TreeLevel({
                 isDisabled={included}
                 isLabelHidden
                 onChange={() => onToggle("doc", d.id)}
-                label={d.title || "Untitled"}
+                label={d.title || t("common.untitled")}
               />
               <FileText size={15} className="collection-tree-row__ico" />
-              <span className="collection-tree-row__label">{d.title || "Untitled"}</span>
-              {included && <span className="collection-tree-row__hint">included</span>}
+              <span className="collection-tree-row__label">{d.title || t("common.untitled")}</span>
+              {included && <span className="collection-tree-row__hint">{t("library.collectionEditor.included")}</span>}
             </div>
           );
         })}
@@ -360,7 +363,7 @@ function FolderRow({
         <button
           className="collection-tree-row__caret collection-tree-row__caret--btn"
           onClick={() => onExpand(node.id, !open)}
-          aria-label={open ? "Collapse" : "Expand"}
+          aria-label={open ? t("library.collectionEditor.collapse") : t("library.collectionEditor.expand")}
         >
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
@@ -369,12 +372,12 @@ function FolderRow({
           isDisabled={ancestorWhole}
           isLabelHidden
           onChange={() => onToggle("folder", node.id)}
-          label={`${node.title || "Untitled folder"} (whole folder)`}
+          label={t("library.collectionEditor.folderCheckbox", { name: node.title || t("common.untitledFolder") })}
         />
         <FolderIcon size={15} className="collection-tree-row__ico collection-tree-row__ico--folder" />
-        <span className="collection-tree-row__label">{node.title || "Untitled folder"}</span>
-        {isWhole && <span className="collection-tree-row__tag">whole folder</span>}
-        {ancestorWhole && <span className="collection-tree-row__hint">included</span>}
+        <span className="collection-tree-row__label">{node.title || t("common.untitledFolder")}</span>
+        {isWhole && <span className="collection-tree-row__tag">{t("library.collectionEditor.wholeFolder")}</span>}
+        {ancestorWhole && <span className="collection-tree-row__hint">{t("library.collectionEditor.included")}</span>}
       </div>
       {open && (
         <TreeLevel
@@ -397,7 +400,8 @@ const indent = (depth: number) => `${depth * 1.1 + 0.25}rem`;
 
 function matches(n: { title: string }, filter: string): boolean {
   if (!filter) return true;
-  return (n.title || "Untitled").toLowerCase().includes(filter);
+  // A blank title is shown as Untitled, so it is found by that word.
+  return (n.title || t("common.untitled")).toLocaleLowerCase(formatLocale()).includes(filter);
 }
 
 function subtreeMatches(f: FolderNode, filter: string): boolean {
@@ -430,7 +434,7 @@ function buildTree(folders: Folder[], docs: DocSummary[]): { folders: FolderNode
     const parent = d.parent_id ? byId.get(d.parent_id) : null;
     (parent ? parent.docs : rootDocs).push(node);
   }
-  const byTitle = (a: { title: string }, b: { title: string }) => (a.title || "").localeCompare(b.title || "");
+  const byTitle = (a: { title: string }, b: { title: string }) => (a.title || "").localeCompare(b.title || "", formatLocale());
   const sortRec = (fs: FolderNode[]) => { fs.sort(byTitle); for (const f of fs) { f.docs.sort(byTitle); sortRec(f.folders); } };
   sortRec(rootFolders); rootDocs.sort(byTitle);
   return { folders: rootFolders, docs: rootDocs };

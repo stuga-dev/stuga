@@ -27,6 +27,7 @@ import { AgentKeys, Connections, type AgentKeyInfo, type ConnectionInfo, type Wo
 import { LoadFailed } from "../ui/LoadFailed";
 import { relativeTime, absoluteTime } from "../lib/format";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
 interface Props {
   /** Keys pinned to another workspace are badged with its name. */
@@ -100,10 +101,10 @@ export function ConnectedAgents({ activeWorkspaceId, workspaces, reloadSignal }:
     setBusy(r.id);
     try {
       await (r.kind === "sign-in" ? Connections.revoke(r.id) : AgentKeys.revoke(r.id));
-      toast({ body: `${r.name} can no longer reach your documents.`, type: "info" });
+      toast({ body: t("agents.connected.revokedToast", { name: r.name }), type: "info" });
       await load();
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't revoke that agent."), type: "error" });
+      toast({ body: errorMessage(e, t("agents.connected.revokeFailed")), type: "error" });
     } finally {
       setBusy(null);
       setConfirming(null);
@@ -115,10 +116,10 @@ export function ConnectedAgents({ activeWorkspaceId, workspaces, reloadSignal }:
     try {
       const out = await AgentKeys.rotate(r.id);
       setRotated({ keyId: r.id, name: r.name || r.agentId, token: out.token });
-      toast({ body: `${r.name} has a new key. The old one stopped working just now.`, type: "info" });
+      toast({ body: t("agents.connected.rotatedToast", { name: r.name }), type: "info" });
       await load();
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't rotate that key."), type: "error" });
+      toast({ body: errorMessage(e, t("agents.connected.rotateFailed")), type: "error" });
     } finally {
       setBusy(null);
       setConfirming(null);
@@ -134,7 +135,7 @@ export function ConnectedAgents({ activeWorkspaceId, workspaces, reloadSignal }:
       setRenaming(null);
       await load();
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't rename that agent."), type: "error" });
+      toast({ body: errorMessage(e, t("agents.connected.renameFailed")), type: "error" });
     } finally {
       setBusy(null);
     }
@@ -142,18 +143,18 @@ export function ConnectedAgents({ activeWorkspaceId, workspaces, reloadSignal }:
 
   function workspaceLabel(id: string): string | null {
     if (id === activeWorkspaceId) return null;
-    return workspaces.find((w) => w.workspace_id === id)?.name ?? "another workspace";
+    return workspaces.find((w) => w.workspace_id === id)?.name ?? t("agents.connected.anotherWorkspace");
   }
 
   /** What the agent may not do that its owner may. */
   function narrowingBadges(r: Row) {
     const out: React.ReactNode[] = [];
-    if (r.access === "read") out.push(<Badge key="ro" variant="neutral" label="Read-only" />);
+    if (r.access === "read") out.push(<Badge key="ro" variant="neutral" label={t("agents.connected.readOnly")} />);
     if (r.kind === "sign-in") {
       const reach = r.connection.workspaces;
       if (reach && workspaces.some((w) => !reach.includes(w.workspace_id))) {
         const only = reach.length === 1 ? workspaces.find((w) => w.workspace_id === reach[0])?.name : undefined;
-        out.push(<Badge key="ws" variant="neutral" label={only ?? `${reach.length} workspace${reach.length === 1 ? "" : "s"}`} />);
+        out.push(<Badge key="ws" variant="neutral" label={only ?? t("agents.connected.workspaceCount", { count: reach.length })} />);
       }
       return out;
     }
@@ -161,13 +162,13 @@ export function ConnectedAgents({ activeWorkspaceId, workspaces, reloadSignal }:
     const where = workspaceLabel(k.workspace_id);
     if (where) out.push(<Badge key="where" variant="neutral" label={where} />);
     if (k.scope_folders && k.scope_folders.length > 0) {
-      out.push(<Badge key="scope" variant="neutral" label={`${k.scope_folders.length} folder${k.scope_folders.length === 1 ? "" : "s"}`} />);
+      out.push(<Badge key="scope" variant="neutral" label={t("agents.connected.folderCount", { count: k.scope_folders.length })} />);
     }
     if (k.expires_at) {
       const expired = Date.parse(k.expires_at) <= Date.now();
       out.push(
         <span key="exp" title={absoluteTime(k.expires_at)}>
-          <Badge variant={expired ? "red" : "neutral"} label={expired ? "Expired" : `Expires ${relativeTime(k.expires_at)}`} />
+          <Badge variant={expired ? "red" : "neutral"} label={expired ? t("agents.connected.expired") : t("agents.connected.expires", { time: relativeTime(k.expires_at) })} />
         </span>,
       );
     }
@@ -181,20 +182,20 @@ export function ConnectedAgents({ activeWorkspaceId, workspaces, reloadSignal }:
     <Card>
       <VStack gap={3} style={{ padding: 20 }}>
         <Heading level={2} id="connected-agents">
-          Connected agents
+          {t("agents.connected.title")}
         </Heading>
-        <Text color="secondary">These agents act with your access. Revoke one to end its access.</Text>
+        <Text color="secondary">{t("agents.connected.intro")}</Text>
 
         {/* Before the spinner branch: a failed load leaves `rows` null too. */}
         {failed ? (
-          <LoadFailed isCompact icon={<Plug size={22} />} title="Couldn’t load connected agents" onRetry={() => void load()} />
+          <LoadFailed isCompact icon={<Plug size={22} />} title={t("agents.connected.loadFailed")} onRetry={() => void load()} />
         ) : rows === null ? (
           <VStack gap={2} hAlign="center" style={{ padding: "1.5rem 0" }}>
-            <Spinner label="Loading connected agents…" />
+            <Spinner label={t("agents.connected.loading")} />
           </VStack>
         ) : shown.length === 0 ? (
           <VStack gap={1}>
-            <Text color="secondary">You haven’t connected any agents yet.</Text>
+            <Text color="secondary">{t("agents.connected.empty")}</Text>
           </VStack>
         ) : (
           <ul className="member-list">
@@ -206,7 +207,7 @@ export function ConnectedAgents({ activeWorkspaceId, workspaces, reloadSignal }:
                     <HStack gap={2} vAlign="center">
                       {renaming?.id === r.id ? (
                         <TextInput
-                          label="Agent name"
+                          label={t("agents.key.agentName")}
                           isLabelHidden
                           size="sm"
                           value={renaming.name}
@@ -216,52 +217,58 @@ export function ConnectedAgents({ activeWorkspaceId, workspaces, reloadSignal }:
                       ) : (
                         <Text>{r.name || r.agentId}</Text>
                       )}
-                      {isRevoked && <Badge variant="neutral" label="Revoked" />}
+                      {isRevoked && <Badge variant="neutral" label={t("agents.connected.revokedBadge")} />}
                       {!isRevoked && narrowingBadges(r)}
                     </HStack>
                     {rotated?.keyId === r.id && (
                       <VStack gap={1} style={{ marginTop: 8 }}>
-                        <Banner status="warning" title={`Copy ${rotated.name}’s new key now`} description="Shown once. Replace the old key with it." />
+                        <Banner status="warning" title={t("agents.connected.rotatedTitle", { name: rotated.name })} description={t("agents.connected.rotatedDescription")} />
                         <CodeBlock code={rotated.token} width="100%" isWrapped hasCopyButton size="sm" />
                       </VStack>
                     )}
                     <Text size="sm" color="secondary">
                       {isRevoked ? (
-                        <span title={absoluteTime(r.revokedAt!)}>Revoked {relativeTime(r.revokedAt!)}</span>
+                        <span title={absoluteTime(r.revokedAt!)}>{t("agents.connected.revokedAt", { time: relativeTime(r.revokedAt!) })}</span>
                       ) : r.lastUsedAt ? (
-                        <span title={absoluteTime(r.lastUsedAt)}>Last used {relativeTime(r.lastUsedAt)}</span>
+                        <span title={absoluteTime(r.lastUsedAt)}>{t("agents.connected.lastUsed", { time: relativeTime(r.lastUsedAt) })}</span>
                       ) : (
-                        "Never used"
+                        t("agents.connected.neverUsed")
                       )}
                       {" · "}
                       {/* How the access was granted, which is also what revoking it undoes: an app signs in again, a pasted key stops working. */}
                       <span title={absoluteTime(r.createdAt)}>
-                        {r.kind === "sign-in" ? "signed in " : "key created "}
-                        {relativeTime(r.createdAt)}
+                        {r.kind === "sign-in"
+                          ? t("agents.connected.signedIn", { time: relativeTime(r.createdAt) })
+                          : t("agents.connected.keyCreated", { time: relativeTime(r.createdAt) })}
                       </span>
-                      {r.kind === "sign-in" && r.connection.verified_host && ` · verified by ${r.connection.verified_host}`}
+                      {r.kind === "sign-in" && r.connection.verified_host && (
+                        <>
+                          {" · "}
+                          {t("agents.connected.verifiedBy", { host: r.connection.verified_host })}
+                        </>
+                      )}
                     </Text>
                   </VStack>
                   {!isRevoked && (
                     <HStack gap={2} vAlign="center">
                       {confirming === r.id ? (
                         <>
-                          <Button label="Cancel" variant="ghost" size="sm" onClick={() => setConfirming(null)} />
-                          <Button label="Confirm revoke" variant="destructive" size="sm" isLoading={busy === r.id} onClick={() => revoke(r)} />
+                          <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={() => setConfirming(null)} />
+                          <Button label={t("agents.connected.confirmRevoke")} variant="destructive" size="sm" isLoading={busy === r.id} onClick={() => revoke(r)} />
                         </>
                       ) : renaming?.id === r.id ? (
                         <>
-                          <Button label="Cancel" variant="ghost" size="sm" onClick={() => setRenaming(null)} />
-                          <Button label="Save" variant="secondary" size="sm" isLoading={busy === r.id} onClick={() => void rename(r, renaming.name)} />
+                          <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={() => setRenaming(null)} />
+                          <Button label={t("common.save")} variant="secondary" size="sm" isLoading={busy === r.id} onClick={() => void rename(r, renaming.name)} />
                         </>
                       ) : (
                         <>
-                          <Button label="Rename" variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={() => setRenaming({ id: r.id, name: r.name || "" })} />
+                          <Button label={t("common.rename")} variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={() => setRenaming({ id: r.id, name: r.name || "" })} />
                           {/* A sign-in's tokens refresh themselves, so only a pasted key rotates. */}
                           {r.kind === "key" && (
-                            <Button label="Rotate" variant="ghost" size="sm" icon={<RefreshCw size={13} />} isLoading={busy === r.id} onClick={() => void rotate(r)} />
+                            <Button label={t("agents.connected.rotate")} variant="ghost" size="sm" icon={<RefreshCw size={13} />} isLoading={busy === r.id} onClick={() => void rotate(r)} />
                           )}
-                          <Button label="Revoke" variant="ghost" size="sm" onClick={() => setConfirming(r.id)} />
+                          <Button label={t("agents.connected.revoke")} variant="ghost" size="sm" onClick={() => setConfirming(r.id)} />
                         </>
                       )}
                     </HStack>

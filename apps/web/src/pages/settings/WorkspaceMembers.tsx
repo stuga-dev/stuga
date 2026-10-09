@@ -29,12 +29,13 @@ import { Workspaces, type InviteInfo, type MemberInfo } from "../../api";
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
 import { errorMessage } from "../../lib/http/client";
 import { relativeTime, versionLabel } from "../../lib/format";
+import { t, type MessageKey } from "../../i18n/i18n";
 
-const ROLE_LABEL: Record<WorkspaceRole, string> = {
-  owner: "Owner",
-  admin: "Admin",
-  member: "Member",
-  guest: "Guest",
+const ROLE_LABEL: Record<WorkspaceRole, MessageKey> = {
+  owner: "settings.roles.owner",
+  admin: "settings.roles.admin",
+  member: "settings.roles.member",
+  guest: "settings.roles.guest",
 };
 const ROLE_VARIANT: Record<WorkspaceRole, "purple" | "blue" | "neutral" | "green"> = {
   owner: "purple",
@@ -45,22 +46,22 @@ const ROLE_VARIANT: Record<WorkspaceRole, "purple" | "blue" | "neutral" | "green
 
 /** Who a link admits, in the words of the row that lists it. */
 function admitsLabel(invite: InviteInfo): string {
-  if (invite.max_uses === 1) return "one person";
-  return invite.max_uses === null ? "anyone with the link" : `up to ${invite.max_uses} people`;
+  return invite.max_uses === null ? t("settings.members.admitsAnyone") : t("settings.members.admits", { count: invite.max_uses });
 }
 
 /** "Not used yet · expires Sep 18, 2:32 PM · created by Liv 3d ago" */
 function describeInvite(invite: InviteInfo, creator: string): string {
   const used =
     invite.use_count === 0
-      ? "Not used yet"
+      ? t("settings.members.notUsed")
       : invite.max_uses === null
-        ? `Used ${invite.use_count === 1 ? "once" : `${invite.use_count} times`}`
-        : `${invite.use_count} of ${invite.max_uses} used`;
+        ? t("settings.members.usedTimes", { count: invite.use_count })
+        : t("settings.members.usedOf", { count: invite.use_count, max: invite.max_uses });
   const expires = invite.expires_at
-    ? `expires ${versionLabel(invite.expires_at)}`
-    : "never expires";
-  return `${used} · ${expires} · created by ${creator} ${relativeTime(invite.created_at)}`;
+    ? t("settings.members.expires", { date: versionLabel(invite.expires_at) })
+    : t("settings.members.neverExpires");
+  const created = t("settings.members.createdBy", { name: creator, time: relativeTime(invite.created_at) });
+  return [used, expires, created].join(" · ");
 }
 
 export function WorkspaceMembers() {
@@ -113,7 +114,7 @@ export function WorkspaceMembers() {
     return (
       <PageColumn>
         <VStack gap={2} hAlign="center" style={{ paddingTop: "20vh" }}>
-          <Spinner label="Loading…" />
+          <Spinner label={t("common.loading")} />
         </VStack>
       </PageColumn>
     );
@@ -123,7 +124,7 @@ export function WorkspaceMembers() {
       <PageColumn>
         <LoadFailed
           icon={<UsersIcon size={28} />}
-          title="Couldn’t load this workspace’s members"
+          title={t("settings.members.loadFailed")}
           onRetry={() => void reload()}
         />
       </PageColumn>
@@ -133,7 +134,7 @@ export function WorkspaceMembers() {
     return (
       <PageColumn>
         <VStack gap={2} hAlign="center" style={{ paddingTop: "20vh" }}>
-          <Spinner label="Loading members…" />
+          <Spinner label={t("settings.members.loading")} />
         </VStack>
       </PageColumn>
     );
@@ -145,11 +146,11 @@ export function WorkspaceMembers() {
     try {
       await Workspaces.invite(workspaceId, { alias: candidate.id }, inviteRole);
       // The route adds an existing account at once; nothing is sent.
-      toast({ body: `${candidate.label} is now ${inviteRole === "admin" ? "an admin" : `a ${ROLE_LABEL[inviteRole].toLowerCase()}`}.`, type: "info" });
+      toast({ body: t("settings.members.added", { name: candidate.label, role: inviteRole }), type: "info" });
       setCandidate(null);
       await reload();
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't add them."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.members.addFailed")), type: "error" });
     } finally {
       setAdding(false);
     }
@@ -159,10 +160,10 @@ export function WorkspaceMembers() {
     if (!workspaceId) return;
     try {
       await Workspaces.revokeInvite(workspaceId, invite.token_hash);
-      toast({ body: "Link revoked. Nobody can join with it any more.", type: "info" });
+      toast({ body: t("settings.members.linkRevoked"), type: "info" });
       await reloadInvites();
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't revoke that link."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.members.revokeFailed")), type: "error" });
     }
   }
 
@@ -172,7 +173,7 @@ export function WorkspaceMembers() {
       await Workspaces.setRole(workspaceId, alias, role);
       await reload();
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't change role."), type: "error" });
+      toast({ body: errorMessage(e, t("settings.members.roleFailed")), type: "error" });
     }
   }
 
@@ -182,7 +183,7 @@ export function WorkspaceMembers() {
     setRemoving(null);
     try {
       await Workspaces.remove(workspaceId, alias);
-      toast({ body: self ? "You left the workspace." : "Member removed.", type: "info" });
+      toast({ body: self ? t("settings.members.left") : t("settings.members.removed"), type: "info" });
       if (self) {
         window.location.assign("/");
         return;
@@ -190,7 +191,7 @@ export function WorkspaceMembers() {
       await reload();
     } catch (e) {
       // One endpoint backs both leaving and removing.
-      const fallback = self ? "Couldn't leave the workspace." : "Couldn't remove that member.";
+      const fallback = self ? t("settings.members.leaveFailed") : t("settings.members.removeFailed");
       toast({ body: errorMessage(e, fallback), type: "error" });
     }
   }
@@ -206,18 +207,18 @@ export function WorkspaceMembers() {
   /** Whoever created a link, as the member list names them; the creator may since have left. */
   function creatorName(alias: string): string {
     const m = members?.find((x) => x.alias === alias);
-    return m ? m.display_name || m.username || m.email || alias : "a former member";
+    return m ? m.display_name || m.username || m.email || alias : t("settings.members.formerMember");
   }
 
   return (
     <PageColumn>
       <VStack gap={3}>
         <HStack justify="between" vAlign="center">
-          <Heading level={2}>Members</Heading>
+          <Heading level={2}>{t("settings.members.heading")}</Heading>
           {/* Labelled by what it counts, since guests are in the list too. */}
           <Badge
             variant="neutral"
-            label={`${members.length} ${members.length === 1 ? "person" : "people"}`}
+            label={t("settings.members.count", { count: members.length })}
             icon={<UsersIcon size={13} />}
           />
         </HStack>
@@ -226,33 +227,33 @@ export function WorkspaceMembers() {
           <HStack gap={2} vAlign="end">
             <StackItem size="fill">
               <PersonPicker
-                label="Add people"
+                label={t("settings.members.addPeople")}
                 search={(q, signal) => Workspaces.memberCandidates(workspace.workspace_id, q, { signal }).then((r) => r.users)}
                 value={candidate}
                 onChange={setCandidate}
-                emptySearchResultsText="No one outside this workspace matches. Send them an invite link instead."
+                emptySearchResultsText={t("settings.members.noMatch")}
               />
             </StackItem>
             <Selector
-              label="Role"
+              label={t("settings.members.role")}
               width={130}
               value={inviteRole}
               onChange={(v) => setInviteRole(v as WorkspaceRole)}
               options={
                 isOwner
                   ? [
-                      { value: "member", label: "Member" },
-                      { value: "guest", label: "Guest" },
-                      { value: "admin", label: "Admin" },
+                      { value: "member", label: t("settings.roles.member") },
+                      { value: "guest", label: t("settings.roles.guest") },
+                      { value: "admin", label: t("settings.roles.admin") },
                     ]
                   : [
-                      { value: "member", label: "Member" },
-                      { value: "guest", label: "Guest" },
+                      { value: "member", label: t("settings.roles.member") },
+                      { value: "guest", label: t("settings.roles.guest") },
                     ]
               }
             />
             <Button
-              label="Add"
+              label={t("settings.members.add")}
               variant="secondary"
               icon={<UserPlus size={15} />}
               onClick={addPerson}
@@ -280,20 +281,20 @@ export function WorkspaceMembers() {
                 <HStack gap={2} vAlign="center">
                   {canEditThis ? (
                     <Selector
-                      label="Role"
+                      label={t("settings.members.role")}
                       isLabelHidden
                       size="sm"
                       width={130}
                       value={m.role}
                       onChange={(v) => changeRole(m.alias, v as WorkspaceRole)}
-                      options={assignableRoles(m).map((r) => ({ value: r, label: ROLE_LABEL[r] }))}
+                      options={assignableRoles(m).map((r) => ({ value: r, label: t(ROLE_LABEL[r]) }))}
                     />
                   ) : (
-                    <Badge variant={ROLE_VARIANT[m.role]} label={ROLE_LABEL[m.role]} />
+                    <Badge variant={ROLE_VARIANT[m.role]} label={t(ROLE_LABEL[m.role])} />
                   )}
                   {canRemoveThis && (
                     <IconButton
-                      label={m.alias === me ? "Leave workspace" : `Remove ${m.display_name || m.username || m.email || m.alias}`}
+                      label={m.alias === me ? t("settings.members.leave") : t("settings.members.removeNamed", { name: m.display_name || m.username || m.email || m.alias })}
                       variant="ghost"
                       size="sm"
                       icon={<Trash2 size={16} />}
@@ -309,33 +310,33 @@ export function WorkspaceMembers() {
         {canManage && workspaceId && (
           <VStack gap={2}>
             <HStack justify="between" vAlign="center" gap={2}>
-              <Heading level={3}>Invite links</Heading>
+              <Heading level={3}>{t("settings.members.invitesHeading")}</Heading>
               <Button
-                label="Create link"
+                label={t("settings.invite.createLink")}
                 variant="secondary"
                 icon={<LinkIcon size={15} />}
                 onClick={() => setLinkDialogOpen(true)}
               />
             </HStack>
-            <Text color="secondary">Anyone with a link can create an account on this server and join this workspace.</Text>
+            <Text color="secondary">{t("settings.members.invitesNote")}</Text>
             {invitesFailed ? (
               <Text size="sm" color="secondary">
-                Couldn’t load this workspace’s invite links.
+                {t("settings.members.invitesFailed")}
               </Text>
             ) : invites && invites.length === 0 ? (
               <Text size="sm" color="secondary">
-                No active links.
+                {t("settings.members.noLinks")}
               </Text>
             ) : invites ? (
               <List hasDividers density="compact">
                 {invites.map((link) => (
                   <ListItem
                     key={link.token_hash}
-                    label={`${ROLE_LABEL[link.role]} · ${admitsLabel(link)}${link.token_hint ? ` · ends in …${link.token_hint}` : ""}`}
+                    label={[t(ROLE_LABEL[link.role]), admitsLabel(link), ...(link.token_hint ? [t("settings.members.endsIn", { hint: link.token_hint })] : [])].join(" · ")}
                     description={describeInvite(link, creatorName(link.created_by))}
                     endContent={
                       <IconButton
-                        label="Revoke link"
+                        label={t("settings.members.revokeLink")}
                         variant="ghost"
                         size="sm"
                         icon={<Link2Off size={16} />}
@@ -363,15 +364,20 @@ export function WorkspaceMembers() {
         onOpenChange={(o) => !o && setRemoving(null)}
         title={
           removing?.alias === me
-            ? `Leave ${workspace.name}?`
-            : `Remove ${removing?.display_name || removing?.username || removing?.email || removing?.alias || "this person"} from ${workspace.name}?`
+            ? t("settings.members.leaveTitle", { workspace: workspace.name })
+            : removing
+              ? t("settings.members.removeTitle", {
+                  name: removing.display_name || removing.username || removing.email || removing.alias,
+                  workspace: workspace.name,
+                })
+              : t("settings.members.removeSomeoneTitle", { workspace: workspace.name })
         }
         description={
           removing?.alias === me
-            ? "You lose access to every document shared through this workspace, and any agent keys you created here stop working. An owner or admin has to invite you back."
-            : "They lose access to every document shared through this workspace, and any agent keys they created here stop working. You can invite them again later."
+            ? t("settings.members.leaveDescription")
+            : t("settings.members.removeDescription")
         }
-        actionLabel={removing?.alias === me ? "Leave workspace" : "Remove"}
+        actionLabel={removing?.alias === me ? t("settings.members.leave") : t("common.remove")}
         actionVariant="destructive"
         onAction={() => removing && remove(removing.alias)}
       />

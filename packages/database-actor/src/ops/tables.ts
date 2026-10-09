@@ -1,6 +1,6 @@
 import { DATABASE_MAX_TABLES, DATABASE_REVERT_MAX_ROWS } from "@stuga/protocol/databases/limits";
 import type { DbRunOpTablesCreate } from "@stuga/protocol/databases/types";
-import { OpError, conflict, plural, requireDisplay } from "../request.js";
+import { OpError, conflict, requireDisplay } from "../request.js";
 import {
   createTable,
   dropTable,
@@ -54,7 +54,7 @@ export const tablesCreate: OpDef<TablesCreate> = {
     const columns = p.columns ?? [];
     return {
       result: { table: createTable(sql, { tableId: p.table_id, display: p.display, columns }, now) },
-      summary: columns.length === 0 ? `Created table "${p.display}"` : `Created table "${p.display}" with ${plural(columns.length, "column")}`,
+      detail: { kind: "tables.create", table: p.display, columns: columns.length },
     };
   },
   proposal: {
@@ -97,7 +97,7 @@ export const tablesRename: OpDef<TablesRename> = {
     const prev = getTable(sql, p.table_id);
     return {
       result: { table: renameTable(sql, p.table_id, p.display, now) },
-      summary: `Renamed table "${prev.display}" to "${p.display}"`,
+      detail: { kind: "tables.rename", table: prev.display, to: p.display },
     };
   },
 };
@@ -121,7 +121,7 @@ export const tablesDelete: OpDef<TablesDelete> = {
     dropTable(sql, meta.table_id, now);
     return {
       result: { deleted: true },
-      summary: `Deleted table "${meta.display}" (${plural(n, "row")})${captured ? "" : " — too large to capture for revert"}`,
+      detail: { kind: "tables.delete", table: meta.display, rows: n, captured },
     };
   },
 };

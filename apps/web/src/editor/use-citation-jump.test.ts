@@ -317,7 +317,7 @@ describe("CitationJump", () => {
     await openDoc(`/doc/d1?q=${encodeURIComponent("nowhere at all")}`);
     await act(async () => vi.advanceTimersByTime(9_000));
     expect(toastBodies()).toEqual([
-      "Couldn't find “nowhere at all” in this document. It may have changed since that answer was written.",
+      "Couldn’t find “nowhere at all” in this document. It may have changed since that answer was written.",
     ]);
   });
 

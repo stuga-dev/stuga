@@ -20,6 +20,7 @@ import { LoadFailed } from "../ui/LoadFailed";
 import { DocPage } from "./DocPage";
 import { DatabasePage } from "./DatabasePage";
 import { errorMessage } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 import { noteRecentDoc } from "../lib/recent-docs";
 import { getActiveWorkspace } from "../lib/session/workspace-pointer";
 import "../styles/editor.css";
@@ -64,7 +65,7 @@ export function ItemPage() {
     setAttempt((n) => n + 1);
   }, []);
 
-  if (!docId) return <div>Missing document id.</div>;
+  if (!docId) return <div>{t("pages.item.missingId")}</div>;
 
   // The row in hand must be this item's: on the render after a navigation the state still answers the previous id.
   const current = load?.docId === docId ? load : null;
@@ -74,7 +75,7 @@ export function ItemPage() {
       <AppShell>
         <Section padding={6} variant="transparent">
           <VStack gap={3} hAlign="center" style={{ paddingTop: "20vh" }}>
-            <LoadFailed title="Couldn’t open this item" icon={<FileText size={28} />} onRetry={retry} />
+            <LoadFailed title={t("pages.item.openFailed")} icon={<FileText size={28} />} onRetry={retry} />
           </VStack>
         </Section>
       </AppShell>
@@ -85,7 +86,7 @@ export function ItemPage() {
       <AppShell>
         <Section padding={6} variant="transparent">
           <VStack gap={3} hAlign="center" style={{ paddingTop: "20vh" }}>
-            <Spinner label="Loading…" />
+            <Spinner label={t("common.loading")} />
           </VStack>
         </Section>
       </AppShell>
@@ -114,7 +115,7 @@ function TrashedDatabaseCard({ doc, onRestored }: { doc: DocSummary; onRestored:
     try {
       onRestored(await Docs.trash(doc.doc_id, false));
     } catch (e) {
-      toast({ body: errorMessage(e, "Couldn't restore the database."), type: "error" });
+      toast({ body: errorMessage(e, t("pages.item.trashedDb.restoreFailed")), type: "error" });
       setBusy(false);
     }
   }
@@ -122,13 +123,11 @@ function TrashedDatabaseCard({ doc, onRestored }: { doc: DocSummary; onRestored:
   return (
     <div className="doc-noaccess">
       <div className="doc-noaccess__card">
-        <h1>This database is in Trash</h1>
-        <p>
-          Restore it to view and edit its tables. Items in Trash are deleted permanently after {TRASH_RETENTION_DAYS} days.
-        </p>
+        <h1>{t("pages.item.trashedDb.title")}</h1>
+        <p>{t("pages.item.trashedDb.body", { days: TRASH_RETENTION_DAYS })}</p>
         <HStack gap={2} justify="center">
-          <Button label="All documents" variant="secondary" onClick={() => nav("/")} />
-          <Button label={busy ? "Restoring…" : "Restore"} variant="primary" isDisabled={busy} onClick={restore} />
+          <Button label={t("common.allDocuments")} variant="secondary" onClick={() => nav("/")} />
+          <Button label={busy ? t("pages.item.trashedDb.restoring") : t("pages.item.trashedDb.restore")} variant="primary" isDisabled={busy} onClick={restore} />
         </HStack>
       </div>
     </div>

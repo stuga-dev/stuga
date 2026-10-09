@@ -1,10 +1,10 @@
 /**
- * A model call that failed: the provider's own words for the node's log, and
- * plain words for the person who asked, who never sees the provider's.
+ * A model call that failed: the provider's own words for the node's log, and its
+ * kind for the person who asked, which the app words; they never see the provider's.
  */
+import type { ModelFailureKind } from "@stuga/protocol/api/ai-turn";
 
-/** What went wrong. `cut_off` and `unparseable` are answers that arrived but could not be used. */
-export type ModelFailureKind = "quota" | "auth" | "rate_limit" | "unavailable" | "rejected" | "cut_off" | "unparseable" | "error";
+export type { ModelFailureKind };
 
 export interface ModelFailure {
   kind: ModelFailureKind;
@@ -49,22 +49,4 @@ export function requestFailure(
   const key = opts.key ?? "";
   const clean = key.length >= 8 ? message.split(key).join("[key]") : message;
   return { kind: classifyFailure(clean, opts.status), protocol, model, message: clean };
-}
-
-const CHECK_SETTINGS = "An administrator can check Settings → This node → AI providers.";
-
-/** The failure in plain words for whoever asked; null when there are none better than "it failed". */
-export function failureReason(failure: ModelFailure | undefined): string | null {
-  switch (failure?.kind) {
-    case "quota":
-      return `The AI provider says the account is out of credit. ${CHECK_SETTINGS}`;
-    case "auth":
-      return `The AI provider did not accept this node's key. ${CHECK_SETTINGS}`;
-    case "rate_limit":
-      return "The AI provider is limiting requests. Try again in a minute.";
-    case "unavailable":
-      return "The AI provider is unavailable right now. Try again shortly.";
-    default:
-      return null;
-  }
 }

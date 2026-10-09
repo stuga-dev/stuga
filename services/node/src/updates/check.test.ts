@@ -192,9 +192,10 @@ describe("checkForUpdates", () => {
       resource_id: null,
       recipient_alias: "ada",
       event_type: SECURITY_UPDATE_EVENT,
-      resource_title: "Security update available: Stuga 1.10.0",
+      resource_title: null,
       resource_url: "https://node.test/settings/node/about",
-      payload: { running: "1.9.0", latest: "1.10.0", security_version: "1.9.1" },
+      // What the tray and the sink write the text from, in each reader's language.
+      payload: { running: "1.9.0", latest: "1.10.0", securityVersion: "1.9.1" },
     });
     expect(w.notifications[0]?.delivery).toBeNull();
   });
@@ -207,8 +208,8 @@ describe("checkForUpdates", () => {
       channel: "slack",
       channelKey: expect.stringMatching(/^[0-9a-f]{16}$/),
       recipient: "ada",
-      title: "Security update available: Stuga 1.10.0",
-      body: "This node runs 1.9.0. Stuga 1.9.1 fixes a security issue.",
+      eventType: SECURITY_UPDATE_EVENT,
+      params: { running: "1.9.0", latest: "1.10.0", securityVersion: "1.9.1" },
       url: "https://node.test/settings/node/about",
     });
   });

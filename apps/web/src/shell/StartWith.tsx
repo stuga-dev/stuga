@@ -17,6 +17,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { WORKSPACE_IMPORT_MAX_BYTES, type DocAccessMode } from "@stuga/protocol/domain/workspaces";
 import { Workspaces, type CreatedWorkspace, type HeldImport, type LeftOut, type WorkspaceSample, type WorkspaceSamples } from "../api";
 import type { ApiError } from "../lib/http/client";
+import { t } from "../i18n/i18n";
 
 export type StartChoice =
   | { kind: "empty" }
@@ -32,11 +33,11 @@ const EMPTY: StartChoice = { kind: "empty" };
 const LOADING: SampleChoices = { samples: [], loading: true };
 
 /** What the name field says while it is empty for a file: the node takes the name the file carries. */
-export const ARCHIVE_NAME_PLACEHOLDER = "Taken from the file";
+export const ARCHIVE_NAME_PLACEHOLDER = t("shell.startWith.namePlaceholder");
 
 /** The files an import would leave out, as the confirmation's banner says them. */
 export function leftOutTitle({ count }: LeftOut): string {
-  return count === 1 ? "1 file won’t be imported" : `${count.toLocaleString()} files won’t be imported`;
+  return t("shell.startWith.leftOutTitle", { count });
 }
 
 /**
@@ -45,7 +46,7 @@ export function leftOutTitle({ count }: LeftOut): string {
  */
 export class ImportMayFinish extends Error {
   constructor() {
-    super("The import may still finish. Check your workspaces before trying again.");
+    super(t("shell.startWith.mayFinish"));
   }
 }
 
@@ -69,7 +70,7 @@ export async function createWorkspaceFrom(start: StartChoice, name: string, acce
   } catch (err) {
     const { status, code } = err as ApiError;
     // The node says how large a file it takes; a 413 without a word of its own is a proxy's in front of it.
-    if (status === 413 && !code) throw new Error("This file is larger than a proxy in front of this node accepts.");
+    if (status === 413 && !code) throw new Error(t("shell.startWith.tooLargeForProxy"));
     throw err;
   }
   return held.left_out ? { held } : { workspace: await importHeldFile(held, name, access) };
@@ -99,14 +100,14 @@ export function LeftOutList({ leftOut }: { leftOut: LeftOut }) {
       {leftOut.files.map((path) => (
         <ListItem key={path} label={path.slice(path.lastIndexOf("/") + 1)} description={path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : undefined} />
       ))}
-      {more > 0 && <ListItem label={`and ${more.toLocaleString()} more`} />}
+      {more > 0 && <ListItem label={t("shell.startWith.leftOutMore", { count: more })} />}
     </List>
   );
   return (
     <VStack gap={2}>
-      <Banner status="warning" title={leftOutTitle(leftOut)} description="Stuga holds documents, databases and images." />
+      <Banner status="warning" title={leftOutTitle(leftOut)} description={t("shell.startWith.leftOutNote")} />
       {leftOut.files.length > 6 ? (
-        <ScrollableArea label="Files that won’t be imported" height={260}>
+        <ScrollableArea label={t("shell.startWith.leftOutList")} height={260}>
           {list}
         </ScrollableArea>
       ) : (
@@ -225,8 +226,8 @@ function startOf(kind: StartChoice["kind"], offered: WorkspaceSample[]): StartCh
 
 /** Why no sample can be chosen yet. */
 function noSamples({ loading, unavailable }: SampleChoices): string {
-  if (loading) return "Loading samples…";
-  return unavailable ? "Samples need an internet connection." : "No samples to offer.";
+  if (loading) return t("shell.startWith.loadingSamples");
+  return unavailable ? t("shell.startWith.samplesOffline") : t("shell.startWith.noSamples");
 }
 
 export function StartWith({ value, onChange, samples, isDisabled = false }: StartWithProps) {
@@ -239,22 +240,22 @@ export function StartWith({ value, onChange, samples, isDisabled = false }: Star
   return (
     <VStack gap={3}>
       <SegmentedControl
-        label="Start with"
+        label={t("shell.startWith.label")}
         layout="fill"
         value={value.kind}
         isDisabled={isDisabled}
         onChange={(kind) => kind !== value.kind && onChange(startOf(kind as StartChoice["kind"], samples.samples))}
       >
-        <SegmentedControlItem value="empty" label="Empty" />
-        <SegmentedControlItem value="sample" label="Sample" />
-        <SegmentedControlItem value="file" label="Import" />
+        <SegmentedControlItem value="empty" label={t("shell.startWith.empty")} />
+        <SegmentedControlItem value="sample" label={t("shell.startWith.sample")} />
+        <SegmentedControlItem value="file" label={t("common.import")} />
       </SegmentedControl>
       {value.kind === "sample" &&
         (samples.samples.length === 0 ? (
           <Text color="secondary">{noSamples(samples)}</Text>
         ) : (
           <RadioList
-            label="Sample"
+            label={t("shell.startWith.sample")}
             isLabelHidden
             value={chosen?.id ?? ""}
             isDisabled={isDisabled}
@@ -270,9 +271,9 @@ export function StartWith({ value, onChange, samples, isDisabled = false }: Star
         ))}
       {value.kind === "file" && (
         <FileInput
-          label="File to import"
+          label={t("shell.startWith.file")}
           isLabelHidden
-          placeholder="Choose a Notion export, a zipped Obsidian vault or Markdown folder, or a .stuga.zip"
+          placeholder={t("shell.startWith.filePlaceholder")}
           mode="dropzone"
           accept=".zip,application/zip"
           maxSize={WORKSPACE_IMPORT_MAX_BYTES}
