@@ -9,6 +9,10 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Security
+
+- A search hit's excerpt no longer depends on how often a word appears in documents you cannot read or in other workspaces: it is the passage of the document showing the most of your search's words ([Postgres](docs/architecture.md#postgres)).
+
 ### Fixed
 
 - Remote access orders no certificate once the CA's new terms wait for an administrator, or the service has refused the node, even when that is recorded while a renewal is starting.
