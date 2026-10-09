@@ -164,6 +164,15 @@ describe("CommandPalette document search", () => {
     expect(host.textContent).not.toContain("Old hit");
   });
 
+  it("leaves the Enter that picks an input method's candidate to it", async () => {
+    docs.search.mockResolvedValue({ results: [hit("d_9", "Start here", "⟦where⟧")], degraded: false });
+    const input = await search("where");
+    // Safari's comes after compositionend, with isComposing false and the IME's keyCode 229.
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true })));
+    expect(path()).toBe("/doc/d_1");
+    expect(options()[0]!.textContent).toContain("Start here");
+  });
+
   it("searches all documents on ⌘Enter, whatever is highlighted", async () => {
     docs.search.mockResolvedValue({ results: [hit("d_9", "Start here", "⟦where⟧")], degraded: false });
     const input = await search("where");

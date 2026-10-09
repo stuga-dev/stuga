@@ -12,17 +12,49 @@ import {
 } from "./plan";
 import { RUN_FEEDBACK_NOTE_MAX_CHARS } from "@stuga/protocol/domain/limits";
 import { noteLabels } from "../../review/note-mode";
+import { isComposingKey } from "../../lib/ime";
 
 /** Blocks the body renders: footnote definitions are hidden there (FootnoteHide), so a ghost omits them too. */
 function visibleBlocks(nodes: PMNode[]): PMNode[] {
   return nodes.filter((n) => n.type.name !== "footnoteDefinition");
 }
 
+interface Draft {
+  text: string;
+  /** The note has the focus, or had it when a repaint removed its field. */
+  focused: boolean;
+  /** Just opened by its button: the field takes the focus from wherever it is. */
+  opening?: boolean;
+  /** The field it is written in, whose caret and selection a rebuilt field takes over. */
+  field?: HTMLTextAreaElement;
+}
+
 /**
  * Notes being written in a change's row, by hunk key. A repaint (a collaborator's edit, another
- * change decided) builds the row anew, and the note, and the caret in it, must survive that.
+ * change decided) builds the row anew, and the note, and the caret in it, must survive that; so must
+ * a sent note whose decision doesn't land. `keepDrafts` drops a note once its change is decided.
  */
-const drafts = new Map<HunkKey, { text: string; focused: boolean }>();
+const drafts = new Map<HunkKey, Draft>();
+
+/** Drop the notes of changes no longer pending: decided some other way, a note must not come back with them. */
+export function keepDrafts(keys: ReadonlySet<HunkKey>): void {
+  for (const key of drafts.keys()) if (!keys.has(key)) drafts.delete(key);
+}
+
+/** The note mid-composition (an input method's candidate not yet picked), and the repaint held back meanwhile. */
+let composing: { field: HTMLTextAreaElement; held: (() => void) | null } | null = null;
+
+/** True while a note is mid-composition, which a rebuilt ghost would end: keep the ghosts, and `repaint` runs once it ends. */
+export function holdWhileComposing(repaint: () => void): boolean {
+  if (!composing?.field.isConnected) return false;
+  composing.held = repaint;
+  return true;
+}
+
+/** Whether focus fell to the page, as it does when the element holding it is removed. */
+function focusDropped(): boolean {
+  return document.activeElement === null || document.activeElement === document.body;
+}
 
 function sendHunkEvent(detail: RunHunkDecisionDetail): void {
   document.dispatchEvent(new CustomEvent<RunHunkDecisionDetail>(RUN_HUNK_EVENT, { detail }));
@@ -47,7 +79,7 @@ function hunkActions(part: PreviewHunkPart, ordinal: number, total: number, pend
     }
     holder.replaceChildren(
       decisionRow(part, ordinal, total, pending, parts, () => {
-        drafts.set(part.key, { text: "", focused: true });
+        drafts.set(part.key, { text: "", focused: true, opening: true });
         show(true);
       }),
     );
@@ -116,7 +148,7 @@ function decisionRow(
  */
 function noteComposer(part: PreviewHunkPart, ordinal: number, total: number, close: () => void): HTMLElement {
   const labels = noteLabels(part.noteMode ?? "agent");
-  const draft = drafts.get(part.key) ?? { text: "", focused: true };
+  const draft: Draft = drafts.get(part.key) ?? { text: "", focused: true };
   drafts.set(part.key, draft);
 
   const box = document.createElement("div");
@@ -132,6 +164,10 @@ function noteComposer(part: PreviewHunkPart, ordinal: number, total: number, clo
   field.setAttribute("aria-label", "What should change?");
   field.maxLength = RUN_FEEDBACK_NOTE_MAX_CHARS;
   field.value = draft.text;
+  // The caret and selection of the field this one replaces, which a detached field still holds.
+  const prev = draft.field;
+  if (prev) field.setSelectionRange(prev.selectionStart, prev.selectionEnd, prev.selectionDirection ?? "none");
+  draft.field = field;
 
   const foot = document.createElement("div");
   foot.className = "ai-preview-hunk-note__foot";
@@ -157,10 +193,11 @@ function noteComposer(part: PreviewHunkPart, ordinal: number, total: number, clo
     drafts.delete(part.key);
     close();
   };
+  // The draft stays until the change leaves review (keepDrafts), so a rejection that fails or is
+  // blocked paints the note back, as written.
   const send = (): void => {
     const note = field.value.trim();
     if (!note) return;
-    drafts.delete(part.key);
     sendHunkEvent({ runId: part.runId, hunkId: part.hunkId, decision: "request_changes", note });
   };
   field.addEventListener("input", () => {
@@ -175,7 +212,9 @@ function noteComposer(part: PreviewHunkPart, ordinal: number, total: number, clo
     if (field.isConnected) draft.focused = false;
   });
   field.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    // An input method's Enter picks a candidate and its Escape drops one: neither is the note's.
+    if (isComposingKey(e)) return;
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
     } else if (e.key === "Escape") {
@@ -184,15 +223,28 @@ function noteComposer(part: PreviewHunkPart, ordinal: number, total: number, clo
       dismiss();
     }
   });
+  field.addEventListener("compositionstart", () => {
+    composing = { field, held: null };
+  });
+  field.addEventListener("compositionend", () => {
+    if (composing?.field !== field) return;
+    const { held } = composing;
+    composing = null;
+    // Once the events that end it have landed: Safari's Enter comes after this one.
+    if (held) setTimeout(held, 0);
+  });
   for (const btn of [cancel, submit]) btn.addEventListener("mousedown", (e) => e.preventDefault());
   cancel.addEventListener("click", dismiss);
   submit.addEventListener("click", send);
 
   if (draft.focused) {
     requestAnimationFrame(() => {
-      if (!field.isConnected) return;
+      // Built anew, the note takes back only the focus its removal dropped, never one moved elsewhere since.
+      if (!field.isConnected || !(draft.opening || focusDropped())) return;
+      draft.opening = false;
+      const { selectionStart, selectionEnd, selectionDirection } = field;
       field.focus({ preventScroll: true });
-      field.setSelectionRange(field.value.length, field.value.length);
+      field.setSelectionRange(selectionStart, selectionEnd, selectionDirection ?? "none");
     });
   }
   return box;

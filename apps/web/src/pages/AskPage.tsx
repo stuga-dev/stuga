@@ -33,6 +33,7 @@ import { ArrowDown, ArrowLeft, Files, Library, Plus, Settings2, Sparkles } from 
 import { LoadFailed } from "../ui/LoadFailed";
 import { Brand } from "../shell/Brand";
 import { takeStored, writeStored } from "../lib/storage";
+import { isComposingKey } from "../lib/ime";
 import { useAiChat } from "../state/model-options";
 import { AiSetupNotice } from "../ai/AiSetupNotice";
 import "../styles/ask.css";
@@ -308,7 +309,7 @@ function AskConversation() {
               onChange={setInput}
               placeholder={turns.length ? "Ask a follow-up…" : "Ask a question across your documents…"}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === "Enter" && !e.shiftKey && !isComposingKey(e)) {
                   e.preventDefault();
                   submit();
                 }

@@ -10,6 +10,7 @@ import { MentionList } from "../../mentions/MentionList";
 import { mentionQueryAt } from "../../mentions/mention-query";
 import { usePeopleSearch } from "../../mentions/use-people-search";
 import { useEditorAnchor } from "../use-editor-anchor";
+import { isComposingKey } from "../../lib/ime";
 
 interface MentionState {
   /** Doc position of the `@`. */
@@ -63,7 +64,8 @@ export function MentionMenu({ editor }: { editor: Editor }) {
     const onKey = (e: KeyboardEvent) => {
       const st = stateRef.current;
       const list = peopleRef.current;
-      if (!st || !openRef.current) return;
+      // An input method's keys pick its own candidates, not a person.
+      if (!st || !openRef.current || isComposingKey(e)) return;
       if (e.key === "Escape") {
         e.preventDefault();
         dismissedRef.current = st.from;

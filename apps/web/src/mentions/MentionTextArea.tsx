@@ -9,6 +9,7 @@ import type { UserInfo } from "../api";
 import { MentionList } from "./MentionList";
 import { mentionQueryAt } from "./mention-query";
 import { usePeopleSearch } from "./use-people-search";
+import { isComposingKey } from "../lib/ime";
 
 type TextAreaProps = ComponentProps<typeof TextArea>;
 
@@ -88,7 +89,8 @@ export function MentionTextArea({
         onBlur={() => setFocused(false)}
         onSelect={syncCaret}
         onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-          if (open) {
+          // An input method's keys pick its own candidates, not a person.
+          if (open && !isComposingKey(e)) {
             if (e.key === "ArrowDown" || e.key === "ArrowUp") {
               e.preventDefault();
               const n = people.length;

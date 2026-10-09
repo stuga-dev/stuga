@@ -15,6 +15,7 @@ import { ArrowDownUp, Columns3, Filter as FilterIcon, Layers, Plus, RotateCcw, S
 import { filterOpNeedsValue } from "@stuga/protocol/databases/filters";
 import type { ColumnSpec, RowFilter, RowFilterOp, RowSort } from "@stuga/protocol/databases/types";
 import { buildFilter, conditionCount, flattenFilter, type FlatFilter, type ViewShape } from "./model/view-shape";
+import { isComposingKey } from "../lib/ime";
 
 const FILTER_OPS: Array<{ value: RowFilterOp; label: string }> = [
   { value: "contains", label: "contains" },
@@ -369,7 +370,7 @@ function FilterEditor({
                   step={col?.type === "number" ? "any" : undefined}
                   value={d.value}
                   onChange={(e) => set({ value: e.target.value })}
-                  onKeyDown={(e) => e.key === "Enter" && apply()}
+                  onKeyDown={(e) => e.key === "Enter" && !isComposingKey(e) && apply()}
                 />
               ))}
             <IconButton

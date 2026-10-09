@@ -112,10 +112,13 @@ function UndoButton({ onUndo }: { onUndo: () => Promise<void> }) {
   );
 }
 
-/** Rejecting with a note: the button's words, and what opens the composer at an anchor. */
+/**
+ * Rejecting with a note: the button's words, and what opens the composer at an anchor. Opened from a
+ * menu, gone once it closes, the composer hands focus back to `returnFocus`, the menu's button.
+ */
 export interface NoteAction {
   label: string;
-  onOpen: (anchor: NoteAnchor) => void;
+  onOpen: (anchor: NoteAnchor, returnFocus: HTMLElement | null) => void;
 }
 
 /**
@@ -145,6 +148,7 @@ export function RunBanner({
   const live = useLiveWindow(updatedAt);
   // The composer floats beside the whole Reject all control, not the menu that opened it.
   const rejectGroup = useRef<HTMLDivElement>(null);
+  const rejectMenu = useRef<HTMLButtonElement>(null);
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="agent-run">
@@ -187,13 +191,14 @@ export function RunBanner({
                     icon: <ChevronDown size={15} />,
                     isDisabled: busy,
                     onMouseDown: keepFocus,
+                    ref: rejectMenu,
                   }}
                   hasChevron={false}
                   alignment="end"
                   items={[
                     {
                       label: noteAction.label,
-                      onClick: () => rejectGroup.current && noteAction.onOpen(anchorRect(rejectGroup.current)),
+                      onClick: () => rejectGroup.current && noteAction.onOpen(anchorRect(rejectGroup.current), rejectMenu.current),
                     },
                   ]}
                 />

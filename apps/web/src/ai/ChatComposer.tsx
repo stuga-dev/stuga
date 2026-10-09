@@ -4,6 +4,7 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { Square } from "lucide-react";
 import { imageFilesFrom } from "../editor/use-upload";
+import { isComposingKey } from "../lib/ime";
 import { useAiChat } from "../state/model-options";
 import { AiSetupNotice } from "./AiSetupNotice";
 
@@ -74,7 +75,7 @@ export function ChatComposer({
           rows={2}
           placeholder={placeholder}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            if (e.key === "Enter" && !e.shiftKey && !isComposingKey(e)) {
               e.preventDefault();
               if (canSend && !streaming) onSend();
             }

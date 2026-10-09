@@ -10,6 +10,7 @@ import { useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
 import { MentionTextArea } from "../mentions/MentionTextArea";
+import { isComposingKey } from "../lib/ime";
 import { useComments } from "./comments-context";
 
 export function CommentComposer() {
@@ -57,7 +58,7 @@ export function CommentComposer() {
         rows={2}
         onChange={setBody}
         onKeyDown={(e: React.KeyboardEvent) => {
-          if (e.key === "Enter" && !e.shiftKey) {
+          if (e.key === "Enter" && !e.shiftKey && !isComposingKey(e)) {
             e.preventDefault();
             void onSubmit();
           }

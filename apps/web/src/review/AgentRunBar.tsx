@@ -68,13 +68,14 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
       const feedbackId = decided && run.source === "panel" ? rejectedFeedbackId(decided, hunkIds) : null;
       if (feedbackId && live?.available) live.revise(note, { runId: run.id, feedbackId });
     });
-  const requestChanges = (hunkIds: string[] | undefined, anchor: NoteAnchor) => {
+  const requestChanges = (hunkIds: string[] | undefined, anchor: NoteAnchor, returnFocus?: HTMLElement | null) => {
     const labels = noteLabels(mode, hunkIds === undefined);
     ask({
       title: labels.submit,
       submitLabel: labels.submit,
       hint: mode === "revise" && coauthor?.streaming ? "Revises when the current turn ends." : labels.hint,
       anchor,
+      returnFocus,
       quote: quoteOf(run, hunkIds),
       onSubmit: (note) => sendNote(hunkIds, note),
     });
@@ -146,7 +147,10 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
         }
         busy={busy}
         onDecide={(decision) => void decide(run.id, decision)}
-        noteAction={{ label: noteLabels(mode, true).trigger, onOpen: (anchor) => requestChanges(undefined, anchor) }}
+        noteAction={{
+          label: noteLabels(mode, true).trigger,
+          onOpen: (anchor, returnFocus) => requestChanges(undefined, anchor, returnFocus),
+        }}
         list={
           hasList ? (
             <RunChangeList

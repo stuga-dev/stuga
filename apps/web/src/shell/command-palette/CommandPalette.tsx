@@ -43,6 +43,7 @@ import { errorMessage } from "../../lib/http/client";
 import { Marked, Snippet, hitHref, markTerms, queryTerms } from "../../lib/snippet";
 import { forgetRecentDoc, recentDocIds } from "../../lib/recent-docs";
 import { getActiveWorkspace } from "../../lib/session/workspace-pointer";
+import { isComposingKey } from "../../lib/ime";
 
 interface Cmd {
   id: string;
@@ -506,7 +507,7 @@ export function CommandPalette() {
             }}
             onKeyDown={(e: React.KeyboardEvent) => {
               // Enter confirms an input method's composition, not a command.
-              if (e.nativeEvent.isComposing) return;
+              if (isComposingKey(e)) return;
               if (e.key === "ArrowDown") {
                 e.preventDefault();
                 setActiveId(all[Math.min(activeIndex + 1, all.length - 1)]?.id ?? null);

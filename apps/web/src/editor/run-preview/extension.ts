@@ -29,7 +29,7 @@ import {
   type RunPreviewData,
   type RunReport,
 } from "./plan";
-import { ghostIsEmpty, isInHunkNote, runGhost } from "./ghost-dom";
+import { ghostIsEmpty, holdWhileComposing, isInHunkNote, runGhost } from "./ghost-dom";
 
 interface RunPreviewOptions {
   /** The shared Y.Doc the segments' relative anchors resolve against. */
@@ -92,6 +92,7 @@ export const RunPreview = Extension.create<RunPreviewOptions, RunPreviewStorage>
   addProseMirrorPlugins() {
     const options = this.options;
     const storage = this.storage;
+    const editor = this.editor;
     // decorations() runs on every transaction; nothing it paints depends on the
     // selection, so the set is memoized on the document and the two storage fields.
     let cache: {
@@ -113,8 +114,10 @@ export const RunPreview = Extension.create<RunPreviewOptions, RunPreviewStorage>
               publishReport(storage, EMPTY_REPORT, new Map());
               return DecorationSet.empty;
             }
-            if (cache && cache.doc === state.doc && cache.runs === runs && cache.pending === pendingKeys) {
-              return cache.set;
+            if (cache && cache.doc === state.doc) {
+              if (cache.runs === runs && cache.pending === pendingKeys) return cache.set;
+              // A rebuilt ghost would end a note's composition, so a repaint the document doesn't need waits for its end.
+              if (holdWhileComposing(() => repaint(editor))) return cache.set;
             }
 
             const size = state.doc.content.size;

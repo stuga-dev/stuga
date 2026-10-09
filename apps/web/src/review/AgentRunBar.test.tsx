@@ -397,6 +397,33 @@ describe("AgentRunBar", () => {
       expect(dialog()).toBeNull();
     });
 
+    it("hands focus back to the menu's button when the whole-run note closes, the menu being gone", async () => {
+      responder = () => ({ runs: [run()] });
+      await mount();
+      await fromRejectMenu("Reject all with note…");
+      await act(async () => {
+        dialog()!.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(dialog()).toBeNull();
+      await act(() => new Promise<void>((done) => requestAnimationFrame(() => done())));
+      expect(document.activeElement).toBe(byLabel("More ways to reject"));
+    });
+
+    it("leaves an input method's Enter and Escape to it", async () => {
+      responder = () => ({ runs: [run()] });
+      await mount();
+      await fromRejectMenu("Reject all with note…");
+      const field = dialog()!.querySelector("textarea")!;
+      await typeInto(field, "再短一点");
+      await act(async () => {
+        // Safari's Enter that picks a candidate comes after compositionend, with the IME's keyCode 229.
+        field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true, cancelable: true }));
+        field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", isComposing: true, bubbles: true, cancelable: true }));
+      });
+      expect(calls.find((c) => c.method === "POST")).toBeUndefined();
+      expect(dialog()!.querySelector("textarea")!.value).toBe("再短一点");
+    });
+
     it("rejects one change from the list with its own note, under the button's own words", async () => {
       responder = (url, method) =>
         method === "POST"

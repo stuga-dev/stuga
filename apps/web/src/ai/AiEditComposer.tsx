@@ -7,6 +7,7 @@ import { useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { HStack } from "@astryxdesign/core/HStack";
+import { isComposingKey } from "../lib/ime";
 import { useAiCoauthor } from "./ai-coauthor-context";
 
 const QUICK_ACTIONS: { label: string; instruction: string }[] = [
@@ -68,7 +69,7 @@ export function AiEditComposer() {
         rows={2}
         onChange={setInstruction}
         onKeyDown={(e: React.KeyboardEvent) => {
-          if (e.key === "Enter" && !e.shiftKey) {
+          if (e.key === "Enter" && !e.shiftKey && !isComposingKey(e)) {
             e.preventDefault();
             run(instruction);
           }

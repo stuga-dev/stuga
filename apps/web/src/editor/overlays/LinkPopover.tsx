@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getMarkRange, type Editor } from "@tiptap/react";
 import { clampCentre, useEditorAnchor } from "../use-editor-anchor";
+import { isComposingKey } from "../../lib/ime";
 
 const HALF = 150;
 
@@ -96,7 +97,7 @@ export function LinkPopover({ editor, editTick }: { editor: Editor; editTick: nu
             onMouseDown={(e) => e.stopPropagation()}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !isComposingKey(e)) {
                 e.preventDefault();
                 apply();
               }

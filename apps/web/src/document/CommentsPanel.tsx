@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { Docs, type Comment } from "../api";
 import { useComments } from "../comments/comments-context";
 import { importedAuthor } from "../lib/format";
+import { isComposingKey } from "../lib/ime";
 import { authorLabel, nameLoading, useUserNames } from "../state/identity";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Button } from "@astryxdesign/core/Button";
@@ -254,7 +255,7 @@ function CommentThread({
             rows={1}
             onChange={setDraft}
             onKeyDown={(e: React.KeyboardEvent) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey && !isComposingKey(e)) {
                 e.preventDefault();
                 void submitReply();
               }

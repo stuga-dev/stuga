@@ -37,13 +37,14 @@ function DbRunBanner({
   const { busy, decide, inFlight } = useDbRuns();
   const { ask, dialog } = useRejectNote();
   // A database run is always an agent's: its note waits for that agent.
-  const requestChanges = (opIds: string[] | undefined, anchor: NoteAnchor, quote: string) => {
+  const requestChanges = (opIds: string[] | undefined, anchor: NoteAnchor, quote: string, returnFocus?: HTMLElement | null) => {
     const labels = noteLabels("agent", opIds === undefined);
     ask({
       title: labels.submit,
       submitLabel: labels.submit,
       hint: labels.hint,
       anchor,
+      returnFocus,
       quote,
       onSubmit: (note) => void decide(run.id, "reject", opIds, note),
     });
@@ -67,7 +68,8 @@ function DbRunBanner({
         onDecide={(decision) => void decide(run.id, decision)}
         noteAction={{
           label: noteLabels("agent", true).trigger,
-          onOpen: (anchor) => requestChanges(undefined, anchor, `All ${n} change${n === 1 ? "" : "s"} by ${run.agent}`),
+          onOpen: (anchor, returnFocus) =>
+            requestChanges(undefined, anchor, `All ${n} change${n === 1 ? "" : "s"} by ${run.agent}`, returnFocus),
         }}
         list={
           n > 0 ? (

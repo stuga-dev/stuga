@@ -14,6 +14,8 @@ import {
   type UnpaintableReason,
 } from "./plan";
 import { EMPTY_REPORT, previewStorage, publish, repaint } from "./extension";
+import { keepDrafts } from "./ghost-dom";
+import { itemKey } from "../../review/run-ledger";
 
 /** Class `scrollToHunk` flashes on the ghost it scrolled to. */
 const FLASH_CLASS = "ai-preview-hunk--flash";
@@ -138,6 +140,12 @@ export function useRunPreview(
     storage.runPending = pendingKeys;
     repaint(editor);
   }, [editor, pendingKeys]);
+
+  // A note outlasts its change's decision only while that is in flight, so one that fails comes back
+  // as written; decided any way at all, by anyone, the note goes, and an Undo brings back the buttons.
+  useEffect(() => {
+    keepDrafts(new Set([...hunks.map((h) => itemKey(h.runId, h.id)), ...pendingKeys]));
+  }, [hunks, pendingKeys]);
 
   useEffect(() => {
     return () => {

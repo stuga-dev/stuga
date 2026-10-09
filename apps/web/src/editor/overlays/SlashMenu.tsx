@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { useEditorAnchor } from "../use-editor-anchor";
+import { isComposingKey } from "../../lib/ime";
 
 interface SlashItem {
   id: string;
@@ -93,7 +94,8 @@ export function SlashMenu({
     const onKey = (e: KeyboardEvent) => {
       const st = stateRef.current;
       const items = filteredRef.current;
-      if (!st) return;
+      // An input method's keys pick its own candidates, not a block.
+      if (!st || isComposingKey(e)) return;
       if (e.key === "Escape") {
         e.preventDefault();
         hide();

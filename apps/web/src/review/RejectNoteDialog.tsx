@@ -10,6 +10,7 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { RUN_FEEDBACK_NOTE_MAX_CHARS } from "@stuga/protocol/domain/limits";
+import { isComposingKey } from "../lib/ime";
 
 /** The viewport box of the control that opened a floating composer. */
 export interface NoteAnchor {
@@ -49,6 +50,8 @@ export interface RejectNoteRequest {
    * one (the inbox, away from any document) a dialog opens.
    */
   anchor?: NoteAnchor;
+  /** Where focus goes when the composer closes, for an opener gone by then (a menu's item); where it was, without one. */
+  returnFocus?: HTMLElement | null;
   onSubmit: (note: string) => void;
 }
 
@@ -115,7 +118,8 @@ function RequestChangesComposer({
       role="dialog"
       aria-label={request.title}
       onKeyDown={(e) => {
-        if (e.key === "Escape") {
+        // An input method's Escape drops its candidate, not the note.
+        if (e.key === "Escape" && !isComposingKey(e)) {
           e.preventDefault();
           e.stopPropagation();
           onClose();
@@ -137,7 +141,7 @@ function RequestChangesComposer({
         status={tooLong ? { type: "error", message: `Keep it under ${RUN_FEEDBACK_NOTE_MAX_CHARS} characters.` } : undefined}
         onChange={setNote}
         onKeyDown={(e: React.KeyboardEvent) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+          if (e.key === "Enter" && !e.shiftKey && !isComposingKey(e)) {
             e.preventDefault();
             submit();
           }
@@ -210,7 +214,7 @@ export function useRejectNote(): { ask: (request: RejectNoteRequest) => void; di
   const [request, setRequest] = useState<RejectNoteRequest | null>(null);
   const returnTo = useRef<HTMLElement | null>(null);
   const ask = useCallback((r: RejectNoteRequest) => {
-    returnTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    returnTo.current = r.returnFocus ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setRequest(r);
   }, []);
   const close = useCallback((restoreFocus = true) => {

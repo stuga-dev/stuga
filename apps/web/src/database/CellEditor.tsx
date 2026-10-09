@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ColumnSpec, RowInputValue, RowValue } from "@stuga/protocol/databases/types";
 import { parseFieldInput } from "./model/field-input";
+import { isComposingKey } from "../lib/ime";
 
 interface CellEditorProps {
   column: ColumnSpec;
@@ -89,6 +90,7 @@ export function CellEditor({ column, initial, onCommit, onCancel }: CellEditorPr
       onChange={(e) => setRaw(e.target.value)}
       onBlur={() => commit(parsed())}
       onKeyDown={(e) => {
+        if (isComposingKey(e)) return;
         if (e.key === "Enter") {
           e.preventDefault();
           commit(parsed());

@@ -4,6 +4,7 @@ import type { Editor } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
 import { captionOf } from "../image-caption";
 import { useEditorAnchor } from "../use-editor-anchor";
+import { isComposingKey } from "../../lib/ime";
 
 /** Debounce for writing the caption, so typing isn't one CRDT step and undo entry per character. */
 const COMMIT_DEBOUNCE_MS = 300;
@@ -112,7 +113,7 @@ export function ImageCaptionBubble({ editor }: { editor: Editor }) {
         onChange={(e) => onChange(e.target.value)}
         onBlur={flush}
         onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === "Escape") {
+          if ((e.key === "Enter" || e.key === "Escape") && !isComposingKey(e)) {
             e.preventDefault();
             flush();
             editor.commands.focus();

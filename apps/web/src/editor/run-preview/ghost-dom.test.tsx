@@ -39,15 +39,16 @@ let ydoc: Y.Doc;
 let editor: Editor;
 let seen: { anchored: readonly HunkKey[]; unanchored: readonly HunkKey[] };
 
-function Probe({ hunks }: { hunks: RunPreviewHunk[] }) {
-  const preview = useRunPreview(editor, ydoc, hunks, new Set());
+function Probe({ hunks, inFlight }: { hunks: RunPreviewHunk[]; inFlight: ReadonlySet<HunkKey> }) {
+  const preview = useRunPreview(editor, ydoc, hunks, inFlight);
   seen = { anchored: preview.anchored, unanchored: preview.unanchored };
   return null;
 }
 
-async function render(hunks: RunPreviewHunk[]): Promise<void> {
+/** Paint `hunks` as the pending ones, with the decisions on `inFlight` posted and not yet answered. */
+async function render(hunks: RunPreviewHunk[], inFlight: ReadonlySet<HunkKey> = new Set()): Promise<void> {
   await act(async () => {
-    root.render(<Probe hunks={hunks} />);
+    root.render(<Probe hunks={hunks} inFlight={inFlight} />);
   });
   await act(async () => {
     await vi.advanceTimersByTimeAsync(500);
@@ -226,6 +227,8 @@ describe("Mod-Z with a review history", () => {
 
 describe("a change's note", () => {
   const INTRO: RunPreviewHunk = { runId: "run_a", id: "h1", old_string: "Intro paragraph.", new_string: "Intro rewritten." };
+  /** Another change, further down, which renumbers the first ("1 of 2") and so builds its ghost anew. */
+  const SECOND: RunPreviewHunk = { ...ROW_HUNK, id: "h2" };
   const noteButton = () => editor.view.dom.querySelector<HTMLButtonElement>(".ai-preview-hunk-btn--request_changes");
   const field = () => editor.view.dom.querySelector<HTMLTextAreaElement>(".ai-preview-hunk-note__field");
   const type = (text: string) => {
@@ -233,6 +236,17 @@ describe("a change's note", () => {
     field()!.dispatchEvent(new Event("input", { bubbles: true }));
   };
   const key = (k: string) => field()!.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  /** Focus on a control outside the editor, as the reviewer moves on. */
+  const focusElsewhere = () => {
+    const other = container.appendChild(document.createElement("button"));
+    other.focus();
+    return other;
+  };
+  /** Let the frame that focuses the note run, and whatever a timer holds. */
+  const frame = () =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
 
   it("names the button for what the note does, and sends with the same words", async () => {
     await render([{ ...INTRO, noteMode: "revise" }]);
@@ -270,6 +284,72 @@ describe("a change's note", () => {
     expect(sent).toEqual([{ runId: "run_a", hunkId: "h1", decision: "request_changes", note: "Keep it shorter." }]);
     // The document is the editor's, and the keys in the note were not.
     expect(editor.state.doc.textContent).toContain("Intro paragraph.");
+    // The rejection lands, and the note leaves with its change.
+    await render([]);
+  });
+
+  it("gives the note back, as written, when its rejection doesn't land", async () => {
+    await render([INTRO]);
+    noteButton()!.click();
+    type("Keep it shorter.");
+    key("Enter");
+    // In flight the change leaves the page; failed or blocked, it is pending again.
+    await render([], new Set(["run_a:h1"]));
+    expect(field()).toBeNull();
+    await render([INTRO]);
+    expect(field()!.value).toBe("Keep it shorter.");
+    key("Escape");
+  });
+
+  it("gives it back without taking the focus from where the reviewer moved it meanwhile", async () => {
+    await render([INTRO]);
+    noteButton()!.click();
+    await frame();
+    type("Keep it shorter.");
+    key("Enter");
+    await render([], new Set(["run_a:h1"]));
+    const banner = focusElsewhere();
+    await render([INTRO]);
+    expect(field()!.value).toBe("Keep it shorter.");
+    expect(document.activeElement).toBe(banner);
+    key("Escape");
+  });
+
+  it("takes the focus when opened, though a repaint builds it anew before the next frame", async () => {
+    await render([INTRO]);
+    // The note button keeps focus where it was, as a press on it must leave the editor's caret.
+    focusElsewhere();
+    noteButton()!.click();
+    await render([INTRO, SECOND]);
+    expect(document.activeElement).toBe(field());
+    key("Escape");
+  });
+
+  it("drops the note when its change is decided some other way, so an Undo brings back the buttons", async () => {
+    await render([INTRO]);
+    noteButton()!.click();
+    type("Half a thought");
+    // Reject all, or a collaborator's decision: the change leaves review with nothing in flight here.
+    await render([]);
+    await render([INTRO]);
+    expect(field()).toBeNull();
+    expect(noteButton()).not.toBeNull();
+  });
+
+  it("leaves an input method's Enter and Escape to it", async () => {
+    await render([INTRO]);
+    const sent: RunHunkDecisionDetail[] = [];
+    const listen = (e: Event) => sent.push((e as CustomEvent<RunHunkDecisionDetail>).detail);
+    document.addEventListener(RUN_HUNK_EVENT, listen);
+    noteButton()!.click();
+    type("再短一点");
+    // Safari's Enter that picks a candidate comes after compositionend, with the IME's keyCode 229.
+    field()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, bubbles: true, cancelable: true }));
+    field()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", isComposing: true, bubbles: true, cancelable: true }));
+    document.removeEventListener(RUN_HUNK_EVENT, listen);
+    expect(sent).toEqual([]);
+    expect(field()!.value).toBe("再短一点");
+    key("Escape");
   });
 
   it("puts the row back on Escape, with focus on the note button", async () => {
@@ -295,6 +375,38 @@ describe("a change's note", () => {
     expect(field()).not.toBe(before);
     expect(field()!.value).toBe("Not this word");
     expect(document.activeElement).toBe(field());
+    key("Escape");
+  });
+
+  it("keeps the caret and the selection when the ghost is built anew", async () => {
+    await render([INTRO]);
+    noteButton()!.click();
+    await frame();
+    type("Not this word");
+    field()!.setSelectionRange(4, 8, "backward");
+    await render([INTRO, SECOND]);
+    expect(document.activeElement).toBe(field());
+    expect([field()!.selectionStart, field()!.selectionEnd, field()!.selectionDirection]).toEqual([4, 8, "backward"]);
+    key("Escape");
+  });
+
+  it("holds a repaint while an input method composes, and paints it once the candidate is picked", async () => {
+    await render([INTRO]);
+    noteButton()!.click();
+    await frame();
+    type("Not th");
+    const composing = field()!;
+    composing.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    await render([INTRO, SECOND]);
+    expect(field()).toBe(composing);
+    composing.value = "Not this";
+    composing.dispatchEvent(new Event("input", { bubbles: true }));
+    composing.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    await frame();
+    // The renumbering held back paints now, around the note as written.
+    expect(field()).not.toBe(composing);
+    expect(field()!.value).toBe("Not this");
+    expect(editor.view.dom.querySelector(".ai-preview-hunk-note")!.getAttribute("aria-label")).toMatch(/change 1 of 2/);
     key("Escape");
   });
 });
