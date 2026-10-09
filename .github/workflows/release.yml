@@ -6,9 +6,9 @@ on:
   push:
     tags: ["v*.*.*"]
 
+# Each job asks for what it writes; the rest read.
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   verify:
@@ -39,6 +39,9 @@ jobs:
 
   docker-images:
     needs: [verify, changelog]
+    permissions:
+      contents: read
+      packages: write
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -140,6 +143,8 @@ jobs:
   # stuga-remote's two architectures, each with its provenance and SBOM, under the version's tag.
   docker-remote:
     needs: docker-images
+    permissions:
+      packages: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -165,6 +170,9 @@ jobs:
 
   docker-package:
     needs: [docker-images, docker-remote]
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-latest
     outputs:
       frp: ${{ steps.pins.outputs.frp }}
@@ -213,6 +221,8 @@ jobs:
   # The only test of what an operator downloads: the stamped compose.yml booting the published images.
   docker-smoke:
     needs: docker-package
+    permissions:
+      packages: read
     env:
       FRP_VERSION: ${{ needs.docker-package.outputs.frp }}
     strategy:
@@ -289,7 +299,9 @@ jobs:
   connector:
     needs: [verify, changelog]
     runs-on: macos-15
-    environment: release
+    environment:
+      name: release
+      deployment: false
     outputs:
       sha256: ${{ steps.build.outputs.sha256 }}
     steps:
@@ -323,7 +335,9 @@ jobs:
     needs: [verify, changelog, connector]
     runs-on: macos-15
     # Signing and notarization secrets live in this environment, which only v* tags may use.
-    environment: release
+    environment:
+      name: release
+      deployment: false
     steps:
       - uses: actions/checkout@v7
       - id: pins
@@ -387,6 +401,9 @@ jobs:
   # release moves only the tags it is the newest of: a patch to an older line leaves :MAJOR alone.
   promote:
     needs: [docker-smoke, macos-pkg]
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -506,6 +523,8 @@ jobs:
   npm:
     needs: [release]
     runs-on: ubuntu-latest
+    # The one job that records a deployment: the release is out and on npm. The other jobs in this
+    # environment set deployment: false. Trusted publishing stays on the default path.
     environment: release
     permissions:
       contents: read
@@ -540,7 +559,9 @@ jobs:
   plugin:
     needs: [npm]
     runs-on: ubuntu-latest
-    environment: release
+    environment:
+      name: release
+      deployment: false
     permissions:
       contents: read
     steps:
