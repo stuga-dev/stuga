@@ -378,7 +378,8 @@ function keywordLeg(
   }
   return sql`
       SELECT d.doc_id,
-             pdb.snippets(d.search_text, '⟦', '⟧', 200, ${EXCERPT_WINDOWS}, NULL, 'position') AS kw_fragments,
+             -- HTML-escaped around the <b> tags, so a < in the body cannot pass for one.
+             pdb.snippets(d.search_text, '<b>', '</b>', 200, ${EXCERPT_WINDOWS}, NULL, 'position') AS kw_fragments,
              pdb.score(d) AS kw_rank
       FROM docs d
       WHERE d.workspace_id = ${input.workspaceId}
@@ -672,17 +673,17 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
     JOIN docs d ON d.doc_id = t.doc_id
     LEFT JOIN doc_chunks ch ON ch.doc_id = t.doc_id AND ch.chunk_index = t.sem_chunk
     -- The keyword window showing the most different matching words (as written, case
-    -- aside), then the most matches, then the first. Each piece after a ⟦ opens with a
-    -- match. pdb.snippets HTML-escapes around matches; decoded so the snippet is raw
-    -- text on every path. &amp; goes last.
+    -- aside), then the most matches, then the first. Tags are counted before the text
+    -- is decoded, so only pdb.snippets' own count; they then become the sentinels
+    -- excerptOf reads, and &amp; is decoded last.
     LEFT JOIN LATERAL (
-      SELECT replace(replace(replace(replace(replace(
-               f.fragment,
+      SELECT replace(replace(replace(replace(replace(replace(replace(
+               f.fragment, '<b>', '⟦'), '</b>', '⟧'),
                '&lt;', '<'), '&gt;', '>'), '&quot;', '"'), '&#x27;', ''''), '&amp;', '&') AS kw_snippet
       FROM unnest(t.kw_fragments) WITH ORDINALITY AS f(fragment, ord),
-           unnest((string_to_array(f.fragment, '⟦'))[2:]) AS mark
+           unnest((string_to_array(f.fragment, '<b>'))[2:]) AS mark
       GROUP BY f.ord, f.fragment
-      ORDER BY count(DISTINCT lower(split_part(mark, '⟧', 1))) DESC, count(*) DESC, f.ord
+      ORDER BY count(DISTINCT lower(split_part(mark, '</b>', 1))) DESC, count(*) DESC, f.ord
       LIMIT 1
     ) kw ON TRUE
     -- Where the unfinished last word begins a word of the body, when the body has no keyword highlight.

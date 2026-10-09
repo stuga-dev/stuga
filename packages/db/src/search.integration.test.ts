@@ -267,6 +267,13 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
     expect(hits.find((h) => h.doc_id === "65th")?.snippet).toMatch(/^A ⟦tapir⟧ naps\./);
   });
 
+  it("counts only the index's highlights in a keyword excerpt, whatever brackets or tags the text holds", async () => {
+    await makeDoc("d", "Notes", `A tapir saw ⟦gecko⟦ ⟦newt⟦ ⟦ibis⟦ and <b>gecko</b> <b>newt</b> <b>ibis</b>. ${apart}Later, a tapir met a heron.`);
+    expect((await keyword("tapir heron"))[0]?.snippet).toContain("a ⟦tapir⟧ met a ⟦heron⟧");
+    // The text's own brackets and tags come through as written.
+    expect((await keyword("gecko"))[0]?.snippet).toContain("saw ⟦⟦gecko⟧⟦ ⟦newt⟦ ⟦ibis⟦ and <b>⟦gecko⟧</b> <b>newt</b>");
+  });
+
   it("gives a document matched by its title alone the opening of its text, not an empty excerpt", async () => {
     await makeDoc("d", "Zephyr", "Calm air over the bay.");
     const [hit] = await keyword("zephyr");
