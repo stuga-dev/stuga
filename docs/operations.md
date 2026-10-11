@@ -251,6 +251,11 @@ administrators only:
 - When a newer release fixes a vulnerability, every node administrator also gets a notification,
   once per release, in the app and through the [notification sink](configuration.md#settings-in-the-app)
   when one is set.
+- With remote access on, the Remote access page warns of such a release too.
+
+Apart from this check, and whatever its switch says, a release with a problem reachable through the
+remote address closes that address until it is updated: the remote access service names the oldest
+release fit to serve ([Remote access](remote-access.md#a-release-older-than-min_version)).
 
 **Check for new versions** turns this off and on. It is on unless someone turns it off, and a
 node makes its first request only once someone has set it up. **Check now** looks at once. A node built from source, or on any version that is not a

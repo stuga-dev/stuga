@@ -42,6 +42,8 @@ export interface FakeRemoteServiceOptions {
   challtestsrv?: string;
   /** Default 1. */
   minProtocol?: number;
+  /** The oldest release check-ins say may serve a remote address. Default none; undefined leaves the field out. */
+  minVersion?: string | null | undefined;
   /** Epoch milliseconds. */
   now?: () => number;
 }
@@ -77,6 +79,8 @@ export interface FakeRemoteService {
   failNext(path: string, status: number, body: Record<string, unknown>, times?: number): void;
   clearFailures(): void;
   setMinProtocol(n: number): void;
+  /** Undefined leaves the field out of check-ins, as a service from before it did. */
+  setMinVersion(v: string | null | undefined): void;
   /** Unix seconds, or null. */
   setReissueBefore(t: number | null): void;
   setAcmeDirectory(url: string): void;
@@ -180,6 +184,7 @@ export async function startFakeRemoteService(opts: FakeRemoteServiceOptions): Pr
   let credentialTtl = opts.credentialTtl ?? 86_400;
   let checkinInterval = opts.checkinInterval ?? 21_600;
   let minProtocol = opts.minProtocol ?? 1;
+  let minVersion: string | null | undefined = "minVersion" in opts ? opts.minVersion : null;
   let reissueBefore: number | null = null;
   let relays: RelayEntry[] = opts.relays ?? [
     {
@@ -345,6 +350,7 @@ export async function startFakeRemoteService(opts: FakeRemoteServiceOptions): Pr
             next_checkin_at: now() + checkinInterval,
             credential_ttl: credentialTtl,
             credential_not_before: deny?.notBefore ?? null,
+            min_version: minVersion,
             relays,
             acme: { directory: acmeDirectory, profile: acmeProfile, reissue_before: reissueBefore },
           },
@@ -511,6 +517,9 @@ export async function startFakeRemoteService(opts: FakeRemoteServiceOptions): Pr
     },
     setMinProtocol(n) {
       minProtocol = n;
+    },
+    setMinVersion(v) {
+      minVersion = v;
     },
     setReissueBefore(t) {
       reissueBefore = t;

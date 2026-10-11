@@ -56,6 +56,7 @@ const memory = vi.hoisted(() => {
     probe_failures: 0,
     connector_config_sha256: null,
     connector_config_changed_at: null,
+    min_version: null,
     last_error: null,
     updated_at: null,
   });
@@ -116,6 +117,7 @@ vi.mock("@stuga/db", async (importOriginal) => {
         acme_reissue_before: c.acmeReissueBefore,
         credential_ttl: c.credentialTtl,
         credential_not_before: c.credentialNotBefore,
+        ...(c.minVersion === undefined ? {} : { min_version: c.minVersion }),
         binding_failing_since: null,
       }),
     setRemoteCheckinNext: async (_sql: unknown, nextAt: Date) => memory.set({ checkin_next_at: nextAt }),
@@ -212,6 +214,7 @@ function service(
     now?: () => number;
     ca?: FakeCa;
     notify?: (n: RemoteNotice) => Promise<void>;
+    version?: string;
   } = {},
 ): RemoteAccess {
   const s = createRemoteAccess({
@@ -227,6 +230,7 @@ function service(
     ...(opts.now ? { now: opts.now } : {}),
     ...(opts.ca ? { acmeTransport: opts.ca.transport, challengeResolver: fakeZone() } : {}),
     ...(opts.notify ? { notify: opts.notify } : {}),
+    ...(opts.version ? { version: opts.version } : {}),
     onError: () => {},
   });
   services.push(s);
@@ -711,12 +715,22 @@ describe("where the packaging runs the connector", () => {
     );
   }
 
-  function managed(opts: { probe?: () => Promise<ProbeResult>; timing?: Partial<RemoteTiming>; certFor?: { notBefore: Date; notAfter: Date } } = {}) {
+  function managed(
+    opts: {
+      probe?: () => Promise<ProbeResult>;
+      timing?: Partial<RemoteTiming>;
+      certFor?: { notBefore: Date; notAfter: Date };
+      version?: string;
+      notify?: (n: RemoteNotice) => Promise<void>;
+    } = {},
+  ) {
     return bound({
       connector: hints,
       now: clock,
       ...(opts.probe ? { probe: opts.probe } : {}),
       ...(opts.certFor ? { certFor: opts.certFor } : {}),
+      ...(opts.version ? { version: opts.version } : {}),
+      ...(opts.notify ? { notify: opts.notify } : {}),
       timing: { serviceTickMs: 100, connectorPollMs: 20, probeDelayMs: 10, ...opts.timing },
     });
   }
@@ -795,6 +809,181 @@ describe("where the packaging runs the connector", () => {
     expect(request()).toBe("off");
     expect(existsSync(join(remoteDir, "relay-1.jwt"))).toBe(false);
     expect(existsSync(join(remoteDir, "relay-1.toml"))).toBe(false);
+  });
+
+  describe("a release older than the service's minimum", () => {
+    const sock = () => existsSync(join(remoteDir, "https.sock"));
+    const pathsSince = (n: number) => fake.requests.slice(n).map((r) => r.path);
+    const DAY = 86_400_000;
+    const restart = async (version: string) => {
+      const r = service({ connector: hints, now: clock, version, timing: { serviceTickMs: 100, connectorPollMs: 20, probeDelayMs: 10 } });
+      await r.start();
+      return r;
+    };
+    /** On, then held back by a minimum of 0.2.31. */
+    async function heldBack(opts: { notify?: (n: RemoteNotice) => Promise<void> } = {}) {
+      const s = await managed({ version: "0.2.30", ...opts });
+      await s.start();
+      await until("on", () => request()?.startsWith("on ") ?? false);
+      fake.setMinVersion("0.2.31");
+      s.kick();
+      await until("off", () => request() === "off");
+      return s;
+    }
+
+    it("closes the address and asks the connector off once a check-in names a newer one, and opens again when it is lowered", async () => {
+      const notices: RemoteNotice[] = [];
+      const s = await managed({ version: "0.2.30", notify: async (n) => void notices.push(n) });
+      await s.start();
+      await until("on", () => request()?.startsWith("on ") ?? false);
+      expect(sock()).toBe(true);
+
+      fake.setMinVersion("0.2.31");
+      const heard = fake.requests.length;
+      s.kick();
+      await until("off", () => request() === "off");
+      expect(sock()).toBe(false);
+      expect(existsSync(join(remoteDir, "relay-1.jwt"))).toBe(false);
+      expect(memory.row()).toMatchObject({ enabled: true, min_version: "0.2.31", credential_expires_at: null });
+      expect(await s.status()).toMatchObject({ state: "error", last_error: { code: "outdated", min_version: "0.2.31" } });
+      await until("the administrators told", () => notices.some((n) => n.event === "REMOTE_UPDATE_REQUIRED"));
+      expect(notices.filter((n) => n.event === "REMOTE_UPDATE_REQUIRED")).toEqual([
+        { event: "REMOTE_UPDATE_REQUIRED", key: "0.2.31", params: { address: `https://${memory.row().hostname as string}`, version: "0.2.31" } },
+      ]);
+
+      // Still checking in, never for a credential, and nothing kept as an error.
+      s.kick();
+      await until("another check-in", () => pathsSince(heard).filter((p) => p === "/v1/checkin").length === 2);
+      await sleep(300);
+      expect(pathsSince(heard).every((p) => p === "/v1/checkin")).toBe(true);
+      expect(request()).toBe("off");
+      expect(lastError()).toBeNull();
+
+      fake.setMinVersion("0.2.30");
+      s.kick();
+      await until("on again", () => request()?.startsWith("on ") ?? false);
+      expect(sock()).toBe(true);
+      expect(memory.row().min_version).toBe("0.2.30");
+      expect(await s.status()).not.toMatchObject({ state: "error" });
+    });
+
+    it("gets no credential for the refresh that was due when the check-in named it", async () => {
+      const s = await managed({ version: "0.2.30" });
+      await s.start();
+      await until("on", () => request()?.startsWith("on ") ?? false);
+      fake.setMinVersion("0.2.31");
+      memory.set({ credential_refresh_at: new Date(clock() - 1_000) });
+      const heard = fake.requests.length;
+      s.kick();
+      await until("off", () => request() === "off");
+      await sleep(300);
+      expect(pathsSince(heard)).toEqual(["/v1/checkin"]);
+    });
+
+    it("stays closed from the start on the same release, across turning off and on, and after going back to it", async () => {
+      const s = await managed({ version: "0.2.30" });
+      await s.start();
+      await until("on", () => request()?.startsWith("on ") ?? false);
+      fake.setMinVersion("0.2.31");
+      s.kick();
+      await until("off", () => request() === "off");
+      await s.stop();
+
+      // The service unreachable: what the row holds is enough to stay closed.
+      fake.pause();
+      const same = await restart("0.2.30");
+      expect(request()).toBe("off");
+      expect(sock()).toBe(false);
+      await same.disable("liv");
+      await same.enable({ acceptCaTerms: true, by: "liv" });
+      expect(sock()).toBe(false);
+      // Let the check-in held out come back, so stopping need not wait for it.
+      fake.resume();
+      await same.stop();
+
+      // Updated: open straight away, and on once it has a credential.
+      const updated = await restart("0.2.31");
+      await until("on", () => request()?.startsWith("on ") ?? false);
+      expect(sock()).toBe(true);
+      await updated.stop();
+
+      // Gone back to the older release: the minimum it already met is still held against this one.
+      fake.pause();
+      await restart("0.2.30");
+      expect(request()).toBe("off");
+      expect(sock()).toBe(false);
+      fake.resume();
+    }, 20_000);
+
+    it("waits about an hour after a failed check-in, not a tick, and leaves no credential backoff for after the update", async () => {
+      const s = await heldBack();
+      fake.failNext("/v1/checkin", 503, { error: "unavailable", message: "Try later." }, 100);
+      const heard = fake.requests.length;
+      s.kick();
+      await until("the failed check-in", () => pathsSince(heard).length === 1);
+      await sleep(500);
+      expect(pathsSince(heard)).toEqual(["/v1/checkin"]);
+      expect((memory.row().checkin_next_at as Date).getTime()).toBeGreaterThan(clock() + 50 * 60_000);
+      expect(memory.row()).toMatchObject({ credential_retry_at: null, credential_failures: 0 });
+      fake.clearFailures();
+      await s.stop();
+
+      const updated = await restart("0.2.31");
+      await until("on, at the first check-in", () => request()?.startsWith("on ") ?? false, 2_000);
+      await updated.stop();
+    });
+
+    it("comes back at once when the minimum is lowered, whatever credential backoff was left", async () => {
+      const s = await heldBack();
+      memory.set({ credential_failures: 5, credential_retry_at: new Date(clock() + 3 * 60 * 60_000) });
+      fake.setMinVersion("0.2.30");
+      s.kick();
+      await until("on again", () => request()?.startsWith("on ") ?? false, 2_000);
+      expect(memory.row()).toMatchObject({ credential_retry_at: null, credential_failures: 0 });
+    });
+
+    it("keeps the minimum it heard when a check-in leaves it out", async () => {
+      const s = await heldBack();
+      fake.setMinVersion(undefined);
+      const heard = fake.requests.length;
+      s.kick();
+      await until("another check-in", () => pathsSince(heard).includes("/v1/checkin"));
+      await sleep(300);
+      expect(memory.row().min_version).toBe("0.2.31");
+      expect(request()).toBe("off");
+      expect(sock()).toBe(false);
+    });
+
+    it("never tells the administrators to update a release that meets the minimum", async () => {
+      const notices: RemoteNotice[] = [];
+      fake.setMinVersion("0.2.31");
+      const s = await managed({ version: "0.2.31", notify: async (n) => void notices.push(n) });
+      await s.start();
+      await until("on", () => request()?.startsWith("on ") ?? false);
+      expect(memory.row().min_version).toBe("0.2.31");
+      s.kick();
+      await sleep(300);
+      expect(notices.map((n) => n.event)).not.toContain("REMOTE_UPDATE_REQUIRED");
+    });
+
+    it("serves nothing on a newer release's credential after a backup is restored, until a check-in names the minimum", async () => {
+      const s = await managed({ version: "0.2.30" });
+      await s.start();
+      await until("on", () => request()?.startsWith("on ") ?? false);
+      await s.stop();
+      // The backup from before the update: a credential of days ago, and no minimum heard yet.
+      memory.set({ credential_issued_at: new Date(clock() - 3 * DAY), credential_expires_at: new Date(clock() - 2 * DAY), min_version: null });
+      fake.setMinVersion("0.2.31");
+      fake.pause();
+      await restart("0.2.30");
+      expect(request()).toBe("off");
+      expect(existsSync(join(remoteDir, "relay-1.jwt"))).toBe(false);
+      fake.resume();
+      await until("the minimum heard", () => memory.row().min_version === "0.2.31");
+      await sleep(300);
+      expect(request()).toBe("off");
+      expect(sock()).toBe(false);
+    });
   });
 
   it("asks once at every start, whatever it asked before", async () => {

@@ -8,6 +8,7 @@ import {
   credentialClaims,
   DEFAULT_PROBE_REFRESH_SPACING_MS,
   DEFAULT_REFRESH_SPACING_MS,
+  describesCredential,
   planServiceTick,
   proofOfPossession,
   type ServicePlanInput,
@@ -34,6 +35,7 @@ function input(over: Omit<Partial<ServicePlanInput>, "row"> & { row?: Partial<No
     } as NodeRemoteAccessRow,
     credential: { iat: T - HOUR, exp: T + 23 * HOUR },
     certUsable: true,
+    outdated: false,
     checkinWanted: false,
     refreshWanted: false,
     lastRefreshAt: T - HOUR,
@@ -79,6 +81,13 @@ describe("when the service loop checks in", () => {
       expect(planServiceTick(input({ credential: null, now: T + HOUR, row: denied }))).toEqual({ checkin: true, refresh: null });
       expect(planServiceTick(input({ credential: null, checkinWanted: true, row: denied }))).toEqual({ checkin: true, refresh: null });
     }
+  });
+
+  it("only checks in, when due, while too old to serve the remote address: no credential, however long without", () => {
+    expect(planServiceTick(input({ credential: null, outdated: true }))).toEqual({ checkin: false, refresh: null });
+    expect(planServiceTick(input({ credential: null, refreshWanted: true, outdated: true }))).toEqual({ checkin: false, refresh: null });
+    expect(planServiceTick(input({ credential: null, now: T + 6 * HOUR, outdated: true }))).toEqual({ checkin: true, refresh: null });
+    expect(planServiceTick(input({ checkinWanted: true, outdated: true }))).toEqual({ checkin: true, refresh: null });
   });
 
   it("waits out a backoff: a check-in someone asks for goes, a new credential does not", () => {
@@ -148,6 +157,20 @@ describe("the proof of possession", () => {
     const key = new X509Certificate(payload.certificate).publicKey;
     const message = Buffer.from(`stuga-relay-pop:v1:${payload.iss}:${payload.nonce}`);
     expect(verify("sha256", message, { key, dsaEncoding: "ieee-p1363" }, Buffer.from(payload.pop, "base64url"))).toBe(true);
+  });
+});
+
+describe("whether the row describes the credential on disk", () => {
+  const held = { jwt: "j", iat: 1_790_900_000, exp: 1_790_986_400 };
+  const at = (seconds: number) => ({ credential_expires_at: new Date(seconds * 1000) });
+
+  it("takes the same expiry, give or take the two clocks, and nothing else", () => {
+    expect(describesCredential(at(held.exp), held)).toBe(true);
+    expect(describesCredential(at(held.exp - 9 * 60), held)).toBe(true);
+    expect(describesCredential(at(held.exp + 11 * 60), held)).toBe(false);
+    // A restored backup: the credential of a day before, or none.
+    expect(describesCredential(at(held.exp - 86_400), held)).toBe(false);
+    expect(describesCredential({ credential_expires_at: null }, held)).toBe(false);
   });
 });
 

@@ -68,6 +68,8 @@
   "REMOTE_BINDING_REJECTED.body": "{reason, select, key_unusable {{addressKnown, select, yes {This node’s key for {address} is missing or can’t be read. Enter a restore code to keep the address.} other {This node’s key for its remote address is missing or can’t be read. Enter a restore code to keep the address.}}} other {{addressKnown, select, yes {The remote access service no longer accepts this node’s key. Enter a restore code to keep {address}.} other {The remote access service no longer accepts this node’s key. Enter a restore code to keep the remote address.}}}}",
   "REMOTE_ADDRESS_MOVED.title": "Remote access moved to another computer",
   "REMOTE_ADDRESS_MOVED.body": "{address} now reaches another computer. Remote access is off on this one.",
+  "REMOTE_UPDATE_REQUIRED.title": "Remote access is paused until Stuga is updated",
+  "REMOTE_UPDATE_REQUIRED.body": "This version has a known security problem, so {address} is closed. Update to Stuga {version} or later and it opens again on its own.",
 
   "channel.none": "Stuga only",
   "channel.email": "email",

@@ -3,7 +3,7 @@ import type { NodeRemoteAccessRow, StoredRemoteError } from "@stuga/db";
 import { ServiceError } from "./service-client.js";
 import type { ConnectorStatus } from "@stuga/protocol/api/remote-access";
 import type { ConnectorReport } from "./connector.js";
-import { bindingBackoff, clearedBy, generalBackoff, remoteState, remoteStatus, serviceFailure, shownError } from "./state.js";
+import { belowMinVersion, bindingBackoff, clearedBy, generalBackoff, remoteState, remoteStatus, serviceFailure, shownError } from "./state.js";
 
 const NOW = new Date("2026-10-02T12:00:00.000Z");
 const MIN = 60_000;
@@ -58,6 +58,7 @@ function row(over: Partial<NodeRemoteAccessRow> = {}): NodeRemoteAccessRow {
     probe_failures: 0,
     connector_config_sha256: null,
     connector_config_changed_at: earlier(MIN),
+    min_version: null,
     last_error: null,
     updated_at: NOW,
     ...over,
@@ -171,6 +172,30 @@ const report = (state: ConnectorStatus["state"] | null, over: Partial<ConnectorR
   retryAt: null,
   behindSince: null,
   ...over,
+});
+
+describe("a release older than the service's minimum", () => {
+  it("is held back only when it is a release below the minimum", () => {
+    expect(belowMinVersion(row({ min_version: "0.2.31" }), "0.2.30")).toBe(true);
+    expect(belowMinVersion(row({ min_version: "0.2.31" }), "0.1.99")).toBe(true);
+    expect(belowMinVersion(row({ min_version: "0.2.31" }), "0.2.31")).toBe(false);
+    expect(belowMinVersion(row({ min_version: "0.2.31" }), "0.10.0")).toBe(false);
+    expect(belowMinVersion(row({ min_version: null }), "0.0.1")).toBe(false);
+    // A build from source or CI has no release to compare.
+    expect(belowMinVersion(row({ min_version: "0.2.31" }), "0.0.0-dev")).toBe(false);
+    expect(belowMinVersion(row({ min_version: "0.2.31" }), "0.0.0-ci")).toBe(false);
+  });
+
+  it("is an error naming the release to update to, before any other, and nothing while off", () => {
+    const held = row({ min_version: "0.2.31", last_error: err("denied") });
+    expect(remoteState(held, NOW, undefined, "0.2.30")).toBe("error");
+    expect(shownError(held, NOW, undefined, "0.2.30")).toMatchObject({ code: "outdated", min_version: "0.2.31", at: held.checkin_at!.toISOString() });
+    expect(remoteStatus(held, { dir: "/d", now: NOW, version: "0.2.30" })).toMatchObject({ state: "error", last_error: { code: "outdated" } });
+    // Updated: what was kept shows again.
+    expect(shownError(held, NOW, undefined, "0.2.31")).toMatchObject({ code: "denied" });
+    expect(remoteState(row({ min_version: "0.2.31" }), NOW, undefined, "0.2.31")).toBe("on");
+    expect(remoteState(row({ min_version: "0.2.31", enabled: false }), NOW, undefined, "0.2.30")).toBe("off");
+  });
 });
 
 describe("what the state itself says, never kept", () => {

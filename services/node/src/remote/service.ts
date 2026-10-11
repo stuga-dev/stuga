@@ -41,6 +41,7 @@ import { behindGate, type ServingGate } from "../http/serving-gate.js";
 import { startInterval } from "../platform/interval.js";
 import type { FrontDoor } from "../platform/http-server.js";
 import { createRemoteListener, removeSocketFile, type RemoteListener } from "../platform/remote-listener.js";
+import { VERSION } from "../version.js";
 import { fetchRenewalInfo, type RenewalInfo } from "./acme/client.js";
 import { ariCertId } from "./acme/der.js";
 import { fetchTransport, type AcmeTransport } from "./acme/transport.js";
@@ -65,6 +66,7 @@ import {
   clampRefreshAt,
   credentialClaims,
   DEFAULT_PROBE_REFRESH_SPACING_MS,
+  describesCredential,
   DEFAULT_REFRESH_SPACING_MS,
   planServiceTick,
   proofOfPossession,
@@ -84,10 +86,10 @@ import {
   UnreadableKey,
   type BindingKey,
 } from "./keys.js";
-import { bindingNotice, certNotices, movedNotice, recoveredNotice, type RemoteNotice } from "./notify.js";
+import { bindingNotice, certNotices, movedNotice, outdatedNotice, recoveredNotice, type RemoteNotice } from "./notify.js";
 import { probeThroughRelay, type ProbeResult } from "./probe.js";
 import { createServiceClient, ServiceError, type CheckinAnswer, type EnrollAnswer } from "./service-client.js";
-import { clearedBy, deniedCheckinDelay, remoteError, remoteStatus, serviceFailure, type ErrorKind } from "./state.js";
+import { belowMinVersion, clearedBy, deniedCheckinDelay, remoteError, remoteStatus, serviceFailure, type ErrorKind } from "./state.js";
 
 export interface RemoteTiming {
   certTickMs: number;
@@ -140,6 +142,8 @@ export interface RemoteAccessDeps {
   frontDoor: FrontDoor;
   /** Epoch milliseconds. Tests. */
   now?: () => number;
+  /** This build's version, compared with the service's `min_version`. Tests. */
+  version?: string;
   /** Tests: a DNS server that stands for the zone's (challtestsrv). */
   challengeResolver?: ChallengeResolver;
   /** Tests: trusts the test CA's root. */
@@ -227,6 +231,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   const { sql, config } = deps;
   const timing: RemoteTiming = { ...DEFAULT_TIMING, ...deps.timing };
   const now = deps.now ?? Date.now;
+  const version = deps.version ?? VERSION;
   const rand = deps.random ?? Math.random;
   const onError = deps.onError ?? ((e: unknown) => console.error("[remote] remote access failed", e));
   const transport = deps.acmeTransport ?? fetchTransport();
@@ -290,6 +295,12 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     row = await getRemoteAccess(sql);
     return row;
   }
+
+  /**
+   * Older than the service's `min_version`: the remote address stays closed and no credential is
+   * taken, until a check-in lowers it or a newer Stuga starts. Every path that would serve asks this.
+   */
+  const outdated = (r: NodeRemoteAccessRow | null): boolean => r !== null && belowMinVersion(r, version);
 
   /** The service's clock, in seconds, to this node's, in milliseconds. */
   const local = (serviceSeconds: number): number => (serviceSeconds - client.clockOffset()) * 1000;
@@ -367,17 +378,20 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
   async function syncListener(dirOk: boolean): Promise<void> {
     dirUsable = dirOk;
     const r = row;
-    if (r?.enabled && !certUsable(cert, r.hostname, now()) && (credential || jwtOnDisk || r.credential_expires_at)) {
+    const tooOld = outdated(r);
+    // Nothing served from here on, before the credential goes.
+    if (tooOld) await closeListener();
+    if (r?.enabled && (tooOld || !certUsable(cert, r.hostname, now())) && (credential || jwtOnDisk || r.credential_expires_at)) {
       await dropCredential(r);
     }
     await syncSocket(dirOk);
     await syncConnector();
   }
 
-  /** Open while on with a certificate that serves the hostname, closed otherwise. Under the lock. */
+  /** Open while on with a certificate that serves the hostname and a release new enough, closed otherwise. Under the lock. */
   async function syncSocket(dirOk: boolean): Promise<void> {
     const r = row;
-    const want = r !== null && r.enabled && dirOk && certUsable(cert, r.hostname, now());
+    const want = r !== null && r.enabled && dirOk && certUsable(cert, r.hostname, now()) && !outdated(r);
     if (!want) {
       await closeListener();
       return;
@@ -454,6 +468,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       r.relays.length > 0 &&
       sha !== null &&
       certUsable(cert, r.hostname, now()) &&
+      !outdated(r) &&
       current !== null &&
       current.exp > now() &&
       jwtOnDisk;
@@ -526,6 +541,11 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     if (f.denied || wasDenied) {
       // A denied node checks in hourly, whatever else went wrong.
       await setRemoteCheckinNext(sql, f.retryAt ?? new Date(at.getTime() + deniedCheckinDelay(rand)));
+    } else if (outdated(r)) {
+      // Too old to serve, so in no hurry: the next check-in in about an hour, or when the service says
+      // if that is later, and no credential backoff left for after the update.
+      const hourly = at.getTime() + deniedCheckinDelay(rand);
+      await setRemoteCheckinNext(sql, new Date(Math.max(hourly, f.retryAt?.getTime() ?? 0)));
     } else if (loop === "service") {
       await recordRemoteCredentialFailure(sql, { failures, retryAt: f.retryAt });
     }
@@ -555,12 +575,19 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       acmeReissueBefore: answer.acme.reissue_before === null ? null : new Date(answer.acme.reissue_before * 1000),
       credentialTtl: answer.credential_ttl,
       credentialNotBefore: answer.credential_not_before === null ? null : new Date(answer.credential_not_before * 1000),
+      minVersion: answer.min_version,
     });
     const wasDenied = before.last_error?.code === "denied" || before.last_error?.code === "retired";
     await refreshRow();
     await succeeded("service");
-    if (wasDenied) {
-      // Let back in: a credential straight away.
+    const wasOutdated = outdated(before);
+    const isOutdated = outdated(row);
+    if ((wasDenied || wasOutdated) && !isOutdated) {
+      // Let back in, or new enough again: a credential straight away, whatever backoff is left.
+      if (wasOutdated && row!.credential_retry_at) {
+        await recordRemoteCredentialFailure(sql, { failures: 0, retryAt: null });
+        await refreshRow();
+      }
       refreshWanted = true;
       serviceLoop?.kick();
     }
@@ -581,7 +608,8 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     }
     // Credentials from before this time are refused: a new one now, not at the next tick.
     if (credential && answer.credential_not_before !== null && credential.iat < answer.credential_not_before) serviceLoop?.kick();
-    if (before.hostname !== answer.node.hostname) await settleListener();
+    // Closed now when the release fell below the service's minimum, opened again when it no longer is.
+    if (before.hostname !== answer.node.hostname || wasOutdated !== isOutdated) await settleListener();
     certLoop?.kick();
   }
 
@@ -599,7 +627,8 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     let answer = first;
     for (let attempt = 0; ; attempt++) {
       const r = row!;
-      if (!certUsable(cert, r.hostname, now())) return;
+      // The check-in before this one may have named a newer minimum: no credential for a release it leaves behind.
+      if (!certUsable(cert, r.hostname, now()) || outdated(r)) return;
       const held = cert!;
       try {
         const issued = await client.relayCredential(r.api_url!, key, r.remote_id!, {
@@ -608,7 +637,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
           pop: proofOfPossession(held.key, r.remote_id!, answer.nonce),
         });
         await locked(async () => {
-          if (gen !== generation || !row?.enabled) return;
+          if (gen !== generation || !row?.enabled || outdated(row)) return;
           const claims = credentialClaims(issued.credential);
           const firstCredential = credential === null;
           credential = { jwt: issued.credential, iat: claims?.iat ?? issued.issued_at, exp: claims?.exp ?? issued.expires_at };
@@ -669,7 +698,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
 
   async function maybeProbe(gen: number): Promise<void> {
     const r = row;
-    if (!r?.enabled || !listener || !cert || !r.hostname) return;
+    if (!r?.enabled || !listener || !cert || !r.hostname || outdated(r)) return;
     const current = held();
     if (!current || current.exp <= now()) return;
     // The packaging's connector not yet started on these settings: nothing to check, and no failure.
@@ -728,6 +757,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
       row: row!,
       credential: held(),
       certUsable: certUsable(cert, row!.hostname, now()),
+      outdated: outdated(row),
       checkinWanted,
       refreshWanted,
       lastRefreshAt,
@@ -848,6 +878,8 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
     }
     const binding = bindingNotice(r, at);
     if (binding) await tell(binding);
+    const update = outdated(r) ? outdatedNotice(r) : null;
+    if (update) await tell(update);
   }
 
   /** True once told, now or before in this process; a failure to tell is reported and tried next tick. */
@@ -1149,7 +1181,7 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
 
   async function status(): Promise<RemoteAccessStatus> {
     const r = await refreshRow();
-    return remoteStatus(r, { dir: config.dir, now: new Date(now()), connector: connector ? await connector.report() : undefined });
+    return remoteStatus(r, { dir: config.dir, now: new Date(now()), connector: connector ? await connector.report() : undefined, version });
   }
 
   const view: RemoteAccessView = {
@@ -1185,6 +1217,12 @@ export function createRemoteAccess(deps: RemoteAccessDeps): RemoteAccess {
         const disk = await readCertificate(config.dataDir);
         cert = disk.kind === "ok" ? disk.cert : null;
         credential = await readHeldCredential(config.dir, r.relays);
+        // A credential the row does not describe, as after restoring a backup over a newer release's
+        // files: never served on before a check-in, which names the minimum release again.
+        if (credential && !describesCredential(r, credential)) {
+          await removeTokenFiles(config.dir, r.relays.map((relay) => relay.name)).catch(() => {});
+          credential = null;
+        }
         jwtOnDisk = credential !== null;
         if (r.enabled) await locked(settleListener);
         await locked(() => syncConnector());

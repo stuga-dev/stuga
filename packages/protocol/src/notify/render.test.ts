@@ -56,6 +56,7 @@ const SAMPLES: { [E in NotificationEvent]: NotificationParams[E] } = {
   REMOTE_CERT_RECOVERED: { address: "https://k7f3q2.mystuga.com", expires: AT },
   REMOTE_BINDING_REJECTED: { address: "https://k7f3q2.mystuga.com", reason: "refused" },
   REMOTE_ADDRESS_MOVED: { address: "https://k7f3q2.mystuga.com" },
+  REMOTE_UPDATE_REQUIRED: { address: "https://k7f3q2.mystuga.com", version: "0.2.31" },
 };
 
 /** What each event reads in English: the sentences the node wrote before it stored params. */
@@ -136,6 +137,10 @@ const ENGLISH: { [E in NotificationEvent]: [title: string, body: string] } = {
   REMOTE_ADDRESS_MOVED: [
     "Remote access moved to another computer",
     "https://k7f3q2.mystuga.com now reaches another computer. Remote access is off on this one.",
+  ],
+  REMOTE_UPDATE_REQUIRED: [
+    "Remote access is paused until Stuga is updated",
+    "This version has a known security problem, so https://k7f3q2.mystuga.com is closed. Update to Stuga 0.2.31 or later and it opens again on its own.",
   ],
 };
 

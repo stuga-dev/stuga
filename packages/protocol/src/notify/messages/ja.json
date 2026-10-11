@@ -68,6 +68,8 @@
   "REMOTE_BINDING_REJECTED.body": "{reason, select, key_unusable {{addressKnown, select, yes {{address}用のこのノードのキーが見つからないか、読み取れません。アドレスを維持するには復元コードを入力してください。} other {リモートアドレス用のこのノードのキーが見つからないか、読み取れません。アドレスを維持するには復元コードを入力してください。}}} other {{addressKnown, select, yes {リモートアクセスサービスがこのノードのキーを受け付けなくなりました。{address}を維持するには復元コードを入力してください。} other {リモートアクセスサービスがこのノードのキーを受け付けなくなりました。リモートアドレスを維持するには復元コードを入力してください。}}}}",
   "REMOTE_ADDRESS_MOVED.title": "リモートアクセスが別のコンピューターに移動しました",
   "REMOTE_ADDRESS_MOVED.body": "{address}は別のコンピューターにつながるようになりました。このコンピューターではリモートアクセスはオフです。",
+  "REMOTE_UPDATE_REQUIRED.title": "Stugaをアップデートするまでリモートアクセスは一時停止しています",
+  "REMOTE_UPDATE_REQUIRED.body": "このバージョンには既知のセキュリティの問題があるため、{address}は閉じています。Stuga {version}以降にアップデートすると、自動的に再び開きます。",
 
   "channel.none": "Stugaのみ",
   "channel.email": "メール",

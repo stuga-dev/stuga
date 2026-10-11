@@ -84,6 +84,8 @@ export interface NotificationParams {
   /** `refused`: the service no longer takes the node's key; `key_unusable`: the node lost it or can't read it. */
   REMOTE_BINDING_REJECTED: { address: string | null; reason: "refused" | "key_unusable" };
   REMOTE_ADDRESS_MOVED: { address: string };
+  /** This release is older than the remote-access service allows; `version` is the one to update to, or later. */
+  REMOTE_UPDATE_REQUIRED: { address: string; version: string };
 }
 
 export type NotificationEvent = keyof NotificationParams;

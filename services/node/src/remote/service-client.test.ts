@@ -139,6 +139,17 @@ describe("answers, against the contract's samples", () => {
     expect(parseCheckin(checkin).api).toBeNull();
   });
 
+  it("reads the oldest release fit to serve: a plain x.y.z or null, and nothing when the answer leaves it out", () => {
+    const body = sample("checkin.response.json").body as Record<string, unknown>;
+    expect(parseCheckin({ ...body, min_version: "0.2.31" }).min_version).toBe("0.2.31");
+    expect(parseCheckin({ ...body, min_version: null }).min_version).toBeNull();
+    const { min_version: _omitted, ...without } = body;
+    expect(parseCheckin(without).min_version).toBeUndefined();
+    for (const bad of [31, "v0.2.31", "0.2.31-rc.1", "0.2", "", false]) {
+      expect(() => parseCheckin({ ...body, min_version: bad }), String(bad)).toThrow(expect.objectContaining({ code: "malformed" }));
+    }
+  });
+
   it("refuses a relay name that is not one, since it becomes a file name", () => {
     const body = sample("checkin.response.json").body as { relays: Array<Record<string, unknown>> };
     const bad = { ...body, relays: [{ ...body.relays[0], name: "../relay" }] };

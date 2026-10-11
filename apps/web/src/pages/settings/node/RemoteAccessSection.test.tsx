@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ConnectorStatus, RemoteAccessStatus, RemoteError } from "@stuga/protocol/api/remote-access";
 import { shortDate } from "../../../lib/format";
 import { failureFrom } from "../../../lib/http/client";
@@ -11,6 +12,7 @@ const nodeApi = vi.hoisted(() => ({
   enableRemoteAccess: vi.fn(),
   disableRemoteAccess: vi.fn(),
   retryRemoteConnector: vi.fn(),
+  version: vi.fn(),
 }));
 
 vi.mock("../../../api", async (orig) => ({
@@ -93,19 +95,38 @@ async function click(el: Element | undefined | null) {
   await act(async () => el!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
-const settle = () => act(async () => new Promise((r) => setTimeout(r, 0)));
+const settle = () =>
+  act(async () => {
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+    else await new Promise((r) => setTimeout(r, 0));
+  });
+
+/** What the node knows of newer releases: one waiting, or none. */
+function releases(available: { version: string; security: boolean } | null) {
+  nodeApi.version.mockResolvedValue({ version: "0.2.30", build: "release", update: { comparable: true, available } });
+}
 
 async function mount(status: RemoteAccessStatus) {
   nodeApi.getRemoteAccess.mockResolvedValue(status);
   const page = mountInto();
   host = page.host;
-  await act(async () => page.root.render(<RemoteAccessSection />));
+  await act(async () =>
+    page.root.render(
+      <MemoryRouter initialEntries={["/settings/node/remote"]}>
+        <Routes>
+          <Route path="/settings/node/remote" element={<RemoteAccessSection />} />
+          <Route path="/settings/node/about" element={<p>About this node</p>} />
+        </Routes>
+      </MemoryRouter>,
+    ),
+  );
   await settle();
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  releases(null);
 });
 
 describe("RemoteAccessSection", () => {
@@ -286,6 +307,54 @@ describe("RemoteAccessSection", () => {
     await mount({ ...ON, state: "error", last_error: problem("remote_dir_unusable", dir) });
     expect(text()).toContain("This node’s folder for remote access can’t be used.");
     expect(text()).toContain(dir);
+  });
+
+  it("says a release too old for remote access is paused until updated, and leads to where to update", async () => {
+    // The release that fixes it is out by then, so the daily check has found it too: one banner, not two.
+    releases({ version: "0.2.31", security: true });
+    const message = "This version of Stuga has a known security problem. Update to 0.2.31 or later to use remote access again.";
+    await mount({ ...ON, state: "error", last_error: problem("outdated", message, { min_version: "0.2.31" }) });
+    expect(text()).toContain("This version has a known security problem, so remote access is paused. Update to Stuga 0.2.31 or later and it comes back on its own.");
+    expect(field("Code")).toBeUndefined();
+    expect(buttons("Turn off")).toHaveLength(1);
+    expect(text()).not.toContain("Security update");
+    await click([...host.querySelectorAll("a, button")].find((el) => el.textContent === "Update"));
+    expect(text()).toBe("About this node");
+  });
+
+  it("warns while on that a security update is waiting, and not for one that isn't, or while off", async () => {
+    releases({ version: "0.2.31", security: true });
+    await mount(ON);
+    expect(text()).toContain("Security update: Stuga 0.2.31");
+    expect(text()).toContain("Remote access reaches this node from anywhere. Install it soon.");
+
+    releases({ version: "0.2.31", security: false });
+    await mount(ON);
+    expect(text()).not.toContain("Security update");
+
+    releases({ version: "0.2.31", security: true });
+    await mount(OFF);
+    expect(text()).not.toContain("Security update");
+    expect(nodeApi.version).toHaveBeenCalledTimes(2);
+  });
+
+  it("looks again for a security release with the status polls, after a look that failed too", async () => {
+    releases({ version: "0.2.31", security: true });
+    nodeApi.version.mockRejectedValueOnce(new Error("offline"));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      await mount(ON);
+      expect(text()).not.toContain("Security update");
+      // The next status poll, a new answer as the node's always is.
+      nodeApi.getRemoteAccess.mockImplementation(async () => ({ ...ON }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      await settle();
+      expect(text()).toContain("Security update: Stuga 0.2.31");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("words a refusal about this node's files, with the node's text beneath, wherever a code was typed", async () => {

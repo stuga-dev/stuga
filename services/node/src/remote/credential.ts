@@ -44,6 +44,18 @@ export async function readHeldCredential(dir: string, relays: readonly { name: s
   return claims ? { jwt, ...claims } : null;
 }
 
+/** How far the row's record of a credential's expiry may sit from the token's own: two clocks wrote them. */
+const DESCRIBED_WITHIN_MS = 10 * MINUTE;
+
+/**
+ * Whether the row describes `held`, the credential in the connector's files: the expiry it recorded,
+ * on this node's clock, within ten minutes of the token's. A restored backup describes an older one.
+ */
+export function describesCredential(row: Pick<NodeRemoteAccessRow, "credential_expires_at">, held: HeldCredential): boolean {
+  const recorded = row.credential_expires_at;
+  return recorded !== null && Math.abs(recorded.getTime() - held.exp * 1000) <= DESCRIBED_WITHIN_MS;
+}
+
 /** Proof of the certificate's key, bound to the check-in's one-time nonce: ECDSA P-256, r||s, base64url. */
 export function proofOfPossession(certKey: KeyObject, id: string, nonce: string): string {
   return sign("sha256", Buffer.from(`stuga-relay-pop:v1:${id}:${nonce}`, "utf8"), { key: certKey, dsaEncoding: "ieee-p1363" }).toString(
@@ -71,6 +83,8 @@ export interface ServicePlanInput {
   credential: { iat: number; exp: number } | null;
   /** A certificate that serves the hostname now: without one there is nothing to prove. */
   certUsable: boolean;
+  /** This release is older than the service's `min_version`: it serves nothing, so it needs no credential. */
+  outdated: boolean;
   /** Start, enable, an administrator's kick, or a self-check through the relay while denied. */
   checkinWanted: boolean;
   /** A denied node was let back in: a credential straight away. */
@@ -92,14 +106,15 @@ export interface ServicePlan {
  * What the service loop does on this tick. A refresh is a check-in (for its nonce) and then the
  * credential; one outside the schedule waits a minute after the last, and one a failing
  * self-check asks for, ten. During a backoff a check-in someone asked for still goes, but no
- * refresh does until `credential_retry_at`. A denied node only checks in, hourly.
+ * refresh does until `credential_retry_at`. A denied node only checks in, hourly; one too old to serve
+ * its remote address only checks in, when due.
  */
 export function planServiceTick(p: ServicePlanInput): ServicePlan {
   const { now, row } = p;
   const at = (d: Date | null) => (d ? d.getTime() : null);
   const code = row.last_error?.code;
   const checkinDue = p.checkinWanted || row.checkin_next_at === null || now >= row.checkin_next_at.getTime();
-  if (code === "denied" || code === "retired") return { checkin: checkinDue, refresh: null };
+  if (code === "denied" || code === "retired" || p.outdated) return { checkin: checkinDue, refresh: null };
   const retryAt = at(row.credential_retry_at);
   const backingOff = retryAt !== null && now < retryAt && !p.refreshWanted;
   if (backingOff && !p.checkinWanted) return { checkin: false, refresh: null };

@@ -76,6 +76,9 @@ the service's last answer named.
   self-signed certificate, which the connector pins.
 - **The certificate authority:** its ACME directory, and a date before which a certificate must be
   replaced (unset unless the operator needs every certificate reissued).
+- **The oldest release fit to serve a remote address** (`min_version`), or none: the same answer for
+  every node. The node compares it with its own version, which it never sends; the service can tell
+  only that a node below it stops asking for credentials.
 - **A relay credential:** an EdDSA-signed JWT with the claims `iss`, `sub` (the `<id>`), `aud`
   (`relay`), `iat` and `exp`, and when to renew it. The node writes it for the connector, which
   presents it to the relay when it connects and at every heartbeat.
@@ -86,6 +89,20 @@ stops accepting is retried for a day before the Settings page asks for a restore
 address checks in hourly and comes back by itself once the service lifts the denial, and a key that a
 restore code replaced on another computer (`node_moved`) turns remote access off
 ([Turning off, restoring and backups](#turning-off-restoring-and-backups)).
+
+### A release older than `min_version`
+
+The service names a minimum for a security problem reachable through the remote address, once the
+release that fixes it is out. A release older than it closes its remote address, asks the connector
+off and takes no new credential, within one check-in. It keeps checking in and renewing its
+certificate, and remote access stays on in Settings, which says to update; every node administrator
+is notified once. A newer Stuga, or a check-in that lowers the minimum, opens it again by itself. The
+node keeps the last minimum it heard, so a restart or turning off and on stays closed, and after a
+backup is restored it checks in before serving on a credential the backup doesn't know. A build from
+source has no release to compare and is never held back.
+
+While remote access is on and a release that fixes a security problem is waiting
+([Learning of a new version](operations.md#learning-of-a-new-version)), the Remote access page says so above everything else.
 
 ## Files
 
@@ -403,7 +420,7 @@ For node administrators; agents are refused. Times are ISO 8601.
 
 | Route | |
 |---|---|
-| `GET /api/node/remote-access` | `{ "available": false }` where the packaging offers none. Otherwise `available`, `enabled`, `state` (`off`, `starting`, `on`, `degraded`, `denied` or `error`), `address`, `certificate` (`expires_at`, `renew_at`), `credential` (`expires_at`), `connector` (`managed`, `status`, `config_path`, `config_changed_at`, `reachable`, `checked_at`), `ca_terms` (`accepted_by`, `accepted_at`, `url`) and `last_error` (`code`, `message`, `at`, and `retry_at`, `service_code` and `reason` when they apply). Where the packaging runs the connector, `managed` is true, `status` is what it last reported, and `config_path` is null. |
+| `GET /api/node/remote-access` | `{ "available": false }` where the packaging offers none. Otherwise `available`, `enabled`, `state` (`off`, `starting`, `on`, `degraded`, `denied` or `error`), `address`, `certificate` (`expires_at`, `renew_at`), `credential` (`expires_at`), `connector` (`managed`, `status`, `config_path`, `config_changed_at`, `reachable`, `checked_at`), `ca_terms` (`accepted_by`, `accepted_at`, `url`) and `last_error` (`code`, `message`, `at`, and `retry_at`, `service_code`, `reason` and `min_version` when they apply). Where the packaging runs the connector, `managed` is true, `status` is what it last reported, and `config_path` is null. |
 | `POST /api/node/remote-access/enable` | `{ "code"?, "accept_ca_terms": true }`. A node with no address needs a code; with one, a code restores or replaces it. Waits up to 25 seconds for the service, then answers like the `GET`, usually `starting`. A refusal is `{ "error", "code" }`. |
 | `POST /api/node/remote-access/disable` | Turns it off and answers like the `GET`. |
 | `POST /api/node/remote-access/connector/retry` | Where the packaging runs the connector, asks for it again after a refusal, and answers like the `GET`. Refused with `409` elsewhere. |
@@ -411,13 +428,14 @@ For node administrators; agents are refused. Times are ISO 8601.
 While off, `last_error` is `moved` once the address moved to another computer; turning on again then
 takes a code.
 
-Four errors are worked out from the state rather than kept, so they go when their cause does:
-`connector_refused` (an error, with the packaging's reason, until **Retry**), `connector_unavailable`
-(an error: this installation has no connector), `certificate_expired` (degraded) and
-`connector_failed` (degraded, with the packaging's reason, or because the connector still isn't
-running what the node asked for after it asked again, and `retry_at`, when the node asks again). An
-error that needs an administrator comes first, then these in that order, then the one kept; while
-the certificate is expired, a kept certificate error says why renewal is stuck and comes before
+Five errors are worked out from the state rather than kept, so they go when their cause does:
+`outdated` (an error: this release is older than `min_version`, which it names), `connector_refused`
+(an error, with the packaging's reason, until **Retry**), `connector_unavailable` (an error: this
+installation has no connector), `certificate_expired` (degraded) and `connector_failed` (degraded,
+with the packaging's reason, or because the connector still isn't running what the node asked for
+after it asked again, and `retry_at`, when the node asks again). `outdated` comes first, then an
+error that needs an administrator, then the rest in that order, then the one kept; while the
+certificate is expired, a kept certificate error says why renewal is stuck and comes before
 `certificate_expired`.
 
 Each of these actions is in the node's audit log, without the code.

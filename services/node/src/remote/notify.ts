@@ -1,9 +1,9 @@
 /**
  * What remote access tells the node's administrators (docs/remote-access.md): a certificate that
  * will not renew, runs short or has run out, and one in use again after that; a key the service
- * no longer takes; and an address that moved to another computer. Each goes to every node
- * administrator, in the app and through the node's sink, once: its id names the certificate, the
- * run of refusals or the move it is about.
+ * no longer takes; an address that moved to another computer; and a release too old to serve its
+ * remote address. Each goes to every node administrator, in the app and through the node's sink,
+ * once: its id names the certificate, the run of refusals, the move or the minimum it is about.
  */
 import type { NodeRemoteAccessRow } from "@stuga/db";
 import { notification, type NotificationParams } from "@stuga/protocol/notify/events";
@@ -21,6 +21,8 @@ export const BINDING_REJECTED_EVENT = "REMOTE_BINDING_REJECTED";
 
 export const MOVED_EVENT = "REMOTE_ADDRESS_MOVED";
 
+export const UPDATE_REQUIRED_EVENT = "REMOTE_UPDATE_REQUIRED";
+
 const CERT_EVENTS = {
   renewal_failed: "REMOTE_CERT_RENEWAL_FAILED",
   expiring: "REMOTE_CERT_EXPIRING",
@@ -30,7 +32,7 @@ const CERT_EVENTS = {
 
 export const certEvent = (kind: CertNoticeKind): string => CERT_EVENTS[kind];
 
-type RemoteEvent = (typeof CERT_EVENTS)[CertNoticeKind] | typeof BINDING_REJECTED_EVENT | typeof MOVED_EVENT;
+type RemoteEvent = (typeof CERT_EVENTS)[CertNoticeKind] | typeof BINDING_REJECTED_EVENT | typeof MOVED_EVENT | typeof UPDATE_REQUIRED_EVENT;
 
 /** One notice: its event and params (@stuga/protocol/notify/events), which each reader's language words. */
 export type RemoteNotice = {
@@ -111,6 +113,15 @@ export function bindingNotice(row: NodeRemoteAccessRow, now: number): RemoteNoti
 /** A restore code moved `hostname` to another computer, which this node learned at `at`. */
 export function movedNotice(hostname: string, at: string): RemoteNotice {
   return { event: MOVED_EVENT, key: at, params: { address: `https://${hostname}` } };
+}
+
+/**
+ * This release is older than the service's `min_version`, so the remote address is closed until
+ * Stuga is updated. Keyed by that minimum: a later, higher one is told again. The caller checks.
+ */
+export function outdatedNotice(row: NodeRemoteAccessRow): RemoteNotice | null {
+  if (!row.min_version || !row.hostname) return null;
+  return { event: UPDATE_REQUIRED_EVENT, key: row.min_version, params: { address: `https://${row.hostname}`, version: row.min_version } };
 }
 
 /** One notification per administrator, in the app and through the sink; one already written is left alone. */

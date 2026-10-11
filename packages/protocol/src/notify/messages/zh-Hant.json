@@ -68,6 +68,8 @@
   "REMOTE_BINDING_REJECTED.body": "{reason, select, key_unusable {{addressKnown, select, yes {此節點用於 {address} 的金鑰遺失或無法讀取。請輸入還原碼以保留該位址。} other {此節點用於遠端位址的金鑰遺失或無法讀取。請輸入還原碼以保留該位址。}}} other {{addressKnown, select, yes {遠端存取服務不再接受此節點的金鑰。請輸入還原碼以保留 {address}。} other {遠端存取服務不再接受此節點的金鑰。請輸入還原碼以保留遠端位址。}}}}",
   "REMOTE_ADDRESS_MOVED.title": "遠端存取已移至另一台電腦",
   "REMOTE_ADDRESS_MOVED.body": "{address} 現在連到另一台電腦。這台電腦上的遠端存取已關閉。",
+  "REMOTE_UPDATE_REQUIRED.title": "遠端存取已暫停，更新 Stuga 後恢復",
+  "REMOTE_UPDATE_REQUIRED.body": "此版本有一個已知的安全性問題，因此 {address} 已關閉。更新到 Stuga {version} 或更新的版本後，它會自動重新開啟。",
 
   "channel.none": "僅 Stuga",
   "channel.email": "電子郵件",

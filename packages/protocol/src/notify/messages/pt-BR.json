@@ -68,6 +68,8 @@
   "REMOTE_BINDING_REJECTED.body": "{reason, select, key_unusable {{addressKnown, select, yes {A chave deste nó para {address} está faltando ou não pode ser lida. Digite um código de restauração para manter o endereço.} other {A chave deste nó para o endereço remoto está faltando ou não pode ser lida. Digite um código de restauração para manter o endereço.}}} other {{addressKnown, select, yes {O serviço de acesso remoto não aceita mais a chave deste nó. Digite um código de restauração para manter {address}.} other {O serviço de acesso remoto não aceita mais a chave deste nó. Digite um código de restauração para manter o endereço remoto.}}}}",
   "REMOTE_ADDRESS_MOVED.title": "O acesso remoto foi transferido para outro computador",
   "REMOTE_ADDRESS_MOVED.body": "{address} agora leva a outro computador. O acesso remoto está desativado neste.",
+  "REMOTE_UPDATE_REQUIRED.title": "O acesso remoto está pausado até o Stuga ser atualizado",
+  "REMOTE_UPDATE_REQUIRED.body": "Esta versão tem um problema de segurança conhecido, por isso {address} está fechado. Atualize para o Stuga {version} ou posterior e ele volta a abrir sozinho.",
 
   "channel.none": "só o Stuga",
   "channel.email": "e-mail",

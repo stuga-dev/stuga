@@ -52,6 +52,7 @@ const DEFAULTS: NodeRemoteAccessRow = {
   probe_failures: 0,
   connector_config_sha256: null,
   connector_config_changed_at: null,
+  min_version: null,
   last_error: null,
   updated_at: null,
 };
@@ -139,6 +140,8 @@ export interface RemoteCheckin {
   acmeReissueBefore: Date | null;
   credentialTtl: number;
   credentialNotBefore: Date | null;
+  /** The oldest release fit to serve a remote address, as the service named it; null for none, undefined to keep the one held. */
+  minVersion: string | null | undefined;
 }
 
 /** What a check-in answered. A check-in that got through ends any run of refusals. */
@@ -154,6 +157,7 @@ export async function recordRemoteCheckin(sql: Queryable, c: RemoteCheckin): Pro
     acme_reissue_before: c.acmeReissueBefore,
     credential_ttl: c.credentialTtl,
     credential_not_before: c.credentialNotBefore,
+    ...(c.minVersion === undefined ? {} : { min_version: c.minVersion }),
     binding_failing_since: null,
   });
 }

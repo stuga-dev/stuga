@@ -6,6 +6,7 @@
  */
 import type { NodeRemoteAccessRow, StoredRemoteError } from "@stuga/db";
 import type { RemoteAccessState, RemoteAccessStatus, RemoteError, RemoteErrorCode } from "@stuga/protocol/api/remote-access";
+import { VERSION, compareVersions, isReleaseVersion } from "../version.js";
 import type { ConnectorReport } from "./connector.js";
 import { configFile } from "./frpc-config.js";
 import type { ServiceError } from "./service-client.js";
@@ -17,6 +18,7 @@ const HOUR = 60 * MINUTE;
 const ERROR_STATE = new Set<string>([
   "binding_rejected",
   "upgrade_required",
+  "outdated",
   "acme_action_required",
   "remote_dir_unusable",
   "socket_path_too_long",
@@ -25,15 +27,33 @@ const ERROR_STATE = new Set<string>([
 ]);
 
 /**
- * The error the page shows. One an administrator must act on comes first; then what the state
+ * Whether `version` is a release older than the oldest the service last named as fit to serve a
+ * remote address: its remote address stays closed until it is updated. A build from source or CI
+ * has no release to compare, so it is never held back.
+ */
+export function belowMinVersion(row: NodeRemoteAccessRow, version: string = VERSION): boolean {
+  return row.min_version !== null && isReleaseVersion(version) && compareVersions(version, row.min_version) < 0;
+}
+
+/**
+ * The error the page shows. A release too old to serve its remote address comes first, since
+ * updating is the one thing to do; then one an administrator must act on; then what the state
  * itself says, never kept, so it goes when the state does: a refused or missing connector, an
  * expired certificate (after a kept reason renewal is stuck, which says more), a failed connector,
  * one not running what it was asked to; then the error kept. `connector` is there where the
  * packaging runs the connector.
  */
-export function shownError(row: NodeRemoteAccessRow, now: Date, connector?: ConnectorReport): RemoteError | null {
+export function shownError(row: NodeRemoteAccessRow, now: Date, connector?: ConnectorReport, version: string = VERSION): RemoteError | null {
   const kept = row.last_error as RemoteError | null;
   if (!row.enabled) return kept;
+  if (row.min_version !== null && belowMinVersion(row, version)) {
+    return {
+      code: "outdated",
+      message: `This version of Stuga has a known security problem. Update to ${row.min_version} or later to use remote access again.`,
+      at: (row.checkin_at ?? now).toISOString(),
+      min_version: row.min_version,
+    };
+  }
   if (kept && (ERROR_STATE.has(kept.code) || kept.code === "denied" || kept.code === "retired")) return kept;
   // A status from before the node last changed what it asks for answers something else.
   const status = connector && !connector.stale ? connector.status : null;
@@ -58,9 +78,9 @@ export function shownError(row: NodeRemoteAccessRow, now: Date, connector?: Conn
 }
 
 /** The first row of the table that holds. */
-export function remoteState(row: NodeRemoteAccessRow, now: Date, connector?: ConnectorReport): RemoteAccessState {
+export function remoteState(row: NodeRemoteAccessRow, now: Date, connector?: ConnectorReport, version: string = VERSION): RemoteAccessState {
   if (!row.enabled) return "off";
-  const error = shownError(row, now, connector);
+  const error = shownError(row, now, connector, version);
   const code = error?.code;
   if (code && ERROR_STATE.has(code)) return "error";
   if (code === "denied" || code === "retired") return "denied";
@@ -237,7 +257,10 @@ export function serviceFailure(
  * The body of `GET /api/node/remote-access`, and of the enable and disable answers. `connector` is
  * there where the packaging runs the connector.
  */
-export function remoteStatus(row: NodeRemoteAccessRow, opts: { dir: string; now: Date; connector?: ConnectorReport }): RemoteAccessStatus {
+export function remoteStatus(
+  row: NodeRemoteAccessRow,
+  opts: { dir: string; now: Date; connector?: ConnectorReport; version?: string },
+): RemoteAccessStatus {
   const iso = (d: Date | null) => (d ? d.toISOString() : null);
   const firstRelay = row.relays[0];
   const reachable = row.probe_at !== null && row.probe_ok_at !== null && row.probe_ok_at.getTime() >= row.probe_at.getTime();
@@ -246,7 +269,7 @@ export function remoteStatus(row: NodeRemoteAccessRow, opts: { dir: string; now:
   return {
     available: true,
     enabled: row.enabled,
-    state: remoteState(row, opts.now, opts.connector),
+    state: remoteState(row, opts.now, opts.connector, opts.version),
     address: row.hostname ? `https://${row.hostname}` : null,
     certificate: row.cert_not_after ? { expires_at: row.cert_not_after.toISOString(), renew_at: iso(row.cert_renew_at) } : null,
     credential: row.credential_expires_at ? { expires_at: row.credential_expires_at.toISOString() } : null,
@@ -264,6 +287,6 @@ export function remoteStatus(row: NodeRemoteAccessRow, opts: { dir: string; now:
     ca_terms: row.ca_terms_accepted_at
       ? { accepted_by: row.ca_terms_accepted_by, accepted_at: row.ca_terms_accepted_at.toISOString(), url: row.ca_terms_url }
       : null,
-    last_error: shownError(row, opts.now, opts.connector),
+    last_error: shownError(row, opts.now, opts.connector, opts.version),
   };
 }

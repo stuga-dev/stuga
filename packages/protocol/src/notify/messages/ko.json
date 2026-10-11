@@ -68,6 +68,8 @@
   "REMOTE_BINDING_REJECTED.body": "{reason, select, key_unusable {{addressKnown, select, yes {{address}에 대한 이 노드의 키가 없거나 읽을 수 없어요. 주소를 유지하려면 복원 코드를 입력하세요.} other {원격 주소에 대한 이 노드의 키가 없거나 읽을 수 없어요. 주소를 유지하려면 복원 코드를 입력하세요.}}} other {{addressKnown, select, yes {원격 액세스 서비스가 더 이상 이 노드의 키를 허용하지 않아요. {address} 주소를 유지하려면 복원 코드를 입력하세요.} other {원격 액세스 서비스가 더 이상 이 노드의 키를 허용하지 않아요. 원격 주소를 유지하려면 복원 코드를 입력하세요.}}}}",
   "REMOTE_ADDRESS_MOVED.title": "원격 액세스가 다른 컴퓨터로 이동했어요",
   "REMOTE_ADDRESS_MOVED.body": "이제 {address} 주소는 다른 컴퓨터로 연결돼요. 이 컴퓨터에서는 원격 액세스가 꺼져 있어요.",
+  "REMOTE_UPDATE_REQUIRED.title": "Stuga를 업데이트할 때까지 원격 액세스가 일시 중지돼요",
+  "REMOTE_UPDATE_REQUIRED.body": "이 버전에는 알려진 보안 문제가 있어서 {address} 주소가 닫혀 있어요. Stuga {version} 이상으로 업데이트하면 자동으로 다시 열려요.",
 
   "channel.none": "Stuga만",
   "channel.email": "이메일",

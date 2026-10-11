@@ -68,6 +68,8 @@
   "REMOTE_BINDING_REJECTED.body": "{reason, select, key_unusable {{addressKnown, select, yes {此节点用于 {address} 的密钥丢失或无法读取。请输入恢复代码以保留该地址。} other {此节点用于远程地址的密钥丢失或无法读取。请输入恢复代码以保留该地址。}}} other {{addressKnown, select, yes {远程访问服务不再接受此节点的密钥。请输入恢复代码以保留 {address}。} other {远程访问服务不再接受此节点的密钥。请输入恢复代码以保留远程地址。}}}}",
   "REMOTE_ADDRESS_MOVED.title": "远程访问已转移到另一台电脑",
   "REMOTE_ADDRESS_MOVED.body": "{address} 现在指向另一台电脑。此电脑上的远程访问已关闭。",
+  "REMOTE_UPDATE_REQUIRED.title": "远程访问已暂停，更新 Stuga 后恢复",
+  "REMOTE_UPDATE_REQUIRED.body": "此版本有一个已知的安全问题，所以 {address} 已关闭。更新到 Stuga {version} 或更高版本后，它会自动重新开启。",
 
   "channel.none": "仅 Stuga",
   "channel.email": "邮件",

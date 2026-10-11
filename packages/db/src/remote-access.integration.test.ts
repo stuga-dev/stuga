@@ -50,6 +50,7 @@ const CHECKIN = {
   acmeReissueBefore: null,
   credentialTtl: 86_400,
   credentialNotBefore: null,
+  minVersion: "0.2.31",
 };
 
 /** The columns that differ between two reads of the row, `updated_at` aside. */
@@ -104,6 +105,7 @@ describe.skipIf(!URL)("node_remote_access", () => {
           "checkin_at",
           "checkin_next_at",
           "credential_ttl",
+          "min_version",
           "relays",
         ],
       ],
@@ -206,6 +208,19 @@ describe.skipIf(!URL)("node_remote_access", () => {
     expect(row.last_error).toEqual(error);
     await setRemoteError(sql, null);
     expect((await getRemoteAccess(sql)).last_error).toBeNull();
+  });
+
+  it("keeps the service's minimum release as written, and takes only a plain x.y.z", async () => {
+    await recordRemoteCheckin(sql, CHECKIN);
+    expect((await getRemoteAccess(sql)).min_version).toBe("0.2.31");
+    // An answer that leaves it out keeps the one heard last.
+    await recordRemoteCheckin(sql, { ...CHECKIN, minVersion: undefined });
+    expect((await getRemoteAccess(sql)).min_version).toBe("0.2.31");
+    await recordRemoteCheckin(sql, { ...CHECKIN, minVersion: null });
+    expect((await getRemoteAccess(sql)).min_version).toBeNull();
+    for (const bad of ["v0.2.31", "0.2", "0.02.31", "0.2.31-rc.1"]) {
+      await expect(recordRemoteCheckin(sql, { ...CHECKIN, minVersion: bad }), bad).rejects.toThrow(/check constraint/);
+    }
   });
 
   it("will not turn on without a binding and an accepted subscriber agreement", async () => {

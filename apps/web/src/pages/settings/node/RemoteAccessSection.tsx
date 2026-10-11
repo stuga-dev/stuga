@@ -3,7 +3,7 @@
  * forwards the encrypted bytes (docs/remote-access.md). The node does the work; this page turns it
  * on and off and says where it stands. The rail lists it only where the packaging offers it.
  */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
@@ -17,6 +17,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Globe } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import type {
   ConnectorStatus,
   RemoteAccessEnableErrorCode,
@@ -44,6 +45,8 @@ const CA_TERMS_URL = "https://letsencrypt.org/repository/";
 /** How soon the page asks again: often while it starts, now and then once it runs. */
 const POLL_STARTING_MS = 3000;
 const POLL_MS = 30_000;
+/** How often the polls look again for a waiting security release. */
+const RELEASES_LOOK_MS = 60_000;
 
 /** The connector settings this browser last saw, so a later change is pointed out; a per-viewer convenience. */
 const CONNECTOR_SEEN_KEY = "stuga:remote-access:connector-seen";
@@ -73,6 +76,9 @@ const LOCAL_PROBLEMS: Record<Extract<RemoteAccessEnableErrorCode, "remote_dir_un
 function localProblem(code: string | undefined): MessageKey | undefined {
   return code && Object.hasOwn(LOCAL_PROBLEMS, code) ? LOCAL_PROBLEMS[code as keyof typeof LOCAL_PROBLEMS] : undefined;
 }
+
+/** Where an administrator updates Stuga. */
+const ABOUT_PATH = "/settings/node/about";
 
 /** What the node says of a denied address when the service gives no reason of its own. */
 const NODE_DENIED = "Remote access is off for this address."; // i18n-exempt: the node's sentence, compared, never shown
@@ -167,6 +173,23 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
   const [detail, setDetail] = useState<string | null>(null);
   const [busy, setBusy] = useState<"" | "on" | "off" | "retry">("");
   const [confirmOff, setConfirmOff] = useState(false);
+  /** A release waiting that fixes a security problem, while the address reaches this node from anywhere. */
+  const [securityUpdate, setSecurityUpdate] = useState<string | null>(null);
+  const releasesLookedAt = useRef(0);
+  const nav = useNavigate();
+
+  // With every status poll, at most once a minute: a release the daily check finds meanwhile shows up,
+  // and a look that failed is tried again at the next poll.
+  useEffect(() => {
+    if (!status.enabled || Date.now() - releasesLookedAt.current < RELEASES_LOOK_MS) return;
+    NodeApi.version()
+      .then((v) => {
+        releasesLookedAt.current = Date.now();
+        setSecurityUpdate(v.update.available?.security ? v.update.available.version : null);
+      })
+      .catch(() => {});
+  }, [status]);
+  const updateLink = <Link onClick={() => nav(ABOUT_PATH)}>{t("nodeAccess.remote.update")}</Link>;
 
   const now = Date.now();
   const bound = status.address !== null;
@@ -327,6 +350,7 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
         <Banner
           status="error"
           title={errorSentence(error)}
+          endContent={error.code === "outdated" ? updateLink : undefined}
           description={
             error.code === "connector_refused" && error.message
               ? presentServerMessage(error.message)
@@ -412,6 +436,14 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
       <Text type="supporting" color="secondary">
         {t("nodeAccess.remote.intro")}
       </Text>
+      {status.enabled && securityUpdate && error?.code !== "outdated" && (
+        <Banner
+          status="warning"
+          title={t("nodeAccess.remote.securityUpdate", { version: securityUpdate })}
+          description={t("nodeAccess.remote.securityUpdateWhy")}
+          endContent={updateLink}
+        />
+      )}
       <SectionStatusBanners status={section} />
       {section.error && detail && (
         <Text type="supporting" color="secondary">
@@ -445,6 +477,8 @@ function errorSentence(error: RemoteError): string {
       return t("nodeAccess.remote.error.bindingRejected");
     case "upgrade_required":
       return t("nodeAccess.remote.error.upgradeRequired");
+    case "outdated":
+      return t("nodeAccess.remote.error.outdated", { version: error.min_version ?? "" });
     case "acme_action_required":
       return t("nodeAccess.remote.error.acmeActionRequired", { message: presentServerMessage(error.message) });
     case "connector_refused":

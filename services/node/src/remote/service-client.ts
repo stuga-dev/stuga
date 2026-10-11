@@ -6,6 +6,7 @@
  */
 import { X509Certificate, sign } from "node:crypto";
 import type { BindingKey } from "./keys.js";
+import { isReleaseVersion } from "../version.js";
 
 /** The protocol this node speaks: `pv` in every request. */
 export const PROTOCOL_VERSION = 1;
@@ -68,6 +69,11 @@ export interface CheckinAnswer {
   next_checkin_at: number;
   credential_ttl: number;
   credential_not_before: number | null;
+  /**
+   * Releases older than this stop serving the remote address until updated; null: none. Undefined
+   * when the answer leaves it out, as one from before the field did: the minimum heard last stands.
+   */
+  min_version: string | null | undefined;
   relays: RelayEntry[];
   acme: { directory: string; profile: string | null; reissue_before: number | null };
 }
@@ -309,6 +315,10 @@ export function parseCheckin(body: unknown): CheckinAnswer {
   const notBefore = field(body, "credential_not_before");
   if (!isInt(nonceExpiresAt) || !isInt(next) || !isInt(ttl) || ttl <= 0) throw malformed("checkin");
   if (notBefore !== null && !isInt(notBefore)) throw malformed("checkin");
+  const minVersion = field(body, "min_version");
+  if (minVersion !== undefined && minVersion !== null && (typeof minVersion !== "string" || !isReleaseVersion(minVersion))) {
+    throw malformed("checkin");
+  }
   const relays = field(body, "relays");
   if (!Array.isArray(relays)) throw malformed("checkin");
   const acme = field(body, "acme");
@@ -326,6 +336,7 @@ export function parseCheckin(body: unknown): CheckinAnswer {
     next_checkin_at: next,
     credential_ttl: ttl,
     credential_not_before: notBefore,
+    min_version: minVersion,
     relays: relays.map(parseRelay),
     acme: { directory, profile, reissue_before: reissueBefore },
   };

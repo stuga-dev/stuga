@@ -711,6 +711,11 @@ export interface NodeRemoteAccessRow {
   probe_failures: number;
   connector_config_sha256: string | null;
   connector_config_changed_at: Date | null;
+  /**
+   * The oldest release the service last named as fit to serve a remote address: an older release
+   * keeps its remote address closed. Kept once met; null while none is named.
+   */
+  min_version: string | null;
   last_error: StoredRemoteError | null;
   updated_at: Date | null;
 }

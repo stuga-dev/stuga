@@ -68,6 +68,8 @@
   "REMOTE_BINDING_REJECTED.body": "{reason, select, key_unusable {{addressKnown, select, yes {Der Schlüssel dieses Knotens für {address} fehlt oder ist nicht lesbar. Gib einen Wiederherstellungscode ein, um die Adresse zu behalten.} other {Der Schlüssel dieses Knotens für seine Fernzugriffsadresse fehlt oder ist nicht lesbar. Gib einen Wiederherstellungscode ein, um die Adresse zu behalten.}}} other {{addressKnown, select, yes {Der Fernzugriffsdienst akzeptiert den Schlüssel dieses Knotens nicht mehr. Gib einen Wiederherstellungscode ein, um {address} zu behalten.} other {Der Fernzugriffsdienst akzeptiert den Schlüssel dieses Knotens nicht mehr. Gib einen Wiederherstellungscode ein, um die Fernzugriffsadresse zu behalten.}}}}",
   "REMOTE_ADDRESS_MOVED.title": "Der Fernzugriff ist auf einen anderen Computer umgezogen",
   "REMOTE_ADDRESS_MOVED.body": "{address} führt jetzt zu einem anderen Computer. Auf diesem ist der Fernzugriff aus.",
+  "REMOTE_UPDATE_REQUIRED.title": "Der Fernzugriff ist pausiert, bis Stuga aktualisiert ist",
+  "REMOTE_UPDATE_REQUIRED.body": "Diese Version hat ein bekanntes Sicherheitsproblem, daher ist {address} geschlossen. Aktualisiere auf Stuga {version} oder neuer, dann öffnet sie sich von selbst wieder.",
 
   "channel.none": "nur Stuga",
   "channel.email": "E-Mail",

@@ -11,6 +11,11 @@ export type RemoteErrorCode =
   /** The service has refused this node's key for more than a day. */
   | "binding_rejected"
   | "upgrade_required"
+  /**
+   * Worked out from the state: this release is older than the oldest the service names as fit to
+   * serve a remote address (`min_version`), so the remote address stays closed until Stuga is updated.
+   */
+  | "outdated"
   | "denied"
   | "retired"
   /** A restore code moved the address to another computer: off here, and unbound until a new code. */
@@ -58,6 +63,8 @@ export interface RemoteError {
   retry_at?: string;
   service_code?: string;
   reason?: string;
+  /** For `outdated`: the release to update to, or a later one. */
+  min_version?: string;
 }
 
 export type RemoteAccessStatus =

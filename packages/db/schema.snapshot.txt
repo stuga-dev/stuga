@@ -426,6 +426,7 @@ TABLE node_remote_access
   hostname text
   id boolean NOT NULL DEFAULT true
   last_error jsonb
+  min_version text
   probe_at timestamp with time zone
   probe_failures integer NOT NULL DEFAULT 0
   probe_ok_at timestamp with time zone
@@ -437,6 +438,7 @@ TABLE node_remote_access
   CONSTRAINT node_remote_access_check CHECK (((NOT enabled) OR ((remote_id IS NOT NULL) AND (hostname IS NOT NULL) AND (api_url IS NOT NULL) AND (ca_terms_accepted_at IS NOT NULL))))
   CONSTRAINT node_remote_access_hostname_check CHECK ((hostname ~ '^[0-9bcdfghjkmnpqrstvwxz]{6,12}(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'::text))
   CONSTRAINT node_remote_access_id_check CHECK (id)
+  CONSTRAINT node_remote_access_min_version_check CHECK ((min_version ~ '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'::text))
   CONSTRAINT node_remote_access_pkey PRIMARY KEY (id)
   CONSTRAINT node_remote_access_remote_id_check CHECK ((remote_id ~ '^[0-9bcdfghjkmnpqrstvwxz]{6,12}$'::text))
   INDEX node_remote_access_pkey CREATE UNIQUE INDEX node_remote_access_pkey ON public.node_remote_access USING btree (id)

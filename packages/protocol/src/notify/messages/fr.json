@@ -68,6 +68,8 @@
   "REMOTE_BINDING_REJECTED.body": "{reason, select, key_unusable {{addressKnown, select, yes {La clé de ce nœud pour {address} est manquante ou illisible. Saisissez un code de restauration pour conserver l’adresse.} other {La clé de ce nœud pour son adresse distante est manquante ou illisible. Saisissez un code de restauration pour conserver l’adresse.}}} other {{addressKnown, select, yes {Le service d’accès à distance n’accepte plus la clé de ce nœud. Saisissez un code de restauration pour conserver {address}.} other {Le service d’accès à distance n’accepte plus la clé de ce nœud. Saisissez un code de restauration pour conserver l’adresse distante.}}}}",
   "REMOTE_ADDRESS_MOVED.title": "L’accès à distance est passé sur un autre ordinateur",
   "REMOTE_ADDRESS_MOVED.body": "{address} mène désormais à un autre ordinateur. L’accès à distance est désactivé sur celui-ci.",
+  "REMOTE_UPDATE_REQUIRED.title": "L’accès à distance est en pause jusqu’à la mise à jour de Stuga",
+  "REMOTE_UPDATE_REQUIRED.body": "Cette version présente un problème de sécurité connu : {address} est donc fermée. Passez à Stuga {version} ou à une version ultérieure et elle se rouvrira d’elle-même.",
 
   "channel.none": "Stuga uniquement",
   "channel.email": "e-mail",
