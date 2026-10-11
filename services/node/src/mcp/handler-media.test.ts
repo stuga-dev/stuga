@@ -27,11 +27,6 @@ import { agentCtx, fixed, recordingJobs } from "../testing/ctx.js";
 import { DEFAULT_MAX_BODY_BYTES } from "../media/media.js";
 import { handleMediaUpload } from "../media/uploads.js";
 
-// Remote fetches vet the addresses a host resolves to, so a stubbed fetch needs a stubbed resolver.
-vi.mock("node:dns/promises", () => ({
-  lookup: vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]),
-}));
-
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);

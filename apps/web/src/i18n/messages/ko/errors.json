@@ -485,6 +485,7 @@
   "server.notValidAbsoluteUrl": "올바른 절대 URL이 아니에요: {url}",
   "server.unsupportedUrlScheme": "지원하지 않는 URL 스킴: “{scheme}”. http(s)를 사용하세요.",
   "server.couldNotResolveHost": "“{host}” 주소를 찾을 수 없었어요.",
+  "server.fakeIpRefused": "이 이름은 198.18.0.0/15로 해석돼요. fake-IP 프록시가 응답하는 범위예요. Stuga에는 실제 DNS를 쓰게 해 주세요.",
   "server.emailNotSetUp": "이메일이 설정되지 않았어요.",
   "server.noEmailAddressInStuga": "Stuga에 이메일 주소가 없어요.",
   "server.noWebhookUrlSet": "웹훅 URL이 설정되지 않았어요.",

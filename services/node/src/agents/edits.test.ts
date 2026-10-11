@@ -2,11 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DocRow } from "@stuga/db";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 
-// A remote fetch vets the addresses a host resolves to, so the fictional hosts need a public answer.
-vi.mock("node:dns/promises", () => ({
-  lookup: vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]),
-}));
-
 vi.mock("@stuga/db", () => ({
   getDoc: vi.fn(),
   getFolderAncestors: vi.fn(async () => []),

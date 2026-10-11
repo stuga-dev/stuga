@@ -1,18 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { WEBHOOK_MAX_FAILURES, signWebhookBody } from "../governance/webhooks/sign.js";
+import { OutboundRefusedError, outboundFetch } from "../net/outbound.js";
 import type { JobsDb } from "./db.js";
-import { isTerminal, type JobDeps, type JobsEnv } from "./deps.js";
+import { isTerminal, jobDeps, type JobDeps, type JobsEnv } from "./deps.js";
 import { handleEvent, handleWebhookDeliver } from "./webhooks.js";
 import { handleRunIndex } from "./worker.js";
 
-// Delivery vets the resolved address, so the fictional host needs a public answer.
-vi.mock("node:dns/promises", () => ({
-  lookup: vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]),
-}));
-
-function deps(overrides: Partial<JobsDb> = {}, fetchImpl?: typeof fetch): JobDeps & { db: JobsDb } {
+function deps(overrides: Partial<JobsDb> = {}, fetchImpl?: JobDeps["webhookFetch"]): JobDeps & { db: JobsDb } {
   const db = {
     upsertAgentRun: vi.fn(async () => {}),
     insertWorkspaceEvent: vi.fn(async (e: { workspaceId: string; type: string; docId: string | null; actor: string; actorKind: string; payload: unknown }) => ({
@@ -37,7 +35,8 @@ function deps(overrides: Partial<JobsDb> = {}, fetchImpl?: typeof fetch): JobDep
     db,
     embed: vi.fn(async () => ({ embeddings: [], inputTokens: 0 })) as unknown as JobDeps["embed"],
     deliver: vi.fn(async () => null),
-    fetch: fetchImpl ?? (vi.fn(async () => new Response("", { status: 200 })) as unknown as typeof fetch),
+    fetch: vi.fn() as unknown as typeof fetch,
+    webhookFetch: fetchImpl ?? (vi.fn(async () => new Response("", { status: 200 })) as unknown as typeof fetch),
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   };
 }
@@ -135,16 +134,47 @@ describe("webhook_deliver", () => {
     expect(d.db.updateWebhook).not.toHaveBeenCalled();
   });
 
-  it("refuses to deliver to a hook that now resolves to a private address, and disables it", async () => {
-    const { lookup } = await import("node:dns/promises");
-    vi.mocked(lookup).mockResolvedValueOnce([{ address: "169.254.169.254", family: 4 }] as never);
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+  it("delivers through the checked connection unless a test says otherwise", () => {
+    expect(jobDeps({} as JobsEnv, {}).webhookFetch).toBe(outboundFetch);
+  });
+
+  it("switches off a hook whose name now resolves to a private address, and does not retry it", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new OutboundRefusedError("private", "hooks.example", "169.254.169.254");
+    });
     const d = deps({ getWebhook: vi.fn(async () => HOOK), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
-    await expect(
-      handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 }),
-    ).rejects.toThrow(/refused address/);
-    expect(fetchImpl).not.toHaveBeenCalled();
+    const thrown = await handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 }).catch((e: unknown) => e);
+    expect(String(thrown)).toMatch(/refused address: refusing to reach a private or loopback address/);
+    expect(String(thrown)).not.toMatch(/169\.254/);
+    expect(isTerminal(thrown)).toBe(true);
+    expect(d.db.recordWebhookDelivery).toHaveBeenCalledWith("whk_a", null, false);
     expect(d.db.updateWebhook).toHaveBeenCalledWith("ws1", "whk_a", { active: false });
+  });
+
+  it("never connects to a hook at a loopback address, however it got stored", async () => {
+    let connections = 0;
+    const server = createServer((_req, res) => res.end()).on("connection", () => void (connections += 1));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const hook = { ...HOOK, url: `http://127.0.0.1:${port}/hook` };
+      const d = deps({ getWebhook: vi.fn(async () => hook), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, outboundFetch);
+      const thrown = await handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 }).catch((e: unknown) => e);
+      expect(isTerminal(thrown)).toBe(true);
+      expect(d.db.updateWebhook).toHaveBeenCalledWith("ws1", "whk_a", { active: false });
+      expect(connections).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("lets go of the answer's body once it has the status", async () => {
+    let cancelled = false;
+    const body = new ReadableStream({ cancel: () => void (cancelled = true) });
+    const fetchImpl = vi.fn(async () => new Response(body, { status: 200 }));
+    const d = deps({ getWebhook: vi.fn(async () => HOOK), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
+    await handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
+    expect(cancelled).toBe(true);
   });
 
   it("a 5xx records the failure and throws so the queue retries", async () => {

@@ -485,6 +485,7 @@
   "server.notValidAbsoluteUrl": "No es una URL absoluta válida: {url}",
   "server.unsupportedUrlScheme": "Esquema de URL “{scheme}” no compatible – usa http(s).",
   "server.couldNotResolveHost": "No se pudo resolver “{host}”.",
+  "server.fakeIpRefused": "El nombre se resuelve en 198.18.0.0/15, donde responden los proxies fake-IP; dale a Stuga un DNS real.",
   "server.emailNotSetUp": "El correo electrónico no está configurado.",
   "server.noEmailAddressInStuga": "No tienes dirección de correo electrónico en Stuga.",
   "server.noWebhookUrlSet": "No hay ninguna URL de webhook configurada.",

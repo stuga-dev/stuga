@@ -3,11 +3,6 @@ import { hostExternalImages, ingestNote, ingestWarning } from "./media-ingest.js
 import type { IngestEnv } from "./media-ingest.js";
 import { DEFAULT_MAX_BODY_BYTES, bodyBytesFor } from "./media.js";
 
-// A remote fetch vets the addresses a host resolves to, so the fictional hosts need a public answer.
-vi.mock("node:dns/promises", () => ({
-  lookup: vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]),
-}));
-
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const WS = "ws-testTenant1";
 /** A well-formed hash for cases that never fetch; `expectedPath()` gives PNG's. */

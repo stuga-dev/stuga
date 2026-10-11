@@ -8,17 +8,19 @@ export interface Cidr {
   prefix: number;
 }
 
-function v4Bits(text: string): bigint | null {
+/** A dotted-quad IPv4 address as a 32-bit integer, or null when it is not one. */
+export function ipv4Bits(text: string): bigint | null {
   const parts = text.split(".");
   if (parts.length !== 4 || !parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)) return null;
   return parts.reduce((acc, p) => (acc << 8n) | BigInt(Number(p)), 0n);
 }
 
-function v6Bits(text: string): bigint | null {
+/** An IPv6 address as a 128-bit integer, however it is written, or null when it is not one. */
+export function ipv6Bits(text: string): bigint | null {
   let h = text.toLowerCase().replace(/^\[|\]$/g, "").replace(/%.*$/, "");
   const tail = /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(h);
   if (tail) {
-    const v4 = v4Bits(tail[1]!);
+    const v4 = ipv4Bits(tail[1]!);
     if (v4 === null) return null;
     h = `${h.slice(0, tail.index)}${(v4 >> 16n).toString(16)}:${(v4 & 0xffffn).toString(16)}`;
   }
@@ -47,9 +49,9 @@ function v6Bits(text: string): bigint | null {
 /** An address as bits, an IPv4-mapped IPv6 one as IPv4. */
 function addressBits(address: string): { family: 4 | 6; bits: bigint } | null {
   const plain = unmappedAddress(address);
-  const v4 = v4Bits(plain);
+  const v4 = ipv4Bits(plain);
   if (v4 !== null) return { family: 4, bits: v4 };
-  const v6 = v6Bits(plain);
+  const v6 = ipv6Bits(plain);
   return v6 === null ? null : { family: 6, bits: v6 };
 }
 

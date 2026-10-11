@@ -39,8 +39,9 @@ AI is off until a node administrator sets it up, and with Ollama on the same mac
 there. A document hidden from search (**Hide from search** in its ⋯ menu) has no sections in the
 index, so while it is hidden its text is not sent for embedding.
 
-For webhooks, images and files by URL, and apps' metadata documents, the node refuses a URL that
-resolves to a private or loopback address.
+For webhooks, images and files by URL, and apps' metadata documents, the node checks every address
+it connects to. It refuses private, loopback and other reserved addresses, its own addresses and its
+own IPv6 network.
 
 ## Installing and upgrading
 

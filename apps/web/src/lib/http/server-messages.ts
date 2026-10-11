@@ -501,6 +501,7 @@ export const SERVER_MESSAGES: readonly ServerMessage[] = [
   { match: /^not a valid absolute URL: (.+)$/s, key: "errors.server.notValidAbsoluteUrl", values: (g) => ({ url: g[1] }), from: "net/outbound.ts" },
   { match: /^unsupported URL scheme "(.*)" — use http\(s\)$/s, key: "errors.server.unsupportedUrlScheme", values: (g) => ({ scheme: g[1] }), from: "net/outbound.ts" },
   { match: /^could not resolve "(.*)"$/s, key: "errors.server.couldNotResolveHost", values: (g) => ({ host: g[1] }), from: "net/outbound.ts" },
+  { match: "the name resolves into 198.18.0.0/15, where fake-IP proxies answer; give Stuga real DNS", key: "errors.server.fakeIpRefused", from: "net/outbound.ts" },
   // jobs/sinks.ts: why a test notification was not sent
   { match: "email is not set up", key: "errors.server.emailNotSetUp", from: "jobs/sinks.ts" },
   { match: "you have no email address in Stuga", key: "errors.server.noEmailAddressInStuga", from: "jobs/sinks.ts" },

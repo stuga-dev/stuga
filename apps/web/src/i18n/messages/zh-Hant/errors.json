@@ -485,6 +485,7 @@
   "server.notValidAbsoluteUrl": "不是有效的絕對 URL：{url}",
   "server.unsupportedUrlScheme": "不支援的 URL 配置「{scheme}」——請使用 http(s)。",
   "server.couldNotResolveHost": "無法解析「{host}」。",
+  "server.fakeIpRefused": "此名稱解析到 198.18.0.0/15，這是 fake-IP 代理回應的位址範圍；讓 Stuga 使用真實 DNS。",
   "server.emailNotSetUp": "尚未設定電子郵件。",
   "server.noEmailAddressInStuga": "你在 Stuga 中沒有電子郵件地址。",
   "server.noWebhookUrlSet": "未設定 Webhook URL。",

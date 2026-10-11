@@ -367,9 +367,11 @@ x-stuga-signature: sha256=<hex HMAC-SHA256 of the raw body, keyed by the webhook
 ```
 
 Verify the signature over the exact bytes you received before trusting the body. The URL must be
-public http(s), and it is checked again at every delivery; redirects are not followed. A delivery
+public http(s), and it is checked on every connection; redirects are not followed. A delivery
 times out after 10 seconds. A `5xx` or a network failure is retried with backoff, and a `3xx` or `4xx`
-is not. After 20 failed deliveries in a row the hook is paused until someone resumes it.
+is not. After 20 failed deliveries in a row the hook is paused until someone resumes it. A delivery
+the node refuses to connect, because the name now resolves to a private, reserved or fake-IP
+address, pauses the hook at once and is not retried.
 
 ## For people only
 

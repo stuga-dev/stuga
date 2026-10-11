@@ -29,8 +29,9 @@ function webhookView(w: WebhookRow) {
 
 /**
  * An absolute http(s) URL that does not resolve into the operator's network: a
- * workspace admin chooses the target of a signed outbound request. Vetted again
- * at delivery, since a name can resolve elsewhere later.
+ * workspace admin chooses the target of a signed outbound request. Resolving it
+ * here gives a plain refusal early; each delivery's connection is checked again,
+ * since a name can resolve elsewhere later.
  */
 async function validWebhookUrl(raw: unknown): Promise<{ url: string } | { error: string }> {
   if (typeof raw !== "string" || raw.length > 2048) return { error: "url must be an absolute http(s) URL" };

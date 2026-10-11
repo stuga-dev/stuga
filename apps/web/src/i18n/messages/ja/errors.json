@@ -485,6 +485,7 @@
   "server.notValidAbsoluteUrl": "有効な絶対URLではありません：{url}",
   "server.unsupportedUrlScheme": "URLスキーム「{scheme}」には対応していません。http(s)を使ってください。",
   "server.couldNotResolveHost": "「{host}」を名前解決できませんでした。",
+  "server.fakeIpRefused": "この名前は198.18.0.0/15に解決されます。fake-IPプロキシが応答する範囲です。Stugaには実際のDNSを使わせてください。",
   "server.emailNotSetUp": "メールが設定されていません。",
   "server.noEmailAddressInStuga": "Stugaにメールアドレスが登録されていません。",
   "server.noWebhookUrlSet": "Webhook URLが設定されていません。",

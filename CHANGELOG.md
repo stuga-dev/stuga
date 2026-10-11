@@ -9,6 +9,10 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Security
+
+- Images and files by URL, webhook deliveries and apps' metadata documents check the address of each connection as it is made, so a name that resolves to a public address when checked and a private one when fetched no longer reaches the node's network. Reserved ranges, the node's own addresses and its IPv6 network are refused too. Behind a fake-IP proxy such as Clash or Surge, these need real DNS ([Troubleshooting](docs/troubleshooting.md#uploads-and-disk)).
+
 ## [0.1.14] - 2026-10-10
 
 Stuga in nine languages; open pages follow what others do to them, live; safer sharing with links

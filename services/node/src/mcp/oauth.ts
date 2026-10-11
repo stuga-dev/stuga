@@ -36,7 +36,7 @@ import { alertsFor } from "../identity/alerts.js";
 import { recentConfirmationRequired } from "../identity/recency.js";
 import { error, json } from "../http/respond.js";
 import { isIpLiteral, isLocalName, isLoopbackHost, isNonPublicAddress } from "../net/addresses.js";
-import { vetOutboundUrl } from "../net/outbound.js";
+import { OutboundRefusedError, outboundFetch } from "../net/outbound.js";
 
 /** What a grant is named when its client gave no name. */
 const CONNECTOR_AGENT_NAME = "MCP Connector";
@@ -281,7 +281,10 @@ export class ClientRefusal extends Error {}
 /** Read a response body up to a limit, refusing more. */
 async function readCappedText(res: Response, maxBytes: number): Promise<string> {
   const declared = Number(res.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > maxBytes) throw new ClientRefusal("the client metadata document is too large");
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new ClientRefusal("the client metadata document is too large");
+  }
   const reader = res.body?.getReader();
   if (!reader) return "";
   const chunks: Uint8Array[] = [];
@@ -304,16 +307,18 @@ async function readCappedText(res: Response, maxBytes: number): Promise<string> 
  * address, no redirects, and a `client_id` inside that repeats its own URL.
  */
 async function fetchClientMetadata(clientId: string): Promise<{ redirectUris: string[]; clientName: string }> {
-  const vetted = await vetOutboundUrl(clientId);
-  if (!vetted.ok) throw new ClientRefusal(`cannot fetch the client metadata document: ${vetted.reason}`);
-  const res = await fetch(vetted.url.toString(), {
-    redirect: "manual",
+  const res = await outboundFetch(clientId, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
   }).catch((e) => {
-    throw new ClientRefusal(`cannot fetch the client metadata document: ${e instanceof Error ? e.message : String(e)}`);
+    // Only the refusal is named: anyone can send this request, and socket errors would map a network.
+    const why = e instanceof OutboundRefusedError ? e.message : "could not reach the URL";
+    throw new ClientRefusal(`cannot fetch the client metadata document: ${why}`);
   });
-  if (res.status !== 200) throw new ClientRefusal(`the client metadata document answered HTTP ${res.status}`);
+  if (res.status !== 200) {
+    await res.body?.cancel().catch(() => {});
+    throw new ClientRefusal(`the client metadata document answered HTTP ${res.status}`);
+  }
   let doc: { client_id?: unknown; redirect_uris?: unknown; client_name?: unknown; token_endpoint_auth_method?: unknown };
   try {
     doc = JSON.parse(await readCappedText(res, MAX_METADATA_BYTES)) as typeof doc;

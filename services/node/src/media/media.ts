@@ -5,7 +5,7 @@
  */
 import { SAFE_IMAGE_MIMES, type SafeImageMime } from "@stuga/protocol/api/media";
 import type { BlobStore } from "@stuga/runtime";
-import { vetOutboundUrl } from "../net/outbound.js";
+import { OutboundRefusedError, outboundFetch, parseOutboundUrl } from "../net/outbound.js";
 
 /** Multipart framing around the file part: boundary, headers, filename. */
 const MULTIPART_OVERHEAD_BYTES = 64 * 1024;
@@ -102,6 +102,8 @@ export async function validateImageUpload(
 
 /** Redirect hops followed when fetching a remote image. */
 const MAX_REMOTE_REDIRECTS = 3;
+/** The redirects followed; any other 3xx is an answer. */
+const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 /** Per-hop connect/response ceiling for a remote image fetch. */
 const REMOTE_FETCH_TIMEOUT_MS = 10_000;
 /** Whole-fetch ceiling, so redirect hops cannot add up to an unbounded wait. */
@@ -146,9 +148,9 @@ export function decodeBase64Image(data: string, what: "image" | "file" = "image"
   return bytes;
 }
 
-/** Parse and vet one hop of a remote-image fetch. */
-async function vetRemoteUrl(raw: string): Promise<URL> {
-  const verdict = await vetOutboundUrl(raw);
+/** Parse and check one hop of a remote fetch; the connection checks where the name resolves. */
+function remoteUrl(raw: string): URL {
+  const verdict = parseOutboundUrl(raw);
   if (!verdict.ok) throw new MediaValidationError(400, verdict.reason);
   return verdict.url;
 }
@@ -157,6 +159,7 @@ async function vetRemoteUrl(raw: string): Promise<URL> {
 async function readCapped(res: Response, maxBytes: number, what: string): Promise<Uint8Array> {
   const declared = Number(res.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel().catch(() => {});
     throw new MediaValidationError(413, `${what} too large (max ${megabytes(maxBytes)} MB)`);
   }
   if (!res.body) throw new MediaValidationError(400, "the URL returned an empty response");
@@ -204,32 +207,40 @@ export async function fetchRemoteFile(raw: string, maxBytes = DEFAULT_MAX_UPLOAD
   return { bytes, name: fileName(name) };
 }
 
-/** Fetch a remote URL's body, up to `maxBytes`. Redirects are followed by hand so every hop is re-vetted. */
+/**
+ * Fetch a remote URL's body, up to `maxBytes`. GET only; redirects are followed by hand, at most
+ * three, and every hop's connection is checked like the first.
+ */
 async function fetchRemote(raw: string, maxBytes: number, what: "image" | "file"): Promise<{ bytes: Uint8Array; url: URL }> {
-  let url = await vetRemoteUrl(raw);
+  let url = remoteUrl(raw);
   // The per-hop timeout bounds one stalled host; the deadline bounds a chain of them.
   const deadline = Date.now() + REMOTE_FETCH_DEADLINE_MS;
   for (let hop = 0; ; hop += 1) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new MediaValidationError(504, `timed out fetching the ${what}`);
-    const res = await fetch(url.toString(), {
-      redirect: "manual",
+    const res = await outboundFetch(url, {
       headers: { accept: what === "image" ? "image/*" : "*/*" },
       signal: AbortSignal.timeout(Math.min(REMOTE_FETCH_TIMEOUT_MS, remaining)),
     }).catch((e) => {
+      if (e instanceof OutboundRefusedError) throw new MediaValidationError(400, e.message);
       if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) {
         throw new MediaValidationError(504, `timed out fetching the ${what}`);
       }
-      throw new MediaValidationError(400, `could not fetch the ${what}: ${e instanceof Error ? e.message : String(e)}`);
+      // The cause is left out: it names addresses and socket errors.
+      throw new MediaValidationError(400, "could not reach the URL");
     });
-    if (res.status >= 300 && res.status < 400) {
+    if (REDIRECT_STATUSES.has(res.status)) {
+      await res.body?.cancel().catch(() => {});
       const location = res.headers.get("location");
       if (!location) throw new MediaValidationError(400, `the URL redirected with no location (${res.status})`);
       if (hop >= MAX_REMOTE_REDIRECTS) throw new MediaValidationError(400, `too many redirects fetching the ${what}`);
-      url = await vetRemoteUrl(new URL(location, url).toString());
+      url = remoteUrl(URL.parse(location, url)?.toString() ?? location);
       continue;
     }
-    if (!res.ok) throw new MediaValidationError(400, `the URL returned HTTP ${res.status}`);
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
+      throw new MediaValidationError(400, `the URL returned HTTP ${res.status}`);
+    }
     return { bytes: await readCapped(res, maxBytes, what), url };
   }
 }

@@ -16,10 +16,9 @@ vi.mock("@stuga/db", async (orig) => ({
   rotateRefreshToken: vi.fn(),
   revokeOauthTokenFamily: vi.fn(async () => {}),
 }));
-vi.mock("../net/outbound.js", () => ({ vetOutboundUrl: vi.fn() }));
 
 const db = await import("@stuga/db");
-const { vetOutboundUrl } = await import("../net/outbound.js");
+const { OutboundRefusedError } = await import("../net/outbound.js");
 const { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_IDLE_DAYS, SIGN_IN_MAX_DAYS, handleAuthorize, handleClientInfo, handleRevoke, handleToken } = await import(
   "./oauth.js"
 );
@@ -453,6 +452,14 @@ describe("clients known by their metadata document", () => {
       new Response(typeof body === "string" ? body : JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init }),
     );
 
+  /** An answer whose body never ends and records whether it was let go. */
+  const unread = (status: number, headers: HeadersInit = {}) => {
+    let cancelled = false;
+    const body = new ReadableStream({ cancel: () => void (cancelled = true) });
+    fetchMock.mockResolvedValue(new Response(body, { status, headers }));
+    return { cancelled: () => cancelled };
+  };
+
   const clientInfo = (clientId: string) =>
     handleClientInfo(env, new Request(`https://stuga.test/oauth/client?client_id=${encodeURIComponent(clientId)}`));
   const authorize = (clientId: string, redirectUri: string) =>
@@ -467,7 +474,6 @@ describe("clients known by their metadata document", () => {
     vi.stubGlobal("fetch", fetchMock);
     fetchMock.mockReset();
     vi.mocked(db.getOauthClient).mockResolvedValue(null);
-    vi.mocked(vetOutboundUrl).mockImplementation(async (raw) => ({ ok: true, url: new URL(raw) }));
     vi.mocked(db.upsertMetadataClient).mockImplementation(async (_sql, input) => ({
       client_id: input.clientId,
       client_secret_hash: null,
@@ -487,8 +493,8 @@ describe("clients known by their metadata document", () => {
     const res = await clientInfo(CIMD_ID);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ client_id: CIMD_ID, client_name: "Hosted Client", verified_host: "client.example.com" });
-    expect(vetOutboundUrl).toHaveBeenCalledWith(CIMD_ID);
-    expect(fetchMock).toHaveBeenCalledWith(CIMD_ID, expect.objectContaining({ redirect: "manual" }));
+    // Through the checked connection, which follows no redirect.
+    expect(fetchMock).toHaveBeenCalledWith(CIMD_ID, expect.objectContaining({ redirect: "manual", dispatcher: expect.anything() }));
     expect(db.upsertMetadataClient).toHaveBeenCalledWith(
       expect.anything(),
       { clientId: CIMD_ID, redirectUris: [CIMD_REDIRECT], clientName: "Hosted Client" },
@@ -560,12 +566,25 @@ describe("clients known by their metadata document", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a document on an address the node must not reach, without fetching it", async () => {
-    vi.mocked(vetOutboundUrl).mockResolvedValue({ ok: false, reason: "refusing to reach a private or loopback address" });
+  it("refuses a document at a private address literal without fetching it", async () => {
+    const res = await clientInfo("https://10.0.0.1/oauth/client.json");
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("cannot fetch the client metadata document: refusing to reach a private or loopback address");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a document whose name the connection finds private, without naming the address", async () => {
+    fetchMock.mockRejectedValue(new TypeError("fetch failed", { cause: new OutboundRefusedError("private", "client.example.com", "10.0.0.7") }));
     const res = await clientInfo(CIMD_ID);
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/private or loopback/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect((await res.json()).error).toBe("cannot fetch the client metadata document: refusing to reach a private or loopback address");
+    expect(db.upsertMetadataClient).not.toHaveBeenCalled();
+  });
+
+  it("names no socket error when the document's host cannot be reached", async () => {
+    fetchMock.mockRejectedValue(new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED 10.0.0.7:443"), { code: "ECONNREFUSED" }) }));
+    const res = await clientInfo(CIMD_ID);
+    expect((await res.json()).error).toBe("cannot fetch the client metadata document: could not reach the URL");
   });
 
   it("refuses a document that redirects rather than following it", async () => {
@@ -588,6 +607,21 @@ describe("clients known by their metadata document", () => {
     const res = await clientInfo(CIMD_ID);
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(message);
+    expect(db.upsertMetadataClient).not.toHaveBeenCalled();
+  });
+
+  it("lets go of the body of an answer that is not a 200", async () => {
+    const answer = unread(404);
+    const res = await clientInfo(CIMD_ID);
+    expect((await res.json()).error).toBe("the client metadata document answered HTTP 404");
+    expect(answer.cancelled()).toBe(true);
+  });
+
+  it("refuses a declared size too large without reading, and lets go of the body", async () => {
+    const answer = unread(200, { "content-type": "application/json", "content-length": String(128 * 1024) });
+    const res = await clientInfo(CIMD_ID);
+    expect((await res.json()).error).toBe("the client metadata document is too large");
+    expect(answer.cancelled()).toBe(true);
     expect(db.upsertMetadataClient).not.toHaveBeenCalled();
   });
 

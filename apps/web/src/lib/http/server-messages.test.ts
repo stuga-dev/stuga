@@ -87,6 +87,7 @@ const SENT_OTHERWISE = new Set<string>([
   "^not a valid absolute URL: (.+)$",
   "^unsupported URL scheme \"(.*)\" — use http\\(s\\)$",
   "^could not resolve \"(.*)\"$",
+  "the name resolves into 198.18.0.0/15, where fake-IP proxies answer; give Stuga real DNS",
   // jobs/sinks.ts: UNSENT_ENGLISH, and SinkAnsweredError's message, which the notification test answers with
   "email is not set up",
   "you have no email address in Stuga",

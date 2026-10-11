@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { lookup } from "node:dns/promises";
+import { describe, expect, it, vi } from "vitest";
 import { MAX_INLINE_IMAGE_BYTES } from "@stuga/agent-surface/catalog";
 import type { SafeImageMime } from "@stuga/protocol/api/media";
 import {
@@ -14,19 +13,19 @@ import {
   validateImageBytes,
   validateImageUpload,
 } from "./media.js";
+import { OutboundRefusedError } from "../net/outbound.js";
 
-vi.mock("node:dns/promises", () => ({ lookup: vi.fn() }));
-const lookupMock = vi.mocked(lookup);
+/** How fetch fails when the connection refuses an address: the reason is its cause. */
+const refusedAt = (address: string, reason: "private" | "fake-ip" = "private") =>
+  new TypeError("fetch failed", { cause: new OutboundRefusedError(reason, "images.example.com", address) });
 
-/** Resolve every name to one public address unless a test says otherwise. */
-function resolvesTo(...addresses: string[]) {
-  lookupMock.mockResolvedValue(addresses.map((address) => ({ address, family: address.includes(":") ? 6 : 4 })) as never);
+/** An answer whose body never ends and records whether it was let go. */
+function answer(status: number, headers: HeadersInit = {}): { res: Response; cancelled: () => boolean } {
+  let cancelled = false;
+  const body = new ReadableStream({ cancel: () => void (cancelled = true) });
+  return { res: new Response(body, { status, headers }), cancelled: () => cancelled };
 }
-
-beforeEach(() => {
-  lookupMock.mockReset();
-  resolvesTo("93.184.216.34");
-});
+const redirect = (location: string, status = 302) => answer(status, { location });
 
 describe("image upload validation", () => {
   it.each<[SafeImageMime, number[]]>([
@@ -137,16 +136,18 @@ describe("remote image fetch", () => {
     fetchSpy.mockRestore();
   });
 
-  it("refuses a public name that resolves to a private address", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    resolvesTo("127.0.0.1");
-    await expect(fetchRemoteImage("http://images.example.com/x.png")).rejects.toMatchObject({ status: 400 });
-    resolvesTo("169.254.169.254");
-    await expect(fetchRemoteImage("http://images.example.com/x.png")).rejects.toMatchObject({ status: 400 });
-    // Every resolved address has to pass.
-    resolvesTo("93.184.216.34", "10.0.0.5");
-    await expect(fetchRemoteImage("http://images.example.com/x.png")).rejects.toMatchObject({ status: 400 });
-    expect(fetchSpy).not.toHaveBeenCalled();
+  it("says why when the connection refuses where a name resolves, never \"fetch failed\"", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(refusedAt("169.254.169.254"));
+    const refused = await fetchRemoteImage("http://images.example.com/x.png").catch((e: unknown) => e);
+    expect(refused).toMatchObject({ status: 400, message: "refusing to reach a private or loopback address" });
+    fetchSpy.mockRejectedValueOnce(refusedAt("198.18.0.7", "fake-ip"));
+    await expect(fetchRemoteImage("http://images.example.com/x.png")).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/fake-IP/) });
+    fetchSpy.mockRestore();
+  });
+
+  it("names no socket error when a host cannot be reached", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("fetch failed", { cause: new Error("connect ECONNREFUSED 93.184.216.34:443") }));
+    await expect(fetchRemoteImage("https://example.com/a.png")).rejects.toMatchObject({ status: 400, message: "could not reach the URL" });
     fetchSpy.mockRestore();
   });
 
@@ -156,10 +157,64 @@ describe("remote image fetch", () => {
   });
 
   it("re-vets every redirect hop, so a public URL cannot bounce to metadata", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(null, { status: 302, headers: { location: "http://169.254.169.254/" } }),
-    );
+    const hop = redirect("http://169.254.169.254/");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(hop.res);
     await expect(fetchRemoteImage("https://example.com/a.png")).rejects.toMatchObject({ status: 400 });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(hop.cancelled()).toBe(true);
+    fetchSpy.mockRestore();
+  });
+
+  it("refuses a redirect to a location that is not a URL, without following it", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(redirect("http://[").res);
+    const refused = await fetchRemoteImage("https://example.com/a.png").catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(MediaValidationError);
+    expect(refused).toMatchObject({ status: 400, message: "not a valid absolute URL: http://[" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+  });
+
+  it("follows a relative redirect, letting go of each hop's body, through the checked connection", async () => {
+    const hops = [redirect("/b.png", 301), redirect("https://cdn.example.com/c.png", 307)];
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(hops[0]!.res)
+      .mockResolvedValueOnce(hops[1]!.res)
+      .mockResolvedValueOnce(new Response(PNG, { status: 200 }));
+    await expect(fetchRemoteImage("https://example.com/a.png")).resolves.toEqual({ bytes: PNG, mime: "image/png" });
+    expect(fetchSpy.mock.calls.map(([url]) => String(url))).toEqual(["https://example.com/a.png", "https://example.com/b.png", "https://cdn.example.com/c.png"]);
+    for (const [, init] of fetchSpy.mock.calls) expect(init).toMatchObject({ redirect: "manual", dispatcher: expect.anything() });
+    expect(hops.every((hop) => hop.cancelled())).toBe(true);
+    fetchSpy.mockRestore();
+  });
+
+  it("follows at most three redirects", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => redirect("https://example.com/again.png").res);
+    await expect(fetchRemoteImage("https://example.com/a.png")).rejects.toMatchObject({ status: 400, message: "too many redirects fetching the image" });
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    fetchSpy.mockRestore();
+  });
+
+  it("treats a 3xx that is not a redirect as the answer", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(redirect("https://example.com/b.png", 300).res);
+    await expect(fetchRemoteImage("https://example.com/a.png")).rejects.toMatchObject({ status: 400, message: "the URL returned HTTP 300" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+  });
+
+  it("lets go of the body of an answer that is not a success", async () => {
+    const missing = answer(404);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(missing.res);
+    await expect(fetchRemoteImage("https://example.com/a.png")).rejects.toMatchObject({ status: 400, message: "the URL returned HTTP 404" });
+    expect(missing.cancelled()).toBe(true);
+    fetchSpy.mockRestore();
+  });
+
+  it("refuses a declared size over the cap without reading, and lets go of the body", async () => {
+    const large = answer(200, { "content-length": String(256 * 1024) });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(large.res);
+    await expect(fetchRemoteImage("https://example.com/a.png", 128 * 1024)).rejects.toMatchObject({ status: 413 });
+    expect(large.cancelled()).toBe(true);
     fetchSpy.mockRestore();
   });
 

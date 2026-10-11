@@ -124,6 +124,12 @@ certificate directory into the node container in `compose.override.yml`, set `TL
 path inside the container, and set `PUBLIC_ORIGIN` to the https address. The container's health
 check and `./stuga` then reach the node over https.
 
+Members and agents can have the node fetch a URL, such as an image to upload. The node refuses
+private and reserved addresses, but inside its container it doesn't know the server's own public
+address, and a connection from the server to itself passes the provider's firewall. Keep other
+services on the server to `127.0.0.1` and `::1`, or deny Docker's networks their ports in the
+server's firewall (`DOCKER-USER` for published ones), for IPv4 and IPv6.
+
 ## Operator commands
 
 `./stuga` runs the node's own `stuga-node` commands in a one-off container of the image that

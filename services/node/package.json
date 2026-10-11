@@ -28,6 +28,7 @@
     "@stuga/runtime": "workspace:*",
     "postgres": "^3.4.9",
     "tsx": "^4.23.15",
+    "undici": "^8.11.2",
     "ws": "^8.22.0",
     "yjs": "^13.6.33"
   },

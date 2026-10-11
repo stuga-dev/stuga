@@ -485,6 +485,7 @@
   "server.notValidAbsoluteUrl": "Not a valid absolute URL: {url}",
   "server.unsupportedUrlScheme": "Unsupported URL scheme “{scheme}” — use http(s).",
   "server.couldNotResolveHost": "Could not resolve “{host}”.",
+  "server.fakeIpRefused": "The name resolves into 198.18.0.0/15, where fake-IP proxies answer; give Stuga real DNS.",
   "server.emailNotSetUp": "Email is not set up.",
   "server.noEmailAddressInStuga": "You have no email address in Stuga.",
   "server.noWebhookUrlSet": "No webhook URL is set.",

@@ -2,7 +2,7 @@
 import { AiError } from "@stuga/ai";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { WEBHOOK_MAX_FAILURES, WEBHOOK_TIMEOUT_MS, signWebhookBody } from "../governance/webhooks/sign.js";
-import { vetOutboundUrl } from "../net/outbound.js";
+import { OutboundRefusedError } from "../net/outbound.js";
 import type { JobDeps, JobsEnv } from "./deps.js";
 
 /**
@@ -30,7 +30,8 @@ export async function handleEvent(env: JobsEnv, deps: JobDeps, msg: Extract<Inde
 /**
  * POST one event to one webhook, signed. A 5xx or network failure throws for a
  * retry; a 3xx or 4xx is terminal; a hook failing WEBHOOK_MAX_FAILURES times in
- * a row is switched off.
+ * a row is switched off, and one at an address the node refuses is switched off
+ * at once.
  */
 export async function handleWebhookDeliver(deps: JobDeps, msg: Extract<IndexMessage, { kind: "webhook_deliver" }>): Promise<void> {
   const [hook, event] = await Promise.all([deps.db.getWebhook(msg.webhookId), deps.db.getWorkspaceEvent(msg.eventId)]);
@@ -45,16 +46,10 @@ export async function handleWebhookDeliver(deps: JobDeps, msg: Extract<IndexMess
     actor_kind: event.actor_kind,
     payload: event.payload,
   });
-  // Vetted again at delivery: the name may resolve somewhere else than at registration.
-  const verdict = await vetOutboundUrl(hook.url);
-  if (!verdict.ok) {
-    await deps.db.recordWebhookDelivery(hook.webhook_id, null, false);
-    await deps.db.updateWebhook(hook.workspace_id, hook.webhook_id, { active: false });
-    throw new AiError(`webhook ${hook.webhook_id} points at a refused address: ${verdict.reason}`, 400, false);
-  }
   let status: number | null = null;
   try {
-    const res = await deps.fetch(hook.url, {
+    // Checked on the connection itself: the name may resolve elsewhere than at registration.
+    const res = await deps.webhookFetch(hook.url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -64,13 +59,18 @@ export async function handleWebhookDeliver(deps: JobDeps, msg: Extract<IndexMess
         "x-stuga-signature": signWebhookBody(hook.secret, body),
       },
       body,
-      // A followed redirect would deliver to an address that was never vetted.
+      // The signed body goes only where the hook says.
       redirect: "manual",
       signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
     });
     status = res.status;
+    await res.body?.cancel().catch(() => {});
   } catch (err) {
     await deps.db.recordWebhookDelivery(hook.webhook_id, null, false);
+    if (err instanceof OutboundRefusedError) {
+      await deps.db.updateWebhook(hook.workspace_id, hook.webhook_id, { active: false });
+      throw new AiError(`webhook ${hook.webhook_id} points at a refused address: ${err.message}`, 400, false);
+    }
     await disableIfDark(deps, hook.webhook_id, hook.workspace_id, hook.failures + 1);
     throw new Error(`webhook ${hook.webhook_id} unreachable: ${String(err)}`);
   }

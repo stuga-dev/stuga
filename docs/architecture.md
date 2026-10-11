@@ -77,7 +77,7 @@ build step. A checkout runs the node's source through tsx; a release bundles it
 | `internal/` | The routes actors call back into. |
 | `jobs/` | Job handlers and the maintenance tick. |
 | `ops/` | Backup, verify, restore and list, and the backups a running node takes of itself. |
-| `net/` | Address classification and outbound URL vetting. |
+| `net/` | Address classification, outbound URL vetting, and the guarded connection for outbound fetches. |
 | `lib/` | The ZIP reader and writer. |
 | `remote/` | [Remote access](remote-access.md): enrollment, the ACME client, check-ins and the relay credential, the connector's files, the self-check, and the state the Settings page shows. |
 | `updates/` | The daily look for a newer version: the release list, the comparison, and the notice to administrators; and the request to the packaging's upgrade helper behind **Update now**. |
