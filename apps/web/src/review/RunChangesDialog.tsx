@@ -12,6 +12,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
 import { BlockDiffView, useBlockDiff } from "./BlockDiffView";
 import { t } from "../i18n/i18n";
+import { useFocusReturn } from "../ui/use-focus-return";
 
 export function RunChangesDialog({
   docId,
@@ -34,6 +35,7 @@ export function RunChangesDialog({
   canRevert: boolean;
   isReverting: boolean;
 }) {
+  useFocusReturn();
   const [baseText, setBaseText] = useState<string | null>(null);
   const [targetText, setTargetText] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

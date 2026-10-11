@@ -41,7 +41,7 @@ import type { Source } from "./source.js";
 /** A body a converter read, by the key its links name it by: the source file it came from. */
 export interface Body {
   key: string;
-  /** Markdown, starting with its title as a heading. */
+  /** Markdown. A first-level heading at its top is its title; else the entry's title is. */
   markdown: string;
 }
 
@@ -77,6 +77,66 @@ export type Entry = FolderEntry | DocEntry | DatabaseEntry;
  */
 export type Resolved = { item: string; row?: string } | { image: string } | { file: string } | { href: string } | null;
 
+/** Why a source file is not in the archive. */
+export type LeftOutReason =
+  /** Past what the node takes: its upload limit for an image or file, a body's cap for a note. */
+  | { reason: "too_large"; size: number; limit: number }
+  /** Named as an image, but not one this node can show. */
+  | { reason: "unreadable_image" }
+  /** A note or table that is not UTF-8 text. */
+  | { reason: "unreadable_text" }
+  /** Neither a page nor a file a page links to or shows. */
+  | { reason: "not_linked" }
+  /** Something the other app keeps that Stuga has no place for, such as a drawing. */
+  | { reason: "not_kept" };
+
+export type LeftOut = { path: string } & LeftOutReason;
+
+/**
+ * What a conversion spelled differently from the export, by kind:
+ * `front_matter` shown as a list under the title, a note's `title_differs` from its first heading,
+ * which titles it, an `unresolved_link` kept as its text, a `missing_image` left out, an
+ * `embedded_note` made a link, a `heading_link` that opens the note at its top, a `highlight` made
+ * bold, `math` kept as text, and a `text_column` whose cells hold several values each.
+ */
+export const CHANGE_KINDS = [
+  "front_matter",
+  "title_differs",
+  "unresolved_link",
+  "missing_image",
+  "embedded_note",
+  "heading_link",
+  "highlight",
+  "math",
+  "text_column",
+] as const;
+export type ChangeKind = (typeof CHANGE_KINDS)[number];
+
+/** Where a change happened: each body's key, or for a column its name. */
+export class Changes {
+  private readonly byKind = new Map<ChangeKind, Set<string>>();
+
+  note(kind: ChangeKind, where: string): void {
+    const set = this.byKind.get(kind) ?? new Set<string>();
+    set.add(where);
+    this.byKind.set(kind, set);
+  }
+
+  /** Each kind noted, in CHANGE_KINDS order, with where, each named by `name`. */
+  list(name: (where: string) => string): Changed[] {
+    return CHANGE_KINDS.flatMap((kind) => {
+      const where = this.byKind.get(kind);
+      return where ? [{ kind, where: [...new Set([...where].map(name))].sort() }] : [];
+    });
+  }
+}
+
+export interface Changed {
+  kind: ChangeKind;
+  /** The documents, or columns, it happened in, by title. */
+  where: string[];
+}
+
 export interface Conversion {
   /** The new workspace's name. */
   name: string;
@@ -86,12 +146,17 @@ export interface Conversion {
   resolve(from: string, href: string): Resolved;
   /** The source files the entries hold, by path. Images count once a body shows them. */
   consumed: ReadonlySet<string>;
+  /** Why a converter set a source file aside, by path; one with no reason here is not linked. */
+  skipped: ReadonlyMap<string, LeftOutReason>;
+  changes: Changes;
 }
 
 export interface Built {
   zip: ZipArchive;
-  /** Every source file the archive does not carry, by path, in order. */
-  leftOut: string[];
+  /** Every source file the archive does not carry, by path, in order, with why. */
+  leftOut: LeftOut[];
+  /** What the conversion spelled differently. */
+  changed: Changed[];
 }
 
 /** Names in a database's deepest path, its own folder's included: `<db>/pages/<row>.md`. */
@@ -125,6 +190,9 @@ function workspaceName(name: string): string {
 
 export async function buildArchive(conversion: Conversion, source: Source, limits: { maxImageBytes: number }): Promise<Built> {
   const carried = new Set(conversion.consumed);
+  const reasons = new Map(conversion.skipped);
+  const { changes } = conversion;
+  const tooLarge = (size: number, limit: number): LeftOutReason => ({ reason: "too_large", size, limit });
   const items: ArchiveItem[] = [];
   const files = new Map<string, HeldFile>();
   const hold = (path: string, bytes: Uint8Array): void => void files.set(path, { size: bytes.byteLength, read: async () => bytes });
@@ -192,7 +260,12 @@ export async function buildArchive(conversion: Conversion, source: Source, limit
   const imageAt = async (file: string): Promise<string | null> => {
     if (media.has(file)) return media.get(file)!;
     const found = source.files.get(file);
-    const path = found && found.size <= limits.maxImageBytes ? await stored(() => found.read()) : null;
+    let path: string | null = null;
+    if (found && found.size > limits.maxImageBytes) reasons.set(file, tooLarge(found.size, limits.maxImageBytes));
+    else if (found) {
+      path = await stored(() => found.read());
+      if (!path) reasons.set(file, { reason: "unreadable_image" });
+    }
     if (path) carried.add(file);
     media.set(file, path);
     return path;
@@ -207,6 +280,7 @@ export async function buildArchive(conversion: Conversion, source: Source, limit
     if (linked.has(file)) return linked.get(file)!;
     const found = source.files.get(file);
     let path: string | null = null;
+    if (found && found.size > limits.maxImageBytes) reasons.set(file, tooLarge(found.size, limits.maxImageBytes));
     if (found && found.size > 0 && found.size <= limits.maxImageBytes) {
       const bytes = await found.read();
       path = filePath(createHash("sha256").update(bytes).digest("hex"), file.slice(file.lastIndexOf("/") + 1));
@@ -236,6 +310,7 @@ export async function buildArchive(conversion: Conversion, source: Source, limit
   }
 
   const schema = getStugaSchema();
+  const titles = new Map<string, string>();
   for (const body of bodies) {
     const doc = markdownToDoc(body.markdown, schema);
     const images = new Map<string, string | null>();
@@ -256,6 +331,8 @@ export async function buildArchive(conversion: Conversion, source: Source, limit
       const to = conversion.resolve(body.key, src);
       const image = to && "image" in to ? await imageAt(to.image) : null;
       images.set(src, image ? archiveHref(body.path, { path: image }) : to && "href" in to ? to.href : null);
+      // One the export does not hold; one it holds but could not carry is listed as left out.
+      if (to === null) changes.note("missing_image", body.key);
     }
     // A link to a file, an image among them, carries the file along.
     const linkedFiles = new Map<string, string | null>();
@@ -270,6 +347,7 @@ export async function buildArchive(conversion: Conversion, source: Source, limit
     const link = (href: string): string | null => {
       if (linkedFiles.has(href)) return linkedFiles.get(href)!;
       const to = conversion.resolve(body.key, href);
+      if (to === null) changes.note("unresolved_link", body.key);
       if (!to || "image" in to || "file" in to) return null;
       if ("href" in to) return to.href;
       const target = targets.get(to.item);
@@ -277,13 +355,18 @@ export async function buildArchive(conversion: Conversion, source: Source, limit
       return archiveHref(body.path, to.row === undefined ? target : { ...target, row: to.row });
     };
     let markdown = docToMarkdown(rewritten(doc, link, (src) => images.get(src) ?? null));
-    if (markdownByteLength(markdown) > MAX_IMPORT_MARKDOWN_BYTES) {
+    const bytes = markdownByteLength(markdown);
+    if (bytes > MAX_IMPORT_MARKDOWN_BYTES) {
       carried.delete(body.key);
+      reasons.set(body.key, tooLarge(bytes, MAX_IMPORT_MARKDOWN_BYTES));
       markdown = "";
     }
-    const title = markdown ? derivedTitle(markdownToDoc(markdown, schema)) : "";
+    // A body that does not open with its title keeps the one the converter gave it, so no heading is added.
+    const written = markdown ? markdownToDoc(markdown, schema) : null;
+    const title = written && opensWithTitle(written) ? derivedTitle(written) : "";
     if (title) body.settle(title, "heading");
     else body.settle(archiveTitle(body.title), "user");
+    titles.set(body.key, title || archiveTitle(body.title));
     hold(body.path, utf8(bodyFile(markdown)));
   }
 
@@ -298,8 +381,17 @@ export async function buildArchive(conversion: Conversion, source: Source, limit
   const start = conversion.start === undefined ? undefined : targets.get(conversion.start);
   if (start && items.some((item) => item.kind === "doc" && item.path === start.path)) manifest.start = start.path;
   hold(MANIFEST_NAME, utf8(JSON.stringify(manifest)));
-  const leftOut = [...source.files.keys()].filter((path) => !carried.has(path)).sort();
-  return { zip: memoryZip(files), leftOut };
+  const leftOut = [...source.files.keys()]
+    .filter((path) => !carried.has(path))
+    .sort()
+    .map((path): LeftOut => ({ path, ...(reasons.get(path) ?? { reason: "not_linked" }) }));
+  return { zip: memoryZip(files), leftOut, changed: changes.list((where) => titles.get(where) ?? where) };
+}
+
+/** Whether a body's first block is a first-level heading, which is then its title. */
+function opensWithTitle(doc: ReturnType<typeof markdownToDoc>): boolean {
+  const first = doc.firstChild;
+  return first?.type.name === "heading" && first.attrs.level === 1;
 }
 
 /** A table name as the database actor takes one: 1 to 200 characters, one line, no space at either end. */

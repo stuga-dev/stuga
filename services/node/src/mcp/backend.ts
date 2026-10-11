@@ -63,6 +63,7 @@ import {
   type DatabaseProposeOutcome,
 } from "../databases/propose.js";
 import { findRowPage, openRowPage } from "../databases/row-pages.js";
+import { pushCommentsChanged } from "../documents/access.js";
 import { createDocument } from "../documents/create.js";
 import { docAgentInstructions, docAgentInstructionsOrNone, docInstructionLabelsOrNone } from "../documents/instructions.js";
 import {
@@ -258,6 +259,7 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
       if (!canCommentDoc(ctx, doc)) return { error: "no comment access" };
       const c = await addComment(ctx.sql, { docId, author: ctx.alias, body, parentNum: null });
       recordEvent(ctx, "comment.added", docId, { num: c.num, parent_num: null, excerpt: body.slice(0, 140) });
+      await pushCommentsChanged(ctx.env, docId, doc.doc_type);
       return { ...c };
     },
 

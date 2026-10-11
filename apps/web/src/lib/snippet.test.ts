@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HIT_PARAM, hitHref, markTerms, passageHint, queryTerms, snippetParts, windowParts, type SnippetPart } from "./snippet";
+import { HIT_PARAM, foundByMeaning, hitHref, markTerms, passageHint, queryTerms, snippetParts, windowParts, withoutTitle, type SnippetPart } from "./snippet";
 
 /** Half of an emoji or other astral character, which a URL turns into U+FFFD. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -73,6 +73,12 @@ describe("snippetParts on Markdown", () => {
     expect(shown("## Week 2\n\n> quoted ⟦repairs⟧ text\n\n- first item\n1. second item\n\n---\n\nEnd.")).toBe(
       "Week 2 quoted [repairs] text first item second item End.",
     );
+  });
+
+  it("drops a task item's box with its list marker, and keeps a box written in prose", () => {
+    expect(shown("Shopping\n\n* [x] buy flour\n* [ ] buy ⟦butter⟧")).toBe("Shopping buy flour buy [butter]");
+    expect(shown("> * [X] ⟦done⟧")).toBe("[done]");
+    expect(shown("Tick [x] when ⟦done⟧")).toBe("Tick [x] when [done]");
   });
 
   it("undoes the serializer's escapes and references", () => {
@@ -239,6 +245,10 @@ describe("passageHint", () => {
     expect(passageHint("![⟦repairs⟧ to the roof](roof.png)")).toBeNull();
   });
 
+  it("finds a task item's words without its box", () => {
+    expect(passageHint("* [x] buy flour\n* [ ] buy the ⟦butter⟧ from the market")).toBe("buy the butter from the market");
+  });
+
   it("undoes the serializer's escapes and references", () => {
     expect(passageHint("Check \\[x\\] the ⟦repairs⟧\\_log with npm&#32;ci")).toBe("Check [x] the repairs log with npm ci");
   });
@@ -356,5 +366,50 @@ describe("hitHref", () => {
     expect(url.pathname).toBe("/doc/a%2Fb");
     expect(url.hash).toBe("");
     expect(url.searchParams.get(HIT_PARAM)).toBe("Costs & fees #2 for repairs in Q3?");
+  });
+});
+
+describe("withoutTitle", () => {
+  const text = (parts: SnippetPart[]) => parts.map((p) => p.text).join("");
+
+  it("drops the title an opening repeats as its heading", () => {
+    expect(text(withoutTitle(snippetParts("# Price list 2026\n\n| Item | Price |\n|---|---|\n| Loaf | 6.50 |"), "Price list 2026"))).toBe(
+      "Item · Price Loaf · 6.50",
+    );
+  });
+
+  it("keeps the highlights after it, and a title that is only the start of a word", () => {
+    expect(withoutTitle(snippetParts("Croissant recipe Laminate the ⟦dough⟧."), "croissant  recipe")).toEqual([
+      { text: "Laminate the ", hit: false },
+      { text: "dough", hit: true },
+      { text: ".", hit: false },
+    ]);
+    expect(text(withoutTitle(snippetParts("Price lists are out."), "Price list"))).toBe("Price lists are out.");
+    expect(text(withoutTitle(snippetParts("Our prices went up."), "Price list"))).toBe("Our prices went up.");
+  });
+
+  it("cuts at the title's own length when lowercasing would lengthen it", () => {
+    expect(text(withoutTitle(snippetParts("İzmir notes: the ferry leaves at nine."), "İzmir notes"))).toBe("the ferry leaves at nine.");
+  });
+});
+
+describe("snippetParts at a cut", () => {
+  it("drops a character reference the excerpt's end cut", () => {
+    expect(snippetParts("Ben: ok will do&#32")).toEqual([{ text: "Ben: ok will do", hit: false }]);
+    expect(snippetParts("Ben: ok will do&#32;")).toEqual([{ text: "Ben: ok will do", hit: false }]);
+  });
+});
+
+describe("foundByMeaning", () => {
+  const hit = (title: string, snippet: string, sem_score = 0.4) => ({ title, snippet, sem_score });
+
+  it("is a hit near in meaning with no highlighted word", () => {
+    expect(foundByMeaning(hit("Shopping list", "Butter, flour, eggs."), "cheap")).toBe(true);
+  });
+
+  it("is not a hit whose words matched, in the excerpt or the title, or one not near in meaning", () => {
+    expect(foundByMeaning(hit("Notes", "It is ⟦cheap⟧ here."), "cheap")).toBe(false);
+    expect(foundByMeaning(hit("Cheap eats", "Butter, flour."), "cheap")).toBe(false);
+    expect(foundByMeaning(hit("Croissant recipe", "Laminate the dough.", 0), "croisant")).toBe(false);
   });
 });

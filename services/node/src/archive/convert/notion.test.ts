@@ -3,7 +3,7 @@ import { openZip } from "../../lib/zip.js";
 import { NOTION_EXPORT as EXPORT, converted, notionId, zipOf } from "../testing/converted.js";
 import { IMAGE, sha256, text, type Json } from "../testing/fixture.js";
 import { convertExport } from "./index.js";
-import { notionMarkdown } from "./notion.js";
+import { notionMarkdown, propertyList } from "./notion.js";
 
 const id = notionId;
 
@@ -29,7 +29,8 @@ describe("converting a Notion export", () => {
     const [table] = manifest.items.find((i: Json) => i.kind === "database").tables;
     expect(table.columns).toEqual([
       { name: "Name", type: "text" },
-      { name: "Status", type: "single_select", choices: ["In progress", "Done"] },
+      // A Status property offers the options Notion starts it with.
+      { name: "Status", type: "single_select", choices: ["Not started", "In progress", "Done"] },
       { name: "Due", type: "date" },
       { name: "Done", type: "checkbox" },
       { name: "Points", type: "number" },
@@ -57,9 +58,9 @@ describe("converting a Notion export", () => {
         "",
         `Back [home](Home.md), on to [Launch](Projects/pages/Launch.md) and [Docs](Projects#row=${id(5)}), or [by URL](Projects/pages/Launch.md).`,
         "",
-        "* ☐ Draft",
+        "* [ ] Draft",
         "",
-        "* ☑ Review",
+        "* [x] Review",
         "",
       ].join("\n"),
     );
@@ -132,6 +133,34 @@ describe("converting a Notion export", () => {
     ]);
   });
 
+  it("makes a status column a select even when no value repeats, and says which columns list several values in a cell", async () => {
+    const { manifest, changed } = await converted({
+      [`Tasks ${id(7)}_all.csv`]: "Name,Status,Tags\r\nA,Done,\"x, y\"\r\nB,Not started,z\r\nC,In progress,\r\n",
+    });
+    const [table] = manifest.items[0].tables;
+    expect(table.columns).toEqual([
+      { name: "Name", type: "text" },
+      { name: "Status", type: "single_select", choices: ["Not started", "In progress", "Done"] },
+      { name: "Tags", type: "text" },
+    ]);
+    expect(changed).toEqual([{ kind: "text_column", where: ["Tags"] }]);
+  });
+
+  it("lists a page's property lines, and makes a one-line toggle its bold title and text", async () => {
+    const { body } = await converted({
+      [`Plan ${id(8)}.md`]: "# Plan\n\nCreated: October 1, 2026 9:00 AM\nStatus: In progress\nOwner: Liv\n\nNote: one line stays.\n\n<details><summary>More</summary>hidden stuff</details>",
+    });
+    expect(await body("Plan.md")).toBe(
+      "# Plan\n\n* Created: October 1, 2026 9:00 AM\n\n* Status: In progress\n\n* Owner: Liv\n\nNote: one line stays.\n\n**More**\n\nhidden stuff\n",
+    );
+  });
+
+  it("leaves a numbered list under a page's title a numbered list", () => {
+    const steps = "# Steps\n\n1. Mix: flour and water\n2. Bake: 40 minutes";
+    expect(propertyList(steps)).toBe(steps);
+    expect(propertyList("# Plan\n\nOwner: Liv\nDue: Friday")).toBe("# Plan\n\n- Owner: Liv\n- Due: Friday");
+  });
+
   it("refuses Notion's HTML export, naming the one it reads", async () => {
     await expect(convertExport(openZip(zipOf({ [`Home ${id(1)}.html`]: "<html></html>" })), { maxImageBytes: 1024 })).rejects.toThrow(
       "this is Notion's HTML export; export as Markdown & CSV instead",
@@ -146,10 +175,12 @@ describe("Notion's Markdown", () => {
     expect(notionMarkdown("```\n    kept\n```")).toBe("```\n    kept\n```");
   });
 
-  it("makes a callout a block quote without its icon, a toggle its bold title, and a task box a character", () => {
+  it("makes a callout a block quote without its icon and a toggle its bold title, and keeps a task box", () => {
     const icon = '<img src="https://www.notion.so/icons/stars_gray.svg" alt="" width="40px" />';
     expect(notionMarkdown(`<aside>\n${icon} **Tip:** Share it.\n\n</aside>`)).toBe("> **Tip:** Share it.\n>\n");
     expect(notionMarkdown("<details>\n<summary>More</summary>\n\nInside\n</details>")).toBe("**More**\n\nInside");
-    expect(notionMarkdown("- [ ]  Draft\n- [x]  Ship")).toBe("- ☐ Draft\n- ☑ Ship");
+    expect(notionMarkdown("<details><summary>More</summary>Inside</details>")).toBe("**More**\n\nInside");
+    expect(notionMarkdown("<aside>\n<details><summary>More</summary></details>\n</aside>")).toBe("> **More**\n");
+    expect(notionMarkdown("- [ ]  Draft\n- [x]  Ship")).toBe("- [ ]  Draft\n- [x]  Ship");
   });
 });

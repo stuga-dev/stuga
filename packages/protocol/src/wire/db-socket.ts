@@ -19,5 +19,6 @@ export interface DatabaseRunDecidedPayload {
 export interface DatabaseChangedPayload {
   /** The table whose rows changed, when the change was table-scoped. */
   table_id: string | null;
-  reason: "mutation" | "run" | "revert";
+  /** `state`: the database was locked, unlocked, trashed or restored; re-read the item, not only its rows. */
+  reason: "mutation" | "run" | "revert" | "state";
 }

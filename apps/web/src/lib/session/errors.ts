@@ -20,13 +20,20 @@ export class AuthError extends Error {
   suggestion?: string;
   /** With `reauth_required`: how this person can confirm it is them (lib/session/reauth.ts). */
   methods?: string[];
-  constructor(status: number, message: string, extra: { detail?: string; suggestion?: string; methods?: string[] } = {}) {
+  /** Seconds to wait, from a 429's Retry-After. */
+  retryAfter?: number;
+  constructor(
+    status: number,
+    message: string,
+    extra: { detail?: string; suggestion?: string; methods?: string[]; retryAfter?: number } = {},
+  ) {
     super(message);
     this.name = "AuthError";
     this.status = status;
     this.detail = extra.detail;
     this.suggestion = extra.suggestion;
     this.methods = extra.methods;
+    this.retryAfter = extra.retryAfter;
   }
 }
 
@@ -79,6 +86,13 @@ const CODE_MESSAGES: Record<string, (err: AuthError) => string> = {
 /** The node's own sentence, in the reader's language when the catalog has it. */
 const nodeSentence = (detail: string | undefined): string | undefined => (detail ? presentServerMessage(detail) : undefined);
 
+/** How long to wait, as the node's Retry-After gives it: a bound, so it rounds up. */
+function tooManyAttempts(seconds: number | undefined): string {
+  if (!seconds || seconds <= 0) return t("auth.errors.tooManyAttempts");
+  if (seconds < 60) return t("auth.errors.tooManyAttemptsSeconds", { seconds: Math.ceil(seconds) });
+  return t("auth.errors.tooManyAttemptsMinutes", { minutes: Math.ceil(seconds / 60) });
+}
+
 /** A sign-in failure as one sentence a person can act on. */
 export function describeError(err: unknown): string {
   if (err instanceof StorageBlockedError) return err.message;
@@ -91,7 +105,7 @@ export function describeError(err: unknown): string {
     // A 403 carries a code, never prose: never pass it through.
     if (err.status === 403) return t("auth.errors.inviteOnly");
     if (err.status === 409) return CODE_MESSAGES.username_taken!(err);
-    if (err.status === 429) return t("auth.errors.tooManyAttempts");
+    if (err.status === 429) return tooManyAttempts(err.retryAfter);
     // Starting, upgrading or backing up says so; a 503 without a sentence is the busy one.
     if (err.status === 503) return nodeSentence(err.detail) || CODE_MESSAGES.busy!(err);
     if (err.status === 400) return nodeSentence(err.detail) || t("auth.errors.checkCredentials");

@@ -37,6 +37,8 @@ function proposeFailure(result: { error: string; message?: string; count?: numbe
       return { code: "review_backlog", count: result.count ?? 0 };
     case "locked":
       return { code: "propose_locked" };
+    case "trashed":
+      return { code: "trashed" };
     case "too_large":
       return { code: "too_large" };
     case "unavailable":
@@ -69,6 +71,7 @@ export class CoAuthor {
     const store = this.ledger.store;
     // An AI turn ends in a document edit, so it takes the write gates.
     if (store.locked) return this.refuse(ws, "locked", "This document is locked; unlock it to make changes.", { code: "locked" });
+    if (store.trashed) return this.refuse(ws, "trashed", "This document is in the trash; restore it to make changes.", { code: "trashed" });
     if (!meta.canWrite) return this.refuse(ws, "acl", "You have view-only access to this document.", { code: "view_only" });
     if (!this.rate.allow(ws, "ai")) return this.refuse(ws, "rate-limit", "Too many AI requests; try again shortly.", { code: "rate_limited" });
     let req: AiRequest;
@@ -189,6 +192,7 @@ export class CoAuthor {
       let staged = 0;
       let applied = 0;
       let runId: string | null = null;
+      let hunkIds: string[] = [];
       let proposeError: CoauthorError | null = null;
       if (result.strEdits.length > 0) {
         const status: CoauthorActivity = { kind: applyAtOnce ? "applying" : "proposing" };
@@ -210,10 +214,12 @@ export class CoAuthor {
         if (out.mode === "proposed") {
           staged = out.pending;
           runId = out.run.id;
+          hunkIds = out.hunkIds;
           recordPanelPropose(this.env.jobs, docId, meta, panelAlias, out.run.id, { mode: "proposed", pending: out.pending });
         } else if (out.mode === "auto_applied") {
           applied = out.applied;
           runId = out.run.id;
+          hunkIds = out.hunkIds;
           recordPanelPropose(this.env.jobs, docId, meta, panelAlias, out.run.id, { mode: "auto_applied", seq: out.seq });
         } else if (out.mode === "error") {
           proposeError = proposeFailure(out);
@@ -243,6 +249,7 @@ export class CoAuthor {
           staged,
           applied,
           run_id: runId,
+          ...(hunkIds.length > 0 ? { hunk_ids: hunkIds } : {}),
           cross_docs: crossDocs,
           citations: result.citations,
           error: proposeError,
@@ -259,7 +266,7 @@ export class CoAuthor {
   }
 
   /** Refuse at the gate: WRITE_REJECTED carries the reason for the page, AI_EDITS ends the turn. */
-  private refuse(ws: DocSocket, kind: "locked" | "acl" | "rate-limit", message: string, error: CoauthorError): void {
+  private refuse(ws: DocSocket, kind: "locked" | "trashed" | "acl" | "rate-limit", message: string, error: CoauthorError): void {
     this.refusals.reject(ws, kind, message);
     this.fail(ws, error);
   }

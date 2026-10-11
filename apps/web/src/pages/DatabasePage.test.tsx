@@ -66,6 +66,7 @@ const { DatabasePage } = await import("./DatabasePage");
 const DOC: DocSummary = {
   doc_id: "d_1",
   title: "Obligations",
+  title_source: "user",
   owner: "user:u_1",
   doc_type: "database",
   created_at: "2026-09-01T00:00:00.000Z",

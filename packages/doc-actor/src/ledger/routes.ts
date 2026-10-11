@@ -200,8 +200,10 @@ export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<
     }
     decided = settled;
     appliedCount = applied.size;
-    // The accepting human gets version credit for what they let through.
+    // The accepting human gets version credit for what they let through. A person's decision is
+    // snapshotted at once, so version history has it now (and records a version when one is due).
     await store.commitMarkdown(ledger.commitTarget(result.markdown, body), current, { alias: decidedBy }, "run-large");
+    await store.flush("run");
   }
 
   stored.updated_at = Date.now();
@@ -270,6 +272,7 @@ export async function handleRunRevert(ledger: RunLedger, req: Request): Promise<
     return Response.json({ error: "conflict", message: "document has changed; use version history to restore" }, { status: 409 });
   }
   await store.commitMarkdown(ledger.commitTarget(result.markdown, body), current, { alias: requestedBy }, "run-large");
+  await store.flush("run");
   // Reverting ends the run, so hunks still pending in it are rejected rather than stranded.
   const orphaned = pendingOf(body);
   for (const h of orphaned) h.status = "rejected";
@@ -312,6 +315,8 @@ export async function handleRunUndo(ledger: RunLedger, req: Request): Promise<Re
     hunk_ids?: unknown;
     requested_by?: string;
     manager_override?: boolean;
+    /** The node's word that the document is locked: undoing a rejection may go on, taking text back out may not. */
+    locked?: boolean;
   } | null;
   const ids = Array.isArray(input?.hunk_ids) ? new Set(input.hunk_ids.filter((id): id is string => typeof id === "string")) : null;
   if (!input || !input.run_id || !ids || ids.size === 0) return badRequest();
@@ -339,6 +344,9 @@ export async function handleRunUndo(ledger: RunLedger, req: Request): Promise<Re
   const requestedBy = input.requested_by!;
   // Unwound as revert does: newest first, sides swapped, and never a deletion, which has nothing to anchor on.
   const landed = targets.filter((h) => h.status === "accepted");
+  if (landed.length > 0 && input.locked) {
+    return Response.json({ error: "locked", message: "this document is locked; unlock it to make changes" }, { status: 423 });
+  }
   if (landed.length > 0) {
     if (landed.some((h) => h.new_string === "")) {
       return refuse("conflict", "a deletion can’t be restored in place; use version history to restore");
@@ -348,6 +356,7 @@ export async function handleRunUndo(ledger: RunLedger, req: Request): Promise<Re
     const result = applyStrEditsStrict(current, inverse);
     if (result.conflicts.length > 0) return refuse("conflict", "the document has changed since; use version history to restore");
     await store.commitMarkdown(ledger.commitTarget(result.markdown, body), current, { alias: requestedBy }, "run-large");
+    await store.flush("run");
   }
   let unlist = false;
   for (const h of targets) {

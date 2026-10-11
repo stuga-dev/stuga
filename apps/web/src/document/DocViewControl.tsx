@@ -79,10 +79,12 @@ export function DocViewControl({
                 }
                 variant="ghost"
                 size="sm"
-                width={64}
                 isDisabled={zoom === ZOOM_DEFAULT}
                 onClick={() => onZoom(ZOOM_DEFAULT)}
-              />
+              >
+                {/* The label says what a press does; the button shows only the zoom, so no language truncates it. */}
+                <Text type="inherit" hasTabularNumbers>{percent(zoom)}</Text>
+              </Button>
               <IconButton
                 label={t("document.view.zoomIn")}
                 variant="ghost"

@@ -1,7 +1,8 @@
 /**
  * Binds a Y.Doc to its document actor: the epoch-gated sync handshake, live
  * updates both ways, awareness, run frames and AI co-author turns. Reconnects
- * with backoff until access is revoked or the provider is destroyed.
+ * with backoff until access is revoked, the document or the membership ends,
+ * or the provider is destroyed.
  */
 import * as Y from "yjs";
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } from "y-protocols/awareness";
@@ -25,18 +26,46 @@ import {
   encodeEpoch,
   decodeEpoch,
 } from "@stuga/protocol/wire/frame";
-import { Opcode, CloseCode, Heartbeat, type PersistDegradedPayload } from "@stuga/protocol/wire/opcodes";
+import {
+  Opcode,
+  CloseCode,
+  TEXT_SCHEMA_VERSION,
+  type DocResetPayload,
+  type DocStatePayload,
+  type PersistDegradedPayload,
+  type TitleChangedPayload,
+} from "@stuga/protocol/wire/opcodes";
+import { forceReload } from "./forced-reload";
 import { wsBase } from "./ws-base";
-import { cachedSocketTicket, ensureSocketTicket } from "../lib/session/tickets";
+import { SocketLiveness } from "./socket-liveness";
+import { cachedSocketTicket, ensureSocketTicket, forgetSocketTicket, socketTicketRefused } from "../lib/session/tickets";
+import { rememberRestore } from "../document/restore-notice";
+
+/** Why a socket closed for good: access withdrawn, the document deleted, or the person's membership of its workspace over. */
+export type SyncEnding = "revoked" | "deleted" | "removed";
+
+/** The close codes that end syncing, and what each means to the page. */
+const ENDINGS: ReadonlyMap<number, SyncEnding> = new Map([
+  [CloseCode.ACCESS_REVOKED, "revoked"],
+  [CloseCode.DOC_DELETED, "deleted"],
+  [CloseCode.MEMBERSHIP_ENDED, "removed"],
+]);
+
+/** The code a socket the page gave up on is closed with, as a dropped connection would be. */
+const ABNORMAL_CLOSURE = 1006;
 
 /** Observers only: none of them changes what is sent, retried or buffered. */
 interface ProviderEvents {
-  onStatus?: (status: "connecting" | "open" | "reconnecting" | "revoked") => void;
+  onStatus?: (status: "connecting" | "open" | "reconnecting" | SyncEnding) => void;
   /** Once: the first handshake completed. */
   onSynced?: () => void;
   /** The handshake finished on the current socket; again after each reconnect. */
   onSyncDone?: () => void;
   onWriteRejected?: (payload: WriteRejectedPayload) => void;
+  /** What this page may do now: after each handshake, and whenever the lock, the trash or the write tier moves. */
+  onDocState?: (state: DocStatePayload) => void;
+  /** Someone renamed the document. */
+  onTitleChanged?: (payload: TitleChangedPayload) => void;
   /**
    * A level, not an edge: sent on each transition and at handshake while
    * degraded. The only signal for a server that acks updates it cannot store.
@@ -78,19 +107,21 @@ export class StugaProvider {
   private aiTurn: AiTurnHandlers | null = null;
   /** A slot rather than a constructor event: the runs context mounts after the provider exists. */
   public runListener: ((evt: RunEvent) => void) | null = null;
+  /**
+   * The comments may have changed: someone changed them, or this tab was away
+   * and may have missed it. A slot for the same reason as `runListener`.
+   */
+  public commentsListener: (() => void) | null = null;
   private awarenessKeepalive: ReturnType<typeof setInterval> | null = null;
-  private liveness: ReturnType<typeof setInterval> | null = null;
-  private heartbeat: ReturnType<typeof setInterval> | null = null;
-  private lastInbound = 0;
+  /** The current socket's heartbeat, which notices a dead link while nothing is typed. */
+  private liveness: SocketLiveness | null = null;
   // Typing moves the caret on every keystroke; awareness sends are coalesced to one per window.
   private awarenessThrottle: ReturnType<typeof setTimeout> | null = null;
   private awarenessPendingClients: Set<number> = new Set();
   private awarenessLastSent = 0;
   private static readonly AWARENESS_THROTTLE_MS = 150;
-  // Well above the 25s heartbeat. Applied only while the tab is visible: hidden
-  // tabs throttle timers to about once a minute, so a healthy socket looks silent.
-  private static readonly LIVENESS_SILENCE_MS = 60_000;
   private visibilityBound: (() => void) | null = null;
+  private networkBound: (() => void) | null = null;
   private pageHideBound: ((e: PageTransitionEvent) => void) | null = null;
 
   // Delivery receipts feed the connection indicator only. An UPDATE_ACK is the
@@ -104,6 +135,9 @@ export class StugaProvider {
   private ackTimer: ReturnType<typeof setTimeout> | null = null;
   /** A deadline lapsed; the transition is reported once. */
   private ackOverdue = false;
+
+  /** The write tier the last DOC_STATE named; a change means the held ticket names an old one. */
+  private canWrite: boolean | null = null;
 
   /** Kept across reconnects: a different value on a later socket means the document was rolled back meanwhile. */
   private serverEpoch: number | null = null;
@@ -131,13 +165,18 @@ export class StugaProvider {
       // pagehide, not beforeunload: it cannot be cancelled and it tells a bfcache freeze apart.
       this.pageHideBound = (e: PageTransitionEvent) => this.onPageHide(e);
       window.addEventListener("pagehide", this.pageHideBound);
+      // The browser's word on the network is a hint, never a verdict: a node on this computer works offline.
+      this.networkBound = () => this.onNetworkChange();
+      window.addEventListener("online", this.networkBound);
+      window.addEventListener("offline", this.networkBound);
     }
     this.connect();
   }
 
   private wsUrl(ticket: string): string {
-    // The ticket is the whole credential, and it names the workspace it opens.
-    return `${wsBase()}/ws/${this.docId}?ticket=${encodeURIComponent(ticket)}`;
+    // The ticket is the whole credential, and it names the workspace it opens. `schema`: the node types
+    // this build's editor can read; a page older than the node's text is told to reload.
+    return `${wsBase()}/ws/${this.docId}?ticket=${encodeURIComponent(ticket)}&schema=${TEXT_SCHEMA_VERSION}`;
   }
 
   /** Synchronous with a ticket in hand, so a drop reconnects with no round trip; only a due mint goes async. */
@@ -153,6 +192,12 @@ export class StugaProvider {
       .catch(() => null)
       .then((minted) => {
         if (seq !== this.connectSeq || !this.shouldReconnect) return;
+        // Refused outright, as after a new role took the document away: as final as a revoked socket.
+        if (minted === null && socketTicketRefused(this.docId)) {
+          this.shouldReconnect = false;
+          this.events.onStatus?.("revoked");
+          return;
+        }
         // No ticket: the upgrade is refused and the backoff path reports it.
         this.openSocket(minted ?? "");
       });
@@ -165,7 +210,6 @@ export class StugaProvider {
 
     ws.onopen = () => {
       this.backoff = 1000;
-      this.lastInbound = Date.now();
       this.events.onStatus?.("open");
       // Updates outstanding on the dead socket are re-delivered by the handshake, not acked one by one.
       this.resetAckTracking();
@@ -178,28 +222,11 @@ export class StugaProvider {
       this.awarenessKeepalive = setInterval(() => {
         if (this.awareness.getStates().size > 1) this.sendAwareness();
       }, 300_000);
-      // The host answers PING without waking the actor; it keeps the socket warm and feeds the watchdog.
-      this.heartbeat = setInterval(() => {
-        try {
-          this.ws?.send(Heartbeat.PING);
-        } catch {
-          /* socket gone */
-        }
-      }, 25_000);
-      // Silence past the threshold is a half-open socket: close it and let backoff reconnect.
-      this.liveness = setInterval(() => {
-        const hidden = typeof document !== "undefined" && document.hidden;
-        if (!hidden && Date.now() - this.lastInbound > StugaProvider.LIVENESS_SILENCE_MS) {
-          try {
-            this.ws?.close();
-          } catch {
-            /* already gone */
-          }
-        }
-      }, 15_000);
+      // Probes go unanswered behind a large first sync, so they count only once it is done.
+      this.liveness = new SocketLiveness(ws, () => this.abandonSocket(ws), { answerable: false });
     };
     ws.onmessage = (ev) => {
-      this.lastInbound = Date.now();
+      this.liveness?.heard();
       if (typeof ev.data === "string") return; // heartbeat PONG
       this.onMessage(ev.data as ArrayBuffer);
     };
@@ -230,7 +257,7 @@ export class StugaProvider {
         // Restored while this tab held its own state: reload rather than send it.
         if (this.serverEpoch !== null && epoch !== this.serverEpoch) {
           this.shouldReconnect = false;
-          location.reload();
+          forceReload();
           break;
         }
         this.serverEpoch = epoch;
@@ -261,11 +288,21 @@ export class StugaProvider {
         this.onUpdateAcked();
         break;
       case Opcode.SYNC_DONE:
+        this.liveness?.expectAnswers();
         this.emitStatus(this.events.onSyncDone, "onSyncDone");
         if (!this.synced) {
           this.synced = true;
           this.events.onSynced?.();
+        } else {
+          // Back after a drop: a comment made meanwhile sent its word to no one here.
+          this.emitStatus(this.commentsListener ?? undefined, "commentsListener");
         }
+        break;
+      case Opcode.COMMENTS_CHANGED:
+        this.emitStatus(this.commentsListener ?? undefined, "commentsListener");
+        break;
+      case Opcode.TITLE_CHANGED:
+        this.events.onTitleChanged?.(decodeJson<TitleChangedPayload>(frame.payload));
         break;
       case Opcode.AI_RESPONSE: {
         const chunk = decodeJson<AiResponseChunk>(frame.payload);
@@ -284,14 +321,30 @@ export class StugaProvider {
       }
       case Opcode.DOC_RESET: {
         // Rolled back: nothing is cached locally, so a reload re-syncs from the restored head.
+        // A restore says who did it, for the reloaded page to tell.
+        if (frame.payload.byteLength > 0) {
+          try {
+            const notice = decodeJson<Partial<DocResetPayload>>(frame.payload);
+            if (notice.restored) rememberRestore(this.docId, notice.restored);
+          } catch {
+            /* the reload matters, the notice does not */
+          }
+        }
         this.shouldReconnect = false;
-        location.reload();
+        forceReload();
         break;
       }
       case Opcode.WRITE_REJECTED: {
         // A refused update gets no ack; without this reset the indicator would blame the network.
         this.resetAckTracking();
         this.events.onWriteRejected?.(decodeJson<WriteRejectedPayload>(frame.payload));
+        break;
+      }
+      case Opcode.DOC_STATE: {
+        const state = decodeJson<DocStatePayload>(frame.payload);
+        if (this.canWrite !== null && state.can_write !== this.canWrite) forgetSocketTicket(this.docId);
+        this.canWrite = state.can_write;
+        this.events.onDocState?.(state);
         break;
       }
       case Opcode.PERSIST_DEGRADED: {
@@ -332,14 +385,8 @@ export class StugaProvider {
       this.awarenessThrottle = null;
     }
     this.awarenessPendingClients.clear();
-    if (this.liveness) {
-      clearInterval(this.liveness);
-      this.liveness = null;
-    }
-    if (this.heartbeat) {
-      clearInterval(this.heartbeat);
-      this.heartbeat = null;
-    }
+    this.liveness?.stop();
+    this.liveness = null;
     // The reconnect handshake re-delivers outstanding edits; onLocalUpdate reports ones typed while down.
     if (this.ackTimer !== null) {
       clearTimeout(this.ackTimer);
@@ -354,20 +401,52 @@ export class StugaProvider {
       turn.onDone(error);
       turn.onEdits({ staged: 0, applied: 0, run_id: null, cross_docs: [], error, notices: [] });
     }
-    if (code === CloseCode.ACCESS_REVOKED) {
+    const ending = ENDINGS.get(code);
+    if (ending) {
       this.shouldReconnect = false;
-      this.events.onStatus?.("revoked");
+      this.events.onStatus?.(ending);
       return;
     }
     if (code === CloseCode.DOC_RESET) {
       this.shouldReconnect = false;
-      location.reload();
+      forceReload();
       return;
     }
     if (!this.shouldReconnect) return;
     this.events.onStatus?.("reconnecting");
+    // Sent on this socket with no receipt, so they may never have arrived: unsent until the handshake re-delivers them.
+    if (this.pendingAcks > 0 && !this.ackOverdue) {
+      this.ackOverdue = true;
+      this.emitStatus(this.events.onLocalUpdateDropped, "onLocalUpdateDropped");
+    }
+    // A new role: a fresh ticket, at once, so the reach it brings applies now.
+    if (code === CloseCode.ROLE_CHANGED) {
+      forgetSocketTicket(this.docId);
+      this.scheduleReconnect(0);
+      return;
+    }
     this.scheduleReconnect(this.backoff);
     this.backoff = Math.min(this.backoff * 2, 30_000);
+  }
+
+  /**
+   * A socket that stopped answering. A dead link can take a minute to report its
+   * close, so the page treats it as closed now and the socket is left to finish
+   * on its own, unheard.
+   */
+  private abandonSocket(ws: WebSocket): void {
+    if (ws !== this.ws) return;
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onerror = null;
+    ws.onclose = null;
+    try {
+      ws.close();
+    } catch {
+      /* already gone */
+    }
+    this.ws = null;
+    this.onClose(ABNORMAL_CLOSURE);
   }
 
   /** Replaces any pending retry, so overlapping closes cannot stack up sockets. */
@@ -401,19 +480,24 @@ export class StugaProvider {
       this.scheduleReconnect(0);
       return;
     }
-    if (ws.readyState === WebSocket.OPEN) {
-      try {
-        ws.send(Heartbeat.PING);
-      } catch {
-        /* socket gone */
-      }
-      if (Date.now() - this.lastInbound > StugaProvider.LIVENESS_SILENCE_MS) {
-        try {
-          ws.close();
-        } catch {
-          /* already gone */
-        }
-      }
+    if (ws.readyState === WebSocket.OPEN) this.liveness?.probe();
+  }
+
+  /**
+   * The browser says the network went or came back. Going: ask the open socket,
+   * which answers at once if the link still works. Coming back: a socket waiting
+   * out its backoff tries now.
+   */
+  private onNetworkChange(): void {
+    if (!this.shouldReconnect) return;
+    const ws = this.ws;
+    if (ws?.readyState === WebSocket.OPEN) {
+      this.liveness?.probe();
+      return;
+    }
+    if (navigator.onLine && (!ws || ws.readyState === WebSocket.CLOSED)) {
+      this.backoff = 1000;
+      this.scheduleReconnect(0);
     }
   }
 
@@ -581,6 +665,8 @@ export class StugaProvider {
   destroy(): void {
     this.shouldReconnect = false;
     this.cancelReconnect();
+    // Opening the document again asks for a ticket again, with whatever tier the person has by then.
+    forgetSocketTicket(this.docId);
     this.resetAckTracking();
     if (this.visibilityBound && typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", this.visibilityBound);
@@ -590,9 +676,14 @@ export class StugaProvider {
       window.removeEventListener("pagehide", this.pageHideBound);
       this.pageHideBound = null;
     }
+    if (this.networkBound && typeof window !== "undefined") {
+      window.removeEventListener("online", this.networkBound);
+      window.removeEventListener("offline", this.networkBound);
+      this.networkBound = null;
+    }
     if (this.awarenessKeepalive) clearInterval(this.awarenessKeepalive);
-    if (this.liveness) clearInterval(this.liveness);
-    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.liveness?.stop();
+    this.liveness = null;
     // Before the goodbye, or a throttled caret send could land after it and resurrect the cursor.
     if (this.awarenessThrottle !== null) {
       clearTimeout(this.awarenessThrottle);

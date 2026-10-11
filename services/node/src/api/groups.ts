@@ -1,10 +1,27 @@
 import { canonicalizeAlias } from "@stuga/auth";
-import { upsertGroup } from "@stuga/db";
+import { listGroups, upsertGroup } from "@stuga/db";
 import { describeGroupSync } from "../audit/acl-diff.js";
 import { recordAudit } from "../audit/record.js";
-import { isWorkspaceAdmin } from "../authz/authz.js";
+import { guestForbidden, isWorkspaceAdmin } from "../authz/authz.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
+
+/**
+ * GET /api/groups: the workspace's groups with their members, for anyone who
+ * may share (everyone but a guest), so a group is picked rather than typed.
+ */
+export async function listGroupsRoute({ ctx }: WorkspaceCall): Promise<Response> {
+  const g = guestForbidden(ctx, "list groups");
+  if (g) return g;
+  const groups = await listGroups(ctx.sql, ctx.workspaceId);
+  return json({
+    groups: groups.map((group) => ({
+      group_id: group.group_id,
+      members: group.members,
+      updated_at: group.updated_at,
+    })),
+  });
+}
 
 /**
  * PUT /api/groups/:id { members: ["user:alice", ...] }: replace a group's

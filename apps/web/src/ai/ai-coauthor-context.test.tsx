@@ -35,6 +35,8 @@ const provider = {
 
 let root: Root;
 let container: HTMLDivElement;
+/** A conversation is kept per document for the tab, so each test opens its own. */
+let docSeq = 0;
 let ctx: ReturnType<typeof useAiCoauthor>;
 
 function Probe() {
@@ -62,7 +64,7 @@ beforeEach(async () => {
   root = createRoot(container);
   await act(async () => {
     root.render(
-      <AiCoauthorProvider provider={provider} docId="d1" onRequestOpen={() => {}}>
+      <AiCoauthorProvider provider={provider} docId={`d${++docSeq}`} onRequestOpen={() => {}}>
         <Probe />
       </AiCoauthorProvider>,
     );
@@ -128,7 +130,7 @@ describe("Reject and revise", () => {
     await act(async () => ctx.stop());
     expect(cancelled).toBe(1);
     await endTurn({ notices: [{ code: "stopped", kept: "staged" }] });
-    expect(ctx.turns.at(-1)!.notice).toBe("Stopped. The changes it had already made are staged for review.");
+    expect(ctx.turns.at(-1)!.notice).toBe("Stopped. The changes it had already suggested are waiting for review.");
     expect(sent).toHaveLength(1);
     expect(ctx.revisionPaused).toBe(true);
 
@@ -172,5 +174,52 @@ describe("what the turn reports", () => {
     expect(ctx.turns.at(-1)!.notice).toBe(
       "Stopped after 1 round of work. Ask me to continue if there’s more to do. Couldn’t download https://e.test/x.png (HTTP 404), so its link was left as-is.",
     );
+  });
+});
+
+describe("the conversation outlives the page", () => {
+  async function remount(docId: string) {
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <AiCoauthorProvider provider={provider} docId={docId} onRequestOpen={() => {}}>
+          <Probe />
+        </AiCoauthorProvider>,
+      );
+    });
+  }
+
+  it("finds the chat again after leaving the document and coming back", async () => {
+    await remount("kept-1");
+    await act(async () => ctx.send("Tighten the intro."));
+    await endTurn({ hunk_ids: ["h1", "h2"] });
+    expect(ctx.turns.at(-1)).toMatchObject({ runId: "run_a", hunkIds: ["h1", "h2"] });
+
+    await remount("kept-other");
+    expect(ctx.turns).toEqual([]);
+    await remount("kept-1");
+    expect(ctx.turns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
+    expect(ctx.turns[0]!.text).toBe("Tighten the intro.");
+  });
+
+  it("says when the person left before the answer finished", async () => {
+    await remount("kept-2");
+    await act(async () => ctx.send("Tighten the intro."));
+    await remount("kept-2");
+    expect(ctx.turns.at(-1)).toMatchObject({
+      role: "assistant",
+      status: undefined,
+      notice: "You left before this answer finished. Anything it suggested is in the document.",
+    });
+  });
+
+  it("starts clean after New chat", async () => {
+    await remount("kept-3");
+    await act(async () => ctx.send("Tighten the intro."));
+    await endTurn();
+    await act(async () => ctx.newChat());
+    await remount("kept-3");
+    expect(ctx.turns).toEqual([]);
   });
 });

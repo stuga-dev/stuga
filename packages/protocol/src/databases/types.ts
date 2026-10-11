@@ -31,6 +31,23 @@ export type DatabaseColumnType = (typeof DATABASE_COLUMN_TYPES)[number];
 export interface ColumnOptions {
   /** single_select only: the allowed values. */
   choices?: string[];
+  /** number only: how the grid shows the values. Display only; the stored value is the plain number. */
+  format?: NumberFormat;
+}
+
+/**
+ * How a number column reads. A percent column shows 25 as "25%"; a currency
+ * column puts the currency's symbol beside the number. `decimals` fixes the
+ * digits after the decimal sign, and absent shows as many as the value has.
+ */
+export interface NumberFormat {
+  style: "number" | "currency" | "percent";
+  /** 0..DATABASE_NUMBER_MAX_DECIMALS. */
+  decimals?: number;
+  /** Group thousands ("1,234"). */
+  grouping?: boolean;
+  /** currency only: an ISO 4217 code such as "EUR". */
+  currency?: string;
 }
 
 export interface ColumnSpec {
@@ -179,6 +196,7 @@ export type DatabaseOpKind =
   | "columns.rename"
   | "columns.set_type"
   | "columns.set_description"
+  | "columns.set_format"
   | "columns.delete"
   | "rows.insert"
   | "rows.update"
@@ -205,6 +223,7 @@ export type DatabaseOpDetail =
   | { kind: "columns.rename"; table: string; column: string; to: string }
   | { kind: "columns.set_type"; table: string; column: string; type: DatabaseColumnType; coerced: number }
   | { kind: "columns.set_description"; table: string; column: string; cleared: boolean }
+  | { kind: "columns.set_format"; table: string; column: string; cleared: boolean }
   | { kind: "columns.delete"; table: string; column: string }
   | { kind: "rows.insert"; table: string; rows: number; imported: boolean }
   /** `columns`: the first few columns the update touched; `more_columns` when it touched others too. */
@@ -292,7 +311,11 @@ export interface DbRunOpRowsInsert {
 export interface DbRunOpRowsUpdate {
   kind: "rows.update";
   table_id: string;
-  updates: Array<{ _id: string; values: Record<string, RowValue> }>;
+  /**
+   * `expect` (a person's direct write only): the values the writer last saw, by column_id. A row
+   * whose cells hold something else by now is left as it is and reported in `conflicts`.
+   */
+  updates: Array<{ _id: string; values: Record<string, RowValue>; expect?: Record<string, RowValue> }>;
 }
 export interface DbRunOpRowsDelete {
   kind: "rows.delete";
@@ -434,6 +457,20 @@ export interface DatabaseImportTicket {
   import_page_url: string;
 }
 
+/** Where one of the file's columns would go, as a dry run reads the file. */
+export interface DatabaseImportHeader {
+  /** The header as the file writes it. */
+  header: string;
+  /** The table column it feeds (column_id); null when it is skipped, unmatched or a new column. */
+  column_id: string | null;
+  /** It becomes a new column (`new_columns`, `new_table`). */
+  new?: true;
+  /** The type a new column made from it gets: what all its values fit. */
+  new_type: DatabaseColumnType;
+  /** For an unmatched header: the column a typo away (column_id). */
+  suggestion?: string;
+}
+
 /** What a `dry_run` commit hands back: the verdict on the file, nothing written. */
 export interface DatabaseImportCheck {
   import_id: string;
@@ -447,6 +484,8 @@ export interface DatabaseImportCheck {
   /** Display names of the table columns the file's headers matched, in file order. */
   matched_columns: string[];
   ignored_columns: string[];
+  /** Each of the file's columns in file order, and where it goes. */
+  headers: DatabaseImportHeader[];
   notes: string[];
   guessed_date_order?: "mdy" | "dmy";
 }
@@ -470,6 +509,8 @@ export interface DatabaseImportResult {
   guessed_date_order?: "mdy" | "dmy";
   /** Replay of an already-committed import: nothing was loaded twice. */
   already_applied?: boolean;
+  /** The table the rows went to: a `new_table` import's new one. */
+  table_id?: string;
   run?: DatabaseRunSummary;
   pending?: number;
 }

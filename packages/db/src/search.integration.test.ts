@@ -209,6 +209,22 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
   const keyword = (query: string) =>
     searchDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query, queryEmbedding: null });
 
+  it("recalls a title one typo away from a long word, and nothing for a short or Chinese query", async () => {
+    await makeDoc("croissant", "Croissant recipe", "Laminate the dough three times.");
+    await makeDoc("c", "C", "Shopping list: butter, flour.");
+    await makeDoc("notes", "Team meeting notes 3 March", "The ovens arrive Monday.");
+    await makeDoc("zh", "会议记录 开店计划", "我们讨论了开店的计划。");
+    const ids = async (query: string) =>
+      (await searchDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query, queryEmbedding: null }))
+        .map((r) => r.doc_id);
+    expect(await ids("croisant")).toEqual(["croissant"]);
+    expect(await ids("煎饼")).toEqual([]);
+    expect(await ids("x")).toEqual([]);
+    expect(await ids("ab")).toEqual([]);
+    // A real one-character match still counts.
+    expect(await ids("会议")).toEqual(["zh"]);
+  });
+
   it("reads the last word as unfinished: a whole-word match first, then a title it begins, then a body word", async () => {
     await makeDoc("body", "Deadlines", "Send a notification within 72 hours.");
     await makeDoc("title", "Notifications", "Who to tell.");
@@ -346,7 +362,8 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
       { content: passage, embedding: vec(42) },
     ]);
     const res = await searchDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query: "zzqxq nomatch", queryEmbedding: vec(42) });
-    expect(res.find((r) => r.doc_id === "d")?.snippet).toBe(`\`\`\`\n${passage.slice(0, 200)}`);
+    // Cut back to the last whole word.
+    expect(res.find((r) => r.doc_id === "d")?.snippet).toBe(`\`\`\`\n${passage.slice(0, 200).replace(/\s\S*$/, "")}`);
   });
 
   it.each([
@@ -362,12 +379,24 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
     }
   });
 
-  it("leaves an excerpt that begins inside a code block's closing fence as the body has it", async () => {
+  it("drops what is left of a code block's closing fence an excerpt begins inside", async () => {
     // The excerpt keeps 60 characters before the word: from the fence's second backtick.
     const prose = `${"The herd crosses at dawn, and the".padEnd(56)}gazelle waits.`;
     await makeDoc("d", "Herd", `${codeBlock()}\n\n${prose}`);
     const [hit] = await keyword("gaze");
-    expect(hit?.snippet).toBe(`\`\`\n\n${prose.replace("gazelle", "⟦gazelle⟧")}`);
+    expect(hit?.snippet).toBe(`\n\n${prose.replace("gazelle", "⟦gazelle⟧")}`);
+  });
+
+  it("cuts an excerpt at whole words, never inside one", async () => {
+    const body = `Queue at 8am on Saturdays is much too long, says Anna B. Our prices went up. ${"Fresh bread every morning. ".repeat(12)}`;
+    await makeDoc("d", "Customer feedback", body);
+    const [hit] = await keyword("pric");
+    // 60 characters before "prices" fall inside "queue"; the excerpt starts at the next word and ends on a whole one.
+    expect(hit?.snippet).toMatch(/^at 8am on Saturdays is much too long, says Anna B\. Our ⟦prices⟧ went up\. /);
+    expect(hit?.snippet).toMatch(/(?:^|\s)(?:Fresh|bread|every|morning\.)$/);
+    const opening = (await searchDocs(sql, { embeddingDims: EMBEDDING_DIMS, maxDistance: 0.6, workspaceId: WS, principals: ALICE, query: "feedback", queryEmbedding: null }))[0];
+    // Matched by its title alone: the opening, cut back to a whole word.
+    expect(opening?.snippet).toBe(body.slice(0, 200).replace(/\s\S*$/, ""));
   });
 
   it("indexDoc replaces the chunk set on re-index (no stale chunks)", async () => {

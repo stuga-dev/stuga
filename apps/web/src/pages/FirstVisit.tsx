@@ -81,7 +81,7 @@ export function FirstVisit() {
 
   if (!info || !ticket) {
     return (
-      <Center axis="both" className="auth-page">
+      <Center axis="horizontal" className="auth-page">
         <Spinner label={t("auth.signingIn")} />
       </Center>
     );
@@ -189,7 +189,7 @@ function Choices({ ticket, info }: { ticket: string; info: FirstVisitTicket }) {
   }
 
   return (
-    <Center axis="both" className="auth-page">
+    <Center axis="horizontal" className="auth-page">
       <Card width="100%" maxWidth={480} padding={8} elevation="med">
         <VStack gap={5}>
           <HStack gap={2} vAlign="center">

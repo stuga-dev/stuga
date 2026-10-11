@@ -17,6 +17,8 @@ export interface CsvTable {
   columns: ArchiveColumn[];
   /** Cells as stored: a checkbox is 0 or 1, a files cell its files' source paths, one per line. */
   rows: ArchiveRow[];
+  /** The text columns whose cells list several values, as a multi-select writes them. */
+  lists: string[];
 }
 
 /** A time after a date, which a date column does not keep: `September 27, 2026 3:00 PM (GMT+8)`. */
@@ -43,12 +45,23 @@ function clipCell(text: string): string {
   return new TextDecoder().decode(bytes.slice(0, DATABASE_MAX_CELL_BYTES)).replace(/�$/, "");
 }
 
+/** A list of short values, as a multi-select or a list of people writes them: `launch, bakery`. */
+const LIST_ITEM_MAX = 40;
+function isList(values: string[]): boolean {
+  const items = values.map((v) => v.split(/,\s*/));
+  return items.some((parts) => parts.length > 1) && items.every((parts) => parts.every((part) => part.trim() !== "" && part.length <= LIST_ITEM_MAX));
+}
+
 /**
  * The type every one of `values` fits, and each value as that type stores it; `text` when no other
  * fits them all. A select needs a value that repeats, so a column of names stays text, and one
- * without commas.
+ * without commas, unless every value is one of a set in `choiceSets`, which it then offers whole.
  */
-function typed(values: Array<string | null>, textOnly: boolean): { column: Omit<ArchiveColumn, "name">; cells: RowValue[] } {
+function typed(
+  values: Array<string | null>,
+  textOnly: boolean,
+  choiceSets: readonly (readonly string[])[],
+): { column: Omit<ArchiveColumn, "name">; cells: RowValue[] } {
   const present = values.filter((v): v is string => v !== null);
   const all = <T>(parse: (v: string) => T | null): T[] | null => {
     const out: T[] = [];
@@ -75,6 +88,8 @@ function typed(values: Array<string | null>, textOnly: boolean): { column: Omit<
       return day !== null && archiveCellValue({ name: "", type: "date" }, day).ok ? day : null;
     };
     if (all(date)) return { column: { type: "date" }, cells: cellsFrom((v) => date(v)!) };
+    const known = choiceSets.find((set) => present.every((v) => set.includes(v)));
+    if (known) return { column: { type: "single_select", choices: [...known] }, cells: cellsFrom((v) => v) };
     const choices = [...new Set(present)];
     // A comma lists several values, as a multi-select or a list of people writes them.
     const selectable = present.every((v) => v.length <= DATABASE_MAX_DISPLAY_LENGTH && !/[\n,]/.test(v));
@@ -87,8 +102,9 @@ function typed(values: Array<string | null>, textOnly: boolean): { column: Omit<
 
 /**
  * The table `records` hold: the first record names the columns, and each other is a row, keyed
- * by `keyOf` its index among the rows. `textColumns` are kept as text whatever they hold, and
- * `filesColumns` are files columns, each row's files by their source paths. Past
+ * by `keyOf` its index among the rows. `textColumns` are kept as text whatever they hold,
+ * `filesColumns` are files columns, each row's files by their source paths, and a column whose
+ * every value is in one of `choiceSets` is a select offering that set. Past
  * DATABASE_MAX_COLUMNS columns and DATABASE_MAX_ROWS rows, the rest is left out.
  */
 export function csvTable(
@@ -96,6 +112,7 @@ export function csvTable(
   keyOf: (index: number) => string,
   textColumns: ReadonlySet<number> = new Set(),
   filesColumns: ReadonlyMap<number, string[][]> = new Map(),
+  choiceSets: readonly (readonly string[])[] = [],
 ): CsvTable {
   const [header = [], ...body] = records;
   const rows = body.slice(0, DATABASE_MAX_ROWS);
@@ -103,17 +120,21 @@ export function csvTable(
   const taken = new Set<string>();
   const columns: ArchiveColumn[] = [];
   const cells: RowValue[][] = [];
+  const lists: string[] = [];
   for (let c = 0; c < width; c++) {
     const files = filesColumns.get(c);
     const values = rows.map((r) => (r[c] ?? "").trim() || null);
     const { column, cells: parsed } = files
       ? { column: { type: "files" as const }, cells: rows.map((_, r) => (files[r]?.length ? files[r]!.join("\n") : null)) }
-      : typed(values, textColumns.has(c));
-    columns.push({ name: columnName(header[c] ?? "", c, taken), ...column });
+      : typed(values, textColumns.has(c), choiceSets);
+    const name = columnName(header[c] ?? "", c, taken);
+    columns.push({ name, ...column });
     cells.push(parsed);
+    if (column.type === "text" && !textColumns.has(c) && isList(values.filter((v): v is string => v !== null))) lists.push(name);
   }
   return {
     columns,
+    lists,
     rows: rows.map((_, r) => {
       const values: Record<string, RowValue> = Object.create(null);
       columns.forEach((column, c) => {
@@ -123,4 +144,9 @@ export function csvTable(
       return { key: keyOf(r), values };
     }),
   };
+}
+
+/** The type a new column made from these values would get, as `csvTable` types a column: what all of them fit. */
+export function guessColumn(values: Array<string | null>): Omit<ArchiveColumn, "name"> {
+  return typed(values, false, []).column;
 }

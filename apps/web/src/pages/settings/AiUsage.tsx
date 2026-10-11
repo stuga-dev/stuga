@@ -1,16 +1,16 @@
-/** This month's AI use in the workspace: raw token counts, no cost, since the node spends its operator's own key. */
+/** This month's AI use in the workspace: token counts, no cost, since the node spends its operator's own key. */
 import { useEffect, useState } from "react";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { Heading, Text } from "@astryxdesign/core/Text";
-import { HStack } from "@astryxdesign/core/HStack";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { Table, proportional, pixel } from "@astryxdesign/core/Table";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Gauge } from "lucide-react";
 import { LoadFailed } from "../../ui/LoadFailed";
 import { PageColumn } from "../../ui/PageColumn";
+import { SettingsTitle } from "./SettingsTitle";
 import { fmtInt, monthYear } from "../../lib/format";
-import { Usage, type UsageByModel, type UsageByPrincipal, type UsageReport } from "../../api";
+import { Usage, tokensRead, type UsageByModel, type UsageByPrincipal, type UsageReport } from "../../api";
 import { resolveNames, useNamesVersion } from "../../state/identity";
 import { ActorName } from "../../ui/ActorName";
 import type { ApiError } from "../../lib/http/client";
@@ -33,8 +33,8 @@ function purposeLabel(kind: string): string {
 function countColumns() {
   return {
     calls: { key: "calls", header: t("settings.usage.calls"), align: "end" as const, width: pixel(90) },
-    read: { key: "input_tokens", header: t("settings.usage.tokensRead"), align: "end" as const, width: pixel(120) },
-    written: { key: "output_tokens", header: t("settings.usage.tokensWritten"), align: "end" as const, width: pixel(130) },
+    read: { key: "input_tokens", header: t("settings.usage.tokensRead"), align: "end" as const, width: pixel(180) },
+    written: { key: "output_tokens", header: t("settings.usage.tokensWritten"), align: "end" as const, width: pixel(195) },
   };
 }
 
@@ -108,7 +108,7 @@ export function AiUsage() {
     },
     { key: "model", header: t("settings.usage.model"), width: proportional(1), renderCell: (r: UsageByModel) => r.model },
     { ...CALLS, renderCell: (r: UsageByModel) => fmtInt(r.calls) },
-    { ...READ, renderCell: (r: UsageByModel) => fmtInt(r.input_tokens) },
+    { ...READ, renderCell: (r: UsageByModel) => fmtInt(tokensRead(r)) },
     { ...WRITTEN, renderCell: (r: UsageByModel) => fmtInt(r.output_tokens) },
   ];
   const byPerson = [
@@ -120,7 +120,7 @@ export function AiUsage() {
     },
     { key: "model", header: t("settings.usage.model"), width: proportional(1), renderCell: (r: UsageByPrincipal) => r.model },
     { ...CALLS, renderCell: (r: UsageByPrincipal) => fmtInt(r.calls) },
-    { ...READ, renderCell: (r: UsageByPrincipal) => fmtInt(r.input_tokens) },
+    { ...READ, renderCell: (r: UsageByPrincipal) => fmtInt(tokensRead(r)) },
     { ...WRITTEN, renderCell: (r: UsageByPrincipal) => fmtInt(r.output_tokens) },
   ];
 
@@ -128,11 +128,11 @@ export function AiUsage() {
     <PageColumn width={920}>
       <VStack gap={6}>
         <VStack gap={3}>
-          <HStack justify="between" vAlign="center">
-            <Heading level={2}>{t("settings.usage.heading")}</Heading>
-            {/* A calendar month, not a rolling window. */}
-            <Text type="supporting">{monthYear(usage.period.since)}</Text>
-          </HStack>
+          {/* A calendar month, not a rolling window. */}
+          <SettingsTitle endContent={<Text type="supporting">{monthYear(usage.period.since)}</Text>}>{t("settings.usage.heading")}</SettingsTitle>
+          <Text type="supporting" color="secondary">
+            {t("settings.usage.tokensNote")}
+          </Text>
           {usage.by_model.length === 0 ? (
             <Text type="supporting" color="secondary">
               {t("settings.usage.none", { month: monthYear(usage.period.since) })}

@@ -23,6 +23,12 @@ export function byteSize(bytes: number): string {
   }).format(n);
 }
 
+/** "12.4 MB": a file's size with a tenth of a megabyte, so a file just past a limit does not read as the limit. */
+export function fileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return byteSize(bytes);
+  return new Intl.NumberFormat(formatLocale(), { style: "unit", unit: "megabyte", unitDisplay: "short", maximumFractionDigits: 1 }).format(bytes / 1024 ** 2);
+}
+
 /** "5m ago" in English, and each language's own short form. */
 function ago(n: number, unit: Intl.RelativeTimeFormatUnit): string {
   return new Intl.RelativeTimeFormat(formatLocale(), { style: uiLanguage() === "en" ? "narrow" : "short" }).format(-n, unit);

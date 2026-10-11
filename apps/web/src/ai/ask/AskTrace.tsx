@@ -7,13 +7,17 @@ import { Code } from "@astryxdesign/core/Code";
 import type { AskStep } from "@stuga/protocol/api/ask";
 import { Database, FileText, List, Search } from "lucide-react";
 import { t } from "../../i18n/i18n";
+import { listOf } from "../../lib/format";
 
 function stepLine(s: AskStep): { icon: React.ReactNode; text: string } {
   if (s.kind === "search") {
-    return {
-      icon: <Search size={13} aria-hidden />,
-      text: t("ai.trace.searched", { query: s.query, hits: s.hits }),
-    };
+    // A step stored before titles were recorded has only the count.
+    const text = !s.titles
+      ? t("ai.trace.searched", { query: s.query, hits: s.hits })
+      : s.titles.length
+        ? t("ai.trace.searchedFound", { query: s.query, titles: listOf(s.titles.map((x) => x || t("common.untitled"))) })
+        : t("ai.trace.searchedNothing", { query: s.query });
+    return { icon: <Search size={13} aria-hidden />, text };
   }
   if (s.kind === "read") {
     return {

@@ -248,7 +248,7 @@ export async function handleRunRevert(db: Database, req: Request): Promise<Respo
   markRunReverted(db.sql, run.run_id, Date.now());
   const fresh = getRun(db.sql, run.run_id)!;
   await db.sendRunUpdated(fresh);
-  db.sockets.broadcastChanged(null, "revert");
+  db.changed(null, "revert");
   db.publishRun(fresh, {
     type: "run.reverted",
     actor: `user:${requestedBy}`,
@@ -298,7 +298,7 @@ export async function handleOpsRevert(db: Database, req: Request): Promise<Respo
   if (op.reverted_by !== null) throw new OpError(409, "already_reverted", "this op was already reverted");
   if (!isRevertible(op)) throw new OpError(409, "not_revertible", "this op has no recorded inverse");
   const outcome = await revertOp(db, op, actor, keep);
-  db.sockets.broadcastChanged(op.table_id, "revert");
+  db.changed(op.table_id, "revert");
   return Response.json({ reverted: true, ...outcome });
 }
 

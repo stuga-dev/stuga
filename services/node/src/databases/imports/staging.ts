@@ -9,16 +9,21 @@
 import type { DocRow } from "@stuga/db";
 import { RUN_FEEDBACK_REVISES_MAX } from "@stuga/protocol/domain/limits";
 import type { AgentFeedback } from "@stuga/protocol/domain/runs";
+import { validateCellValue } from "@stuga/protocol/databases/cells";
+import { sanitizeIdentifier } from "@stuga/protocol/databases/identifiers";
 import {
   DATABASE_IMPORT_INLINE_MAX_CHARS,
   DATABASE_IMPORT_MAX_BYTES,
   DATABASE_IMPORT_MAX_ERRORS,
+  DATABASE_MAX_COLUMNS,
+  DATABASE_MAX_DISPLAY_LENGTH,
 } from "@stuga/protocol/databases/limits";
 import {
   type ColumnSpec,
   DATABASE_IMPORT_FORMATS,
   type DatabaseImportCheck,
   type DatabaseImportFormat,
+  type DatabaseImportHeader,
   type DatabaseImportResult,
   type DatabaseImportTicket,
   type DatabaseRunSource,
@@ -31,15 +36,21 @@ import { resolveReviewMode } from "../../authz/review-mode.js";
 import { actorRefusalStatus, afterDatabaseMutation, callDatabaseActor, findTable, projectedSchema } from "../gate.js";
 import {
   type DateOrder,
+  type HeaderMapping,
+  type ImportTable,
+  coerceCell,
   csvToTable,
   importExpiry,
+  inferDateOrder,
   jsonlToTable,
   mapHeaders,
+  nearest,
   newImportId,
   signUpload,
   validateImportRows,
   verifyUpload,
 } from "./format.js";
+import { guessColumn } from "../../archive/convert/table.js";
 import { proposeDatabaseOp } from "../propose.js";
 import type { NodeEnv } from "../../env.js";
 import { arrivalOf } from "../../http/arrival.js";
@@ -60,6 +71,7 @@ interface ImportDone {
   rows_total: number;
   rows_ingested: number;
   rows_skipped: number;
+  table_id?: string;
   run_id?: string;
 }
 
@@ -108,6 +120,10 @@ interface CommitImportOptions {
   dryRun?: boolean;
   /** Feedback ids the import answers. */
   revises?: string[];
+  /** File headers that become new columns of the table, typed by their values. People only. */
+  newColumns?: string[];
+  /** Land the file in a new table of this name, every header not mapped to null a new column. People only. */
+  newTable?: string;
 }
 
 /** Shape-check a commit body; every field is optional. */
@@ -135,6 +151,16 @@ export function parseCommitOptions(b: Record<string, unknown>): CommitImportOpti
     return { error: "revises must be a list of feedback ids" };
   }
   const revises = Array.isArray(b.revises) ? (b.revises as string[]).slice(0, RUN_FEEDBACK_REVISES_MAX) : [];
+  if (
+    b.new_columns !== undefined &&
+    (!Array.isArray(b.new_columns) || b.new_columns.length > DATABASE_MAX_COLUMNS || b.new_columns.some((h) => typeof h !== "string"))
+  ) {
+    return { error: `new_columns must be a list of at most ${DATABASE_MAX_COLUMNS} file headers` };
+  }
+  const newColumns = (b.new_columns as string[] | undefined) ?? [];
+  if (b.new_table !== undefined && (typeof b.new_table !== "string" || b.new_table.trim() === "" || b.new_table.trim().length > DATABASE_MAX_DISPLAY_LENGTH)) {
+    return { error: `new_table must be a table name of 1 to ${DATABASE_MAX_DISPLAY_LENGTH} characters` };
+  }
   return {
     columnMap,
     onError,
@@ -142,6 +168,8 @@ export function parseCommitOptions(b: Record<string, unknown>): CommitImportOpti
     ...(dateOrder ? { dateOrder } : {}),
     ...(b.dry_run === true ? { dryRun: true } : {}),
     ...(revises.length > 0 ? { revises } : {}),
+    ...(newColumns.length > 0 ? { newColumns } : {}),
+    ...(typeof b.new_table === "string" ? { newTable: b.new_table.trim() } : {}),
   };
 }
 
@@ -291,7 +319,11 @@ export async function commitDatabaseImport(
   const text = await blob.text();
   const parsed = meta.format === "jsonl" ? jsonlToTable(text) : csvToTable(text);
   if (parsed.headers.length === 0) return refuse(400, "the file has no header row");
-  const mapping = mapHeaders(parsed.headers, table.columns as ColumnSpec[], opts.columnMap);
+  if (ctx.isAgent && (opts.newColumns || opts.newTable !== undefined)) {
+    return refuse(403, "agents cannot add tables or columns through an import — propose them first (create_table, add_column), then import into them");
+  }
+  const plan = planImport(parsed, opts.newTable !== undefined ? [] : (table.columns as ColumnSpec[]), opts);
+  const mapping = plan.mapping;
   const failure = (message: string, extra: Record<string, unknown>) => ({
     status: 422,
     body: { error: "import_validation_failed", message, import_id: importId, ignored_columns: mapping.ignored, ...extra },
@@ -305,13 +337,14 @@ export async function commitDatabaseImport(
     const check: DatabaseImportCheck = {
       import_id: importId,
       dry_run: true,
-      rows_total: parsed.rows.length,
+      rows_total: validated ? validated.rows_total : parsed.rows.length,
       rows_ready: validated ? validated.rows.length : 0,
       rows_failed: validated ? validated.rows_failed : parsed.rows.length,
       errors: errors.slice(0, DATABASE_IMPORT_MAX_ERRORS),
       errors_truncated: (validated?.errors_truncated ?? false) || errors.length > DATABASE_IMPORT_MAX_ERRORS,
-      matched_columns: mapping.targets.flatMap((t) => (t ? [t.display] : [])),
+      matched_columns: mapping.targets.flatMap((t) => (t && !plan.created.includes(t) ? [t.display] : [])),
       ignored_columns: mapping.ignored,
+      headers: plan.headers,
       notes: validated?.notes ?? [],
       ...(validated?.guessedDateOrder ? { guessed_date_order: validated.guessedDateOrder } : {}),
     };
@@ -344,22 +377,32 @@ export async function commitDatabaseImport(
   }
   if (validated.rows.length === 0) return refuse(400, "the file has no data rows");
 
-  const rows: Array<Record<string, RowValue>> = validated.rows;
+  // The new table or columns are made only now, once the file validated, so a refused import leaves none behind.
+  const made = await createPlannedColumns(ctx, doc, table, plan.created, opts.newTable);
+  if (!made.ok) return refuse(made.status, made.message);
+  const target = made.table;
+  const rows: Array<Record<string, RowValue>> = validated.rows.map((row) =>
+    Object.fromEntries(Object.entries(row).map(([columnId, value]) => [made.ids.get(columnId) ?? columnId, value])),
+  );
   let mode: "proposed" | "applied";
   let run: DatabaseRunSummary | undefined;
   let pending: number | undefined;
   // An agent's answer carries its open feedback here and the ids this import answered, as any proposal's does.
   let feedback: { feedback?: AgentFeedback[]; revised?: string[] } = {};
   if (ctx.isAgent) {
-    const outcome = await proposeDatabaseOp(ctx, doc, { kind: "rows.insert", table: table.table_id, rows, import: true }, source, { revises: opts.revises });
+    const outcome = await proposeDatabaseOp(ctx, doc, { kind: "rows.insert", table: target.table_id, rows, import: true }, source, { revises: opts.revises });
     if (outcome.kind === "error") return refuse(outcome.status, outcome.message);
     mode = outcome.kind;
     run = outcome.run;
     if (outcome.kind === "proposed") pending = outcome.pending;
     feedback = { ...(outcome.feedback ? { feedback: outcome.feedback } : {}), ...(outcome.revised ? { revised: outcome.revised } : {}) };
   } else {
-    const inserted = await insertImportedRows(ctx, doc, table, rows);
-    if (!inserted.ok) return refuse(inserted.status, inserted.message);
+    const inserted = await insertImportedRows(ctx, doc, target, rows);
+    if (!inserted.ok) {
+      // A table made for this file alone goes again; columns added to a table stay, empty.
+      if (opts.newTable !== undefined) await callDatabaseActor(ctx, doc.doc_id, "tables/delete", { table_id: target.table_id }).catch(() => null);
+      return refuse(inserted.status, inserted.message);
+    }
     mode = "applied";
   }
 
@@ -369,6 +412,7 @@ export async function commitDatabaseImport(
     rows_total: validated.rows_total,
     rows_ingested: rows.length,
     rows_skipped: validated.rows_failed,
+    table_id: target.table_id,
     ...(run ? { run_id: run.id } : {}),
   };
   await env.snapshots.delete([importKey(doc.doc_id, importId, "body"), importKey(doc.doc_id, importId, "meta")]).catch(() => {});
@@ -383,12 +427,129 @@ export async function commitDatabaseImport(
     errors_truncated: validated.errors_truncated,
     ignored_columns: mapping.ignored,
     notes: validated.notes,
+    table_id: target.table_id,
     ...(validated.guessedDateOrder ? { guessed_date_order: validated.guessedDateOrder } : {}),
     ...(run ? { run } : {}),
     ...(pending !== undefined ? { pending } : {}),
     ...feedback,
   };
   return { status: 200, body: result as unknown as Record<string, unknown> };
+}
+
+/** The type a new column made from one of the file's columns gets, checked against every value so the import cannot refuse its own guess. */
+function newColumnType(values: Array<string | null>): Pick<ColumnSpec, "type" | "options"> {
+  const guess = guessColumn(values);
+  if (guess.type === "text") return { type: "text", options: null };
+  const options = guess.choices ? { choices: guess.choices } : null;
+  const { order } = inferDateOrder(values, "mdy");
+  const fits = values.every((v) => {
+    if (v === null) return true;
+    const cell = coerceCell(guess.type, v, guess.choices, order);
+    return !(typeof cell === "object" && cell !== null) && validateCellValue(guess.type, options, cell).ok;
+  });
+  return fits ? { type: guess.type, options } : { type: "text", options: null };
+}
+
+/** A new column's name: the header on one line, not taken by another column ignoring case. */
+function newColumnName(header: string, taken: Set<string>): string {
+  const base = header.replace(/\s+/g, " ").trim().slice(0, DATABASE_MAX_DISPLAY_LENGTH - 5).trim();
+  let name = base;
+  for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} (${n})`;
+  taken.add(name.toLowerCase());
+  return name;
+}
+
+interface ImportPlan {
+  mapping: HeaderMapping;
+  /** Stand-ins for the columns to create, keyed `new:<file column>` until they exist. */
+  created: ColumnSpec[];
+  headers: DatabaseImportHeader[];
+}
+
+/**
+ * Where each of the file's columns goes: `column_map` and matching as
+ * `mapHeaders` reads them, and the new columns `new_columns` or `new_table` ask
+ * for, typed by their values. Rows validate against the stand-ins exactly as
+ * against the columns they become.
+ */
+function planImport(parsed: ImportTable, columns: ColumnSpec[], opts: CommitImportOptions): ImportPlan {
+  const valuesOf = (j: number): Array<string | null> =>
+    parsed.rows.map((r) => {
+      const v = r[j];
+      if (v === undefined || v === null) return null;
+      const s = typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : JSON.stringify(v);
+      return s.trim() === "" ? null : s.trim();
+    });
+  const guesses = parsed.headers.map((_, j) => newColumnType(valuesOf(j)));
+  const wanted = new Set(
+    opts.newTable !== undefined
+      ? parsed.headers.filter((h) => h !== "" && !h.startsWith("_") && opts.columnMap[h] !== null)
+      : (opts.newColumns ?? []),
+  );
+  const taken = new Set(columns.map((c) => c.display.toLowerCase()));
+  const columnMap = { ...opts.columnMap };
+  const created: ColumnSpec[] = [];
+  parsed.headers.forEach((header, j) => {
+    // A header written twice becomes one column, from its first appearance.
+    if (!wanted.has(header) || columnMap[header]?.startsWith("new:")) return;
+    const display = newColumnName(header, taken);
+    if (display === "") return;
+    const spec: ColumnSpec = { column_id: `new:${j}`, name: sanitizeIdentifier(display), display, position: columns.length + created.length, ...guesses[j]! };
+    created.push(spec);
+    columnMap[header] = spec.column_id;
+  });
+  const mapping = mapHeaders(parsed.headers, [...columns, ...created], columnMap);
+  const displays = columns.map((c) => c.display);
+  const headers = parsed.headers.map((header, j): DatabaseImportHeader => {
+    const target = mapping.targets[j] ?? null;
+    const isNew = target !== null && created.includes(target);
+    const unmatched = target === null && mapping.errors.some((e) => e.row === 0 && e.code === "unknown_column" && e.column === header);
+    const near = unmatched ? nearest(header, displays) : null;
+    const suggestion = near === null ? undefined : columns.find((c) => c.display === near)?.column_id;
+    return {
+      header,
+      column_id: target && !isNew ? target.column_id : null,
+      ...(isNew ? { new: true as const } : {}),
+      new_type: guesses[j]!.type,
+      ...(suggestion ? { suggestion } : {}),
+    };
+  });
+  return { mapping, created, headers };
+}
+
+/** Make the planned table or columns; `ids` takes each stand-in to the column it became. */
+async function createPlannedColumns(
+  ctx: Ctx,
+  doc: DocRow,
+  table: TableSchema,
+  created: ColumnSpec[],
+  newTable: string | undefined,
+): Promise<{ ok: true; table: Pick<TableSchema, "table_id" | "display">; ids: Map<string, string> } | { ok: false; status: number; message: string }> {
+  const ids = new Map<string, string>();
+  const input = (c: ColumnSpec) => ({ display: c.display, type: c.type, ...(c.options?.choices ? { choices: c.options.choices } : {}) });
+  if (newTable !== undefined) {
+    const res = await callDatabaseActor(ctx, doc.doc_id, "tables/create", { display: newTable, columns: created.map(input) });
+    const body = (await res.json().catch(() => null)) as { table?: TableSchema; message?: string } | null;
+    if (!res.ok || !body?.table) return { ok: false, status: actorRefusalStatus(res), message: body?.message ?? "could not create the table" };
+    for (const c of created) {
+      const made = body.table.columns.find((x) => x.display === c.display);
+      if (made) ids.set(c.column_id, made.column_id);
+    }
+    await afterDatabaseMutation(ctx, doc, { kind: "table_created" });
+    return { ok: true, table: body.table, ids };
+  }
+  // Refused before the first add, so a file with too many new columns leaves none of them behind.
+  if (table.columns.length + created.length > DATABASE_MAX_COLUMNS) {
+    return { ok: false, status: 409, message: `table "${table.display}" already has ${table.columns.length} columns (max ${DATABASE_MAX_COLUMNS})` };
+  }
+  for (const c of created) {
+    const res = await callDatabaseActor(ctx, doc.doc_id, "columns/add", { table_id: table.table_id, ...input(c) });
+    const body = (await res.json().catch(() => null)) as { column?: ColumnSpec; message?: string } | null;
+    if (!res.ok || !body?.column) return { ok: false, status: actorRefusalStatus(res), message: body?.message ?? "could not add the column" };
+    ids.set(c.column_id, body.column.column_id);
+  }
+  if (created.length > 0) await afterDatabaseMutation(ctx, doc, { kind: "column_added" });
+  return { ok: true, table, ids };
 }
 
 /**

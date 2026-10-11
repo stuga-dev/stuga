@@ -73,6 +73,7 @@ export function NodeAudit() {
       renderCell: (e: AuditEvent) => (
         <ActorName
           alias={e.on_behalf_of ?? e.actor}
+          scope="node"
           title={e.on_behalf_of ? t("node.audit.actorFor", { actor: e.actor, principal: e.on_behalf_of }) : e.actor}
         />
       ),

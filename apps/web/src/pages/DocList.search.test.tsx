@@ -33,8 +33,10 @@ function result(doc_id: string, over: Partial<SearchResult> = {}): SearchResult 
     doc_type: "prose",
     snippet: `Read this first. Find out ⟦where⟧ things live in ${doc_id}.`,
     score: 1,
+    sem_score: 0,
     page_of: null,
     page_row: null,
+    updated_at: "2026-10-01T09:00:00.000Z",
     ...over,
   };
 }
@@ -111,6 +113,24 @@ describe("DocList search results count", () => {
     await render();
     expect(badge()).toBe("3");
     expect(showMoreButton()).toBeUndefined();
+  });
+});
+
+describe("DocList search results", () => {
+  it("names the tab after the search, and says when each result last changed", async () => {
+    docs.search.mockResolvedValue(answer(["d_1"]));
+    await render();
+    expect(document.title).toBe("Search results - Stuga");
+    expect(rows()[0]!.querySelector("time")?.getAttribute("datetime")).toBe("2026-10-01T09:00:00.000Z");
+  });
+
+  it("finds nothing: says recent edits may not show yet, and offers Ask", async () => {
+    docs.search.mockResolvedValue(answer([]));
+    await render();
+    expect(host.textContent).toContain("No documents match");
+    expect(host.textContent).toContain("Edits from the last minute may not show yet.");
+    await click([...host.querySelectorAll("button")].find((b) => b.textContent === "Ask your documents"));
+    expect(where()).toBe("/ask");
   });
 });
 

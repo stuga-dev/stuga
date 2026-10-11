@@ -1,6 +1,8 @@
 /** A workspace's name, its default document access and its export. Members see it read-only. */
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@astryxdesign/core/Button";
+import { Link } from "@astryxdesign/core/Link";
 import { Divider } from "@astryxdesign/core/Divider";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
@@ -9,20 +11,24 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../../ui/use-toast";
 import { DEFAULT_DOC_ACCESS, type DocAccessMode } from "@stuga/protocol/domain/workspaces";
-import { WORKSPACE_ACCESS_OPTIONS } from "../../shell/workspace-access";
+import { WORKSPACE_ACCESS_HELP, WORKSPACE_ACCESS_LABEL, WORKSPACE_ACCESS_OPTIONS } from "../../shell/workspace-access";
 import { useSettingsScope } from "./SettingsLayout";
 import { PageColumn } from "../../ui/PageColumn";
+import { SettingsTitle } from "./SettingsTitle";
 import { Workspaces } from "../../api";
 import { setActiveWorkspace } from "../../lib/session/workspace-pointer";
+import { leaveNotice } from "../../lib/session/notice";
 import { saveBlob } from "../../lib/download";
 import { errorMessage } from "../../lib/http/client";
 import { t } from "../../i18n/i18n";
+import { tRich } from "../../i18n/rich";
 
 export function WorkspaceGeneral() {
   const toast = useToast();
-  const { isReady, workspace, canManage, isOwner, reload } = useSettingsScope();
+  const nav = useNavigate();
+  const { isReady, workspace, canManage, isOwner, isNodeAdmin, reload } = useSettingsScope();
   const [name, setName] = useState("");
   const [defaultAccess, setDefaultAccess] = useState<DocAccessMode>(DEFAULT_DOC_ACCESS);
   const [busy, setBusy] = useState(false);
@@ -66,6 +72,7 @@ export function WorkspaceGeneral() {
     try {
       const { blob, filename } = await Workspaces.exportArchive(workspace.workspace_id);
       saveBlob(blob, filename);
+      toast({ body: t("settings.general.exported", { file: filename }), type: "info" });
     } catch (e) {
       toast({ body: errorMessage(e, t("settings.general.exportFailed")), type: "error" });
     } finally {
@@ -78,7 +85,8 @@ export function WorkspaceGeneral() {
     setBusy(true);
     try {
       await Workspaces.deleteWorkspace(workspace.workspace_id, deleteConfirm);
-      // The server resolves the caller's next workspace, or sends them to onboarding.
+      // The server resolves the caller's next workspace, or sends them to onboarding; the notice shows there.
+      leaveNotice(t("settings.general.deleted", { name: workspace.name }));
       setActiveWorkspace(null);
       window.location.assign("/");
     } catch (e) {
@@ -91,13 +99,12 @@ export function WorkspaceGeneral() {
     <PageColumn>
       <VStack gap={6}>
         <VStack gap={3}>
-          <Heading level={2}>{t("settings.general.heading")}</Heading>
+          <SettingsTitle>{t("settings.general.heading")}</SettingsTitle>
           <TextInput label={t("settings.general.name")} value={name} onChange={setName} isDisabled={!canManage} />
-          <VStack gap={0}>
-            <Text color="secondary">{t("settings.general.defaultAccess")}</Text>
+          <VStack gap={1}>
             <Selector
-              label={t("settings.general.defaultAccessLabel")}
-              isLabelHidden
+              label={WORKSPACE_ACCESS_LABEL}
+              description={WORKSPACE_ACCESS_HELP}
               value={defaultAccess}
               onChange={(v) => setDefaultAccess(v as DocAccessMode)}
               options={WORKSPACE_ACCESS_OPTIONS}
@@ -120,6 +127,12 @@ export function WorkspaceGeneral() {
             <VStack gap={3}>
               <Heading level={2}>{t("settings.general.exportHeading")}</Heading>
               <Text color="secondary">{t("settings.general.exportNote")}</Text>
+              {/* Backups are the node's, so only its administrators can open them. */}
+              {isNodeAdmin && (
+                <Text color="secondary">
+                  {tRich("settings.general.exportBackups", { link: (chunks) => <Link onClick={() => nav("/settings/node/backups")}>{chunks}</Link> })}
+                </Text>
+              )}
               <HStack justify="end">
                 <Button label={t("settings.general.exportButton")} onClick={exportWorkspace} isLoading={exporting} />
               </HStack>
@@ -129,19 +142,18 @@ export function WorkspaceGeneral() {
 
         {isOwner && (
           <>
-            <Divider />
-            <VStack gap={3}>
+            {/* Outlined in the error colour, so it reads as dangerous before anything is typed; the outline separates it. */}
+            <VStack gap={3} padding={4} className="settings-danger-zone">
               <Heading level={2}>{t("settings.general.dangerHeading")}</Heading>
               <Text color="secondary">{t("settings.general.dangerNote")}</Text>
               <HStack gap={2} vAlign="end">
                 <StackItem size="fill">
+                  {/* No placeholder: the name in grey read as already typed. The label says what to type. */}
                   <TextInput
-                    label={t("settings.general.name")}
-                    isLabelHidden
+                    label={t("settings.general.deleteConfirm", { name: workspace.name })}
                     width="100%"
                     value={deleteConfirm}
                     onChange={setDeleteConfirm}
-                    placeholder={workspace.name}
                   />
                 </StackItem>
                 <Button

@@ -12,7 +12,7 @@ import { RunChangesDialog } from "./RunChangesDialog";
 import { CatchUpBanner } from "./RunBanner";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Button } from "@astryxdesign/core/Button";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { errorMessage } from "../lib/http/client";
 import { t } from "../i18n/i18n";
 import { runAgentLabel } from "../state/identity";
@@ -45,6 +45,7 @@ export function AgentCatchUpCard({ docId, ydoc }: { docId: string; ydoc: Y.Doc |
       setReverting(null);
       // The open diff described changes that are no longer in the document.
       setViewing(null);
+      toast({ body: t("review.catchUp.reverted"), type: "info" });
     } catch (e) {
       setReverting(null);
       const { status, code } = e as ApiError;
@@ -96,7 +97,8 @@ export function AgentCatchUpCard({ docId, ydoc }: { docId: string; ydoc: Y.Doc |
           onClose={() => setViewing(null)}
           canRevert={!!viewingRun && !viewingRun.reverted}
           isReverting={busy}
-          onRevert={() => setReverting({ runId: viewing.runId, agent: viewing.agent })}
+          // The diff on screen is the confirmation: no second dialog over it.
+          onRevert={() => void doRevert(viewing.runId)}
         />
       )}
       <AlertDialog

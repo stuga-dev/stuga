@@ -6,10 +6,11 @@
  * caps, per-alias rate limits, read-only agent SQL, and a revertible ledger
  * entry for every mutation.
  */
+import { DATABASE_MAX_ROWS } from "@stuga/protocol/databases/limits";
 import { selectOnlyViolation } from "@stuga/protocol/databases/sql-guard";
 import type { DatabaseRunUpdatedPayload } from "@stuga/protocol/wire/db-socket";
 import { encodeJson } from "@stuga/protocol/wire/frame";
-import { Opcode } from "@stuga/protocol/wire/opcodes";
+import { CloseCode, Opcode } from "@stuga/protocol/wire/opcodes";
 import { SocketPair, upgradeResponse, type Actor, type ActorState } from "@stuga/runtime";
 import { Database } from "./database.js";
 import type { DatabaseActorEnv } from "./env.js";
@@ -18,9 +19,10 @@ import { handleRunPropose } from "./ledger/propose.js";
 import { feedbackFor, openRunOf, outstandingRunsFor, pendingCountOf } from "./ledger/runs.js";
 import { commitOp, opDef, type OpPayload } from "./ops/registry.js";
 import { SchemaView } from "./ops/schema-view.js";
-import { isInitialized, schemaInit } from "./ops/tables.js";
+import { followTitle, isInitialized, schemaInit, tablesRename, titleTable } from "./ops/tables.js";
 import { projectRows, projectSchema } from "./projection.js";
 import { listRowPage } from "./query/row-query.js";
+import { databaseSearchText } from "./query/search-text.js";
 import { runReadOnly } from "./query/sql-guard.js";
 import { OpError, errorResponse, parseActor, parseOpsKeep, readJson } from "./request.js";
 import { ensureSchema, getTable, readSchema, setMeta, takeDocLinks } from "./schema-ops.js";
@@ -42,16 +44,20 @@ export class DatabaseActor implements Actor<SessionMeta> {
       "POST /schema/init": (req) => this.init(req),
       "POST /tables/create": mutation("tables.create"),
       "POST /tables/rename": mutation("tables.rename"),
+      "POST /tables/follow-title": (req) => this.followTitle(req),
       "POST /tables/delete": mutation("tables.delete"),
       "POST /columns/add": mutation("columns.add"),
       "POST /columns/rename": mutation("columns.rename"),
       "POST /columns/set-type": mutation("columns.set_type"),
       "POST /columns/set-description": mutation("columns.set_description"),
+      "POST /columns/set-format": mutation("columns.set_format"),
       "POST /columns/delete": mutation("columns.delete"),
       "POST /views/create": mutation("views.create"),
       "POST /views/update": mutation("views.update"),
       "POST /views/delete": mutation("views.delete"),
       "POST /rows/list": (req) => this.listRows(req),
+      "POST /rows/export": (req) => this.exportRows(req),
+      "GET /search-text": () => Response.json({ text: databaseSearchText(this.db.storage) }),
       "POST /rows/insert": mutation("rows.insert"),
       "POST /rows/update": mutation("rows.update"),
       "POST /rows/delete": mutation("rows.delete"),
@@ -68,6 +74,7 @@ export class DatabaseActor implements Actor<SessionMeta> {
       "POST /runs/ack": (req) => handleRunAck(this.db, req),
       "POST /runs/revert": (req) => handleRunRevert(this.db, req),
       "POST /set-locked": (_req, url) => this.setLocked(url),
+      "POST /state-changed": () => this.stateChanged(),
       "POST /destroy": () => this.destroy(),
     };
   }
@@ -118,8 +125,31 @@ export class DatabaseActor implements Actor<SessionMeta> {
     this.db.throttle(actor, "mutation");
     const sql = this.db.sql;
     if (isInitialized(sql)) return Response.json({ initialized: false, schema: readSchema(sql, this.db.dbId) });
-    await commitOp(this.db, schemaInit, schemaInit.parse(body, SchemaView.live(sql)), { actor, keep });
+    const payload = schemaInit.parse(body, SchemaView.live(sql));
+    await commitOp(this.db, schemaInit, payload, { actor, keep });
+    if (body.follows_title === true) followTitle(sql, payload.table_id);
     return Response.json({ initialized: true, schema: readSchema(sql, this.db.dbId) });
+  }
+
+  /**
+   * The database was renamed: its first table takes the new name while it is
+   * the only table and nobody has named it, so the page never shows two names
+   * for one list. A rename like any other, in the ledger and revertible.
+   */
+  private async followTitle(req: Request): Promise<Response> {
+    const body = await readJson(req);
+    const actor = parseActor(body);
+    const keep = parseOpsKeep(body);
+    const sql = this.db.sql;
+    const table = titleTable(sql);
+    if (!table) return Response.json({ renamed: false });
+    const payload = tablesRename.parse({ table_id: table.table_id, display: body.display }, SchemaView.live(sql));
+    if (payload.display === table.display) return Response.json({ renamed: false });
+    this.db.throttle(actor, "mutation");
+    await commitOp(this.db, tablesRename, payload, { actor, keep });
+    // The rename names the table, which would stop it following; this one came from the database.
+    followTitle(sql, table.table_id);
+    return Response.json({ renamed: true });
   }
 
   /** An agent reads the schema with its own pending ops laid over it, and the rejections here it has not acted on. */
@@ -137,6 +167,14 @@ export class DatabaseActor implements Actor<SessionMeta> {
     const agentAlias = typeof body.agent_alias === "string" && body.agent_alias !== "" ? body.agent_alias : null;
     const projected = agentAlias ? await projectRows(this.db, meta.table_id, agentAlias, page, { offset }) : null;
     return Response.json(projected ? { ...page, ...projected } : page);
+  }
+
+  /** Every row a listing's shape selects, in its order, for a download: one read rather than a page at a time. */
+  private async exportRows(req: Request): Promise<Response> {
+    const body = await readJson(req);
+    const meta = getTable(this.db.sql, body.table_id);
+    const { page } = listRowPage(this.db.sql, meta, { ...body, limit: undefined, offset: undefined }, { maxLimit: DATABASE_MAX_ROWS });
+    return Response.json({ rows: page.rows, total: page.total });
   }
 
   /** The node's inbox of pages to trash or restore, read and cleared together. */
@@ -196,14 +234,29 @@ export class DatabaseActor implements Actor<SessionMeta> {
     return upgradeResponse(client);
   }
 
-  /** docs.locked, mirrored by the node so a proposal cannot land in a database just frozen. */
+  /** docs.locked, mirrored by the node so a proposal cannot land in a database just frozen. Open pages re-read it, unlocks included. */
   private setLocked(url: URL): Response {
     setMeta(this.db.sql, "locked", url.searchParams.get("locked") === "1" ? "1" : "0");
+    this.db.sockets.broadcastChanged(null, "state");
     return Response.json({ locked: this.db.locked() });
+  }
+
+  /** The database went into the trash or came back: open pages re-read it. The node refuses its data plane meanwhile. */
+  private stateChanged(): Response {
+    this.db.sockets.broadcastChanged(null, "state");
+    return new Response(null, { status: 204 });
   }
 
   /** Wipe the actor; the next request rebuilds an empty shell. A spill left behind is a harmless orphan. */
   private async destroy(): Promise<Response> {
+    // Open pages are told it is gone, and do not reconnect to the empty shell.
+    for (const ws of this.db.state.getWebSockets()) {
+      try {
+        ws.close(CloseCode.DOC_DELETED, "database deleted");
+      } catch {
+        /* already closing */
+      }
+    }
     await this.db.storage.deleteAll();
     this.schemaReady = false;
     this.db.rate.clear();

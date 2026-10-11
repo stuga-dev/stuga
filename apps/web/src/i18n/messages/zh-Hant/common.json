@@ -1,8 +1,10 @@
 {
   "cancel": "取消",
+  "back": "返回",
   "save": "儲存",
   "close": "關閉",
   "done": "完成",
+  "advanced": "進階",
   "retry": "重試",
   "loading": "載入中…",
   "remove": "移除",
@@ -39,5 +41,6 @@
   "notifications": "通知",
   "actionsFor": "{name} 的操作",
   "tooLong": "太長：{count, number} 個字元，上限為 {limit, number}。",
-  "savedLive": "已儲存——立即生效，無須重新啟動。"
+  "savedLive": "已儲存——立即生效，無須重新啟動。",
+  "foundByMeaning": "依意義找到"
 }

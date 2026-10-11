@@ -79,11 +79,13 @@ describe("Revoke everything for someone", () => {
     await settle();
     expect(nodeApi.revokeEverythingFor).toHaveBeenCalledWith("u_bo", undefined);
     expect(host.textContent).toContain("Password link for Bo");
-    expect(host.textContent).toContain("http://livs-air.local:8787/reset/abc");
+    // In a read-only field beside a Copy button, so it can be copied whole.
+    expect([...host.querySelectorAll("input")].map((i) => i.value)).toContain("http://livs-air.local:8787/reset/abc");
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Copy")).toBe(true);
     expect(host.textContent).not.toContain("Opens only on");
   });
 
-  it("asks who the link is for while remote access is on, says a local one opens only on this network, and sends the choice", async () => {
+  it("asks who the link is for while remote access is on, says a local one opens on this network, and sends the choice", async () => {
     linkAddresses.mockResolvedValue({ remote: true, local: "network", default: "local" });
     nodeApi.mintPasswordReset.mockResolvedValue({ url: "http://livs-air.local:8787/reset/def", alias: "u_bo", username: "bo", expires_at: "2026-10-01T00:00:00Z" });
     const { host, root } = mountInto();
@@ -103,7 +105,7 @@ describe("Revoke everything for someone", () => {
     await act(async () => create().dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await settle();
     expect(nodeApi.mintPasswordReset).toHaveBeenCalledWith("bo", "local");
-    expect(host.textContent).toContain("Opens only on this network.");
+    expect(host.textContent).toContain("Opens on any device on this network.");
   });
 
   it("calls the node's own side this computer when that is all it reaches", async () => {

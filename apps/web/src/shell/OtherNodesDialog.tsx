@@ -15,7 +15,7 @@ import { Divider } from "@astryxdesign/core/Divider";
 import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Text } from "@astryxdesign/core/Text";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { X } from "lucide-react";
 import { MAX_NODE_LABEL_CHARS, MAX_OTHER_NODES } from "@stuga/protocol/api/other-nodes";
 import { OtherNodes, type OtherNode } from "../api";

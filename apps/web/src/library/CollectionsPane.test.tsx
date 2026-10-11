@@ -61,6 +61,12 @@ beforeEach(async () => {
 });
 
 describe("CollectionsPane", () => {
+  it("offers no New collection to a guest, who cannot make one", async () => {
+    collections.list.mockResolvedValue({ collections: [] });
+    await act(async () => root.render(<CollectionsPane selectedId={null} onSelect={onSelect} canCreate={false} />));
+    expect(button("New collection")).toBeUndefined();
+  });
+
   it("shows the refusal when a collection cannot be created, and selects nothing", async () => {
     collections.create.mockRejectedValue(new Error("A collection with that name exists"));
     await click("New collection");

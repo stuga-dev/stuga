@@ -7,7 +7,7 @@ vi.mock("@stuga/db", () => ({
   insertWorkspaceInvite: vi.fn(async () => {}),
   listWorkspaceInvites: vi.fn(async () => []),
   redeemWorkspaceInvite: vi.fn(),
-  revokeWorkspaceInvite: vi.fn(async () => true),
+  revokeWorkspaceInvite: vi.fn(async () => ({ role: "member", token_hint: "Ab12", note: null })),
 }));
 
 const db = await import("@stuga/db");
@@ -60,7 +60,7 @@ function audited(action: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockRole.mockResolvedValue("owner");
-  mockRevoke.mockResolvedValue(true);
+  mockRevoke.mockResolvedValue({ role: "member", token_hint: "Ab12", note: null });
 });
 
 describe("POST /api/workspaces/:id/invites", () => {
@@ -93,9 +93,22 @@ describe("POST /api/workspaces/:id/invites", () => {
       source: "web",
       targetKind: "invite",
       targetId: sha256Hex(body.token).slice(0, 12),
-      detail: { role: "member", max_uses: 1, expires_at: body.expires_at },
+      targetLabel: null,
+      detail: { role: "member", hint: body.token.slice(-4), max_uses: 1, expires_at: body.expires_at },
     });
     expect(JSON.stringify(row)).not.toContain(body.token);
+  });
+
+  it("keeps who a link is for, trimmed, and names the ledger row by it", async () => {
+    const res = await create({ role: "guest", note: "  Sofia  " });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { note: string }).note).toBe("Sofia");
+    expect(mockInsert.mock.calls[0]![1]).toMatchObject({ note: "Sofia" });
+    expect(audited("invite.create")[0]).toMatchObject({ targetLabel: "Sofia" });
+
+    expect((await create({ role: "guest", note: "   " })).status).toBe(201);
+    expect(mockInsert.mock.calls[1]![1]).toMatchObject({ note: null });
+    expect((await create({ role: "guest", note: 7 })).status).toBe(400);
   });
 
   it("omitting both limits mints what the dialog offers: one person, seven days", async () => {
@@ -188,15 +201,21 @@ describe("revoking and redeeming", () => {
     };
     expect((await call()).status).toBe(200);
     expect(audited("invite.revoke")).toEqual([
-      expect.objectContaining({ workspaceId: "ws1", targetKind: "invite", targetId: hash.slice(0, 12) }),
+      expect.objectContaining({
+        workspaceId: "ws1",
+        targetKind: "invite",
+        targetId: hash.slice(0, 12),
+        targetLabel: null,
+        detail: { role: "member", hint: "Ab12" },
+      }),
     ]);
-    mockRevoke.mockResolvedValue(false);
+    mockRevoke.mockResolvedValue(null);
     expect((await call()).status).toBe(404);
     expect(audited("invite.revoke")).toHaveLength(1);
   });
 
   it("records a join in the workspace the link belongs to, with the role it kept", async () => {
-    mockRedeem.mockResolvedValue({ ok: true, workspaceId: "ws9", role: "guest" });
+    mockRedeem.mockResolvedValue({ ok: true, workspaceId: "ws9", role: "guest", invite: { role: "member", token_hint: "Zz9_", note: "Gus" } });
     const req = new Request("http://node.test:8787/api/invites/redeem", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -211,7 +230,8 @@ describe("revoking and redeeming", () => {
         actor: "u_owner",
         targetKind: "invite",
         targetId: sha256Hex("inv_xyz").slice(0, 12),
-        detail: { role: "guest" },
+        targetLabel: "Gus",
+        detail: { role: "guest", hint: "Zz9_" },
       }),
     ]);
   });

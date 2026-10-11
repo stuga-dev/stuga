@@ -6,6 +6,7 @@ import { sha256Hex } from "@stuga/auth";
 import {
   getMemberRole,
   insertWorkspaceInvite,
+  type InviteLabel,
   listWorkspaceInvites,
   redeemWorkspaceInvite,
   revokeWorkspaceInvite,
@@ -25,10 +26,28 @@ function inviteRef(tokenHash: string): string {
   return tokenHash.slice(0, 12);
 }
 
-/** The ledger row for someone joining through a link; registration redeems links too and writes the same row. */
-export function inviteRedeemedAudit(tokenHash: string, role: string): AuditInput {
-  return { action: "invite.redeem", targetKind: "invite", targetId: inviteRef(tokenHash), detail: { role } };
+/**
+ * A link's ledger target and detail: who it is for, when its maker said, else what it admits as
+ * and its last characters, which the reader composes in their own language.
+ */
+function inviteTarget(tokenHash: string, invite: InviteLabel | undefined): Pick<AuditInput, "targetKind" | "targetId" | "targetLabel"> & { detail: Record<string, unknown> } {
+  return {
+    targetKind: "invite",
+    targetId: inviteRef(tokenHash),
+    targetLabel: invite?.note ?? null,
+    detail: invite ? { role: invite.role, hint: invite.token_hint } : {},
+  };
 }
+
+/** The ledger row for someone joining through a link; registration redeems links too and writes the same row. */
+export function inviteRedeemedAudit(tokenHash: string, role: string, invite?: InviteLabel): AuditInput {
+  const target = inviteTarget(tokenHash, invite);
+  // `role` is the one the person holds now: an existing member keeps theirs.
+  return { action: "invite.redeem", ...target, detail: { ...target.detail, role } };
+}
+
+/** The longest note a link carries; the column allows no more. */
+const MAX_INVITE_NOTE = 80;
 
 /** What a link admits when the request does not say: one person, for seven days, as the dialog offers. */
 export const DEFAULT_INVITE_USES = 1;
@@ -55,6 +74,7 @@ export async function createInvite({ ctx, req, match }: WorkspaceCall): Promise<
     expires_in_days?: unknown;
     max_uses?: unknown;
     address?: unknown;
+    note?: unknown;
   };
   // A link never carries ownership; otherwise the direct-grant escalation rule applies.
   const role = body.role ?? "member";
@@ -79,36 +99,42 @@ export async function createInvite({ ctx, req, match }: WorkspaceCall): Promise<
       { status: 400 },
     );
   }
+  if (body.note !== undefined && body.note !== null && typeof body.note !== "string") return error(400, "note must be a string");
+  // Blank means none; a name longer than the column takes is cut, not refused.
+  // Cut by characters, as the column counts them, so an emoji is never split in half.
+  const note = typeof body.note === "string" ? [...body.note.trim()].slice(0, MAX_INVITE_NOTE).join("") || null : null;
   // Whoever holds a reusable admin link could hand admin to anyone, so an admin link admits one person.
   if (role === "admin" && uses !== 1) return error(400, "an admin invite link admits one person: set max_uses to 1");
 
   // Shown once in the join URL; only its hash is stored.
   const token = newId("inv_") + newId("");
   const tokenHash = sha256Hex(token);
+  // Four characters of a long random token: enough to tell links apart, far too few to guess the rest.
+  const tokenHint = token.slice(-4);
   const expiresAt = days === null ? null : new Date(Date.now() + days * 86400_000).toISOString();
   await insertWorkspaceInvite(ctx.sql, {
     tokenHash,
-    // Four characters of a long random token: enough to tell links apart, far too few to guess the rest.
-    tokenHint: token.slice(-4),
+    tokenHint,
+    note,
     workspaceId: wsId,
     role,
     createdBy: ctx.alias,
     expiresAt,
     maxUses: uses,
   });
+  const ledgerTarget = inviteTarget(tokenHash, { role, token_hint: tokenHint, note });
   recordAudit(
     { ...ctx, workspaceId: wsId },
     {
       action: "invite.create",
-      targetKind: "invite",
-      targetId: inviteRef(tokenHash),
-      detail: { role, expires_at: expiresAt, max_uses: uses, address: target.address },
+      ...ledgerTarget,
+      detail: { ...ledgerTarget.detail, expires_at: expiresAt, max_uses: uses, address: target.address },
     },
   );
   const joinUrl = `${target.origin}/join/${token}`;
   // token_hash names the link for revoking, as the listing does.
   return json(
-    { token, token_hash: tokenHash, join_url: joinUrl, role, expires_at: expiresAt, max_uses: uses, address: target.address },
+    { token, token_hash: tokenHash, join_url: joinUrl, role, note, expires_at: expiresAt, max_uses: uses, address: target.address },
     { status: 201 },
   );
 }
@@ -133,7 +159,7 @@ export async function revokeInvite({ ctx, match }: WorkspaceCall): Promise<Respo
   }
   const revoked = await revokeWorkspaceInvite(ctx.sql, tokenHash, wsId);
   if (revoked) {
-    recordAudit({ ...ctx, workspaceId: wsId }, { action: "invite.revoke", targetKind: "invite", targetId: inviteRef(tokenHash) });
+    recordAudit({ ...ctx, workspaceId: wsId }, { action: "invite.revoke", ...inviteTarget(tokenHash, revoked) });
   }
   return revoked ? json({ revoked: true }) : error(404, "invite not found");
 }
@@ -150,6 +176,6 @@ export async function redeemInvite({ ctx, req }: AccountCall): Promise<Response>
     }
     return error(400, "this invite link is invalid, expired, or fully used");
   }
-  recordAudit({ ...ctx, workspaceId: result.workspaceId }, inviteRedeemedAudit(tokenHash, result.role));
+  recordAudit({ ...ctx, workspaceId: result.workspaceId }, inviteRedeemedAudit(tokenHash, result.role, result.invite));
   return json({ workspace_id: result.workspaceId, role: result.role });
 }

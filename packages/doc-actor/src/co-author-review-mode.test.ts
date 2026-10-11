@@ -101,7 +101,7 @@ describe("a co-author turn follows the document's setting", () => {
 
     expect(h.reviewCalls).toEqual([{ workspaceId: WS_ID, docId: DOC, principals: expect.arrayContaining(["user:alice"]) }]);
     expect(mockAgentTurn.mock.calls[0]![1]).toMatchObject({ applyAtOnce: true });
-    expect(lastEdits(ws)).toMatchObject({ staged: 0, applied: 1, run_id: expect.any(String), error: null });
+    expect(lastEdits(ws)).toMatchObject({ staged: 0, applied: 1, run_id: expect.any(String), hunk_ids: ["h1"], error: null });
     expect(await markdown(dobj)).toContain("Alpha, rewritten.");
     // The person watched it land; no notification.
     expect(notifications(h)).toHaveLength(0);
@@ -118,7 +118,7 @@ describe("a co-author turn follows the document's setting", () => {
     await askAi(dobj, ws);
 
     expect(mockAgentTurn.mock.calls[0]![1]).toMatchObject({ applyAtOnce: false });
-    expect(lastEdits(ws)).toMatchObject({ staged: 1, applied: 0 });
+    expect(lastEdits(ws)).toMatchObject({ staged: 1, applied: 0, hunk_ids: ["h1"] });
     expect(await markdown(dobj)).toContain("Alpha.");
     expect(await markdown(dobj)).not.toContain("rewritten");
     expect(notifications(h)).toHaveLength(0);

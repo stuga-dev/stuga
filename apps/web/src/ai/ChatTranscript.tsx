@@ -2,8 +2,9 @@ import { useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Text } from "@astryxdesign/core/Text";
 import { FileText, Files, Zap } from "lucide-react";
-import type { AiCitation, AiCrossDocProposal } from "@stuga/protocol/wire/doc-socket";
+import type { AgentRunSummary, AiCitation, AiCrossDocProposal } from "@stuga/protocol/wire/doc-socket";
 import { renderAssistantHtml } from "./render-markdown";
+import { turnOutcome, type TurnOutcome } from "./turn-outcome";
 import { useCitationPopover } from "./CitationPopover";
 import { t } from "../i18n/i18n";
 import { crossDocErrorText } from "./turn-text";
@@ -18,6 +19,8 @@ export interface ChatTurn {
   quote?: string;
   /** User turns: images sent with the message. */
   images?: { url: string; name: string }[];
+  /** User turns: the rejections this turn asked to revise, by feedback id. */
+  revises?: string[];
   /** Assistant turns: what the agent is doing while it has no prose yet, worded. */
   status?: string;
   /** Assistant turns: cited documents, one per document. */
@@ -28,6 +31,9 @@ export interface ChatTurn {
   staged?: number;
   /** Assistant turns: how many changes the turn applied at once on the item on screen. */
   applied?: number;
+  /** Assistant turns: the run its changes on the item on screen joined, and which changes are this turn's. */
+  runId?: string;
+  hunkIds?: string[];
   /** Assistant turns: proposals raised in other documents. */
   crossDocs?: AiCrossDocProposal[];
   /** Assistant turns: the reply finished but its edits could not be proposed, worded. */
@@ -39,6 +45,28 @@ export interface ChatTurn {
 /** Where a turn's proposed changes are reviewed: in the document, or in the banner above a database grid. */
 export type ReviewPlace = "document" | "grid";
 
+/** A turn's changes as they stand now. */
+function outcomeText(outcome: TurnOutcome, reviewIn: ReviewPlace): string {
+  switch (outcome.kind) {
+    case "pending":
+      return reviewIn === "grid"
+        ? t("ai.transcript.stagedInGrid", { count: outcome.count })
+        : t("ai.transcript.stagedInDocument", { count: outcome.count });
+    case "applied":
+      return t("ai.transcript.applied", { count: outcome.count });
+    case "accepted":
+      return t("ai.transcript.accepted");
+    case "rejected":
+      return t("ai.transcript.rejected");
+    case "replaced":
+      return t("ai.transcript.replaced");
+    case "reverted":
+      return t("ai.transcript.reverted");
+    case "mixed":
+      return t("ai.transcript.mixed", { accepted: outcome.accepted, rejected: outcome.rejected });
+  }
+}
+
 /** Distance from the bottom within which new content keeps the thread scrolled to the end. */
 const FOLLOW_PX = 48;
 
@@ -47,6 +75,7 @@ export function ChatTranscript({
   streaming,
   empty,
   reviewIn = "document",
+  runs,
 }: {
   turns: ChatTurn[];
   streaming: boolean;
@@ -54,6 +83,8 @@ export function ChatTranscript({
   empty: ReactNode;
   /** Where proposed changes are reviewed. */
   reviewIn?: ReviewPlace;
+  /** The runs as the ledger holds them now, so each turn says what became of its changes. */
+  runs?: readonly AgentRunSummary[];
 }) {
   const nav = useNavigate();
   const { onChipClick, popover } = useCitationPopover();
@@ -65,6 +96,13 @@ export function ChatTranscript({
     () => turns.map((turn) => (turn.role === "assistant" && turn.text ? renderAssistantHtml(turn.text, turn.citations) : null)),
     [turns],
   );
+
+  const outcomes = useMemo(() => {
+    if (!runs) return [];
+    const byId = new Map(runs.map((r) => [r.id, r]));
+    const revised = new Set(turns.flatMap((turn) => turn.revises ?? []));
+    return turns.map((turn) => (turn.runId ? turnOutcome(byId.get(turn.runId), turn.hunkIds, revised) : null));
+  }, [turns, runs]);
 
   useLayoutEffect(() => {
     const el = threadRef.current;
@@ -124,7 +162,15 @@ export function ChatTranscript({
               ))}
             </div>
           )}
-          {turn.staged !== undefined && turn.staged > 0 && (
+          {outcomes[i] && (
+            <div className="ai-staged">
+              <Zap size={13} aria-hidden />
+              <Text type="supporting" color="secondary">
+                {outcomeText(outcomes[i], reviewIn)}
+              </Text>
+            </div>
+          )}
+          {!outcomes[i] && turn.staged !== undefined && turn.staged > 0 && (
             <div className="ai-staged">
               <Zap size={13} aria-hidden />
               <Text type="supporting" color="secondary">
@@ -134,7 +180,7 @@ export function ChatTranscript({
               </Text>
             </div>
           )}
-          {turn.applied !== undefined && turn.applied > 0 && (
+          {!outcomes[i] && turn.applied !== undefined && turn.applied > 0 && (
             <div className="ai-staged">
               <Zap size={13} aria-hidden />
               <Text type="supporting" color="secondary">

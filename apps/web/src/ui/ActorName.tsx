@@ -5,17 +5,18 @@
  */
 import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
-import { actorHandle, actorName } from "../state/identity";
+import { actorHandle, actorName, type NameScope } from "../state/identity";
 
 /** A flex item shrinks below its content only with min-width 0. */
 const CLAMP = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
 
-export function ActorName({ alias, title }: { alias: string; title?: string }) {
+/** `scope`: "node" for a node-wide ledger, whose accounts the workspace's directory need not know. */
+export function ActorName({ alias, title, scope = "workspace" }: { alias: string; title?: string; scope?: NameScope }) {
   const handle = actorHandle(alias);
   return (
     <HStack gap={2} vAlign="center" style={{ minWidth: 0 }}>
       <span title={title ?? alias} style={CLAMP}>
-        {actorName(alias)}
+        {actorName(alias, scope)}
       </span>
       {handle && (
         <span title={handle} style={CLAMP}>

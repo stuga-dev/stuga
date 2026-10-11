@@ -24,6 +24,7 @@ function summary(over: Partial<DocSummary> = {}): DocSummary {
   return {
     doc_id: "d_1",
     title: "Plan",
+    title_source: "user",
     owner: "user:u_1",
     doc_type: "prose",
     created_at: "2026-09-01T00:00:00.000Z",

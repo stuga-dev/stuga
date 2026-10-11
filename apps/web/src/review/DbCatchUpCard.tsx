@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import type { DatabaseRunSummary } from "@stuga/protocol/databases/types";
 import { useDbRuns } from "./db-runs-context";
 import { CatchUpBanner } from "./RunBanner";

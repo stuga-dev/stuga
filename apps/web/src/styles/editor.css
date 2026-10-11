@@ -7,6 +7,8 @@
 .item-nav > :first-child > *,
 .item-nav > :first-child > * > * { min-width: 0; }
 .item-nav .doc-title-btn, .item-nav .doc-crumb { min-width: 0; overflow: hidden; }
+/* The title is the page's heading, in the header's own type. */
+.item-title { margin: 0; font: inherit; display: flex; min-width: 0; overflow: hidden; }
 .doc-title-btn { background: transparent; border: none; cursor: pointer; padding: 0.15rem 0.3rem; border-radius: var(--radius-element); max-width: 34vw; text-align: left; color: inherit; }
 .doc-title-btn:hover:not(:disabled) { background: var(--color-accent-muted); }
 /* A title that cannot be renamed reads as plain text. */
@@ -19,15 +21,12 @@
 }
 .doc-crumb:hover { background: var(--color-accent-muted); color: var(--color-text-primary); }
 
-/* Presence badges: white initials on the peer's hue, overlapping, ringed in the surface colour. */
-.presence-stack { display: inline-flex; align-items: center; padding-left: 4px; }
+/* Presence badges: white initials on the peer's hue, side by side so no badge covers another's initials. */
+.presence-stack { display: inline-flex; align-items: center; gap: 3px; padding-left: 4px; }
 .presence-badge {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px; border-radius: 50%;
-  /* The stack's left padding absorbs the first badge's overlap. */
-  margin-left: -4px;
-  box-shadow: 0 0 0 2px var(--color-background-surface);
-  color: var(--color-on-dark); font-size: 10px; font-weight: 700; line-height: 1;
+  width: 24px; height: 24px; border-radius: 50%; flex: 0 0 auto;
+  color: var(--color-on-dark); font-size: 11px; font-weight: 700; line-height: 1;
   text-transform: uppercase; letter-spacing: 0.02em;
   user-select: none; box-sizing: border-box;
   border: none; padding: 0; font-family: inherit; cursor: pointer;
@@ -90,10 +89,18 @@ span.presence-badge { cursor: default; }
     box-shadow: var(--shadow-med);
   }
 }
-/* Same breakpoint as NARROW_QUERY. A phone gets narrow page margins and a full-width dock. */
+/* Same breakpoint as NARROW_QUERY. A phone gets narrow page margins and a full-width dock; the
+   header puts the title on a row of its own above the buttons, and the toolbar is one row that
+   scrolls sideways and scrolls away with the page. */
 @media (max-width: 640px) {
   .doc-body > .dock { left: 0; width: auto; border-left: none; box-shadow: none; }
   .doc-main { padding: 0 0.5rem 1rem; }
+  .item-nav { flex-wrap: wrap; }
+  .item-nav > :first-child { flex-basis: 100%; }
+  .item-nav .doc-title-btn { max-width: 100%; }
+  .editor-toolbar-bar { position: static; }
+  .editor-toolbar-bar .astryx-toolbar { overflow-x: auto; scrollbar-width: none; }
+  .editor-toolbar-bar .astryx-toolbar .astryx-stack { flex-wrap: nowrap; }
 }
 /* No transition or smooth scroll while a width or zoom change re-anchors the reading position. */
 .doc-main--reflowing,
@@ -105,17 +112,24 @@ span.presence-badge { cursor: default; }
 
 .editor-shell { max-width: var(--doc-width, 740px); margin: 0 auto; }
 
-/* Sticky over the scrolling page, below the floating popovers (50+). */
+/* Sticky over the scrolling page, below the floating popovers (50+). One row: EditorToolbar
+   moves what does not fit into More, and the row never wraps onto the page. */
 .editor-toolbar-bar {
   position: sticky; top: 0; z-index: 20;
   padding: 0.75rem 0 0.5rem;
   background: var(--color-background-body);
 }
+/* Should a row still not fit (a very narrow phone inside a table), it scrolls rather than wraps. */
+.editor-toolbar-fit { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.editor-toolbar-fit::-webkit-scrollbar { display: none; }
+@media (max-width: 640px) {
+  .editor-toolbar-bar { padding: 0.4rem 0; }
+}
 
 /* The page: a lighter sheet on the canvas, in both themes. */
 .editor-page {
-  background: var(--color-background-surface);
-  border: 1px solid var(--color-border);
+  background: var(--paper);
+  border: 1px solid var(--paper-border);
   border-radius: var(--radius-container);
   box-shadow: var(--shadow-low);
   padding: 3.5rem 3.5rem 4rem;
@@ -136,6 +150,18 @@ span.presence-badge { cursor: default; }
   .editor-page { padding: 1.5rem 1.25rem 2.5rem; margin-bottom: 1rem; }
   .doc-page[data-doc-width="full"] .editor-page { padding-left: 1.25rem; padding-right: 1.25rem; }
 }
+
+.editor-page { position: relative; }
+.editor-skeleton { position: absolute; inset: 3.5rem 3.5rem auto; display: flex; flex-direction: column; gap: 0.9rem; pointer-events: none; }
+.editor-skeleton > span { height: 0.9rem; border-radius: 4px; background: var(--color-neutral); animation: editor-skeleton-pulse 1.4s ease-in-out infinite; }
+.editor-skeleton > span:first-child { height: 1.4rem; width: 45%; margin-bottom: 0.4rem; }
+.editor-skeleton > span:nth-child(2) { width: 92%; }
+.editor-skeleton > span:nth-child(3) { width: 85%; }
+.editor-skeleton > span:nth-child(4) { width: 88%; }
+.editor-skeleton > span:nth-child(5) { width: 60%; }
+@keyframes editor-skeleton-pulse { 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { .editor-skeleton > span { animation: none; } }
+@media (max-width: 640px) { .editor-skeleton { inset: 1.5rem 1.25rem auto; } }
 
 /* An empty document still shows a full sheet that takes a click anywhere. */
 .stuga-editor { outline: none; line-height: 1.6; min-height: calc(100vh - 18rem); }
@@ -177,6 +203,15 @@ span.presence-badge { cursor: default; }
 .stuga-editor li > p { margin: 0; }
 .stuga-editor li > ul,
 .stuga-editor li > ol { margin: 0.25em 0 0; }
+/* A task: its box in the marker's place, then the item's blocks. A done task reads as done. */
+.stuga-editor ul[data-type="taskList"] { list-style: none; padding-inline-start: 0.15em; }
+.stuga-editor ul[data-type="taskList"] > li { display: flex; align-items: flex-start; gap: 0.55em; }
+.stuga-editor ul[data-type="taskList"] > li > label { flex: 0 0 auto; display: flex; align-items: center; height: 1.7em; user-select: none; }
+.stuga-editor ul[data-type="taskList"] > li > label input { width: 1.05em; height: 1.05em; margin: 0; accent-color: var(--color-accent); cursor: pointer; }
+.stuga-editor ul[data-type="taskList"] > li > div { flex: 1 1 auto; min-width: 0; }
+.stuga-editor ul[data-type="taskList"] > li > div > p { margin: 0; }
+.stuga-editor ul[data-type="taskList"] > li > div > :is(ul, ol) { margin: 0.25em 0 0; }
+.stuga-editor ul[data-type="taskList"] > li[data-checked="true"] > div > p { color: var(--color-text-secondary); text-decoration: line-through; }
 .stuga-editor blockquote {
   margin: 0 0 0.85em;
   padding-block: 0.1em;
@@ -195,6 +230,21 @@ span.presence-badge { cursor: default; }
 .stuga-editor > :first-child { margin-top: 0; }
 .stuga-editor > :last-child { margin-bottom: 0; }
 .stuga-editor a { color: var(--color-accent); text-decoration: underline; cursor: pointer; }
+/* A file attached to the document (a link to its media path with the file's name): a chip with
+   a paperclip, its name, and its size once known (file-links.ts). */
+.stuga-editor a[href^="/api/docs/"][href*="/media/"] {
+  color: var(--color-text-primary); text-decoration: none;
+  padding: 0.05em 0.45em 0.05em 0.35em; border: 1px solid var(--color-border); border-radius: 6px;
+  background: var(--color-background-body); box-decoration-break: clone; -webkit-box-decoration-break: clone;
+}
+.stuga-editor a[href^="/api/docs/"][href*="/media/"]::before {
+  content: ""; display: inline-block; width: 0.9em; height: 0.9em; margin-inline-end: 0.3em; vertical-align: -0.1em;
+  background: var(--color-text-secondary);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.stuga-editor a[href^="/api/docs/"][href*="/media/"]:hover { border-color: var(--color-border-emphasized); }
+.file-chip__size { margin-inline-start: 0.4em; color: var(--color-text-secondary); font-size: 0.85em; user-select: none; }
 .stuga-editor hr { border: none; border-top: 1px solid var(--color-border); margin: 1.2rem 0; }
 .stuga-editor img { max-width: 100%; height: auto; border-radius: 6px; display: block; margin: 0.5rem 0; }
 
@@ -277,8 +327,8 @@ span.presence-badge { cursor: default; }
 .tb-grid-pop { padding: 0.25rem; min-width: 0; }
 .tb-grid-label { text-align: center; font-size: 0.75rem; color: var(--color-text-secondary); margin-bottom: 0.4rem; min-height: 1rem; }
 .tb-grid { display: grid; grid-auto-rows: 16px; gap: 2px; }
-.tb-grid-cell { border: 1px solid var(--color-border); border-radius: 2px; background: transparent; cursor: pointer; }
-.tb-grid-cell.on { background: var(--color-accent); border-color: var(--color-accent); }
+.tb-grid-cell { border: 1px solid var(--color-border-emphasized); border-radius: 2px; background: var(--color-background-surface); cursor: pointer; }
+.tb-grid-cell.on { background: var(--color-accent-muted); border-color: var(--color-accent); }
 
 /* --- selection bubble (floats above the selection; positioned from PM coords) --- */
 .selection-bubble {
@@ -324,14 +374,14 @@ span.presence-badge { cursor: default; }
 .link-popover__url:hover { text-decoration: underline; }
 .link-popover__btn {
   flex: 0 0 auto; background: transparent; border: 1px solid transparent; color: var(--color-text-primary);
-  border-radius: 6px; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.82rem;
+  border-radius: 6px; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.82rem; text-decoration: none;
 }
 .link-popover__btn:hover { background: var(--color-accent-muted); }
 .link-popover__btn--danger:hover { background: color-mix(in srgb, var(--color-background-red) 70%, transparent); color: var(--color-text-red); }
 
 /* --- slash command menu (type `/` at the start of a block) --- */
 .slash-menu {
-  position: fixed; z-index: 60; width: 232px; max-height: 312px; overflow-y: auto;
+  position: fixed; z-index: 60; width: 270px; max-width: calc(100vw - 16px); max-height: 360px; overflow-y: auto;
   background: var(--color-background-surface); border: 1px solid var(--color-border); border-radius: 10px;
   box-shadow: var(--shadow-high); padding: 0.3rem;
   display: flex; flex-direction: column; gap: 1px;
@@ -350,7 +400,8 @@ span.presence-badge { cursor: default; }
   font-size: 0.78rem; color: var(--color-text-secondary);
 }
 .slash-item.active .slash-item__hint { color: var(--color-accent); border-color: var(--color-accent); }
-.slash-item__label { flex: 1 1 auto; }
+.slash-item__text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.slash-item__desc { font-size: 0.78rem; color: var(--color-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* --- image upload tray (floating progress, bottom-right) --- */
 .upload-tray {
@@ -364,7 +415,8 @@ span.presence-badge { cursor: default; }
 }
 .upload-row.error { border-color: var(--color-border-red); }
 .upload-row__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.upload-row__err { grid-column: 1 / 3; color: var(--color-text-red); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Wraps: a refusal names the file, its size and the limit, all of which must read. */
+.upload-row__err { grid-column: 1 / 3; color: var(--color-text-red); overflow-wrap: anywhere; }
 .upload-bar { grid-column: 1 / 4; height: 4px; border-radius: 2px; background: var(--color-accent-muted); overflow: hidden; }
 
 /* --- comment composer (floats under the selection; controls are Astryx) --- */
@@ -423,15 +475,19 @@ span.presence-badge { cursor: default; }
 .stuga-editor .collaboration-carets__caret::before {
   content: "";
   position: absolute;
-  top: -2px;
-  left: -2px;
+  /* A 7px flag inside a transparent border: a larger target, so an idle caret's name is easy to bring up on hover. */
+  top: -6px;
+  left: -6px;
+  box-sizing: content-box;
   width: 7px;
   height: 7px;
-  background: var(--peer-ink);
-  border-radius: 2px 2px 2px 0;
+  border: 4px solid transparent;
+  background: var(--peer-ink) content-box;
+  border-radius: 6px 6px 6px 4px;
   pointer-events: auto;
 }
-/* Every font property is set: the widget sits inside the following text's marks. */
+/* Every font property is set: the widget sits inside the following text's marks. Small and flush
+   with the caret's top, so it sits in the gap between lines and hides as little of the line above as it can. */
 .stuga-editor .collaboration-carets__label {
   position: absolute;
   left: -2px;
@@ -439,12 +495,11 @@ span.presence-badge { cursor: default; }
   z-index: 1;
   display: inline-block;
   max-width: 10rem;
-  margin-bottom: 2px;
-  padding: 1px 5px;
+  padding: 0 4px;
   border-radius: 3px 3px 3px 0;
   background: var(--peer-ink);
   color: light-dark(var(--color-on-dark), var(--color-on-light));
-  font: 600 12px/1.4 var(--font-family-body);
+  font: 600 11px/1.25 var(--font-family-body);
   font-style: normal;
   letter-spacing: normal;
   text-transform: none;
@@ -498,7 +553,7 @@ span.presence-badge { cursor: default; }
 .stuga-editor .tableWrapper .collaboration-carets__label {
   top: 100%;
   bottom: auto;
-  margin: 2px 0 0;
+  margin: 0;
   border-radius: 0 3px 3px 3px;
 }
 .stuga-editor .tableWrapper .collaboration-carets__caret[data-flip] .collaboration-carets__label {
@@ -593,7 +648,7 @@ a.sources-title:hover { color: var(--color-accent); text-decoration: underline; 
   flex-shrink: 0; font-size: var(--text-supporting-size); font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
   color: var(--color-accent); background: var(--color-accent-muted); border-radius: 999px; padding: 0.05rem 0.4rem;
 }
-.vchange { flex-shrink: 0; display: flex; gap: 0.35rem; font-size: var(--text-body-size); font-variant-numeric: tabular-nums; }
+.vchange { min-width: 0; text-align: end; font-size: var(--text-supporting-size); font-variant-numeric: tabular-nums; }
 .vchange--none { color: var(--color-text-secondary); font-style: italic; }
 .vchange__ins { color: var(--color-text-green); font-weight: 600; }
 .vchange__del { color: var(--color-text-red); font-weight: 600; }
@@ -609,14 +664,17 @@ a.sources-title:hover { color: var(--color-accent); text-decoration: underline; 
 .vcompare-legend-swatch { width: 0.85rem; height: 0.85rem; border-radius: 3px; flex-shrink: 0; }
 .vcompare-legend-swatch--del { background: color-mix(in srgb, var(--color-background-red) 90%, transparent); border: 1px solid var(--color-border-red); }
 .vcompare-legend-swatch--ins { background: color-mix(in srgb, var(--color-background-green) 90%, transparent); border: 1px solid var(--color-border-green); margin-left: 0.8rem; }
-.vcompare-legend-note { color: var(--color-text-secondary); opacity: 0.8; }
 .vcompare-diff { max-height: 55vh; overflow: auto; border: 1px solid var(--color-border); border-radius: 8px; padding: 0.3rem; display: flex; flex-direction: column; gap: 0.15rem; }
+/* A task item shows its box in place of the bullet (task-list-markdown.ts). */
+.vcompare-diff li.task-item { list-style: none; }
+.vcompare-diff .task-box { margin: 0 0.4em 0 -1.3em; vertical-align: -0.1em; accent-color: var(--color-accent); }
 .vcompare-block { border-radius: 6px; padding: 0.25rem 0.6rem; border-left: 3px solid transparent; }
 .vcompare-block--eq { color: var(--color-text-secondary); }
 .vcompare-block--del { background: color-mix(in srgb, var(--color-background-red) 50%, transparent); border-left-color: var(--color-border-red); text-decoration: line-through; text-decoration-color: var(--color-text-red); }
 .vcompare-block--ins { background: color-mix(in srgb, var(--color-background-green) 65%, transparent); border-left-color: var(--color-border-green); }
 /* In the footer, so the diff stays visible while deciding. */
 .vcompare-confirm { color: var(--color-text-secondary); font-size: 0.82rem; }
+.vcompare-restore-note { max-width: 22rem; font-size: var(--text-supporting-size); color: var(--color-text-secondary); text-align: end; }
 /* --- comments rail --- */
 .comment-toolbar { display: flex; align-items: center; padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--color-border); }
 /* Outlined so it reads as a control; the caret turns down while resolved threads show. */
@@ -649,7 +707,9 @@ a.sources-title:hover { color: var(--color-accent); text-decoration: underline; 
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .comment-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
-.comment-actions { display: flex; gap: 0.3rem; flex-shrink: 0; }
+.comment-actions { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
+.comment-byline { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; flex-wrap: wrap; }
+.comment-time { color: var(--color-text-secondary); font-size: var(--text-supporting-size); }
 
 /* --- comment thread replies --- */
 .comment-replies { list-style: none; margin: 0.4rem 0 0; padding: 0 0 0 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; border-left: 2px solid var(--color-border); }
@@ -685,5 +745,30 @@ a.sources-title:hover { color: var(--color-accent); text-decoration: underline; 
 }
 .mention-item.active { background: var(--color-accent-muted); }
 .mention-item--empty { color: var(--color-text-secondary); cursor: default; }
+.mention-item__text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.mention-item__line { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; }
+.mention-item__warn { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--color-text-secondary); font-size: 0.8rem; }
 .mention-item__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mention-item__handle { flex: 0 1 auto; color: var(--color-text-secondary); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- printing a document (⋯ > Print, or the browser's own) ---------------------
+   Paper only: every element that neither holds the page nor sits inside it is
+   dropped, and the page's ancestors lose their scrolling and fixed heights so a
+   long document runs on over as many sheets as it needs. */
+@media print {
+  body:has(.editor-page) :not(:has(.editor-page)):not(.editor-page):not(.editor-page *) { display: none !important; }
+  body:has(.editor-page),
+  body:has(.editor-page) :has(.editor-page) {
+    display: block !important; position: static !important;
+    height: auto !important; min-height: 0 !important; max-height: none !important;
+    width: auto !important; max-width: none !important;
+    overflow: visible !important; margin: 0 !important; padding: 0 !important;
+    background: none !important; box-shadow: none !important; border: none !important;
+  }
+  .editor-page { border: none; border-radius: 0; box-shadow: none; padding: 0; margin: 0; zoom: 1; background: none; }
+  .stuga-editor { min-height: 0; }
+  .stuga-editor .collaboration-carets__caret,
+  .stuga-editor .collaboration-carets__selection { display: none; }
+  .comment-highlight, .comment-highlight--active { background: none; border-bottom: none; }
+  .stuga-editor img, .stuga-editor table, .stuga-editor pre { break-inside: avoid; }
+}

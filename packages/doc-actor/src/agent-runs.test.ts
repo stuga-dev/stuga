@@ -263,6 +263,22 @@ describe("propose under an `auto` rule", () => {
     expect(runs[0]!.id).toBe(run.id);
   });
 
+  it("tells the reviewer's open page at once, so it shows the change landed", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const reviewer = await connect(dobj, h, { docId: DOC, alias: "alice" });
+    const other = await connect(dobj, h, { docId: DOC, alias: "bob" });
+
+    const { json } = await proposeAuto(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha revised." });
+
+    const seen = payloads<RunUpdatedPayload>(reviewer, Opcode.RUN_UPDATED);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.run).toMatchObject({ id: runOf(json).id, auto_applied: true, acknowledged: false, status: "open" });
+    expect(seen[0]!.run.hunks.map((x) => x.status)).toEqual(["auto_applied"]);
+    expect(other.has(Opcode.RUN_UPDATED)).toBe(false);
+  });
+
   it("leaves an earlier parked hunk alone, and joins it rather than landing past it", async () => {
     // The run is shared and so is the wait: while a hunk proposed under `review`
     // is undecided, later `auto` proposals queue behind it instead of landing,
@@ -776,6 +792,21 @@ describe("undoing a decision", () => {
     expect(await readMarkdown(dobj, "agent1")).toMatchObject({ run_id: runId });
     const again = await post(dobj, "decide", { run_id: runId, decision: "accept", hunk_ids: ["h2"], decided_by: "alice" });
     expect(again.json).toMatchObject({ applied: 1 });
+    expect((await readMarkdown(dobj)).markdown).toContain("Bravo revised.");
+  });
+
+  it("on a locked document, puts a rejection back up but leaves accepted text in place", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const runId = await proposeTwo(dobj);
+    await post(dobj, "decide", { run_id: runId, decision: "reject", hunk_ids: ["h1"], decided_by: "alice" });
+    await post(dobj, "decide", { run_id: runId, decision: "accept", hunk_ids: ["h2"], decided_by: "alice" });
+
+    const rejection = await post(dobj, "undo", { run_id: runId, hunk_ids: ["h1"], requested_by: "alice", locked: true });
+    expect(rejection.status).toBe(200);
+    const accepted = await post(dobj, "undo", { run_id: runId, hunk_ids: ["h2"], requested_by: "alice", locked: true });
+    expect(accepted.status).toBe(423);
     expect((await readMarkdown(dobj)).markdown).toContain("Bravo revised.");
   });
 

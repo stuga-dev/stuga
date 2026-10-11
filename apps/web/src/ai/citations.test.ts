@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  answerText,
   citationHref,
   citedSources,
   excerptSnippet,
@@ -33,6 +34,15 @@ describe("excerptSnippet", () => {
     const snip = excerptSnippet(long);
     expect(snip.length).toBeLessThanOrEqual(80);
     expect(snip.endsWith("word")).toBe(true);
+  });
+
+  it("takes one line, never text joined across two paragraphs", () => {
+    const snip = excerptSnippet("Staff schedule for next week.\nMonday: Anna opens at 5am, Ben closes at 6pm.");
+    expect(snip).toBe("Staff schedule for next week.");
+  });
+
+  it("passes over a line too short to be the passage", () => {
+    expect(excerptSnippet("Notes\n\nTurn the listed repairs into dated jobs.")).toBe("Turn the listed repairs into dated jobs.");
   });
 
   it("returns nothing when there is no usable prose", () => {
@@ -139,5 +149,13 @@ describe("citedSources", () => {
       { doc_id: "b", title: "B" },
       { doc_id: "a", title: "A" },
     ]);
+  });
+});
+
+describe("answerText", () => {
+  it("drops the citation markers, whose cards do not travel with a pasted answer", () => {
+    expect(answerText("Anna opens at 5am [^1][^2].\n\nPeter delivers on Tuesday [^3].")).toBe(
+      "Anna opens at 5am.\n\nPeter delivers on Tuesday.",
+    );
   });
 });

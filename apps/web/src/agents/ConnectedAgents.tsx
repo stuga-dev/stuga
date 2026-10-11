@@ -20,7 +20,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import { Banner } from "@astryxdesign/core/Banner";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { Pencil, Plug, RefreshCw } from "lucide-react";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { AgentKeys, Connections, type AgentKeyInfo, type ConnectionInfo, type WorkspaceInfo } from "../api";

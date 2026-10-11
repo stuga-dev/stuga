@@ -1,5 +1,6 @@
 /**
- * The sync sockets each person's sign-in has open, so that ending a sign-in closes them. Every
+ * The sync sockets each person's sign-in has open, so that ending a sign-in closes them, and ending
+ * or changing a membership closes the ones open in that workspace. Every
  * upgrade looks its session up (./context.ts), so a closed socket cannot open again on the ticket
  * in hand; this closes the ones already open, with SESSION_ENDED_CLOSE_CODE: at once when a route
  * ends the sign-in, and on `sweep` for one that ended otherwise (its fixed end, its idle expiry, or
@@ -15,6 +16,7 @@
  * the upgrade's own check.
  */
 import type { CredentialArrival, PresentedSession } from "@stuga/db";
+import { CloseCode } from "@stuga/protocol/wire/opcodes";
 import { serverSocketOf, type InboundGate } from "@stuga/runtime";
 
 /** What a socket closed this way reports to the browser: sign in again. */
@@ -35,12 +37,19 @@ interface Closable {
 }
 
 export interface SessionSockets {
-  /** Note the socket an upgrade response for a person's session `sid` of `alias`, signed in at `arrival`, carries. */
-  track(sid: string, alias: string, upgrade: Response, arrival: CredentialArrival): void;
+  /**
+   * Note the socket an upgrade response for a person's session `sid` of `alias`, signed in at
+   * `arrival`, carries, on an item of `workspaceId`.
+   */
+  track(sid: string, alias: string, upgrade: Response, arrival: CredentialArrival, workspaceId: string): void;
   /** Close every socket the sessions opened; how many were open. */
   closeSessions(sids: Iterable<string>): number;
   /** Close every socket any of the account's sessions opened; how many were open. */
   closeAccount(alias: string): number;
+  /** The account left the workspace: close its sockets there for good; how many were open. */
+  closeMembership(alias: string, workspaceId: string): number;
+  /** The account's role in the workspace changed: close its sockets there to open again with the new reach; how many were open. */
+  reopenMembership(alias: string, workspaceId: string): number;
   /** Close the sockets of every tracked sign-in `isLive` says has ended; how many were open. */
   sweep(isLive: (session: PresentedSession) => Promise<boolean>): Promise<number>;
 }
@@ -59,7 +68,8 @@ export interface SessionSocketsOptions {
 interface Entry {
   alias: string;
   arrival: CredentialArrival;
-  sockets: Set<Closable>;
+  /** Each open socket, with the workspace of the item it is on. */
+  sockets: Map<Closable, string>;
   /** Messages are let through without a read until then: the last read's time plus RECHECK_MS, or the sign-in's end; 0 before the first read. */
   knownUntil: number;
   /** The read in flight, which every socket of the sign-in waits on. */
@@ -77,7 +87,7 @@ export function createSessionSockets(options: SessionSocketsOptions | ((upgrade:
   function prune(sid: string): void {
     const entry = bySession.get(sid);
     if (!entry) return;
-    for (const socket of entry.sockets) if (socket.closed) entry.sockets.delete(socket);
+    for (const socket of entry.sockets.keys()) if (socket.closed) entry.sockets.delete(socket);
     if (entry.sockets.size === 0) bySession.delete(sid);
   }
 
@@ -85,10 +95,27 @@ export function createSessionSockets(options: SessionSocketsOptions | ((upgrade:
     const entry = bySession.get(sid);
     bySession.delete(sid);
     let n = 0;
-    for (const socket of entry?.sockets ?? []) {
+    for (const socket of entry?.sockets.keys() ?? []) {
       if (socket.closed) continue;
       socket.close(code, reason);
       n++;
+    }
+    return n;
+  }
+
+  /** Close one account's sockets in one workspace; its sign-ins stay tracked for the rest. */
+  function closeInWorkspace(alias: string, workspaceId: string, code: number, reason: string): number {
+    let n = 0;
+    for (const [sid, entry] of bySession) {
+      if (entry.alias !== alias) continue;
+      for (const [socket, ws] of entry.sockets) {
+        if (ws !== workspaceId) continue;
+        entry.sockets.delete(socket);
+        if (socket.closed) continue;
+        socket.close(code, reason);
+        n++;
+      }
+      if (entry.sockets.size === 0) bySession.delete(sid);
     }
     return n;
   }
@@ -156,13 +183,13 @@ export function createSessionSockets(options: SessionSocketsOptions | ((upgrade:
   }
 
   return {
-    track(sid, alias, upgrade, arrival) {
+    track(sid, alias, upgrade, arrival, workspaceId) {
       prune(sid);
       // A sign-in new here vouches for nothing yet: the upgrade's check knows it is on, not until when.
-      const entry = bySession.get(sid) ?? { alias, arrival, sockets: new Set<Closable>(), knownUntil: 0, reading: null };
+      const entry = bySession.get(sid) ?? { alias, arrival, sockets: new Map<Closable, string>(), knownUntil: 0, reading: null };
       const socket = socketOf(upgrade);
       if (opts.liveUntil) socket.gate = gateFor(sid, entry, socket, opts.liveUntil);
-      entry.sockets.add(socket);
+      entry.sockets.set(socket, workspaceId);
       bySession.set(sid, entry);
     },
     closeSessions(sids) {
@@ -174,6 +201,12 @@ export function createSessionSockets(options: SessionSocketsOptions | ((upgrade:
       let n = 0;
       for (const [sid, entry] of bySession) if (entry.alias === alias) n += close(sid);
       return n;
+    },
+    closeMembership(alias, workspaceId) {
+      return closeInWorkspace(alias, workspaceId, CloseCode.MEMBERSHIP_ENDED, "membership ended");
+    },
+    reopenMembership(alias, workspaceId) {
+      return closeInWorkspace(alias, workspaceId, CloseCode.ROLE_CHANGED, "role changed");
     },
     async sweep(isLive) {
       let n = 0;

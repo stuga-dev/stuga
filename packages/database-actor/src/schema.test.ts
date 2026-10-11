@@ -328,6 +328,53 @@ describe("column descriptions", () => {
     expect(back.description).toBe("USD, net of refunds");
   });
 
+  it("sets and clears a number column's format, keeps it beside the description, and reverts it", async () => {
+    const { actor } = makeActor();
+    const starter = await initStarter(actor);
+    const { column } = await doJson<{ column: ColumnSpec }>(actor, "/columns/add", {
+      table_id: starter.table_id,
+      display: "Price",
+      type: "number",
+      description: "Per loaf",
+      actor: HUMAN,
+    });
+    const setFormat = (format: unknown) =>
+      doJson<{ column: ColumnSpec }>(actor, "/columns/set-format", { table_id: starter.table_id, column_id: column.column_id, format, actor: HUMAN });
+
+    const set = await setFormat({ style: "currency", currency: "EUR", decimals: 2, grouping: true });
+    expect(set.column.options).toEqual({ format: { style: "currency", currency: "EUR", decimals: 2, grouping: true } });
+    expect(set.column.description).toBe("Per loaf");
+    const ops = async () => (await doJson<{ ops: Array<{ op_id: string; kind: string; summary: string }> }>(actor, "/ops")).ops;
+    expect((await ops())[0]!.summary).toBe('Changed the number format of column "Price" in "Table 1"');
+
+    // A description written later keeps the format.
+    await doJson(actor, "/columns/set-description", { table_id: starter.table_id, column_id: column.column_id, description: "Per loaf, VAT included", actor: HUMAN });
+    expect((await schemaOf(actor)).tables[0]!.columns.find((c) => c.column_id === column.column_id)!.options?.format?.style).toBe("currency");
+
+    await setFormat({ style: "percent" });
+    const op = (await ops())[0]!;
+    expect(op.kind).toBe("columns.set_format");
+    await doJson(actor, "/ops/revert", { op_id: op.op_id, actor: HUMAN });
+    expect((await schemaOf(actor)).tables[0]!.columns.find((c) => c.column_id === column.column_id)!.options?.format?.style).toBe("currency");
+
+    const cleared = await setFormat(null);
+    expect(cleared.column.options).toBeNull();
+    expect(cleared.column.description).toBe("Per loaf, VAT included");
+  });
+
+  it("refuses a number format on a column that holds no numbers, and drops it when the column stops holding them", async () => {
+    const { actor } = makeActor();
+    const starter = await initStarter(actor);
+    const notes = starter.columns.find((c) => c.display === "Notes")!;
+    const res = await doFetch(actor, "/columns/set-format", { table_id: starter.table_id, column_id: notes.column_id, format: { style: "number" }, actor: HUMAN });
+    expect(res.status).toBe(400);
+
+    const { column } = await doJson<{ column: ColumnSpec }>(actor, "/columns/add", { table_id: starter.table_id, display: "Qty", type: "number", actor: HUMAN });
+    await doJson(actor, "/columns/set-format", { table_id: starter.table_id, column_id: column.column_id, format: { style: "number", grouping: true }, actor: HUMAN });
+    const retyped = await doJson<{ column: ColumnSpec }>(actor, "/columns/set-type", { table_id: starter.table_id, column_id: column.column_id, type: "text", actor: HUMAN });
+    expect(retyped.column.options).toBeNull();
+  });
+
   it("restores the previous description when a set_description is reverted", async () => {
     const { actor } = makeActor();
     const starter = await initStarter(actor);

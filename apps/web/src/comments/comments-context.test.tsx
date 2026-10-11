@@ -17,8 +17,14 @@ const shared = vi.hoisted(() => ({ editor: null as unknown, comments: [] as Comm
 
 vi.mock("../api", () => ({ Docs: { comments: vi.fn(async () => ({ comments: shared.comments })) } }));
 vi.mock("../editor/editor-context", () => ({ useSharedEditor: () => ({ editor: shared.editor }) }));
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const { CommentsProvider, useComments } = await import("./comments-context");
+const { CommentDeepLink } = await import("./CommentDeepLink");
+const { MemoryRouter, useLocation, useNavigate } = await import("react-router-dom");
+const { toasts } = await import("../test/toast");
+const { Docs } = await import("../api");
+import type { StugaProvider } from "../sync/stuga-provider";
 const { commentHighlightPlugin } = await import("./comment-highlight");
 
 const PROSE = "The quick brown fox jumps over the lazy dog.";
@@ -42,7 +48,10 @@ function editorOver(view: EditorView) {
     run: () => true,
   };
   return {
-    isDestroyed: false,
+    // As Tiptap's: a destroyed view has no docView.
+    get isDestroyed() {
+      return !(view as unknown as { docView: unknown }).docView;
+    },
     storage: { commentHighlight: highlight },
     view,
     get state() {
@@ -95,7 +104,19 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function mount(comments: Comment[]) {
+/** Stands in for the document's socket: the slot the provider calls when the comments changed. */
+const socket = { commentsListener: null as (() => void) | null };
+let path = "";
+let navigate: (to: string) => void = () => {};
+
+function PathProbe() {
+  const loc = useLocation();
+  path = `${loc.pathname}${loc.search}`;
+  navigate = useNavigate();
+  return null;
+}
+
+async function mount(comments: Comment[], url?: string) {
   const ydoc = new Y.Doc();
   const frag = ydoc.getXmlFragment("default");
   applyMarkdownToYXmlFragment(frag, PROSE);
@@ -107,9 +128,13 @@ async function mount(comments: Comment[]) {
   await act(async () => {
     root = createRoot(host);
     root.render(
-      <CommentsProvider docId="d1" ydoc={ydoc} onReveal={onReveal}>
-        <Probe />
-      </CommentsProvider>,
+      <MemoryRouter initialEntries={[url ?? "/doc/d1"]}>
+        <CommentsProvider docId="d1" ydoc={ydoc} provider={socket as unknown as StugaProvider} onReveal={onReveal}>
+          <Probe />
+          <CommentDeepLink ready />
+          <PathProbe />
+        </CommentsProvider>
+      </MemoryRouter>,
     );
   });
 }
@@ -145,5 +170,57 @@ describe("clickComment", () => {
     expect(caret).toEqual([]);
     expect(scrolled).not.toHaveBeenCalled();
     expect(highlight.flashNum).toBeNull();
+  });
+});
+
+describe("comments that change elsewhere", () => {
+  it("re-reads them when the document's socket says they changed", async () => {
+    await mount([]);
+    expect(ctx.comments).toEqual([]);
+    shared.comments = [imported(3, "brown fox")];
+    await act(async () => socket.commentsListener!());
+    expect(ctx.comments.map((c) => c.num)).toEqual([3]);
+  });
+
+  it("asks once more after a read in flight, rather than once per word", async () => {
+    await mount([]);
+    vi.mocked(Docs.comments).mockClear();
+    await act(async () => {
+      socket.commentsListener!();
+      socket.commentsListener!();
+      socket.commentsListener!();
+    });
+    expect(Docs.comments).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("a link to one comment", () => {
+  beforeEach(() => {
+    toasts.shown = [];
+  });
+
+  it("opens the thread a reply belongs to, then drops the parameter", async () => {
+    await mount([imported(3, "brown fox"), imported(4, "", { parent_num: 3, anchor_quote: null })], "/doc/d1?comment=4");
+    await act(() => new Promise((done) => requestAnimationFrame(() => done(undefined))));
+    expect(onReveal).toHaveBeenCalledWith(3);
+    expect(caret).toEqual([1 + PROSE.indexOf("brown fox")]);
+    expect(path).toBe("/doc/d1");
+  });
+
+  it("says the comment was deleted when it is gone", async () => {
+    await mount([imported(3, "brown fox")], "/doc/d1?comment=9");
+    expect(onReveal).not.toHaveBeenCalled();
+    expect(toasts.shown).toEqual([{ body: "That comment was deleted.", type: "info" }]);
+    expect(path).toBe("/doc/d1");
+  });
+
+  it("reads afresh for a second link to the same comment, which was deleted since", async () => {
+    await mount([imported(3, "brown fox")], "/doc/d1?comment=3");
+    await act(() => new Promise((done) => requestAnimationFrame(() => done(undefined))));
+    expect(onReveal).toHaveBeenCalledWith(3);
+    shared.comments = [];
+    await act(async () => navigate("/doc/d1?comment=3"));
+    expect(toasts.shown).toEqual([{ body: "That comment was deleted.", type: "info" }]);
+    expect(path).toBe("/doc/d1");
   });
 });

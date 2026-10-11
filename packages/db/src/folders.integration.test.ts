@@ -94,6 +94,8 @@ describe.skipIf(!URL)("folders", () => {
     const res = await deleteFolderCascade(sql, "f_root", WS);
     expect(res.folderIds.sort()).toEqual(["f_child", "f_root"]);
     expect(res.trashedDocIds.sort()).toEqual(["d_child", "d_root"]);
+    // With each type, so the node knows which actor to tell.
+    expect(res.trashedDocs.map((d) => d.doc_type)).toEqual(["prose", "prose"]);
 
     const folders = await listFolders(sql, ALICE, WS);
     expect(folders.map((f) => f.folder_id)).toEqual(["f_sib"]);
@@ -134,7 +136,7 @@ describe.skipIf(!URL)("folders", () => {
     });
 
     const miss = await deleteFolderCascade(sql, "f_other", WS);
-    expect(miss).toEqual({ folderIds: [], trashedDocIds: [] });
+    expect(miss).toEqual({ folderIds: [], trashedDocIds: [], trashedDocs: [] });
     expect(await listFolders(sql, ["user:bob"], OTHER_WS)).toHaveLength(1);
 
     await deleteFolderCascade(sql, "f_root", WS);
@@ -148,7 +150,7 @@ describe.skipIf(!URL)("folders", () => {
     await createDoc(sql, { workspaceId: WS, docId: "d_top", owner: "user:alice", title: "Top", aclPrincipals: ALICE });
 
     const res = await deleteFolderCascade(sql, "f_empty", WS);
-    expect(res).toEqual({ folderIds: ["f_empty"], trashedDocIds: [] });
+    expect(res).toEqual({ folderIds: ["f_empty"], trashedDocIds: [], trashedDocs: [] });
     const active = await listDocs(sql, ALICE, WS);
     expect(active.map((d) => d.doc_id)).toEqual(["d_top"]);
   });

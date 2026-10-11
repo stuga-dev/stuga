@@ -16,7 +16,7 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { Text } from "@astryxdesign/core/Text";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { VStack } from "@astryxdesign/core/VStack";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { MAX_AGENT_INSTRUCTIONS_CHARS } from "@stuga/protocol/domain/limits";
 import {
   MAX_AGENT_INSTRUCTIONS_STACK_CHARS,

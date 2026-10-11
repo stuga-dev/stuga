@@ -12,6 +12,7 @@ import { TableRow } from "@tiptap/extension-table-row";
 import { TableHeader } from "@tiptap/extension-table-header";
 import { TableCell } from "@tiptap/extension-table-cell";
 import { Image } from "@tiptap/extension-image";
+import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Markdown } from "tiptap-markdown";
 import { FootnoteDefinition, StugaCode } from "@stuga/crdt-ops";
 import { MentionView } from "./mention-node-view";
@@ -27,6 +28,7 @@ import { withImageSizeSync } from "./image-resize-sync";
 import { RunPreview } from "./run-preview/extension";
 import { CommentHighlight } from "../comments/comment-highlight";
 import { PassageFlash } from "./passage-flash";
+import { FileChips } from "./file-links";
 import { t } from "../i18n/i18n";
 
 // A link ends at its boundary, so typing after an autolinked URL is plain text.
@@ -53,6 +55,8 @@ export function stugaEditorExtensions(deps: {
   awareness: unknown;
   alias: string;
   label?: string;
+  /** The account alias, so the caret and avatar share the colour the person has everywhere else. */
+  account?: string | null;
   onClickComment: (num: number) => void;
 }): Extensions {
   return [
@@ -82,6 +86,12 @@ export function stugaEditorExtensions(deps: {
         return withImageSizeSync(this.parent?.());
       },
     }),
+    // `[ ] ` at the start of a line makes one; `nested` matches the server's `paragraph block*`.
+    TaskList.configure({ HTMLAttributes: { dir: "auto" } }),
+    TaskItem.configure({
+      nested: true,
+      a11y: { checkboxLabel: (node) => t("editor.task.checkbox", { task: node.textContent }) },
+    }),
     // Clicking a link places the caret; LinkPopover's Open navigates.
     StugaLink.configure({ openOnClick: false }),
     StugaMarkdown.configure({ html: false, transformPastedText: true }),
@@ -89,8 +99,15 @@ export function stugaEditorExtensions(deps: {
     Collaboration.configure({ document: deps.ydoc, field: "default" }),
     PeerCarets.configure({
       provider: { awareness: deps.awareness } as never,
-      // `label` rides along in awareness for the presence tooltip; `color` must be 6-digit hex.
-      user: { name: deps.alias, label: deps.label ?? deps.alias, color: colorFor(deps.alias) },
+      // `label` rides along in awareness for the presence tooltip; `color` must be 6-digit hex and is only a
+      // preference: the room may hand out another (peer-carets.ts roomPeople). `since` orders the room.
+      user: {
+        name: deps.alias,
+        label: deps.label ?? deps.alias,
+        color: colorFor(deps.account ?? deps.alias),
+        ...(deps.account ? { id: deps.account } : {}),
+        since: Date.now(),
+      },
     }),
     CommentHighlight.configure({
       ydoc: deps.ydoc,
@@ -104,6 +121,8 @@ export function stugaEditorExtensions(deps: {
     RunPreview.configure({ ydoc: deps.ydoc }),
     // The block a citation or search hit landed on (see CitationJump).
     PassageFlash,
+    // An attached file's size beside its name.
+    FileChips,
     // Decorations only, never the document. editor.css shows the hint on an empty document once it has synced.
     Placeholder.configure({ placeholder: t("editor.content.placeholder"), showOnlyWhenEditable: true }),
   ];

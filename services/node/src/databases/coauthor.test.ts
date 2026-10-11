@@ -86,7 +86,7 @@ describe("the table co-author's writes", () => {
 
   it("waits for review on a database that is not set to apply at once", async () => {
     const { fetch, out } = stage({ ...DOC, agent_mode: "review" }, { mode: "proposed", run: { id: "run_1" }, pending: 1, minted: {} });
-    expect(await out).toEqual({ staged: true, applied: false, text: "ok: staged for the user's review." });
+    expect(await out).toEqual({ staged: true, applied: false, text: "ok: proposed for the user's review." });
     expect(JSON.parse(fetch.mock.calls[0]![1].body as string)).toMatchObject({ review: "review" });
   });
 

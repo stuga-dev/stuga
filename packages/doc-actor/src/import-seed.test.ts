@@ -144,7 +144,7 @@ describe("markdown import seeds a brand-new document", () => {
     expect(seeded).not.toContain("\\#");
   });
 
-  it("drops frontmatter that would otherwise seed an hr plus a bogus heading", () => {
+  it("seeds frontmatter as a list under the title, not as an hr plus a bogus heading", () => {
     const raw = "---\ntitle: Meta\ntags: [a]\n---\n\n# Real\n\nBody";
     // The unnormalized shape: a thematic break, then "title: Meta tags: [a]"
     // parsed as a setext H2.
@@ -153,6 +153,6 @@ describe("markdown import seeds a brand-new document", () => {
 
     const { markdown } = normalizeImportedMarkdown(raw, {});
     const seeded = seed(freshDocFragment(), markdown);
-    expect(seeded).toBe("# Real\n\nBody");
+    expect(seeded).toBe("# Real\n\n* title: Meta\n\n* tags: a\n\nBody");
   });
 });

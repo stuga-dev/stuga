@@ -112,8 +112,8 @@ minutes, or confirming it is you (with a passkey there, if you have one), as an 
 you are notified that the app is connected.
 
 The page names the app. An app that identifies itself by a metadata document the node fetched is
-shown as **Verified by** that document's host; any other is an **Unverified app**, with the host it
-returns to.
+shown as **Verified by** that document's host; any other is an **Unverified app**, a warning callout
+naming the host it returns to, or "an app on this computer" for a loopback address.
 
 Each consent creates a connection: one per person per app. Signing in again as the same client (the
 same `client_id`) renews it with your new answers and keeps its name and its agent, so its runs stay
@@ -313,7 +313,7 @@ under **Connected agents**.
 
 Any client that speaks Streamable HTTP can use `<PUBLIC_ORIGIN>/mcp`. A client that supports OAuth
 signs in like Claude Code. Any other client sends a key as `Authorization: Bearer vk_...`, and the
-**Other clients** in **Your AI agents** builds that config.
+**Other apps** in **Your AI agents** builds that config.
 
 ## The stdio server
 

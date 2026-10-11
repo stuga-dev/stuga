@@ -129,6 +129,27 @@ afterEach(() => {
 });
 
 describe("WorkspaceOnboarding", () => {
+  it("goes into a workspace the account is a member of after all, as after being added back", async () => {
+    sessionStorage.setItem("stuga_membership_ended", "Bakery");
+    services.list.mockResolvedValue({ workspaces: [{ workspace_id: "w_5", name: "Bakery", role: "member" }], active: "w_5" });
+    await render();
+    expect(getActiveWorkspace()).toBe("w_5");
+    expect(host.querySelector('[data-testid="destination"]')?.textContent).toBe("/");
+    expect(sessionStorage.getItem("stuga_membership_ended")).toBeNull();
+  });
+
+  it("names the workspace the person is no longer a member of", async () => {
+    sessionStorage.setItem("stuga_membership_ended", "Bakery");
+    await render();
+    expect(host.textContent).toContain("You are no longer a member of Bakery");
+    expect(host.textContent).toContain("Create your workspace");
+  });
+
+  it("says nothing of a membership to a new account", async () => {
+    await render();
+    expect(host.textContent).not.toContain("no longer a member");
+  });
+
   it("creates a workspace with the chosen default and enters it for a regular member", async () => {
     await render();
     expect(host.textContent).toContain("Start on your own and invite others when you’re ready.");
@@ -202,26 +223,37 @@ describe("WorkspaceOnboarding", () => {
     expect(services.checkImport).toHaveBeenCalledWith(file);
     expect(services.importHeld).toHaveBeenCalledWith("wsi_1", "", "workspace_edit");
     expect(services.create).not.toHaveBeenCalled();
+    // An import ends with its summary; the workspace opens from there.
+    expect(host.textContent).toContain("Imported “");
+    await click("Open workspace");
     expect(getActiveWorkspace()).toBe("w_2");
     expect(host.querySelector('[data-testid="destination"]')?.textContent).toBe("/doc/d_start");
   });
 
   it("lists what a file would leave out and imports it only on Import", async () => {
-    services.checkImport.mockResolvedValue({ import_id: "wsi_2", name: "Notion", expires_at: "2026-09-28T01:00:00Z", left_out: { count: 1, files: ["Home/Brief.pdf"] } });
+    services.checkImport.mockResolvedValue({
+      import_id: "wsi_2",
+      name: "Notion",
+      expires_at: "2026-09-28T01:00:00Z",
+      left_out: { count: 1, files: [{ path: "Home/Brief.pdf", reason: "not_linked" }] },
+    });
     await render();
     await chooseSegment(host, "Import");
     await pickFile(host, new File(["PK"], "Export.zip", { type: "application/zip" }));
     await click("Create workspace");
 
     expect(host.querySelector('.astryx-banner[data-status="warning"]')?.textContent).toContain("1 file won’t be imported");
-    expect(host.textContent).toContain("Brief.pdf");
+    expect(host.textContent).toContain("Home/Brief.pdf");
+    expect(host.textContent).toContain("Not a page, and no page links to it");
+    expect(host.textContent).toContain("Import a workspace");
     expect(services.importHeld).not.toHaveBeenCalled();
     expect(button("Create workspace")).toBeUndefined();
-    await click("Cancel");
+    await click("Back");
     expect(services.discardImport).toHaveBeenCalledWith("wsi_2");
     await click("Create workspace");
     await click("Import");
     expect(services.importHeld).toHaveBeenCalledWith("wsi_2", "", "workspace_edit");
+    await click("Open workspace");
     expect(getActiveWorkspace()).toBe("w_2");
     expect(host.querySelector('[data-testid="destination"]')?.textContent).toBe("/doc/d_start");
   });
@@ -233,6 +265,7 @@ describe("WorkspaceOnboarding", () => {
     await chooseSegment(host, "Import");
     await pickFile(host, new File(["PK"], "Handbook.zip", { type: "application/zip" }));
     await click("Create workspace");
+    await click("Open workspace");
     expect(host.textContent).toContain("Your workspace is ready");
     await click("Start using Stuga");
     expect(host.querySelector('[data-testid="destination"]')?.textContent).toBe("/doc/d_start");
@@ -294,7 +327,8 @@ describe("WorkspaceOnboarding", () => {
     expect(scrolled.filter((el) => el.textContent?.includes("The import may still finish"))).toHaveLength(1);
 
     await act(async () => vi.advanceTimersByTime(IMPORT_CHECK_MS));
-    expect(services.list).toHaveBeenCalledTimes(1);
+    // Once on arrival, once by the import's check.
+    expect(services.list).toHaveBeenCalledTimes(2);
     expect(host.querySelector('[data-testid="destination"]')).toBeNull();
 
     // Nothing asks for a second meanwhile, which the node would refuse, or copy once the first is done.
@@ -308,7 +342,7 @@ describe("WorkspaceOnboarding", () => {
     expect(getActiveWorkspace()).toBe("w_9");
     expect(host.querySelector('[data-testid="destination"]')?.textContent).toBe("/");
     await act(async () => vi.advanceTimersByTime(IMPORT_CHECK_MS * 3));
-    expect(services.list).toHaveBeenCalledTimes(2);
+    expect(services.list).toHaveBeenCalledTimes(3);
   });
 
   it("stops looking, and says the import did not finish, once the node would have stopped it", async () => {

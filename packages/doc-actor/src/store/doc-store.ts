@@ -33,17 +33,22 @@ interface Hashed {
 }
 
 /**
- * The version of what a document keeps in its actor storage: the keys below and the run ledger's.
- * The host stamps each store with it and refuses one stamped higher. A change to a stored shape
- * raises it, together with the step in the host that brings an older store forward.
+ * The version of what a document keeps in its actor storage: the keys below, the run ledger's, and
+ * the node types its text may hold. The host stamps each store with it and refuses one stamped
+ * higher. A change to a stored shape raises it, together with the step in the host that brings an
+ * older store forward.
  */
-export const DOC_STORE_VERSION = 2;
+export const DOC_STORE_VERSION = 3;
 
 /** The steps that bring an older store forward, keyed by the version each reaches. */
 export const DOC_STORE_UPGRADES: Record<number, StoreUpgrade> = {
   // 2: the run ledger's `feedback-pending:<agent>` key, and a reviewer's rejection with its note on each
   // hunk it covered (in the run's blob). Both are new and optional, so a version 1 store is read as it is.
   2: () => {},
+  // 3: task lists (`taskList` and `taskItem` nodes) in the text. An older build's schema has no such
+  // node, and its editor drops one it cannot read, so it must not open the store. A version 2 store
+  // holds none, so it is read as it is.
+  3: () => {},
 };
 
 const FLUSH_THRESHOLD = 100; // updates
@@ -81,6 +86,11 @@ export class DocStore {
   epoch = 0;
   /** Mirrors docs.locked (pushed by /set-locked). Freezes content, not persistence. */
   locked = false;
+  /**
+   * Mirrors docs.trashed while the actor is up: read by the node at every /connect, and pushed by
+   * /set-trashed. Not stored, since no write arrives except through a socket the node opened.
+   */
+  trashed = false;
   readonly ring = new VersionRing();
   /**
    * Set when meta names a snapshot the store did not return: the in-memory doc is
@@ -360,6 +370,14 @@ export class DocStore {
     else await this.forcePersistPending();
   }
 
+  /**
+   * Flush now when the next snapshot would record a version, so a change an agent applied shows in
+   * version history at once. Bounded by the version interval, so a busy agent costs no extra snapshots.
+   */
+  async flushIfVersionDue(reason: string): Promise<void> {
+    if (this.ring.due(this.seq + 1, reason, Date.now())) await this.flush(reason);
+  }
+
   async flush(reason: string): Promise<void> {
     await this.ensureLoaded();
     if (this.flushing || this.replacingHead || this.destroyed) return;
@@ -611,6 +629,7 @@ export class DocStore {
     this.seq = 0;
     this.epoch = 0;
     this.locked = false;
+    this.trashed = false;
     this.ring.restore({ seqs: [], lastAt: 0, lastHash: "" });
     this.hydrationIncomplete = false;
     this.persistDegraded = false;

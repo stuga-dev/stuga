@@ -149,6 +149,11 @@ function installLinks(mcpUrl: string, name: string, key: string): Record<LinkCli
 }
 
 interface ClientConfigs {
+  /**
+   * The address a client on the browser's machine dials, and whether only this computer can reach
+   * it: a loopback address, unless the page itself was opened at the remote address.
+   */
+  address: { url: string; thisComputerOnly: boolean };
   /** What a hosted client such as Claude on the web dials; `clientTabs` offers none where nothing can. */
   hostedMcpUrl: string;
   /** `stuga`: what every config calls this connection, and what Claude Code lists it as. */
@@ -198,6 +203,7 @@ export function clientConfigs(setup: AgentSetup, token: string | null, pageOrigi
     return { setup: run(), disconnect: run("?action=disconnect"), uninstall: run("?action=uninstall") };
   };
   return {
+    address: { url: local.url, thisComputerOnly: setup.loopback && !local.remote },
     hostedMcpUrl: hostedEndpoint(setup) ?? setup.mcp_url,
     serverKey,
     bundleFilename: MCP_BUNDLE_FILENAME,

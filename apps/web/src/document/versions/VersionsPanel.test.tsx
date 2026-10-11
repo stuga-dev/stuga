@@ -29,6 +29,7 @@ vi.mock("@stuga/crdt-ops", async (importOriginal) => {
 vi.mock("@astryxdesign/core/Toast", () => import("../../test/toast"));
 
 const { VersionsPanel } = await import("./VersionsPanel");
+const { rememberRestore, takeRestore } = await import("../restore-notice");
 
 /** Past the actor's snapshot interval and the index job's allowance. */
 const SETTLED_MS = DOC_FLUSH_INTERVAL_MS + 10_000;
@@ -137,6 +138,18 @@ afterEach(async () => {
 });
 
 describe("VersionsPanel: Current", () => {
+  it("labels nothing current after a restore until the restore's own row is listed", async () => {
+    rememberRestore("d_1", { by: "Liv", at: version(3).ts, seq: 3 });
+    // The panel may mount before the page takes the notice, or after.
+    await mount(listing([4, 3], 4));
+    expect(takeRestore("d_1")).toMatchObject({ by: "Liv", seq: 3, mine: false });
+    expect(current()).toHaveLength(0);
+    docs.versions.mockResolvedValue({ versions: [version(5, ["restore:v3"]), version(4), version(3)], head_seq: 5, can_manage: true });
+    await advance(2_000);
+    expect(current()).toHaveLength(1);
+    expect(rows()[0]!.querySelector(".vcurrent")).not.toBeNull();
+  });
+
   it("labels the version the document loads from as current", async () => {
     await mount(listing([7, 6], 7));
     expect(current()).toHaveLength(1);
@@ -426,13 +439,13 @@ describe("VersionsPanel: authors", () => {
     expect(authorsCell(1)).toBe("Eve, Claude Desktop");
   });
 
-  it("shows someone who has left the workspace by the short id", async () => {
+  it("shows someone who has left the workspace as a former member, never by an id", async () => {
     users.resolve.mockResolvedValue({ users: [] });
     await mount({ versions: [version(7, ["u_Zx9Pformermember"])], head_seq: 7, can_manage: true });
     expect(users.resolve).toHaveBeenCalledTimes(1);
-    expect(authorsCell(0)).toBe("u_Zx9P…");
+    expect(authorsCell(0)).toBe("Former member");
     await open(0);
-    expect(savedLine()).toContain("by u_Zx9P…");
+    expect(savedLine()).toContain("by Former member");
   });
 });
 

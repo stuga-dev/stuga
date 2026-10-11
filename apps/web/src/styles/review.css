@@ -7,8 +7,10 @@
    one; red and green stay on the text. A paragraph's gap to the next part is padding, so the rail runs on. */
 .ai-preview-part { border-left: 2px solid var(--color-border-emphasized); padding-left: 0.4rem; }
 p.ai-preview-part:has(+ .ai-preview-part, + .ai-preview-ghost) { margin-bottom: 0; padding-bottom: 0.85em; }
-.ai-preview-insert--block > :first-child { margin-top: 0; }
-.ai-preview-insert--block > :last-child { margin-bottom: 0; }
+.ai-preview-insert--block > :first-child,
+.ai-preview-insert--block > .ai-preview-hunk:first-child > :first-child { margin-top: 0; }
+.ai-preview-insert--block > :last-child,
+.ai-preview-insert--block > .ai-preview-hunk:last-child > :last-child { margin-bottom: 0; }
 ins.ai-preview-insert { padding: 0 0.1rem; }
 
 /* A ghost's Accept is filled, Reject is an outline that turns red on hover, and the note is plain text. */
@@ -113,6 +115,43 @@ ol > .ai-preview-ghost { list-style: none; margin-left: 0; }
 }
 
 /* --- run banners -------------------------------------------------------- */
+/* A neutral bar with the review accent down its side: the page's own surface, so the red and green
+   of the changes stay the only colour. */
+.agent-run-bar {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding: 0.45rem 0.75rem; min-height: 2.75rem; box-sizing: border-box;
+  background: var(--color-background-surface); color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border); border-left: 3px solid var(--color-border-green);
+}
+.agent-run-bar__icon { flex: 0 0 auto; color: var(--color-icon-green); }
+.agent-run-bar .agent-run-title { flex: 1 1 12rem; font-weight: 600; }
+.agent-run-bar__actions { margin-left: auto; }
+.agent-catchup__text { flex: 1 1 14rem; min-width: 0; display: flex; flex-direction: column; }
+.agent-catchup__text .agent-run-title__main { font-weight: 600; white-space: normal; }
+.agent-catchup__description { font-size: var(--text-supporting-size); color: var(--color-text-secondary); }
+/* Changing struck text then new text: a hair of space, so the two words never read as one. */
+.ai-preview-delete + ins.ai-preview-insert { margin-left: 0.2em; }
+
+/* On a document the bars float over the foot of the reading column, so a proposal arriving never
+   moves the page; the column gains room at its end to scroll the last lines clear of them. */
+.doc-main-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
+.doc-review-float {
+  position: absolute; left: 1rem; right: 1rem; bottom: 1rem; z-index: 25;
+  display: flex; flex-direction: column; align-items: center; gap: 0.5rem; pointer-events: none;
+}
+.doc-review-float > * { pointer-events: auto; max-width: min(100%, 56rem); }
+.doc-review-float .agent-run-bar {
+  border: 1px solid var(--color-border); border-left: 3px solid var(--color-border-green);
+  border-radius: var(--radius-container); box-shadow: var(--shadow-med);
+}
+/* "Review each" opens above its bar there, and scrolls rather than covering the page. */
+.doc-review-float .agent-run { display: flex; flex-direction: column-reverse; gap: 0.35rem; }
+.doc-review-float .agent-run-changes {
+  max-height: 40vh; overflow: auto; border: 1px solid var(--color-border);
+  border-radius: var(--radius-container); box-shadow: var(--shadow-med);
+}
+.doc-main-wrap:has(.doc-review-float > *) .doc-main { padding-bottom: 7rem; }
+
 /* A run that just changed pulses, so a streaming agent reads as live. */
 .agent-run-bar--live { animation: agent-run-pulse 1.2s ease-in-out 2; }
 @keyframes agent-run-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.72; } }
@@ -158,7 +197,7 @@ ol > .ai-preview-ghost { list-style: none; margin-left: 0; }
 }
 .agent-run-change__body:disabled { cursor: default; }
 .agent-run-change__body:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: var(--radius-element); }
-.agent-run-change__marker { flex: 0 0 auto; width: 0.75rem; font-weight: 700; }
+.agent-run-change__marker { flex: 0 0 auto; min-width: 4.5rem; font-size: var(--text-supporting-size); font-weight: 600; }
 .agent-run-change__marker--add { color: var(--color-text-green); }
 .agent-run-change__marker--remove { color: var(--color-text-red); }
 .agent-run-change__marker--change { color: var(--color-text-secondary); }
@@ -199,3 +238,6 @@ ol > .ai-preview-ghost { list-style: none; margin-left: 0; }
 .db-run-list__row:last-child { border-bottom: none; }
 .db-run-list__row--busy { opacity: 0.55; pointer-events: none; }
 .db-run-list__summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A library row whose item has AI edits waiting for this person. */
+.doc-state-mark--waiting { color: var(--color-icon-green); }

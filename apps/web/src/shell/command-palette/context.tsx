@@ -19,6 +19,11 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
+/** For a control shown only where there is a palette to open: null outside the provider. */
+export function useOptionalCommandPalette(): CommandPaletteControl | null {
+  return useContext(Ctx);
+}
+
 /** Throws outside the provider rather than giving a search control that does nothing. */
 export function useCommandPalette(): CommandPaletteControl {
   const ctx = useContext(Ctx);

@@ -21,13 +21,14 @@ function opLine(op: DatabaseRunOp): string {
   return op.detail ? describeProposal(op.detail) : op.summary;
 }
 
-export function DbRunBar({ tables, activeTableId }: { tables: TableSchema[]; activeTableId: string | null }) {
+/** `locked`: the database is locked, so its changes can be rejected but not accepted until it is unlocked. */
+export function DbRunBar({ tables, activeTableId, locked = false }: { tables: TableSchema[]; activeTableId: string | null; locked?: boolean }) {
   const { openRuns, notices, dismissNotice } = useDbRuns();
   return (
     <>
       <RunNotices notices={notices} dismissNotice={dismissNotice} />
       {openRuns.map((run) => (
-        <DbRunBanner key={run.id} run={run} tables={tables} activeTableId={activeTableId} />
+        <DbRunBanner key={run.id} run={run} tables={tables} activeTableId={activeTableId} locked={locked} />
       ))}
     </>
   );
@@ -37,10 +38,12 @@ function DbRunBanner({
   run,
   tables,
   activeTableId,
+  locked,
 }: {
   run: DatabaseRunSummary;
   tables: TableSchema[];
   activeTableId: string | null;
+  locked: boolean;
 }) {
   const { busy, decide, inFlight } = useDbRuns();
   const { ask, dialog } = useRejectNote();
@@ -68,7 +71,14 @@ function DbRunBanner({
       <RunBanner
         updatedAt={run.updated_at}
         title={t("review.runBar.dbTitle", { agent, count: n })}
-        hint={offTable > 0 ? t("review.runBar.dbHintOffTable", { count: offTable }) : t("review.runBar.dbHint")}
+        acceptBlocked={locked}
+        hint={
+          locked
+            ? t("review.runBar.lockedHint")
+            : offTable > 0
+              ? t("review.runBar.dbHintOffTable", { count: offTable })
+              : t("review.runBar.dbHint")
+        }
         busy={busy}
         onDecide={(decision) => void decide(run.id, decision)}
         noteAction={{
@@ -97,7 +107,7 @@ function DbRunBanner({
                         label={t("review.runBar.acceptOne")}
                         variant="secondary"
                         size="sm"
-                        isDisabled={flying}
+                        isDisabled={flying || locked}
                         onClick={() => void decide(run.id, "accept", [op.id])}
                       >
                         {t("common.accept")}

@@ -79,6 +79,9 @@ const SCHEMA_PREVIEW_CHARS = 16_000;
 
 const SEARCH_TOOL_LINE = `- search_collection(query): search the user's selected knowledge base of DOCUMENTS for relevant passages. Use it for facts that are not already in the tables — \`query\` reads the data you have, this reads the prose you don't. Cite facts you use with a [^n] marker in YOUR PROSE ONLY.`;
 
+/** Without documents in scope: say how to bring them in, rather than ask the user to paste them. */
+const NO_SEARCH_LINE = `You can read only this database. When a request needs facts from the user's documents (a price list, a schedule, notes), say that you cannot see them here and that the user can choose them in the Search scope menu beside the message box, then ask again. Never invent such facts.`;
+
 const SYSTEM = `You are a collaborative co-author for a structured database (typed tables of rows), working through tools.
 Reading:
 - get_schema(): the tables, their typed columns (with column_id and physical SQL name), and row counts. Entries marked "pending": true are your OWN not-yet-accepted proposals.
@@ -91,11 +94,11 @@ Reading:
 - add_column(table, name, type, choices?): types are text, number, checkbox (true/false), date ("YYYY-MM-DD"), single_select (requires choices), files (attachments the user uploads).
 A files cell holds links to files stored with the database, one per line. You cannot upload a file: keep the links a cell holds, and never write one you did not read from this database.
 - create_table(name): a new empty table (add columns next).
-Making a change means CALLING a tool — describing it in prose stages nothing and the user sees nothing to accept.
-Guidance: read before you write (query for _ids, get_schema for column names and types); batch related rows into ONE insert_rows/update_rows call rather than many; make the smallest set of changes that satisfies the request; briefly say what you proposed and why, in the language of the request; new cell text follows the language the table already uses. A tool error means that one change was refused — fix the input and retry that change, or explain why it cannot be done.`;
+Making a change means CALLING a tool — describing it in prose proposes nothing and the user sees nothing to accept.
+Guidance: read before you write (query for _ids, get_schema for column names and types); batch related rows into ONE insert_rows/update_rows call rather than many; make the smallest set of changes that satisfies the request; briefly say what you proposed and why, in the language of the request and in everyday words (no SQL, column ids or tool names); do not state how many changes you made, as the app shows the count; new cell text follows the language the table already uses. A tool error means that one change was refused — fix the input and retry that change, or explain why it cannot be done.`;
 
 const REVIEW_LINE =
-  "Proposing changes (each call stages ONE change for the user to Accept or Reject in their grid — changes are NOT applied until accepted):";
+  "Proposing changes (each call proposes ONE change for the user to Accept or Reject in their grid — changes are NOT applied until accepted, so say you suggested or proposed them, never that you added, changed or staged them):";
 const APPLY_AT_ONCE_LINE =
   "Making changes (this database is set to apply agent changes at once: each call applies ONE change without review, and the user can revert it):";
 
@@ -122,7 +125,7 @@ export async function runTableAgentTurn(
   const modelId = resolveModel(cfg, input.model);
   const collectionEnabled = input.collectionEnabled === true && typeof runner.searchCollection === "function";
   const system =
-    SYSTEM.replace("{{SEARCH_TOOL}}", collectionEnabled ? `${SEARCH_TOOL_LINE}\n` : "").replace(
+    SYSTEM.replace("{{SEARCH_TOOL}}", `${collectionEnabled ? SEARCH_TOOL_LINE : NO_SEARCH_LINE}\n`).replace(
       "{{WRITES}}",
       input.applyAtOnce ? APPLY_AT_ONCE_LINE : REVIEW_LINE,
     ) +

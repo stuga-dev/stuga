@@ -23,6 +23,8 @@
   "op.columnTypeChanged": "Colonne « {column} » de « {table} » changée en {type} ({coerced, plural, one {# cellule convertie} many {# cellules converties} other {# cellules converties}})",
   "op.columnDescribed": "Colonne « {column} » de « {table} » décrite",
   "op.columnDescriptionCleared": "Description de la colonne « {column} » de « {table} » effacée",
+  "op.columnFormatChanged": "Format numérique de la colonne « {column} » modifié dans « {table} »",
+  "op.columnFormatCleared": "Format numérique de la colonne « {column} » retiré dans « {table} »",
   "op.columnDeleted": "Colonne « {column} » supprimée de « {table} »",
   "op.rowsInserted": "{rows, plural, one {# ligne insérée} many {# lignes insérées} other {# lignes insérées}} dans « {table} »",
   "op.rowsImported": "{rows, plural, one {# ligne importée} many {# lignes importées} other {# lignes importées}} dans « {table} »",

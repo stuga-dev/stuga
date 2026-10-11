@@ -83,6 +83,8 @@ import {
   mediaPath,
   parseManifest,
   rewritten,
+  tableCsv,
+  tableCsvPath,
   type ArchiveColumn,
   type ArchiveComment,
   type ArchiveDocSettings,
@@ -342,8 +344,9 @@ export async function planWorkspaceExport(ctx: Ctx): Promise<ExportPlan> {
   const tables = plan.databases.flatMap((db) => db.tables);
   const rows = tables.reduce((n, t) => n + t.schema.row_count, 0);
   if (rows > ARCHIVE_MAX_ROWS) throw new ExportRefused(413, `this workspace holds ${rows} rows you can open; an archive holds at most ${ARCHIVE_MAX_ROWS}`);
-  // A body per document and row page, a rows file per table, and the manifest; images come on top.
-  const files = docs.size + tables.length + 1;
+  // A body per document and row page, a rows file and its spreadsheet copy per table, the manifest
+  // and the README; images come on top.
+  const files = docs.size + tables.length * 2 + 2;
   if (files > ARCHIVE_MAX_ENTRIES) throw new ExportRefused(413, `this workspace would take ${files} files; an archive holds at most ${ARCHIVE_MAX_ENTRIES}`);
 
   // Every body read once ahead, so one longer than an import takes is named before anything is sent.
@@ -408,6 +411,7 @@ function planTable(plan: ExportPlan, schema: TableSchema, dbPath: string, tableN
     }
     const description = multiline(spec.description ?? "", DATABASE_MAX_COLUMN_DESCRIPTION_CHARS).trim();
     if (description) column.description = description;
+    if (spec.type === "number" && spec.options?.format) column.format = spec.options.format;
     columns.set(spec.column_id, column);
   }
   return {
@@ -552,7 +556,31 @@ export async function writeWorkspaceExport(ctx: Ctx, plan: ExportPlan, sink: Zip
   // What an import will read: an export that would not pass is a bug here, never an archive.
   parseManifest(JSON.parse(text));
   await addText(state, MANIFEST_NAME, text, ARCHIVE_MAX_MANIFEST_BYTES);
+  // Unless a document already takes the name, as `archive check` allows.
+  if (!items.some((item) => item.path.toLowerCase() === README_NAME.toLowerCase())) {
+    await zip.add(README_NAME, utf8(readme(plan.workspace.name, manifest.exported_at)), "deflate");
+  }
   await zip.finish();
+}
+
+/** What a person unzipping an export reads first. */
+const README_NAME = "README.md";
+
+/** The README: what each kind of file is, in plain words. */
+function readme(workspace: string, exportedAt: string): string {
+  return [
+    `# ${workspace.replace(/[\\`*_[\]<>#!|~]/g, "\\$&")}`,
+    "",
+    `A Stuga workspace, exported ${exportedAt.slice(0, 10)}.`,
+    "",
+    "- Each document is a Markdown file (.md), in folders as in the workspace.",
+    "- Each database is a folder. Each of its tables is a .csv file, which a spreadsheet opens, and a .jsonl file, which Stuga reads. A row's page is in the database's pages folder.",
+    "- Images and attached files are in the media folder.",
+    "- stuga.json lists everything, with titles, comments and settings.",
+    "",
+    "To bring it back, create a workspace in Stuga and choose Import.",
+    "",
+  ].join("\n");
 }
 
 /** A text file an import reads only up to `max` bytes: past that the export stops, since no node would import it. */
@@ -602,6 +630,9 @@ async function writeRows(state: WriteState, db: PlannedDatabase, table: PlannedT
   state.rows += rows.length;
   if (state.rows > ARCHIVE_MAX_ROWS) throw new ArchiveError(table.archive.file, `takes the archive past ${ARCHIVE_MAX_ROWS} rows`);
   await addText(state, table.archive.file, formatTableRows(table.archive, rows), ARCHIVE_MAX_TABLE_FILE_BYTES);
+  // The copy a spreadsheet opens; one past what a rows file may hold is left out, since no import reads it.
+  const csv = utf8(tableCsv(table.archive, rows));
+  if (csv.byteLength <= ARCHIVE_MAX_TABLE_FILE_BYTES) await state.zip.add(tableCsvPath(table.archive.file), csv, "deflate");
 }
 
 /** A files cell as the archive keeps it: each file copied in, by its path. A file the archive cannot hold is left out. */
@@ -702,12 +733,47 @@ async function writeBody(state: WriteState, body: Body): Promise<ArchiveDocSetti
   await currentReach(state);
   const markdown = await liveMarkdown(state.ctx, body.doc);
   const schema = getStugaSchema();
-  const doc = markdown === "" ? null : await rewriteBody(state, body.path, markdownToDoc(markdown, schema));
+  const doc = markdown === "" ? null : withoutEdgeSpaces(await rewriteBody(state, body.path, markdownToDoc(markdown, schema)));
   const out = doc ? docToMarkdown(doc) : "";
   await addText(state, body.path, bodyFile(out), ARCHIVE_MAX_BODY_BYTES);
   // A title the body gives is read as an import will read it: from the file.
   const derived = body.doc.title_source === "heading" && out !== "" ? derivedTitle(markdownToDoc(out, schema)) : "";
   return docSettings(state, body.doc, archiveTitle(derived || body.doc.title));
+}
+
+/**
+ * `node` without the spaces at either end of each paragraph, heading or other text block, which
+ * nothing shows but Markdown can only keep as `&#32;`. Code keeps its own.
+ */
+function withoutEdgeSpaces(node: Doc): Doc {
+  if (node.isTextblock) {
+    if (node.type.spec.code) return node;
+    let trimmed = node;
+    const last = trimmed.lastChild;
+    if (last?.isText && /[^\S\n]$/.test(last.text!)) {
+      const text = last.text!.replace(/[^\S\n]+$/, "");
+      const kept = trimmed.content.cut(0, trimmed.content.size - last.nodeSize);
+      trimmed = trimmed.copy(text ? kept.addToEnd(last.type.schema.text(text, last.marks)) : kept);
+    }
+    const first = trimmed.firstChild;
+    if (first?.isText && /^[^\S\n]/.test(first.text!)) {
+      const text = first.text!.replace(/^[^\S\n]+/, "");
+      const kept = trimmed.content.cut(first.nodeSize);
+      trimmed = trimmed.copy(text ? kept.addToStart(first.type.schema.text(text, first.marks)) : kept);
+    }
+    return trimmed;
+  }
+  if (node.isLeaf) return node;
+  let changed = false;
+  let content = node.content;
+  node.forEach((child, _, i) => {
+    const next = withoutEdgeSpaces(child);
+    if (next !== child) {
+      changed = true;
+      content = content.replaceChild(i, next);
+    }
+  });
+  return changed ? node.copy(content) : node;
 }
 
 /**

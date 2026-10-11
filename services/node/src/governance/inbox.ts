@@ -2,13 +2,22 @@
 import { type AgentRunRow, type RunInboxFilter, agentNames, agentRunStats, listAgentRuns } from "@stuga/db";
 import { instant } from "../audit/read.js";
 import type { Ctx } from "../auth/context.js";
+import { isWorkspaceAdmin, manages } from "../authz/authz.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
 
-/** Rows the inbox returns: the mirror row plus the agent's display name. */
+/**
+ * Rows the inbox returns: the mirror row plus the agent's display name, and whether the caller may
+ * decide the run (its reviewer, or someone who manages the document, with write access to it as the
+ * decision routes ask), so others see it read-only.
+ */
 async function withAgentNames(ctx: Ctx, runs: AgentRunRow[]) {
   const names = await agentNames(ctx.sql, [...new Set(runs.map((r) => r.agent_alias))]);
-  return runs.map((r) => ({ ...r, agent_name: names.get(r.agent_alias) ?? r.agent }));
+  return runs.map(({ doc_owner, doc_writable, ...r }) => ({
+    ...r,
+    agent_name: names.get(r.agent_alias) ?? r.agent,
+    can_decide: !ctx.isAgent && doc_writable && (r.reviewer === ctx.alias || manages(ctx, { owner: doc_owner })),
+  }));
 }
 
 export async function listRunInbox({ ctx, url }: WorkspaceCall): Promise<Response> {
@@ -28,6 +37,7 @@ export async function listRunInbox({ ctx, url }: WorkspaceCall): Promise<Respons
     agentAlias: p.get("agent") ?? undefined,
     before: beforeAt.value && beforeId ? { updatedAt: beforeAt.value, runId: beforeId } : undefined,
     limit: Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : undefined,
+    decider: { alias: ctx.alias, admin: isWorkspaceAdmin(ctx) },
   });
   return json({ runs: await withAgentNames(ctx, runs), filter });
 }

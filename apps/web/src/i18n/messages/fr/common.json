@@ -1,8 +1,10 @@
 {
   "cancel": "Annuler",
+  "back": "Retour",
   "save": "Enregistrer",
   "close": "Fermer",
   "done": "Terminé",
+  "advanced": "Avancé",
   "retry": "Réessayer",
   "loading": "Chargement…",
   "remove": "Retirer",
@@ -39,5 +41,6 @@
   "notifications": "Notifications",
   "actionsFor": "Actions pour {name}",
   "tooLong": "Trop long : {count, number} caractères, pour une limite de {limit, number}.",
-  "savedLive": "Enregistré – actif immédiatement, sans redémarrage."
+  "savedLive": "Enregistré – actif immédiatement, sans redémarrage.",
+  "foundByMeaning": "Trouvé par le sens"
 }

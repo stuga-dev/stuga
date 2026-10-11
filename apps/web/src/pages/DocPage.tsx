@@ -1,15 +1,20 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { StugaProvider } from "../sync/stuga-provider";
 import { Editor } from "../editor/Editor";
 import { ShareDialog } from "../library/ShareDialog";
+import { useShareRequested } from "../library/share-request";
+import { MentionScopeProvider } from "../mentions/mention-scope";
 import { DocDock, useDocDock } from "../document/DocDock";
 import { DockToggle } from "../ui/Dock";
 import { ItemOptionsMenu } from "../library/ItemOptionsMenu";
+import { useDocFileActions } from "../library/doc-file-actions";
 import { ItemTitle, useTitleRename } from "./ItemTitle";
+import { usePageTitle } from "../state/branding";
 import { EditorProvider } from "../editor/editor-context";
 import { CitationJump } from "../editor/use-citation-jump";
 import { CommentsProvider } from "../comments/comments-context";
+import { CommentDeepLink } from "../comments/CommentDeepLink";
 import { AiCoauthorProvider } from "../ai/ai-coauthor-context";
 import { AgentRunsProvider } from "../review/agent-runs-context";
 import { AgentRunBar } from "../review/AgentRunBar";
@@ -17,6 +22,8 @@ import { AgentCatchUpCard } from "../review/AgentCatchUpCard";
 import { PresenceStack } from "../document/PresenceStack";
 import { ConnectionStatus } from "../document/ConnectionStatus";
 import { useLinkHealth } from "../sync/use-link-health";
+import { hasUnsentEdits } from "../sync/link-health";
+import { LeaveUnsentGuard } from "../document/LeaveUnsentGuard";
 import { AccountMenu } from "../shell/AccountMenu";
 import { NotificationsBell } from "../shell/NotificationsBell";
 import { Outline } from "../document/Outline";
@@ -24,6 +31,9 @@ import { ResizeHandle, usePanelWidth } from "../ui/ResizeHandle";
 import { useIsCompact } from "../ui/narrow";
 import { useKeepReadingPosition } from "../editor/use-keep-reading-position";
 import { useRefreshAfterIndexing } from "../document/use-refresh-after-indexing";
+import { useFirstLine } from "../document/first-line";
+import { takeRestore } from "../document/restore-notice";
+import { versionLabel } from "../lib/format";
 import { Docs, type DocSummary } from "../api";
 import { getDisplayName } from "../lib/http/client";
 import { MAX_TABLE_COLS, MAX_TABLE_ROWS } from "@stuga/protocol/domain/limits";
@@ -31,12 +41,16 @@ import { t } from "../i18n/i18n";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { readStored, writeStored } from "../lib/storage";
 import { DocStateChips } from "../library/DocStateChips";
+import { EndedBanner, TrashedBanner } from "../document/ItemStateBanner";
+import { useLockedTypingHint } from "../document/use-locked-typing-hint";
+import type { SyncEnding } from "../sync/stuga-provider";
+import { yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import { DocViewControl, WIDTH_ORDER, ZOOM_DEFAULT, ZOOM_PRESETS, type WidthKey } from "../document/DocViewControl";
 import { pageRefOf, parseRowRef, rowHref } from "../database/model/row-ref";
 import { TopNav } from "@astryxdesign/core/TopNav";
 import { Button } from "@astryxdesign/core/Button";
 import { ToggleButton } from "@astryxdesign/core/ToggleButton";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { Text } from "@astryxdesign/core/Text";
 import { Divider } from "@astryxdesign/core/Divider";
 import { HStack } from "@astryxdesign/core/HStack";
@@ -84,6 +98,8 @@ export function DocPage({ doc }: { doc: DocSummary }) {
   const [hasSynced, setHasSynced] = useState(false);
   const { status: connStatus, signals: connSignals } = useLinkHealth(docId);
   const [showShare, setShowShare] = useState(false);
+  // An access request's notification opens the page with the Share dialog up.
+  useShareRequested(() => setShowShare(true));
   const [showOutline, setShowOutline] = useState(false);
   // Stored preferences are validated, never cast: anything can write the key.
   const [width, setWidth] = useState<WidthKey>(() => {
@@ -125,22 +141,61 @@ export function DocPage({ doc }: { doc: DocSummary }) {
     writeStored("local", "stuga_show_citations", next ? "true" : "false");
   }
 
-  /** Set by an ACL write refusal: this caller lacks write access. */
+  /** This caller lacks write access: from the server's state, or an ACL write refusal. */
   const [readOnly, setReadOnly] = useState(false);
   const [locked, setLocked] = useState(!!doc.locked);
+  /** In the trash: from the row, then from the server's state, so a trash or restore elsewhere shows at once. */
+  const [trashed, setTrashed] = useState(!!doc.trashed);
+  /** The server has said what this caller may do, so Restore is offered only to someone who may write. */
+  const [stateKnown, setStateKnown] = useState(false);
   const [searchHidden, setSearchHidden] = useState(!!doc.search_hidden);
   const [agentMode, setAgentMode] = useState<ReviewMode>(doc.agent_mode);
+
+  // Titles arrive from row reads, this page's renames and pushed renames, in any order: the one
+  // asked for (or pushed) last wins, so an answer to an older request cannot bring back an old title.
+  const titleAsOf = useRef(0);
+  const applyRow = useCallback((next: DocSummary, askedAt: number) => {
+    const stale = askedAt < titleAsOf.current;
+    titleAsOf.current = Math.max(titleAsOf.current, askedAt);
+    setDocMeta((prev) => (stale ? { ...next, title: prev.title, title_source: prev.title_source } : next));
+  }, []);
+  /** Someone renamed it while open: the provider's handler is set once, so it reaches the hook through this. */
+  const onTitleChanged = useRef<(title: string, by: string) => void>(() => {});
+  /** Who chose each title pushed while open, to name them if their rename wins over this page's. */
+  const pushedBy = useRef(new Map<string, string>());
+
+  // A restore reloaded the page: say who brought back which version.
+  useEffect(() => {
+    const restored = takeRestore(docId);
+    if (!restored) return;
+    const version = versionLabel(restored.at);
+    toast({
+      body: restored.mine
+        ? t("document.versions.restoredByYou", { version })
+        : t("document.versions.restoredBy", { name: restored.by, version }),
+      type: "info",
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId]);
 
   useEffect(() => {
     const p = new StugaProvider(docId, alias, {
       // "open" alone never turns the indicator green; a completed handshake does.
       onStatus: (s) => {
         if (s === "open") connSignals.onSocketOpen();
-        else if (s === "revoked") connSignals.onRevoked();
-        else connSignals.onSocketDown();
+        else if (s === "connecting" || s === "reconnecting") connSignals.onSocketDown();
+        else connSignals.onEnded(s);
+      },
+      // Levels, so an unlock, a restore or a new tier undoes what a refusal set.
+      onDocState: (state) => {
+        setStateKnown(true);
+        setReadOnly(!state.can_write);
+        setLocked(state.locked);
+        setTrashed(state.trashed);
       },
       onSyncDone: connSignals.onSyncDone,
       onSynced: () => setHasSynced(true),
+      onTitleChanged: ({ title, by }) => onTitleChanged.current(title, by),
       onLocalUpdateDropped: connSignals.onLocalUpdateDropped,
       onLocalUpdatesAcked: connSignals.onLocalUpdatesAcked,
       // Only the indicator reacts: the actor keeps the edits and owns the retry, so editing stays on.
@@ -150,6 +205,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
         if (payload.kind === "acl") setReadOnly(true);
         // A lock sets only `locked`, so unlocking restores editing without a reload.
         if (payload.kind === "locked") setLocked(true);
+        if (payload.kind === "trashed") setTrashed(true);
         // One refused update; the document stays editable. "epoch" is already reloading the page.
         // The doc actor's sentence is English for agents; a person reads the same refusal from the catalog.
         if (payload.kind === "table-cap") {
@@ -166,18 +222,57 @@ export function DocPage({ doc }: { doc: DocSummary }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId]);
 
-  useRefreshAfterIndexing(docId, provider?.doc ?? null, setDocMeta);
+  useRefreshAfterIndexing(docId, provider?.doc ?? null, applyRow);
 
-  const editorReadOnly = readOnly || locked;
+  /** Why syncing stopped for good, or null while it goes on. */
+  const ended: SyncEnding | null =
+    connStatus.phase === "revoked" || connStatus.phase === "deleted" || connStatus.phase === "removed" ? connStatus.phase : null;
+  const editorReadOnly = readOnly || locked || trashed || ended !== null;
+  const mainRef = useRef<HTMLElement>(null);
+  useLockedTypingHint(locked && ended === null, mainRef);
   const dock = useDocDock(editorReadOnly);
-  const rename = useTitleRename(docId, docMeta.title, editorReadOnly);
+  // Until someone names it, the title is the first line: shown as it is typed, before the node derives the same.
+  const followsFirstLine = docMeta.title_source === "heading";
+  const firstLine = useFirstLine(provider?.doc ?? null, followsFirstLine);
+  // What the header shows; a download or a copy is named after it, not after a title the node has yet to derive.
+  const shownTitle = (followsFirstLine && firstLine) || docMeta.title;
+  const rename = useTitleRename(docId, shownTitle, editorReadOnly, undefined, (row, sentAt) => {
+    applyRow(row, sentAt);
+    readTitle();
+  });
+  /** Two renames at once arrive in either order: a row read after both says which won. */
+  function readTitle() {
+    const askedAt = Date.now();
+    Docs.get(docId).then(
+      (row) => {
+        applyRow(row, askedAt);
+        const by = pushedBy.current.get(row.title);
+        if (by !== undefined) rename.noteRenamedBy(row.title, by, askedAt);
+      },
+      () => {},
+    );
+  }
+  onTitleChanged.current = (title, by) => {
+    titleAsOf.current = Date.now();
+    pushedBy.current.set(title, by);
+    setDocMeta((prev) => ({ ...prev, title, title_source: "user" }));
+    readTitle();
+  };
+  usePageTitle(rename.name);
   // A compact window has no room beside the reading column: no outline or page-width controls, and the dock overlays the page.
   const isCompact = useIsCompact();
+  // A copy opens at once, as a new document does.
+  const fileActions = useDocFileActions({ openCopy: true });
+
+  // @mentions here ask about this document, and offer Share for someone who cannot open it.
+  const mentionScope = useMemo(() => ({ docId, share: () => setShowShare(true) }), [docId]);
 
   return (
+    <MentionScopeProvider value={mentionScope}>
     <EditorProvider>
       <CitationJump />
-      <CommentsProvider docId={docId} ydoc={provider?.doc ?? null} onReveal={() => dock.open("comments")}>
+      <CommentsProvider docId={docId} ydoc={provider?.doc ?? null} provider={provider} onReveal={() => dock.open("comments")}>
+      <CommentDeepLink ready={hasSynced} />
       <AiCoauthorProvider provider={provider} docId={docId} onRequestOpen={() => dock.open("ai")}>
       <AgentRunsProvider provider={provider} docId={docId}>
       <div className="doc-page" data-show-citations={showCitations ? "true" : "false"} data-doc-width={width} style={{ ["--doc-width" as string]: WIDTHS[width], ["--doc-zoom" as string]: zoom === 100 ? undefined : String(zoom / 100) }}>
@@ -195,7 +290,12 @@ export function DocPage({ doc }: { doc: DocSummary }) {
                   <ChevronRight size={14} aria-hidden="true" />
                 </button>
               )}
-              <ItemTitle rename={rename} readOnly={editorReadOnly} label={t("pages.doc.titleLabel")} />
+              <ItemTitle
+                rename={rename}
+                readOnly={editorReadOnly}
+                label={t("pages.doc.titleLabel")}
+                hint={followsFirstLine ? t("pages.itemTitle.namedFromFirstLine") : undefined}
+              />
               <DocStateChips
                 locked={locked}
                 searchHidden={searchHidden}
@@ -237,6 +337,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
                 // A row's page goes back to its row, where the panel offers to restore it or start a new one.
                 afterTrash={ownRow ? rowHref(ownRow) : undefined}
                 onRename={rename.startEditing}
+                extras={fileActions.items({ ...docMeta, title: shownTitle }, { print: true })}
                 onStateChanged={(next) => {
                   setDocMeta(next);
                   setLocked(!!next.locked);
@@ -250,8 +351,24 @@ export function DocPage({ doc }: { doc: DocSummary }) {
             </HStack>
           }
         />
-        <AgentRunBar />
-        <AgentCatchUpCard docId={docId} ydoc={provider?.doc ?? null} />
+        {ended ? (
+          <EndedBanner
+            why={ended}
+            noun="document"
+            textToCopy={provider ? () => yXmlFragmentToMarkdown(provider.doc.getXmlFragment("default")) : undefined}
+          />
+        ) : (
+          trashed && (
+            <TrashedBanner
+              docId={docId}
+              canRestore={stateKnown && !readOnly && !locked}
+              onRestored={(next) => {
+                setDocMeta(next);
+                setTrashed(!!next.trashed);
+              }}
+            />
+          )
+        )}
         <div className="doc-body">
           {showOutline && !isCompact && (
             <>
@@ -259,15 +376,21 @@ export function DocPage({ doc }: { doc: DocSummary }) {
               <ResizeHandle width={outlineW} onResize={setOutlineW} dir={1} label={t("pages.doc.resizeOutline")} />
             </>
           )}
-          <main className="doc-main">
-            {provider ? (
-              <Editor provider={provider} alias={alias} label={rawName} docId={docId} readOnly={editorReadOnly} hasSynced={hasSynced} autoFocus={autoFocus} />
-            ) : (
-              <VStack gap={2} hAlign="center" style={{ paddingTop: "18vh" }}>
-                <Spinner label={t("pages.doc.loading")} />
-              </VStack>
-            )}
-          </main>
+          <div className="doc-main-wrap">
+            <main className="doc-main" ref={mainRef}>
+              {provider ? (
+                <Editor provider={provider} alias={alias} label={rawName} docId={docId} readOnly={editorReadOnly} hasSynced={hasSynced} autoFocus={autoFocus} />
+              ) : (
+                <VStack gap={2} hAlign="center" style={{ paddingTop: "18vh" }}>
+                  <Spinner label={t("pages.doc.loading")} />
+                </VStack>
+              )}
+            </main>
+            <div className="doc-review-float">
+              <AgentRunBar locked={locked} />
+              <AgentCatchUpCard docId={docId} ydoc={provider?.doc ?? null} />
+            </div>
+          </div>
           {dock.state.visible && dock.state.active && (
             <DocDock
               dock={dock}
@@ -281,11 +404,12 @@ export function DocPage({ doc }: { doc: DocSummary }) {
           )}
         </div>
         {showShare && <ShareDialog docId={docId} onClose={() => setShowShare(false)} />}
-        {connStatus.phase === "revoked" && <div className="toast">{t("pages.doc.revoked")}</div>}
+        <LeaveUnsentGuard unsent={hasUnsentEdits(connStatus)} />
       </div>
       </AgentRunsProvider>
       </AiCoauthorProvider>
       </CommentsProvider>
     </EditorProvider>
+    </MentionScopeProvider>
   );
 }

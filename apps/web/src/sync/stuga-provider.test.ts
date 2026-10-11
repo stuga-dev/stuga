@@ -10,13 +10,21 @@ import {
   encodeBinary,
   encodeEmpty,
   encodeEpoch,
+  encodeJson,
 } from "@stuga/protocol/wire/frame";
-import { Opcode } from "@stuga/protocol/wire/opcodes";
+import { CloseCode, Opcode, type DocStatePayload, type TitleChangedPayload } from "@stuga/protocol/wire/opcodes";
+import { PROBE_DEADLINE_MS, PROBE_EVERY_MS } from "./socket-liveness";
+
+const forgotten: string[] = [];
+/** While set, no ticket is in hand and the node refuses to mint one. */
+const tickets = { refused: false };
 
 // A ticket is always in hand, so the constructor opens a socket synchronously.
 vi.mock("../lib/session/tickets", () => ({
-  cachedSocketTicket: () => "test-ticket",
-  ensureSocketTicket: async () => "test-ticket",
+  cachedSocketTicket: () => (tickets.refused ? null : "test-ticket"),
+  ensureSocketTicket: async () => (tickets.refused ? null : "test-ticket"),
+  forgetSocketTicket: (docId: string) => forgotten.push(docId),
+  socketTicketRefused: () => tickets.refused,
 }));
 
 /** Every socket the provider has constructed during a test. */
@@ -63,6 +71,11 @@ class FakeSocket {
     this.onclose?.({ code });
   }
 
+  /** The host's answer to a PING. */
+  pong(): void {
+    this.onmessage?.({ data: "pong" });
+  }
+
   /** Deliver a server→client binary frame. */
   deliver(frame: Uint8Array): void {
     this.onmessage?.({ data: frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength) });
@@ -83,17 +96,27 @@ function liveSockets(): FakeSocket[] {
 
 let hidden = false;
 let StugaProvider: typeof import("./stuga-provider").StugaProvider;
+/** Every provider a test made, closed after it: each listens to the window's network events. */
+let providers: InstanceType<typeof StugaProvider>[] = [];
 
 beforeEach(async () => {
   vi.useFakeTimers();
   sockets = [];
+  providers = [];
   hidden = false;
   vi.stubGlobal("WebSocket", FakeSocket);
   Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
-  ({ StugaProvider } = await import("./stuga-provider"));
+  const { StugaProvider: Real } = await import("./stuga-provider");
+  StugaProvider = class extends Real {
+    constructor(...args: ConstructorParameters<typeof Real>) {
+      super(...args);
+      providers.push(this);
+    }
+  };
 });
 
 afterEach(() => {
+  for (const p of providers) p.destroy();
   vi.useRealTimers();
 });
 
@@ -380,6 +403,204 @@ describe("terminal closes", () => {
 
     foreground();
     vi.advanceTimersByTime(120_000);
+    expect(sockets).toHaveLength(1);
+  });
+});
+
+describe("an ending the server names", () => {
+  it.each([
+    [CloseCode.DOC_DELETED, "deleted"],
+    [CloseCode.MEMBERSHIP_ENDED, "removed"],
+  ])("close %i is reported as %s and never reconnects", (code, ending) => {
+    const statuses: string[] = [];
+    new StugaProvider("doc1", "alice", { onStatus: (s) => statuses.push(s) });
+    sockets[0]!.open();
+    sockets[0]!.dropped(code);
+    vi.advanceTimersByTime(120_000);
+    expect(sockets).toHaveLength(1);
+    expect(statuses.at(-1)).toBe(ending);
+  });
+
+  it("ends as revoked when a new role took the document away and no ticket is minted", async () => {
+    const statuses: string[] = [];
+    new StugaProvider("doc1", "alice", { onStatus: (s) => statuses.push(s) });
+    sockets[0]!.open();
+    tickets.refused = true;
+    try {
+      sockets[0]!.dropped(CloseCode.ROLE_CHANGED);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(120_000);
+    } finally {
+      tickets.refused = false;
+    }
+    expect(sockets).toHaveLength(1);
+    expect(statuses.at(-1)).toBe("revoked");
+  });
+
+  it("reconnects at once with a fresh ticket after a role change", () => {
+    forgotten.length = 0;
+    new StugaProvider("doc1", "alice");
+    sockets[0]!.open();
+    sockets[0]!.dropped(CloseCode.ROLE_CHANGED);
+    vi.advanceTimersByTime(0);
+    expect(forgotten).toEqual(["doc1"]);
+    expect(sockets).toHaveLength(2);
+  });
+});
+
+describe("the state the server sends", () => {
+  const state = (s: DocStatePayload) => encodeJson(Opcode.DOC_STATE, s);
+
+  it("reaches the page, and a new write tier drops the held ticket", () => {
+    forgotten.length = 0;
+    const seen: DocStatePayload[] = [];
+    new StugaProvider("doc1", "alice", { onDocState: (s) => seen.push(s) });
+    sockets[0]!.open();
+    sockets[0]!.deliver(state({ locked: false, trashed: false, can_write: false }));
+    sockets[0]!.deliver(state({ locked: true, trashed: false, can_write: false }));
+    expect(forgotten).toEqual([]);
+    sockets[0]!.deliver(state({ locked: false, trashed: false, can_write: true }));
+    expect(forgotten).toEqual(["doc1"]);
+    expect(seen.map((s) => s.can_write)).toEqual([false, false, true]);
+  });
+
+  it("drops the ticket when the page closes, so opening it again asks afresh", () => {
+    forgotten.length = 0;
+    const p = new StugaProvider("doc1", "alice");
+    p.destroy();
+    expect(forgotten).toEqual(["doc1"]);
+  });
+});
+
+describe("what changes beside the text", () => {
+  it("passes a comments change on, and again after a reconnect that may have missed one", () => {
+    const p = new StugaProvider("doc1", "alice");
+    let reloads = 0;
+    p.commentsListener = () => reloads++;
+    sockets[0]!.open();
+    sockets[0]!.deliver(encodeEmpty(Opcode.SYNC_DONE));
+    expect(reloads).toBe(0);
+    sockets[0]!.deliver(encodeEmpty(Opcode.COMMENTS_CHANGED));
+    expect(reloads).toBe(1);
+    sockets[0]!.dropped();
+    vi.advanceTimersByTime(1_000);
+    sockets[1]!.open();
+    sockets[1]!.deliver(encodeEmpty(Opcode.SYNC_DONE));
+    expect(reloads).toBe(2);
+  });
+
+  it("passes a rename on with who made it", () => {
+    const seen: TitleChangedPayload[] = [];
+    new StugaProvider("doc1", "alice", { onTitleChanged: (t) => seen.push(t) });
+    sockets[0]!.open();
+    sockets[0]!.deliver(encodeJson(Opcode.TITLE_CHANGED, { title: "Oven rota", by: "Liv" }));
+    expect(seen).toEqual([{ title: "Oven rota", by: "Liv" }]);
+  });
+
+  it("keeps who restored which version for the page the reload brings", () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    new StugaProvider("doc1", "alice");
+    sockets[0]!.open();
+    sockets[0]!.deliver(encodeJson(Opcode.DOC_RESET, { restored: { by: "Liv", at: "2026-10-09T11:52:00.000Z", seq: 4 } }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(sessionStorage.getItem("stuga_restored:doc1")!)).toEqual({ by: "Liv", at: "2026-10-09T11:52:00.000Z", seq: 4 });
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("a link that dies while nothing is typed", () => {
+  /** A provider past its first handshake, with what it reported. */
+  function synced() {
+    const statuses: string[] = [];
+    let dropped = 0;
+    const p = new StugaProvider("doc1", "alice", {
+      onStatus: (s) => statuses.push(s),
+      onLocalUpdateDropped: () => dropped++,
+    });
+    sockets[0]!.open();
+    sockets[0]!.deliver(encodeEmpty(Opcode.SYNC_DONE));
+    return { p, statuses, dropped: () => dropped };
+  }
+
+  function setOnline(online: boolean): void {
+    Object.defineProperty(navigator, "onLine", { configurable: true, get: () => online });
+    window.dispatchEvent(new Event(online ? "online" : "offline"));
+  }
+
+  afterEach(() => {
+    Object.defineProperty(navigator, "onLine", { configurable: true, get: () => true });
+  });
+
+  it("is noticed by the heartbeat within a probe and its deadline, and retried", () => {
+    const { statuses } = synced();
+    vi.advanceTimersByTime(PROBE_EVERY_MS + PROBE_DEADLINE_MS - 1);
+    expect(statuses.at(-1)).toBe("open");
+    vi.advanceTimersByTime(1);
+    expect(statuses.at(-1)).toBe("reconnecting");
+    // Not waiting for the dead socket to report its own close.
+    expect(sockets[0]!.onclose).toBeNull();
+    vi.advanceTimersByTime(1_000);
+    expect(sockets).toHaveLength(2);
+  });
+
+  it("stays connected while the host answers", () => {
+    const { statuses } = synced();
+    for (let i = 0; i < 6; i++) {
+      vi.advanceTimersByTime(PROBE_EVERY_MS);
+      sockets[0]!.pong();
+    }
+    expect(statuses.at(-1)).toBe("open");
+    expect(sockets).toHaveLength(1);
+  });
+
+  it("asks at once when the browser goes offline, and gives up on no answer", () => {
+    const { statuses } = synced();
+    vi.advanceTimersByTime(1_000);
+    setOnline(false);
+    vi.advanceTimersByTime(PROBE_DEADLINE_MS);
+    expect(statuses.at(-1)).toBe("reconnecting");
+  });
+
+  it("keeps a socket that still answers offline, as a node on this computer does", () => {
+    const { statuses } = synced();
+    setOnline(false);
+    sockets[0]!.pong();
+    vi.advanceTimersByTime(PROBE_DEADLINE_MS);
+    expect(statuses.at(-1)).toBe("open");
+  });
+
+  it("retries at once when the network is back, not after the backoff", () => {
+    synced();
+    sockets[0]!.dropped();
+    vi.advanceTimersByTime(1_000);
+    sockets[1]!.dropped();
+    vi.advanceTimersByTime(1_000);
+    expect(sockets).toHaveLength(2);
+    setOnline(true);
+    vi.advanceTimersByTime(0);
+    expect(sockets).toHaveLength(3);
+  });
+
+  it("reports edits sent on the dead socket as unsent until a handshake re-delivers them", () => {
+    const { p, dropped } = synced();
+    p.doc.getText("t").insert(0, "flour");
+    expect(dropped()).toBe(0);
+    sockets[0]!.dropped();
+    expect(dropped()).toBe(1);
+  });
+
+  it("does not report a drop with nothing outstanding as unsent", () => {
+    const { dropped } = synced();
+    sockets[0]!.dropped();
+    expect(dropped()).toBe(0);
+  });
+
+  it("stops listening to the network once the page closes", () => {
+    const { p } = synced();
+    p.destroy();
+    setOnline(true);
+    vi.advanceTimersByTime(60_000);
     expect(sockets).toHaveLength(1);
   });
 });

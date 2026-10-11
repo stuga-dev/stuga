@@ -17,7 +17,10 @@ import { PersonPicker, type PersonItem } from "../../../ui/PersonPicker";
 import { NodeAudit } from "./NodeAudit";
 import { IdentityProviderSection } from "./IdentityProviderSection";
 import { SectionStatusBanners, useSectionStatus } from "./status";
-import { LinkAddressSwitch, localOnlyNote, useLinkAddresses, type LinkAddress } from "../../../ui/LinkAddress";
+import { LinkAddressSwitch, LinkReachNote, useLinkAddresses, type LinkAddress } from "../../../ui/LinkAddress";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { Check, Copy } from "lucide-react";
+import { copyText } from "../../../lib/clipboard";
 import { formatLocale, t, uiLanguage } from "../../../i18n/i18n";
 import { presentServerMessage } from "../../../lib/http/server-messages";
 
@@ -40,6 +43,8 @@ export function AccessSection({
   const [resetFor, setResetFor] = useState<PersonItem | null>(null);
   /** The link just minted, shown once: only its hash is kept. */
   const [reset, setReset] = useState<{ url: string; name: string; address: LinkAddress } | null>(null);
+  /** The shown link is on the clipboard. */
+  const [copied, setCopied] = useState(false);
   const addresses = useLinkAddresses(true);
   /** Where a password link opens, while there is a choice: the administrator's own address until they pick. */
   const [chosenAddress, setChosenAddress] = useState<LinkAddress | null>(null);
@@ -77,6 +82,7 @@ export function AccessSection({
     setRevokeBusy(true);
     try {
       const { password_link } = await NodeApi.revokeEverythingFor(revoking.person.id, requested);
+      setCopied(false);
       setReset({ url: password_link.url, name: revoking.person.label, address: linkAddress });
       setResetFor(null);
       setRevoking(null);
@@ -191,6 +197,7 @@ export function AccessSection({
               if (!picked || !username) return;
               void NodeApi.mintPasswordReset(username, requested)
                 .then((r) => {
+                  setCopied(false);
                   setReset({ url: r.url, name: picked.label, address: linkAddress });
                   setResetFor(null);
                 })
@@ -203,9 +210,19 @@ export function AccessSection({
             status="info"
             title={t("nodeAccess.recovery.linkFor", { name: reset.name })}
             description={
-              <VStack gap={1}>
-                <Text type="supporting">{reset.url}</Text>
-                {localOnlyNote(addresses, reset.address) && <Text type="supporting">{localOnlyNote(addresses, reset.address)}</Text>}
+              <VStack gap={2}>
+                <HStack gap={2} vAlign="center">
+                  <StackItem size="fill">
+                    <TextInput label={t("nodeAccess.recovery.linkLabel")} isLabelHidden width="100%" value={reset.url} onChange={() => {}} isReadOnly />
+                  </StackItem>
+                  <Button
+                    label={copied ? t("common.copied") : t("common.copy")}
+                    variant="secondary"
+                    icon={copied ? <Check size={15} /> : <Copy size={15} />}
+                    onClick={() => void copyText(reset.url).then(setCopied)}
+                  />
+                </HStack>
+                <LinkReachNote addresses={addresses} address={reset.address} />
               </VStack>
             }
           />

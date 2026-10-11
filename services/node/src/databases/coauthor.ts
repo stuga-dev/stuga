@@ -85,7 +85,7 @@ export function tableToolRunner(
       const mintedNote = Object.keys(minted).length ? ` ${JSON.stringify(minted)}` : "";
       // The actor's word, not `review`: a run holding undecided ops parks even on `auto`.
       const applied = parsed.mode === "applied";
-      return { staged: true, applied, text: `ok: ${applied ? "applied" : "staged for the user's review"}.${mintedNote}` };
+      return { staged: true, applied, text: `ok: ${applied ? "applied" : "proposed for the user's review"}.${mintedNote}` };
     },
     // Offered only with a collection selected. Never throws: a refusal is text the model can act on.
     searchCollection: collectionId

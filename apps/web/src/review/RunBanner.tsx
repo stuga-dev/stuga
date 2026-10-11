@@ -1,11 +1,11 @@
 /** The pieces the document and database review banners share. */
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { ButtonGroup } from "@astryxdesign/core/ButtonGroup";
 import { DropdownMenu } from "@astryxdesign/core/DropdownMenu";
 import { HStack } from "@astryxdesign/core/HStack";
-import { useToast } from "@astryxdesign/core/Toast";
+import type { ToastOptions } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { ChevronDown, ChevronUp, Sparkles, Zap } from "lucide-react";
 import type { RunNotice } from "./use-run-ledger";
 import { anchorRect, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
@@ -43,15 +43,33 @@ export function RunNotices({
   onUndoDecision?: (runId: string, itemIds: string[]) => Promise<void>;
 }) {
   const toast = useToast();
+  // Each run's toast, by its key, so leaving the page takes them along: their Undo belongs to this page.
+  const shown = useRef(new Map<string, () => void>());
   useEffect(() => {
+    const open = shown.current;
+    return () => {
+      for (const dismiss of open.values()) dismiss();
+      open.clear();
+    };
+  }, []);
+  useEffect(() => {
+    const show = (key: string, options: ToastOptions) => {
+      const dismiss = toast({
+        ...options,
+        uniqueID: key,
+        onHide: () => {
+          if (shown.current.get(key) === dismiss) shown.current.delete(key);
+        },
+      });
+      shown.current.set(key, dismiss);
+    };
     for (const n of notices) {
       if (n.kind === "decided" && n.runId && n.itemIds && onUndoDecision) {
         const { runId, itemIds } = n;
         // One per run: a newer decision's toast replaces the last, and its Undo is the one that applies.
-        toast({
+        show(`run-decision:${runId}`, {
           body: n.message,
           type: "info",
-          uniqueID: `run-decision:${runId}`,
           autoHideDuration: 8000,
           endContent: (
             <UndoButton
@@ -65,13 +83,12 @@ export function RunNotices({
         });
       } else if (n.kind === "undone" && n.runId) {
         // Replaces the decision's own toast, whose Undo no longer applies.
-        toast({ body: n.message, type: "info", uniqueID: `run-decision:${n.runId}` });
+        show(`run-decision:${n.runId}`, { body: n.message, type: "info" });
       } else if (n.kind === "accepted" && n.runId && onUndo) {
         const runId = n.runId;
-        toast({
+        show(`run-accept:${runId}`, {
           body: n.message,
           type: "info",
-          uniqueID: `run-accept:${runId}`,
           autoHideDuration: 8000,
           endContent: (
             <UndoButton
@@ -136,6 +153,7 @@ export function RunBanner({
   busy,
   onDecide,
   noteAction,
+  acceptBlocked = false,
 }: {
   updatedAt: number;
   title: string;
@@ -145,6 +163,8 @@ export function RunBanner({
   busy: boolean;
   onDecide: (decision: "accept" | "reject") => void;
   noteAction?: NoteAction;
+  /** Accepting is refused here (a locked document); `hint` says why. */
+  acceptBlocked?: boolean;
 }) {
   const live = useLiveWindow(updatedAt);
   // The composer floats beside the whole Reject all control, not the menu that opened it.
@@ -153,19 +173,14 @@ export function RunBanner({
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="agent-run">
-      {/* No `description`: with the title as its only text the Banner keeps to one line. */}
-      <Banner
-        className={`agent-run-bar${live ? " agent-run-bar--live" : ""}`}
-        status="info"
-        container="section"
-        icon={<Zap size={16} />}
-        title={
-          <span className="agent-run-title">
-            <span className="agent-run-title__main">{title}</span>
-            <span className="agent-run-title__hint">{hint}</span>
-          </span>
-        }
-        endContent={
+      {/* A plain surface with the review accent, not a status banner: a proposal is neither news nor a warning. */}
+      <section className={`agent-run-bar${live ? " agent-run-bar--live" : ""}`} role="status">
+        <Zap size={16} className="agent-run-bar__icon" aria-hidden />
+        <span className="agent-run-title">
+          <span className="agent-run-title__main">{title}</span>
+          <span className="agent-run-title__hint">{hint}</span>
+        </span>
+        <div className="agent-run-bar__actions">
           <HStack gap={2} vAlign="center">
             {controls}
             {list && (
@@ -179,7 +194,7 @@ export function RunBanner({
                 {t("review.runBar.reviewEach")}
               </Button>
             )}
-            <Button label={t("review.runBar.acceptAll")} variant="primary" size="sm" isDisabled={busy} onClick={() => onDecide("accept")} />
+            <Button label={t("review.runBar.acceptAll")} variant="primary" size="sm" isDisabled={busy || acceptBlocked} onClick={() => onDecide("accept")} />
             {noteAction ? (
               <ButtonGroup ref={rejectGroup} label={t("review.runBar.rejectAll")} size="sm">
                 <Button label={t("review.runBar.rejectAll")} variant="secondary" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
@@ -208,8 +223,8 @@ export function RunBanner({
               <Button label={t("review.runBar.rejectAll")} variant="secondary" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
             )}
           </HStack>
-        }
-      />
+        </div>
+      </section>
       {list && expanded && list}
     </div>
   );
@@ -231,20 +246,19 @@ export function CatchUpBanner({
   onDismiss: () => void;
 }) {
   return (
-    <Banner
-      className="agent-catchup"
-      status="info"
-      container="section"
-      icon={<Sparkles size={16} />}
-      title={title}
-      description={description}
-      endContent={
-        <HStack gap={2}>
+    <section className="agent-run-bar agent-catchup" role="status">
+      <Sparkles size={16} className="agent-run-bar__icon" aria-hidden />
+      <span className="agent-catchup__text">
+        <span className="agent-run-title__main">{title}</span>
+        <span className="agent-catchup__description">{description}</span>
+      </span>
+      <div className="agent-run-bar__actions">
+        <HStack gap={2} vAlign="center">
           {view}
           {revert}
           <Button label={t("common.dismiss")} variant="ghost" size="sm" onClick={onDismiss} />
         </HStack>
-      }
-    />
+      </div>
+    </section>
   );
 }

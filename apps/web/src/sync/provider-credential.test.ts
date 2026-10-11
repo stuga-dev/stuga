@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 /** A socket URL reaches proxy logs and history, so it carries a short-lived ticket, never the access token. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TEXT_SCHEMA_VERSION } from "@stuga/protocol/wire/opcodes";
 
 let sockets: FakeSocket[] = [];
 
@@ -67,6 +68,8 @@ describe("the sync socket URL", () => {
     const provider = await newProvider();
     expect(sockets).toHaveLength(1);
     expect(sockets[0]!.url).toContain("ticket=tk-1");
+    // The node reloads a page whose editor predates the text it holds.
+    expect(new URL(sockets[0]!.url).searchParams.get("schema")).toBe(String(TEXT_SCHEMA_VERSION));
     expect(sockets[0]!.url).not.toContain("access_token");
     expect(sockets[0]!.url).not.toContain("test-token");
     provider.destroy();

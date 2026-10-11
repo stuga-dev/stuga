@@ -35,8 +35,9 @@ toast({ body: t("library.folderCreated", { name }), type: "info" });
 - **Sorting** text a person reads uses `localeCompare(other, formatLocale())`.
 - **Search over labels** (the slash menu, the command palette) matches the translated label and
   the English one, so either finds the item.
-- **Text that becomes data** is written in the creator's language, as a document app does: a new
-  document is titled `t("common.untitled")`, and stays so for everyone.
+- **Text that becomes data** is written in the creator's language, as a document app does. A new
+  document is created with no title, which each reader sees as `t("common.untitled")` in their own
+  language until its first line or a rename names it.
 - **What stays English**: names, identifiers, and anything sent to agents or models. Mark such a
   line `// i18n-exempt: <why>`.
 

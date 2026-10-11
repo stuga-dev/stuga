@@ -10,11 +10,11 @@
  */
 import { parseCsv } from "../../databases/imports/format.js";
 import { ARCHIVE_MAX_TABLE_FILE_BYTES, ArchiveError } from "../format.js";
-import type { Conversion, DatabaseEntry, DocEntry, Entry, Resolved } from "./build.js";
-import { IMAGE_FILE, dirname, readText, sourceTarget, withinSource } from "./files.js";
+import { Changes, type Conversion, type DatabaseEntry, type DocEntry, type Entry, type LeftOutReason, type Resolved } from "./build.js";
+import { IMAGE_FILE, dirname, readText, sourceTarget, unreadText, withinSource } from "./files.js";
 import type { Source } from "./source.js";
 import { csvTable } from "./table.js";
-import { headingLine, mapOutsideCodeSpans, mapProse, taskBox } from "./text.js";
+import { mapOutsideCodeSpans, mapProse } from "./text.js";
 
 /** `Title 0123456789abcdef0123456789abcdef.md`, and a database's `….csv` or `…_all.csv`. */
 const NAMED = /^(.*?) ?([0-9a-f]{32})(_all)?\.(md|csv)$/;
@@ -59,6 +59,10 @@ export function isNotionExport(source: Source): boolean {
 
 /** A property line at the head of a row page: `Status: Done`. */
 const PROPERTY = /^([^:\n]{1,200}): (.*)$/;
+/** One that could be nothing else: its name opens no Markdown block, numbered list item included. */
+const PAGE_PROPERTY = /^(?!\d{1,9}[.)](?:\s|$))[^\s#>*+\-|`~:<![][^:\n]{0,199}: \S/;
+/** The options a Status property starts with, which a status column offers whatever its cells hold. */
+const STATUS_CHOICES = ["Not started", "In progress", "Done"];
 
 /**
  * A row page's body with the property lines Notion writes under its title left out, since the row
@@ -142,7 +146,10 @@ function unindentChildren(markdown: string): string {
   }
 }
 
-/** Notion's Markdown as Stuga's: children read as Notion nests them, callouts as block quotes, toggles as their bold title and what they hold, and task boxes as characters. */
+/** A toggle on one line: `<details><summary>More</summary>Inside</details>`. */
+const ONE_LINE_TOGGLE = /^\s*<details>\s*<summary>(.*?)<\/summary>(.*?)(?:<\/details>)?\s*$/i;
+
+/** Notion's Markdown as Stuga's: children read as Notion nests them, callouts as block quotes, toggles as their bold title and what they hold. */
 export function notionMarkdown(markdown: string): string {
   let inAside = false;
   return mapProse(unindentChildren(markdown), (line) => {
@@ -155,11 +162,35 @@ export function notionMarkdown(markdown: string): string {
       inAside = false;
       return "";
     }
+    const toggle = ONE_LINE_TOGGLE.exec(line);
+    if (toggle) {
+      const inside = toggle[2]!.trim();
+      return [`<summary>${toggle[1]}</summary>`, ...(inside ? ["", inside] : [])].map((part) => notionLine(part, inAside)).join("\n");
+    }
     if (DETAILS.test(line)) return null;
-    const summary = SUMMARY.exec(line);
-    const text = mapOutsideCodeSpans(taskBox(summary ? `**${summary[1]!.trim()}**` : line), (part) => part.replace(ICON, ""));
-    return inAside ? `> ${text}`.trimEnd() : text;
+    return notionLine(line, inAside);
   });
+}
+
+/** One line of prose: a toggle's title bold, without a callout's icon, and quoted inside a callout. */
+function notionLine(line: string, inAside: boolean): string {
+  const summary = SUMMARY.exec(line);
+  const text = mapOutsideCodeSpans(summary ? `**${summary[1]!.trim()}**` : line, (part) => part.replace(ICON, ""));
+  return inAside ? `> ${text}`.trimEnd() : text;
+}
+
+/**
+ * A page's property lines, which Notion writes one under another below its title, as a list, so
+ * they do not run together as one paragraph. Two or more make a run.
+ */
+export function propertyList(markdown: string): string {
+  const lines = markdown.split("\n");
+  let at = lines[0]?.startsWith("# ") ? 1 : 0;
+  while (at < lines.length && lines[at]!.trim() === "") at++;
+  let end = at;
+  while (end < lines.length && PAGE_PROPERTY.test(lines[end]!)) end++;
+  if (end - at < 2) return markdown;
+  return [...lines.slice(0, at), ...lines.slice(at, end).map((line) => `- ${line}`), ...lines.slice(end)].join("\n");
 }
 
 /** A folder's name as a title: a teamspace's folder may carry an id too. */
@@ -167,6 +198,8 @@ const folderTitle = (path: string): string => baseName(path).replace(/\s*[0-9a-f
 
 export async function convertNotion(source: Source): Promise<Conversion> {
   const consumed = new Set<string>();
+  const skipped = new Map<string, LeftOutReason>();
+  const changes = new Changes();
   const pages = new Map<string, Named>();
   const databases = new Map<string, Named>();
   /** A database's other CSV, the view it was exported from, which gives its columns' order. */
@@ -236,13 +269,15 @@ export async function convertNotion(source: Source): Promise<Conversion> {
   };
 
   const read = async (page: Named): Promise<string | null> => {
-    const text = await readText(source.files.get(page.path)!);
+    const file = source.files.get(page.path)!;
+    const text = await readText(file);
     if (text !== null) consumed.add(page.path);
+    else skipped.set(page.path, unreadText(file));
     return text;
   };
   const docOf = (page: Named, markdown: string | null): DocEntry => {
-    const body = notionMarkdown(markdown ?? "").replace(/^\s+/, "");
-    return { kind: "doc", key: page.path, title: page.title, markdown: body.startsWith("# ") ? body : `${headingLine(page.title)}\n\n${body}`.trimEnd() };
+    const body = notionMarkdown(propertyList(markdown ?? "")).replace(/^\s+/, "").trimEnd();
+    return { kind: "doc", key: page.path, title: page.title, markdown: body };
   };
 
   /** What `dir` holds, less `skip`: its pages and databases, and the folders none of them owns. */
@@ -284,6 +319,7 @@ export async function convertNotion(source: Source): Promise<Conversion> {
     // A table it cannot read is left out, and its row pages kept as pages.
     if (text === null) {
       consumed.delete(db.path);
+      skipped.set(db.path, unreadText(source.files.get(db.path)!, ARCHIVE_MAX_TABLE_FILE_BYTES));
       return folder ? entriesIn(folder) : [];
     }
     let raw = parseCsv(text);
@@ -320,7 +356,8 @@ export async function convertNotion(source: Source): Promise<Conversion> {
       waiting.set(title, [...(waiting.get(title) ?? []), page]);
     }
     const matched = records.slice(1).map((record) => waiting.get((record[0] ?? "").trim() || "Untitled")?.shift() ?? null);
-    const table = csvTable(records, (i) => matched[i]?.id ?? `row-${i + 1}`, new Set([0]), filesColumns);
+    const table = csvTable(records, (i) => matched[i]?.id ?? `row-${i + 1}`, new Set([0]), filesColumns, [STATUS_CHOICES]);
+    for (const name of table.lists) changes.note("text_column", name);
 
     const entry: DatabaseEntry = { kind: "database", key: db.path, title: db.title, columns: table.columns, rows: table.rows, pages: [] };
     place(db, { item: db.path });
@@ -381,5 +418,7 @@ export async function convertNotion(source: Source): Promise<Conversion> {
     start: top.length === 1 && pages.get(top[0]!.id) === top[0] ? top[0]!.path : undefined,
     resolve,
     consumed,
+    skipped,
+    changes,
   };
 }

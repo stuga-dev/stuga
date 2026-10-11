@@ -154,3 +154,63 @@ describe("version retention", () => {
     expect(meta.ring.seqs).toEqual([1]);
   });
 });
+
+describe("a change decided on the run ledger", () => {
+  /** A run-ledger call, as the node makes it. */
+  async function runs(actor: DocActor, path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const res = await actor.fetch(
+      new Request(`http://actor/runs/${path}?docId=${DOC}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+    return (await res.json()) as Record<string, unknown>;
+  }
+  const proposal = (find: string, replace: string, review = "review") => ({
+    action: "str_replace",
+    find,
+    replace,
+    review,
+    source: "stdio",
+    agent: "Claude",
+    agent_alias: "agent1",
+    reviewer: "alice",
+    workspace_id: "ws1",
+    doc_title: "Notes",
+  });
+
+  it("is snapshotted at once when a person accepts it, and recorded as a version when one is due", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const h = harness();
+    await flushOnce(h, "", "Alpha. Bravo.");
+    const actor = makeActor(h);
+
+    const early = (await runs(actor, "propose", proposal("Alpha.", "Alpha revised."))) as { run: { id: string } };
+    await runs(actor, "decide", { run_id: early.run.id, decision: "accept", decided_by: "alice" });
+    expect(indexJobs(h)).toHaveLength(2);
+    expect(indexJobs(h)[1]).toMatchObject({ snapshotSeq: 2, recordVersion: false });
+
+    vi.setSystemTime(Date.now() + VERSION_INTERVAL_MS + 1);
+    const late = (await runs(actor, "propose", proposal("Bravo.", "Bravo revised."))) as { run: { id: string } };
+    await runs(actor, "decide", { run_id: late.run.id, decision: "accept", decided_by: "alice" });
+    expect(indexJobs(h)).toHaveLength(3);
+    expect(indexJobs(h)[2]).toMatchObject({ snapshotSeq: 3, recordVersion: true });
+  });
+
+  it("lands an `auto` edit in version history at once when a version is due, and waits inside the interval", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const h = harness();
+    await flushOnce(h, "", "Alpha.");
+    vi.setSystemTime(Date.now() + VERSION_INTERVAL_MS + 1);
+
+    const actor = makeActor(h);
+    await runs(actor, "propose", proposal("Alpha.", "Alpha applied.", "auto"));
+    expect(indexJobs(h).at(-1)).toMatchObject({ snapshotSeq: 2, recordVersion: true });
+    // A busy agent costs no snapshot per write: the next one waits for the flush.
+    await runs(actor, "propose", proposal("Alpha applied.", "Alpha applied twice.", "auto"));
+    expect(indexJobs(h)).toHaveLength(2);
+  });
+});

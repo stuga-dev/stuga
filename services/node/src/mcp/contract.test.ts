@@ -314,11 +314,11 @@ describe("the /mcp contract", () => {
 
   it("answers a search with documents that name their workspace and link, without per-workspace scores", async () => {
     vi.mocked(searchDocs).mockResolvedValueOnce([
-      { doc_id: "d1", title: "Plan", doc_type: "prose", page_of: null, page_row: null, snippet: "the plan", kw_rank: 3, sem_score: 0.4, score: 0.9 },
+      { doc_id: "d1", title: "Plan", doc_type: "prose", page_of: null, page_row: null, updated_at: "2026-10-01T09:00:00.000Z", snippet: "the plan", kw_rank: 3, sem_score: 0.4, score: 0.9 },
     ]);
     expect(JSON.parse(await callText("search", { q: "plan" }))).toEqual({
       query: "plan",
-      results: [{ workspace_id: "ws1", doc_id: "d1", title: "Plan", doc_type: "prose", page_of: null, page_row: null, snippet: "the plan", url: "https://stuga.test/doc/d1" }],
+      results: [{ workspace_id: "ws1", doc_id: "d1", title: "Plan", doc_type: "prose", page_of: null, page_row: null, updated_at: "2026-10-01T09:00:00.000Z", snippet: "the plan", url: "https://stuga.test/doc/d1" }],
       degraded: false,
       semantic: false,
       unavailable: [],

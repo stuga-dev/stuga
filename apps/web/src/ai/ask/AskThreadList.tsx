@@ -9,6 +9,7 @@ import { PromptDialog } from "../../ui/PromptDialog";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { t } from "../../i18n/i18n";
+import { absoluteTime, relativeTime } from "../../lib/format";
 
 /** An unnamed thread shows its most recent question. */
 const title = (thread: { title: string; last_question?: string | null }) =>
@@ -50,6 +51,12 @@ export function AskThreadList() {
               label={title(thread)}
               isSelected={thread.thread_id === threadId}
               onClick={() => openThread(thread.thread_id)}
+              // When it was last asked, so two threads with the same question tell apart.
+              endContent={
+                <time className="ask-rail__when" dateTime={thread.updated_at} title={absoluteTime(thread.updated_at)}>
+                  {relativeTime(thread.updated_at)}
+                </time>
+              }
               actions={
                 /* Empty title suppresses the row's inherited tooltip. */
                 <span className="ask-rail__actions" title="">

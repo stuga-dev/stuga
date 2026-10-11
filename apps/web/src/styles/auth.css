@@ -1,6 +1,7 @@
 /* The sign-in split card. The collapse keys off the card's width, not the window's,
-   so the columns and the padding change together. */
-.auth-page { min-height: 100vh; padding: 1.5rem;
+   so the columns and the padding change together. Held a fixed way down rather than
+   centred, so an error that grows the card does not move it. */
+.auth-page { min-height: 100vh; padding: max(1.5rem, 10vh) 1.5rem 1.5rem; align-items: flex-start;
   background: radial-gradient(1200px 600px at 50% -10%, var(--color-accent-muted), transparent 70%); }
 .auth-card { width: 100%; max-width: 1000px; margin-inline: auto; }
 /* The grid carries the inset: the brand panel paints to the card's edge. */

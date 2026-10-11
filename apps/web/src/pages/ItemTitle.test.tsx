@@ -9,11 +9,12 @@ const docs = vi.hoisted(() => ({ rename: vi.fn() }));
 vi.mock("../api", () => ({ Docs: docs }));
 vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
-const { useTitleRename } = await import("./ItemTitle");
+const { ItemTitle, useTitleRename } = await import("./ItemTitle");
 
 type Rename = ReturnType<typeof useTitleRename>;
 let current!: Rename;
 let root: Root;
+let host: HTMLDivElement;
 
 interface ProbeProps {
   serverTitle?: string;
@@ -23,6 +24,11 @@ interface ProbeProps {
 
 function Probe({ serverTitle = "Plan", readOnly = false, onError }: ProbeProps) {
   current = useTitleRename("d_1", serverTitle, readOnly, onError);
+  return null;
+}
+
+function RenamedProbe({ onRenamed }: { onRenamed: (doc: unknown) => void }) {
+  current = useTitleRename("d_1", "Plan", false, undefined, onRenamed);
   return null;
 }
 
@@ -43,7 +49,7 @@ async function typeAndCommit(title: string) {
 beforeEach(() => {
   docs.rename.mockReset();
   toasts.shown = [];
-  ({ root } = mountInto());
+  ({ root, host } = mountInto());
 });
 
 describe("useTitleRename", () => {
@@ -115,12 +121,52 @@ describe("useTitleRename", () => {
     expect(current.title).toBe("Agenda");
   });
 
-  it("keeps a rename over a later server title", async () => {
+  it("keeps its rename until the server's title moves, then shows the server's", async () => {
     docs.rename.mockResolvedValue({});
     await mount();
     await typeAndCommit("Launch plan");
-    await mount({ serverTitle: "Plan, derived again" });
     expect(current.title).toBe("Launch plan");
+    // Someone renamed it after: everyone sees the title that won.
+    await mount({ serverTitle: "Lin's plan" });
+    expect(current.title).toBe("Lin's plan");
+  });
+
+  it("hands the renamed row on, with when the rename was sent", async () => {
+    docs.rename.mockResolvedValue({ doc_id: "d_1", title: "Launch plan", title_source: "user" });
+    const onRenamed = vi.fn();
+    current = undefined as unknown as Rename;
+    await act(async () => root.render(<RenamedProbe onRenamed={onRenamed} />));
+    await typeAndCommit("Launch plan");
+    expect(onRenamed).toHaveBeenCalledWith(expect.objectContaining({ title: "Launch plan", title_source: "user" }), expect.any(Number));
+  });
+
+  it("says who won when a read after its own rename was answered finds another title", async () => {
+    docs.rename.mockResolvedValue({});
+    await mount();
+    await typeAndCommit("Launch plan");
+    const later = Date.now() + 1;
+    act(() => current.noteRenamedBy("Launch plan", "Liv", later));
+    expect(toasts.shown).toEqual([]);
+    act(() => current.noteRenamedBy("Oven rota", "Liv", later));
+    expect(toasts.shown).toEqual([{ body: "Liv renamed it to “Oven rota”.", type: "info" }]);
+    // Said once; a later rename by someone else is just the new title.
+    act(() => current.noteRenamedBy("Bread", "Bo", later));
+    expect(toasts.shown).toHaveLength(1);
+  });
+
+  it("says nothing on a read asked before its own rename was answered, which that rename may still overtake", async () => {
+    docs.rename.mockResolvedValue({});
+    await mount();
+    const before = Date.now() - 1;
+    await typeAndCommit("Launch plan");
+    act(() => current.noteRenamedBy("Oven rota", "Liv", before));
+    expect(toasts.shown).toEqual([]);
+  });
+
+  it("says nothing about a rename by someone else when it renamed nothing itself", async () => {
+    await mount();
+    act(() => current.noteRenamedBy("Oven rota", "Liv", Date.now()));
+    expect(toasts.shown).toEqual([]);
   });
 
   it("goes back to following the server's title when a rename is refused", async () => {
@@ -129,5 +175,32 @@ describe("useTitleRename", () => {
     await typeAndCommit("Other");
     await mount({ serverTitle: "Meeting notes" });
     expect(current.title).toBe("Meeting notes");
+  });
+});
+
+describe("ItemTitle", () => {
+  function Header({ serverTitle }: { serverTitle: string }) {
+    const rename = useTitleRename("d_1", serverTitle, false);
+    return <ItemTitle rename={rename} readOnly={false} label="Title" />;
+  }
+
+  async function openField(serverTitle: string): Promise<HTMLInputElement> {
+    await act(async () => root.render(<Header serverTitle={serverTitle} />));
+    await act(async () => host.querySelector("button")!.click());
+    return host.querySelector("input")!;
+  }
+
+  it("opens a title with all of it selected, so typing replaces it", async () => {
+    const field = await openField("Bakery handbook");
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe("Bakery handbook");
+    expect(field.selectionStart).toBe(0);
+    expect(field.selectionEnd).toBe("Bakery handbook".length);
+  });
+
+  it("opens an untitled item empty, with Untitled only as the placeholder", async () => {
+    const field = await openField("");
+    expect(field.value).toBe("");
+    expect(field.placeholder).toBe("Untitled");
   });
 });

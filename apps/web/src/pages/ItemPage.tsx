@@ -11,7 +11,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Button } from "@astryxdesign/core/Button";
 import { Spinner } from "@astryxdesign/core/Spinner";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { FileText } from "lucide-react";
 import { Docs, type DocSummary } from "../api";
 import { TRASH_RETENTION_DAYS } from "@stuga/protocol/domain/limits";
@@ -69,7 +69,7 @@ export function ItemPage() {
 
   // The row in hand must be this item's: on the render after a navigation the state still answers the previous id.
   const current = load?.docId === docId ? load : null;
-  if (current?.kind === "no-access") return <NoAccessCard docId={docId} />;
+  if (current?.kind === "no-access") return <NoAccessCard docId={docId} onAccess={retry} />;
   if (current?.kind === "failed") {
     return (
       <AppShell>
@@ -99,8 +99,9 @@ export function ItemPage() {
     if (doc.trashed) {
       return <TrashedDatabaseCard doc={doc} onRestored={(d) => setLoad({ docId, kind: "ready", doc: d })} />;
     }
-    return <DatabasePage key={doc.doc_id} doc={doc} />;
+    return <DatabasePage key={doc.doc_id} doc={doc} onTrashed={(d) => setLoad({ docId, kind: "ready", doc: d })} />;
   }
+  // A prose document in the trash still opens, read-only under a banner, so its text can be read and copied.
   return <DocPage key={doc.doc_id} doc={doc} />;
 }
 

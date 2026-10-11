@@ -186,6 +186,61 @@ export async function pushLockState(env: NodeEnv, docId: string, locked: boolean
   }
 }
 
+/**
+ * Tell an item's live actor it went into the trash or came back, so open pages
+ * say so at once. A document's actor refuses writes meanwhile; a database's
+ * data plane is refused here, so its actor only passes the word on. Best-effort:
+ * every socket upgrade reads `trashed` again.
+ */
+export async function pushTrashState(env: NodeEnv, docId: string, trashed: boolean, docType: "prose" | "database"): Promise<void> {
+  const url =
+    docType === "database"
+      ? `http://actor/state-changed?dbId=${encodeURIComponent(docId)}`
+      : `http://actor/set-trashed?docId=${encodeURIComponent(docId)}&trashed=${trashed ? "1" : "0"}`;
+  const actors = docType === "database" ? env.databases : env.docs;
+  try {
+    await actors.get(docId).fetch(url, docType === "database" ? { method: "POST" } : undefined);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Tell a document's open pages its comments changed, so they re-read them.
+ * Best-effort: a page also re-reads them whenever it reconnects. A database's
+ * pages show no comments, and its actor is not a document's.
+ */
+export async function pushCommentsChanged(env: Pick<NodeEnv, "docs">, docId: string, docType: "prose" | "database"): Promise<void> {
+  if (docType !== "prose") return;
+  try {
+    await env.docs.get(docId).fetch(`http://actor/comments-changed?docId=${encodeURIComponent(docId)}`);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Tell an item's open pages it was renamed, and by whom, so a rename reaches
+ * them at once and someone whose rename lost sees the title that won. A
+ * database's page re-reads the item. Best-effort: a page also re-reads its
+ * item when it comes back into view.
+ */
+export async function pushTitleChange(env: Pick<NodeEnv, "docs" | "databases">, doc: Pick<DocRow, "doc_id" | "doc_type" | "title">, by: string): Promise<void> {
+  try {
+    if (doc.doc_type === "database") {
+      await env.databases.get(doc.doc_id).fetch(`http://actor/state-changed?dbId=${encodeURIComponent(doc.doc_id)}`, { method: "POST" });
+      return;
+    }
+    const u = new URL("http://actor/title-changed");
+    u.searchParams.set("docId", doc.doc_id);
+    u.searchParams.set("title", doc.title);
+    u.searchParams.set("by", by);
+    await env.docs.get(doc.doc_id).fetch(u.toString());
+  } catch {
+    /* best-effort */
+  }
+}
+
 /** Drop a deleted item's actor storage. Best-effort: an actor that is already gone has nothing left to drop. */
 export async function destroyActorStorage(
   env: Pick<NodeEnv, "docs" | "databases">,

@@ -19,7 +19,8 @@ type RefusalKind = WriteRejectedPayload["kind"];
 /**
  * The refusals that decide who may write. `epoch`, `rate-limit`, `table-cap` and
  * `structural-rate` would turn away the owner's frame just the same, so they
- * are backpressure, not permission decisions.
+ * are backpressure, not permission decisions; `trashed` is a tab that has not
+ * caught up with the trash, which the ledger already records.
  */
 const AUDITED_REFUSALS: ReadonlySet<RefusalKind> = new Set(["acl", "locked", "approval_required"]);
 

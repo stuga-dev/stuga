@@ -131,6 +131,15 @@ describe("Login · where a sign-in goes", () => {
   });
 });
 
+describe("Login · from a share link", () => {
+  it("says once how to get an invite, and names a document", async () => {
+    rememberLoginReturn("/s/shl_abc");
+    await open();
+    expect(host.textContent).toContain("Sign in to open the document shared with you. No account? Ask the person who sent it for an invite.");
+    expect(host.textContent).not.toContain("Ask a member for an invite.");
+  });
+});
+
 describe("Login · a username the node refuses", () => {
   const registered = () =>
     fetchMock.mock.calls.filter(([url]) => String(url) === "/auth/register").map(([, init]) => JSON.parse(String(init!.body)) as Record<string, unknown>);
@@ -574,5 +583,50 @@ describe("Login with a passkey, at the remote address", () => {
     await click("Sign in");
     expect(host.querySelector("#app")).not.toBeNull();
     expect(passkeyOfferDue()).toBe(false);
+  });
+});
+
+describe("Login · an invite link, checked before anything is typed", () => {
+  const preview = (body: unknown) =>
+    fetchMock.mockImplementation(async (url) => (String(url) === "/auth/invite/preview" ? reply(200, body) : reply(500, {})));
+
+  it("names the workspace, the role and who invited", async () => {
+    rememberLoginReturn("/join/inv_abc");
+    preview({ status: "ok", workspace_id: "w1", workspace_name: "Bakery", role: "guest", invited_by: "Liv" });
+    await open();
+    expect(JSON.parse(String(fetchMock.mock.calls.find(([url]) => String(url) === "/auth/invite/preview")![1]!.body))).toEqual({ token: "inv_abc" });
+    expect(host.textContent).toContain("Liv invited you to Bakery as a guest. Create an account or sign in to join.");
+    expect(button("Create account")).toBeTruthy();
+  });
+
+  it("says a used, expired or made-up link can't be used, and offers only sign-in", async () => {
+    rememberLoginReturn("/join/inv_dead");
+    preview({ status: "invalid" });
+    await open();
+    expect(host.textContent).toContain("That invite link is no longer valid. Ask whoever sent it for a new one.");
+    expect(host.textContent).not.toContain("You’re invited");
+    expect(input("Full name")).toBeUndefined();
+    expect(button("Create account")).toBeUndefined();
+    expect(button("Sign in")).toBeTruthy();
+  });
+});
+
+describe("Login · setup and sign-in help", () => {
+  it("says what the product is, shows the username and password rules before typing, and keeps a username lowercase", async () => {
+    setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME });
+    await open("/login?setup=ABCDE");
+    expect(host.textContent).toContain("A shared place for your team’s documents and databases, with AI to help.");
+    expect(host.textContent).toContain("Lowercase letters, digits, dots, dashes or underscores.");
+    expect(host.textContent).toContain("At least 8 characters");
+    await type("Username", "LIV");
+    expect(input("Username")!.value).toBe("liv");
+  });
+
+  it("tells someone who forgot their password whom to ask", async () => {
+    await open();
+    const forgot = [...host.querySelectorAll("a, button, [role=link]")].find((el) => el.textContent === "Forgot password?");
+    expect(forgot).toBeTruthy();
+    await act(async () => forgot!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(host.textContent).toContain(`Ask an administrator of ${NODE_NAME} for a password reset link.`);
   });
 });

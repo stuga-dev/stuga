@@ -65,16 +65,16 @@ const ENGLISH: { [E in NotificationEvent]: [title: string, body: string] } = {
   DIRECT_DOC_PERMISSIONS: ["Ada shared “Q3 plan” with you", "You now have access to this document."],
   REQUEST_ACCESS: ["Ada requested access to “Untitled”", "Open the share dialog to grant them access."],
   MENTIONED_IN_DOC: ["You were mentioned in “Q3 plan”", "Owner: @bo"],
-  DATABASE_AGENT_EDIT: ["Scout edited “Tasks”", "Inserted 3 rows. You can review and revert from the database’s Activity panel."],
+  DATABASE_AGENT_EDIT: ["“Tasks”: Scout made changes", "Inserted 3 rows. You can review and revert from the database’s Activity panel."],
   DATABASE_AGENT_PROPOSED: [
-    "Scout proposed changes to “Tasks”",
+    "“Tasks”: Scout proposed changes",
     "Scout proposed 2 changes to this table — waiting for your review in the table’s Activity panel.",
   ],
-  AGENT_EDITS_PROPOSED: ["Scout proposed changes to “Q3 plan”", "Scout proposed 1 change — waiting for your review"],
-  AGENT_EDITS_APPLIED: ["Scout edited “Q3 plan”", "Scout edited this document — applied at once by policy"],
+  AGENT_EDITS_PROPOSED: ["“Q3 plan”: Scout proposed changes", "Scout proposed 1 change — waiting for your review"],
+  AGENT_EDITS_APPLIED: ["“Q3 plan”: Scout made changes", "Scout changed this document directly, as it is set to allow."],
   ACCOUNT_NEW_SIGN_IN: [
     "New sign-in at k7f3q2.mystuga.com: Safari on iPhone",
-    "New sign-in at k7f3q2.mystuga.com: Safari on iPhone · 2026-09-30 14:02 UTC · from 203.0.113.7. Not you? Revoke everything.",
+    "New sign-in at k7f3q2.mystuga.com: Safari on iPhone · 2026-09-30 14:02 UTC · from 203.0.113.7. Not you? Sign out everywhere.",
   ],
   MEMBER_NEW_SIGN_IN: [
     "Bo signed in at k7f3q2.mystuga.com: Safari on iPhone",
@@ -82,7 +82,7 @@ const ENGLISH: { [E in NotificationEvent]: [title: string, body: string] } = {
   ],
   ACCOUNT_PASSWORD_CHANGED: [
     "Your password was changed",
-    "Your password was changed on Safari on Mac · 2026-09-30 14:02 UTC. Not you? Run reset-password on the node’s machine to get back in, then revoke everything.",
+    "Your password was changed on Safari on Mac · 2026-09-30 14:02 UTC. Not you? Run reset-password on the node’s machine to get back in, then sign out everywhere.",
   ],
   MEMBER_PASSWORD_CHANGED: [
     "Bo’s password was reset at k7f3q2.mystuga.com",
@@ -90,19 +90,19 @@ const ENGLISH: { [E in NotificationEvent]: [title: string, body: string] } = {
   ],
   ACCOUNT_EVERYTHING_REVOKED: ["Liv revoked everything for you", "Liv revoked everything for you · 2026-09-30 14:02 UTC."],
   MEMBER_EVERYTHING_REVOKED: ["Bo revoked everything", "Bo revoked everything · 2026-09-30 14:02 UTC."],
-  ACCOUNT_API_KEY_CREATED: ["API key created: Scout", "API key created: Scout. Not you? Revoke everything."],
+  ACCOUNT_API_KEY_CREATED: ["API key created: Scout", "API key created: Scout. Not you? Sign out everywhere."],
   ACCOUNT_PASSKEY_ADDED: [
     "Passkey added at k7f3q2.mystuga.com: iCloud Keychain",
-    "Passkey added at k7f3q2.mystuga.com: iCloud Keychain · Safari on Mac · 2026-09-30 14:02 UTC · from 203.0.113.9. Not you? Revoke everything.",
+    "Passkey added at k7f3q2.mystuga.com: iCloud Keychain · Safari on Mac · 2026-09-30 14:02 UTC · from 203.0.113.9. Not you? Sign out everywhere.",
   ],
-  ACCOUNT_PASSKEY_REMOVED: ["Passkey removed: Security key", "Passkey removed: Security key. Not you? Revoke everything."],
+  ACCOUNT_PASSKEY_REMOVED: ["Passkey removed: Security key", "Passkey removed: Security key. Not you? Sign out everywhere."],
   ACCOUNT_APP_CONNECTED: [
     "App connected at k7f3q2.mystuga.com: Claude (claude.ai)",
-    "App connected at k7f3q2.mystuga.com: Claude (claude.ai). Not you? Revoke everything.",
+    "App connected at k7f3q2.mystuga.com: Claude (claude.ai). Not you? Sign out everywhere.",
   ],
   ACCOUNT_EMAIL_CHANGED: [
     "Your email was changed to bo@new.test",
-    "Your email was changed to bo@new.test on Safari on Mac · 2026-09-30 14:02 UTC. Not you? Revoke everything.",
+    "Your email was changed to bo@new.test on Safari on Mac · 2026-09-30 14:02 UTC. Not you? Sign out everywhere.",
   ],
   MEMBER_EMAIL_CHANGED: ["Bo’s email was removed", "Bo’s email was removed on Safari on Mac · 2026-09-30 14:02 UTC."],
   ACCOUNT_SIGN_INS_PAUSED: [

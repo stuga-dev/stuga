@@ -15,8 +15,9 @@ import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/Segme
 import { Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 import { WORKSPACE_IMPORT_MAX_BYTES, type DocAccessMode } from "@stuga/protocol/domain/workspaces";
-import { Workspaces, type CreatedWorkspace, type HeldImport, type LeftOut, type WorkspaceSample, type WorkspaceSamples } from "../api";
+import { Workspaces, type CreatedWorkspace, type HeldImport, type LeftOut, type LeftOutReason, type WorkspaceSample, type WorkspaceSamples } from "../api";
 import type { ApiError } from "../lib/http/client";
+import { fileSize } from "../lib/format";
 import { t } from "../i18n/i18n";
 
 export type StartChoice =
@@ -92,20 +93,36 @@ async function imported(run: () => Promise<CreatedWorkspace>): Promise<CreatedWo
   }
 }
 
-/** The files a held import would leave out, by path, in a list that scrolls when it is long. */
-export function LeftOutList({ leftOut }: { leftOut: LeftOut }) {
+/** Why a file is left out, in a few words. */
+export function leftOutReason(left: LeftOutReason): string {
+  switch (left.reason) {
+    case "too_large":
+      return t("shell.startWith.reason.tooLarge", { size: fileSize(left.size), limit: fileSize(left.limit) });
+    case "unreadable_image":
+      return t("shell.startWith.reason.unreadableImage");
+    case "unreadable_text":
+      return t("shell.startWith.reason.unreadableText");
+    case "not_linked":
+      return t("shell.startWith.reason.notLinked");
+    case "not_kept":
+      return t("shell.startWith.reason.notKept");
+  }
+}
+
+/** The files an import leaves out, by path, each with why, in a list that scrolls when it is long; `title` heads it. */
+export function LeftOutList({ leftOut, title = leftOutTitle(leftOut) }: { leftOut: LeftOut; title?: string }) {
   const more = leftOut.count - leftOut.files.length;
   const list = (
     <List density="compact">
-      {leftOut.files.map((path) => (
-        <ListItem key={path} label={path.slice(path.lastIndexOf("/") + 1)} description={path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : undefined} />
+      {leftOut.files.map((file) => (
+        <ListItem key={file.path} label={file.path} description={leftOutReason(file)} />
       ))}
       {more > 0 && <ListItem label={t("shell.startWith.leftOutMore", { count: more })} />}
     </List>
   );
   return (
     <VStack gap={2}>
-      <Banner status="warning" title={leftOutTitle(leftOut)} description={t("shell.startWith.leftOutNote")} />
+      <Banner status="warning" title={title} />
       {leftOut.files.length > 6 ? (
         <ScrollableArea label={t("shell.startWith.leftOutList")} height={260}>
           {list}

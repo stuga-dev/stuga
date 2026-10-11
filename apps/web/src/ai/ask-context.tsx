@@ -6,7 +6,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Ask, AskThreads, type AskThreadSummary, type AskTurn } from "../api";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
-import type { AskStep } from "@stuga/protocol/api/ask";
+import type { AskStep, AskStopReason } from "@stuga/protocol/api/ask";
 import { t } from "../i18n/i18n";
 import { presentServerMessage } from "../lib/http/server-messages";
 import { askActivityText, askNoticeText } from "./turn-text";
@@ -26,7 +26,16 @@ export interface AskUiTurn {
   /** The turn ended early or retrieval degraded, worded; the answer still stands. */
   notice?: string | null;
   error?: string | null;
+  /** Stopped before it finished, by Stop or by leaving the page; it can be asked again. */
+  stopped?: boolean;
   streaming?: boolean;
+}
+
+/** A stored turn's ending, worded as the live stream words it (retrieval health is not stored). */
+export function storedTurnNotice(stop: AskStopReason | undefined): Pick<AskUiTurn, "notice" | "stopped"> {
+  if (!stop || stop === "complete") return {};
+  if (stop === "error") return { notice: askNoticeText({ code: "error", failure: null }) };
+  return { notice: askNoticeText({ code: stop }), stopped: stop === "aborted" };
 }
 
 interface AskContextValue {
@@ -43,7 +52,7 @@ interface AskContextValue {
   setScope: (v: string) => void;
   /** Ask a question in the open thread, creating one if there isn't one yet. */
   send: (question: string) => Promise<void>;
-  /** Re-send the last turn's question after it failed, replacing the failure. */
+  /** Re-send the last turn's question after it failed (replacing the failure) or stopped (below it). */
   retryLast: () => Promise<void>;
   stop: () => void;
   openThread: (id: string | null) => void;
@@ -131,6 +140,7 @@ export function AskProvider({
             answer: turn.answer,
             citations: turn.citations ?? [],
             steps: turn.steps ?? [],
+            ...storedTurnNotice(turn.stop_reason),
           })),
         );
         setScope(r.thread.collection_id ?? "");
@@ -203,11 +213,14 @@ export function AskProvider({
     [threadId, scope, streaming, onNavigate, patchLast, refreshThreads],
   );
 
-  /** Re-ask the last question after it failed, replacing the failed turn. */
+  /**
+   * Re-ask the last question. A failed turn is replaced; a stopped one stays,
+   * since the server keeps it and a reload shows both.
+   */
   const retryLast = useCallback(async () => {
     const last = turns[turns.length - 1];
-    if (!last?.error || streaming) return;
-    setTurns((all) => all.slice(0, -1));
+    if (!last || !(last.error || last.stopped) || streaming) return;
+    if (last.error) setTurns((all) => all.slice(0, -1));
     await send(last.question);
   }, [turns, streaming, send]);
 
@@ -247,7 +260,7 @@ export function AskProvider({
     abortRef.current?.abort();
     abortRef.current = null;
     const question = turns[turns.length - 1]?.question;
-    patchLast((x) => ({ ...x, status: undefined, streaming: false, notice: x.notice ?? t("ai.notice.stopped") }));
+    patchLast((x) => ({ ...x, status: undefined, streaming: false, stopped: true, notice: x.notice ?? t("ai.notice.stopped") }));
     setStreaming(false);
     void refreshThreads();
     const seq = ++generationRef.current;

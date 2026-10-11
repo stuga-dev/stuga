@@ -10,7 +10,7 @@ import { finalizeInverse, recordOp, type InverseJson } from "../ledger/ops-ledge
 import { setOpStatus } from "../ledger/runs.js";
 import { OpError, type Body } from "../request.js";
 import { newId, type SqlHandle } from "../schema-ops.js";
-import { columnsAdd, columnsDelete, columnsRename, columnsSetDescription, columnsSetType } from "./columns.js";
+import { columnsAdd, columnsDelete, columnsRename, columnsSetDescription, columnsSetFormat, columnsSetType } from "./columns.js";
 import { rowsDelete, rowsInsert, rowsLinkPage, rowsLinkPages, rowsUpdate } from "./rows.js";
 import type { SchemaView } from "./schema-view.js";
 import { tablesCreate, tablesDelete, tablesRename } from "./tables.js";
@@ -63,6 +63,7 @@ const OPS = {
   "columns.rename": columnsRename,
   "columns.set_type": columnsSetType,
   "columns.set_description": columnsSetDescription,
+  "columns.set_format": columnsSetFormat,
   "columns.delete": columnsDelete,
   "views.create": viewsCreate,
   "views.update": viewsUpdate,
@@ -143,6 +144,6 @@ export async function commitOp(
     return applied.result;
   });
   db.dropBlobs(pruned);
-  db.sockets.broadcastChanged(p.table_id, "mutation", args.actor.is_agent ? null : args.actor.alias);
+  db.changed(p.table_id, "mutation", args.actor.is_agent ? null : args.actor.alias);
   return result;
 }

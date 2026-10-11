@@ -67,6 +67,15 @@ describe("the write tier on an upgrade", () => {
     expect(await writeParam(["user:bob"], true)).toBe("0");
   });
 
+  it("stays the ACL's on a document in the trash, and the actor is told it is there", async () => {
+    mockGetDoc.mockResolvedValue({ ...DOC, trashed: true });
+    const params = await upgradeParams(ctx(["user:alice"]));
+    expect(params.get("write")).toBe("1");
+    expect(params.get("trashed")).toBe("1");
+    mockGetDoc.mockResolvedValue(DOC);
+    expect((await upgradeParams(ctx(["user:alice"]))).get("trashed")).toBe("0");
+  });
+
   it("is not sent to a database socket, which carries no edits", async () => {
     mockGetDoc.mockResolvedValue({ ...DOC, doc_type: "database" });
     expect(await writeParam(["user:alice"], true)).toBeNull();
@@ -91,5 +100,14 @@ describe("the delegate on an upgrade", () => {
     const params = await upgradeParams(ctx(["user:alice"]), "harness&onBehalfOf=ceo");
     expect(params.get("agent")).toBe("harness&onBehalfOf=ceo");
     expect(params.get("onBehalfOf")).toBeNull();
+  });
+});
+
+/** A page names the text schema its editor holds; the actor reloads one older than the text. */
+describe("the editor's text schema on an upgrade", () => {
+  it("is passed on for a page, and not set for a socket no page opened", async () => {
+    await routeWebSocket(ctx(["user:alice"]), env, "d1", null, true, "2");
+    expect(new URL(actorUrls.at(-1)!).searchParams.get("editorSchema")).toBe("2");
+    expect((await upgradeParams(ctx(["user:alice"]))).get("editorSchema")).toBeNull();
   });
 });

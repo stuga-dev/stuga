@@ -1,12 +1,15 @@
 /**
- * The notification tray in every TopNav. Opening it marks everything read, but
- * rows that were unread stay highlighted until it closes. It lists every
- * workspace the person belongs to; opening a row from another switches there.
+ * The notification tray in every TopNav. Opening it reads the count and the
+ * rows afresh; a row stays marked unread until it is opened or everything is
+ * marked read. It lists every workspace the person belongs to, naming the
+ * workspace of a row from another, and opening such a row switches there.
  */
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Popover } from "@astryxdesign/core/Popover";
 import { IconButton } from "@astryxdesign/core/IconButton";
+import { Button } from "@astryxdesign/core/Button";
+import { HStack } from "@astryxdesign/core/HStack";
 import { List } from "@astryxdesign/core/List";
 import { Item } from "@astryxdesign/core/Item";
 import { Text } from "@astryxdesign/core/Text";
@@ -15,7 +18,8 @@ import { parseDeliveryError, type DeliveryErrorCode } from "@stuga/protocol/noti
 import { renderNotification } from "@stuga/protocol/notify/render";
 import { getActiveWorkspace, setActiveWorkspace } from "../lib/session/workspace-pointer";
 import type { Notification } from "../api";
-import { useNotifications } from "../state/notifications";
+import { refreshNotifications, useNotifications } from "../state/notifications";
+import { SHARE_PARAM } from "../library/share-request";
 import { relativeTime } from "../lib/format";
 import { t, uiLanguage, type MessageKey } from "../i18n/i18n";
 
@@ -45,12 +49,24 @@ function present(n: Notification): { label: string; to: string | null } {
     renderNotification(n.event_type, n.payload ?? {}, notificationLanguage())?.title ??
     n.resource_title ??
     n.event_type; // i18n-exempt: an identifier, for an event no catalog knows
+  // An access request is answered in the Share dialog, so it opens there.
   const to = n.resource_id
-    ? `/doc/${n.resource_id}`
+    ? `/doc/${n.resource_id}${n.event_type === "REQUEST_ACCESS" ? `?${SHARE_PARAM}=1` : commentQuery(n.resource_url)}`
     : n.resource_url
       ? safeInternalPath(n.resource_url)
       : null;
   return { label, to };
+}
+
+/** `?comment=<num>` when the notification is about one comment, so opening it shows that comment. */
+function commentQuery(raw: string | null): string {
+  if (!raw) return "";
+  try {
+    const num = new URL(raw, window.location.origin).searchParams.get("comment");
+    return num !== null && /^\d+$/.test(num) ? `?comment=${num}` : "";
+  } catch {
+    return "";
+  }
 }
 
 /** A channel as the tray names it: the services by their names, the rest in the reader's words. */
@@ -91,12 +107,11 @@ function notSentLine(channel: string, stored: string): string {
 
 /**
  * Whether a notification about the node or one's own account also went out by the node's channel:
- * so nobody believes an alert reached their inbox when it did not. Nothing for a row from before
- * this was recorded.
+ * so nobody believes an alert reached their inbox when it did not. Nothing when the node has no
+ * channel (the bell is the only place it could be), or for a row from before this was recorded.
  */
 export function deliveryLine(n: Pick<Notification, "delivery_channel" | "delivered_at" | "delivery_error">): string | undefined {
-  if (!n.delivery_channel) return undefined;
-  if (n.delivery_channel === "none") return t("notifications.delivery.inStugaOnly");
+  if (!n.delivery_channel || n.delivery_channel === "none") return undefined;
   const channel = channelName(n.delivery_channel);
   if (n.delivered_at) return t("notifications.delivery.sent", { channel });
   if (n.delivery_error) return notSentLine(channel, n.delivery_error);
@@ -116,12 +131,10 @@ function openTarget(n: Notification, to: string, nav: (to: string) => void): voi
 export function NotificationsBell() {
   const nav = useNavigate();
   const active = getActiveWorkspace();
-  const { notifications, rowsFailed, unread, markAllRead, loadRows } = useNotifications();
+  const { notifications, rowsFailed, unread, markAllRead, markRead, loadRows } = useNotifications();
   const [open, setOpen] = useState(false);
   /** The unread count the open tray last pulled rows for. */
   const pulledAt = useRef<number | null>(null);
-  /** Rows unread while the tray is open, highlighted until it closes. */
-  const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
 
   // Rows load on open, and again only when the count rises while open: marking read lowers it.
   useEffect(() => {
@@ -134,19 +147,13 @@ export function NotificationsBell() {
     if (previous === null || unread > previous) loadRows();
   }, [open, unread, loadRows]);
 
-  // Marks whatever lands while the tray is open, since rows arrive after the open click.
-  useEffect(() => {
-    if (!open) return;
-    const unreadIds = (notifications ?? []).filter((n) => !n.read).map((n) => n.id);
-    if (unreadIds.length === 0) return;
-    setFresh((cur) => new Set([...cur, ...unreadIds]));
-    void markAllRead();
-  }, [open, notifications, markAllRead]);
-
   function handleOpenChange(next: boolean) {
     setOpen(next);
-    if (!next) setFresh(new Set());
+    // The count is read again too, so what the tray shows and the dot agree.
+    if (next) refreshNotifications();
   }
+
+  const anyUnread = (notifications ?? []).some((n) => !n.read);
 
   return (
     <Popover
@@ -157,14 +164,33 @@ export function NotificationsBell() {
       width={340}
       label={t("common.notifications")}
       content={
-        <List hasDividers header={<Text type="label">{t("common.notifications")}</Text>}>
+        <List
+          hasDividers
+          header={
+            <HStack gap={2} justify="between" vAlign="center">
+              <Text type="label">{t("common.notifications")}</Text>
+              {anyUnread && <Button label={t("notifications.tray.markAllRead")} variant="ghost" size="sm" onClick={() => void markAllRead()} />}
+            </HStack>
+          }
+        >
           {(notifications ?? []).map((n) => {
             const { label, to } = present(n);
             return (
               <Item
                 as="li"
                 key={n.id}
+                className={n.read ? "notif-row" : "notif-row notif-row--unread"}
+                align="start"
+                startContent={
+                  n.read ? (
+                    <span className="notif-unread-mark" aria-hidden="true" />
+                  ) : (
+                    <span className="notif-unread-mark notif-unread-mark--on" role="img" aria-label={t("notifications.tray.unread")} />
+                  )
+                }
                 label={label}
+                // Long titles wrap rather than cut off mid-word.
+                labelLines={4}
                 description={
                   n.workspace_id === null
                     ? deliveryLine(n)
@@ -172,20 +198,17 @@ export function NotificationsBell() {
                       ? (n.workspace_name ?? undefined)
                       : undefined
                 }
-                isHighlighted={fresh.has(n.id) || !n.read}
                 endContent={
-                  <Text type="supporting" color="secondary">
+                  <Text type="supporting" color="secondary" className="notif-time">
                     {relativeTime(n.created_at)}
                   </Text>
                 }
-                onClick={
-                  to
-                    ? () => {
-                        setOpen(false);
-                        openTarget(n, to, nav);
-                      }
-                    : undefined
-                }
+                onClick={() => {
+                  void markRead(n.id);
+                  if (!to) return;
+                  setOpen(false);
+                  openTarget(n, to, nav);
+                }}
               />
             );
           })}

@@ -19,9 +19,10 @@ import { VisuallyHidden } from "@astryxdesign/core/VisuallyHidden";
 import { Kbd } from "@astryxdesign/core/Kbd";
 import { CommandPaletteFooter, CommandPaletteGroup } from "@astryxdesign/core/CommandPalette";
 import { useAnnounce } from "@astryxdesign/core/hooks";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../../ui/use-toast";
 import { NewFolderDialog } from "../../library/NewFolderDialog";
 import { ImportMarkdownDialog } from "../../library/ImportMarkdownDialog";
+import { openKeyboardShortcuts } from "../KeyboardShortcuts";
 import {
   Database,
   FilePlus,
@@ -30,6 +31,7 @@ import {
   Files,
   FolderPlus,
   Gauge,
+  Keyboard,
   Palette,
   Plug,
   RotateCw,
@@ -41,10 +43,12 @@ import {
   Sparkles,
   Users, ListChecks } from "lucide-react";
 import { errorMessage } from "../../lib/http/client";
-import { Marked, Snippet, hitHref, markTerms, queryTerms } from "../../lib/snippet";
+import { HitDescription, Marked, foundByMeaning, hitHref, markTerms, queryTerms } from "../../lib/snippet";
+import { absoluteTime, relativeTime } from "../../lib/format";
 import { forgetRecentDoc, recentDocIds } from "../../lib/recent-docs";
 import { getActiveWorkspace } from "../../lib/session/workspace-pointer";
 import { isComposingKey } from "../../lib/ime";
+import { selectOnFocus } from "../../ui/select-on-focus";
 import { t, type MessageKey } from "../../i18n/i18n";
 import { EN } from "../../i18n/en";
 
@@ -52,7 +56,7 @@ interface Cmd {
   id: string;
   label: ReactNode;
   description?: ReactNode;
-  hint?: string;
+  hint?: ReactNode;
   icon: ReactNode;
   /** Words it matches besides its label, in English. */
   terms?: string[];
@@ -68,6 +72,8 @@ const KEYWORD_DELAY_MS = 120;
 const HYBRID_DELAY_MS = 450;
 /** Characters of context kept before a snippet's first hit, so the hit shows in two lines. */
 const SNIPPET_LEAD = 40;
+/** The dialog's inline start: centred while 640px fit, else the window's 16px margin. */
+export const PALETTE_START = "max(16px, calc(50% - 320px))";
 
 /** While loading, the previous query's hits stay on screen, dimmed and out of reach of Enter. */
 type DocSearch =
@@ -132,6 +138,8 @@ export function CommandPalette() {
   // The gated settings pages are offered only to those the server lets in; a failed check hides them.
   const [canSeeLedger, setCanSeeLedger] = useState(false);
   const [isNodeAdmin, setIsNodeAdmin] = useState(false);
+  // A guest creates nothing in the workspace, so the create commands are left out.
+  const [isGuest, setIsGuest] = useState(false);
   useEffect(() => {
     let alive = true;
     Me.whoami()
@@ -140,7 +148,9 @@ export function CommandPalette() {
     Workspaces.list()
       .then(({ workspaces, active }) => {
         const role = workspaces.find((w) => w.workspace_id === active)?.role;
-        if (alive) setCanSeeLedger(role === "owner" || role === "admin");
+        if (!alive) return;
+        setCanSeeLedger(role === "owner" || role === "admin");
+        setIsGuest(role === "guest");
       })
       .catch(() => {});
     return () => {
@@ -169,12 +179,15 @@ export function CommandPalette() {
     return () => window.removeEventListener("keydown", onKey);
   }, [setOpen]);
 
-  useEffect(() => {
+  // Seeded while rendering, so the input holds the query by the time it takes focus and selects it.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setQ(liveQuery);
       setActiveId(null);
     }
-  }, [open, liveQuery]);
+  }
 
   // Asked of the server at each opening: titles stay current, and what the person can no longer read drops out.
   const openDocId = /^\/doc\/([^/]+)/.exec(loc.pathname)?.[1];
@@ -250,38 +263,43 @@ export function CommandPalette() {
     const create = t("shell.palette.hintCreate");
     const navigate = t("shell.palette.hintNavigate");
     return [
-      action("shell.palette.newDocument", {
-        id: "new-doc",
-        hint: create,
-        icon: <FilePlus size={16} />,
-        run: async () => {
-          const d = await Docs.create(t("common.untitled"));
-          nav(`/doc/${d.doc_id}`, { state: { focusEditor: true } });
-        },
-      }),
-      action("shell.palette.newDatabase", {
-        id: "new-database",
-        hint: create,
-        icon: <Database size={16} />,
-        terms: ["table", "grid", "rows", "spreadsheet"],
-        // The palette has no folder context, so what it creates lands at the top level.
-        run: async () => {
-          const d = await Docs.create(t("common.untitled"), undefined, "database");
-          nav(`/doc/${d.doc_id}`);
-        },
-      }),
-      action("shell.palette.newFolder", {
-        id: "new-folder",
-        hint: create,
-        icon: <FolderPlus size={16} />,
-        run: () => setShowNewFolder(true),
-      }),
-      action("shell.palette.importMarkdown", {
-        id: "import-markdown",
-        hint: create,
-        icon: <FileUp size={16} />,
-        run: () => setShowImport(true),
-      }),
+      ...(isGuest
+        ? []
+        : [
+          action("shell.palette.newDocument", {
+            id: "new-doc",
+            hint: create,
+            icon: <FilePlus size={16} />,
+            run: async () => {
+              // No title: the page shows "Untitled" until the first line or a rename names it.
+              const d = await Docs.create("");
+              nav(`/doc/${d.doc_id}`, { state: { focusEditor: true } });
+            },
+          }),
+          action("shell.palette.newDatabase", {
+            id: "new-database",
+            hint: create,
+            icon: <Database size={16} />,
+            terms: ["table", "grid", "rows", "spreadsheet"],
+            // The palette has no folder context, so what it creates lands at the top level.
+            run: async () => {
+              const d = await Docs.create("", undefined, "database");
+              nav(`/doc/${d.doc_id}`);
+            },
+          }),
+          action("shell.palette.newFolder", {
+            id: "new-folder",
+            hint: create,
+            icon: <FolderPlus size={16} />,
+            run: () => setShowNewFolder(true),
+          }),
+          action("shell.palette.importMarkdown", {
+            id: "import-markdown",
+            hint: create,
+            icon: <FileUp size={16} />,
+            run: () => setShowImport(true),
+          }),
+        ]),
       action("shell.palette.ask", {
         id: "ask",
         hint: navigate,
@@ -322,6 +340,12 @@ export function CommandPalette() {
         icon: <Palette size={16} />,
         terms: ["theme", "dark mode", "light mode", "colour", "color"],
         run: () => nav("/settings/appearance"),
+      }),
+      action("shell.shortcuts.title", {
+        id: "shortcuts",
+        icon: <Keyboard size={16} />,
+        terms: ["keys", "hotkeys", "keyboard", "help"],
+        run: openKeyboardShortcuts,
       }),
       action("shell.palette.workspaceSettings", {
         id: "workspace-settings",
@@ -367,7 +391,7 @@ export function CommandPalette() {
           ]
         : []),
     ];
-  }, [nav, canSeeLedger, isNodeAdmin]);
+  }, [nav, canSeeLedger, isNodeAdmin, isGuest]);
 
   const needle = trimmed.toLowerCase();
   const filteredActions = useMemo(() => actions.filter((a) => matchesAction(a, needle)), [actions, needle]);
@@ -401,7 +425,12 @@ export function CommandPalette() {
           <Marked parts={markTerms(d.title || t("common.untitled"), terms)} />
         </span>
       ),
-      description: d.snippet ? <Snippet text={d.snippet} lead={SNIPPET_LEAD} className="cmdk-snippet" /> : undefined,
+      description:
+        d.snippet || foundByMeaning(d, trimmed) ? (
+          <HitDescription hit={d} query={trimmed} lead={SNIPPET_LEAD} className="cmdk-snippet" />
+        ) : undefined,
+      // When it last changed, which tells two hits with one title apart.
+      hint: <time dateTime={d.updated_at} title={absoluteTime(d.updated_at)}>{relativeTime(d.updated_at)}</time>,
       icon: d.doc_type === "database" ? <Database size={16} /> : <FileText size={16} />,
       // Opens at the passage that matched. Offered hits always answer `trimmed`, never an earlier query.
       // A fresh `jump` lands again on the passage already open, whose URL is unchanged (see CitationJump).
@@ -501,13 +530,23 @@ export function CommandPalette() {
 
   return (
     <>
-      {/* `position` turns off the dialog's centring, so the start offset is half its width. */}
-      <Dialog isOpen={open} onOpenChange={setOpen} purpose="info" width={640} position={{ top: "12vh", start: "calc(50% - 320px)" }}>
+      {/* `position` turns off the dialog's centring, so the start offset is half its width; on a
+          narrow screen, where the dialog shrinks to the window less a margin, it is that margin. */}
+      <Dialog
+        isOpen={open}
+        onOpenChange={setOpen}
+        purpose="info"
+        width={640}
+        position={{ top: "12vh", start: PALETTE_START }}
+        aria-label={t("shell.palette.input")}
+      >
         <div className="cmdk">
           <TextInput
             label={t("shell.palette.input")}
             isLabelHidden
             hasAutoFocus
+            // Typing replaces the query it reopened with.
+            onFocus={selectOnFocus}
             placeholder={t("shell.palette.placeholder")}
             role="combobox"
             aria-autocomplete="list"
@@ -599,9 +638,9 @@ export function CommandPalette() {
       </Dialog>
       <NewFolderDialog
         isOpen={showNewFolder}
-        onSubmit={async (title, instructions) => {
+        onSubmit={async (title) => {
           try {
-            await Folders.create(title, null, instructions);
+            await Folders.create(title, null);
           } catch (e) {
             toast({ body: errorMessage(e, t("shell.palette.folderFailed")), type: "error" });
             return;

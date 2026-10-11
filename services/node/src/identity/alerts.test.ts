@@ -93,7 +93,7 @@ describe("a sign-in from a new device", () => {
     expect(title(rows[1]!)).toBe("Bo signed in at k7f3q2.mystuga.com: Safari on iPhone");
     expect(deliveries[0]).toMatchObject({ kind: "notify_deliver", recipient: "u_bo", eventType: ACCOUNT_NEW_SIGN_IN, params: rows[0]!.payload });
     expect(body(deliveries[0])).toBe(
-      "New sign-in at k7f3q2.mystuga.com: Safari on iPhone · 2026-09-30 14:02 UTC · from 203.0.113.7. Not you? Revoke everything.",
+      "New sign-in at k7f3q2.mystuga.com: Safari on iPhone · 2026-09-30 14:02 UTC · from 203.0.113.7. Not you? Sign out everywhere.",
     );
   });
 
@@ -126,7 +126,7 @@ describe("the other alerts", () => {
     const alone = setup(["u_bo"]);
     await alone.alerts.passwordChanged({ ...bo, device: "Safari on Mac", at, how: "changed", remoteHost: null });
     expect(body(alone.deliveries[0])).toBe(
-      "Your password was changed on Safari on Mac · 2026-09-30 14:02 UTC. Not you? Run reset-password on the node’s machine to get back in, then revoke everything.",
+      "Your password was changed on Safari on Mac · 2026-09-30 14:02 UTC. Not you? Run reset-password on the node’s machine to get back in, then sign out everywhere.",
     );
   });
 
@@ -198,7 +198,7 @@ describe("passkeys, apps and email", () => {
     ]);
     // Where and when, which the adding browser does not choose, beside the name it does.
     expect(body(rows[0])).toBe(
-      "Passkey added at k7f3q2.mystuga.com: iCloud Keychain · Safari on Mac · 2026-09-30 14:02 UTC · from 203.0.113.9. Not you? Revoke everything.",
+      "Passkey added at k7f3q2.mystuga.com: iCloud Keychain · Safari on Mac · 2026-09-30 14:02 UTC · from 203.0.113.9. Not you? Sign out everywhere.",
     );
     expect(new Set(rows.map((r) => r.id)).size).toBe(4);
     expect(rows.every((r) => r.resource_url.endsWith("/settings/profile?revoke=1"))).toBe(true);

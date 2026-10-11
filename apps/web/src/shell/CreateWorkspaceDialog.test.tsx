@@ -69,30 +69,77 @@ describe("CreateWorkspaceDialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("lists what a file would leave out and imports it only on Import, or lets it go on Cancel", async () => {
-    const files = ["Notes/Brief.pdf", "Board.canvas", "Notes/Old/Scan.heic"];
+  it("lists what a file would leave out and why, imports it only on Import, or goes back to the form", async () => {
+    const files = [
+      { path: "Notes/Brief.pdf", reason: "too_large", size: 13_002_342, limit: 10 * 1024 * 1024 },
+      { path: "Board.canvas", reason: "not_linked" },
+      { path: "Notes/Old/Scan.png", reason: "unreadable_image" },
+    ];
     const held = { import_id: "wsi_1", name: "Notion", expires_at: "2026-09-28T01:00:00Z", left_out: { count: 12, files } };
     onSubmit.mockResolvedValue({ held });
     await render(true);
     await chooseSegment(dialog(), "Import");
     await pickFile(dialog(), ARCHIVE);
-    await typeName("Notes");
     await click("Create workspace");
     expect(onOpen).not.toHaveBeenCalled();
+    expect(dialog().textContent).toContain("Import a workspace");
     expect(dialog().querySelector('.astryx-banner[data-status="warning"]')?.textContent).toContain("12 files won’t be imported");
-    for (const text of ["Brief.pdf", "Notes/Old", "Board.canvas", "and 9 more"]) expect(dialog().textContent).toContain(text);
+    for (const text of ["Notes/Brief.pdf", "Too large: 12.4 MB (up to 10 MB per file)", "Not a page, and no page links to it", "Not a readable image", "and 9 more"]) {
+      expect(dialog().textContent).toContain(text);
+    }
+    expect(dialog().textContent).not.toContain("Stuga holds");
     expect(button("Create workspace")).toBeUndefined();
+    // The name can still be given here; left empty, the file's is taken.
+    expect(nameInput().placeholder).toBe("Notion");
 
-    await click("Cancel");
+    await click("Back");
     expect(discardImport).toHaveBeenCalledWith("wsi_1");
     expect(button("Create workspace")).toBeDefined();
     expect(onClose).not.toHaveBeenCalled();
 
     await click("Create workspace");
+    await typeName("Notes");
     await click("Import");
     expect(importHeld).toHaveBeenCalledWith("wsi_1", "Notes", "workspace_edit");
+    // An import ends with its summary; the workspace opens from there.
+    expect(onOpen).not.toHaveBeenCalled();
+    await click("Open workspace");
     expect(onOpen).toHaveBeenCalledWith(CREATED);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("ends an import with what came in, what was left out and what changed on the way", async () => {
+    const imported = {
+      ...CREATED,
+      name: "Vault",
+      imported: { folders: 1, docs: 9, databases: 1, pages: 2, rows: 3, images: 2, files: 1, comments: 0 },
+      left_out: { count: 1, files: [{ path: "Slides.key", reason: "not_linked" }] },
+      changed: [
+        { kind: "front_matter", count: 2, where: ["Home", "Plan"] },
+        { kind: "unresolved_link", count: 7, where: ["A", "B", "C", "D", "E", "F", "G"] },
+      ],
+    };
+    onSubmit.mockResolvedValue({ workspace: imported });
+    await render(true);
+    await chooseSegment(dialog(), "Import");
+    await pickFile(dialog(), ARCHIVE);
+    await click("Create workspace");
+    const text = dialog().textContent;
+    for (const part of [
+      "Imported “Vault”",
+      "9 documents, 1 database and 3 files came in.",
+      "1 file left out",
+      "Slides.key",
+      "Front matter shown as a list under the title",
+      "Home, Plan",
+      "Links to pages the file doesn’t hold, kept as text",
+      "A, B, C, D, E and 2 more",
+    ]) {
+      expect(text).toContain(part);
+    }
+    // Closing it opens the workspace, which exists by now.
+    await act(async () => dialog().querySelector<HTMLButtonElement>('button[aria-label="Close"]')?.click());
+    expect(onOpen).toHaveBeenCalledWith(imported);
   });
 
   it("creates from a chosen file, named as its archive is unless a name is typed, and waits for a file before it can", async () => {

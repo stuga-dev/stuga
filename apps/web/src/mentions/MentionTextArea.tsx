@@ -9,6 +9,7 @@ import type { UserInfo } from "../api";
 import { MentionList } from "./MentionList";
 import { mentionQueryAt } from "./mention-query";
 import { usePeopleSearch } from "./use-people-search";
+import { useMentionPicked } from "./mention-scope";
 import { isComposingKey } from "../lib/ime";
 
 type TextAreaProps = ComponentProps<typeof TextArea>;
@@ -45,8 +46,11 @@ export function MentionTextArea({
     el.setSelectionRange(pos, pos);
   }, [value]);
 
+  // Once that `@` is gone, one typed in its place opens the list again.
+  if (dismissedAt !== null && value[dismissedAt] !== "@") setDismissedAt(null);
   const at = mentionQueryAt(value.slice(0, Math.min(caret, value.length)));
-  const { people, loading } = usePeopleSearch(at && focused ? at.query : null);
+  const { people, loading, tooShort, canShare, readersOnly } = usePeopleSearch(at && focused ? at.query : null);
+  const picked = useMentionPicked();
   const open =
     at !== null &&
     focused &&
@@ -61,13 +65,18 @@ export function MentionTextArea({
 
   function choose(u: UserInfo) {
     if (!at || !u.username) return;
-    const insert = `@${u.username} `;
-    const next = value.slice(0, at.start) + insert + value.slice(caret);
-    const pos = at.start + insert.length;
+    const rest = value.slice(caret);
+    // One space after the mention: the one already there, else a new one. The caret goes past it.
+    const insert = /^\s/.test(rest) ? `@${u.username}` : `@${u.username} `;
+    const next = value.slice(0, at.start) + insert + rest;
+    const pos = at.start + insert.length + (insert.endsWith(" ") ? 0 : 1);
     pendingCaret.current = pos;
     onChange(next);
     setCaret(pos);
     setActive(0);
+    // Done with this `@`: "@omar " would otherwise still read as a query that finds them.
+    setDismissedAt(at.start);
+    picked(u, canShare);
   }
 
   return (
@@ -119,6 +128,8 @@ export function MentionTextArea({
           query={at!.query}
           people={people}
           loading={loading}
+          tooShort={tooShort}
+          readersOnly={readersOnly}
           active={Math.min(active, Math.max(people.length - 1, 0))}
           onActive={setActive}
           onChoose={choose}

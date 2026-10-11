@@ -17,6 +17,7 @@ import { BlockDiffView, useBlockDiff } from "../../review/BlockDiffView";
 import { authorsOf } from "./VersionHistory";
 import { t } from "../../i18n/i18n";
 import { tRich } from "../../i18n/rich";
+import { useFocusReturn } from "../../ui/use-focus-return";
 
 /** The live document is re-read at most this often while edits arrive. */
 const FOLLOW_MS = 300;
@@ -127,6 +128,7 @@ export function VersionCompareDialog({
   onRestore: (seq: number) => void;
   onDelete: (seq: number) => void;
 }) {
+  useFocusReturn();
   // "current" or another version's seq.
   const [chosen, setBaseline] = useState<string>("current");
   const [targetText, setTargetText] = useState<string | null>(null);
@@ -231,16 +233,12 @@ export function VersionCompareDialog({
                     ? t("document.versions.identicalToCurrent")
                     : t("document.versions.identicalTo", { version: baselineLabel })
                 }
-                removedNote={
+                removedLabel={
                   baselineLabel === null
-                    ? t("document.versions.removedNoteCurrent")
-                    : t("document.versions.removedNote", { version: baselineLabel })
+                    ? t("document.versions.onlyInCurrent")
+                    : t("document.versions.onlyIn", { version: baselineLabel })
                 }
-                addedNote={
-                  baselineLabel === null
-                    ? t("document.versions.addedNoteCurrent")
-                    : t("document.versions.addedNote", { version: baselineLabel })
-                }
+                addedLabel={t("document.versions.onlyInThis")}
               />
             </div>
           </LayoutContent>
@@ -277,7 +275,8 @@ export function VersionCompareDialog({
                   }
                 />
               )}
-              <HStack gap={2}>
+              <HStack gap={2} vAlign="center">
+                {canManage && !confirmDelete && <span className="vcompare-restore-note">{t("document.versions.restoreNote")}</span>}
                 <Button label={t("common.close")} variant="ghost" onClick={onClose} />
                 {canManage && (
                   <Button

@@ -22,7 +22,7 @@ export async function converted(files: Record<string, string | Uint8Array>) {
   expect(check.issues).toEqual([]);
   const read = async (path: string): Promise<string> => new TextDecoder().decode(await zip.read(path));
   const manifest = JSON.parse(await read(MANIFEST_NAME)) as Json;
-  return { kind: out.kind, manifest, leftOut: out.leftOut, body: read };
+  return { kind: out.kind, manifest, leftOut: out.leftOut, changed: out.changed, body: read };
 }
 
 /** A Notion id: 32 of the digit `n`. */

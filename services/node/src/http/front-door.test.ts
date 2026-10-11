@@ -95,6 +95,8 @@ describe("what a visitor who has not signed in reaches", () => {
       "/auth/login",
       "/auth/register",
       "/auth/reset",
+      "/auth/reset/preview",
+      "/auth/invite/preview",
       "/auth/oidc/start",
       "/auth/oidc/handoff",
       "/auth/oidc/ticket",

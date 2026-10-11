@@ -108,7 +108,7 @@ export interface IdentityDeps {
   /** Called after the first account claims the node. */
   onFirstAccount?: (alias: string) => void;
   /** Called after a new account joins a workspace through the invite link it was made with. */
-  onInviteRedeemed?: (joined: { alias: string; tokenHash: string; workspaceId: string; role: string }) => void;
+  onInviteRedeemed?: (joined: { alias: string; tokenHash: string } & InviteJoin) => void;
   /** Called after a person links or unlinks the identity provider. */
   onIdentityChange?: (event: IdentityEvent) => void;
   /**
@@ -759,6 +759,31 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     return replacePassword(req, account, next, true, { session: presentedSession(token) });
   }
 
+  /**
+   * Whose account a reset link is for, so its page can say so before a password is chosen. The
+   * token is the credential: its holder may know the account it opens, and a dead one says nothing.
+   */
+  async function resetPreview(req: Request): Promise<Response> {
+    const body = await readJson(req);
+    const token = body ? field(body, "token").trim() : "";
+    if (!token) return fail(400, "bad_request", "token is required");
+    const alias = await db.passwordResetAlias(sha256Hex(token));
+    const account = alias ? await db.findAccountByAlias(alias) : null;
+    if (!account) return fail(403, "reset_invalid", "this reset link is invalid, expired, or already used");
+    return json({ username: account.username, display_name: (await db.displayNameOf(account.alias)) || null });
+  }
+
+  /**
+   * What an invite link admits to, for the page it opens: the workspace, the role and who made it,
+   * or that it can no longer be used. Its holder may know this; anyone else would need the token.
+   */
+  async function invitePreview(req: Request): Promise<Response> {
+    const body = await readJson(req);
+    const token = body ? field(body, "token").trim() : "";
+    if (!token) return fail(400, "bad_request", "token is required");
+    return json(await db.invitePreview(sha256Hex(token), arrivalOf(req)));
+  }
+
   /** Redeem a one-time reset link: unauthenticated, because the token names the account. */
   async function resetPassword(req: Request): Promise<Response> {
     const body = await readJson(req);
@@ -1064,6 +1089,8 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     ...post("/auth/login", login),
     ...post("/auth/password", password),
     ...post("/auth/reset", resetPassword),
+    ...post("/auth/reset/preview", resetPreview),
+    ...post("/auth/invite/preview", invitePreview),
     ...post("/auth/confirm", confirm),
     ...post("/auth/revoke-everything", revokeEverything),
     ...post("/auth/refresh", refresh),

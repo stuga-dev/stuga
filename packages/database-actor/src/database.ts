@@ -4,7 +4,7 @@
  */
 import { DATABASE_MUTATIONS_PER_MINUTE, DATABASE_QUERIES_PER_MINUTE } from "@stuga/protocol/databases/limits";
 import type { DatabaseActor as DatabaseActorIdentity } from "@stuga/protocol/databases/types";
-import type { DatabaseRunUpdatedPayload } from "@stuga/protocol/wire/db-socket";
+import type { DatabaseChangedPayload, DatabaseRunUpdatedPayload } from "@stuga/protocol/wire/db-socket";
 import { encodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
 import type { ActorState, ActorStorage, BlobStore } from "@stuga/runtime";
@@ -15,6 +15,8 @@ import { getMeta, type SqlHandle } from "./schema-ops.js";
 import { Sockets, type SessionMeta } from "./sockets.js";
 
 const RATE_WINDOW_MS = 60_000;
+/** Quiet time after the last change before the workspace search re-reads the database's text. */
+const SEARCH_INDEX_DELAY_MS = 2_000;
 /** Alias×budget keys kept; the oldest goes first, so rotating aliases cannot grow the map. */
 const RATE_KEYS_MAX = 200;
 
@@ -31,6 +33,7 @@ export class Database {
   readonly sockets: Sockets;
   /** Request stamps per `<budget>\0<alias>`; insertion order doubles as LRU. */
   readonly rate = new Map<string, number[]>();
+  private searchIndexTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     readonly state: ActorState<SessionMeta>,
@@ -63,6 +66,22 @@ export class Database {
     this.rate.set(key, stamps);
     while (this.rate.size > RATE_KEYS_MAX) this.rate.delete(this.rate.keys().next().value!);
     if (!ok) throw new OpError(429, "rate_limited", `too many ${budget === "mutation" ? "mutations" : "queries"} (max ${max}/min per actor)`);
+  }
+
+  /**
+   * Data changed: open grids refetch, and once changes go quiet the node
+   * re-reads the database's text for the workspace search. Not durable: a
+   * restart in between leaves the search text one change behind until the next.
+   */
+  changed(tableId: string | null, reason: DatabaseChangedPayload["reason"], exceptAlias: string | null = null): void {
+    this.sockets.broadcastChanged(tableId, reason, exceptAlias);
+    if (this.searchIndexTimer) clearTimeout(this.searchIndexTimer);
+    const docId = this.dbId;
+    this.searchIndexTimer = setTimeout(() => {
+      this.searchIndexTimer = null;
+      void this.env.jobs.send({ kind: "index_doc", docId, reason: "database_changed" }).catch(() => {});
+    }, SEARCH_INDEX_DELAY_MS);
+    this.searchIndexTimer.unref?.();
   }
 
   /** docs.locked, mirrored in by the node so an agent's change cannot land in a frozen database. */

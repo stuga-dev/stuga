@@ -461,6 +461,10 @@ describe("AgentRunsProvider decisions", () => {
       await latest.decide("run_a", "reject", undefined, "Too formal.");
     });
     expect(latest.notices.filter((n) => n.kind === "decided")).toHaveLength(1);
+    // Still said, so the page does not just go quiet.
+    expect(latest.notices.filter((n) => n.kind === "noted").map((n) => n.message)).toEqual([
+      "Rejected 2 changes from Claude (Connector), with your note.",
+    ]);
   });
 
   it("offers no Undo for a change that conflicted instead of landing", async () => {

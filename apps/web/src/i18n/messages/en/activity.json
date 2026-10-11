@@ -23,6 +23,8 @@
   "op.columnTypeChanged": "Changed column “{column}” in “{table}” to {type} ({coerced, plural, one {# cell} other {# cells}} converted)",
   "op.columnDescribed": "Described column “{column}” in “{table}”",
   "op.columnDescriptionCleared": "Cleared the description of column “{column}” in “{table}”",
+  "op.columnFormatChanged": "Changed the number format of column “{column}” in “{table}”",
+  "op.columnFormatCleared": "Cleared the number format of column “{column}” in “{table}”",
   "op.columnDeleted": "Deleted column “{column}” from “{table}”",
   "op.rowsInserted": "Inserted {rows, plural, one {# row} other {# rows}} into “{table}”",
   "op.rowsImported": "Imported {rows, plural, one {# row} other {# rows}} into “{table}”",

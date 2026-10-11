@@ -45,6 +45,9 @@ export function ClaudeCodeTab({
           <Text size="sm" color="secondary">
             {tRich("agents.claudeCode.step2", { command: "/mcp", server: serverKey, code: (chunks) => <code>{chunks}</code>, strong: (chunks) => <strong>{chunks}</strong> })}
           </Text>
+          <Text size="sm" color="secondary">
+            {t("agents.claudeCode.done")}
+          </Text>
         </>
       )}
       <Text size="sm" color="secondary">

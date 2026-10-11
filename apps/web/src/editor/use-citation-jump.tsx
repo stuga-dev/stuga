@@ -3,19 +3,18 @@
  * `q` (an excerpt slice) and `sec` (the heading path), and one opened from a
  * search hit on the matched block, from `hit` (see passageHint). The body arrives
  * over the socket in several frames, so it retries until a match or the deadline.
- * A citation then says the passage was not found; a search hit leaves the
- * document at the top, as a plain link would. The params stay in the URL.
+ * A miss leaves the document at the top, as a plain link would: the passage may
+ * have been edited since, and the document itself is what was asked for. The
+ * params stay in the URL.
  */
 import { useEffect, useRef } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { useToast } from "@astryxdesign/core/Toast";
 import type { Editor } from "@tiptap/react";
 import { Selection } from "@tiptap/pm/state";
 import { useSharedEditor } from "./editor-context";
 import { flashBlock } from "./passage-flash";
-import { SNIPPET_MIN, headingSegments, stripMarkdown } from "../ai/citations";
+import { SNIPPET_MIN, headingSegments, stripMarkdown, wordPrefix } from "../ai/citations";
 import { HIT_PARAM } from "../lib/snippet";
-import { t } from "../i18n/i18n";
 
 /** A document not rendered by now is not going to match. */
 const DEADLINE_MS = 8_000;
@@ -24,6 +23,8 @@ const RETRY_MS = 150;
 const SCROLLER = ".doc-main";
 /** Breathing room between the sticky toolbar and the passage. */
 const GAP_PX = 12;
+/** A shorter slice of the excerpt, tried when the whole one misses: an edit or inline content later in the line breaks only the tail. */
+const SHORT_SNIPPET_CHARS = 40;
 
 const BLOCKS = "p, li, blockquote, td, th, pre, h1, h2, h3, h4, h5, h6";
 const HEADINGS = "h1, h2, h3, h4, h5, h6";
@@ -44,7 +45,10 @@ export function findTarget(root: HTMLElement, q: string, sec: string): HTMLEleme
 
   if (q) {
     const needle = norm(q);
-    const el = needle ? firstBlock(root, needle) : null;
+    const short = wordPrefix(needle, SHORT_SNIPPET_CHARS);
+    const el =
+      (needle ? firstBlock(root, needle) : null) ??
+      (short !== needle && short.length >= SNIPPET_MIN ? firstBlock(root, short) : null);
     if (el) return sectionHeadingOf(root, el) ?? el;
   }
   return null;
@@ -139,8 +143,9 @@ export function jumpTo(target: HTMLElement): void {
     target.scrollIntoView({ behavior: "auto", block: "start" });
     return;
   }
-  const sticky = scroller.querySelector<HTMLElement>(".editor-toolbar-bar");
-  const offset = sticky ? sticky.getBoundingClientRect().height : 0;
+  const bar = scroller.querySelector<HTMLElement>(".editor-toolbar-bar");
+  // A phone's toolbar scrolls away with the page, covering nothing.
+  const offset = bar && getComputedStyle(bar).position === "sticky" ? bar.getBoundingClientRect().height : 0;
   const delta = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset - GAP_PX;
   scroller.scrollTop += delta;
 }
@@ -172,7 +177,6 @@ function placeReader(editor: Editor, block: HTMLElement): void {
 
 function useCitationJump(): void {
   const [params] = useSearchParams();
-  const toast = useToast();
   const { editor } = useSharedEditor();
   const q = params.get("q") ?? "";
   const sec = params.get("sec") ?? "";
@@ -204,13 +208,8 @@ function useCitationJump(): void {
           timer = window.setTimeout(attempt, RETRY_MS);
           return;
         }
-        // Spent, so a later render does not toast again.
+        // Spent, so a later render does not try again.
         done.current = { key, jump };
-        if (hit) return;
-        toast({
-          body: q ? t("editor.citation.notFoundQuote", { quote: q }) : t("editor.citation.notFound"),
-          type: "error",
-        });
         return;
       }
       done.current = { key, jump };
@@ -224,7 +223,7 @@ function useCitationJump(): void {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [editor, q, sec, hit, jump, toast]);
+  }, [editor, q, sec, hit, jump]);
 }
 
 /** The hook as a component, to sit inside <EditorProvider>. */

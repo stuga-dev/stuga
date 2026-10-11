@@ -62,6 +62,8 @@ export interface AuditFacets {
   agents: AuditFacet[];
   actions: AuditFacet[];
   statuses: AuditFacet[];
+  /** Agents among `agents` by the name their key or connection has now. */
+  agent_names?: Record<string, string>;
   truncated: boolean;
 }
 
@@ -112,7 +114,9 @@ export const Audit = {
       q.set("before_id", String(filters.before_id));
     }
     const qs = q.toString();
-    return api<{ events: AuditEvent[]; next_before: AuditCursor | null }>(`/api/audit${qs ? `?${qs}` : ""}`);
+    return api<{ events: AuditEvent[]; next_before: AuditCursor | null; agent_names?: Record<string, string> }>(
+      `/api/audit${qs ? `?${qs}` : ""}`,
+    );
   },
   /** Only the window: a menu narrowed by its own selection could not offer the way back out. */
   facets: (window: { since?: string; until?: string } = {}) => {

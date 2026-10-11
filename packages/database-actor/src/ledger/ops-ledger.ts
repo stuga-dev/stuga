@@ -13,6 +13,7 @@ import type {
   DatabaseOpDetail,
   DatabaseOpKind,
   DatabaseOpSummary,
+  NumberFormat,
   RowValue,
   TableSchema,
   ViewSpec,
@@ -40,6 +41,7 @@ import {
   renameColumn,
   renameTable,
   setColumnDescriptionMeta,
+  setColumnFormatMeta,
   setColumnTypeMeta,
   unlinkRowDoc,
   writeView,
@@ -74,6 +76,7 @@ export type InverseJson =
   | { kind: "columns.add"; table_id: string; column_id: string }
   | { kind: "columns.rename"; table_id: string; column_id: string; prev_display: string }
   | { kind: "columns.set_description"; table_id: string; column_id: string; prev_description: string | null }
+  | { kind: "columns.set_format"; table_id: string; column_id: string; prev_format: NumberFormat | null }
   | {
       kind: "columns.set_type";
       table_id: string;
@@ -371,6 +374,14 @@ export function applyInverse(sql: SqlHandle, inv: InverseJson, now: number): Rev
     case "columns.set_description": {
       if (!getColumns(sql, inv.table_id).some((c) => c.column_id === inv.column_id)) return { restored: 0, missing: 1 };
       setColumnDescriptionMeta(sql, inv.table_id, inv.column_id, inv.prev_description);
+      return { restored: 1, missing: 0 };
+    }
+
+    case "columns.set_format": {
+      // A column retyped since has no number format to restore.
+      const col = getColumns(sql, inv.table_id).find((c) => c.column_id === inv.column_id);
+      if (!col || col.type !== "number") return { restored: 0, missing: 1 };
+      setColumnFormatMeta(sql, inv.table_id, inv.column_id, inv.prev_format);
       return { restored: 1, missing: 0 };
     }
 

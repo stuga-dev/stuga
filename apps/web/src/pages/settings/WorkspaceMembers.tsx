@@ -1,7 +1,9 @@
 /**
  * A workspace's members and roles. Owners manage everything, including roles;
  * admins move people between member and guest. Removal revokes the person's live
- * connections and the agent keys they minted here, so it is confirmed first.
+ * connections and the agent keys they minted here, so it is confirmed first, as
+ * are making someone an owner and giving up your own ownership, which you cannot
+ * undo yourself. The only owner cannot leave, and is told so on their row.
  * Owners and admins add people who already have an account by picking them from
  * a search. Invite links are how anyone new gets an account on this server: each
  * admits a set number of people or anyone holding it, lapses or not, and can be revoked here.
@@ -12,19 +14,20 @@ import { Badge } from "@astryxdesign/core/Badge";
 import { Button } from "@astryxdesign/core/Button";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
-import { IconButton } from "@astryxdesign/core/IconButton";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { StackItem } from "@astryxdesign/core/Stack";
 import { VStack } from "@astryxdesign/core/VStack";
-import { useToast } from "@astryxdesign/core/Toast";
-import { Link2Off, Link as LinkIcon, Trash2, UserPlus, Users as UsersIcon } from "lucide-react";
+import { useToast } from "../../ui/use-toast";
+import { Link as LinkIcon, UserPlus, Users as UsersIcon } from "lucide-react";
 import { LoadFailed } from "../../ui/LoadFailed";
 import { useSettingsScope } from "./SettingsLayout";
 import { InviteLinkDialog } from "./InviteLinkDialog";
 import { PageColumn } from "../../ui/PageColumn";
+import { SettingsTitle } from "./SettingsTitle";
 import { PersonPicker, type PersonItem } from "../../ui/PersonPicker";
+import { Avatar, rememberUsers } from "../../state/identity";
 import { Workspaces, type InviteInfo, type MemberInfo } from "../../api";
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
 import { errorMessage } from "../../lib/http/client";
@@ -43,6 +46,11 @@ const ROLE_VARIANT: Record<WorkspaceRole, "purple" | "blue" | "neutral" | "green
   member: "neutral",
   guest: "green",
 };
+
+/** A member as the page names them. */
+function memberName(m: MemberInfo): string {
+  return m.display_name || m.username || m.email || m.alias;
+}
 
 /** Who a link admits, in the words of the row that lists it. */
 function admitsLabel(invite: InviteInfo): string {
@@ -66,7 +74,7 @@ function describeInvite(invite: InviteInfo, creator: string): string {
 
 export function WorkspaceMembers() {
   const toast = useToast();
-  const { isReady, workspace, canManage, isOwner, me } = useSettingsScope();
+  const { isReady, workspace, canManage, isOwner, me, reload: scopeReload } = useSettingsScope();
   const workspaceId = workspace?.workspace_id ?? null;
   const [members, setMembers] = useState<MemberInfo[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -78,6 +86,10 @@ export function WorkspaceMembers() {
   const [adding, setAdding] = useState(false);
   /** The member the removal confirmation is open for; null when it is closed. */
   const [removing, setRemoving] = useState<MemberInfo | null>(null);
+  /** A role change waiting for its confirmation: making someone an owner, or giving up your own ownership. */
+  const [pendingRole, setPendingRole] = useState<{ member: MemberInfo; role: WorkspaceRole } | null>(null);
+  /** The invite link the turn-off confirmation is open for. */
+  const [revoking, setRevoking] = useState<InviteInfo | null>(null);
 
   const reload = useCallback(async () => {
     if (!workspaceId) return;
@@ -85,6 +97,8 @@ export function WorkspaceMembers() {
       const { members } = await Workspaces.members(workspaceId);
       setFailed(false);
       setMembers(members);
+      // Avatars elsewhere on the page read names from the same cache, renamed members included.
+      rememberUsers(members.map((m) => ({ ...m, display_name: m.display_name ?? "" })));
     } catch {
       setFailed(true);
     }
@@ -158,6 +172,7 @@ export function WorkspaceMembers() {
 
   async function revokeLink(invite: InviteInfo) {
     if (!workspaceId) return;
+    setRevoking(null);
     try {
       await Workspaces.revokeInvite(workspaceId, invite.token_hash);
       toast({ body: t("settings.members.linkRevoked"), type: "info" });
@@ -167,10 +182,20 @@ export function WorkspaceMembers() {
     }
   }
 
+  /** Making someone an owner, or giving up your own ownership, is asked first: neither can be undone from your seat. */
+  function chooseRole(member: MemberInfo, role: WorkspaceRole) {
+    if (role === member.role) return;
+    if (role === "owner" || (member.alias === me && member.role === "owner")) setPendingRole({ member, role });
+    else void changeRole(member.alias, role);
+  }
+
   async function changeRole(alias: string, role: WorkspaceRole) {
     if (!workspaceId) return;
+    setPendingRole(null);
     try {
       await Workspaces.setRole(workspaceId, alias, role);
+      // Your own role decides what this page offers you.
+      if (alias === me) await scopeReload();
       await reload();
     } catch (e) {
       toast({ body: errorMessage(e, t("settings.members.roleFailed")), type: "error" });
@@ -207,14 +232,16 @@ export function WorkspaceMembers() {
   /** Whoever created a link, as the member list names them; the creator may since have left. */
   function creatorName(alias: string): string {
     const m = members?.find((x) => x.alias === alias);
-    return m ? m.display_name || m.username || m.email || alias : t("settings.members.formerMember");
+    return m ? memberName(m) : t("settings.members.formerMember");
   }
+
+  const owners = members.filter((x) => x.role === "owner").length;
 
   return (
     <PageColumn>
       <VStack gap={3}>
         <HStack justify="between" vAlign="center">
-          <Heading level={2}>{t("settings.members.heading")}</Heading>
+          <SettingsTitle>{t("settings.members.heading")}</SettingsTitle>
           {/* Labelled by what it counts, since guests are in the list too. */}
           <Badge
             variant="neutral"
@@ -231,7 +258,7 @@ export function WorkspaceMembers() {
                 search={(q, signal) => Workspaces.memberCandidates(workspace.workspace_id, q, { signal }).then((r) => r.users)}
                 value={candidate}
                 onChange={setCandidate}
-                emptySearchResultsText={t("settings.members.noMatch")}
+                emptySearchText={t("settings.members.noMatch")}
               />
             </StackItem>
             <Selector
@@ -242,9 +269,9 @@ export function WorkspaceMembers() {
               options={
                 isOwner
                   ? [
+                      { value: "admin", label: t("settings.roles.admin") },
                       { value: "member", label: t("settings.roles.member") },
                       { value: "guest", label: t("settings.roles.guest") },
-                      { value: "admin", label: t("settings.roles.admin") },
                     ]
                   : [
                       { value: "member", label: t("settings.roles.member") },
@@ -262,45 +289,64 @@ export function WorkspaceMembers() {
             />
           </HStack>
         )}
+        <Text size="sm" color="secondary">
+          {t("settings.members.rolesNote")}
+        </Text>
 
         <ul className="member-list">
           {members.map((m) => {
-            const canEditThis =
-              canManage && !(m.role === "owner" && members.filter((x) => x.role === "owner").length <= 1);
-            const canRemoveThis =
-              m.alias === me ||
-              (canManage && !(isOwner === false && (m.role === "admin" || m.role === "owner")));
+            const self = m.alias === me;
+            const onlyOwner = m.role === "owner" && owners <= 1;
+            // A menu only where there is a choice: an admin sees an owner's or another admin's role as a badge.
+            const canEditThis = canManage && !onlyOwner && assignableRoles(m).length > 1;
+            // An admin cannot remove an admin or an owner; the only owner cannot leave.
+            const canRemoveThis = !onlyOwner && (self || (canManage && !(isOwner === false && (m.role === "admin" || m.role === "owner"))));
             return (
               <li key={m.alias} className="member-row">
-                <VStack gap={0}>
-                  <Text>{m.display_name || m.username || m.email || m.alias}</Text>
-                  {m.display_name && (m.username || m.email) && (
-                    <Text size="sm" color="secondary">{m.username ? `@${m.username}` : m.email}</Text>
-                  )}
-                </VStack>
+                <HStack gap={3} vAlign="center">
+                  {/* i18n-exempt: a principal id */}
+                  <Avatar principal={`user:${m.alias}`} size={28} />
+                  <VStack gap={0}>
+                    <Text>{memberName(m)}</Text>
+                    {m.display_name && (m.username || m.email) && (
+                      <Text size="sm" color="secondary">{m.username ? `@${m.username}` : m.email}</Text>
+                    )}
+                  </VStack>
+                </HStack>
                 <HStack gap={2} vAlign="center">
+                  {self && onlyOwner && (
+                    <span title={t("settings.members.onlyOwnerHint")}>
+                      <Text size="sm" color="secondary">
+                        {t("settings.members.onlyOwner")}
+                      </Text>
+                    </span>
+                  )}
                   {canEditThis ? (
                     <Selector
-                      label={t("settings.members.role")}
+                      label={t("settings.members.roleOf", { name: memberName(m) })}
                       isLabelHidden
                       size="sm"
                       width={130}
                       value={m.role}
-                      onChange={(v) => changeRole(m.alias, v as WorkspaceRole)}
+                      onChange={(v) => chooseRole(m, v as WorkspaceRole)}
                       options={assignableRoles(m).map((r) => ({ value: r, label: t(ROLE_LABEL[r]) }))}
                     />
                   ) : (
                     <Badge variant={ROLE_VARIANT[m.role]} label={t(ROLE_LABEL[m.role])} />
                   )}
-                  {canRemoveThis && (
-                    <IconButton
-                      label={m.alias === me ? t("settings.members.leave") : t("settings.members.removeNamed", { name: m.display_name || m.username || m.email || m.alias })}
-                      variant="ghost"
-                      size="sm"
-                      icon={<Trash2 size={16} />}
-                      onClick={() => setRemoving(m)}
-                    />
-                  )}
+                  {/* Words, not an icon: on your own row it means leaving, on anyone else's removing them. */}
+                  {canRemoveThis &&
+                    (self ? (
+                      <Button label={t("settings.members.leave")} variant="secondary" size="sm" onClick={() => setRemoving(m)} />
+                    ) : (
+                      <Button
+                        label={t("common.remove")}
+                        tooltip={t("settings.members.removeNamed", { name: memberName(m) })}
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setRemoving(m)}
+                      />
+                    ))}
                 </HStack>
               </li>
             );
@@ -332,17 +378,14 @@ export function WorkspaceMembers() {
                 {invites.map((link) => (
                   <ListItem
                     key={link.token_hash}
-                    label={[t(ROLE_LABEL[link.role]), admitsLabel(link), ...(link.token_hint ? [t("settings.members.endsIn", { hint: link.token_hint })] : [])].join(" · ")}
+                    label={[
+                      ...(link.note ? [t("settings.members.linkFor", { note: link.note })] : []),
+                      t(ROLE_LABEL[link.role]),
+                      admitsLabel(link),
+                      ...(link.token_hint ? [t("settings.members.endsIn", { hint: link.token_hint })] : []),
+                    ].join(" · ")}
                     description={describeInvite(link, creatorName(link.created_by))}
-                    endContent={
-                      <IconButton
-                        label={t("settings.members.revokeLink")}
-                        variant="ghost"
-                        size="sm"
-                        icon={<Link2Off size={16} />}
-                        onClick={() => void revokeLink(link)}
-                      />
-                    }
+                    endContent={<Button label={t("settings.members.revokeLink")} variant="ghost" size="sm" onClick={() => setRevoking(link)} />}
                   />
                 ))}
               </List>
@@ -358,7 +401,7 @@ export function WorkspaceMembers() {
         )}
       </VStack>
 
-      {/* Names the person and the workspace: the icon means "leave" on your own row, and rows are close together. */}
+      {/* Names the person and the workspace: rows are close together. */}
       <AlertDialog
         isOpen={removing !== null}
         onOpenChange={(o) => !o && setRemoving(null)}
@@ -366,10 +409,7 @@ export function WorkspaceMembers() {
           removing?.alias === me
             ? t("settings.members.leaveTitle", { workspace: workspace.name })
             : removing
-              ? t("settings.members.removeTitle", {
-                  name: removing.display_name || removing.username || removing.email || removing.alias,
-                  workspace: workspace.name,
-                })
+              ? t("settings.members.removeTitle", { name: memberName(removing), workspace: workspace.name })
               : t("settings.members.removeSomeoneTitle", { workspace: workspace.name })
         }
         description={
@@ -380,6 +420,30 @@ export function WorkspaceMembers() {
         actionLabel={removing?.alias === me ? t("settings.members.leave") : t("common.remove")}
         actionVariant="destructive"
         onAction={() => removing && remove(removing.alias)}
+      />
+      <AlertDialog
+        isOpen={pendingRole !== null}
+        onOpenChange={(o) => !o && setPendingRole(null)}
+        title={
+          pendingRole?.role === "owner"
+            ? t("settings.members.makeOwnerTitle", { name: memberName(pendingRole.member) })
+            : t("settings.members.stepDownTitle")
+        }
+        description={
+          pendingRole?.role === "owner"
+            ? t("settings.members.makeOwnerDescription")
+            : t("settings.members.stepDownDescription", { role: pendingRole?.role ?? "member" })
+        }
+        actionLabel={pendingRole?.role === "owner" ? t("settings.members.makeOwner") : t("settings.members.stepDown")}
+        onAction={() => pendingRole && changeRole(pendingRole.member.alias, pendingRole.role)}
+      />
+      <AlertDialog
+        isOpen={revoking !== null}
+        onOpenChange={(o) => !o && setRevoking(null)}
+        title={revoking?.note ? t("settings.members.revokeTitleFor", { note: revoking.note }) : t("settings.members.revokeTitle")}
+        description={t("settings.members.revokeDescription")}
+        actionLabel={t("settings.members.revokeLink")}
+        onAction={() => revoking && revokeLink(revoking)}
       />
     </PageColumn>
   );

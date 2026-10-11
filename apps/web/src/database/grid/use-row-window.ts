@@ -1,6 +1,6 @@
 /** The server-side window of rows the grid shows: the first page on every re-window, then offset pages. */
 import { useCallback, useEffect, useState } from "react";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../../ui/use-toast";
 import { DATABASE_ROWS_PAGE_MAX } from "@stuga/protocol/databases/limits";
 import type { RowGroup, RowRecord, RowValue } from "@stuga/protocol/databases/types";
 import { Databases } from "../../api";
@@ -26,7 +26,8 @@ interface RowWindow {
   removeRows: (ids: ReadonlySet<string>, deleted: number) => void;
 }
 
-export function useRowWindow(docId: string, tableId: string, shape: ViewShape, rowsKey: number): RowWindow {
+/** `search`: words a row must hold in a text, choice, number or date cell; empty for every row. */
+export function useRowWindow(docId: string, tableId: string, shape: ViewShape, search: string, rowsKey: number): RowWindow {
   const toast = useToast();
   const [rows, setRows] = useState<RowRecord[]>([]);
   const [total, setTotal] = useState(0);
@@ -39,7 +40,7 @@ export function useRowWindow(docId: string, tableId: string, shape: ViewShape, r
   const [loadError, setLoadError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
-  const query = { sort: shape.sorts, filter: shape.filter, group_by: shape.group_by };
+  const query = { sort: shape.sorts, filter: shape.filter, group_by: shape.group_by, ...(search ? { search } : {}) };
   const queryKey = JSON.stringify(query);
   const windowKey = `${docId}\n${tableId}\n${queryKey}\n${rowsKey}\n${reloadKey}`;
 

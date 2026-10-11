@@ -4,7 +4,7 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import type { DocSummary } from "../api";
 import type { LibraryRow } from "./DocTable";
-import { toasts } from "../test/toast";
+import { toastBodies, toasts } from "../test/toast";
 import { mountInto } from "../test/form-input";
 
 const docs = vi.hoisted(() => ({ list: vi.fn(), trash: vi.fn(), remove: vi.fn() }));
@@ -16,14 +16,14 @@ vi.mock("../api", async (orig) => ({
   Folders: folders,
 }));
 vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
-// The table stands in as one row of buttons per row action.
+// The table stands in as one row of buttons per row button.
 vi.mock("./DocTable", async (orig) => ({
   ...(await orig<typeof import("./DocTable")>()),
-  DocTable: ({ rows, rowActions }: { rows: LibraryRow[]; rowActions: (row: LibraryRow) => Array<Record<string, unknown>> }) => (
+  DocTable: ({ rows, rowButtons }: { rows: LibraryRow[]; rowButtons: (row: LibraryRow) => Array<Record<string, unknown>> }) => (
     <ul>
       {rows.map((row) => (
         <li key={row.id}>
-          {rowActions(row).map((item) => (
+          {rowButtons(row).map((item) => (
             <button key={String(item.label)} data-row={row.id} onClick={item.onClick as () => void}>
               {String(item.label)}
             </button>
@@ -39,6 +39,7 @@ const { TrashList } = await import("./TrashList");
 const DOC: DocSummary = {
   doc_id: "d_1",
   title: "Plan",
+  title_source: "user",
   owner: "user:u_2",
   doc_type: "prose",
   created_at: "2026-09-01T00:00:00.000Z",
@@ -71,7 +72,7 @@ beforeEach(async () => {
   docs.list.mockResolvedValue({ docs: [DOC] });
   folders.list.mockResolvedValue({ folders: [] });
   ({ host, root } = mountInto());
-  await act(async () => root.render(<TrashList />));
+  await act(async () => root.render(<TrashList refreshKey={0} />));
 });
 
 describe("TrashList", () => {
@@ -84,10 +85,20 @@ describe("TrashList", () => {
     expect(rowButton("Restore")).toBeTruthy();
   });
 
-  it("removes the row without a message once it is restored", async () => {
+  it("removes the row and says so once it is restored", async () => {
     docs.trash.mockResolvedValue({});
     await click(rowButton("Restore"));
-    expect(toasts.shown).toEqual([]);
+    expect(toastBodies()).toEqual(["Restored “Plan”."]);
+    expect(rowButton("Restore")).toBeUndefined();
+  });
+
+  it("reads the list again when asked, keeping the rows on screen meanwhile", async () => {
+    let answer!: (r: { docs: DocSummary[] }) => void;
+    docs.list.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    await act(async () => root.render(<TrashList refreshKey={1} />));
+    expect(docs.list).toHaveBeenCalledTimes(2);
+    expect(rowButton("Restore")).toBeTruthy();
+    await act(async () => answer({ docs: [] }));
     expect(rowButton("Restore")).toBeUndefined();
   });
 

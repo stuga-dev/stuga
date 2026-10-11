@@ -3,9 +3,10 @@
  * resulting document gets. Runs in the node (the trust boundary) and in the web
  * import dialog (to preview the title), so both derive the same one.
  *
- * Transforms: strip a leading BOM (it hides the first heading), strip YAML
- * frontmatter (it parses as a thematic break plus a setext heading), drop C0
- * controls Postgres TEXT rejects, and normalize CRLF so no \r reaches the title.
+ * Transforms: strip a leading BOM (it hides the first heading), turn YAML
+ * frontmatter (it parses as a thematic break plus a setext heading) into a list
+ * under the title, drop C0 controls Postgres TEXT rejects, and normalize CRLF so
+ * no \r reaches the title.
  */
 
 /** Ceiling on one imported body, in UTF-8 bytes. The client checks it to fail fast; the server is the authority. */
@@ -20,7 +21,7 @@ const MAX_TITLE_CHARS = 200;
 const TITLE_SCAN_CHARS = 4096;
 
 export interface ImportedMarkdown {
-  /** The body to seed the document with — normalized, frontmatter removed. */
+  /** The body to seed the document with — normalized, frontmatter a list under the title. */
   markdown: string;
   /** Always the first non-blank line of `markdown` with its heading marker stripped. */
   title: string;
@@ -81,14 +82,21 @@ const FRONTMATTER_KEYS = new Set([
   "toc",
 ]);
 
+/** One top-level frontmatter entry, its value read as one line of text: a list's items joined with commas. */
+export interface FrontmatterProperty {
+  key: string;
+  value: string;
+}
+
 /**
- * Strip a leading frontmatter block and return its `title:`. Only a closed block
- * whose every non-blank line looks like YAML counts, because a leading `---` is
- * also a valid thematic break.
+ * Strip a leading frontmatter block and return its `title:` and its entries. Only a closed block
+ * whose every non-blank line looks like YAML counts, because a leading `---` is also a valid
+ * thematic break.
  */
-export function stripFrontmatter(text: string): { body: string; title: string | null } {
+export function stripFrontmatter(text: string): { body: string; title: string | null; properties: FrontmatterProperty[] } {
+  const none = { body: text, title: null, properties: [] };
   const lines = text.split("\n");
-  if (lines.length === 0 || !FENCE.test(lines[0] ?? "")) return { body: text, title: null };
+  if (lines.length === 0 || !FENCE.test(lines[0] ?? "")) return none;
 
   let close = -1;
   for (let i = 1; i < lines.length; i++) {
@@ -97,30 +105,77 @@ export function stripFrontmatter(text: string): { body: string; title: string | 
       break;
     }
   }
-  if (close === -1) return { body: text, title: null };
+  if (close === -1) return none;
 
   let title: string | null = null;
-  const keys: string[] = [];
+  const entries: Array<{ key: string; inline: string; more: string[] }> = [];
   for (let i = 1; i < close; i++) {
     const line = lines[i] ?? "";
     const trimmed = line.trim();
     if (trimmed === "") continue;
     if (YAML_COMMENT.test(trimmed)) continue;
     // Indented lines and `- item` entries continue the preceding key.
-    if (/^\s/.test(line) || /^-(?:\s|$)/.test(trimmed)) continue;
-    if (!YAML_ENTRY.test(trimmed)) return { body: text, title: null };
+    if (/^\s/.test(line) || /^-(?:\s|$)/.test(trimmed)) {
+      entries.at(-1)?.more.push(trimmed);
+      continue;
+    }
+    if (!YAML_ENTRY.test(trimmed)) return none;
     const kv = YAML_KEY_VALUE.exec(line);
-    const key = (kv?.[1] ?? kv?.[2] ?? kv?.[3] ?? "").toLowerCase();
-    keys.push(key);
-    if (key === "title" && title === null) {
+    const key = kv?.[1] ?? kv?.[2] ?? kv?.[3] ?? "";
+    entries.push({ key, inline: kv?.[4] ?? "", more: [] });
+    if (key.toLowerCase() === "title" && title === null) {
       const value = unquote(kv?.[4] ?? "");
       if (value) title = value;
     }
   }
-  if (keys.length === 0) return { body: text, title: null };
-  if (keys.length === 1 && !FRONTMATTER_KEYS.has(keys[0]!)) return { body: text, title: null };
+  if (entries.length === 0) return none;
+  if (entries.length === 1 && !FRONTMATTER_KEYS.has(entries[0]!.key.toLowerCase())) return none;
 
-  return { body: lines.slice(close + 1).join("\n"), title };
+  const properties = entries.flatMap(({ key, inline, more }) => {
+    const value = yamlText(inline, more);
+    return value ? [{ key, value }] : [];
+  });
+  return { body: lines.slice(close + 1).join("\n"), title, properties };
+}
+
+/**
+ * An entry's value as one line: a scalar unquoted, `[a, b]` or a `- item` list as `a, b`, a block
+ * scalar's lines joined, and a nested map's `key: value` lines joined with commas.
+ */
+function yamlText(inline: string, more: string[]): string {
+  const raw = inline.trim();
+  // An unquoted value ends where a comment starts.
+  const value = /^["']/.test(raw) ? raw : raw.replace(/\s+#.*$/, "");
+  if (/^[|>][-+]?\d*$/.test(value)) return more.join(" ").trim();
+  if (value.startsWith("[") && value.endsWith("]")) return listText(value.slice(1, -1).split(","));
+  if (value) return unquote(value);
+  return listText(more.map((line) => line.replace(/^-\s*/, "")));
+}
+
+const listText = (items: string[]): string =>
+  items
+    .map(unquote)
+    .filter((item) => item !== "")
+    .join(", ");
+
+/** Obsidian's styling of a note, which says nothing about it. */
+const STYLING_KEYS = new Set(["cssclass", "cssclasses"]);
+
+/** Text as Markdown that reads as that text. */
+const escapeMarkdown = (text: string): string => text.replace(/[\\`*_[\]<>#!|~&]/g, "\\$&");
+
+/**
+ * Frontmatter entries as a Markdown list, one `key: value` item each, so what they said stays
+ * visible in the document; "" for none. `title`, which names the document, is left out when it
+ * says what the document is titled.
+ */
+export function frontmatterList(properties: readonly FrontmatterProperty[], title: string): string {
+  const shown = properties.filter(({ key, value }) => {
+    const name = key.toLowerCase();
+    if (STYLING_KEYS.has(name)) return false;
+    return !(name === "title" && cleanTitle(value) === title);
+  });
+  return shown.map(({ key, value }) => `- ${escapeMarkdown(key)}: ${escapeMarkdown(value.replace(/\s+/g, " "))}`).join("\n");
 }
 
 /** Drop matching surrounding quotes from a YAML scalar. */
@@ -186,7 +241,8 @@ function leadingHeading(lines: string[]): string | null {
  * Normalize imported Markdown and decide its title. The DocActor re-derives
  * `docs.title` from the body's first non-blank line on every flush, so the title
  * must be that line: a leading heading is the title as-is; otherwise the
- * frontmatter title, filename or "Untitled" is prepended as an H1.
+ * frontmatter title, filename or "Untitled" is prepended as an H1. The
+ * frontmatter's entries follow the title as a list.
  */
 export function normalizeImportedMarkdown(raw: string, opts: { filename?: string } = {}): ImportedMarkdown {
   const cleaned = (raw ?? "")
@@ -195,19 +251,33 @@ export function normalizeImportedMarkdown(raw: string, opts: { filename?: string
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
 
-  const { body: afterFrontmatter, title: frontmatterTitle } = stripFrontmatter(cleaned);
+  const { body: afterFrontmatter, title: frontmatterTitle, properties } = stripFrontmatter(cleaned);
   // trimEnd, not /\s+$/: that regex backtracks quadratically on a non-space tail.
   const body = afterFrontmatter.replace(/^\n+/, "").trimEnd();
 
-  if (body === "") return { markdown: "", title: "" };
-
-  const heading = leadingHeading(body.split("\n"));
-  if (heading) return { markdown: body, title: heading };
-
-  const fallback =
+  const lines = body.split("\n");
+  const heading = leadingHeading(lines);
+  const title =
+    heading ||
     (frontmatterTitle ? cleanTitle(frontmatterTitle) : "") ||
     (opts.filename ? titleFromFilename(opts.filename) : "") ||
     "Untitled";
-  // The blank line keeps the body a separate block, whatever its first line holds.
-  return { markdown: `# ${fallback}\n\n${body}`, title: fallback };
+  // The frontmatter shows as a list under the title, so nothing it said is lost.
+  const list = frontmatterList(properties, title);
+  if (body === "" && list === "") return { markdown: "", title: "" };
+  if (heading) {
+    const end = headingEnd(lines);
+    const rest = lines.slice(end).join("\n").replace(/^\n+/, "");
+    const head = lines.slice(0, end).join("\n");
+    return { markdown: [head, list, rest].filter((part) => part !== "").join("\n\n"), title };
+  }
+  // The blank lines keep the body a separate block, whatever its first line holds.
+  return { markdown: [`# ${title}`, list, body].filter((part) => part !== "").join("\n\n"), title };
+}
+
+/** The index of the line after the leading heading leadingHeading found: one line for ATX, two for setext. */
+function headingEnd(lines: string[]): number {
+  let i = 0;
+  while (i < lines.length && (lines[i] ?? "").trim() === "") i++;
+  return ATX_HEADING.test(lines[i] ?? "") ? i + 1 : i + 2;
 }

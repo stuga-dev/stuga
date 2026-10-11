@@ -69,6 +69,12 @@ export async function restoreVersion({ ctx, req, match }: WorkspaceCall): Promis
   const u = new URL("http://actor/restore");
   u.searchParams.set("docId", docId);
   u.searchParams.set("seq", String(seq));
+  // Who restored which version, for every open page to say so; a version no longer listed goes unnamed.
+  const restored = (await listVersions(ctx.sql, docId)).find((v) => Number(v.seq) === seq);
+  if (restored) {
+    u.searchParams.set("by", ctx.displayName || ctx.alias);
+    u.searchParams.set("at", new Date(restored.ts).toISOString());
+  }
   const res = await ctx.env.docs.get(docId).fetch(u.toString());
   if (!res.ok) return error(res.status === 404 ? 404 : 502, "restore failed");
   return json(await res.json());

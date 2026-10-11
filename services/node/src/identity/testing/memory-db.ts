@@ -179,6 +179,10 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
       const r = resets.get(tokenHash);
       return !!r && !r.used && r.expiresAt.getTime() > Date.now();
     },
+    async passwordResetAlias(tokenHash) {
+      const r = resets.get(tokenHash);
+      return r && !r.used && r.expiresAt.getTime() > Date.now() ? r.alias : null;
+    },
     async redeemPasswordReset(tokenHash, passwordHash) {
       const r = resets.get(tokenHash);
       if (!r || r.used || r.expiresAt.getTime() <= Date.now()) return null;
@@ -359,6 +363,11 @@ export function memoryDb(opts: { issuer?: () => string | null } = {}) {
       const invite = invites.get(tokenHash);
       if (!invite || invite.usesLeft <= 0) return "invalid";
       return invite.localOnly && arrival === "remote" ? "local_only" : "ok";
+    },
+    async invitePreview(tokenHash, arrival) {
+      const status = await db.inviteStatus(tokenHash, arrival);
+      if (status === "invalid") return { status };
+      return { status, workspace_id: "w1", workspace_name: "Workspace", role: "member", invited_by: null };
     },
     async insertPasskey(p, requires) {
       if (!holds(p.alias, requires)) return "ended";

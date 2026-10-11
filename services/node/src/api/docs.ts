@@ -19,6 +19,7 @@ import { databaseDocMessage, readDocMarkdownWithProjection } from "../agents/edi
 import { recordAudit, recordEvent } from "../audit/record.js";
 import { canReadDoc, canWriteDoc, canWriteFolder, manages, scopeFolderIds } from "../authz/authz.js";
 import { type ResolvedReview, resolveReviewMode } from "../authz/review-mode.js";
+import { followDatabaseRename } from "../databases/first-table.js";
 import { pagesTrashedWithDatabase, restoreDatabasePages, trashDatabasePages } from "../databases/row-pages.js";
 import {
   agentInstructionsError,
@@ -28,6 +29,8 @@ import {
   itemKind,
   lockedError,
   pushLockState,
+  pushTitleChange,
+  pushTrashState,
   recordItemChange,
   rematerializeDoc,
 } from "../documents/access.js";
@@ -85,6 +88,7 @@ export async function createDocumentRoute({ ctx, req }: WorkspaceCall): Promise<
     parentId: body.parent_id,
     markdown: body.markdown,
     filename: body.filename,
+    copyOf: body.copy_of,
     table: body.table,
     columns: body.columns,
   });
@@ -141,6 +145,10 @@ export async function updateDocument({ ctx, req, match }: WorkspaceCall): Promis
     const trashChange =
       body.trashed === true && !pdoc.trashed ? "trash" : body.trashed === false && pdoc.trashed ? "restore" : undefined;
     recordItemChange(ctx, "doc", pdoc, updated, docId, trashChange);
+    if (trashChange) await pushTrashState(ctx.env, docId, trashChange === "trash", pdoc.doc_type);
+    // A new database's first table takes its name first, so the open pages' re-read finds both renamed.
+    if (pdoc.doc_type === "database" && typeof body.title === "string" && updated.title !== pdoc.title) await followDatabaseRename(ctx, updated);
+    if (body.title !== undefined && updated.title !== pdoc.title) await pushTitleChange(ctx.env, updated, ctx.displayName || ctx.alias);
     // Row pages follow their database into and out of the trash. After the
     // database's own update, so the purge job meets the database first and a
     // failed restore brings no page back.

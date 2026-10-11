@@ -38,6 +38,8 @@ export interface InviteInfo {
   /** The link's last few characters, to tell it apart from others; null for a link made before hints were kept. */
   token_hint: string | null;
   role: InviteRole;
+  /** Who the link is for, in its maker's words; null when they gave none. */
+  note: string | null;
   created_by: string;
   created_at: string;
   /** Null: the link does not lapse. */
@@ -47,15 +49,60 @@ export interface InviteInfo {
   use_count: number;
 }
 
-/** A workspace just made; one imported from an archive or a sample names the document to open first. */
-export interface CreatedWorkspace extends WorkspaceInfo {
-  start_doc_id?: string;
+/** What an import made. */
+export interface ImportedCounts {
+  folders: number;
+  docs: number;
+  databases: number;
+  pages: number;
+  rows: number;
+  images: number;
+  files: number;
+  comments: number;
 }
 
-/** The files a Notion export or folder of Markdown holds that Stuga does not: how many, and the first by path. */
+/** What converting a Notion export or folder of Markdown spelled differently. */
+export type ImportChangeKind =
+  | "front_matter"
+  | "title_differs"
+  | "unresolved_link"
+  | "missing_image"
+  | "embedded_note"
+  | "heading_link"
+  | "highlight"
+  | "math"
+  | "text_column";
+
+export interface ImportChange {
+  kind: ImportChangeKind;
+  /** In how many documents, or columns. */
+  count: number;
+  /** The first of them, by title. */
+  where: string[];
+}
+
+/** A workspace just made; one imported from an archive or a sample names the document to open first, and says what came in. */
+export interface CreatedWorkspace extends WorkspaceInfo {
+  start_doc_id?: string;
+  imported?: ImportedCounts;
+  left_out?: LeftOut;
+  changed?: ImportChange[];
+}
+
+/** Why a file of an export is not imported. */
+export type LeftOutReason =
+  | { reason: "too_large"; size: number; limit: number }
+  | { reason: "unreadable_image" }
+  | { reason: "unreadable_text" }
+  | { reason: "not_linked" }
+  | { reason: "not_kept" };
+
+export type LeftOutFile = { path: string } & LeftOutReason;
+
+/** The files a Notion export or folder of Markdown holds that Stuga does not: how many, and the first by path, each with why. */
 export interface LeftOut {
   count: number;
-  files: string[];
+  files: LeftOutFile[];
 }
 
 /** A file checked for import, which the node holds until its importer says go or an hour passes. */
@@ -126,6 +173,11 @@ async function invalidating<T>(request: Promise<T>): Promise<T> {
 export const Workspaces = {
   /** The caller's workspaces and the one the server resolved as active. */
   list: () => workspaceList.get(),
+  /** The caller's role in the active workspace; null in none. */
+  activeRole: async (): Promise<WorkspaceRole | null> => {
+    const { workspaces, active } = await workspaceList.get();
+    return workspaces.find((w) => w.workspace_id === active)?.role ?? null;
+  },
   /** The caller becomes the owner. */
   create: (name: string, defaultDocAccess?: DocAccessMode) =>
     invalidating(
@@ -230,13 +282,14 @@ export const Workspaces = {
   createInvite: (
     workspaceId: string,
     /** Omitted limits are one person and seven days; null is no limit, which works only on the node's own network. */
-    opts: { role?: InviteRole; expires_in_days?: number | null; max_uses?: number | null; address?: "local" | "remote" } = {},
+    opts: { role?: InviteRole; expires_in_days?: number | null; max_uses?: number | null; address?: "local" | "remote"; note?: string } = {},
   ) =>
     api<{
       token: string;
       token_hash: string;
       join_url: string;
       role: InviteRole;
+      note: string | null;
       expires_at: string | null;
       max_uses: number | null;
     }>(

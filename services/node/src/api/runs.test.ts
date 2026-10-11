@@ -221,10 +221,31 @@ describe("the gates around the review routes", () => {
     expect(actorCalls).toEqual([]);
   });
 
-  it("refuses a decision on a locked document before touching the actor", async () => {
+  it("refuses an accept on a locked document before touching the actor", async () => {
     mockGetDoc.mockResolvedValue({ ...DOC, locked: true });
     expect((await call(userCtx(), "POST", "/api/docs/d1/runs/run_x/decision", { decision: "accept" })).status).toBe(423);
     expect(actorCalls).toEqual([]);
+  });
+
+  it("lets a reject through on a locked document, since it leaves the text as it is", async () => {
+    mockGetDoc.mockResolvedValue({ ...DOC, locked: true });
+    expect((await call(userCtx(), "POST", "/api/docs/d1/runs/run_x/decision", { decision: "reject" })).status).toBe(200);
+    expect(actorCalls).toHaveLength(1);
+  });
+});
+
+describe("undoing a decision on a locked document", () => {
+  it("asks the actor, telling it the lock, and passes on its refusal as the lock's", async () => {
+    mockGetDoc.mockResolvedValue({ ...DOC, locked: true });
+    actorBody = { run: { id: "run_x", agent_alias: "agent-1" }, reopened: 1 };
+    expect((await call(userCtx(), "POST", "/api/docs/d1/runs/run_x/undo", { hunk_ids: ["h1"] })).status).toBe(200);
+    expect(actorCalls[0]!.body.locked).toBe(true);
+
+    actorStatus = 423;
+    actorBody = { error: "locked", message: "this document is locked; unlock it to make changes" };
+    const res = await call(userCtx(), "POST", "/api/docs/d1/runs/run_x/undo", { hunk_ids: ["h2"] });
+    expect(res.status).toBe(423);
+    expect(await res.json()).toMatchObject({ error: "this document is locked; unlock it to make changes" });
   });
 });
 

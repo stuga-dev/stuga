@@ -4,6 +4,9 @@ import type { SearchStrictness } from "@stuga/protocol/domain/search-strictness"
 import { t } from "../../../i18n/i18n";
 import { timeOfDay } from "../../../lib/format";
 
+/** The three parts of the node's AI, each set up, tested and switched on its own. */
+export type Half = "chat" | "search" | "rerank";
+
 /** What each part is called and is for, the same in Settings and at first run. */
 export const HALF_COPY = {
   chat: { title: t("node.ai.chat.title"), about: t("node.ai.chat.about") },
@@ -30,27 +33,34 @@ export interface Preset {
   provider: string;
   baseUrl: string;
   embeddings: boolean;
+  /** The vendor's page that issues API keys. */
+  keyUrl?: string;
+  /**
+   * The model to mark Recommended in each half, the first listed one that matches: a list comes
+   * newest first, so the pattern names a family and the newest of it wins.
+   */
+  recommends?: { chat?: RegExp; embed?: RegExp };
 }
 
 /** The protocol entries take the node's own defaults, so a packaged node's Ollama address shows as the preset. */
 export function presetsFor(base: BaseUrls): Preset[] {
   return [
-    { value: "openai", label: "OpenAI", provider: "openai", baseUrl: base.openai ?? "", embeddings: true }, // i18n-exempt: a vendor's name
-    { value: "anthropic", label: "Anthropic (Claude)", provider: "anthropic", baseUrl: base.anthropic ?? "", embeddings: false }, // i18n-exempt: a vendor's name
-    { value: "gemini", label: "Google Gemini", provider: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", embeddings: true }, // i18n-exempt: a vendor's name
-    { value: "cerebras", label: "Cerebras", provider: "openai", baseUrl: "https://api.cerebras.ai/v1", embeddings: false }, // i18n-exempt: a vendor's name
-    { value: "deepseek", label: "DeepSeek", provider: "openai", baseUrl: "https://api.deepseek.com/v1", embeddings: false }, // i18n-exempt: a vendor's name
-    { value: "fireworks", label: "Fireworks", provider: "openai", baseUrl: "https://api.fireworks.ai/inference/v1", embeddings: true }, // i18n-exempt: a vendor's name
-    { value: "groq", label: "Groq", provider: "openai", baseUrl: "https://api.groq.com/openai/v1", embeddings: false }, // i18n-exempt: a vendor's name
-    { value: "minimax", label: "MiniMax", provider: "anthropic", baseUrl: "https://api.minimax.io/anthropic", embeddings: false }, // i18n-exempt: a vendor's name
-    { value: "mistral", label: "Mistral", provider: "openai", baseUrl: "https://api.mistral.ai/v1", embeddings: true }, // i18n-exempt: a vendor's name
-    { value: "moonshot", label: "Moonshot (Kimi)", provider: "openai", baseUrl: "https://api.moonshot.ai/v1", embeddings: false }, // i18n-exempt: a vendor's name
-    { value: "openrouter", label: "OpenRouter", provider: "openai", baseUrl: "https://openrouter.ai/api/v1", embeddings: false }, // i18n-exempt: a vendor's name
-    { value: "qwen", label: "Qwen (Alibaba Cloud)", provider: "openai", baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", embeddings: true }, // i18n-exempt: a vendor's name
-    { value: "together", label: "Together", provider: "openai", baseUrl: "https://api.together.ai/v1", embeddings: true }, // i18n-exempt: a vendor's name
-    { value: "xai", label: "xAI (Grok)", provider: "openai", baseUrl: "https://api.x.ai/v1", embeddings: false }, // i18n-exempt: a vendor's name
-    { value: "zai", label: "Z.ai (GLM)", provider: "openai", baseUrl: "https://api.z.ai/api/paas/v4", embeddings: false }, // i18n-exempt: a vendor's name
-    { value: "ollama", label: t("node.ai.preset.ollamaLocal"), provider: "ollama", baseUrl: base.ollama ?? "", embeddings: true },
+    { value: "openai", label: "OpenAI", provider: "openai", baseUrl: base.openai ?? "", embeddings: true, keyUrl: "https://platform.openai.com/api-keys", recommends: { chat: /^gpt-[\d.]+-mini$/, embed: /^text-embedding-3-small$/ } }, // i18n-exempt: a vendor's name
+    { value: "anthropic", label: "Anthropic (Claude)", provider: "anthropic", baseUrl: base.anthropic ?? "", embeddings: false, keyUrl: "https://console.anthropic.com/settings/keys", recommends: { chat: /^claude-sonnet-\d/ } }, // i18n-exempt: a vendor's name
+    { value: "gemini", label: "Google Gemini", provider: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", embeddings: true, keyUrl: "https://aistudio.google.com/apikey", recommends: { chat: /^(models\/)?gemini-[\d.]+-flash$/ } }, // i18n-exempt: a vendor's name
+    { value: "cerebras", label: "Cerebras", provider: "openai", baseUrl: "https://api.cerebras.ai/v1", embeddings: false, keyUrl: "https://cloud.cerebras.ai" }, // i18n-exempt: a vendor's name
+    { value: "deepseek", label: "DeepSeek", provider: "openai", baseUrl: "https://api.deepseek.com/v1", embeddings: false, keyUrl: "https://platform.deepseek.com/api_keys", recommends: { chat: /^deepseek-chat$/ } }, // i18n-exempt: a vendor's name
+    { value: "fireworks", label: "Fireworks", provider: "openai", baseUrl: "https://api.fireworks.ai/inference/v1", embeddings: true, keyUrl: "https://fireworks.ai/account/api-keys" }, // i18n-exempt: a vendor's name
+    { value: "groq", label: "Groq", provider: "openai", baseUrl: "https://api.groq.com/openai/v1", embeddings: false, keyUrl: "https://console.groq.com/keys" }, // i18n-exempt: a vendor's name
+    { value: "minimax", label: "MiniMax", provider: "anthropic", baseUrl: "https://api.minimax.io/anthropic", embeddings: false, keyUrl: "https://platform.minimax.io" }, // i18n-exempt: a vendor's name
+    { value: "mistral", label: "Mistral", provider: "openai", baseUrl: "https://api.mistral.ai/v1", embeddings: true, keyUrl: "https://console.mistral.ai/api-keys", recommends: { chat: /^mistral-medium-latest$/, embed: /^mistral-embed$/ } }, // i18n-exempt: a vendor's name
+    { value: "moonshot", label: "Moonshot (Kimi)", provider: "openai", baseUrl: "https://api.moonshot.ai/v1", embeddings: false, keyUrl: "https://platform.moonshot.ai/console/api-keys" }, // i18n-exempt: a vendor's name
+    { value: "openrouter", label: "OpenRouter", provider: "openai", baseUrl: "https://openrouter.ai/api/v1", embeddings: false, keyUrl: "https://openrouter.ai/keys" }, // i18n-exempt: a vendor's name
+    { value: "qwen", label: "Qwen (Alibaba Cloud)", provider: "openai", baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", embeddings: true, keyUrl: "https://modelstudio.console.alibabacloud.com" }, // i18n-exempt: a vendor's name
+    { value: "together", label: "Together", provider: "openai", baseUrl: "https://api.together.ai/v1", embeddings: true, keyUrl: "https://api.together.ai/settings/api-keys" }, // i18n-exempt: a vendor's name
+    { value: "xai", label: "xAI (Grok)", provider: "openai", baseUrl: "https://api.x.ai/v1", embeddings: false, keyUrl: "https://console.x.ai" }, // i18n-exempt: a vendor's name
+    { value: "zai", label: "Z.ai (GLM)", provider: "openai", baseUrl: "https://api.z.ai/api/paas/v4", embeddings: false, keyUrl: "https://z.ai/manage-apikey/apikey-list" }, // i18n-exempt: a vendor's name
+    { value: "ollama", label: t("node.ai.preset.ollamaLocal"), provider: "ollama", baseUrl: base.ollama ?? "", embeddings: true, recommends: { embed: /^embeddinggemma(:|$)/ } },
     { value: "custom", label: t("node.ai.preset.custom"), provider: "openai", baseUrl: "", embeddings: true },
   ];
 }
@@ -64,11 +74,31 @@ export function endpointSummary(base: BaseUrls, provider: string, baseUrl: strin
   return t("node.ai.endpointSummary", { address: baseUrl || base[provider] || "—", protocol: provider });
 }
 
-/** The discovered models plus any selected one that fell out of that list, so it stays selectable. */
-export function modelOptions(discovered: string[], current: string | string[]): Array<{ value: string; label: string }> {
+/**
+ * The discovered models plus any selected one that fell out of that list, so it stays selectable.
+ * A recommended model leads the list and says so; which one to use stays the administrator's pick.
+ */
+export function modelOptions(discovered: string[], current: string | string[], recommended: string | null = null): Array<{ value: string; label: string }> {
   const currentIds = Array.isArray(current) ? current : current ? [current] : [];
   const missing = currentIds.filter((id) => !discovered.includes(id));
-  return [...missing, ...discovered].map((id) => ({ value: id, label: id }));
+  const listed = recommended && discovered.includes(recommended) ? [recommended, ...discovered.filter((id) => id !== recommended)] : discovered;
+  return [...missing, ...listed].map((id) => ({ value: id, label: id === recommended ? t("node.ai.recommendedModel", { model: id }) : id }));
+}
+
+/** The model a preset recommends for a half among those a service listed, or null. */
+export function recommendedModel(preset: Preset | undefined, half: "chat" | "embed", listed: readonly string[]): string | null {
+  const pattern = preset?.recommends?.[half];
+  return (pattern && listed.find((id) => pattern.test(id))) || null;
+}
+
+/** A base URL a request could be sent to: http(s) with a host. Anything else is refused before asking. */
+export function isServiceAddress(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    return (url.protocol === "https:" || url.protocol === "http:") && url.hostname !== "";
+  } catch {
+    return false;
+  }
 }
 
 /** A chat provider as the form edits it. The key is write-only, so it starts empty. */
@@ -267,10 +297,18 @@ export function withConnectedProvider(
   return toInput(next, NO_CLEARED_KEYS, base, "chat");
 }
 
+/** What a failed connection was about: the key, reaching the server, or anything else the service said. */
+export function connectFailureKind(message: string): "key" | "unreachable" | "answered" {
+  if (/\b(401|403)\b|unauthori[sz]ed|invalid.{0,20}key|api key/i.test(message)) return "key";
+  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|fetch failed|timed? ?out|network/i.test(message)) return "unreachable";
+  return "answered";
+}
+
 /** A failed connection in words: a refused key and an unreachable server read differently from anything else. */
 export function connectFailure(label: string, message: string): string {
-  if (/\b(401|403)\b|unauthori[sz]ed|invalid.{0,20}key|api key/i.test(message)) return t("node.ai.connect.keyRefused", { service: label });
-  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|fetch failed|timed? ?out|network/i.test(message)) return t("node.ai.connect.unreachable", { service: label });
+  const kind = connectFailureKind(message);
+  if (kind === "key") return t("node.ai.connect.keyRefused", { service: label });
+  if (kind === "unreachable") return t("node.ai.connect.unreachable", { service: label });
   const short = message.length > 240 ? `${message.slice(0, 240)}…` : message;
   return t("node.ai.connect.answered", { service: label, message: short });
 }
@@ -299,9 +337,9 @@ export function chatInputWith(
 }
 
 /** Where a System One ranker is served, and the model to ask for there. */
-export const RERANK_PRESETS = [
-  { value: "typesafe", label: "TypeSafe", baseUrl: "https://api.typesafe.ai/v1", model: "jev-latest" }, // i18n-exempt: a vendor's name
-  { value: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "~typesafe/jev-latest" }, // i18n-exempt: a vendor's name
+export const RERANK_PRESETS: ReadonlyArray<{ value: string; label: string; baseUrl: string; model: string; keyUrl?: string }> = [
+  { value: "typesafe", label: "TypeSafe", baseUrl: "https://api.typesafe.ai/v1", model: "jev-latest", keyUrl: "https://typesafe.ai" }, // i18n-exempt: a vendor's name
+  { value: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "~typesafe/jev-latest", keyUrl: "https://openrouter.ai/keys" }, // i18n-exempt: a vendor's name
   { value: "custom", label: t("node.ai.preset.custom"), baseUrl: "", model: "" },
 ];
 

@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
-import { AppShell, useAppShellMobile } from "@astryxdesign/core/AppShell";
+import { AppShell } from "@astryxdesign/core/AppShell";
 import { Button } from "@astryxdesign/core/Button";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
@@ -20,7 +20,7 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Table, proportional, pixel } from "@astryxdesign/core/Table";
 import { VStack } from "@astryxdesign/core/VStack";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { ListChecks } from "lucide-react";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import type { DatabaseRunSummary } from "@stuga/protocol/databases/types";
@@ -31,7 +31,9 @@ import { absoluteTime, fmtInt, relativeTime } from "../lib/format";
 import { DatabaseRuns, INBOX_PAGE_LIMIT, Inbox, Runs, type AgentStats, type InboxFilter, type InboxRun } from "../api";
 import { errorMessage } from "../lib/http/client";
 import { useRejectNote } from "../review/RejectNoteDialog";
-import { runAgentLabel } from "../state/identity";
+import { summarizeHunk } from "../review/hunk-review";
+import { describeProposal } from "../database/op-lines";
+import { principalLabel, runAgentLabel, useUserNames } from "../state/identity";
 import { t, type MessageKey } from "../i18n/i18n";
 
 const FILTERS: Array<{ value: InboxFilter; label: MessageKey }> = [
@@ -41,11 +43,11 @@ const FILTERS: Array<{ value: InboxFilter; label: MessageKey }> = [
   { value: "all", label: "review.inbox.filter.all" },
 ];
 
-type RunAction = "accept" | "reject" | "revert" | "dismiss";
+/** Accepting takes seeing the change where it lands, so the list offers no blind Accept all. */
+type RunAction = "reject" | "revert" | "dismiss";
 
 /** The toast after a whole-run action. */
 const DONE: Record<RunAction, MessageKey> = {
-  accept: "review.inbox.done.accept",
   reject: "review.inbox.done.reject",
   revert: "review.inbox.done.revert",
   dismiss: "review.inbox.done.dismiss",
@@ -92,9 +94,10 @@ export function needsAttention(run: InboxRun): boolean {
   return state === "waiting" || state === "unchecked";
 }
 
-/** The whole-run actions a row offers. */
+/** The whole-run actions a row offers: none on a run someone else decides. */
 export function runActions(run: InboxRun): { decide: boolean; revert: boolean; dismiss: boolean } {
   const state = runState(run);
+  if (run.can_decide === false) return { decide: false, revert: false, dismiss: false };
   return {
     decide: state === "waiting",
     // Only landed changes unwind; a document refuses a run with none.
@@ -122,7 +125,9 @@ export function runStatus(run: InboxRun): string {
     case "reverted":
       return t("review.inbox.status.reverted");
     case "waiting":
-      return t("review.inbox.status.waiting", { count: run.pending });
+      return run.can_decide === false
+        ? t("review.inbox.status.waitingFor", { count: run.pending, name: principalLabel(`user:${run.reviewer}`) })
+        : t("review.inbox.status.waiting", { count: run.pending });
     case "unchecked":
       return t("review.inbox.status.unchecked", { outcome: outcomeOf(run) });
     case "settled":
@@ -139,10 +144,39 @@ export function madeBy(run: InboxRun): string {
   return via && !key(name).includes(key(via)) ? `${name} · ${via}` : name;
 }
 
-/** The top bar names the page, except below AppShell's breakpoint, where its title sits in the menu drawer. */
-function PhoneTitle({ children }: { children: string }) {
-  const { isMobile } = useAppShellMobile();
-  return isMobile ? <Heading level={1}>{children}</Heading> : null;
+/**
+ * What a waiting run would change, in a line: its first change, and how many more. Read once per run
+ * version; nothing shows while it loads or when the read fails.
+ */
+function WaitingPreview({ row }: { row: InboxRun }) {
+  const [line, setLine] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    const read: Promise<string[]> =
+      row.doc_kind === "prose"
+        ? Runs.detail(row.doc_id, row.run_id).then((d) =>
+            d.run.hunks.filter((h) => h.status === "pending").map((h) => summarizeHunk(h).text),
+          )
+        : DatabaseRuns.detail(row.doc_id, row.run_id, { sample: 0 }).then((d) =>
+            d.run.ops.filter((o) => o.status === "pending").map((o) => (o.detail ? describeProposal(o.detail) : o.summary)),
+          );
+    read.then(
+      (changes) => {
+        if (!live || changes.length === 0) return;
+        const first = changes[0]!;
+        setLine(changes.length > 1 ? t("review.inbox.previewMore", { change: first, count: changes.length - 1 }) : first);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [row.doc_id, row.run_id, row.doc_kind, row.updated_at]);
+  return line ? (
+    <Text color="secondary" maxLines={1}>
+      {line}
+    </Text>
+  ) : null;
 }
 
 export function ReviewPage() {
@@ -179,6 +213,9 @@ export function ReviewPage() {
     void load();
   }, [load]);
 
+  // Rows someone else decides name that person.
+  useUserNames((runs ?? []).filter((r) => r.can_decide === false).map((r) => `user:${r.reviewer}`));
+
   const agentOptions = useMemo(
     () => [{ value: "", label: t("review.inbox.allAgents") }, ...stats.map((s) => ({ value: s.agent_alias, label: runAgentLabel(s) }))],
     [stats],
@@ -208,11 +245,11 @@ export function ReviewPage() {
     try {
       let run: AgentRunSummary | DatabaseRunSummary | null = null;
       if (row.doc_kind === "prose") {
-        if (what === "accept" || what === "reject") run = (await Runs.decide(row.doc_id, row.run_id, what, undefined, note)).run;
+        if (what === "reject") run = (await Runs.decide(row.doc_id, row.run_id, what, undefined, note)).run;
         else if (what === "revert") run = (await Runs.revert(row.doc_id, row.run_id, note)).run;
         else await Runs.ack(row.doc_id, row.run_id);
       } else {
-        if (what === "accept" || what === "reject") run = (await DatabaseRuns.decide(row.doc_id, row.run_id, what, undefined, note)).run;
+        if (what === "reject") run = (await DatabaseRuns.decide(row.doc_id, row.run_id, what, undefined, note)).run;
         else if (what === "revert") run = (await DatabaseRuns.revert(row.doc_id, row.run_id, note)).run;
         else run = (await DatabaseRuns.ack(row.doc_id, row.run_id)).run;
       }
@@ -266,7 +303,6 @@ export function ReviewPage() {
           <VStack gap={3}>
             <HStack gap={4} vAlign="end" justify="between" wrap="wrap">
               <VStack gap={1}>
-                <PhoneTitle>{t("common.reviewAiEdits")}</PhoneTitle>
                 <Text color="secondary">{t("review.inbox.intro")}</Text>
               </VStack>
               <HStack gap={2} vAlign="end" wrap="wrap">
@@ -303,12 +339,12 @@ export function ReviewPage() {
                 {runs.map((row) => {
                   const actions = runActions(row);
                   const isBusy = busy.has(row.run_id);
-                  const attention = needsAttention(row);
+                  // Another person's decision is theirs to make: shown, not flagged.
+                  const attention = needsAttention(row) && row.can_decide !== false;
                   const status = runStatus(row);
                   const title = row.doc_title || t("common.untitled");
                   const items = [
                     ...(actions.decide ? [
-                      { label: t("review.inbox.acceptAll"), onClick: () => void act(row, "accept"), isDisabled: isBusy },
                       { label: t("review.inbox.rejectAll"), onClick: () => void act(row, "reject"), isDisabled: isBusy },
                       {
                         label: t("review.note.rejectAllEllipsis"),
@@ -348,6 +384,7 @@ export function ReviewPage() {
                       description={
                         <VStack gap={1}>
                           <Text color="secondary">{status}</Text>
+                          {row.pending > 0 && row.status === "open" && <WaitingPreview row={row} />}
                           <Text type="supporting" color="secondary">
                             {row.doc_kind === "database" ? t("common.database") : t("common.document")} · {madeBy(row)} ·{" "}
                             <span title={absoluteTime(row.updated_at)}>{relativeTime(row.updated_at)}</span>

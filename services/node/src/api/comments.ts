@@ -4,7 +4,7 @@ import { addComment, deleteComment, getComment, getMembersByUsername, listCommen
 import { MAX_MENTIONS, commentMentionCandidates } from "@stuga/protocol/domain/mentions";
 import { recordEvent } from "../audit/record.js";
 import { canCommentDoc, manages } from "../authz/authz.js";
-import { authorizedDoc } from "../documents/access.js";
+import { authorizedDoc, pushCommentsChanged } from "../documents/access.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
 import { mentionReaders } from "../mentions/recipients.js";
@@ -69,8 +69,9 @@ export async function addDocComment({ ctx, req, match }: WorkspaceCall): Promise
     mentions,
   });
   recordEvent(ctx, "comment.added", docId, { num: c.num, parent_num: parentNum, excerpt: commentBody.slice(0, 140) });
+  await pushCommentsChanged(ctx.env, docId, cdoc.doc_type);
   const actorName = ctx.displayName || ctx.alias;
-  // The notify worker collapses a flurry of notifications into one per person, event and hour.
+  // The notify worker keeps each mention apart, and collapses the owner's comment notices into one per hour.
   const mentioned = await mentionReaders(ctx.sql, cdoc, mentions.map((m) => m.alias), ctx.alias);
   for (const recipient of mentioned) {
     await ctx.env.jobs.send({
@@ -79,6 +80,7 @@ export async function addDocComment({ ctx, req, match }: WorkspaceCall): Promise
       workspaceId: ctx.workspaceId,
       eventType: "MENTIONED_IN_COMMENT",
       docId,
+      commentNum: c.num,
       params: { actor: actorName, doc: cdoc.title, excerpt: commentBody.slice(0, 140) },
       actor: ctx.alias,
     });
@@ -95,6 +97,7 @@ export async function addDocComment({ ctx, req, match }: WorkspaceCall): Promise
       workspaceId: ctx.workspaceId,
       eventType: "COMMENT_ON_OWNED_DOC",
       docId,
+      commentNum: c.num,
       params: { actor: actorName, doc: cdoc.title, kind: parentNum === null ? "comment" : "reply", excerpt: commentBody.slice(0, 140) },
       actor: ctx.alias,
     });
@@ -116,6 +119,7 @@ export async function resolveDocComment({ ctx, req, match }: WorkspaceCall): Pro
   }
   const updated = await setCommentResolved(ctx.sql, docId, num, body.resolved);
   if (!updated) return error(404, "comment not found");
+  await pushCommentsChanged(ctx.env, docId, doc.doc_type);
   return json(updated);
 }
 
@@ -130,5 +134,7 @@ export async function deleteDocComment({ ctx, match }: WorkspaceCall): Promise<R
     return error(403, "only the comment author or doc owner can delete this comment");
   }
   const deleted = await deleteComment(ctx.sql, docId, num);
-  return deleted ? json({ deleted: true }) : error(404, "comment not found");
+  if (!deleted) return error(404, "comment not found");
+  await pushCommentsChanged(ctx.env, docId, doc.doc_type);
+  return json({ deleted: true });
 }

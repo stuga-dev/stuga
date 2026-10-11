@@ -11,6 +11,8 @@ import type { NodeEnv } from "../env.js";
  * @param writeCeiling Whether the credential that opened this socket permits
  * writing at all: `true` for an API key, the ticket's write tier otherwise. It
  * only narrows the ACL's answer, which is read again here.
+ * @param editorSchema The text schema a page's editor says it holds (TEXT_SCHEMA_VERSION), passed on for
+ * the actor to reload an older page; null for a socket no page opened.
  */
 export async function routeWebSocket(
   ctx: Ctx,
@@ -18,6 +20,7 @@ export async function routeWebSocket(
   docId: string,
   agent: string | null,
   writeCeiling: boolean,
+  editorSchema: string | null = null,
 ): Promise<Response> {
   const doc = await getDoc(ctx.sql, docId);
   if (!doc) return new Response("not found", { status: 404 });
@@ -50,6 +53,8 @@ export async function routeWebSocket(
   for (const principal of ctx.principals) actorUrl.searchParams.append("principal", principal);
   for (const folderId of scopeFolderIds(ctx) ?? []) actorUrl.searchParams.append("scopeFolder", folderId);
   actorUrl.searchParams.set("workspaceId", ctx.workspaceId);
+  // The write tier stays the ACL's, so the page can offer Restore; the actor refuses writes while it is in the trash.
+  actorUrl.searchParams.set("trashed", doc.trashed ? "1" : "0");
   // `agentAuth` is asserted from the verified credential and gates the actor's
   // agent rules; `agent` is only a display label a human client may choose.
   if (ctx.isAgent) {
@@ -58,6 +63,7 @@ export async function routeWebSocket(
   } else if (agent) actorUrl.searchParams.set("agent", agent);
   // The human an agent key acts for, for the actor's audit rows. Attribution only.
   if (ctx.onBehalfOf) actorUrl.searchParams.set("onBehalfOf", ctx.onBehalfOf);
+  if (editorSchema !== null) actorUrl.searchParams.set("editorSchema", editorSchema);
 
   return env.docs.get(docId).fetch(actorUrl.toString(), {
     headers: { upgrade: "websocket" },

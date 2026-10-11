@@ -10,8 +10,15 @@ import { orderRowsForReview, summarizeHunk, unshownReason } from "./hunk-review"
 import { itemKey } from "./run-ledger";
 import { Button } from "@astryxdesign/core/Button";
 import { anchorOf, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
-import { t } from "../i18n/i18n";
+import { t, type MessageKey } from "../i18n/i18n";
 import { runAgentLabel } from "../state/identity";
+
+/** A change's kind as a word, not a glyph. */
+const KIND_LABEL: Record<"add" | "remove" | "change", MessageKey> = {
+  add: "review.changeList.kind.add",
+  remove: "review.changeList.kind.remove",
+  change: "review.changeList.kind.change",
+};
 
 export function RunChangeList({
   run,
@@ -77,7 +84,7 @@ export function RunChangeList({
               onClick={() => preview.scrollToHunk(row.key)}
             >
               <span className={`agent-run-change__marker agent-run-change__marker--${summary.kind}`} aria-hidden="true">
-                {summary.marker}
+                {t(KIND_LABEL[summary.kind])}
               </span>
               <span className="agent-run-change__lines">
                 <span className="agent-run-change__text">{summary.text}</span>

@@ -318,6 +318,21 @@ export function completionPrefix(query: string): { head: string; prefix: string 
   return { head: words.join(" "), prefix: last.toLowerCase() };
 }
 
+/** Characters a word needs before a title may differ from it by one edit and still match. */
+const TYPO_MIN_CHARS = 4;
+
+/**
+ * Whether a one-letter typo may recall a title: every word of the query is at least
+ * TYPO_MIN_CHARS long, and none is in a script written without spaces. One edit away
+ * from a short word, or from one Chinese character, is any title holding a short token
+ * ("3", "C", 会), so such a query would list the same unrelated documents every time.
+ */
+export function typoTolerant(query: string): boolean {
+  if (UNSPACED.test(query)) return false;
+  const words = query.split(/[^\p{L}\p{M}\p{N}]+/u).filter(Boolean);
+  return words.length > 0 && words.every((w) => [...w].length >= TYPO_MIN_CHARS);
+}
+
 /**
  * Below any real BM25 score short of a word in nearly every document, which ranks
  * nothing anyway. A title prefix outranks a body prefix, and a typo (scored zero)
@@ -336,7 +351,8 @@ const EXCERPT_WINDOWS = 64;
  * field clause is a conjunction so more words narrow. The `search_text` clause
  * scores zero and exists because pdb.snippets() highlights only a field that
  * matched in its own right. The fuzzy title clause also scores zero, so a typo
- * can recall a document but never outrank a real match. The prefix clauses read
+ * can recall a document but never outrank a real match; it is left out where
+ * typoTolerant says one edit would match nearly anything. The prefix clauses read
  * the query's last word as unfinished, at a constant just above zero, so "whe"
  * finds "where" while typing and a whole-word match still ranks first. kw_rank
  * must stay a bare pdb.score(): wrapped in arithmetic, ORDER BY leaves the
@@ -365,6 +381,11 @@ function keywordLeg(
     return sql`paradedb.match_conjunction('all_text', ${text}),
                             paradedb.match_conjunction('all_text_en', ${text})${langLegs}`;
   };
+  const typoLeg = typoTolerant(input.query)
+    ? sql`,
+              paradedb.const_score(0.0,
+                paradedb.match('title', ${input.query}, distance => 1, conjunction_mode => true))`
+    : sql``;
   const completion = completionPrefix(input.query);
   let prefixLegs = sql``;
   if (completion) {
@@ -393,9 +414,7 @@ function keywordLeg(
                             paradedb.boost(2.0, paradedb.match_conjunction('title', ${input.query})),
                             ${wholeWords(input.query)}]) ],
                 should => ARRAY[ paradedb.const_score(0.0,
-                            paradedb.match_disjunction('search_text', ${input.query})) ]),
-              paradedb.const_score(0.0,
-                paradedb.match('title', ${input.query}, distance => 1, conjunction_mode => true))${prefixLegs}])
+                            paradedb.match_disjunction('search_text', ${input.query})) ])${typoLeg}${prefixLegs}])
       ORDER BY kw_rank DESC
       LIMIT ${candidates}`;
 }
@@ -527,6 +546,10 @@ interface SearchRow extends Omit<SearchResult, "snippet"> {
   in_code: boolean;
   /** The part of the excerpt's first line the cut left out, before where it begins. */
   line_lead: string;
+  /** Where the prefix excerpt begins in the body, counting from 1, and the lengths its cuts and the passage's are judged by. */
+  prefix_start: number | null;
+  text_len: number;
+  passage_len: number | null;
 }
 
 const EXCERPT_CHARS = 200;
@@ -540,6 +563,30 @@ const PREFIX_LEAD = 60;
  */
 const FENCE_LINE = "^[ \\t]*(?:>[ \\t]?)*[ \\t]*(?:(?:[-+*]|\\d+[.)])[ \\t]+)?(?:`{3,}[^`]*|~{3,}.*)$";
 const FENCE = new RegExp(FENCE_LINE);
+
+/** Characters a cut may drop to end on a word; text written without spaces has none that near, and is kept as cut. */
+const WORD_CUT_MAX = 24;
+
+/**
+ * `text` without the word a cut fell inside at its start or end, so an excerpt
+ * reads "queue at 8am", not "eue at 8am". `dropped` is what went from the start.
+ */
+function wholeWordCut(text: string, cutStart: boolean, cutEnd: boolean): { text: string; dropped: string } {
+  let dropped = "";
+  if (cutStart && /^\S/.test(text)) {
+    const space = text.slice(0, WORD_CUT_MAX).search(/\s/);
+    if (space > 0) {
+      // A line break stays, so the excerpt's first line is still one of the body's.
+      dropped = text.slice(0, text[space] === "\n" ? space : space + 1);
+      text = text.slice(dropped.length);
+    }
+  }
+  if (cutEnd && /\S$/.test(text)) {
+    const tail = /\s\S*$/.exec(text.slice(-WORD_CUT_MAX));
+    if (tail) text = text.slice(0, text.length - tail[0].length);
+  }
+  return { text, dropped };
+}
 
 /** Wraps the word starting `offset` code points into `text` in highlight sentinels. */
 function markWordAt(text: string, offset: number): string {
@@ -562,15 +609,25 @@ function markWordAt(text: string, offset: number): string {
  * excerpt honest Markdown.
  */
 function excerptOf(row: SearchRow): string {
-  const text = row.kw_snippet?.includes("⟦")
-    ? row.kw_snippet
-    : row.prefix_excerpt && row.prefix_offset !== null
-      ? markWordAt(row.prefix_excerpt, row.prefix_offset)
-      : row.passage || row.head;
+  let text: string;
+  let lineLead = row.line_lead;
+  if (row.kw_snippet?.includes("⟦")) {
+    // The index cuts its windows at word edges.
+    text = row.kw_snippet;
+  } else if (row.prefix_excerpt && row.prefix_offset !== null && row.prefix_start !== null) {
+    const length = [...row.prefix_excerpt].length;
+    const cut = wholeWordCut(row.prefix_excerpt, row.prefix_start > 1, row.prefix_start - 1 + length < row.text_len);
+    text = markWordAt(cut.text, row.prefix_offset - [...cut.dropped].length);
+    lineLead += cut.dropped;
+  } else if (row.passage) {
+    text = wholeWordCut(row.passage, false, (row.passage_len ?? 0) > EXCERPT_CHARS).text;
+  } else {
+    text = wholeWordCut(row.head, false, row.text_len > EXCERPT_CHARS).text;
+  }
   if (!row.in_code) return text;
-  const line = row.line_lead + (text.split("\n", 1)[0] ?? "");
+  const line = lineLead + (text.split("\n", 1)[0] ?? "");
   // Cut past an opening fence's backticks, at its language ("sh"): the fence line is made whole again.
-  if (row.line_lead.trim() && FENCE.test(line)) return row.line_lead + text;
+  if (lineLead.trim() && FENCE.test(line)) return lineLead + text;
   // The serializer follows an opening fence with code and a closing one with a
   // blank line, which is how the page tells them apart: blank lines go. A block
   // in a quote has its fence there too.
@@ -650,19 +707,22 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
       FULL OUTER JOIN sem_ranked s ON k.doc_id = s.doc_id
     ),
     top AS (
-      SELECT f.*, d.title, d.doc_type, d.page_of, d.page_row
+      SELECT f.*, d.title, d.doc_type, d.page_of, d.page_row, d.updated_at
       FROM fused f
       JOIN docs d ON d.doc_id = f.doc_id
       ORDER BY f.score DESC, d.doc_id
       LIMIT ${limit}
     )
-    SELECT t.doc_id, t.title, t.doc_type, t.page_of, t.page_row, t.kw_rank, t.sem_score, t.score,
+    SELECT t.doc_id, t.title, t.doc_type, t.page_of, t.page_row, t.updated_at, t.kw_rank, t.sem_score, t.score,
            -- Null for a document that matched in its title only.
            kw.kw_snippet,
            CASE WHEN x.pos > 0 THEN substr(d.search_text, greatest(1, x.pos - ${PREFIX_LEAD}), ${EXCERPT_CHARS + PREFIX_LEAD}) END AS prefix_excerpt,
            CASE WHEN x.pos > 0 THEN x.pos - greatest(1, x.pos - ${PREFIX_LEAD}) END AS prefix_offset,
+           CASE WHEN x.pos > 0 THEN greatest(1, x.pos - ${PREFIX_LEAD}) END AS prefix_start,
            left(ch.content, ${EXCERPT_CHARS}) AS passage,
+           length(ch.content) AS passage_len,
            left(d.search_text, ${EXCERPT_CHARS}) AS head,
+           length(d.search_text) AS text_len,
            -- The body is in code after the excerpt's first line when its fences through
            -- that line are odd in number, and the excerpt opens a block of its own when
            -- that line reads as a fence. Either without the other wants a fence above it.
@@ -703,7 +763,19 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
     ) e
     ORDER BY t.score DESC, t.doc_id`));
   return rows.map((row) => {
-    const { kw_snippet: _k, prefix_excerpt: _p, prefix_offset: _o, passage: _s, head: _h, in_code: _c, line_lead: _l, ...hit } = row;
+    const {
+      kw_snippet: _k,
+      prefix_excerpt: _p,
+      prefix_offset: _o,
+      prefix_start: _ps,
+      passage: _s,
+      passage_len: _pl,
+      head: _h,
+      text_len: _tl,
+      in_code: _c,
+      line_lead: _l,
+      ...hit
+    } = row;
     return { ...hit, snippet: excerptOf(row) };
   });
 }

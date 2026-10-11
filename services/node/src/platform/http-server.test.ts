@@ -199,7 +199,10 @@ describe("createHttpServer", () => {
       },
     });
     const big = Buffer.alloc(65, 120);
-    expect((await raw(port, { method: "POST", path: "/", body: big })).status).toBe(413);
+    const refused = await raw(port, { method: "POST", path: "/", body: big });
+    expect(refused.status).toBe(413);
+    // The ceiling is named, so the person sending a file can be told the limit.
+    expect(JSON.parse(refused.text)).toEqual({ error: "request body too large", max_bytes: 64 });
     expect((await raw(port, { method: "POST", path: "/", body: big, chunked: true, headers: { "transfer-encoding": "chunked" } })).status).toBe(413);
     expect((await raw(port, { method: "POST", path: "/", body: Buffer.alloc(64, 120) })).status).toBe(200);
     expect(calls).toBe(1);

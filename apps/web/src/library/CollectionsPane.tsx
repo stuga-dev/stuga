@@ -19,7 +19,7 @@ import { Text, Heading } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Badge } from "@astryxdesign/core/Badge";
 import { Spinner } from "@astryxdesign/core/Spinner";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { Pencil, Trash2, Plus, Library } from "lucide-react";
 import { t } from "../i18n/i18n";
 
@@ -27,9 +27,11 @@ interface CollectionsPaneProps {
   /** From the URL, so the selection is linkable. */
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  /** False for a guest, who makes no collections: no New. */
+  canCreate?: boolean;
 }
 
-export function CollectionsPane({ selectedId, onSelect }: CollectionsPaneProps) {
+export function CollectionsPane({ selectedId, onSelect, canCreate = true }: CollectionsPaneProps) {
   const [collections, setCollections] = useState<CollectionSummary[] | null>(null);
   const [listFailed, setListFailed] = useState(false);
   const [items, setItems] = useState<CollectionItem[] | null>(null);
@@ -106,16 +108,18 @@ export function CollectionsPane({ selectedId, onSelect }: CollectionsPaneProps) 
         style={{ flexShrink: 0 }}
       >
         <div className="collections-page__master-inner">
-          <div className="collections-page__new">
-            <Button
-              label={t("library.collections.new")}
-              variant="secondary"
-              size="sm"
-              icon={<Plus size={15} />}
-              width="100%"
-              onClick={() => setCreating(true)}
-            />
-          </div>
+          {canCreate && (
+            <div className="collections-page__new">
+              <Button
+                label={t("library.collections.new")}
+                variant="secondary"
+                size="sm"
+                icon={<Plus size={15} />}
+                width="100%"
+                onClick={() => setCreating(true)}
+              />
+            </div>
+          )}
           <div className="collections-page__list">
             {listFailed ? (
               <div className="collections-page__center">
@@ -188,7 +192,7 @@ export function CollectionsPane({ selectedId, onSelect }: CollectionsPaneProps) 
                 }
                 icon={<Library size={28} />}
                 actions={
-                  collections.length ? undefined : (
+                  collections.length || !canCreate ? undefined : (
                     <Button label={t("library.collections.new")} variant="primary" size="sm" onClick={() => setCreating(true)} />
                   )
                 }

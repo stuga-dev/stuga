@@ -398,7 +398,7 @@ describe.skipIf(!URL)("local accounts", () => {
     ]);
     const made = results.filter((r) => r.ok);
     expect(made).toHaveLength(1);
-    expect(made[0]!.joined).toEqual({ workspaceId: "ws", role: "member" });
+    expect(made[0]!.joined).toEqual({ workspaceId: "ws", role: "member", invite: { role: "member", token_hint: null, note: null } });
     expect(results.filter((r) => !r.ok)).toEqual([
       { ok: false, reason: "invite_invalid" },
       { ok: false, reason: "invite_invalid" },
@@ -471,7 +471,7 @@ describe.skipIf(!URL)("accounts through the identity provider", () => {
     expect(made).toEqual({
       ok: true,
       account: { alias: "u1", username: "ada", password_hash: null, oidc_sub: "sub-1" },
-      joined: { workspaceId: "ws", role: "member" },
+      joined: { workspaceId: "ws", role: "member", invite: { role: "member", token_hint: null, note: null } },
       admin: false,
     });
     expect(await countAccounts(sql)).toBe(2);

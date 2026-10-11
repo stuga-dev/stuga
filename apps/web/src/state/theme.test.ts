@@ -62,4 +62,13 @@ describe("theme preference", () => {
     expect(painted()).toBe("dark");
     expect(getTheme()).toBe("dark");
   });
+
+  it("paints a phone browser's bar in the page's colour, following the theme", () => {
+    const meta = document.head.appendChild(Object.assign(document.createElement("meta"), { name: "theme-color" }));
+    setThemePreference("dark");
+    expect(meta.getAttribute("content")).toBe("#1b1b1b");
+    setThemePreference("light");
+    expect(meta.getAttribute("content")).toBe("#f1f1f1");
+    meta.remove();
+  });
 });

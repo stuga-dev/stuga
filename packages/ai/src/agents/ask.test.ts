@@ -43,6 +43,8 @@ describe("runAskAgentTurn", () => {
     expect(r.prose).toContain("$4.2M");
     expect(out.join("")).toBe(r.prose);
     expect(steps.map((s) => s.kind)).toEqual(["search", "read"]);
+    // The trace names where the passages came from, not only what was searched for.
+    expect(steps[0]).toEqual({ kind: "search", query: "target", hits: 1, titles: ["Doc"] });
     expect(r.citations).toHaveLength(1);
     expect(r.citations[0]).toMatchObject({ n: 1, doc_id: "d1", title: "Doc" });
   });
@@ -376,6 +378,8 @@ describe("workspace instructions", () => {
     await runAskAgentTurn(CFG, { ...BASE, workspaceInstructions: "Answer in bullet points." }, runnerWith(), { onChunk: () => {} });
     const system = systemOf();
     expect(system).toContain("search_documents(query)");
+    // The answer is about the question, never about what the library lacks.
+    expect(system).toContain("never describe your tools or searches, or what the library lacks");
     expect(system).toContain("<<<INSTRUCTIONS Workspace\nAnswer in bullet points.\nINSTRUCTIONS");
     expect(system).toMatch(/the user's request wins/);
     // Part of the cached prefix: the same on every round.

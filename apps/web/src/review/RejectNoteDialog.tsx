@@ -12,6 +12,7 @@ import { TextArea } from "@astryxdesign/core/TextArea";
 import { RUN_FEEDBACK_NOTE_MAX_CHARS } from "@stuga/protocol/domain/limits";
 import { isComposingKey } from "../lib/ime";
 import { t } from "../i18n/i18n";
+import { useFocusReturn } from "../ui/use-focus-return";
 
 /** The viewport box of the control that opened a floating composer. */
 export interface NoteAnchor {
@@ -165,6 +166,7 @@ function RequestChangesComposer({
 }
 
 function RejectNoteDialog({ request, onClose }: { request: RejectNoteRequest; onClose: () => void }) {
+  useFocusReturn();
   const [note, setNote] = useState("");
   const text = note.trim();
   const tooLong = text.length > RUN_FEEDBACK_NOTE_MAX_CHARS;

@@ -56,8 +56,8 @@ export interface ProposeRunInput {
 
 export type ProposeRunResult =
   | { mode: "noop" }
-  | { mode: "proposed"; run: AgentRunSummary; pending: number; parkedBehindPending?: boolean }
-  | { mode: "auto_applied"; run: AgentRunSummary; seq: number; applied: number }
+  | { mode: "proposed"; run: AgentRunSummary; pending: number; hunkIds: string[]; parkedBehindPending?: boolean }
+  | { mode: "auto_applied"; run: AgentRunSummary; seq: number; applied: number; hunkIds: string[] }
   | { mode: "error"; status: number; error: string; message?: string; count?: number };
 
 function appendHunks(body: RunBody, hunks: Array<{ old_string: string; new_string: string }>, review: ReviewMode): AgentRunHunk[] {
@@ -78,6 +78,8 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
   const { agentAlias, reviewer } = input;
   // The route checks the lock too; this copy holds if one lands between the two.
   if (store.locked) return { mode: "error", status: 423, error: "locked", message: "this document is locked" };
+  // The node refuses a trashed document first; this holds for a co-author turn that outlived the trashing.
+  if (store.trashed) return { mode: "error", status: 409, error: "trashed", message: "this document is in the trash" };
 
   // Every storage read happens before `current` is read, so nothing awaits between reading and committing.
   const open = await ledger.openRunFor(agentAlias, { closeIdle: true });
@@ -189,7 +191,10 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
   const agentName = input.agent || agentAlias;
   // Before any further storage await, so the fragment cannot shift after `current` was read.
   // A cited edit staged only the body, so its definitions are written here, as on accept.
-  if (commit) await store.commitMarkdown(ledger.commitTarget(plan!.markdown, { citations }), current, { agent: agentName }, "run-large");
+  if (commit) {
+    await store.commitMarkdown(ledger.commitTarget(plan!.markdown, { citations }), current, { agent: agentName }, "run-large");
+    await store.flushIfVersionDue("run");
+  }
 
   const now = Date.now();
   let stored = open?.stored;
@@ -244,6 +249,7 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
       mode: "proposed",
       run: ledger.summaryOf(stored, runBody),
       pending,
+      hunkIds: added.map((h) => h.id),
       // Said only when it contradicts the `auto` the agent read.
       parkedBehindPending: parkedBehindPending && input.review === "auto",
     };
@@ -258,6 +264,8 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
   if (input.notifyReviewer !== false) {
     await ledger.notify(stored, { eventType: "AGENT_EDITS_APPLIED" });
   }
+  // An open page shows the catch-up card now, not on its next load.
+  ledger.sendUpdated(stored, runBody);
   const applied = plan!.applied.size;
   ledger.emitEvent("run.applied", stored, agentActorOf(agentAlias), "agent", {
     review: input.review,
@@ -265,7 +273,7 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
     applied,
     conflicts: added.length - applied,
   });
-  return { mode: "auto_applied", run: ledger.summaryOf(stored, runBody), seq: store.seq, applied };
+  return { mode: "auto_applied", run: ledger.summaryOf(stored, runBody), seq: store.seq, applied, hunkIds: added.map((h) => h.id) };
 }
 
 /** A run's citations with a proposal's added under the numbers its markers landed as. */

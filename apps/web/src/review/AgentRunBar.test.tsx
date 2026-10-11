@@ -539,7 +539,7 @@ describe("AgentRunBar", () => {
           : { runs: [run({ source: "panel", agent: "AI co-author" })] };
       await mount();
       await fromRejectMenu("Revise all…");
-      expect(dialog()!.textContent).toContain("Revises when the current turn ends.");
+      expect(dialog()!.textContent).toContain("Revises when the current answer finishes.");
       await typeInto(dialog()?.querySelector("textarea"), "Again.");
       await click(dialogButton("Revise all")!);
       expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "reject", note: "Again." });

@@ -25,7 +25,7 @@ vi.mock("../agents/edits.js", () => ({
 }));
 
 const { runAskAgentTurn } = await import("@stuga/ai");
-const { getCollection, expandCollectionScope, getWorkspace, createAskThread, getAskThread, appendAskTurn, renameAskThread, deleteAskThread } =
+const { getCollection, expandCollectionScope, getWorkspace, createAskThread, getAskThread, appendAskTurn, renameAskThread, deleteAskThread, listAskTurns } =
   await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { AskToolRunner } from "@stuga/ai";
@@ -144,6 +144,18 @@ describe("a read-only key", () => {
     const asked = await send(readOnlyKey, "POST", "/api/ask", { question: "what launched?", thread_id: "ask_1" });
     expect(asked.status).toBe(200);
     expect(vi.mocked(appendAskTurn).mock.calls[0]![1]).toMatchObject({ threadId: "ask_1", question: "what launched?" });
+  });
+
+  it("says how each stored turn ended, so a stopped one can be offered again", async () => {
+    vi.mocked(listAskTurns).mockResolvedValue([
+      { thread_id: "ask_1", seq: 1, question: "q", answer: "", citations: [], steps: [], model: "m", rounds: 1, stop_reason: "aborted", input_tokens: 9, output_tokens: 0, created_at: "" },
+    ] as never);
+    const got = await send(readOnlyKey, "GET", "/api/ask/threads/ask_1");
+    const turn = (JSON.parse(got.text) as { turns: Record<string, unknown>[] }).turns[0]!;
+    expect(turn.stop_reason).toBe("aborted");
+    // Usage stays out of the conversation.
+    expect(turn).not.toHaveProperty("input_tokens");
+    expect(turn).not.toHaveProperty("model");
   });
 
   it("renames and deletes its own threads, and cannot reach anyone else's", async () => {

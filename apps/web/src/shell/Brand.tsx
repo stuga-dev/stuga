@@ -18,6 +18,16 @@ export function Brand() {
   );
 }
 
+/** The brand slot of a top bar: the mark and the node's name, which is not the page's heading. */
+export function BrandName() {
+  return (
+    <div className="brand">
+      <Brand />
+      <span className="brand__name">{nodeName()}</span>
+    </div>
+  );
+}
+
 /** What the brand slot, the tab and the sign-in pages call this node: the name set in Settings, else the product's. */
 export function nodeName(): string {
   return authConfig().nodeName || PRODUCT_NAME;

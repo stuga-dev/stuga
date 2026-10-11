@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@stuga/db", async (orig) => ({
   ...(await orig<typeof import("@stuga/db")>()),
   createDoc: vi.fn(),
+  addComment: vi.fn(),
   getDoc: vi.fn(async () => null),
   getFolder: vi.fn(async () => null),
   listFolders: vi.fn(async () => []),
@@ -38,7 +39,7 @@ vi.mock("@stuga/ai", async (orig) => ({
   embed: vi.fn(async () => ({ embeddings: [[0.1, 0.2]], inputTokens: 1 })),
 }));
 
-const { createDoc, getDoc, getFolder, getCollection, expandCollectionScope, listFolders, listWorkspacesForUser, resolveDocInstructions, searchDocs } =
+const { addComment, createDoc, getDoc, getFolder, getCollection, expandCollectionScope, listFolders, listWorkspacesForUser, resolveDocInstructions, searchDocs } =
   await import("@stuga/db");
 const { retrieveAndRerank } = await import("../retrieval/retrieve.js");
 const { proposeDocEdit } = await import("../agents/edits.js");
@@ -49,7 +50,7 @@ const { retrieve: restRetrieve, search: restSearch } = await import("../api/sear
 import { EMPTY_SCOPE_NOTE, RETRIEVE_SEMANTIC_OFF_MESSAGE } from "@stuga/agent-surface/render/search";
 import { NO_INSTRUCTIONS } from "@stuga/agent-surface/render/docs";
 import type { Ctx } from "../auth/context.js";
-import { agentCtx, fixed, nodeSettings, personCtx, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
+import { actorsAnswering, agentCtx, fixed, nodeSettings, personCtx, recordingJobs, type CtxOverrides } from "../testing/ctx.js";
 
 const mockCreateDoc = vi.mocked(createDoc);
 const mockGetDoc = vi.mocked(getDoc);
@@ -70,8 +71,12 @@ const FOLDER = {
 
 let ai = { chat: { enabled: true }, embed: { enabled: true, model: "embed-1" } };
 
+/** What the node asked a document's actor, by path. */
+const actorFetch = vi.fn(async (_url: string) => new Response(null, { status: 204 }));
+
 const env = () => ({
   jobs,
+  docs: actorsAnswering(actorFetch),
   aiSettings: { current: () => ai },
   embeddingDims: 2,
   searchLanguages: fixed([]),
@@ -221,7 +226,7 @@ describe("retrieve", () => {
 });
 
 describe("search", () => {
-  const HIT = { doc_id: "d1", title: "Handbook", doc_type: "prose" as const, page_of: null, page_row: null, snippet: "Expenses are filed", kw_rank: 3.2, sem_score: 0.8, score: 0.03 };
+  const HIT = { doc_id: "d1", title: "Handbook", doc_type: "prose" as const, page_of: null, page_row: null, updated_at: "2026-10-01T09:00:00.000Z", snippet: "Expenses are filed", kw_rank: 3.2, sem_score: 0.8, score: 0.03 };
 
   it("answers with REST's hits, each naming its workspace and link, without the per-workspace scores", async () => {
     vi.mocked(searchDocs).mockResolvedValue([HIT]);
@@ -360,5 +365,24 @@ describe("folders", () => {
     expect(JSON.parse(r.text)).toEqual({
       folders: [{ folder_id: "f1", parent_id: null, title: "Legal", owner: "user:carol", created_at: "t0", updated_at: "t1" }],
     });
+  });
+});
+
+describe("comments_add", () => {
+  it("tells the document's open pages, as a person's comment does", async () => {
+    mockGetDoc.mockResolvedValue({
+      doc_id: "d1",
+      workspace_id: "ws1",
+      owner: "user:human-1",
+      doc_type: "prose",
+      trashed: false,
+      acl_principals: ["user:human-1", "agent:agent-1"],
+      acl_writers: ["user:human-1", "agent:agent-1"],
+      acl_commenters: [],
+    } as never);
+    vi.mocked(addComment).mockResolvedValue({ num: 4, body: "Looks good" } as never);
+    const r = await callTool(ctxOf(), "comments_add", { doc_id: "d1", body: "Looks good" });
+    expect(r.isError).toBe(false);
+    expect(actorFetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(["/comments-changed"]);
   });
 });

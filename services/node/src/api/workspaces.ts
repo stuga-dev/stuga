@@ -14,6 +14,7 @@ import {
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
 import { ARCHIVE_WORK_MAX_MS, type DocAccessMode, isDocAccessMode } from "@stuga/protocol/domain/workspaces";
 import { ARCHIVE_MAX_BYTES, ArchiveError } from "../archive/format.js";
+import type { Changed, LeftOut } from "../archive/convert/build.js";
 import { type ArchiveContents, type ImportResult, ImportStepError, importWorkspaceArchive, readArchive } from "../archive/import.js";
 import { dropHeldImport, heldImport, holdImport } from "../archive/held.js";
 import { SampleDownloadError, sampleCatalog, sampleStepReplay } from "../archive/samples.js";
@@ -219,9 +220,14 @@ async function archiveOf(ctx: AccountCtx, bytes: Uint8Array): Promise<ArchiveCon
   }
 }
 
-/** How many files a converted export held that its archive does not carry, and the first of them. */
-function leftOutView(leftOut: readonly string[]): { left_out?: { count: number; files: string[] } } {
+/** How many files a converted export held that its archive does not carry, and the first of them, each with why. */
+function leftOutView(leftOut: readonly LeftOut[]): { left_out?: { count: number; files: LeftOut[] } } {
   return leftOut.length ? { left_out: { count: leftOut.length, files: leftOut.slice(0, LEFT_OUT_LISTED) } } : {};
+}
+
+/** What converting an export spelled differently: each kind, in how many places, and the first of them. */
+function changedView(changed: readonly Changed[]): { changed?: Array<{ kind: Changed["kind"]; count: number; where: string[] }> } {
+  return changed.length ? { changed: changed.map(({ kind, where }) => ({ kind, count: where.length, where: where.slice(0, LEFT_OUT_LISTED) })) } : {};
 }
 
 /**
@@ -296,13 +302,15 @@ async function workspaceFromArchive(
     {
       ...workspaceView({ ...current, role: "owner" }),
       ...(imported.startDocId ? { start_doc_id: imported.startDocId } : {}),
+      imported: imported.counts,
       ...leftOutView(contents.leftOut),
+      ...changedView(contents.changed),
     },
     { status: 201 },
   );
 }
 
-/** How many of the files a converted export leaves out an answer names; it counts them all. */
+/** How many of the files a converted export leaves out, or of the places a change happened in, an answer names; it counts them all. */
 const LEFT_OUT_LISTED = 200;
 
 export async function updateWorkspace({ ctx, req, match }: WorkspaceCall): Promise<Response> {

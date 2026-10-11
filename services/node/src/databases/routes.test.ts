@@ -169,6 +169,17 @@ describe("who gets through the data plane", () => {
     expect(actorCalls).toEqual([]);
     expect((await call(ctxOf(), "GET", "/api/databases/db1/schema")).status).toBe(200);
   });
+
+  it("lets a reject through on a locked database, and refuses an accept, as on a document", async () => {
+    mockGetDoc.mockResolvedValue({ ...DB_DOC, locked: true });
+    actorBody = { run: RUN, rejected: 1 };
+    const path = "/api/databases/db1/runs/run_abc123def456/decision";
+    expect((await call(ctxOf(), "POST", path, { decision: "accept" })).status).toBe(423);
+    expect(actorCalls).toEqual([]);
+    expect((await call(ctxOf(), "POST", path, { decision: "reject" })).status).toBe(200);
+    expect(actorCalls.map((c) => new URL(c.url).pathname)).toContain("/runs/decide");
+    expect((await call(viewer(), "POST", path, { decision: "reject" })).status).toBe(403);
+  });
 });
 
 /** A minimal run summary, as the actor's propose endpoint answers. */
@@ -237,6 +248,16 @@ describe("identity and side-effects riding along", () => {
     await call(ctxOf(), "POST", "/api/databases/db1/tables/t1/rows", { rows: [{ Name: "x" }] });
     expect(mockTouchDoc).toHaveBeenCalled();
     expect(jobsSend).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "notify" }));
+  });
+
+  it("an update refused for a conflict on every row bumps nothing and reports no change", async () => {
+    actorBody = { updated: 0, missing: [], conflicts: [{ _id: "r1" }] };
+    const res = await call(ctxOf(), "PATCH", "/api/databases/db1/tables/t1/rows", {
+      updates: [{ _id: "r1", values: { Name: "y" }, expect: { Name: "x" } }],
+    });
+    expect(res.status).toBe(200);
+    expect(mockTouchDoc).not.toHaveBeenCalled();
+    expect(jobsSend).not.toHaveBeenCalled();
   });
 
   it("a failed actor mutation bumps nothing and notifies nobody", async () => {
@@ -519,7 +540,8 @@ describe("row pages", () => {
     };
     const res = await call(ctxOf(), "POST", "/api/databases/db1/tables/t1/rows/delete", { row_ids: ["r1", "r2"] });
     expect(res.status).toBe(200);
-    expect(actorCalls.map((c) => new URL(c.url).pathname)).toEqual(["/rows/delete", "/doc-links/take"]);
+    // The trashed page's open editors are told.
+    expect(actorCalls.map((c) => new URL(c.url).pathname)).toEqual(["/rows/delete", "/doc-links/take", "/set-trashed"]);
     // page2 is locked and keeps its state.
     expect(mockUpdateDoc).toHaveBeenCalledTimes(1);
     expect(mockUpdateDoc).toHaveBeenCalledWith(expect.anything(), "page1", { trashed: true });
@@ -646,10 +668,35 @@ describe("row pages", () => {
     expect(actorCalls.filter((c) => c.url.includes("/doc-links/take"))).toHaveLength(0);
   });
 
-  it("a prose document's trash and restore touch no pages", async () => {
+  it("a prose document's trash and restore touch no pages, and tell its own editors", async () => {
     docsById({ page1: { ...PAGE } });
     await call(ctxOf(), "PATCH", "/api/docs/page1", { trashed: true });
     expect(mockListPagesOf).not.toHaveBeenCalled();
+    expect(actorCalls.map((c) => c.url)).toEqual(["http://actor/set-trashed?docId=page1&trashed=1"]);
+  });
+
+  /** updateDoc answering with the prose page, patched. */
+  const asPage = async (_sql: unknown, id: string, patch: Record<string, unknown>) => ({ ...PAGE, doc_id: id, ...patch });
+
+  it("a rename tells the open pages the new title and who chose it; a database's page re-reads it", async () => {
+    docsById({ page1: { ...PAGE } });
+    mockUpdateDoc.mockImplementationOnce(asPage);
+    await call(ctxOf(), "PATCH", "/api/docs/page1", { title: "Oven rota" });
+    const told = new URL(actorCalls.at(-1)!.url);
+    expect(told.pathname).toBe("/title-changed");
+    expect(Object.fromEntries(told.searchParams)).toEqual({ docId: "page1", title: "Oven rota", by: "Bob" });
+
+    actorCalls.length = 0;
+    await call(ctxOf(), "PATCH", "/api/docs/db1", { title: "Stock" });
+    // The first table follows the name before the open pages are told.
+    expect(actorCalls.map((c) => c.url)).toEqual(["http://actor/tables/follow-title?dbId=db1", "http://actor/state-changed?dbId=db1"]);
+  });
+
+  it("a move or a rename to the same title tells nobody about the title", async () => {
+    docsById({ page1: { ...PAGE } });
+    mockUpdateDoc.mockImplementationOnce(asPage).mockImplementationOnce(asPage);
+    await call(ctxOf(), "PATCH", "/api/docs/page1", { parent_id: null });
+    await call(ctxOf(), "PATCH", "/api/docs/page1", { title: "Task 11" });
     expect(actorCalls).toHaveLength(0);
   });
 });
@@ -703,12 +750,24 @@ describe("column descriptions", () => {
       { type: "number", description: "d" },
       { display: "Y", description: "d" },
       { type: "number", display: "Y", description: "d" },
+      { format: { style: "percent" }, description: "d" },
     ]) {
       const res = await call(ctxOf(), "PATCH", "/api/databases/db1/tables/t1/columns/c1", body);
       expect(res.status).toBe(400);
       expect(((await res.json()) as { error: string }).error).toContain("separate requests");
     }
     expect(actorCalls).toEqual([]);
+  });
+
+  it("sends a lone `format` to columns/set-format, and refuses it to an agent", async () => {
+    const res = await call(ctxOf(), "PATCH", "/api/databases/db1/tables/t1/columns/c1", { format: { style: "currency", currency: "EUR" } });
+    expect(res.status).toBe(200);
+    expect(actorCalls[0]!.url).toContain("/columns/set-format");
+    expect(actorCalls[0]!.body).toMatchObject({ table_id: "t1", column_id: "c1", format: { style: "currency", currency: "EUR" } });
+
+    const refused = await call(agent(), "PATCH", "/api/databases/db1/tables/t1/columns/c1", { format: null });
+    expect(refused.status).toBe(403);
+    expect(actorCalls).toHaveLength(1);
   });
 
   it("carries a description on a person's and an agent's add_column", async () => {
@@ -879,5 +938,60 @@ describe("many row pages at once", () => {
     expect(await openRowPages(ctxOf(), { ...DB_DOC, locked: true } as never, "t1", pages(2))).toMatchObject({ kind: "error", status: 423 });
     expect(mockCreateDoc).not.toHaveBeenCalled();
     expect(actorCalls).toEqual([]);
+  });
+});
+
+describe("a table's CSV download", () => {
+  const TABLE = {
+    table_id: "t1",
+    name: "orders",
+    display: "Orders: 2026",
+    position: 0,
+    row_count: 2,
+    views: [],
+    columns: [
+      { column_id: "c1", name: "item", display: "Item", type: "text", position: 0, options: null },
+      { column_id: "c2", name: "price", display: "Price", type: "number", position: 1, options: null },
+      { column_id: "c3", name: "paid", display: "Paid", type: "checkbox", position: 2, options: null },
+    ],
+  };
+
+  it("writes the rows the listing selects, in the columns asked for, as a spreadsheet opens them", async () => {
+    actorRoutes = {
+      "/schema": { body: { database_id: "db1", tables: [TABLE] } },
+      "/rows/export": { body: { rows: [{ _id: "r1", c1: "抹茶蛋糕", c2: 4.5, c3: 1 }, { _id: "r2", c1: "=1+1", c2: null, c3: 0 }], total: 2 } },
+    };
+    const filter = { column_id: "c3", op: "eq", value: 1 };
+    const res = await call(viewer(), "POST", "/api/databases/db1/tables/t1/rows/csv", { columns: ["c2", "c1", "gone"], search: "cake", filter });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/csv; charset=utf-8");
+    expect(res.headers.get("content-disposition")).toBe(`attachment; filename="Orders 2026.csv"; filename*=UTF-8''Orders%202026.csv`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect(Array.from(bytes.subarray(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
+    expect(new TextDecoder().decode(bytes.slice(3))).toBe("Price,Item\r\n4.5,抹茶蛋糕\r\n,\"'=1+1\"\r\n");
+    expect(actorCalls.find((c) => c.url.includes("/rows/export"))!.body).toMatchObject({ table_id: "t1", search: "cake", filter });
+  });
+
+  it("writes every column in order when none are named, and answers 404 for a table that is not there", async () => {
+    actorRoutes = {
+      "/schema": { body: { database_id: "db1", tables: [TABLE] } },
+      "/rows/export": { body: { rows: [{ _id: "r1", c1: "Bread", c2: 3, c3: 1 }], total: 1 } },
+    };
+    const res = await call(ctxOf(), "POST", "/api/databases/db1/tables/t1/rows/csv", {});
+    expect((await res.text()).replace(/^﻿/, "")).toBe("Item,Price,Paid\r\nBread,3,TRUE\r\n");
+    expect((await call(ctxOf(), "POST", "/api/databases/db1/tables/t9/rows/csv", {})).status).toBe(404);
+  });
+});
+
+describe("a new database's table follows the database's name", () => {
+  it("asks the actor to carry a rename over to the table, and only for a rename", async () => {
+    expect((await call(ctxOf(), "PATCH", "/api/docs/db1", { title: "  Shop  " })).status).toBe(200);
+    expect(actorCalls.filter((c) => c.url.includes("/tables/follow-title")).map((c) => c.body)).toEqual([
+      expect.objectContaining({ display: "Shop" }),
+    ]);
+    actorCalls.length = 0;
+    await call(ctxOf(), "PATCH", "/api/docs/db1", { locked: false, title: undefined });
+    await call(ctxOf(), "PATCH", "/api/docs/db1", { title: "Projects" });
+    expect(actorCalls.some((c) => c.url.includes("/tables/follow-title"))).toBe(false);
   });
 });

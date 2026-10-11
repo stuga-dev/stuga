@@ -27,8 +27,12 @@ export function getTheme(): Theme {
   return pref === "system" ? systemTheme() : pref;
 }
 
+/** The page's background in each theme, which a phone's browser paints its bar with. */
+const THEME_COLOR: Record<Theme, string> = { light: "#f1f1f1", dark: "#1b1b1b" };
+
 export function applyTheme(t: Theme = getTheme()): void {
   document.documentElement.setAttribute("data-theme", t);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLOR[t]);
 }
 
 export function setThemePreference(pref: ThemePreference): void {

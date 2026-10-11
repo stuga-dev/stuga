@@ -23,6 +23,8 @@
   "op.columnTypeChanged": "「{table}」の列「{column}」を{type}に変更（{coerced, plural, other {#個のセルを変換}}）",
   "op.columnDescribed": "「{table}」の列「{column}」に説明を追加",
   "op.columnDescriptionCleared": "「{table}」の列「{column}」の説明を削除",
+  "op.columnFormatChanged": "「{table}」の列「{column}」の数値の表示形式を変更",
+  "op.columnFormatCleared": "「{table}」の列「{column}」の数値の表示形式を解除",
   "op.columnDeleted": "「{table}」から列「{column}」を削除",
   "op.rowsInserted": "「{table}」に{rows, plural, other {#行}}を追加",
   "op.rowsImported": "「{table}」に{rows, plural, other {#行}}をインポート",

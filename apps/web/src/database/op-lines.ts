@@ -32,6 +32,8 @@ export function describeChange(d: DatabaseOpChangeDetail): string {
       return t("activity.op.columnTypeChanged", { table: d.table, column: d.column, type: columnTypeLabel(d.type), coerced: d.coerced });
     case "columns.set_description":
       return t(d.cleared ? "activity.op.columnDescriptionCleared" : "activity.op.columnDescribed", { table: d.table, column: d.column });
+    case "columns.set_format":
+      return t(d.cleared ? "activity.op.columnFormatCleared" : "activity.op.columnFormatChanged", { table: d.table, column: d.column });
     case "columns.delete":
       return t("activity.op.columnDeleted", { table: d.table, column: d.column });
     case "rows.insert":

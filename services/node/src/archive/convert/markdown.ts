@@ -2,16 +2,16 @@
  * A folder of Markdown files as a workspace: an Obsidian vault, or notes from any app that writes
  * Markdown files. Each folder with notes in it is a folder, each note a document titled by its
  * first-level heading, else its `title:` property, else its file name, and each other file a note
- * links to or embeds goes along with it. Obsidian's own syntax is
- * spelled as Stuga's Markdown: `[[links]]` and `![[embeds]]` resolved as Obsidian resolves them,
- * callouts as block quotes, `==highlights==` as bold, and `%%comments%%`, block ids and properties
- * left out.
+ * links to or embeds goes along with it. Its properties are a list under the title. Obsidian's own
+ * syntax is spelled as Stuga's Markdown: `[[links]]` and `![[embeds]]` resolved as Obsidian
+ * resolves them, callouts as block quotes, `==highlights==` as bold, and `%%comments%%` and block
+ * ids left out. What reads differently is noted in the conversion's changes.
  */
-import { stripFrontmatter } from "@stuga/protocol/text/markdown-import";
-import type { Conversion, DocEntry, Entry, FolderEntry, Resolved } from "./build.js";
+import { frontmatterList, stripFrontmatter } from "@stuga/protocol/text/markdown-import";
+import { Changes, type Conversion, type DocEntry, type Entry, type FolderEntry, type LeftOutReason, type Resolved } from "./build.js";
 import type { Source } from "./source.js";
-import { IMAGE_FILE, dirname, readText, sourceHref, sourceTarget, withinSource } from "./files.js";
-import { escapeText, headingLine, mapOutsideCodeSpans, mapProse, taskBox } from "./text.js";
+import { IMAGE_FILE, dirname, readText, sourceHref, sourceTarget, unreadText, withinSource } from "./files.js";
+import { escapeText, mapOutsideCodeSpans, mapProse } from "./text.js";
 
 const NOTE = /\.(md|markdown)$/i;
 
@@ -68,16 +68,23 @@ const CALLOUT = /^(\s*(?:>\s*)+)\[!([A-Za-z0-9_-]+)\][+-]?\s*(.*)$/;
 /** A Markdown image's size, which Obsidian reads from its text: `![Chart|300](chart.png)`. */
 const IMAGE_SIZE = /(!\[[^\]|]*)\|\d+(?:x\d+)?\]\(/g;
 const EXCALIDRAW = /^---\n(?:(?!---).*\n)*?excalidraw-plugin:/;
+/** Obsidian's math, which Stuga keeps as the text it is written in: `$$E=mc^2$$`, or `$x$` hugging its text. */
+const MATH = /\$\$[^$]+\$\$|\$(?=[^\s$])[^$\n]*[^\s$]\$(?!\d)/;
 
-/** The vault's Markdown as Stuga's: see the module comment. */
-export function vaultMarkdown(markdown: string, from: string, index: VaultIndex): string {
+/** The vault's Markdown as Stuga's: see the module comment. What reads differently is noted in `changes`. */
+export function vaultMarkdown(markdown: string, from: string, index: VaultIndex, changes = new Changes()): string {
   let inComment = false;
-  const inline = (part: string): string =>
-    part
+  const inline = (part: string): string => {
+    if (MATH.test(part)) changes.note("math", from);
+    return part
       .replace(COMMENT, "")
-      .replace(WIKILINK, (_, bang: string, inner: string) => wikilink(bang === "!", inner, from, index))
-      .replace(HIGHLIGHT, "**$1**")
+      .replace(WIKILINK, (_, bang: string, inner: string) => wikilink(bang === "!", inner, from, index, changes))
+      .replace(HIGHLIGHT, (_, text: string) => {
+        changes.note("highlight", from);
+        return `**${text}**`;
+      })
       .replace(IMAGE_SIZE, "$1](");
+  };
   return mapProse(markdown, (line) => {
     // A comment may span lines: `%%` opens one that runs to the next `%%`.
     if (inComment) {
@@ -99,12 +106,12 @@ export function vaultMarkdown(markdown: string, from: string, index: VaultIndex)
       const [, quote, kind, title] = callout;
       line = `${quote}**${title ? title : escapeText(kind![0]!.toUpperCase() + kind!.slice(1).toLowerCase())}**\n${quote!.trimEnd()}`;
     }
-    return mapOutsideCodeSpans(taskBox(line).replace(BLOCK_ID, ""), inline);
+    return mapOutsideCodeSpans(line.replace(BLOCK_ID, ""), inline);
   });
 }
 
 /** A wikilink or embed as a Markdown link or image to the file it resolves to, or its text when it resolves to none. */
-function wikilink(embed: boolean, inner: string, from: string, index: VaultIndex): string {
+function wikilink(embed: boolean, inner: string, from: string, index: VaultIndex, changes: Changes): string {
   const bar = inner.search(/\\?\|/);
   const target = (bar < 0 ? inner : inner.slice(0, bar)).trim();
   const alias = bar < 0 ? null : inner.slice(bar).replace(/^\\?\|/, "").trim();
@@ -116,19 +123,33 @@ function wikilink(embed: boolean, inner: string, from: string, index: VaultIndex
   // An image's alias is a size, as `![[chart.png|300]]`.
   const label = alias && !(isImage && /^\d+(x\d+)?$/.test(alias)) ? alias : heading ? `${path} > ${heading}` : path || heading;
   if (found && isImage && embed) return `![${escapeText(label === path ? "" : label)}](${sourceHref(found)})`;
+  if (!found) {
+    changes.note(embed && path !== "" && IMAGE_FILE.test(path) ? "missing_image" : "unresolved_link", from);
+    return escapeText(label);
+  }
+  if (embed && NOTE.test(found)) changes.note("embedded_note", from);
+  if (heading && NOTE.test(found)) changes.note("heading_link", from);
   // A note, or any other file, which goes along with the note.
-  if (found) return `[${escapeText(label)}](${sourceHref(found)})`;
-  return escapeText(label);
+  return `[${escapeText(label)}](${sourceHref(found)})`;
 }
 
-/** The title of a note and its body with that title as its first line. */
-export function titled(markdown: string, fileName: string): { title: string; markdown: string } {
-  const { body, title: property } = stripFrontmatter(markdown);
+/**
+ * The title of a note and its body, its properties a list under its first-level heading, or at its
+ * top when it has none: then the title is the `title` property or the file's name, and the body
+ * gains no heading.
+ */
+export function titled(markdown: string, fileName: string, key = fileName, changes = new Changes()): { title: string; markdown: string } {
+  const { body, title: property, properties } = stripFrontmatter(markdown);
   const text = body.replace(/^\s*\n/, "");
-  const heading = /^# +(.+?)(?: +#+)? *$/.exec(text.split("\n", 1)[0]!);
-  if (heading) return { title: heading[1]!.trim(), markdown: text };
-  const title = property?.trim() || fileName;
-  return { title, markdown: text.trim() ? `${headingLine(title)}\n\n${text}` : headingLine(title) };
+  const [first = "", ...rest] = text.split("\n");
+  const heading = /^# +(.+?)(?: +#+)? *$/.exec(first);
+  const title = heading ? heading[1]!.trim() : property?.trim() || fileName;
+  const list = frontmatterList(properties, title);
+  if (list) changes.note("front_matter", key);
+  if (heading && property?.trim() && property.trim() !== title) changes.note("title_differs", key);
+  if (!list) return { title, markdown: text };
+  if (!heading) return { title, markdown: text.trim() ? `${list}\n\n${text}` : list };
+  return { title, markdown: [first, list, rest.join("\n").replace(/^\s*\n/, "")].filter((part) => part.trim() !== "").join("\n\n") };
 }
 
 /** Whether `source` is a folder of Markdown notes. */
@@ -139,6 +160,8 @@ export function isVault(source: Source): boolean {
 export async function convertVault(source: Source): Promise<Conversion> {
   const index = new VaultIndex(source.files.keys());
   const consumed = new Set<string>();
+  const skipped = new Map<string, LeftOutReason>();
+  const changes = new Changes();
   const root: FolderEntry = { kind: "folder", title: "", children: [] };
   const folders = new Map<string, FolderEntry>([["", root]]);
   const folderOf = (dir: string): FolderEntry => {
@@ -154,11 +177,18 @@ export async function convertVault(source: Source): Promise<Conversion> {
   for (const file of [...source.files.values()].sort((a, b) => a.path.localeCompare(b.path))) {
     if (!NOTE.test(file.path)) continue;
     const text = await readText(file);
+    if (text === null) {
+      skipped.set(file.path, unreadText(file));
+      continue;
+    }
     // A drawing the Excalidraw plugin keeps as a note holds its drawing as data, not text.
-    if (text === null || EXCALIDRAW.test(text)) continue;
+    if (EXCALIDRAW.test(text)) {
+      skipped.set(file.path, { reason: "not_kept" });
+      continue;
+    }
     consumed.add(file.path);
-    const note = titled(text, file.path.slice(file.path.lastIndexOf("/") + 1).replace(NOTE, ""));
-    const doc: DocEntry = { kind: "doc", key: file.path, title: note.title, markdown: vaultMarkdown(note.markdown, file.path, index) };
+    const note = titled(text, file.path.slice(file.path.lastIndexOf("/") + 1).replace(NOTE, ""), file.path, changes);
+    const doc: DocEntry = { kind: "doc", key: file.path, title: note.title, markdown: vaultMarkdown(note.markdown, file.path, index, changes) };
     folderOf(dirname(file.path)).children.push(doc);
   }
 
@@ -172,7 +202,7 @@ export async function convertVault(source: Source): Promise<Conversion> {
     return { file: found };
   };
 
-  return { name: source.name ?? "Notes", entries: prune(root.children), resolve, consumed };
+  return { name: source.name ?? "Notes", entries: prune(root.children), resolve, consumed, skipped, changes };
 }
 
 /** `entries` less every folder that holds no document. */

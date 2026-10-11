@@ -27,9 +27,10 @@ export interface RunNotice {
    * `conflict`: refused because the content moved, and gone. `blocked`: waits
    * on an earlier item of its run and is still pending. `accepted`: landed and
    * can be reverted through `runId`. `decided`: `itemIds` of `runId` were just
-   * decided, and the decision can be undone. `undone`: that decision was undone.
+   * decided, and the decision can be undone. `undone`: that decision was undone. `noted`: a
+   * rejection with a note, which goes to the agent at once and so has no Undo.
    */
-  kind: "conflict" | "blocked" | "error" | "accepted" | "decided" | "undone";
+  kind: "conflict" | "blocked" | "error" | "accepted" | "decided" | "undone" | "noted";
   message: string;
   runId?: string;
   itemIds?: string[];
@@ -170,7 +171,10 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
         }
         hooks.current.onDecided?.(res, runId, decision, notify);
         // A rejection with a note goes to the agent at once, so only a plain decision offers Undo.
-        if (apiRef.current.undo && !note) {
+        if (note) {
+          const n = shape.items(res.run).filter((i) => targets.includes(i.id) && i.status === "rejected").length;
+          if (n > 0) notify("noted", t("review.notice.rejectedWithNote", { count: n, agent: runAgentLabel(res.run) }), runId);
+        } else if (apiRef.current.undo) {
           const landed = new Set(targets);
           const done = shape.items(res.run).filter((i) => landed.has(i.id) && i.status === (decision === "accept" ? "accepted" : "rejected"));
           if (done.length > 0) {

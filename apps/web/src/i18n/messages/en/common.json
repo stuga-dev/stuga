@@ -1,8 +1,10 @@
 {
   "cancel": "Cancel",
+  "back": "Back",
   "save": "Save",
   "close": "Close",
   "done": "Done",
+  "advanced": "Advanced",
   "retry": "Retry",
   "loading": "Loading…",
   "remove": "Remove",
@@ -39,5 +41,6 @@
   "notifications": "Notifications",
   "actionsFor": "Actions for {name}",
   "tooLong": "Too long: {count, number} characters, and the limit is {limit, number}.",
-  "savedLive": "Saved — live now, no restart."
+  "savedLive": "Saved — live now, no restart.",
+  "foundByMeaning": "Found by meaning"
 }

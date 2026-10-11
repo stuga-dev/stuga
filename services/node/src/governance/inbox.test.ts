@@ -196,6 +196,34 @@ describe("the inbox and statistics", () => {
     expect(out.json).toMatchObject({ runs: [], filter: "open" });
     expect((await call(humanCtx(), "GET", "/api/agents/stats")).status).toBe(200);
   });
+  it("says which runs the caller may decide: their own, or any on a document they manage", async () => {
+    const { listAgentRuns } = await import("@stuga/db");
+    const row = (run_id: string, reviewer: string, doc_owner: string, doc_writable = true) => ({
+      run_id,
+      reviewer,
+      doc_owner,
+      doc_writable,
+      agent_alias: "a1",
+      agent: "Claude",
+    });
+    vi.mocked(listAgentRuns).mockResolvedValueOnce([
+      row("mine", "human-1", "user:someone"),
+      row("owned", "someone", "user:human-1"),
+      row("theirs", "someone", "user:someone"),
+      // Deciding needs write access, as the decision routes ask.
+      row("view-only", "human-1", "user:someone", false),
+    ] as never);
+    const out = await call(humanCtx(), "GET", "/api/runs");
+    const runs = (out.json as { runs: Array<Record<string, unknown>> }).runs;
+    expect(runs.map((r) => [r.run_id, r.can_decide])).toEqual([
+      ["mine", true],
+      ["owned", true],
+      ["theirs", false],
+      ["view-only", false],
+    ]);
+    // The owner principal and the write check stay on the node.
+    expect(runs.every((r) => !("doc_owner" in r) && !("doc_writable" in r))).toBe(true);
+  });
   it("pages below a cursor spelled as an ISO instant, and refuses a half or unparseable cursor", async () => {
     const { listAgentRuns } = await import("@stuga/db");
     const paged = await call(humanCtx(), "GET", "/api/runs?before_at=2026-09-01T10:00:00%2B02:00&before_id=run_9");

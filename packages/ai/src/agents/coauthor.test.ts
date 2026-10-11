@@ -303,7 +303,7 @@ describe("runAgentTurn", () => {
     const secondBody = JSON.parse((vi.mocked(fetch).mock.calls[1]![1] as RequestInit).body as string);
     const lastMsg = secondBody.messages[secondBody.messages.length - 1];
     expect(lastMsg.role).toBe("user");
-    expect(JSON.stringify(lastMsg.content)).toContain("did not stage it");
+    expect(JSON.stringify(lastMsg.content)).toContain("did not propose it");
   });
 
   it("does NOT nudge on a pure-answer turn (no edit intent → no extra round)", async () => {
@@ -997,7 +997,7 @@ describe("another document's instructions", () => {
 
     // Once per document per turn: the next read is the text alone, and so is the edit's result.
     expect(lastToolResult(2)).toBe("Clause 1. Terms.");
-    expect(lastToolResult(3)).toBe("ok: edit staged for the user's review.");
+    expect(lastToolResult(3)).toBe("ok: edit proposed for the user's review.");
     // The note never enters the working copy an edit matches against.
     expect(r.docEdits[0]!.strEdits).toEqual([{ old_string: "Clause 1.", new_string: "Clause 1 (mutual)." }]);
     expect(r.docEdits[0]!.baselineMarkdown).toBe("Clause 1. Terms.");
@@ -1012,9 +1012,9 @@ describe("another document's instructions", () => {
     const r = await runAgentTurn(CFG, INPUT, runnerWith([WORKSPACE, LEGAL, NDA]), () => {});
 
     const first = lastToolResult(1);
-    expect(first.startsWith("ok: insertion staged at the end of the document for the user's review.\n\n<<<NOTE about document \"NDA\"")).toBe(true);
+    expect(first.startsWith("ok: insertion proposed at the end of the document for the user's review.\n\n<<<NOTE about document \"NDA\"")).toBe(true);
     expect([...first.matchAll(/^<<<INSTRUCTIONS (.*)$/gm)].map((m) => m[1])).toEqual(['Folder "Legal"', 'Document "NDA"']);
-    expect(lastToolResult(2)).toBe("ok: insertion staged at the end of the document for the user's review.");
+    expect(lastToolResult(2)).toBe("ok: insertion proposed at the end of the document for the user's review.");
     expect(r.docEdits[0]!.strEdits.map((e) => e.new_string).join("")).not.toContain("NOTE");
   });
 
@@ -1099,7 +1099,11 @@ describe("a document set to apply agent changes at once", () => {
     mockRounds(rounds());
     await runAgentTurn(CFG, base, NOOP_RUNNER, () => {});
     expect(systemAt(0)).toContain("they are NOT applied until the\nuser accepts");
-    expect(lastMessageAt(1)).toContain("ok: edit staged for the user's review.");
+    // The model never claims a suggestion landed, and leaves the count to the app.
+    expect(systemAt(0)).toContain("never\nthat you added, changed or staged them");
+    expect(systemAt(0)).toContain("Do not state how many edits you made");
+    expect(systemAt(0)).toContain("never mention Markdown");
+    expect(lastMessageAt(1)).toContain("ok: edit proposed for the user's review.");
   });
 
   it("tells the model its edits to this document land when the turn ends", async () => {
@@ -1107,7 +1111,7 @@ describe("a document set to apply agent changes at once", () => {
     await runAgentTurn(CFG, { ...base, applyAtOnce: true }, NOOP_RUNNER, () => {});
     expect(systemAt(0)).toContain("Edits to the current document apply when your turn ends");
     expect(systemAt(0)).not.toContain("NOT applied until");
-    expect(lastMessageAt(1)).toContain("ok: edit staged; it applies when your turn ends.");
+    expect(lastMessageAt(1)).toContain("ok: edit made; it applies when your turn ends.");
   });
 });
 
@@ -1197,7 +1201,7 @@ describe("a revise turn stays inside the rejected passages", () => {
     mockRounds([toolRound("insert_text", { text: "## Summary\n\nShort.", before: "# Notes" }), textRound("Moved it to the top.")]);
     const viaInsert = await runAgentTurn(CFG, input(appended), NOOP_RUNNER, () => {});
     expect(viaInsert.strEdits).toEqual([{ old_string: "# Notes", new_string: "## Summary\n\nShort.\n\n# Notes" }]);
-    expect(lastToolResult(1)).toBe('ok: insertion staged before "# Notes" for the user\'s review.');
+    expect(lastToolResult(1)).toBe('ok: insertion proposed before "# Notes" for the user\'s review.');
 
     mockRounds([toolRound("str_replace", { old_string: "# Notes", new_string: "## Summary\n\nShort.\n\n# Notes" }), textRound("Moved.")]);
     const viaReplace = await runAgentTurn(CFG, input(appended), NOOP_RUNNER, () => {});

@@ -213,21 +213,21 @@ export async function deleteFolderCascade(
   sql: Sql,
   folderId: string,
   workspaceId: string,
-): Promise<{ folderIds: string[]; trashedDocIds: string[] }> {
+): Promise<{ folderIds: string[]; trashedDocIds: string[]; trashedDocs: Array<{ doc_id: string; doc_type: "prose" | "database" }> }> {
   return sql.begin(async (tx) => {
     const folderIds = await getFolderSubtreeIds(tx, folderId, workspaceId);
-    if (folderIds.length === 0) return { folderIds: [], trashedDocIds: [] };
+    if (folderIds.length === 0) return { folderIds: [], trashedDocIds: [], trashedDocs: [] };
 
     // Before the folders go: parent_id is what finds these documents.
-    const trashed = await tx<{ doc_id: string }[]>`
+    const trashed = await tx<{ doc_id: string; doc_type: "prose" | "database" }[]>`
       UPDATE docs
       SET trashed = TRUE, trashed_at = now(), updated_at = now()
       WHERE parent_id = ANY(${folderIds}) AND workspace_id = ${workspaceId}
         AND trashed = FALSE AND locked = FALSE
-      RETURNING doc_id`;
+      RETURNING doc_id, doc_type`;
 
     await tx`DELETE FROM folders WHERE folder_id = ANY(${folderIds}) AND workspace_id = ${workspaceId}`;
 
-    return { folderIds, trashedDocIds: trashed.map((r) => r.doc_id) };
+    return { folderIds, trashedDocIds: trashed.map((r) => r.doc_id), trashedDocs: trashed.map(({ doc_id, doc_type }) => ({ doc_id, doc_type })) };
   });
 }

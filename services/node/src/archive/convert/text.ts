@@ -54,17 +54,7 @@ export function mapOutsideCodeSpans(text: string, rewrite: (part: string) => str
   return out + rewrite(text.slice(from));
 }
 
-/** A list item's task box, which Stuga has no node for, as a character that reads the same: `- [x] Done` → `- ☑ Done`. */
-const TASK = /^(\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]\s+/;
-
-export function taskBox(line: string): string {
-  return line.replace(TASK, (_, lead: string, mark: string) => `${lead}${mark === " " ? "☐" : "☑"} `);
-}
-
 /** `text` as Markdown that reads as that text: every character CommonMark could take as syntax escaped. */
 export function escapeText(text: string): string {
   return text.replace(/[\\`*_[\]<>#!|~]/g, "\\$&");
 }
-
-/** A heading line that shows `title`. */
-export const headingLine = (title: string): string => `# ${escapeText(title.replace(/\s+/g, " ").trim())}`;

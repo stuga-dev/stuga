@@ -15,7 +15,8 @@ vi.mock("../database/model/row-ref", async (orig) => ({
   ...(await orig<typeof import("../database/model/row-ref")>()),
   usePageParents: () => undefined,
 }));
-vi.mock("../lib/use-element-width", () => ({ useElementWidth: () => ({ ref: () => {}, width: 900 }) }));
+const wrapWidth = vi.hoisted(() => ({ value: 900 }));
+vi.mock("../lib/use-element-width", () => ({ useElementWidth: () => ({ ref: () => {}, width: wrapWidth.value }) }));
 
 const { DocTable } = await import("./DocTable");
 type DocTableProps = Parameters<typeof DocTable>[0];
@@ -190,5 +191,62 @@ describe("document library row interaction", () => {
     await click(1);
     expect(onSelect).toHaveBeenCalledWith([row.id], row);
     expect(onOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe("folder rows", () => {
+  const folder: LibraryRow = { ...row, id: "f_1", kind: "folder", title: "Recipes" };
+
+  it("opens a folder from its name with one click, as a document's name does", async () => {
+    await render({ rows: [folder], folderHref: (id) => `/?folder=${id}` });
+    const link = host.querySelector<HTMLAnchorElement>('a[href="/?folder=f_1"]')!;
+    expect(link.textContent).toBe("Recipes");
+    await act(async () => link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 })));
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith(folder);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe("right-click", () => {
+  async function rightClick(el: Element) {
+    let followed = true;
+    await act(async () => {
+      followed = el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+    });
+    return followed;
+  }
+
+  it("opens the row's ⋯ menu in place of the browser's", async () => {
+    await renderWithControls();
+    expect(await rightClick(firstRow().querySelector("td")!)).toBe(false);
+    expect(menuButton().getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("leaves the browser's menu on a name, for opening it in a new tab", async () => {
+    await renderWithControls();
+    expect(await rightClick(nameLink())).toBe(true);
+    expect(menuButton().getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+describe("row buttons", () => {
+  it("shows each action as a button on the row, outside the row's own click", async () => {
+    const onRestore = vi.fn();
+    await render({ columns: ["name", "buttons"], rowButtons: () => [{ label: "Restore", onClick: onRestore }] });
+    const restore = [...firstRow().querySelectorAll("button")].find((b) => b.textContent === "Restore")!;
+    await act(async () => restore.click());
+    expect(onRestore).toHaveBeenCalledOnce();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("puts them behind the ⋯ menu on a phone, where a row has no room for them", async () => {
+    wrapWidth.value = 390;
+    try {
+      await render({ columns: ["name", "buttons"], rowButtons: () => [{ label: "Restore", onClick: () => {} }] });
+      expect([...firstRow().querySelectorAll("button")].some((b) => b.textContent === "Restore")).toBe(false);
+      expect(menuButton()).toBeTruthy();
+    } finally {
+      wrapWidth.value = 900;
+    }
   });
 });

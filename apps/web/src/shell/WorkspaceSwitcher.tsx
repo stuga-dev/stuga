@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DropdownMenu, type DropdownMenuOption } from "@astryxdesign/core/DropdownMenu";
 import { PanelsTopLeft, Plus, Check, Server, ServerPlus, Settings2 } from "lucide-react";
 import { OtherNodes, Workspaces, onWorkspaceListChanged, type CreatedWorkspace, type OtherNode, type WorkspaceInfo } from "../api";
-import { getActiveWorkspace, setActiveWorkspace } from "../lib/session/workspace-pointer";
+import { getActiveWorkspace, setActiveWorkspace, workspaceName } from "../lib/session/workspace-pointer";
 import { nodeLabel } from "./Brand";
 import { CreateWorkspaceDialog } from "./CreateWorkspaceDialog";
 import { OtherNodesDialog } from "./OtherNodesDialog";
@@ -74,7 +74,8 @@ export function WorkspaceSwitcher() {
   }, []);
 
   const activeWs = workspaces.find((w) => w.workspace_id === active);
-  const activeName = activeWs?.name ?? t("shell.switcher.workspace");
+  // Offline the list does not load: the name last seen still says where the person is.
+  const activeName = activeWs?.name ?? (active ? workspaceName(active) : null) ?? t("shell.switcher.workspace");
 
   function switchTo(workspaceId: string) {
     if (workspaceId === active) return;

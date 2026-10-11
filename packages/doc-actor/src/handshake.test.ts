@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import type { WriteRejectedPayload } from "@stuga/protocol/wire/doc-socket";
 import { decodeJson, encodeBinary } from "@stuga/protocol/wire/frame";
-import { Opcode } from "@stuga/protocol/wire/opcodes";
+import { CloseCode, Opcode, TEXT_SCHEMA_VERSION } from "@stuga/protocol/wire/opcodes";
+import { serverSocketOf } from "@stuga/runtime";
 import { connectActor } from "@stuga/runtime/testing";
 import type { DocActor } from "./doc-actor.js";
 import { addsNothing } from "./sync/gates.js";
@@ -74,6 +75,29 @@ describe("/connect", () => {
     ) as Record<string, string | string[]>;
     await expect(connectActor(actor, h.state, sent)).rejects.toThrow(/400/);
     expect(h.state.getWebSockets()).toEqual([]);
+  });
+
+  it("closes a page older than the text with DOC_RESET before it sends a frame, so it reloads first", async () => {
+    const h = harness();
+    const actor = makeActor(h);
+    for (const editorSchema of ["0", String(TEXT_SCHEMA_VERSION - 1)]) {
+      const url = new URL("http://actor/connect");
+      for (const [k, v] of Object.entries({ ...params, editorSchema })) for (const one of [v].flat()) url.searchParams.append(k, one);
+      const res = await actor.fetch(new Request(url, { headers: { upgrade: "websocket" } }));
+      const ws = serverSocketOf(res);
+      expect(ws.closed?.code).toBe(CloseCode.DOC_RESET);
+      expect(ws.sent).toEqual([]);
+    }
+  });
+
+  it("syncs a page as new as the text, and a socket no page opened", async () => {
+    const h = harness();
+    const actor = makeActor(h);
+    for (const extra of [{ editorSchema: String(TEXT_SCHEMA_VERSION) }, {}] as Record<string, string>[]) {
+      const ws = await connectActor(actor, h.state, { ...params, ...extra });
+      expect(ws.closed).toBeNull();
+      expect(ws.has(Opcode.DOCUMENT_EPOCH)).toBe(true);
+    }
   });
 
   it("refuses a request that does not name the document", async () => {

@@ -71,6 +71,8 @@ export async function getAskThreadRoute({ ctx, match }: WorkspaceCall): Promise<
     answer: t.answer,
     citations: t.citations,
     steps: t.steps,
+    // A turn cut short (Stop, or the page left mid-answer) says so when it is reopened.
+    stop_reason: t.stop_reason as AskStopReason,
     created_at: t.created_at,
   }));
   return json({ thread, turns });

@@ -14,9 +14,54 @@ const WORD_DIFF_MAX_TOKENS = 1500;
  */
 const REWRITE_BELOW_SHARED = 1 / 3;
 
+/**
+ * A fragmented diff (many changed runs, or one every few words) reads as a rewrite while fewer than
+ * this share of the block's words stay: a translation or a rephrase keeps names and small words, and
+ * striking around them leaves "~~Wednesday:~~Onsdag: Ben ~~opens,~~öppnar".
+ */
+const FRAGMENTED_REWRITE_BELOW_SHARED = 0.65;
+const FRAGMENTED_RUNS = 3;
+/** One changed run per this many words or fewer counts as fragmented. */
+const FRAGMENTED_WORDS_PER_RUN = 5;
+
 /** Split into tokens that alternate non-space / space runs, so joining round-trips. */
 function tokenize(s: string): string[] {
   return s.match(/\s+|\S+/g) ?? [];
+}
+
+const isSpace = (t: string) => !/\S/.test(t);
+const wordCount = (ts: readonly string[]) => ts.filter((t) => !isSpace(t)).length;
+
+type Run = { type: "eq"; text: string } | { type: "change"; del: string; ins: string };
+
+/**
+ * Token ops grouped into equal runs and changed runs (each one deletion then one insertion). A space
+ * kept between two changes joins them, so the words of one rephrased stretch are struck together and
+ * the new words follow, instead of alternating word by word.
+ */
+function groupRuns(ops: readonly WordOp[]): Run[] {
+  const runs: Run[] = [];
+  const change = (): Extract<Run, { type: "change" }> => {
+    const last = runs[runs.length - 1];
+    if (last?.type === "change") return last;
+    const fresh: Run = { type: "change", del: "", ins: "" };
+    runs.push(fresh);
+    return fresh;
+  };
+  ops.forEach((op, i) => {
+    if (op.type === "del") change().del += op.text;
+    else if (op.type === "ins") change().ins += op.text;
+    else if (isSpace(op.text) && runs[runs.length - 1]?.type === "change" && ops[i + 1] && ops[i + 1]!.type !== "eq") {
+      const c = change();
+      c.del += op.text;
+      c.ins += op.text;
+    } else {
+      const last = runs[runs.length - 1];
+      if (last?.type === "eq") last.text += op.text;
+      else runs.push({ type: "eq", text: op.text });
+    }
+  });
+  return runs;
 }
 
 export function wordDiff(oldText: string, newText: string): WordOp[] {
@@ -78,13 +123,26 @@ export function wordDiff(oldText: string, newText: string): WordOp[] {
     }
     while (i < n) add("del", midA[i++]!);
     while (j < m) add("ins", midB[j++]!);
-    const words = (ts: string[]) => ts.filter((t) => /\S/.test(t)).length;
-    const shared = middle.filter((o) => o.type === "eq" && /\S/.test(o.text)).length;
-    if (shared < REWRITE_BELOW_SHARED * Math.max(words(midA), words(midB))) {
+    const shared = middle.filter((o) => o.type === "eq" && !isSpace(o.text)).length;
+    const runs = groupRuns(middle);
+    const changed = runs.filter((r) => r.type === "change").length;
+    const blockWords = Math.max(wordCount(a), wordCount(b));
+    const keptWords = shared + wordCount(a.slice(0, lo)) + wordCount(a.slice(hiA));
+    const fragmented = changed >= FRAGMENTED_RUNS || changed * FRAGMENTED_WORDS_PER_RUN > blockWords;
+    if (
+      shared < REWRITE_BELOW_SHARED * Math.max(wordCount(midA), wordCount(midB)) ||
+      (fragmented && keptWords < FRAGMENTED_REWRITE_BELOW_SHARED * blockWords)
+    ) {
       push("del", midA.join(""));
       push("ins", midB.join(""));
     } else {
-      for (const o of middle) push(o.type, o.text);
+      for (const r of runs) {
+        if (r.type === "eq") push("eq", r.text);
+        else {
+          push("del", r.del);
+          push("ins", r.ins);
+        }
+      }
     }
   }
 

@@ -351,9 +351,11 @@ describe("workspace export", () => {
     expect([...archive.files.keys()].sort()).toEqual([
       "Plans/Plan (2).md",
       "Plans/Plan.md",
+      "Plans/Tasks/Tasks.csv",
       "Plans/Tasks/Tasks.jsonl",
       "Plans/Tasks/pages/row_a1.md",
       "Plans/Write again.md",
+      "README.md",
       "Welcome.md",
       `media/${PNG_HASH}.png`,
       "stuga.json",
@@ -374,6 +376,19 @@ describe("workspace export", () => {
     expect(start).not.toContain("Gone");
     expect(start).not.toContain("mention:");
     expect(await text("Plans/Tasks/pages/row_a1.md")).toBe("# Write\n\nBack to [the table](..).\n");
+  });
+
+  it("writes a README that says what the files are, unless a document takes its name", async () => {
+    const { text } = await exportArchive();
+    const readme = await text("README.md");
+    expect(readme).toMatch(/^# .+\n\nA Stuga workspace, exported \d{4}-\d{2}-\d{2}\.\n/);
+    expect(readme).toContain(".csv file, which a spreadsheet opens");
+  });
+
+  it("leaves out the spaces at a paragraph's ends, which Markdown would spell as &#32;", async () => {
+    bodies.set("d-start", "# Start here\n\n[menu.pdf](https://example.com/menu.pdf)&#32;\n\n&#32;Indented by accident");
+    const { text } = await exportArchive();
+    expect(await text("Welcome.md")).toBe("# Start here\n\n[menu.pdf](https://example.com/menu.pdf)\n\nIndented by accident\n");
   });
 
   it("copies each image once, named for its bytes, whether stored or inline", async () => {
@@ -409,7 +424,7 @@ describe("workspace export", () => {
   });
 
   it("writes a table's rows, columns and views by name, de-duplicated", async () => {
-    const { manifest, text } = await exportArchive();
+    const { manifest, text, archive } = await exportArchive();
     const tasks = item<ArchiveDatabase>(manifest, "Plans/Tasks");
     expect(tasks).toMatchObject({ title: "Tasks", agent_mode: "auto", locked: true, agent_instructions: "Keep rows short." });
     const [table] = tasks.tables;
@@ -427,6 +442,9 @@ describe("workspace export", () => {
         '{"_id":"row_a2","Name":"Ship","name (2)":"b","Status":"Blocked","Done":false}\n',
     );
     expect(parseTableRows(file, table!).map((r) => r.key)).toEqual(["row_a1", "row_a2"]);
+    // Beside it, a copy a spreadsheet opens, without the row keys; the byte order mark tells Excel it is UTF-8.
+    expect(Array.from((await archive.read("Plans/Tasks/Tasks.csv")).subarray(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
+    expect(await text("Plans/Tasks/Tasks.csv")).toBe("Name,name (2),Status,Done,_id (2)\r\nWrite,,Open,TRUE,x\r\nShip,b,Blocked,FALSE,\r\n");
     expect(table!.views).toEqual([
       {
         name: "Open",
@@ -584,7 +602,7 @@ describe("workspace export", () => {
     // Its two folders as well.
     expect(await refusal()).toBe("this workspace holds 10003 folders, documents and databases you can open; an archive holds at most 10000");
 
-    // Within both counts, but with three rows files and the manifest, 20,003 files.
+    // Within both counts, but with three rows files, their copies, the manifest and the README, 20,007 files.
     vi.mocked(db.listFolders).mockResolvedValueOnce([]);
     schema.tables.push({ ...schema.tables[0]!, table_id: "t2" }, { ...schema.tables[0]!, table_id: "t3" });
     docs = [
@@ -592,7 +610,7 @@ describe("workspace export", () => {
       ...Array.from({ length: 9_999 }, (_, i) => doc(`d${String(i).padStart(5, "0")}`)),
       ...Array.from({ length: 10_000 }, (_, i) => doc(`p${String(i).padStart(5, "0")}`, { page_of: "db1" })),
     ];
-    expect(await refusal()).toBe("this workspace would take 20003 files; an archive holds at most 20000");
+    expect(await refusal()).toBe("this workspace would take 20007 files; an archive holds at most 20000");
 
     world();
     schema.tables[0]!.row_count = 500_001;

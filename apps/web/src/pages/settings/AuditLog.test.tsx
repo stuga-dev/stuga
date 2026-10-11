@@ -19,6 +19,8 @@ vi.mock("../../api", async (orig) => ({
 
 vi.mock("@astryxdesign/core/Toast", () => import("../../test/toast"));
 
+vi.mock("./SettingsLayout", () => ({ useSettingsScope: () => ({ workspace: { workspace_id: "ws_1", name: "Bakery" } }) }));
+
 vi.mock("react-router-dom", async (orig) => ({
   ...(await orig<typeof import("react-router-dom")>()),
   useNavigate: () => (to: string) => navigations.to.push(to),
@@ -661,6 +663,14 @@ describe("AuditLog — the target cell", () => {
     expect(navigations.to).toEqual(["/doc/db_1"]);
     // And an api_key target stays text: there is no page it could open.
     expect([...bodyRows()[1]!.querySelectorAll("button")].some((b) => b.textContent === "deploy bot")).toBe(false);
+  });
+
+  it("names this workspace rather than printing its id", async () => {
+    const read = row({ id: 30, action: "audit.read", target_kind: "workspace", target_id: "ws_1" });
+    audit.list.mockResolvedValue({ events: [read], next_before: null });
+    await mount();
+    expect(bodyRows()[0]!.textContent).toContain("Bakery");
+    expect(bodyRows()[0]!.textContent).not.toContain("ws_1");
   });
 });
 

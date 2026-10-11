@@ -51,9 +51,16 @@ describe("useRefreshAfterIndexing", () => {
     await act(async () => vi.advanceTimersByTime(1));
     expect(docs.get).toHaveBeenCalledTimes(1);
     expect(docs.get).toHaveBeenCalledWith("d_1");
-    expect(onDoc).toHaveBeenCalledWith({ doc_id: "d_1", title: "Meeting notes" });
+    expect(onDoc).toHaveBeenCalledWith({ doc_id: "d_1", title: "Meeting notes" }, expect.any(Number));
 
     await act(async () => vi.advanceTimersByTime(SETTLED_MS * 3));
+    expect(docs.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-reads when the page comes back into view, which may have missed a rename", async () => {
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
     expect(docs.get).toHaveBeenCalledTimes(1);
   });
 

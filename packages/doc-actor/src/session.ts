@@ -6,8 +6,8 @@
  * and must never decide anything.
  */
 import type { ActorSocket, ActorState } from "@stuga/runtime";
-import { encodeEmpty } from "@stuga/protocol/wire/frame";
-import { CloseCode, Opcode } from "@stuga/protocol/wire/opcodes";
+import { encodeEmpty, encodeJson } from "@stuga/protocol/wire/frame";
+import { CloseCode, Opcode, type DocResetPayload } from "@stuga/protocol/wire/opcodes";
 import { bucketClientType, CLIENT_TYPES, type ClientType } from "./client-type.js";
 
 export interface SessionMeta {
@@ -98,10 +98,11 @@ export class Peers {
 
   /**
    * Void one socket's document state: DOC_RESET as a frame (the browser reloads
-   * on it) and as a close code (what an MCP connection notices).
+   * on it, and says who restored what when `notice` tells it) and as a close
+   * code (what an MCP connection notices).
    */
-  resetSocket(ws: DocSocket, reason: string): void {
-    safeSend(ws, encodeEmpty(Opcode.DOC_RESET));
+  resetSocket(ws: DocSocket, reason: string, notice?: DocResetPayload): void {
+    safeSend(ws, notice ? encodeJson(Opcode.DOC_RESET, notice) : encodeEmpty(Opcode.DOC_RESET));
     try {
       ws.close(CloseCode.DOC_RESET, reason);
     } catch {
@@ -111,10 +112,10 @@ export class Peers {
 
   /**
    * Close every socket the ACL no longer admits (4403) and re-tier the rest.
-   * Returns the sockets demoted to viewer so the caller can tell them.
+   * Returns the sockets whose tier changed, either way, so the caller can tell them.
    */
   applyAcl(allowed: Set<string>, writers: Set<string>): DocSocket[] {
-    const demoted: DocSocket[] = [];
+    const retiered: DocSocket[] = [];
     for (const ws of this.all()) {
       if (!namedBy(ws.meta, allowed)) {
         try {
@@ -127,9 +128,9 @@ export class Peers {
       const canWrite = namedBy(ws.meta, writers);
       if (canWrite === ws.meta.canWrite) continue;
       ws.meta.canWrite = canWrite;
-      if (!canWrite) demoted.push(ws);
+      retiered.push(ws);
     }
-    return demoted;
+    return retiered;
   }
 
   /**

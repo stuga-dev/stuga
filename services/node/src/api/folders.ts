@@ -14,7 +14,7 @@ import {
 import { recordAudit } from "../audit/record.js";
 import { canReadFolder, canWriteFolder, guestForbidden, manages, scopeFolderIds } from "../authz/authz.js";
 import { docOwnership } from "../authz/ownership.js";
-import { agentInstructionsError, authorizedFolder, recordItemChange, reflattenFolderSubtree } from "../documents/access.js";
+import { agentInstructionsError, authorizedFolder, pushTrashState, recordItemChange, reflattenFolderSubtree } from "../documents/access.js";
 import { visibilityFloor } from "../documents/create.js";
 import { folderInstructionStack, inheritedLevels } from "../documents/instructions.js";
 import { error, json } from "../http/respond.js";
@@ -61,7 +61,7 @@ export async function createFolderRoute({ ctx, req }: WorkspaceCall): Promise<Re
   }
   // Owned by the human behind a key, like a document; an agent-owned root folder would be invisible to every human.
   const ownership = await docOwnership(ctx);
-  const floor = await visibilityFloor(ctx);
+  const floor = await visibilityFloor(ctx, parent);
   const own: OwnGrants = {
     p: [...new Set([...ownership.ownGrants.p, ...floor.p])],
     w: [...new Set([...ownership.ownGrants.w, ...floor.w])],
@@ -195,7 +195,7 @@ export async function deleteFolderRoute({ ctx, match }: WorkspaceCall): Promise<
   const folder = await authorizedFolder(ctx, folderId);
   if (!folder) return error(404, "not found");
   if (!manages(ctx, folder)) return error(403, "only the owner or a workspace admin can delete this folder");
-  const { folderIds, trashedDocIds } = await deleteFolderCascade(ctx.sql, folderId, ctx.workspaceId);
+  const { folderIds, trashedDocIds, trashedDocs } = await deleteFolderCascade(ctx.sql, folderId, ctx.workspaceId);
   recordAudit(ctx, {
     action: "folder.delete",
     targetKind: "folder",
@@ -203,6 +203,8 @@ export async function deleteFolderRoute({ ctx, match }: WorkspaceCall): Promise<
     targetLabel: folder.title,
     detail: { folders: folderIds.length, docs_trashed: trashedDocIds.length },
   });
+  // Open pages hear at once that they went into the trash.
+  for (const d of trashedDocs) await pushTrashState(ctx.env, d.doc_id, true, d.doc_type);
   // No jobs: searches filter trashed rows live, and snapshot GC is the trash purge's.
   return json({ deleted: true, folders: folderIds.length, docs_trashed: trashedDocIds.length });
 }

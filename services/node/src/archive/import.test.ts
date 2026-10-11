@@ -36,6 +36,7 @@ function fakeClient(overrides: Partial<ImportClient> = {}): { client: ImportClie
     createDatabase: async (db) => (calls.push(["createDatabase", db]), { docId: next("db"), table: tableOf(db.table, db.columns) }),
     createTable: async (id, table) => (calls.push(["createTable", id, table]), tableOf(table.display, table.columns)),
     deleteTable: async (...args) => void calls.push(["deleteTable", ...args]),
+    setColumnFormat: async (...args) => void calls.push(["setColumnFormat", ...args]),
     insertRows: async (id, table, rows) => (calls.push(["insertRows", id, table, rows]), rows.map(() => next("row"))),
     createView: async (...args) => (calls.push(["createView", ...args]), next("view")),
     openRowPages: async (id, table, pages) => (calls.push(["openRowPages", id, table, pages]), pages.map(() => next("page"))),
@@ -124,6 +125,15 @@ describe("importing an archive", () => {
       "release db1",
     ]);
     expect(callsOf(calls, "release").map((c) => c[1])).toEqual(["database", "database", "prose", "prose", "prose", "prose", "database", "prose", "prose", "prose", "database"]);
+  });
+
+  it("gives a number column its format once its table exists", async () => {
+    const { client, calls } = fakeClient();
+    const money = { style: "currency", currency: "EUR", decimals: 2 };
+    const archive = build((m) => (m.items[3].tables[0].columns[2].format = money));
+    await importArchive(client, await readArchive(archive, LIMITS));
+    // Hours is the database's third column.
+    expect(callsOf(calls, "setColumnFormat")).toEqual([["db1", "table1", "col3", money]]);
   });
 
   it("creates each item where the archive puts it, with its tables, rows by column id and views by column id", async () => {

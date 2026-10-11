@@ -53,12 +53,13 @@ import {
   toInput,
   withSavedHalf,
   withSelectedModels,
+  type Half,
   type BaseUrls,
   type ChatEndpointForm,
   type Form,
   type RerankForm,
 } from "./ai-form";
-import { ConnectForm, type Connected } from "./ConnectForm";
+import { ConnectForm, KeyLink, type Connected } from "./ConnectForm";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 import { StoredSecret } from "./StoredSecret";
 
@@ -66,52 +67,60 @@ import { StoredSecret } from "./StoredSecret";
 const keyOnFile = (fingerprint: string | null | undefined) =>
   fingerprint ? t("node.ai.keySet", { fingerprint }) : t("node.ai.keySetOnFile");
 
-type ProbeRow = { ok: boolean; model?: string; latency_ms?: number; dims?: number; message?: string; skipped?: boolean };
+type ProbeRow = { ok: boolean; model?: string; latency_ms?: number; message?: string; skipped?: boolean };
 
 /** While the node measures its embedding model, how often Settings follows along. */
 const CALIBRATION_POLL_MS = 2000;
 
-/** What a save or a test heard back, one line per service that was asked. */
-function ProbeBanner({ probe, labels, level }: { probe: AiProbe; labels: Record<string, string>; level: SearchStrictness }) {
+/** What a save or a test heard back from one half, one line per service that was asked, shown in that half. */
+function ProbeBanner({ probe, half, labels }: { probe: AiProbe; half: Half; labels: Record<string, string> }) {
   const line = (label: string, r: ProbeRow) =>
     r.ok
-      ? [
-          t("node.ai.probe.ok", { service: label }),
-          r.model,
-          r.latency_ms ? t("node.ai.probe.latency", { ms: r.latency_ms }) : null,
-          r.dims ? t("node.ai.probe.dimensions", { count: r.dims }) : null,
-        ]
-          .filter(Boolean)
-          .join(" · ")
+      ? r.model && r.latency_ms
+        ? t("node.ai.probe.answeredIn", { service: label, model: r.model, seconds: r.latency_ms / 1000 })
+        : t("node.ai.probe.ok", { service: label })
       : r.message
         ? t("node.ai.probe.failedWith", { service: label, message: presentServerMessage(r.message) })
         : t("node.ai.probe.failed", { service: label });
-  // A model measured before shows where the chosen level sits for it.
-  const cutoff =
-    probe.embed.cutoffs && level !== "off"
-      ? ` · ${t("node.ai.probe.cutoff", { level: STRICTNESS_COPY[level].label, distance: probe.embed.cutoffs[level] })}`
-      : "";
   // A skipped row made no request, so it says nothing about the service.
-  const rows = [
-    ...probe.chat.filter((r) => !r.skipped).map((r) => line(labels[r.id] ?? r.id, r)),
-    ...(probe.embed.skipped ? [] : [line(HALF_COPY.search.title, probe.embed) + (probe.embed.ok ? cutoff : "")]),
-    ...(probe.rerank.skipped ? [] : [line(HALF_COPY.rerank.title, probe.rerank)]),
-  ];
-  if (rows.length === 0) return null;
+  const asked: Array<[string, ProbeRow]> =
+    half === "chat"
+      ? probe.chat.filter((r) => !r.skipped).map((r) => [labels[r.id] ?? r.id, r])
+      : half === "search"
+        ? probe.embed.skipped
+          ? []
+          : [[HALF_COPY.search.title, probe.embed]]
+        : probe.rerank.skipped
+          ? []
+          : [[HALF_COPY.rerank.title, probe.rerank]];
+  if (asked.length === 0) return null;
+  const ok = asked.every(([, r]) => r.ok);
   return (
     <Banner
-      status={probe.ok ? "success" : "error"}
-      title={probe.ok ? t("node.ai.probe.answered") : t("node.ai.probe.unexpected")}
+      status={ok ? "success" : "error"}
+      title={ok ? t("node.ai.probe.answered") : t("node.ai.probe.unexpected")}
       description={
         <VStack gap={1}>
-          {rows.map((r, i) => (
+          {asked.map(([label, r], i) => (
             <Text key={i} type="supporting">
-              {r}
+              {line(label, r)}
             </Text>
           ))}
         </VStack>
       }
     />
+  );
+}
+
+/** A switch that says On or Off beside it, so its state reads without knowing the control. */
+function OnOffSwitch({ label, value, isDisabled, onChange }: { label: string; value: boolean; isDisabled: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <HStack gap={2} vAlign="center">
+      <Text type="supporting" color="secondary" aria-hidden>
+        {value ? t("node.ai.switchOn") : t("node.ai.switchOff")}
+      </Text>
+      <Switch label={label} isLabelHidden value={value} isDisabled={isDisabled} onChange={onChange} />
+    </HStack>
   );
 }
 
@@ -171,7 +180,10 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   const searchSetUp = !!settings.embed.model;
 
   const [busy, setBusy] = useState("");
-  const [probe, setProbe] = useState<AiProbe | null>(null);
+  /** The last save's or test's answer, and the half it was about, which shows it beside what was tested. */
+  const [probe, setProbe] = useState<{ half: Half; result: AiProbe } | null>(null);
+  /** The half the last action was in: its outcome line shows there, not at the top of the page. */
+  const [statusHalf, setStatusHalf] = useState<Half>("chat");
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   /** The Connect form for a chat provider, the first or another. */
   const [adding, setAdding] = useState(false);
@@ -226,15 +238,15 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   }, [measuring, onSaved]);
 
   const measureAgain = () =>
-    act("measure", async () => {
+    act("measure", "search", async () => {
       await NodeApi.calibrateAi();
       onSaved(await NodeApi.ai());
     });
 
-
-  /** One action at a time, its failure shown above the fields. */
-  async function act(key: string, fn: () => Promise<void>) {
+  /** One action at a time, its outcome shown in the half it was about. */
+  async function act(key: string, half: Half, fn: () => Promise<void>) {
     setBusy(key);
+    setStatusHalf(half);
     status.clear();
     setProbe(null);
     try {
@@ -246,8 +258,15 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
     }
   }
 
-  function connected(result: Connected) {
+  /** Opening or closing a form leaves the last outcome behind: it was about what was there before. */
+  function clearOutcome() {
+    status.clear();
+    setProbe(null);
+  }
+
+  function connected(half: Half, result: Connected) {
     applied(result.settings);
+    setStatusHalf(half);
     setForm((f) => withSavedHalf(f, toForm(result.settings), "embed"));
     setAdding(false);
     setSettingUpSearch(false);
@@ -258,12 +277,13 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   // ---- chat ----
 
   const setChatOn = (on: boolean) =>
-    act("chat-switch", async () => {
+    act("chat-switch", "chat", async () => {
       applied((await NodeApi.saveAi(chatInputWith(settings, { enabled: on }, baseUrls))).settings);
     });
 
   async function discover(ep: ChatEndpointForm) {
     setFetching(ep.id);
+    setStatusHalf("chat");
     try {
       // With no key typed, the node uses the saved provider's own.
       const r = await NodeApi.discoverModels("chat", ep.provider, ep.baseUrl || baseUrls[ep.provider] || "", ep.key || undefined);
@@ -279,6 +299,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   function edit(id: string) {
     const ep = toForm(settings).chatEndpoints.find((e) => e.id === id);
     if (!ep) return;
+    clearOutcome();
     setDraft(ep);
     setDraftKeyCleared(false);
     setAdding(false);
@@ -286,42 +307,43 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   }
 
   const saveProvider = () =>
-    act("save-provider", async () => {
+    act("save-provider", "chat", async () => {
       if (!draft) return;
       const res = await NodeApi.saveAi(chatInputWith(settings, { edit: draft, clearKeyOf: draftKeyCleared ? draft.id : undefined }, baseUrls));
       applied(res.settings);
-      setProbe(res.probe);
+      setProbe({ half: "chat", result: res.probe });
       setDraft(null);
     });
 
   // Switched on for the test, so a switched-off half is asked too.
   const testProvider = () =>
-    act("test-provider", async () => {
+    act("test-provider", "chat", async () => {
       if (!draft) return;
-      setProbe(await NodeApi.testAi(chatInputWith(settings, { edit: draft, clearKeyOf: draftKeyCleared ? draft.id : undefined, enabled: true }, baseUrls)));
+      setProbe({ half: "chat", result: await NodeApi.testAi(chatInputWith(settings, { edit: draft, clearKeyOf: draftKeyCleared ? draft.id : undefined, enabled: true }, baseUrls)) });
     });
 
   const removeProvider = (id: string) =>
-    act("remove-provider", async () => {
+    act("remove-provider", "chat", async () => {
       applied((await NodeApi.saveAi(chatInputWith(settings, { removeId: id }, baseUrls))).settings);
       if (draft?.id === id) setDraft(null);
     });
 
   const saveDefault = (model: string) =>
-    act("default", async () => {
+    act("default", "chat", async () => {
       applied((await NodeApi.saveAi(chatInputWith(settings, { defaultModel: model }, baseUrls))).settings);
     });
 
   // ---- semantic search ----
 
   const setSearchOn = (on: boolean) =>
-    act("search-switch", async () => {
+    act("search-switch", "search", async () => {
       const res = await NodeApi.saveAi(toInput({ ...toForm(settings), embedEnabled: on }, NO_CLEARED_KEYS, baseUrls, "embed"));
       applied(res.settings);
       setForm((f) => ({ ...f, embedEnabled: res.settings.embed.enabled }));
     });
 
   function editSearch() {
+    clearOutcome();
     setForm(toForm(settings));
     setEmbedKeyCleared(false);
     setFoundEmbed([]);
@@ -330,6 +352,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
 
   async function discoverEmbed() {
     status.setError(null);
+    setStatusHalf("search");
     setFetching("embed");
     try {
       const r = await NodeApi.discoverModels("embed", form.embedProvider, form.embedBaseUrl, form.embedKey);
@@ -352,11 +375,11 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
     form.embedModel !== settings.embed.model || form.embedBaseUrl !== settings.embed.base_url || form.embedProvider !== settings.embed.provider;
 
   const saveSearch = () =>
-    act("save-search", async () => {
+    act("save-search", "search", async () => {
       const res = await NodeApi.saveAi(toInput(form, { chat: {}, embed: embedKeyCleared }, baseUrls, "embed"));
       applied(res.settings);
       setForm((f) => withSavedHalf(f, toForm(res.settings), "embed"));
-      setProbe(res.probe);
+      setProbe({ half: "search", result: res.probe });
       setEditingSearch(false);
       if (res.reembed?.armed) {
         status.setNotice({ status: "success", message: t("node.ai.reindexing", { model: res.settings.embed.model ?? "" }) });
@@ -364,12 +387,12 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
     });
 
   const testSearch = () =>
-    act("test-search", async () => {
-      setProbe(await NodeApi.testAi(toInput({ ...form, embedEnabled: true }, { chat: {}, embed: embedKeyCleared }, baseUrls, "embed")));
+    act("test-search", "search", async () => {
+      setProbe({ half: "search", result: await NodeApi.testAi(toInput({ ...form, embedEnabled: true }, { chat: {}, embed: embedKeyCleared }, baseUrls, "embed")) });
     });
 
   const removeSearch = () =>
-    act("remove-search", async () => {
+    act("remove-search", "search", async () => {
       applied((await NodeApi.saveAi({ embed: { provider: "", base_url: "", model: "", api_key: "" } })).settings);
       setEditingSearch(false);
     });
@@ -377,33 +400,34 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   // ---- ranking ----
 
   const setRerankOn = (on: boolean) =>
-    act("rerank-switch", async () => {
+    act("rerank-switch", "rerank", async () => {
       applied((await NodeApi.saveAi(rerankInput(rerankFormOf(settings), { enabled: on }))).settings);
     });
 
   function editRerank() {
+    clearOutcome();
     setRerankDraft(rerankFormOf(settings));
     setRerankKeyCleared(false);
   }
 
   const saveRerank = () =>
-    act("save-rerank", async () => {
+    act("save-rerank", "rerank", async () => {
       if (!rerankDraft) return;
       const res = await NodeApi.saveAi(rerankInput(rerankDraft, { clearKey: rerankKeyCleared }));
       applied(res.settings);
-      setProbe(res.probe);
+      setProbe({ half: "rerank", result: res.probe });
       setRerankDraft(null);
     });
 
   // Switched on for the test, so a switched-off ranker is asked too.
   const testRerank = () =>
-    act("test-rerank", async () => {
+    act("test-rerank", "rerank", async () => {
       if (!rerankDraft) return;
-      setProbe(await NodeApi.testAi(rerankInput(rerankDraft, { clearKey: rerankKeyCleared, enabled: true })));
+      setProbe({ half: "rerank", result: await NodeApi.testAi(rerankInput(rerankDraft, { clearKey: rerankKeyCleared, enabled: true })) });
     });
 
   const removeRerank = () =>
-    act("remove-rerank", async () => {
+    act("remove-rerank", "rerank", async () => {
       applied((await NodeApi.saveAi(rerankInput({ baseUrl: "", model: "", key: "" }))).settings);
       setRerankDraft(null);
     });
@@ -411,15 +435,24 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   /** What reranks passages while no reranker is set up. */
   const chatReranks = settings.chat.running;
   const rerankLabel = (baseUrl: string) => RERANK_PRESETS.find((p) => p.value === rerankPresetFor(baseUrl) && p.value !== "custom")?.label ?? baseUrl;
+  const rerankPreset = rerankDraft ? RERANK_PRESETS.find((p) => p.value === rerankPresetFor(rerankDraft.baseUrl)) : undefined;
+  const rerankKeyUrl = rerankPreset?.keyUrl ? { url: rerankPreset.keyUrl, label: rerankPreset.label } : null;
 
   // ---- the page ----
 
   const offered = allChatModelIds(toForm(settings).chatEndpoints);
   const removingProvider = confirm?.kind === "remove-provider" ? confirm.id : null;
+  /** What the last action in a half heard back, shown in that half under what was tested. */
+  const outcome = (half: Half) => (
+    <>
+      {statusHalf === half && <SectionStatusBanners status={status} />}
+      {probe?.half === half && <ProbeBanner probe={probe.result} half={half} labels={labels} />}
+    </>
+  );
 
   return (
     <>
-      {/* Someone with their own subscription looks here first, and needs nothing on this page. */}
+      {/* Under the page's title, from the rail. Someone with their own subscription looks here first, and needs nothing on this page. */}
       <Text type="supporting" color="secondary">
         {tRich("node.ai.ownSubscription", {
           // In-app navigation: a full page load would drop the in-memory session.
@@ -430,15 +463,13 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
           ),
         })}
       </Text>
-      <SectionStatusBanners status={status} />
-      {probe && <ProbeBanner probe={probe} labels={labels} level={level} />}
 
       <VStack gap={3}>
         <HalfHead
           {...HALF_COPY.chat}
           toggle={
             providers.length > 0 && (
-              <Switch label={HALF_COPY.chat.title} isLabelHidden value={settings.chat.enabled} isDisabled={busy === "chat-switch"} onChange={(v: boolean) => void setChatOn(v)} />
+              <OnOffSwitch label={HALF_COPY.chat.title} value={settings.chat.enabled} isDisabled={busy === "chat-switch"} onChange={(v) => void setChatOn(v)} />
             )
           }
         />
@@ -446,10 +477,16 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
         {providers.length === 0 &&
           (adding ? (
             <Card>
-              <ConnectForm half="chat" settings={settings} onConnected={connected} onCancel={() => setAdding(false)} />
+              <ConnectForm half="chat" settings={settings} onConnected={(r) => connected("chat", r)} onCancel={() => setAdding(false)} />
             </Card>
           ) : (
-            <NotSetUp note={t("node.ai.notSetUp")} onSetUp={() => setAdding(true)} />
+            <NotSetUp
+              note={t("node.ai.notSetUp")}
+              onSetUp={() => {
+                clearOutcome();
+                setAdding(true);
+              }}
+            />
           ))}
 
         {providers.map((ep) =>
@@ -518,8 +555,17 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                 <HStack gap={2}>
                   <Button label={t("common.save")} variant="primary" size="sm" isLoading={busy === "save-provider"} onClick={() => void saveProvider()} />
                   <Button label={t("node.ai.test")} variant="secondary" size="sm" isLoading={busy === "test-provider"} onClick={() => void testProvider()} />
-                  <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={() => setDraft(null)} />
+                  <Button
+                    label={t("common.cancel")}
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      clearOutcome();
+                      setDraft(null);
+                    }}
+                  />
                 </HStack>
+                {outcome("chat")}
               </VStack>
             </Card>
           ) : (
@@ -531,7 +577,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
               <Button label={t("node.ai.edit")} variant="ghost" size="sm" onClick={() => edit(ep.id)} />
               <Button
                 label={t("common.remove")}
-                variant="ghost"
+                variant="destructive"
                 size="sm"
                 isLoading={busy === "remove-provider" && removingProvider === ep.id}
                 onClick={() => setConfirm({ kind: "remove-provider", id: ep.id })}
@@ -543,7 +589,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
         {providers.length > 0 &&
           (adding ? (
             <Card>
-              <ConnectForm half="chat" settings={settings} onConnected={connected} onCancel={() => setAdding(false)} />
+              <ConnectForm half="chat" settings={settings} onConnected={(r) => connected("chat", r)} onCancel={() => setAdding(false)} />
             </Card>
           ) : (
             <HStack>
@@ -552,6 +598,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                 variant="secondary"
                 size="sm"
                 onClick={() => {
+                  clearOutcome();
                   setDraft(null);
                   setAdding(true);
                 }}
@@ -569,6 +616,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
             onChange={(v: string) => v !== settings.chat.default_model && void saveDefault(v)}
           />
         )}
+        {!draft && outcome("chat")}
       </VStack>
 
       <Divider />
@@ -578,13 +626,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
           {...HALF_COPY.search}
           toggle={
             searchSetUp && (
-              <Switch
-                label={HALF_COPY.search.title}
-                isLabelHidden
-                value={settings.embed.enabled}
-                isDisabled={busy === "search-switch"}
-                onChange={(v: boolean) => void setSearchOn(v)}
-              />
+              <OnOffSwitch label={HALF_COPY.search.title} value={settings.embed.enabled} isDisabled={busy === "search-switch"} onChange={(v) => void setSearchOn(v)} />
             )
           }
         />
@@ -592,10 +634,16 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
         {!searchSetUp &&
           (settingUpSearch ? (
             <Card>
-              <ConnectForm half="search" settings={settings} onConnected={connected} onCancel={() => setSettingUpSearch(false)} />
+              <ConnectForm half="search" settings={settings} onConnected={(r) => connected("search", r)} onCancel={() => setSettingUpSearch(false)} />
             </Card>
           ) : (
-            <NotSetUp note={t("node.ai.searchNotSetUp")} onSetUp={() => setSettingUpSearch(true)} />
+            <NotSetUp
+              note={t("node.ai.searchNotSetUp")}
+              onSetUp={() => {
+                clearOutcome();
+                setSettingUpSearch(true);
+              }}
+            />
           ))}
 
         {searchSetUp && banner && (
@@ -613,7 +661,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
             detail={[settings.embed.model, searchServiceDetail(settings), settings.embed.api_key_stale ? t("node.ai.keyFileMissing") : null].filter(Boolean).join(" · ")}
           >
             <Button label={t("node.ai.edit")} variant="ghost" size="sm" onClick={editSearch} />
-            <Button label={t("common.remove")} variant="ghost" size="sm" isLoading={busy === "remove-search"} onClick={() => setConfirm({ kind: "remove-search" })} />
+            <Button label={t("common.remove")} variant="destructive" size="sm" isLoading={busy === "remove-search"} onClick={() => setConfirm({ kind: "remove-search" })} />
           </ServiceRow>
         )}
 
@@ -667,47 +715,51 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                 </StackItem>
                 <Button label={t("node.ai.fetchModels")} variant="secondary" size="sm" isLoading={fetching === "embed"} onClick={() => void discoverEmbed()} />
               </HStack>
-              <VStack gap={1}>
-                <Text type="label">{t("node.ai.strictness.label")}</Text>
-                <SegmentedControl
-                  label={t("node.ai.strictness.label")}
-                  size="sm"
-                  layout="fill"
-                  value={level}
-                  onChange={(v: string) =>
-                    // Choosing the default while none is stored keeps following the default.
-                    setForm({ ...form, searchStrictness: settings.embed.search_strictness === null && v === settings.strictness_default ? null : (v as SearchStrictness) })
-                  }
-                >
-                  <SegmentedControlItem value="strict" label={STRICTNESS_COPY.strict.label} />
-                  <SegmentedControlItem value="balanced" label={STRICTNESS_COPY.balanced.label} />
-                  <SegmentedControlItem value="loose" label={STRICTNESS_COPY.loose.label} />
-                  <SegmentedControlItem value="off" label={STRICTNESS_COPY.off.label} />
-                </SegmentedControl>
-                <Text type="supporting" color="secondary">
-                  {STRICTNESS_COPY[level].line}
-                </Text>
-                {note && (
-                  <Text type="supporting" color="secondary">
-                    {note.text}
-                    {note.measureAgain && (
-                      <>
-                        {" · "}
-                        <Link type="supporting" onClick={() => void measureAgain()}>
-                          {t("node.ai.measureAgain")}
-                        </Link>
-                      </>
-                    )}
-                  </Text>
-                )}
-                {warning && (
-                  <Text type="supporting" color="secondary">
-                    {warning}
-                  </Text>
-                )}
-              </VStack>
-              <Collapsible trigger={t("node.ai.advanced")} defaultIsOpen={presetFor(presets, form.embedProvider, form.embedBaseUrl) === "custom"}>
+              {/* Strictness and the address have working defaults, so they wait behind Advanced. */}
+              <Collapsible trigger={t("node.ai.advanced")} defaultIsOpen={presetFor(presets, form.embedProvider, form.embedBaseUrl) === "custom" || !!warning}>
                 <VStack gap={3}>
+                  <VStack gap={1}>
+                    <Text type="label">{t("node.ai.strictness.label")}</Text>
+                    <Text type="supporting" color="secondary">
+                      {t("node.ai.strictness.about")}
+                    </Text>
+                    <SegmentedControl
+                      label={t("node.ai.strictness.label")}
+                      size="sm"
+                      layout="fill"
+                      value={level}
+                      onChange={(v: string) =>
+                        // Choosing the default while none is stored keeps following the default.
+                        setForm({ ...form, searchStrictness: settings.embed.search_strictness === null && v === settings.strictness_default ? null : (v as SearchStrictness) })
+                      }
+                    >
+                      <SegmentedControlItem value="strict" label={STRICTNESS_COPY.strict.label} />
+                      <SegmentedControlItem value="balanced" label={STRICTNESS_COPY.balanced.label} />
+                      <SegmentedControlItem value="loose" label={STRICTNESS_COPY.loose.label} />
+                      <SegmentedControlItem value="off" label={STRICTNESS_COPY.off.label} />
+                    </SegmentedControl>
+                    <Text type="supporting" color="secondary">
+                      {STRICTNESS_COPY[level].line}
+                    </Text>
+                    {note && (
+                      <Text type="supporting" color="secondary">
+                        {note.text}
+                        {note.measureAgain && (
+                          <>
+                            {" · "}
+                            <Link type="supporting" onClick={() => void measureAgain()}>
+                              {t("node.ai.measureAgain")}
+                            </Link>
+                          </>
+                        )}
+                      </Text>
+                    )}
+                    {warning && (
+                      <Text type="supporting" color="secondary">
+                        {warning}
+                      </Text>
+                    )}
+                  </VStack>
                   <Selector
                     label={t("node.ai.apiProtocol")}
                     options={PROVIDERS.filter((o) => o.value !== "anthropic")}
@@ -726,11 +778,21 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                   onClick={() => (embeddingChanged() ? setConfirm({ kind: "reembed" }) : void saveSearch())}
                 />
                 <Button label={t("node.ai.test")} variant="secondary" size="sm" isLoading={busy === "test-search"} onClick={() => void testSearch()} />
-                <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={() => setEditingSearch(false)} />
+                <Button
+                  label={t("common.cancel")}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    clearOutcome();
+                    setEditingSearch(false);
+                  }}
+                />
               </HStack>
+              {outcome("search")}
             </VStack>
           </Card>
         )}
+        {!editingSearch && outcome("search")}
       </VStack>
 
       <Divider />
@@ -740,13 +802,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
           {...HALF_COPY.rerank}
           toggle={
             rerankSetUp && (
-              <Switch
-                label={HALF_COPY.rerank.title}
-                isLabelHidden
-                value={settings.rerank.enabled}
-                isDisabled={busy === "rerank-switch"}
-                onChange={(v: boolean) => void setRerankOn(v)}
-              />
+              <OnOffSwitch label={HALF_COPY.rerank.title} value={settings.rerank.enabled} isDisabled={busy === "rerank-switch"} onChange={(v) => void setRerankOn(v)} />
             )
           }
         />
@@ -759,7 +815,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
             detail={[settings.rerank.model, settings.rerank.api_key_stale ? t("node.ai.keyFileMissing") : null].filter(Boolean).join(" · ")}
           >
             <Button label={t("node.ai.edit")} variant="ghost" size="sm" onClick={editRerank} />
-            <Button label={t("common.remove")} variant="ghost" size="sm" isLoading={busy === "remove-rerank"} onClick={() => setConfirm({ kind: "remove-rerank" })} />
+            <Button label={t("common.remove")} variant="destructive" size="sm" isLoading={busy === "remove-rerank"} onClick={() => setConfirm({ kind: "remove-rerank" })} />
           </ServiceRow>
         )}
 
@@ -790,6 +846,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                   removeLabel={t("node.ai.removeKey")}
                   removedNote={t("node.ai.keyRemovedOnSave")}
                 />
+                {rerankKeyUrl && <KeyLink url={rerankKeyUrl.url} label={t("nodeAccess.connect.getKey", { service: rerankKeyUrl.label })} />}
               </VStack>
               <TextInput label={t("node.ai.model")} value={rerankDraft.model} onChange={(v: string) => setRerankDraft({ ...rerankDraft, model: v })} />
               <Collapsible trigger={t("node.ai.advanced")} defaultIsOpen={rerankPresetFor(rerankDraft.baseUrl) === "custom"}>
@@ -798,11 +855,21 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
               <HStack gap={2}>
                 <Button label={t("common.save")} variant="primary" size="sm" isLoading={busy === "save-rerank"} onClick={() => void saveRerank()} />
                 <Button label={t("node.ai.test")} variant="secondary" size="sm" isLoading={busy === "test-rerank"} onClick={() => void testRerank()} />
-                <Button label={t("common.cancel")} variant="ghost" size="sm" onClick={() => setRerankDraft(null)} />
+                <Button
+                  label={t("common.cancel")}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    clearOutcome();
+                    setRerankDraft(null);
+                  }}
+                />
               </HStack>
+              {outcome("rerank")}
             </VStack>
           </Card>
         )}
+        {!rerankDraft && outcome("rerank")}
       </VStack>
 
       <AlertDialog

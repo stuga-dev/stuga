@@ -100,6 +100,12 @@ describe("findTarget", () => {
     expect(el?.textContent).toBe("Costs");
   });
 
+  it("tries the start of the snippet when its tail no longer matches", () => {
+    const el = findTarget(DOC, "An introduction that mentions repairs in passing, and a tail edited since", "");
+    expect(el?.tagName).toBe("H1");
+    expect(el?.nextElementSibling?.textContent).toContain("An introduction");
+  });
+
   it("returns nothing rather than guessing", () => {
     expect(findTarget(DOC, "", "")).toBeNull();
     expect(findTarget(DOC, "nowhere at all", "No Such Section")).toBeNull();
@@ -126,11 +132,13 @@ describe("jumpTo", () => {
   });
 
   /** A scroller at y=100 with a 40px sticky toolbar, and a target 500px down. */
-  function scene({ targetTop }: { targetTop: number }) {
+  function scene({ targetTop, sticky = true }: { targetTop: number; sticky?: boolean }) {
     const scroller = document.createElement("div");
     scroller.className = "doc-main";
     const toolbar = document.createElement("div");
     toolbar.className = "editor-toolbar-bar";
+    // jsdom loads no stylesheet; the rule that makes it sticky, inline.
+    toolbar.style.position = sticky ? "sticky" : "static";
     const target = document.createElement("p");
     scroller.append(toolbar, target);
     document.body.append(scroller);
@@ -147,6 +155,12 @@ describe("jumpTo", () => {
     jumpTo(target);
     // 600 - 100 (scroller top) - 40 (toolbar) - 12 (gap) = 448
     expect(scroller.scrollTop).toBe(448);
+  });
+
+  it("leaves no room for a toolbar that scrolls with the page, as on a phone", () => {
+    const { scroller, target } = scene({ targetTop: 600, sticky: false });
+    jumpTo(target);
+    expect(scroller.scrollTop).toBe(600 - 100 - 12);
   });
 
   it("scrolls backwards when the passage is above the viewport", () => {
@@ -313,12 +327,24 @@ describe("CitationJump", () => {
     expect(flashing(live)).toEqual(["Week 2 — Repairs"]);
   });
 
-  it("still says when a cited passage is not found", async () => {
+  it("opens a citation at the top, without a word, when its passage is not found", async () => {
     await openDoc(`/doc/d1?q=${encodeURIComponent("nowhere at all")}`);
     await act(async () => vi.advanceTimersByTime(9_000));
-    expect(toastBodies()).toEqual([
-      "Couldn’t find “nowhere at all” in this document. It may have changed since that answer was written.",
-    ]);
+    expect(flashing(live)).toEqual([]);
+    expect(document.querySelector<HTMLElement>(".doc-main")?.scrollTop).toBe(0);
+    expect(toastBodies()).toEqual([]);
+  });
+
+  it("lands a citation whose excerpt spans two paragraphs", async () => {
+    const md = ["Staff schedule for next week.", "Monday: Anna opens at 5am, Ben closes at 6pm.", "## Costs", "Hosting runs to twelve hundred a year."].join("\n\n");
+    const href = citationHref({
+      doc_id: "d1",
+      heading_path: "",
+      content: "Staff schedule for next week.\nMonday: Anna opens at 5am, Ben closes at 6pm.",
+    });
+    await openDoc(href, md);
+    expect(flashing(live)).toEqual(["Staff schedule for next week."]);
+    expect(toastBodies()).toEqual([]);
   });
 
   it("lands again when the palette picks the passage already open", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fileLinks, validateCellValue, validateSelectChoices } from "./cells.js";
+import { fileLinks, validateCellValue, validateSelectChoices, validateNumberFormat } from "./cells.js";
 import { DATABASE_MAX_CELL_BYTES, DATABASE_MAX_FILES_PER_CELL } from "./limits.js";
 
 describe("validateCellValue", () => {
@@ -68,5 +68,24 @@ describe("validateSelectChoices", () => {
     expect(validateSelectChoices(["A", ""]).ok).toBe(false);
     expect(validateSelectChoices(Array.from({ length: 51 }, (_, i) => `c${i}`)).ok).toBe(false);
     expect(validateSelectChoices("not an array").ok).toBe(false);
+  });
+});
+
+describe("validateNumberFormat", () => {
+  it("keeps only the fields the style uses", () => {
+    expect(validateNumberFormat({ style: "number", decimals: 2, grouping: true, currency: "EUR" })).toEqual({
+      ok: true,
+      format: { style: "number", decimals: 2, grouping: true },
+    });
+    expect(validateNumberFormat({ style: "currency", currency: "EUR", grouping: false })).toEqual({ ok: true, format: { style: "currency", currency: "EUR" } });
+  });
+
+  it("refuses an unknown style, odd decimals and a currency without a code", () => {
+    expect(validateNumberFormat({ style: "money" }).ok).toBe(false);
+    expect(validateNumberFormat({ style: "number", decimals: 1.5 }).ok).toBe(false);
+    expect(validateNumberFormat({ style: "number", decimals: 7 }).ok).toBe(false);
+    expect(validateNumberFormat({ style: "currency" }).ok).toBe(false);
+    expect(validateNumberFormat({ style: "currency", currency: "eur" }).ok).toBe(false);
+    expect(validateNumberFormat(null).ok).toBe(false);
   });
 });

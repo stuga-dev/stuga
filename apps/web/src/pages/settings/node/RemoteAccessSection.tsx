@@ -13,7 +13,7 @@ import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Link } from "@astryxdesign/core/Link";
 import { Spinner } from "@astryxdesign/core/Spinner";
-import { Heading, Text } from "@astryxdesign/core/Text";
+import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Globe } from "lucide-react";
@@ -409,7 +409,6 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
 
   return (
     <VStack gap={3}>
-      <Heading level={2}>{t("nodeAccess.remote.heading")}</Heading>
       <Text type="supporting" color="secondary">
         {t("nodeAccess.remote.intro")}
       </Text>

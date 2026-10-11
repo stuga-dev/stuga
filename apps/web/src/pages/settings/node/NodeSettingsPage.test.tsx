@@ -288,7 +288,7 @@ async function openSearchEditor() {
 }
 
 /** The segment of Search strictness chosen now. */
-const chosenStrictness = () => [...host.querySelectorAll('button[role="radio"][aria-checked="true"]')].map((b) => b.textContent).find((t) => ["Strict", "Balanced", "Loose", "Off"].includes(t ?? ""));
+const chosenStrictness = () => [...host.querySelectorAll('button[role="radio"][aria-checked="true"]')].map((b) => b.textContent).find((t) => ["Strict", "Balanced", "Loose", "No limit"].includes(t ?? ""));
 
 /** Semantic search measured for its model: Balanced at 0.34 for short queries. */
 const MEASURED: NodeAiSettings = {
@@ -407,6 +407,105 @@ describe("NodeSettingsPage", () => {
     });
   });
 
+  it("tries a pasted key without leaving the field, and flags a refused one beside it", async () => {
+    await renderWith(FRESH);
+    await clickNth("Set up", 0);
+    nodeApi.discoverModels.mockResolvedValue({ models: [], message: 'models 401: {"error":"invalid x-api-key"}' });
+
+    await typeInto(inputs("API key")[0], "sk-wrong");
+    expect(nodeApi.discoverModels).not.toHaveBeenCalled();
+    await act(async () => new Promise((r) => setTimeout(r, 700)));
+    await settle();
+
+    expect(nodeApi.discoverModels).toHaveBeenCalledWith("chat", "openai", "https://api.openai.com/v1", "sk-wrong");
+    expect(inputs("API key")[0]!.getAttribute("aria-invalid")).toBe("true");
+    expect(host.textContent).toContain("OpenAI didn’t accept that key.");
+    // Beside the field, not as a banner over the form.
+    expect(host.textContent).not.toContain("Not connected");
+  });
+
+  it("tries the key typed while an older one was being tried, and drops the older answer", async () => {
+    await renderWith(FRESH);
+    await clickNth("Set up", 0);
+    let answerFirst: (v: unknown) => void = () => {};
+    nodeApi.discoverModels.mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
+    nodeApi.discoverModels.mockResolvedValue({ models: ["gpt-5.5-mini"] });
+
+    await typeInto(inputs("API key")[0], "sk-par");
+    await act(async () => new Promise((r) => setTimeout(r, 700)));
+    await typeInto(inputs("API key")[0], "sk-partial-then-whole");
+    await act(async () => new Promise((r) => setTimeout(r, 700)));
+    expect(nodeApi.discoverModels).toHaveBeenCalledTimes(1);
+
+    await act(async () => answerFirst({ models: [], message: 'models 401: {"error":"invalid x-api-key"}' }));
+    await act(async () => new Promise((r) => setTimeout(r, 700)));
+    await settle();
+
+    expect(nodeApi.discoverModels).toHaveBeenLastCalledWith("chat", "openai", "https://api.openai.com/v1", "sk-partial-then-whole");
+    expect(inputs("API key")[0]!.getAttribute("aria-invalid")).not.toBe("true");
+    expect(host.textContent).not.toContain("didn’t accept that key");
+  });
+
+  it("links to where each service hands out keys", async () => {
+    await renderWith(FRESH);
+    await clickNth("Set up", 0);
+    const link = [...host.querySelectorAll("a")].find((a) => a.textContent?.startsWith("Get a key from OpenAI"));
+    expect(link?.getAttribute("href")).toBe("https://platform.openai.com/api-keys");
+    expect(link?.getAttribute("target")).toBe("_blank");
+  });
+
+  it("answers an address that is not one in plain words, without asking the service", async () => {
+    await renderWith(FRESH);
+    await clickNth("Set up", 0);
+    await choose("Service", "Something else…");
+    await typeInto(inputs("Base URL")[0], "jev.example");
+    await pressEnter(inputs("Base URL")[0]);
+    await settle();
+
+    expect(host.textContent).toContain("Enter the address that starts with https://");
+    expect(inputs("Base URL")[0]!.getAttribute("aria-invalid")).toBe("true");
+    expect(nodeApi.discoverModels).not.toHaveBeenCalled();
+  });
+
+  it("says Ollama is not answering as a hint, not an error, when it was only picked", async () => {
+    await renderWith(FRESH);
+    nodeApi.discoverModels.mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:11434"));
+    await clickNth("Set up", 0);
+    await choose("Service", "Ollama (local)");
+    await settle();
+
+    expect(host.textContent).toContain("Ollama isn’t answering at this address. Start it, then come back here.");
+    expect(host.textContent).not.toContain("Not connected");
+    expect(host.querySelector('[aria-invalid="true"]')).toBeNull();
+  });
+
+  it("shows a test's answer beside the service tested, in plain words", async () => {
+    await renderWith(AI);
+    nodeApi.testAi.mockResolvedValue({
+      ok: true,
+      chat: [{ id: "openai-1", ok: true, model: "gpt-4.1", latency_ms: 1214 }],
+      embed: { ok: true, skipped: true },
+      rerank: { ok: true, skipped: true },
+    });
+    await clickNth("Edit", 0);
+    await settle();
+    await click("Test");
+    await settle();
+
+    expect(host.textContent).toContain("OpenAI answered with gpt-4.1 in 1.2 s.");
+    // In the provider's own form, after its buttons, not above the page.
+    const banner = [...host.querySelectorAll("*")].find((e) => e.textContent === "OpenAI answered with gpt-4.1 in 1.2 s.")!;
+    const testButton = visibleButtons("Test")[0]!;
+    expect(testButton.compareDocumentPosition(banner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(host.textContent).not.toContain("ms");
+  });
+
+  // The page's title, "AI providers", comes from the rail: "titles each page as the rail names it, once".
+  it("says On or Off beside each switch", async () => {
+    await renderWith(AI);
+    expect(host.textContent).toContain("On");
+  });
+
   it("names a model that cannot chat when the save's probe refuses it", async () => {
     await renderWith(FRESH);
     await clickNth("Set up", 0);
@@ -491,9 +590,9 @@ describe("NodeSettingsPage", () => {
     await settle();
     expect(nodeApi.discoverModels).toHaveBeenCalledWith("embed", "openai", "https://api.openai.com/v1", "sk-embed");
 
-    // Nothing is picked for the administrator here either.
+    // Nothing is picked for the administrator here either; the recommended model leads the list and says so.
     expect(isDisabled(visibleButtons("Connect")[0])).toBe(true);
-    await choose("Model", "text-embedding-3-small");
+    await choose("Model", "text-embedding-3-small · Recommended");
     await click("Connect");
     await settle();
     expect(nodeApi.saveAi).toHaveBeenCalledWith({
@@ -514,7 +613,7 @@ describe("NodeSettingsPage", () => {
     nodeApi.discoverModels.mockResolvedValue({ models: ["embeddinggemma:300m"] });
     await act(async () => void window.dispatchEvent(new Event("focus")));
     await settle();
-    await choose("Model", "embeddinggemma:300m");
+    await choose("Model", "embeddinggemma:300m · Recommended");
     expect(isDisabled(visibleButtons("Connect")[0])).toBe(false);
   });
 
@@ -616,7 +715,7 @@ describe("NodeSettingsPage", () => {
     await renderWith(WITH_SEARCH);
     await openSearchEditor();
     expect(chosenStrictness()).toBe("Balanced");
-    expect(host.textContent).toContain("Most unrelated passages are left out.");
+    expect(host.textContent).toContain("Most unrelated matches are left out.");
     savedAs(WITH_SEARCH);
 
     await click("Save");
@@ -631,7 +730,7 @@ describe("NodeSettingsPage", () => {
     await openSearchEditor();
     await click("Loose");
     expect(chosenStrictness()).toBe("Loose");
-    expect(host.textContent).toContain("More matches by meaning, some of them unrelated.");
+    expect(host.textContent).toContain("More matches, some of them unrelated.");
     savedAs({ ...WITH_SEARCH, embed: { ...WITH_SEARCH.embed, search_strictness: "loose" } });
     await click("Save");
     const sent = nodeApi.saveAi.mock.calls[0]![0] as { chat?: unknown; embed: Record<string, unknown> };
@@ -662,9 +761,9 @@ describe("NodeSettingsPage", () => {
     await renderWith(MEASURED);
     expect(host.textContent).toContain("bge-m3 · Balanced");
     await openSearchEditor();
-    expect(host.textContent).toContain("Distance 0.34 for this model");
+    expect(host.textContent).toContain("Measured for this model: 0.34");
     await click("Strict");
-    expect(host.textContent).toContain("Distance 0.27 for this model");
+    expect(host.textContent).toContain("Measured for this model: 0.27");
 
     nodeApi.calibrateAi.mockResolvedValue({ calibration: null });
     const link = [...host.querySelectorAll("button, a")].find((b) => isShown(b as HTMLElement) && b.textContent === "Measure again");
@@ -953,7 +1052,8 @@ describe("NodeSettingsPage", () => {
 
   it("lists the node's backups, one taken before an upgrade marked so, how much they take and where", async () => {
     await mount("backups");
-    expect(host.textContent).toContain("23 MB in /backups");
+    expect(host.textContent).toContain("23 MB in total");
+    expect(host.textContent).toContain("Kept in /backups on the machine that runs Stuga.");
     expect(host.textContent).toContain("12 MB");
     expect(host.textContent).toContain("Before upgrading from 1.8.0");
     expect(host.textContent).toContain("Next: ");
@@ -978,6 +1078,17 @@ describe("NodeSettingsPage", () => {
     await mount("backups");
     expect(host.textContent).toContain("Before upgrading from 1.8.0");
     expect(visibleButtons("Restore…")).toHaveLength(0);
+    // The way back is still named: the guide, which every packaging follows.
+    const guide = [...host.querySelectorAll("a")].find((a) => a.textContent?.startsWith("How to restore a backup"));
+    expect(guide?.getAttribute("href")).toMatch(/docs\/operations\.md#restore$/);
+  });
+
+  it("titles each page as the rail names it, once", async () => {
+    for (const [category, title] of [["ai", "AI providers"], ["backups", "Backups"], ["branding", "Branding"], ["notifications", "Notifications"]]) {
+      await mount(category);
+      expect([...host.querySelectorAll("h1")].map((h) => h.textContent)).toEqual([title]);
+      expect([...host.querySelectorAll("h2")].map((h) => h.textContent)).not.toContain(title);
+    }
   });
 
   it("turns the scheduled backup off, and moves its hour", async () => {
@@ -1112,6 +1223,24 @@ describe("NodeSettingsPage", () => {
     expect(nodeApi.saveSettings).toHaveBeenCalledWith({ search: { languages: ["ko"] } });
     expect(host.textContent).not.toContain("The search index wasn’t rebuilt");
     expect(host.textContent).toContain("Rebuilding the search index");
+  });
+
+  it("names the colour swatch, and takes a typed hex code once it is one", async () => {
+    await mount("branding");
+    const swatch = host.querySelector<HTMLInputElement>('input[type="color"]');
+    expect(swatch?.getAttribute("aria-label")).toBe("Brand color");
+    expect(inputs("Hex code")[0]!.placeholder).toBe("Default");
+
+    await typeInto(inputs("Hex code")[0], "#12345");
+    expect(host.textContent).toContain("Use a 6-digit hex code, such as #2563eb.");
+    expect(isDisabled(visibleButtons("Save")[0])).toBe(true);
+
+    nodeApi.saveSettings.mockResolvedValue({ ...OPS, branding: { accent_color: "#123456" } });
+    await typeInto(inputs("Hex code")[0], "#123456");
+    expect(swatch!.value).toBe("#123456");
+    await click("Save");
+    await settle();
+    expect(nodeApi.saveSettings).toHaveBeenLastCalledWith({ node_name: "", branding: { accent_color: "#123456" } });
   });
 
   it("opens Branding on an unnamed node with the product's name as the placeholder and in the preview", async () => {

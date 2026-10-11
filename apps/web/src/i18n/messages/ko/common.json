@@ -1,8 +1,10 @@
 {
   "cancel": "취소",
+  "back": "뒤로",
   "save": "저장",
   "close": "닫기",
   "done": "완료",
+  "advanced": "고급",
   "retry": "다시 시도",
   "loading": "불러오는 중…",
   "remove": "제거",
@@ -39,5 +41,6 @@
   "notifications": "알림",
   "actionsFor": "{name} 작업",
   "tooLong": "너무 길어요. {count, number}자이며 최대 {limit, number}자까지 쓸 수 있어요.",
-  "savedLive": "저장했어요. 다시 시작하지 않아도 바로 적용돼요."
+  "savedLive": "저장했어요. 다시 시작하지 않아도 바로 적용돼요.",
+  "foundByMeaning": "의미로 찾음"
 }

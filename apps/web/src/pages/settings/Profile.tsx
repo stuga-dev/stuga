@@ -3,12 +3,11 @@
  * sign in: the username is fixed, the email is optional and editable, a
  * password can be set or changed, and the node's identity provider, when it
  * has one, can be linked or unlinked. Passkeys are added at the remote address
- * and listed, renamed and removed at either. Revoke everything takes every way
+ * and listed, renamed and removed at either. Sign out everywhere takes every way
  * in back at once; an alert about a sign-in opens it here (?revoke=1).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Avatar } from "@astryxdesign/core/Avatar";
 import { Badge } from "@astryxdesign/core/Badge";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
@@ -19,12 +18,13 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../../ui/use-toast";
 import { Pencil, UserRound } from "lucide-react";
 import { isEmailShaped } from "@stuga/protocol/domain/username";
 import { LoadFailed } from "../../ui/LoadFailed";
 import { useSettingsScope } from "./SettingsLayout";
 import { PageColumn } from "../../ui/PageColumn";
+import { SettingsTitle } from "./SettingsTitle";
 import { Me, type PasskeySummary, type RevokeEverythingCounts } from "../../api";
 import { absoluteTime, relativeTime } from "../../lib/format";
 import { PasskeyCancelled, addPasskey, passkeysOffered } from "../../lib/session/passkey";
@@ -49,8 +49,18 @@ import { useRemoteStrength } from "../../lib/session/password-strength";
 import { PasswordStrengthHint } from "../../ui/PasswordStrengthHint";
 import { formatLocale, t, uiLanguage } from "../../i18n/i18n";
 import { tRich } from "../../i18n/rich";
+import { Avatar, rememberName } from "../../state/identity";
 
 const PROFILE_PATH = "/settings/profile";
+
+/** One toast slot per credential form, so a later outcome replaces an earlier one instead of stacking. */
+const PASSWORD_TOAST = "settings-password";
+const REVOKE_TOAST = "settings-revoke";
+
+/** A field's error, as TextInput takes it. */
+function fieldError(message: string | null) {
+  return message ? { status: { type: "error" as const, message } } : {};
+}
 
 /** How a link through the provider came back (?provider=), in words. */
 function linkOutcome(outcome: string, provider: string): { body: string; type: "info" | "error" } | null {
@@ -131,7 +141,9 @@ export function Profile() {
     setSaving(true);
     try {
       if (nameChanged) {
-        const { display_name } = await Me.setDisplayName(name);
+        const { alias, display_name } = await Me.setDisplayName(name);
+        // The header and every avatar of you read the names cache.
+        rememberName(alias, display_name);
         setSavedName(display_name);
         setName(display_name);
         void scope.reload();
@@ -170,14 +182,10 @@ export function Profile() {
     <PageColumn>
       <VStack gap={5}>
         <VStack gap={3}>
-          <Heading level={2}>{t("settings.profile.heading")}</Heading>
+          <SettingsTitle>{t("settings.profile.heading")}</SettingsTitle>
           {/* Previews the unsaved name. */}
-          <HStack gap={3} vAlign="center">
-            <Avatar name={name || username || t("settings.profile.you")} size="lg" tooltip={false} />
-            <Text size="sm" color="secondary">
-              {t("settings.profile.avatarNote")}
-            </Text>
-          </HStack>
+          {/* i18n-exempt: a principal id */}
+          <Avatar principal={`user:${scope.me}`} name={name || username || t("settings.profile.you")} size={48} />
           {username && (
             <VStack gap={0}>
               <Text size="sm" color="secondary">{t("common.username")}</Text>
@@ -187,10 +195,7 @@ export function Profile() {
               </Text>
             </VStack>
           )}
-          <TextInput label={t("common.name")} value={name} onChange={setName} onEnter={save} />
-          <Text size="sm" color="secondary">
-            {t("settings.profile.nameNote")}
-          </Text>
+          <TextInput label={t("common.name")} value={name} onChange={setName} onEnter={save} description={t("settings.profile.nameNote")} />
           <TextInput
             label={t("settings.profile.email")}
             type="email"
@@ -253,6 +258,9 @@ function PasswordSection({ username, hasPassword, onSet }: { username: string; h
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [busy, setBusy] = useState(false);
+  /** Problems with what was typed, shown on the field until it changes. */
+  const [currentError, setCurrentError] = useState<string | null>(null);
+  const [nextError, setNextError] = useState<string | null>(null);
   const strength = useRemoteStrength(next, { username });
   const askCurrent = hasPassword && !atRemoteAddress();
   /** The button's condition, which Enter in either field goes through too. */
@@ -261,25 +269,27 @@ function PasswordSection({ username, hasPassword, onSet }: { username: string; h
   async function submit() {
     if (!filled || busy) return;
     if (!passwordOk(next, strength.strong)) {
-      toast({ body: t("settings.password.chooseAnother", { rules: passwordRulesText(strength.strong) }), type: "error" });
+      setNextError(t("settings.password.chooseAnother", { rules: passwordRulesText(strength.strong) }));
       return;
     }
+    setCurrentError(null);
+    setNextError(null);
     setBusy(true);
     try {
       if (hasPassword) {
         // The node ends every other session and answers with this browser's next one.
         setSession(await changePassword(username, current, next));
-        toast({ body: t("settings.password.changed"), type: "info" });
+        toast({ body: t("settings.password.changed"), type: "info", uniqueID: PASSWORD_TOAST });
       } else {
         await setFirstPassword(next);
-        toast({ body: t("settings.password.set"), type: "info" });
+        toast({ body: t("settings.password.set"), type: "info", uniqueID: PASSWORD_TOAST });
         onSet();
       }
       setCurrent("");
       setNext("");
     } catch (err) {
-      const wrongCurrent = askCurrent && err instanceof AuthError && err.message === "invalid_credentials";
-      toast({ body: wrongCurrent ? t("settings.password.wrongCurrent") : describeError(err), type: "error" });
+      if (askCurrent && err instanceof AuthError && err.message === "invalid_credentials") setCurrentError(t("settings.password.wrongCurrent"));
+      else toast({ body: describeError(err), type: "error", uniqueID: PASSWORD_TOAST });
     } finally {
       setBusy(false);
     }
@@ -296,21 +306,29 @@ function PasswordSection({ username, hasPassword, onSet }: { username: string; h
           label={t("settings.password.current")}
           type="password"
           value={current}
-          onChange={setCurrent}
+          onChange={(v: string) => {
+            setCurrent(v);
+            setCurrentError(null);
+          }}
           onEnter={() => void submit()}
           htmlName="current-password"
           autoComplete="current-password"
+          {...fieldError(currentError)}
         />
       )}
       <TextInput
         label={t("settings.password.new")}
         type="password"
         value={next}
-        onChange={setNext}
+        onChange={(v: string) => {
+          setNext(v);
+          setNextError(null);
+        }}
         onEnter={() => void submit()}
         htmlName="new-password"
         autoComplete="new-password"
         description={passwordRulesText(strength.strong)}
+        {...fieldError(nextError)}
       />
       <PasswordStrengthHint password={next} strength={strength} />
       <HStack justify="end">
@@ -392,7 +410,7 @@ function ProviderSection({
   );
 }
 
-/** What the dialog says Revoke everything takes, from the node's count. */
+/** What the dialog says Sign out everywhere takes, from the node's count. */
 export function revokeSummary(counts: RevokeEverythingCounts, provider: string | null): string {
   const links = counts.invites + counts.share_links;
   const parts = [
@@ -413,7 +431,7 @@ export function revokeSummary(counts: RevokeEverythingCounts, provider: string |
 }
 
 /**
- * Revoke everything: every session ends, every other way in goes, and the new password chosen here is
+ * Sign out everywhere: every session ends, every other way in goes, and the new password chosen here is
  * the only way back. The node asks for a recent confirmation first.
  */
 function RevokeEverythingSection({ username, onDone }: { username: string; onDone: () => void }) {
@@ -424,11 +442,13 @@ function RevokeEverythingSection({ username, onDone }: { username: string; onDon
   const [open, setOpen] = useState(false);
   const [counts, setCounts] = useState<RevokeEverythingCounts | null>(null);
   const [next, setNext] = useState("");
+  const [nextError, setNextError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const strength = useRemoteStrength(next, { username });
 
   const show = useCallback(() => {
     setNext("");
+    setNextError(null);
     setCounts(null);
     setOpen(true);
     Me.revokeEverythingCounts()
@@ -446,17 +466,17 @@ function RevokeEverythingSection({ username, onDone }: { username: string; onDon
   async function submit() {
     if (!next || busy) return;
     if (!passwordOk(next, strength.strong)) {
-      toast({ body: t("settings.password.chooseAnother", { rules: passwordRulesText(strength.strong) }), type: "error" });
+      setNextError(t("settings.password.chooseAnother", { rules: passwordRulesText(strength.strong) }));
       return;
     }
     setBusy(true);
     try {
       setSession(await revokeEverything(next));
       setOpen(false);
-      toast({ body: t("settings.revoke.done"), type: "info" });
+      toast({ body: t("settings.revoke.done"), type: "info", uniqueID: REVOKE_TOAST });
       onDone();
     } catch (err) {
-      toast({ body: describeError(err), type: "error" });
+      toast({ body: describeError(err), type: "error", uniqueID: REVOKE_TOAST });
     } finally {
       setBusy(false);
     }
@@ -469,7 +489,7 @@ function RevokeEverythingSection({ username, onDone }: { username: string; onDon
         {t("settings.revoke.intro")}
       </Text>
       <HStack justify="end">
-        <Button label={t("settings.revoke.button")} variant="secondary" onClick={show} />
+        <Button label={t("settings.revoke.button")} variant="secondary" className="button--danger-outline" onClick={show} />
       </HStack>
       <Dialog isOpen={open} onOpenChange={(o) => !o && !busy && setOpen(false)} purpose="form" width={440}>
         <Layout
@@ -484,11 +504,15 @@ function RevokeEverythingSection({ username, onDone }: { username: string; onDon
                   label={t("settings.password.new")}
                   type="password"
                   value={next}
-                  onChange={setNext}
+                  onChange={(v: string) => {
+                    setNext(v);
+                    setNextError(null);
+                  }}
                   onEnter={() => void submit()}
                   htmlName="new-password"
                   autoComplete="new-password"
                   description={passwordRulesText(strength.strong)}
+                  {...fieldError(nextError)}
                 />
                 <PasswordStrengthHint password={next} strength={strength} />
               </VStack>
@@ -498,7 +522,7 @@ function RevokeEverythingSection({ username, onDone }: { username: string; onDon
             <LayoutFooter>
               <HStack gap={2} justify="end">
                 <Button label={t("common.cancel")} variant="ghost" onClick={() => setOpen(false)} isDisabled={busy} />
-                <Button label={t("settings.revoke.button")} variant="primary" onClick={() => void submit()} isDisabled={!next} isLoading={busy} />
+                <Button label={t("settings.revoke.button")} variant="destructive" onClick={() => void submit()} isDisabled={!next} isLoading={busy} />
               </HStack>
             </LayoutFooter>
           }

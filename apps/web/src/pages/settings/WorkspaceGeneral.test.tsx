@@ -5,10 +5,11 @@ import { act } from "react";
 import type { Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { toasts } from "../../test/toast";
-import { mountInto } from "../../test/form-input";
+import { mountInto, typeInto } from "../../test/form-input";
+import { takeNotice } from "../../lib/session/notice";
 
-const workspaces = vi.hoisted(() => ({ exportArchive: vi.fn() }));
-const scope = vi.hoisted(() => ({ canManage: true, isOwner: false }));
+const workspaces = vi.hoisted(() => ({ exportArchive: vi.fn(), deleteWorkspace: vi.fn() }));
+const scope = vi.hoisted(() => ({ canManage: true, isOwner: false, isNodeAdmin: false }));
 const saved = vi.hoisted(() => ({ files: [] as Array<{ blob: Blob; filename: string }> }));
 
 vi.mock("../../api", async (orig) => {
@@ -43,6 +44,11 @@ let root: Root;
 const settle = () => act(async () => new Promise((r) => setTimeout(r, 0)));
 const button = (label: string) => [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(label));
 const headings = () => [...host.querySelectorAll("h2")].map((h) => h.textContent);
+/** The input a visible label names. */
+const fieldLabelled = (text: string) => {
+  const label = [...host.querySelectorAll("label")].find((l) => l.textContent?.startsWith(text));
+  return label ? host.querySelector<HTMLInputElement>(`#${CSS.escape(label.htmlFor)}`) : null;
+};
 
 async function open() {
   await act(async () => {
@@ -63,8 +69,10 @@ async function click(label: string) {
 
 beforeEach(() => {
   workspaces.exportArchive.mockReset();
+  workspaces.deleteWorkspace.mockReset();
   scope.canManage = true;
   scope.isOwner = false;
+  scope.isNodeAdmin = false;
   saved.files = [];
   toasts.shown = [];
   ({ host, root } = mountInto());
@@ -87,6 +95,18 @@ describe("WorkspaceGeneral · Export", () => {
     await settle();
     expect(saved.files).toEqual([{ blob, filename: "Liv's team.stuga.zip" }]);
     expect(button("Export workspace")?.disabled).toBe(false);
+    expect(toasts.shown).toEqual([{ body: "Exported Liv's team.stuga.zip.", type: "info" }]);
+  });
+
+  it("says what the archive holds, and points a node administrator at Backups", async () => {
+    await open();
+    expect(host.textContent).toContain("Documents, databases, files and comments, in one .stuga.zip.");
+    expect(host.textContent).not.toContain("Backups");
+    await act(async () => root.unmount());
+    ({ host, root } = mountInto());
+    scope.isNodeAdmin = true;
+    await open();
+    expect(host.textContent).toContain("For a full backup with version history, use Backups.");
   });
 
   it("says why when the export fails", async () => {
@@ -96,6 +116,38 @@ describe("WorkspaceGeneral · Export", () => {
     await settle();
     expect(toasts.shown).toEqual([{ body: "the node is busy", type: "error" }]);
     expect(saved.files).toEqual([]);
+  });
+
+  it("leaves a notice that the workspace was deleted, for the page the app reloads to", async () => {
+    scope.isOwner = true;
+    workspaces.deleteWorkspace.mockResolvedValue({ deleted: true, docs: 3 });
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    await open();
+    const confirm = fieldLabelled("Type “Liv's team” to confirm")!;
+    await typeInto(confirm, "Liv's team");
+    await click("Delete workspace");
+    await settle();
+    expect(workspaces.deleteWorkspace).toHaveBeenCalledWith("ws1", "Liv's team");
+    expect(assign).toHaveBeenCalledWith("/");
+    expect(takeNotice()).toBe("Deleted “Liv's team”.");
+    vi.unstubAllGlobals();
+  });
+
+  it("asks for the name with a label, not a placeholder that reads as already typed", async () => {
+    scope.isOwner = true;
+    await open();
+    const confirm = fieldLabelled("Type “Liv's team” to confirm");
+    expect(confirm).toBeTruthy();
+    expect(confirm!.placeholder).toBe("");
+    expect(confirm!.value).toBe("");
+    expect(button("Delete workspace")?.disabled).toBe(true);
+  });
+
+  it("names the access choice as creating a workspace does", async () => {
+    await open();
+    expect(fieldLabelled("Access for new documents") ?? host.querySelector("[aria-label='Access for new documents']")).toBeTruthy();
+    expect(host.textContent).toContain("Access for new documents");
   });
 
   it("is not offered to a member", async () => {

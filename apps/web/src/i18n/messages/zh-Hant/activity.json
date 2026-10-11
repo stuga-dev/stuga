@@ -23,6 +23,8 @@
   "op.columnTypeChanged": "將「{table}」中的欄「{column}」改為{type}（轉換了 {coerced, plural, other {# 個儲存格}}）",
   "op.columnDescribed": "為「{table}」中的欄「{column}」加上說明",
   "op.columnDescriptionCleared": "清除了「{table}」中欄「{column}」的說明",
+  "op.columnFormatChanged": "變更了「{table}」中欄「{column}」的數字格式",
+  "op.columnFormatCleared": "清除了「{table}」中欄「{column}」的數字格式",
   "op.columnDeleted": "從「{table}」刪除了欄「{column}」",
   "op.rowsInserted": "在「{table}」插入了 {rows, plural, other {# 列}}",
   "op.rowsImported": "在「{table}」匯入了 {rows, plural, other {# 列}}",

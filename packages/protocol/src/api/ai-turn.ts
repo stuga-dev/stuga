@@ -90,6 +90,8 @@ export type CoauthorNotice =
 /** Why a co-author turn failed, or why its edits could not be staged. */
 export type CoauthorError =
   | { code: "locked" }
+  /** The document is in the trash. */
+  | { code: "trashed" }
   | { code: "view_only" }
   | { code: "rate_limited" }
   | { code: "unreadable" }

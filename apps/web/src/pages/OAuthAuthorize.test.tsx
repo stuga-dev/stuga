@@ -178,6 +178,27 @@ describe("OAuthAuthorize", () => {
     expect(button("Deny")).toBeDefined();
   });
 
+  it("warns about an unverified app in a callout, and calls a loopback redirect an app on this computer", async () => {
+    node(reply(200, {}));
+    await open(`client_id=cid_1&redirect_uri=${encodeURIComponent("http://127.0.0.1:9879/callback")}&code_challenge=${REQUEST.codeChallenge}`);
+    // A warning callout, not a line of small print.
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Unverified app");
+    expect(host.textContent).toContain("Allow only if you just started this connection from an app on this computer.");
+    expect(host.textContent).not.toContain("127.0.0.1");
+  });
+
+  it("explains a disabled Allow, and what read only means", async () => {
+    node(reply(200, {}));
+    await open(`client_id=cid_1&redirect_uri=${encodeURIComponent(REQUEST.redirectUri)}&code_challenge=${REQUEST.codeChallenge}`);
+    expect(host.textContent).toContain("It can look, but not change anything.");
+    expect(host.textContent).not.toContain("Choose at least one workspace.");
+    for (const box of [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].filter((b) => b.checked)) {
+      await act(async () => box.click());
+    }
+    expect(button("Allow")!.disabled).toBe(true);
+    expect(host.textContent).toContain("Choose at least one workspace.");
+  });
+
   it("offers nothing to approve for a request whose redirect does not parse", async () => {
     await open(`client_id=cid_1&redirect_uri=not-a-url&code_challenge=${REQUEST.codeChallenge}`);
     expect(host.textContent).toContain("Incomplete request");

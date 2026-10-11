@@ -5,8 +5,8 @@ import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Banner } from "@astryxdesign/core/Banner";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
-import { Link } from "@astryxdesign/core/Link";
-import { useToast } from "@astryxdesign/core/Toast";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { useToast } from "../../ui/use-toast";
 import { Download } from "lucide-react";
 import { Agents } from "../../api";
 import { saveBlob } from "../../lib/download";
@@ -35,8 +35,6 @@ export function ClaudeDesktopTab({
   const toast = useToast();
   const [downloading, setDownloading] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
-  // Open from the start when there is no one-click path to prefer.
-  const [showManual, setShowManual] = useState(!canBundle);
 
   /** The file carries no key: once installed, it signs in through the browser. */
   async function downloadBundle() {
@@ -82,14 +80,10 @@ export function ClaudeDesktopTab({
         </Text>
       )}
       {desktopJson !== null && (
-        <>
-          {!showManual && (
-            <HStack>
-              <Link onClick={() => setShowManual(true)}>{t("agents.claudeDesktop.byHand")}</Link>
-            </HStack>
-          )}
-          {/* Mounted while hidden, so a reader who opens it keeps their place. */}
-          <div hidden={!showManual} data-testid="manual-setup">
+        // A disclosure row like Uninstall's below it, so neither reads as the other's heading. Open from
+        // the start when there is no one-click path to prefer; Collapsible hides with CSS, so a reader keeps their place.
+        <Collapsible trigger={t("agents.claudeDesktop.byHand")} defaultIsOpen={!canBundle}>
+          <div data-testid="manual-setup">
             <VStack gap={2}>
               {/* i18n-exempt: the client's name, which names its key */}
               <MintKey mint={mint} defaultName="Claude Desktop" />
@@ -108,7 +102,7 @@ export function ClaudeDesktopTab({
               </Text>
             </VStack>
           </div>
-        </>
+        </Collapsible>
       )}
       {(canBundle || desktopJson !== null) && (
         <UninstallGuide host="Claude Desktop">

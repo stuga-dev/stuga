@@ -1,11 +1,13 @@
 /**
- * The node's branding applied to the page: its name in the tab title, and its
- * colour as the `--brand` token. The brand colour is deliberately not the Astryx
+ * The node's branding applied to the page: its name in the tab title after the
+ * page's own, and its colour as the `--brand` token. The brand colour is deliberately not the Astryx
  * accent (near-black, meaning "primary action"); it only marks the selected item.
  */
+import { useEffect } from "react";
 import { brandingConfig, setBrandingConfig, setNodeNameConfig, type BrandingConfig } from "../lib/session/auth-config";
 import { createStore, useStore } from "../lib/store";
 import { nodeName } from "../shell/Brand";
+import { t } from "../i18n/i18n";
 
 interface Rgb {
   r: number;
@@ -91,13 +93,40 @@ export function brandColor(hex: string, mode: "light" | "dark"): string | null {
 
 const STYLE_TAG_ID = "stuga-branding-accent";
 
+/** What the page on screen is called, or null where the node's name alone titles the tab. */
+let pageName: string | null = null;
+
+function applyTitle(): void {
+  document.title = pageName ? t("ui.app.pageTitle", { page: pageName, node: nodeName() }) : nodeName();
+}
+
+/** Name the tab after the page on screen ("Croissant recipe - Stuga"); null leaves the node's name alone. */
+export function setPageTitle(name: string | null): void {
+  pageName = name?.replace(/\s+/g, " ").trim() || null;
+  applyTitle();
+}
+
+/** Titles the tab after `name` while the calling page is on screen. */
+export function usePageTitle(name: string | null): void {
+  useEffect(() => {
+    setPageTitle(name);
+    return () => setPageTitle(null);
+  }, [name]);
+}
+
+/** usePageTitle for a part of a page that is rendered only in one of its states. */
+export function PageTitle({ name }: { name: string | null }): null {
+  usePageTitle(name);
+  return null;
+}
+
 /**
  * Title the tab with the node's name and inject `--brand` for both modes, or
  * remove the override when no colour is set. `html:root` outranks the `:root`
  * default in styles/tokens.css regardless of stylesheet order.
  */
 export function applyBranding(): void {
-  document.title = nodeName();
+  applyTitle();
   const { accentColor } = brandingConfig();
   let tag = document.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null;
 

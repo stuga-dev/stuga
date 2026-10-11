@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
+import { createBrowserRouter, RouterProvider, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
 import { Theme } from "@astryxdesign/core/theme";
 import { LayerProvider } from "@astryxdesign/core/Layer";
 import { neutralTheme } from "@astryxdesign/theme-neutral/built";
@@ -23,6 +23,7 @@ import { Appearance } from "./pages/settings/Appearance";
 import { YourAiAgents } from "./pages/settings/YourAiAgents";
 import { WorkspaceGeneral } from "./pages/settings/WorkspaceGeneral";
 import { WorkspaceMembers } from "./pages/settings/WorkspaceMembers";
+import { WorkspaceGroups } from "./pages/settings/WorkspaceGroups";
 import { AuditLog } from "./pages/settings/AuditLog";
 import { AiUsage } from "./pages/settings/AiUsage";
 import { AgentSettings } from "./pages/settings/AgentSettings";
@@ -30,18 +31,23 @@ import { ReviewPage } from "./pages/ReviewPage";
 import { DEFAULT_NODE_CATEGORY } from "./pages/settings/node/categories";
 import { JoinDoc, JoinWorkspace } from "./pages/JoinLink";
 import { WorkspaceOnboarding } from "./pages/WorkspaceOnboarding";
+import { NotFound } from "./pages/NotFound";
+import { RouteError } from "./pages/RouteError";
 import { CommandPalette } from "./shell/command-palette/CommandPalette";
 import { CommandPaletteProvider } from "./shell/command-palette/context";
 import { NodeHealthBanner } from "./shell/NodeHealthBanner";
 import { AuthLayout } from "./shell/AuthLayout";
+import { KeyboardShortcuts } from "./shell/KeyboardShortcuts";
 import { ConfirmIdentity } from "./ui/ConfirmIdentity";
 import { PasskeyOffer } from "./ui/PasskeyOffer";
 import { Workspaces } from "./api";
-import { getActiveWorkspace, setActiveWorkspace } from "./lib/session/workspace-pointer";
+import { rememberWorkspaceName } from "./lib/session/workspace-pointer";
+import { adoptActiveWorkspace, clearMembershipEnded } from "./lib/session/endings";
 import { rememberWorkspaceReturn } from "./lib/session/return-path";
 import { ensureMediaTicket } from "./lib/session/tickets";
 import { useThemeMode } from "./state/theme";
 import { useBrandingVersion } from "./state/branding";
+import { useIsCompact } from "./ui/narrow";
 import { t } from "./i18n/i18n";
 import "./styles/shell.css";
 
@@ -70,9 +76,11 @@ function WorkspaceLayout() {
     void Promise.all([Workspaces.list(), ensureMediaTicket()])
       .then(([{ workspaces, active }]) => {
         if (!alive) return;
-        // Adopt the server's answer, including "none": a stale id from another
-        // account must not keep riding x-stuga-workspace.
-        if (getActiveWorkspace() !== active) setActiveWorkspace(active);
+        adoptActiveWorkspace(active, workspaces.length);
+        const current = workspaces.find((w) => w.workspace_id === active);
+        if (current) rememberWorkspaceName(current.workspace_id, current.name);
+        // A membership that ended elsewhere is old news once another workspace opens.
+        if (workspaces.length > 0) clearMembershipEnded();
         setState(workspaces.length > 0 ? "ready" : "empty");
       })
       .catch(() => {
@@ -134,57 +142,78 @@ function WorkspaceLayout() {
   );
 }
 
+/** Every page. Inside a data router, so a page can ask before it is left (`useBlocker`). */
+function AppRoutes() {
+  // The router holds this element from the first render, so the repaint on new branding is asked for here.
+  useBrandingVersion();
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      {/* Where a sign-in through the identity provider lands; the node leaves both to the app. */}
+      <Route path="/auth/complete" element={<AuthComplete />} />
+      <Route path="/auth/first-visit" element={<FirstVisit />} />
+      {/* A reset link from Account recovery or `reset-password`: signed out, like the login page. */}
+      <Route path="/reset/:token" element={<ResetPassword />} />
+      <Route element={<AuthLayout />}>
+        <Route element={<WorkspaceLayout />}>
+          <Route path="/" element={<DocList />} />
+          <Route path="/doc/:docId" element={<ItemPage />} />
+          <Route path="/ask/:threadId?" element={<AskPage />} />
+          <Route path="/review" element={<ReviewPage />} />
+          <Route path="/oauth/consent" element={<OAuthAuthorize />} />
+        </Route>
+        {/* Not under WorkspaceLayout: node settings need no workspace, and
+            SettingsLayout applies the workspace requirement per scope. */}
+        <Route path="/settings" element={<SettingsLayout />}>
+          <Route index element={<Navigate to="/settings/profile" replace />} />
+          <Route path="profile" element={<Profile />} />
+          <Route path="appearance" element={<Appearance />} />
+          <Route path="agents" element={<YourAiAgents />} />
+          <Route path="workspace" element={<WorkspaceGeneral />} />
+          <Route path="workspace/members" element={<WorkspaceMembers />} />
+          <Route path="workspace/groups" element={<WorkspaceGroups />} />
+          <Route path="workspace/audit" element={<AuditLog />} />
+          <Route path="workspace/usage" element={<AiUsage />} />
+          <Route path="workspace/agents" element={<AgentSettings />} />
+          <Route path="node" element={<Navigate to={`/settings/node/${DEFAULT_NODE_CATEGORY}`} replace />} />
+          <Route path="node/:category" element={<NodeSettingsPage />} />
+        </Route>
+        <Route path="/onboarding" element={<WorkspaceOnboarding />} />
+        <Route path="/join/:token" element={<JoinWorkspace />} />
+        <Route path="/s/:token" element={<JoinDoc />} />
+      </Route>
+      <Route path="*" element={<NotFound />} />
+    </Routes>
+  );
+}
+
+/**
+ * Where toasts show, clear of the controls a person is using as one arrives:
+ * the dock keeps its composer and footer buttons along the bottom, beside the
+ * page on a wide screen and over it on a narrower one.
+ */
+const TOAST_BESIDE_DOCK = { position: "bottomStart" } as const;
+const TOAST_OVER_DOCK = { position: "topStart" } as const;
+
+// A page that fails to render shows the app's own error page, not React Router's.
+const router = createBrowserRouter([{ path: "*", element: <AppRoutes />, errorElement: <RouteError /> }]);
+
 export function App() {
   const mode = useThemeMode();
+  const compact = useIsCompact();
   // Re-renders the tree when node branding changes, so every brand mark and name repaints.
   useBrandingVersion();
   return (
     <Theme theme={neutralTheme} mode={mode}>
-      <LayerProvider>
+      <LayerProvider toast={compact ? TOAST_OVER_DOCK : TOAST_BESIDE_DOCK}>
         {/* Outside the router: an unreachable database concerns every page, the login screen included. */}
         <NodeHealthBanner />
         {/* Outside the router too: a change anywhere may first ask the person to confirm it is them. */}
         <ConfirmIdentity />
         {/* Once, after a password sign-in at the remote address. */}
         <PasskeyOffer />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            {/* Where a sign-in through the identity provider lands; the node leaves both to the app. */}
-            <Route path="/auth/complete" element={<AuthComplete />} />
-            <Route path="/auth/first-visit" element={<FirstVisit />} />
-            {/* A reset link from Account recovery or `reset-password`: signed out, like the login page. */}
-            <Route path="/reset/:token" element={<ResetPassword />} />
-            <Route element={<AuthLayout />}>
-              <Route element={<WorkspaceLayout />}>
-                <Route path="/" element={<DocList />} />
-                <Route path="/doc/:docId" element={<ItemPage />} />
-                <Route path="/ask/:threadId?" element={<AskPage />} />
-                <Route path="/review" element={<ReviewPage />} />
-                <Route path="/oauth/consent" element={<OAuthAuthorize />} />
-              </Route>
-              {/* Not under WorkspaceLayout: node settings need no workspace, and
-                  SettingsLayout applies the workspace requirement per scope. */}
-              <Route path="/settings" element={<SettingsLayout />}>
-                <Route index element={<Navigate to="/settings/profile" replace />} />
-                <Route path="profile" element={<Profile />} />
-                <Route path="appearance" element={<Appearance />} />
-                <Route path="agents" element={<YourAiAgents />} />
-                <Route path="workspace" element={<WorkspaceGeneral />} />
-                <Route path="workspace/members" element={<WorkspaceMembers />} />
-                <Route path="workspace/audit" element={<AuditLog />} />
-                <Route path="workspace/usage" element={<AiUsage />} />
-                <Route path="workspace/agents" element={<AgentSettings />} />
-                <Route path="node" element={<Navigate to={`/settings/node/${DEFAULT_NODE_CATEGORY}`} replace />} />
-                <Route path="node/:category" element={<NodeSettingsPage />} />
-              </Route>
-              <Route path="/onboarding" element={<WorkspaceOnboarding />} />
-              <Route path="/join/:token" element={<JoinWorkspace />} />
-              <Route path="/s/:token" element={<JoinDoc />} />
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
+        <KeyboardShortcuts />
+        <RouterProvider router={router} />
       </LayerProvider>
     </Theme>
   );

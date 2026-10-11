@@ -1,6 +1,6 @@
 /** Server-sent events over POST. Not through `authedFetch`, whose timeout a long turn outlives. */
 import { t } from "../../i18n/i18n";
-import { authHeaders } from "./client";
+import { authHeaders, networkFailure } from "./client";
 import { presentServerMessage } from "./server-messages";
 
 type SseEventHandler = (event: string, data: Record<string, unknown>) => void;
@@ -63,7 +63,7 @@ export function openSse(
     if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) return;
     // The connection failed or dropped mid-stream; the browser's own words are English.
     if (import.meta.env.DEV) console.warn(`sse ${path}`, e);
-    handlers.onError(t("errors.client.offline"));
+    handlers.onError(networkFailure(e).message);
   });
   return controller;
 }

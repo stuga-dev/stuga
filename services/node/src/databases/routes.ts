@@ -1,13 +1,16 @@
 /** `/api/databases/:id/...`: every route passes databaseRoute's gate and forwards to the database's actor. */
 import { touchDoc, type DocRow } from "@stuga/db";
+import { csvFileName, rowsToCsv } from "@stuga/protocol/databases/csv";
 import { selectOnlyViolation } from "@stuga/protocol/databases/sql-guard";
 import { parseDecisionNote } from "@stuga/protocol/domain/runs";
-import type { DatabaseRunSummary } from "@stuga/protocol/databases/types";
+import type { DatabaseOpSummary, DatabaseRunSummary } from "@stuga/protocol/databases/types";
+import { agentNameMap } from "../agents/names.js";
 import { recordAudit } from "../audit/record.js";
 import { docInstructionLabelsOrNone } from "../documents/instructions.js";
 import { canWriteDoc, manages } from "../authz/authz.js";
+import { lockedError } from "../documents/access.js";
 import { docAgentInstructions } from "../documents/instructions.js";
-import { afterDatabaseMutation, authorizedDatabase, callDatabaseActor, databaseActor, proxyActor } from "./gate.js";
+import { afterDatabaseMutation, authorizedDatabase, callDatabaseActor, databaseActor, projectedSchema, proxyActor } from "./gate.js";
 import { commitDatabaseImport, createDatabaseImport, parseCommitOptions } from "./imports/staging.js";
 import {
   databaseProposeBody,
@@ -166,9 +169,18 @@ export async function updateColumn({ ctx, match, doc, docId, writeRefusal, body,
   const r = writeRefusal() ?? agentSchemaRefusal();
   if (r) return r;
   const b = await body();
-  // A body names one of `type`, `display` or `description`; any two at once is ambiguous.
-  if (["type", "display", "description"].filter((f) => b[f] !== undefined).length > 1) {
+  // A body names one of `type`, `display`, `description` or `format`; any two at once is ambiguous.
+  if (["type", "display", "description", "format"].filter((f) => b[f] !== undefined).length > 1) {
     return error(400, "change the type, the name and the description in separate requests");
+  }
+  if (b.format !== undefined) {
+    const res = await callDatabaseActor(ctx, docId, "columns/set-format", {
+      table_id: tableId,
+      column_id: columnId,
+      format: b.format,
+    });
+    if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "column_format_changed" });
+    return proxyActor(res, "could not change the number format");
   }
   if (b.description !== undefined) {
     const res = await callDatabaseActor(ctx, docId, "columns/set-description", {
@@ -259,6 +271,7 @@ export async function listRows({ ctx, match, docId, body }: DatabaseCall): Promi
     filter: b.filter,
     group_by: b.group_by,
     view_id: b.view_id,
+    search: b.search,
     ...(ctx.isAgent ? { agent_alias: ctx.alias } : {}),
   });
   if (!res.ok) return proxyActor(res, "could not list rows");
@@ -266,6 +279,46 @@ export async function listRows({ ctx, match, docId, body }: DatabaseCall): Promi
   if (!page) return error(502, "could not list rows");
   await annotateRowPages(ctx, page.rows ?? []);
   return json(page);
+}
+
+/**
+ * Every row a listing's shape selects as a CSV download: `filter`, `sort`, `group_by`, `search` and
+ * `view_id` as a listing takes them, and `columns`, the column ids to write in order (default every
+ * column). Live data only: an agent's pending proposals are not laid over it.
+ */
+export async function exportRowsCsv({ ctx, match, docId, body }: DatabaseCall): Promise<Response> {
+  const tableId = match[2]!;
+  const b = await body();
+  const schema = await projectedSchema(ctx, docId);
+  const table = schema?.tables.find((t) => t.table_id === tableId && !t.pending);
+  if (!table) return error(404, "no such table");
+  const live = [...table.columns].filter((c) => !c.pending).sort((x, y) => x.position - y.position);
+  let columns = live;
+  if (b.columns !== undefined) {
+    if (!Array.isArray(b.columns) || !b.columns.every((c) => typeof c === "string")) return error(400, "columns must be a list of column ids");
+    const wanted = b.columns as string[];
+    columns = wanted.flatMap((id) => live.filter((c) => c.column_id === id));
+  }
+  const res = await callDatabaseActor(ctx, docId, "rows/export", {
+    table_id: tableId,
+    sort: b.sort,
+    filter: b.filter,
+    group_by: b.group_by,
+    view_id: b.view_id,
+    search: b.search,
+  });
+  if (!res.ok) return proxyActor(res, "could not export rows");
+  const out = (await res.json().catch(() => null)) as { rows?: Array<Record<string, unknown>> } | null;
+  if (!out?.rows) return error(502, "could not export rows");
+  const name = csvFileName(table.display);
+  return new Response(rowsToCsv(columns, out.rows), {
+    headers: {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="${name.replace(/[^\x20-\x7e]|"/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    },
+  });
 }
 
 export async function insertRows({ ctx, match, doc, docId, writeRefusal, body, proposeOrError }: DatabaseCall): Promise<Response> {
@@ -295,7 +348,8 @@ export async function updateRows({ ctx, match, doc, docId, writeRefusal, body, p
   const out = (await res.json().catch(() => null)) as { updated?: number } | null;
   if (!out) return error(502, "could not update rows");
   const n = out.updated ?? 0;
-  await afterDatabaseMutation(ctx, doc, { kind: "rows_updated", count: n });
+  // Nothing changed (each row refused for a conflict): no edit time, audit row or event to report.
+  if (n > 0) await afterDatabaseMutation(ctx, doc, { kind: "rows_updated", count: n });
   return json(out);
 }
 
@@ -353,14 +407,16 @@ export async function getDatabaseRun({ ctx, url, match, docId }: DatabaseCall): 
   return json(detail);
 }
 
-export async function decideDatabaseRun({ ctx, match, doc, docId, writeRefusal, body }: DatabaseCall): Promise<Response> {
+export async function decideDatabaseRun({ ctx, match, doc, docId, canWrite, body }: DatabaseCall): Promise<Response> {
   if (ctx.isAgent) return error(403, "agents cannot review agent edits");
-  const r = writeRefusal();
-  if (r) return r;
+  if (!canWrite) return error(403, "view-only access");
   const b = await body();
   if (b.decision !== "accept" && b.decision !== "reject") {
     return error(400, "decision must be accept or reject");
   }
+  // As on a document: a lock holds the data as it is, and a rejected proposal never touched it.
+  const lk = b.decision === "accept" ? lockedError(doc) : null;
+  if (lk) return lk;
   const note = parseDecisionNote(b.decision, b.note);
   if (!note.ok) return error(400, note.message);
   const opIds = Array.isArray(b.op_ids) ? b.op_ids.filter((x): x is string => typeof x === "string") : undefined;
@@ -480,7 +536,12 @@ export async function listOps({ ctx, url, docId }: DatabaseCall): Promise<Respon
   if (before) qs.set("before_seq", before);
   qs.set("dbId", docId);
   const res = await databaseActor(ctx, docId).fetch(`http://actor/ops?${qs}`);
-  return proxyActor(res, "could not load activity");
+  if (!res.ok) return proxyActor(res, "could not load activity");
+  const body = (await res.json().catch(() => null)) as { ops?: DatabaseOpSummary[] } | null;
+  if (!body) return error(502, "could not load activity");
+  // The ledger keeps an agent's id; people read the name its key or connection has now.
+  const agents = (body.ops ?? []).filter((o) => o.is_agent).map((o) => o.actor);
+  return json({ ...body, agent_names: await agentNameMap(ctx.sql, agents) });
 }
 
 export async function revertOp({ ctx, match, doc, docId, writeRefusal }: DatabaseCall): Promise<Response> {

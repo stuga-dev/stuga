@@ -245,6 +245,8 @@ describe("parseManifest", () => {
     ["a select without choices", (m) => delete obligations(m).columns[1].choices, "items[3].tables[0].columns[1].choices", "non-empty choices"],
     ["choices repeated", (m) => (obligations(m).columns[1].choices = ["a", "a"]), "items[3].tables[0].columns[1].choices", "duplicate choice"],
     ["choices on a text column", (m) => (obligations(m).columns[0].choices = ["a"]), "items[3].tables[0].columns[0].choices", "only a single_select"],
+    ["a format on a text column", (m) => (obligations(m).columns[0].format = { style: "number" }), "items[3].tables[0].columns[0].format", "only a number column"],
+    ["a format it cannot read", (m) => (obligations(m).columns[2].format = { style: "currency" }), "items[3].tables[0].columns[2].format", "currency code"],
     ["a description over 500", (m) => (obligations(m).columns[2].description = "x".repeat(501)), "items[3].tables[0].columns[2].description", "longer than 500"],
     ["two views named alike", (m) => obligations(m).views.push({ ...obligations(m).views[0], name: "breach" }), "items[3].tables[0].views[1].name", "listed twice"],
     ["a view kind it does not know", (m) => (obligations(m).views[0].kind = "board"), "items[3].tables[0].views[0].kind", "must be one of table"],

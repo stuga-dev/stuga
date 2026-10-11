@@ -61,6 +61,8 @@ export interface InboxRun {
   client: string | null;
   model: string | null;
   reviewer: string;
+  /** Whether this person may decide the run: its reviewer, or someone who manages the item. */
+  can_decide?: boolean;
   status: "open" | "applied" | "rejected" | "expired" | string;
   review_mode: ReviewMode;
   auto_applied: boolean;

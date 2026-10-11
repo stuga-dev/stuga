@@ -6,13 +6,13 @@
  * caller's extra grants stack on top.
  */
 import { type OwnGrants, agentPrincipal, materializeAcl, orgPrincipal, userPrincipal } from "@stuga/auth";
-import { type DocRow, type FolderRow, createDoc, deleteDoc, getFolder, getWorkspace } from "@stuga/db";
+import { type DocRow, type FolderRow, createDoc, deleteDoc, getFolder, getWorkspace, updateDoc } from "@stuga/db";
 import {
   MAX_IMPORT_MARKDOWN_BYTES,
   markdownByteLength,
   normalizeImportedMarkdown,
 } from "@stuga/protocol/text/markdown-import";
-import { proposeDocEdit } from "../agents/edits.js";
+import { proposeDocEdit, readDocMarkdownWithProjection } from "../agents/edits.js";
 import { recordAudit, recordEvent } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
 import { canWriteFolder } from "../authz/authz.js";
@@ -25,6 +25,8 @@ import { authorizedFolder, destroyActorStorage } from "./access.js";
 
 interface OwnedDocInput {
   title: string;
+  /** `user`: the title was given as the document's name. */
+  titleSource?: "user";
   docType: "prose" | "database";
   /** The folder the document lands in, already authorized by the caller, or null for the root. */
   parent: Pick<FolderRow, "folder_id" | "acl_principals" | "acl_writers"> | null;
@@ -61,6 +63,7 @@ async function insertOwnedDoc(ctx: Ctx, input: OwnedDocInput): Promise<DocRow> {
     workspaceId: ctx.workspaceId,
     owner: ownership.owner,
     title: input.title,
+    ...(input.titleSource ? { titleSource: input.titleSource } : {}),
     docType: input.docType,
     parentId: input.parent?.folder_id ?? null,
     aclPrincipals: effective.principals,
@@ -135,6 +138,8 @@ export interface CreateDocumentInput {
   markdown?: unknown;
   /** The import's source filename, used only as a title fallback. */
   filename?: unknown;
+  /** Prose only: a copy of this document the caller can read, its body as written, under `title` or the source's own. */
+  copyOf?: unknown;
   /** Databases only: the starter table's name (defaults to the title). */
   table?: unknown;
   /** Databases only: the starter table's columns `[{ name, type, choices? }]`. */
@@ -151,13 +156,20 @@ const refuse = (status: number, message: string): CreateDocumentOutcome => ({ ok
  * The workspace default-visibility floor for a new document or folder, an
  * agent's included: it creates for its human, and what it writes there still
  * waits for review. A folder takes it too, or a member could open a document
- * without seeing the folder that holds it.
+ * without seeing the folder that holds it. Inside a folder the floor reaches no
+ * further than the folder does: inheritance only adds, so a workspace grant the
+ * folder withholds would open everything created in it.
  */
-export async function visibilityFloor(ctx: Ctx): Promise<OwnGrants> {
+export async function visibilityFloor(
+  ctx: Ctx,
+  parent: Pick<FolderRow, "acl_principals" | "acl_writers"> | null,
+): Promise<OwnGrants> {
   const mode = (await getWorkspace(ctx.sql, ctx.workspaceId))?.default_doc_access;
   const access = mode === "workspace_view" || mode === "private" ? mode : "workspace_edit";
   const org = orgPrincipal(ctx.workspaceId);
-  return { p: access === "private" ? [] : [org], w: access === "workspace_edit" ? [org] : [], c: [] };
+  const reads = access !== "private" && (!parent || parent.acl_principals.includes(org));
+  const writes = access === "workspace_edit" && reads && (!parent || parent.acl_writers.includes(org));
+  return { p: reads ? [org] : [], w: writes ? [org] : [], c: [] };
 }
 
 /**
@@ -198,6 +210,19 @@ export async function createDocument(ctx: Ctx, input: CreateDocumentInput): Prom
     if (imported.markdown === "") return refuse(400, "nothing to import (the markdown is empty)");
   }
 
+  // A copy keeps its body as written, with no heading added for a title: it is named, not derived.
+  let copied = false;
+  if (input.copyOf !== undefined) {
+    if (docType !== "prose" || imported) return refuse(400, "copy_of makes a prose document and takes no markdown");
+    if (typeof input.copyOf !== "string" || input.copyOf === "") return refuse(400, "invalid copy_of");
+    const source = await readDocMarkdownWithProjection(ctx, input.copyOf);
+    if (!source) return refuse(404, "document to copy not found");
+    if (source === "database") return refuse(400, "copy_of takes a document, not a database");
+    const named = typeof input.title === "string" ? input.title.trim().slice(0, TITLE_MAX) : "";
+    imported = { title: named || source.doc.title, markdown: source.markdown.trim() };
+    copied = true;
+  }
+
   let parent: FolderRow | null = null;
   if (input.parentId !== undefined && input.parentId !== null) {
     if (typeof input.parentId !== "string" || input.parentId === "") return refuse(400, "invalid parent_id");
@@ -212,15 +237,19 @@ export async function createDocument(ctx: Ctx, input: CreateDocumentInput): Prom
 
   const requestedTitle = typeof input.title === "string" ? input.title.trim().slice(0, TITLE_MAX) : "";
   const doc = await insertOwnedDoc(ctx, {
-    // An import keeps title and body in sync: the title is derived from the body.
-    title: imported ? imported.title : requestedTitle || "Untitled",
+    // An import keeps title and body in sync: the title is derived from the body. A blank one
+    // stays blank, which every reader shows as "Untitled" in their own language, until the first line names it.
+    title: imported ? imported.title : requestedTitle,
+    // An agent's title names the document, so accepting its text never retitles it. A person's
+    // title, blank or not, is a stand-in their first line replaces until they rename it.
+    ...(ctx.isAgent && requestedTitle && !imported ? { titleSource: "user" as const } : {}),
     docType,
     parent,
-    grants: await visibilityFloor(ctx),
+    grants: await visibilityFloor(ctx, parent),
     inheritsPerms: true,
   });
 
-  if (imported && !(await seedBody(ctx, doc.doc_id, imported.markdown))) {
+  if (imported && imported.markdown !== "" && !(await seedBody(ctx, doc.doc_id, imported.markdown))) {
     await discardCreatedDoc(ctx, doc);
     return refuse(502, "could not write the imported content");
   }
@@ -229,6 +258,8 @@ export async function createDocument(ctx: Ctx, input: CreateDocumentInput): Prom
     const initialized = await callDatabaseActor(ctx, doc.doc_id, "schema/init", {
       display: starter.display || requestedTitle || undefined,
       ...(starter.columns ? { columns: starter.columns } : {}),
+      // A table named after the database, or named before the database has a name, takes the names it gets later.
+      follows_title: starter.display === undefined || requestedTitle === "",
     })
       .then((res) => res.ok)
       .catch(() => false);
@@ -238,8 +269,10 @@ export async function createDocument(ctx: Ctx, input: CreateDocumentInput): Prom
     }
   }
 
-  announceDoc(ctx, doc);
-  return { ok: true, doc };
+  // Named as a rename names it, so the copy's first line does not take the title back.
+  const created = copied && doc.title ? ((await updateDoc(ctx.sql, doc.doc_id, { title: doc.title })) ?? doc) : doc;
+  announceDoc(ctx, created);
+  return { ok: true, doc: created };
 }
 
 /**

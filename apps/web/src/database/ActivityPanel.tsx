@@ -11,10 +11,10 @@ import { Button } from "@astryxdesign/core/Button";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Text } from "@astryxdesign/core/Text";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { Databases } from "../api";
 import type { DatabaseOpSummary } from "@stuga/protocol/databases/types";
-import { authorLabel, nameLoading, useUserNames } from "../state/identity";
+import { actorName, authorLabel, nameLoading, rememberAgentNames, useUserNames } from "../state/identity";
 import { aiCoauthorLabel, absoluteTime, principalHuman, relativeTime } from "../lib/format";
 import { errorMessage } from "../lib/http/client";
 import { t } from "../i18n/i18n";
@@ -37,7 +37,8 @@ interface ActivityPanelProps {
  */
 function actorLabel(op: DatabaseOpSummary): string | null {
   if (op.is_agent && principalHuman(op.actor) !== null) return aiCoauthorLabel();
-  if (op.is_agent) return op.actor.replace(/^agent:/, "");
+  // Its key's current name once the page has it, else its id.
+  if (op.is_agent) return actorName(op.actor);
   return nameLoading(`user:${op.actor}`) ? null : authorLabel(op.actor);
 }
 
@@ -79,6 +80,7 @@ export function ActivityPanel({ docId, refreshKey, readOnly, onReverted, onWrite
     Databases.ops(docId, { limit: PAGE })
       .then((r) => {
         if (!live) return;
+        rememberAgentNames(r.agent_names);
         setOps((cur) => mergeOps(cur ?? [], r.ops));
         setHasMore((more) => more || r.ops.length >= PAGE);
       })
@@ -98,6 +100,7 @@ export function ActivityPanel({ docId, refreshKey, readOnly, onReverted, onWrite
     try {
       const oldest = ops[ops.length - 1]!.seq;
       const r = await Databases.ops(docId, { limit: PAGE, before_seq: oldest });
+      rememberAgentNames(r.agent_names);
       setOps((cur) => mergeOps(cur ?? [], r.ops));
       setHasMore(r.ops.length >= PAGE);
     } catch {

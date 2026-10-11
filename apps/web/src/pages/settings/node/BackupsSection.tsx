@@ -5,6 +5,7 @@ import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
+import { Link } from "@astryxdesign/core/Link";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Switch } from "@astryxdesign/core/Switch";
@@ -13,6 +14,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { Check, Copy } from "lucide-react";
 import { NodeSettings as NodeApi, type NodeBackup, type NodeBackups, type NodeOperationalSettings } from "../../../api";
 import { formatLocale, t } from "../../../i18n/i18n";
+import { tRich } from "../../../i18n/rich";
 import { copyText } from "../../../lib/clipboard";
 import { presentServerMessage } from "../../../lib/http/server-messages";
 import { byteSize, relativeTime, versionLabel } from "../../../lib/format";
@@ -34,6 +36,9 @@ const WEEKDAYS = Array.from({ length: 7 }, (_, day) => ({
 
 /** The one reason the node gives for holding a backup (boot.ts), worded here as a whole sentence. */
 const ARCHIVE_WORK = "a workspace is being imported or exported";
+
+/** Restoring is done on the node's machine; the operations guide walks through it. */
+const RESTORE_DOCS_URL = "https://github.com/stuga-dev/stuga/blob/main/docs/operations.md#restore";
 
 /** One width for every field on the page, so they line up whichever are shown. */
 const FIELD_WIDTH = 160;
@@ -136,6 +141,22 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
 
   return (
     <VStack gap={5}>
+      {/* What a backup is, where it goes and how to get it back, before any control. */}
+      <VStack gap={1}>
+        <Text color="secondary">{t("node.backups.intro")}</Text>
+        <Text color="secondary">
+          {state ? t("node.backups.where", { dir: state.dir }) : " "}
+        </Text>
+        <Text color="secondary">
+          {tRich("node.backups.restoreHelp", {
+            link: (chunks) => (
+              <Link href={RESTORE_DOCS_URL} isExternalLink>
+                {chunks}
+              </Link>
+            ),
+          })}
+        </Text>
+      </VStack>
       <SectionStatusBanners status={status} />
       {state?.error && !waiting && !status.error && (
         <Banner status="warning" title={t("node.backups.lastFailed")} description={presentServerMessage(state.error)} />
@@ -210,10 +231,12 @@ export function BackupsSection({ ops, onSaved }: { ops: NodeOperationalSettings;
       <VStack gap={3}>
         <HStack hAlign="between" vAlign="center" gap={3}>
           <VStack gap={0}>
-            <Heading level={2}>{t("node.backups.heading")}</Heading>
-            <Text type="supporting" color="secondary">
-              {state ? (state.backups.length > 0 ? t("node.backups.total", { size: byteSize(total), dir: state.dir }) : state.dir) : " "}
-            </Text>
+            <Heading level={2}>{t("node.backups.recent")}</Heading>
+            {state && state.backups.length > 0 && (
+              <Text type="supporting" color="secondary">
+                {t("node.backups.totalSize", { size: byteSize(total) })}
+              </Text>
+            )}
           </VStack>
           <Button
             label={waiting ? t("node.backups.backingUp") : t("node.backups.backUpNow")}

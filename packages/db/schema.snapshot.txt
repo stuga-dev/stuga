@@ -807,12 +807,14 @@ TABLE workspace_invites
   created_by text NOT NULL
   expires_at timestamp with time zone
   max_uses integer
+  note text
   revoked_at timestamp with time zone
   role text NOT NULL DEFAULT 'member'::text
   token_hash text NOT NULL
   token_hint text
   use_count integer NOT NULL DEFAULT 0
   workspace_id text NOT NULL
+  CONSTRAINT workspace_invites_note_check CHECK (((char_length(note) >= 1) AND (char_length(note) <= 80)))
   CONSTRAINT workspace_invites_pkey PRIMARY KEY (token_hash)
   CONSTRAINT workspace_invites_role_check CHECK ((role = ANY (ARRAY['admin'::text, 'member'::text, 'guest'::text])))
   CONSTRAINT workspace_invites_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE

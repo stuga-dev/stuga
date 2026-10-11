@@ -10,7 +10,7 @@ import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "./use-toast";
 import { Me } from "../api";
 import { t } from "../i18n/i18n";
 import { remoteOrigin } from "../lib/session/auth-config";

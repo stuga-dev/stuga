@@ -13,7 +13,7 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { VStack } from "@astryxdesign/core/VStack";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "./use-toast";
 import { t } from "../i18n/i18n";
 import { providerLabel } from "../lib/session/auth-config";
 import { AuthError, describeError } from "../lib/session/errors";

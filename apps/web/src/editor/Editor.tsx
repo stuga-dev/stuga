@@ -1,6 +1,6 @@
 /** The collaborative editor bound to the document's Y.Doc, with its toolbar and floating overlays. */
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, type Editor as TiptapEditor } from "@tiptap/react";
 import type { StugaProvider } from "../sync/stuga-provider";
 import { useSharedEditor } from "./editor-context";
 import { stugaEditorExtensions } from "./extensions";
@@ -16,7 +16,20 @@ import { LinkPopover } from "./overlays/LinkPopover";
 import { SlashMenu } from "./overlays/SlashMenu";
 import { MentionMenu } from "./overlays/MentionMenu";
 import { UploadTray } from "./overlays/UploadTray";
+import { useEditorTick } from "./use-editor-tick";
 import { t } from "../i18n/i18n";
+import { getAlias } from "../lib/http/client";
+
+/** Lines where the text will be until the first sync or the first text, so a document never opens as a blank sheet. */
+function LoadingLines({ editor, hasSynced }: { editor: TiptapEditor; hasSynced: boolean }) {
+  useEditorTick(editor);
+  if (hasSynced || !editor.isEmpty) return null;
+  return (
+    <div className="editor-skeleton" aria-hidden="true">
+      <span /><span /><span /><span /><span />
+    </div>
+  );
+}
 
 export function Editor({ provider, alias, label, docId, readOnly, hasSynced, autoFocus }: { provider: StugaProvider; alias: string; label: string; docId: string; readOnly: boolean; hasSynced: boolean; autoFocus: boolean }) {
   const { setEditor } = useSharedEditor();
@@ -39,6 +52,7 @@ export function Editor({ provider, alias, label, docId, readOnly, hasSynced, aut
       awareness: provider.awareness,
       alias,
       label,
+      account: getAlias(),
       onClickComment: (num) => clickRef.current?.(num),
     }),
     editorProps: {
@@ -85,9 +99,10 @@ export function Editor({ provider, alias, label, docId, readOnly, hasSynced, aut
       )}
       <div className="editor-shell">
         <div className="editor-page" data-empty-hint={hasSynced && !readOnly ? "true" : "false"}>
+          <LoadingLines editor={editor} hasSynced={hasSynced} />
           <EditorContent editor={editor} />
         </div>
-        <SelectionBubble editor={editor} readOnly={readOnly} />
+        <SelectionBubble editor={editor} readOnly={readOnly} onEditLink={requestLinkEdit} />
         <ImageCaptionBubble editor={editor} />
         <LinkPopover editor={editor} editTick={linkEditTick} />
         <FootnotePopover editor={editor} />

@@ -31,7 +31,7 @@ import { HALF_COPY, endpointLabel, presetsFor } from "./settings/node/ai-form";
 import { invalidateModelOptions } from "../state/model-options";
 import { setActiveWorkspace } from "../lib/session/workspace-pointer";
 import { ARCHIVE_WORK_MAX_MS, DEFAULT_DOC_ACCESS, type DocAccessMode } from "@stuga/protocol/domain/workspaces";
-import { WORKSPACE_ACCESS_OPTIONS, WORKSPACE_ACCESS_HELP } from "../shell/workspace-access";
+import { WORKSPACE_ACCESS_OPTIONS, WORKSPACE_ACCESS_HELP, WORKSPACE_ACCESS_LABEL } from "../shell/workspace-access";
 import {
   ARCHIVE_NAME_PLACEHOLDER,
   LeftOutList,
@@ -44,8 +44,10 @@ import {
   useNewWorkspace,
   useWorkspaceSamples,
 } from "../shell/StartWith";
+import { ImportSummary } from "../shell/ImportSummary";
 import { logout } from "../lib/session/tokens";
 import { takeWorkspaceReturn } from "../lib/session/return-path";
+import { clearMembershipEnded, membershipEnded } from "../lib/session/endings";
 import { Brand, PRODUCT_NAME, nodeName } from "../shell/Brand";
 import { errorMessage } from "../lib/http/client";
 import { t } from "../i18n/i18n";
@@ -87,8 +89,29 @@ export function WorkspaceOnboarding() {
    */
   const [importing, setImporting] = useState<number | null>(null);
   const importingRef = useBannerInView(importing);
-  /** A workspace whose import left files out, shown here before it opens. */
+  /** A file whose import would leave files out, shown here before it is imported. */
   const [held, setHeld] = useState<HeldImport | null>(null);
+  /** The workspace this person was just removed from, "" when its name is unknown, or null. */
+  const [leftWorkspace] = useState(membershipEnded);
+  /** A workspace imported from a file, whose summary shows before it opens. */
+  const [imported, setImported] = useState<CreatedWorkspace | null>(null);
+
+  // A person who is a member somewhere after all (added back, or sent here by a page that went stale) goes there.
+  useEffect(() => {
+    let alive = true;
+    Workspaces.list()
+      .then(({ workspaces, active }) => {
+        if (!alive || workspaces.length === 0) return;
+        setActiveWorkspace(active ?? workspaces[0]!.workspace_id);
+        clearMembershipEnded();
+        nav(takeWorkspaceReturn(), { replace: true });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
+  }, []);
 
   // An imported or sample workspace opens at the document it starts with; else wherever the person was headed.
   const enter = (to: string | null) => {
@@ -122,15 +145,21 @@ export function WorkspaceOnboarding() {
     }
   }
 
+  /** A workspace made from a file says first what came in; any other opens at once. */
+  async function made(workspace: CreatedWorkspace) {
+    if (start.kind === "file") setImported(workspace);
+    else await opened(workspace);
+  }
+
   const createWorkspace = () =>
     ready &&
     attempt(async () => {
-      const made = await createWorkspaceFrom(start, name.trim(), access);
-      if ("held" in made) setHeld(made.held);
-      else await opened(made.workspace);
+      const creation = await createWorkspaceFrom(start, name.trim(), access);
+      if ("held" in creation) setHeld(creation.held);
+      else await made(creation.workspace);
     });
 
-  const importHeld = () => held && attempt(async () => opened(await importHeldFile(held, name.trim(), access)));
+  const importHeld = () => held && attempt(async () => made(await importHeldFile(held, name.trim(), access)));
 
   /** Back to the form; the node lets the file go. */
   const letGo = () => {
@@ -196,21 +225,46 @@ export function WorkspaceOnboarding() {
             />
           ) : (
             <VStack gap={6}>
-              <VStack gap={2}>
-                <Heading level={1}>{t("auth.onboarding.title")}</Heading>
-                <Text color="secondary">{t("auth.onboarding.subtitle")}</Text>
-              </VStack>
-              {held?.left_out ? (
+              {imported ? (
                 <>
+                  <Heading level={1}>{t("shell.importSummary.title", { name: imported.name })}</Heading>
+                  <ImportSummary workspace={imported} />
+                  <HStack justify="end">
+                    <Button label={t("shell.importSummary.open")} variant="primary" endContent={<ArrowRight size={16} />} onClick={() => void opened(imported)} />
+                  </HStack>
+                </>
+              ) : held?.left_out ? (
+                <>
+                  <Heading level={1}>{t("shell.createWorkspace.importTitle")}</Heading>
                   {error && <Banner ref={errorRef} status="error" title={t("auth.onboarding.createFailed")} description={error} />}
                   <LeftOutList leftOut={held.left_out} />
+                  <TextInput
+                    label={t("auth.onboarding.nameLabel")}
+                    placeholder={held.name}
+                    value={name}
+                    onChange={setName}
+                    onEnter={importHeld}
+                    isOptional
+                    isDisabled={busy}
+                  />
                   <HStack gap={2} justify="end">
-                    <Button label={t("common.cancel")} variant="ghost" onClick={letGo} isDisabled={busy} />
+                    <Button label={t("common.back")} variant="ghost" onClick={letGo} isDisabled={busy} />
                     <Button label={t("common.import")} variant="primary" icon={<ArrowRight size={16} />} onClick={importHeld} isDisabled={busy || importing !== null} isLoading={busy} />
                   </HStack>
                 </>
               ) : (
                 <>
+                {leftWorkspace !== null && (
+                  <Banner
+                    status="warning"
+                    title={leftWorkspace ? t("auth.onboarding.removed", { workspace: leftWorkspace }) : t("auth.onboarding.removedUnnamed")}
+                    description={t("auth.onboarding.removedBody")}
+                  />
+                )}
+                <VStack gap={2}>
+                  <Heading level={1}>{t("auth.onboarding.title")}</Heading>
+                  <Text color="secondary">{t("auth.onboarding.subtitle")}</Text>
+                </VStack>
                 {importing !== null && (
                   <Banner ref={importingRef} status="info" title={t("auth.onboarding.importMayFinish")} description={t("auth.onboarding.importMayFinishBody")} />
                 )}
@@ -224,12 +278,13 @@ export function WorkspaceOnboarding() {
                     onChange={setName}
                     onEnter={createWorkspace}
                     isRequired={!nameOptional}
+                    isOptional={nameOptional}
                     hasAutoFocus
                     isDisabled={busy}
                   />
                   {/* This choice is stamped on new items; it does not change existing sharing. */}
                   <Selector
-                    label={t("auth.onboarding.accessLabel")}
+                    label={WORKSPACE_ACCESS_LABEL}
                     description={WORKSPACE_ACCESS_HELP}
                     value={access}
                     onChange={(v) => setAccess(v as DocAccessMode)}
@@ -304,7 +359,8 @@ function AiChoices({
             onOpen={() => show("agent", true)}
           >
             {/* Nothing on this page lists keys, so a new one has nothing to reload. */}
-            <AgentClients onKeyCreated={() => {}} />
+            {/* Shown only to a node administrator, who can turn remote access on. */}
+            <AgentClients onKeyCreated={() => {}} isNodeAdmin />
             <HStack>
               <Button label={t("common.done")} variant="secondary" size="sm" onClick={() => show("agent", false)} />
             </HStack>

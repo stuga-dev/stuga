@@ -36,6 +36,8 @@ button { font: inherit; }
 }
 .resize-handle:hover::after,
 .resize-handle--dragging::after { background: var(--color-accent); }
+/* A wider grip than the strip itself, so the edge is easy to catch. */
+.resize-handle::before { content: ""; position: absolute; top: 0; bottom: 0; left: -5px; right: -5px; }
 
 /* --- workspace settings: member list --- */
 .member-list { list-style: none; padding: 0; margin: 0; }

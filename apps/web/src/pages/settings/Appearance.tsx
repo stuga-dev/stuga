@@ -5,12 +5,13 @@
 import { useState } from "react";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { Selector } from "@astryxdesign/core/Selector";
-import { Heading, Text } from "@astryxdesign/core/Text";
+import { Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/VStack";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../../ui/use-toast";
 import { UI_LANGUAGE_NAMES, UI_LANGUAGES, isUiLanguage } from "@stuga/protocol/domain/ui-languages";
 import { PageColumn } from "../../ui/PageColumn";
+import { SettingsTitle } from "./SettingsTitle";
 import { useThemePreference, setThemePreference, type ThemePreference } from "../../state/theme";
 import { t } from "../../i18n/i18n";
 import { cachedLanguageChoice } from "../../i18n/choice-cache";
@@ -40,22 +41,19 @@ export function Appearance() {
 
   return (
     <PageColumn>
-      <VStack gap={3}>
-        <Heading level={2}>{t("settings.appearance.heading")}</Heading>
-        <HStack gap={3} vAlign="center" justify="between">
-          <Text size="sm" color="secondary">
-            {t("settings.appearance.themeNote")}
-          </Text>
+      <VStack gap={5}>
+        <SettingsTitle>{t("settings.appearance.heading")}</SettingsTitle>
+        <HStack gap={3} vAlign="center" justify="between" wrap="wrap">
+          <SettingName name={t("settings.appearance.theme")} note={t("settings.appearance.themeNote")} />
           <SegmentedControl label={t("settings.appearance.theme")} value={themePref} onChange={(v) => setThemePreference(v as ThemePreference)}>
             <SegmentedControlItem value="system" label={t("settings.appearance.system")} />
             <SegmentedControlItem value="light" label={t("settings.appearance.light")} />
             <SegmentedControlItem value="dark" label={t("settings.appearance.dark")} />
           </SegmentedControl>
         </HStack>
-        <HStack gap={3} vAlign="center" justify="between">
-          <Text size="sm" color="secondary">
-            {t("settings.appearance.languageNote")}
-          </Text>
+        <HStack gap={3} vAlign="center" justify="between" wrap="wrap">
+          <SettingName name={t("settings.appearance.language")} note={t("settings.appearance.languageNote")} />
+          {/* The visible label is the text beside it. */}
           <Selector
             label={t("settings.appearance.language")}
             isLabelHidden
@@ -71,5 +69,17 @@ export function Appearance() {
         </HStack>
       </VStack>
     </PageColumn>
+  );
+}
+
+/** A setting's visible name, which its control also carries as its accessible name, and what it does. */
+function SettingName({ name, note }: { name: string; note: string }) {
+  return (
+    <VStack gap={0.5}>
+      <Text weight="semibold">{name}</Text>
+      <Text size="sm" color="secondary">
+        {note}
+      </Text>
+    </VStack>
   );
 }

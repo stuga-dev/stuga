@@ -35,6 +35,15 @@ describe("the sign-in refusals a remote address and its limits bring", () => {
   });
 });
 
+describe("too many attempts", () => {
+  it("says how long to wait when the node does, rounding up", () => {
+    expect(describeError(new AuthError(429, "rate_limited", { retryAfter: 60 }))).toBe("Too many attempts. Try again in 1 minute.");
+    expect(describeError(new AuthError(429, "rate_limited", { retryAfter: 90 }))).toBe("Too many attempts. Try again in 2 minutes.");
+    expect(describeError(new AuthError(429, "rate_limited", { retryAfter: 20 }))).toBe("Too many attempts. Try again in 20 seconds.");
+    expect(describeError(new AuthError(429, "rate_limited"))).toBe("Too many attempts. Wait a moment and try again.");
+  });
+});
+
 describe("the username rule", () => {
   it("reads in English as @stuga/protocol states it, which the node sends too", () => {
     expect(t("auth.username.rule")).toBe(USERNAME_RULE);

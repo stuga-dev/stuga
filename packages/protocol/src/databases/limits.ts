@@ -14,6 +14,10 @@ export const DATABASE_ROWS_PAGE_MAX = 200;
 /** Leaves (conditions) one filter tree may hold, and how deep its groups nest. */
 export const DATABASE_FILTER_MAX_LEAVES = 20;
 export const DATABASE_FILTER_MAX_DEPTH = 3;
+/** A "Search this table" query, in characters. */
+export const DATABASE_ROW_SEARCH_MAX_CHARS = 200;
+/** Characters of cell text a database gives the workspace search, read in the order its rows were added. */
+export const DATABASE_SEARCH_TEXT_MAX_CHARS = 200_000;
 /** Sort keys one listing or view may carry. */
 export const DATABASE_MAX_SORTS = 4;
 /** Groups a grouped listing reports before it says `groups_truncated`. */
@@ -60,3 +64,5 @@ export const DATABASE_MAX_DISPLAY_LENGTH = 200;
 /** A column's description: help text, not documentation. */
 export const DATABASE_MAX_COLUMN_DESCRIPTION_CHARS = 500;
 export const DATABASE_MAX_SELECT_CHOICES = 50;
+/** Digits after the decimal sign a number format may fix. */
+export const DATABASE_NUMBER_MAX_DECIMALS = 6;

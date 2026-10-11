@@ -44,7 +44,7 @@ describe("the table assistant", () => {
       "The turn ended early, but the changes above were applied. The AI provider did not accept this node’s key. An administrator can check Settings → This node → AI providers.",
     );
     expect(tableNoticeText({ code: "ended_early", kept: "staged", failure: null })).toBe(
-      "The turn ended early, but the changes above are staged for review.",
+      "The answer ended early, but the changes above are waiting for review.",
     );
   });
 });

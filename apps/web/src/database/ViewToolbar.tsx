@@ -1,8 +1,9 @@
 /**
- * Filter, Sort, Group and Columns for the grid's working shape: each a button
- * that becomes a chip while active, plus Save and Reset once the shape differs
- * from its saved view. Popovers use native controls so no further layers stack.
- * `compact` drops the button labels when the bar is too narrow for them.
+ * Search, then Filter, Sort, Group and Columns for the grid's working shape:
+ * each a button that becomes a chip while active, plus Save and Reset once the
+ * shape differs from its saved view. A search is never part of a view.
+ * Popovers use native controls so no further layers stack. `compact` drops the
+ * button labels when the bar is too narrow for them.
  */
 import { useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
@@ -11,12 +12,15 @@ import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { Popover } from "@astryxdesign/core/Popover";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
-import { ArrowDownUp, Columns3, Filter as FilterIcon, Layers, Plus, RotateCcw, Save, X } from "lucide-react";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { ArrowDownUp, Columns3, Filter as FilterIcon, Layers, Plus, RotateCcw, Save, Search, X } from "lucide-react";
 import { filterOpNeedsValue } from "@stuga/protocol/databases/filters";
 import type { ColumnSpec, RowFilter, RowFilterOp, RowSort } from "@stuga/protocol/databases/types";
 import { buildFilter, conditionCount, flattenFilter, type FlatFilter, type ViewShape } from "./model/view-shape";
 import { isComposingKey } from "../lib/ime";
-import { t, type MessageKey } from "../i18n/i18n";
+import { formatLocale, t, type MessageKey } from "../i18n/i18n";
+import { DATE_MAX, DATE_MIN } from "./model/field-input";
+import { numberForEditing, parseNumberText } from "./model/numbers";
 
 const FILTER_OP_LABELS: Record<RowFilterOp, MessageKey> = {
   contains: "database.filter.op.contains",
@@ -38,6 +42,9 @@ const opsFor = (col: ColumnSpec | undefined) => (col?.type === "files" ? FILTER_
 
 interface ViewToolbarProps {
   columns: ColumnSpec[];
+  /** Words to find in the table's rows, as typed. */
+  search: string;
+  onSearch: (search: string) => void;
   shape: ViewShape;
   onShape: (next: ViewShape) => void;
   /** The working shape differs from the saved view, or from "All rows". */
@@ -50,7 +57,7 @@ interface ViewToolbarProps {
   compact: boolean;
 }
 
-export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly, onSave, onReset, compact }: ViewToolbarProps) {
+export function ViewToolbar({ columns, search, onSearch, shape, onShape, dirty, hasView, readOnly, onSave, onReset, compact }: ViewToolbarProps) {
   const [open, setOpen] = useState<"filter" | "sort" | "group" | "columns" | null>(null);
   const nConditions = conditionCount(shape.filter);
   const groupCol = columns.find((c) => c.column_id === shape.group_by);
@@ -75,6 +82,23 @@ export function ViewToolbar({ columns, shape, onShape, dirty, hasView, readOnly,
 
   return (
     <HStack gap={1} vAlign="center" wrap="nowrap">
+      <div className={`db-search${compact ? " db-search--compact" : ""}`}>
+        <TextInput
+          label={t("database.search.label")}
+          isLabelHidden
+          size="sm"
+          value={search}
+          onChange={onSearch}
+          onKeyDown={(e) => {
+            if (e.key !== "Escape" || search === "") return;
+            e.stopPropagation();
+            onSearch("");
+          }}
+          placeholder={compact ? t("database.search.placeholderShort") : t("database.search.placeholder")}
+          startIcon={<Search size={14} />}
+          hasClear
+        />
+      </div>
       <Popover
         isOpen={open === "filter"}
         onOpenChange={(o) => setOpen(o ? "filter" : null)}
@@ -258,8 +282,12 @@ interface DraftLeaf {
   value: string;
 }
 
-function toDraft(leaf: RowFilter): DraftLeaf {
-  return { column_id: leaf.column_id, op: leaf.op, value: leaf.value === null || leaf.value === undefined ? "" : String(leaf.value) };
+/** A saved number reads back in the reader's own decimal sign, as Apply parses it again. */
+function toDraft(columns: ColumnSpec[], leaf: RowFilter): DraftLeaf {
+  const { value } = leaf;
+  const number = typeof value === "number" && columns.find((c) => c.column_id === leaf.column_id)?.type === "number";
+  const text = value === null || value === undefined ? "" : number ? numberForEditing(value, formatLocale()) : String(value);
+  return { column_id: leaf.column_id, op: leaf.op, value: text };
 }
 
 /** A wire leaf, or why the draft cannot be one yet. */
@@ -267,10 +295,15 @@ function leafFromDraft(columns: ColumnSpec[], d: DraftLeaf): RowFilter | { error
   const col = columns.find((c) => c.column_id === d.column_id);
   if (!col) return { error: t("database.filter.pickColumn") };
   if (!filterOpNeedsValue(d.op)) return { column_id: col.column_id, op: d.op };
-  if (col.type === "number" || col.type === "checkbox") {
-    const n = parseFloat(d.value);
-    if (!Number.isFinite(n)) return { error: t("database.filter.enterNumber", { name: col.display }) };
-    return { column_id: col.column_id, op: d.op, value: n };
+  if (col.type === "checkbox") {
+    if (d.value !== "0" && d.value !== "1") return { error: t("database.filter.enterValue", { name: col.display }) };
+    return { column_id: col.column_id, op: d.op, value: Number(d.value) };
+  }
+  if (col.type === "number") {
+    // Read as a cell reads it, so "4,50" filters on four and a half.
+    const n = parseNumberText(d.value, formatLocale());
+    if (!n.ok) return { error: t("database.filter.enterNumber", { name: col.display }) };
+    return { column_id: col.column_id, op: d.op, value: n.value };
   }
   if (d.value === "") return { error: t("database.filter.enterValue", { name: col.display }) };
   return { column_id: col.column_id, op: d.op, value: d.value };
@@ -287,7 +320,7 @@ function FilterEditor({
 }) {
   const flat = flattenFilter(filter);
   const [op, setOp] = useState<"and" | "or">(flat !== null && flat !== "nested" ? flat.op : "and");
-  const [leaves, setLeaves] = useState<DraftLeaf[]>(flat !== null && flat !== "nested" ? flat.leaves.map(toDraft) : []);
+  const [leaves, setLeaves] = useState<DraftLeaf[]>(flat !== null && flat !== "nested" ? flat.leaves.map((l) => toDraft(columns, l)) : []);
   const [error, setError] = useState<string | null>(null);
 
   if (flat === "nested") {
@@ -382,8 +415,10 @@ function FilterEditor({
                 <input
                   className="db-select"
                   aria-label={t("database.value.label")}
-                  type={col?.type === "number" ? "number" : col?.type === "date" ? "date" : "text"}
-                  step={col?.type === "number" ? "any" : undefined}
+                  type={col?.type === "date" ? "date" : "text"}
+                  inputMode={col?.type === "number" ? "decimal" : undefined}
+                  min={col?.type === "date" ? DATE_MIN : undefined}
+                  max={col?.type === "date" ? DATE_MAX : undefined}
                   value={d.value}
                   onChange={(e) => set({ value: e.target.value })}
                   onKeyDown={(e) => e.key === "Enter" && !isComposingKey(e) && apply()}
@@ -419,7 +454,8 @@ function FilterEditor({
               }}
             />
           )}
-          <Button label={t("database.filter.apply")} variant="primary" size="sm" onClick={apply} />
+          {/* Nothing to apply until there is a condition, or one to take away. */}
+          <Button label={t("database.filter.apply")} variant="primary" size="sm" isDisabled={leaves.length === 0 && filter === null} onClick={apply} />
         </HStack>
       </HStack>
     </div>

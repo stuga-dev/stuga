@@ -243,7 +243,7 @@ from the one on `BIND` and `PORT`. The relay reaches it through the connector.
 - **New devices.** A sign-in at the remote address from a browser that has not signed in to that
   account there before tells the person and the node's administrators, in the app and through the
   node's notifications when an administrator set them up: the browser, the time and the address it
-  came from. Each alert opens Revoke everything. A browser that signed in before keeps signing in
+  came from. Each alert opens **Sign out everywhere**. A browser that signed in before keeps signing in
   while wrong passwords from elsewhere pause the account.
 - **Other alerts.** The person is also told when a passkey is added or removed (with the browser,
   time and address it was added from), when an app is connected at the remote address (with where
@@ -252,7 +252,7 @@ from the one on `BIND` and `PORT`. The relay reaches it through the connector.
   node sends notifications tells every administrator through the place they went before, and an
   alert not yet sent then is not sent elsewhere. Each alert says whether it also went out through
   the node's notifications: sending, sent, not sent and why, or shown in Stuga only.
-- **Revoke everything.** In **Settings → Profile**, it ends every session at both addresses, removes
+- **Sign out everywhere.** In **Settings → Profile**, it ends every session at both addresses, removes
   every passkey, unlinks the identity provider, revokes every app and API key, forgets every browser, and closes the
   invite and share links the person made; the new password chosen there is the way back in. An
   administrator does it for someone under **Account recovery**, which removes their password too
@@ -267,8 +267,9 @@ from the one on `BIND` and `PORT`. The relay reaches it through the connector.
   hours, and the sign-in page asks the provider again. Removing someone at the provider ends no
   session, key or passkey they already have, and a passkey or password they added signs in without
   the provider: to cut someone off at once, an administrator uses Revoke everything.
-- **Before signing in.** A visitor who has not signed in reaches the app's pages, sign-in, OAuth
-  discovery and agent installs, and nothing else: every other request needs a credential that works
+- **Before signing in.** A visitor who has not signed in reaches the app's pages, sign-in (with the
+  look-ups that let an invite or reset link's page say what it is for), OAuth discovery and agent
+  installs, and nothing else: every other request needs a credential that works
   there, and is refused before its body is read. Sign-in requests take 16 KiB at most and must be
   JSON from the address's own pages, and state their length; they share 1 MiB of bodies in flight, four
   at a time at most from one source, and each has 10 seconds to arrive. A client registers over

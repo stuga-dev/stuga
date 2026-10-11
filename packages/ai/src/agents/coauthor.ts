@@ -132,12 +132,14 @@ You have:
 {{SEARCH_TOOL}}
 {{MULTIDOC_TOOLS}}{{ATTACHMENTS}}
 Proposing an edit means CALLING str_replace or insert_text — describing the
-change in prose does NOT stage anything, so the user sees nothing to accept. When
+change in prose does NOT propose anything, so the user sees nothing to accept. When
 the request calls for changing the document, read what you need, then emit the
 edit tool call(s) before ending your turn. Do not end your turn having only
 described an edit you did not actually make with a tool call.
 Guidance: read before you edit; make the smallest edits that satisfy the request;
-explain briefly what you changed. Write edits in the document's own language (new text
+explain briefly what you did. Describe changes in everyday words: never mention Markdown,
+your tools, or symbols like # or ** (say "made it a heading", not "an H1"), and call what you
+search "your documents". Write edits in the document's own language (new text
 in an empty document follows the request), and reply in the language of the request. When you use a fact from a knowledge-base
 search result, cite it with a footnote marker [^n] (n = the source's number in
 the search result) right after the fact, in BOTH your prose and any edit text.
@@ -166,9 +168,13 @@ const ATTACHMENT_LINES_BLIND =
   "Base alt text on the filename and the user's instruction; do not describe image content you " +
   "have not been shown.";
 
-const REVIEW_LINE = "Edits are shown to the user to Accept or Reject — they are NOT applied until the\nuser accepts.";
+/** The app shows the number of changes, so the model never states one: it counts calls, the app counts hunks. */
+const NO_COUNT = "Do not state how many edits you made; the app shows the count.";
+const REVIEW_LINE =
+  "Edits are shown to the user to Accept or Reject — they are NOT applied until the\nuser accepts. Your edits are suggestions: say you suggested or proposed them, never\nthat you added, changed or staged them. " +
+  NO_COUNT;
 const APPLY_AT_ONCE_LINE =
-  "Edits to the current document apply when your turn ends, without review: this\ndocument is set to apply agent changes at once. The user can revert them.";
+  "Edits to the current document apply when your turn ends, without review: this\ndocument is set to apply agent changes at once. The user can revert them. " + NO_COUNT;
 
 const SEARCH_TOOL_LINE =
   "- search_collection(query): search the user's selected knowledge base for relevant passages. Cite facts you use with a [^n] footnote marker.";
@@ -613,7 +619,7 @@ export async function runAgentTurn(
         return {
           action: "nudge",
           message:
-            "You described an edit but did not stage it — nothing is shown to me to accept. If the request needs a document change, call str_replace or insert_text now to actually propose it. If no change is needed, say so plainly.",
+            "You described an edit but did not propose it — nothing is shown to me to accept. If the request needs a document change, call str_replace or insert_text now to actually propose it. If no change is needed, say so plainly.",
         };
       }
 
@@ -699,7 +705,9 @@ function uniqueMatch(haystack: string, needle: string, refusal: { missing: strin
 function staged(what: "edit" | "insertion", target: EditTarget, where?: string): string {
   // Where an insertion landed, so the answer to the user says what happened, not what was meant.
   const placed = where ? ` ${where}` : "";
-  const result = target.atOnce ? `ok: ${what} staged${placed}; it applies when your turn ends.` : `ok: ${what} staged${placed} for the user's review.`;
+  const result = target.atOnce
+    ? `ok: ${what} made${placed}; it applies when your turn ends.`
+    : `ok: ${what} proposed${placed} for the user's review.`;
   const note = target.instructionsNote();
   return note ? `${result}\n\n${note}` : result;
 }

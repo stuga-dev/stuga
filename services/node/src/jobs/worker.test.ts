@@ -23,6 +23,7 @@ function fakeDb(overrides: Partial<JobsDb> = {}): JobsDb {
     getReusableChunkEmbeddings: vi.fn(async () => new Map()),
     insertAiUsage: vi.fn(async () => {}),
     indexDoc: vi.fn(async () => {}),
+    setDatabaseSearchText: vi.fn(async () => {}),
     advanceSnapshotSeq: vi.fn(async () => {}),
     insertNotification: vi.fn(async () => true),
     recordDelivery: vi.fn(async () => {}),
@@ -299,6 +300,42 @@ describe("notify", () => {
     expect(m.acked()).toBe(true);
   });
 
+  it("links a comment's notification to that comment, and keeps two comments within the hour apart", async () => {
+    const db = fakeDb();
+    const about = (num: number): IndexMessage => ({
+      kind: "notify",
+      docId: "d1",
+      recipient: "u_r",
+      workspaceId: "w1",
+      eventType: "MENTIONED_IN_COMMENT",
+      params: { actor: "Ada", doc: "Q3 plan", excerpt: "see this" },
+      actor: "u_a",
+      commentNum: num,
+    });
+    await handleJobBatch(fakeEnv(), batchOf([message(about(3)), message(about(4))]), { db, log: silentLog, deliver: vi.fn(async () => null) });
+    const rows = vi.mocked(db.insertNotification).mock.calls.map(([row]) => row);
+    expect(rows.map((r) => r.resource_url)).toEqual(["http://localhost:8787/doc/d1?comment=3", "http://localhost:8787/doc/d1?comment=4"]);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(2);
+  });
+
+  it("keeps a flurry of comments on an owned document within the hour as one notification", async () => {
+    const db = fakeDb();
+    const about = (num: number): IndexMessage => ({
+      kind: "notify",
+      docId: "d1",
+      recipient: "u_r",
+      workspaceId: "w1",
+      eventType: "COMMENT_ON_OWNED_DOC",
+      params: { actor: "Ada", doc: "Q3 plan", kind: "comment", excerpt: "see this" },
+      actor: "u_a",
+      commentNum: num,
+    });
+    await handleJobBatch(fakeEnv(), batchOf([message(about(3)), message(about(4))]), { db, log: silentLog, deliver: vi.fn(async () => null) });
+    const rows = vi.mocked(db.insertNotification).mock.calls.map(([row]) => row);
+    expect(rows[0]!.resource_url).toBe("http://localhost:8787/doc/d1?comment=3");
+    expect(new Set(rows.map((r) => r.id)).size).toBe(1);
+  });
+
   it("queues no delivery when no sink is configured", async () => {
     const db = fakeDb();
     await handleJobBatch(fakeEnv(), batchOf([message(notifyMsg)]), { db, log: silentLog, deliver: vi.fn(async () => null) });
@@ -517,6 +554,25 @@ describe("runMaintenanceTick", () => {
 
 });
 
+describe("index_doc: a database", () => {
+  it("stores the cell text its actor reads out, and indexes no passages", async () => {
+    const db = fakeDb({ getDoc: vi.fn(async () => ({ doc_id: "db1", doc_type: "database", title: "Orders" }) as never) });
+    const fetch = vi.fn(async (_url: string) => Response.json({ text: "Orders\nORD-00777 · 236.3 · Refunded" }));
+    const env = fakeEnv({ databases: { get: vi.fn(() => ({ fetch })) } as unknown as JobsEnv["databases"] });
+    await dispatchJob(env, { kind: "index_doc", docId: "db1", reason: "database_changed" }, { db, log: silentLog, embed: vi.fn() });
+    expect(fetch.mock.calls[0]![0]).toBe("http://actor/search-text?dbId=db1");
+    expect(db.setDatabaseSearchText).toHaveBeenCalledWith("db1", "Orders\nORD-00777 · 236.3 · Refunded");
+    expect(db.indexDoc).not.toHaveBeenCalled();
+  });
+
+  it("fails the job when the actor cannot answer, so it is retried", async () => {
+    const db = fakeDb({ getDoc: vi.fn(async () => ({ doc_id: "db1", doc_type: "database", title: "Orders" }) as never) });
+    const env = fakeEnv({ databases: { get: vi.fn(() => ({ fetch: async () => new Response(null, { status: 500 }) })) } as unknown as JobsEnv["databases"] });
+    await expect(dispatchJob(env, { kind: "index_doc", docId: "db1" }, { db, log: silentLog, embed: vi.fn() })).rejects.toThrow(/answered 500/);
+    expect(db.setDatabaseSearchText).not.toHaveBeenCalled();
+  });
+});
+
 describe("index_doc: the version half", () => {
   /** A snapshot store holding one document's encoded state under `key`. */
   function snapshotStore(key: string, markdown: string): BlobStore {
@@ -622,6 +678,13 @@ describe("index_doc: the version half", () => {
     const embed = vi.fn(async (_cfg: unknown, texts: string[]) => ({ embeddings: texts.map(() => [0, 0, 0, 1]), modelDims: 4, inputTokens: 5 }));
     await dispatchJob(env, { ...msg, authors: [], versionAuthors: ["alice", "ada"] } as IndexMessage, { db, log: silentLog, embed });
     expect(db.insertAiUsage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ alias: "alice", inputTokens: 5 }));
+  });
+
+  it("charges a restored version's embedding to a person, never to the restore's marker", async () => {
+    const { db, env, msg } = fixture(true, { snapshot_seq: 6, owner: "user:bob", workspace_id: "ws1" });
+    const embed = vi.fn(async (_cfg: unknown, texts: string[]) => ({ embeddings: texts.map(() => [0, 0, 0, 1]), modelDims: 4, inputTokens: 5 }));
+    await dispatchJob(env, { ...msg, authors: ["restore:v5"], versionAuthors: [] } as IndexMessage, { db, log: silentLog, embed });
+    expect(db.insertAiUsage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ alias: "bob", inputTokens: 5 }));
   });
 
   it("advances the row's seq on the search-hidden exit, after clearing the chunks", async () => {

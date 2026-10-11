@@ -8,6 +8,7 @@ import { TableRow } from "@tiptap/extension-table-row";
 import { TableHeader } from "@tiptap/extension-table-header";
 import { TableCell } from "@tiptap/extension-table-cell";
 import { Image } from "@tiptap/extension-image";
+import { TaskItem, TaskList } from "@tiptap/extension-list";
 import type { Node as PMNode } from "prosemirror-model";
 import {
   applyMarkdownToYXmlFragment,
@@ -282,6 +283,8 @@ describe("mermaid code block (client NodeView, server schema unchanged)", () => 
       TableHeader,
       TableCell,
       Image.configure({ inline: false }),
+      TaskList,
+      TaskItem.configure({ nested: true }),
       MermaidCodeBlock,
       FootnoteReference,
       FootnoteDefinition,
@@ -1113,9 +1116,47 @@ describe("word diff", () => {
     });
   });
 
+  it("shows a translated line as the old line struck, then the new one", () => {
+    const oldText = "Wednesday: Ben opens, Clara closes.";
+    const newText = "Onsdag: Ben öppnar, Clara stänger.";
+    expect(wordDiff(oldText, newText)).toEqual([
+      { type: "del", text: oldText },
+      { type: "ins", text: newText },
+    ]);
+  });
+
+  it("shows a rephrased paragraph that keeps half its words as one removal and one insertion", () => {
+    const oldText =
+      "Complaint received on 3 October from Mrs Lindqvist. She bought a sourdough loaf and said it was too salty and the crust was burnt. She asked for a refund of 6 euro. We offered a free cinnamon bun and she accepted. Action: Ben to check the oven temperature on Monday.";
+    const newText =
+      "On 3 October, we received a complaint from Mrs Lindqvist regarding a sourdough loaf she had purchased, which she described as too salty with a burnt crust. She requested a refund of €6. We offered her a complimentary cinnamon bun instead, which she accepted. Action: Ben to check the oven temperature on Monday.";
+    const ops = wordDiff(oldText, newText);
+    expect(ops.map((o) => o.type)).toEqual(["del", "ins", "eq"]);
+    expect(ops[2]!.text).toBe(" she accepted. Action: Ben to check the oven temperature on Monday.");
+    expect(reconstruct(ops)).toEqual({ oldText, newText });
+  });
+
+  it("joins changes separated only by a space into one struck run and one new run", () => {
+    const ops = wordDiff(
+      "Bring the trays to the front counter before we open the shop at seven every morning.",
+      "Bring the trays to the back room before we open the shop at seven every morning.",
+    );
+    expect(ops).toEqual([
+      { type: "eq", text: "Bring the trays to the " },
+      { type: "del", text: "front counter" },
+      { type: "ins", text: "back room" },
+      { type: "eq", text: " before we open the shop at seven every morning." },
+    ]);
+  });
+
   it("keeps word-level marks when most of the words stay", () => {
     const ops = wordDiff("Tom and I met when we were eleven, and he has been late since.", "Tom and I met when we were eleven, and he's been late ever since.");
-    expect(ops.filter((o) => o.type === "eq").length).toBeGreaterThan(1);
+    expect(ops.filter((o) => o.type === "eq").length).toBeGreaterThan(2);
+    expect(ops.some((o) => o.type === "eq" && o.text.includes("been late"))).toBe(true);
+    expect(reconstruct(ops)).toEqual({
+      oldText: "Tom and I met when we were eleven, and he has been late since.",
+      newText: "Tom and I met when we were eleven, and he's been late ever since.",
+    });
   });
 
   it("caps huge inputs: collapses to one del + one ins instead of an O(n*m) matrix", () => {

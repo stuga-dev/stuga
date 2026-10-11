@@ -1,8 +1,10 @@
 {
   "cancel": "Cancelar",
+  "back": "Atrás",
   "save": "Guardar",
   "close": "Cerrar",
   "done": "Listo",
+  "advanced": "Avanzado",
   "retry": "Reintentar",
   "loading": "Cargando…",
   "remove": "Quitar",
@@ -39,5 +41,6 @@
   "notifications": "Notificaciones",
   "actionsFor": "Acciones de {name}",
   "tooLong": "Demasiado largo: {count, number} caracteres, y el límite es {limit, number}.",
-  "savedLive": "Guardado – ya está activo, sin reiniciar."
+  "savedLive": "Guardado – ya está activo, sin reiniciar.",
+  "foundByMeaning": "Encontrado por significado"
 }

@@ -7,7 +7,7 @@
 import * as Y from "yjs";
 import { snapshotKey } from "@stuga/protocol/domain/limits";
 import { decodeAwareness, decodeEpoch, decodeFrame, encodeBinary, encodeEmpty, encodeEpoch, encodeJson } from "@stuga/protocol/wire/frame";
-import { CloseCode, Opcode, type PersistDegradedPayload } from "@stuga/protocol/wire/opcodes";
+import { CloseCode, Opcode, TEXT_SCHEMA_VERSION, type DocStatePayload, type PersistDegradedPayload, type TitleChangedPayload } from "@stuga/protocol/wire/opcodes";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
 import { applyCitedStrEdits, yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import { SocketPair, upgradeResponse, type Actor, type ActorState } from "@stuga/runtime";
@@ -69,6 +69,9 @@ export class DocActor implements Actor<SessionMeta> {
       "/restore": { handle: async (_req, url) => this.restore(url) },
       "/recover": { method: "POST", handle: (req) => this.recover(req) },
       "/set-locked": { handle: async (_req, url) => this.setLocked(url) },
+      "/set-trashed": { handle: async (_req, url) => this.setTrashed(url) },
+      "/comments-changed": { handle: async () => this.commentsChanged() },
+      "/title-changed": { handle: async (_req, url) => this.titleChanged(url) },
     };
   }
 
@@ -97,8 +100,9 @@ export class DocActor implements Actor<SessionMeta> {
     const allowed = new Set(url.searchParams.getAll("principal"));
     const writers = new Set(url.searchParams.getAll("writer"));
     for (const ws of this.peers.applyAcl(allowed, writers)) {
-      // Flip the editor now rather than at the next refused keystroke.
-      this.refusals.reject(ws, "acl", "Your access to this document is now view-only.", "notice");
+      // Flip the editor now rather than at the next refused keystroke, and back for someone who may edit again.
+      if (!ws.meta.canWrite) this.refusals.reject(ws, "acl", "Your access to this document is now view-only.", "notice");
+      this.sendState(ws);
     }
     return new Response(null, { status: 204 });
   }
@@ -165,7 +169,7 @@ export class DocActor implements Actor<SessionMeta> {
     if (!this.destroyed) {
       for (const ws of this.peers.all()) {
         try {
-          ws.close(4404, "document deleted");
+          ws.close(CloseCode.DOC_DELETED, "document deleted");
         } catch {
           /* already closing */
         }
@@ -177,11 +181,16 @@ export class DocActor implements Actor<SessionMeta> {
     return Response.json({ destroyed: true });
   }
 
-  /** Roll back to a version, written as a new head seq; every client is reset to resync. */
+  /**
+   * Roll back to a version, written as a new head seq; every client is reset to
+   * resync, and told who restored the version from when (`by`, `at`).
+   */
   private async restore(url: URL): Promise<Response> {
     const seq = Number(url.searchParams.get("seq"));
     if (!Number.isFinite(seq)) return new Response("bad request", { status: 400 });
-    const newSeq = await restoreToVersion(this.store, this.env, this.peers, seq);
+    const by = url.searchParams.get("by");
+    const at = url.searchParams.get("at");
+    const newSeq = await restoreToVersion(this.store, this.env, this.peers, seq, by && at ? { name: by, at } : undefined);
     if (newSeq === null) return new Response("version not found", { status: 404 });
     return Response.json({ restored: seq, seq: newSeq });
   }
@@ -196,18 +205,47 @@ export class DocActor implements Actor<SessionMeta> {
 
   /**
    * Mirror the lock flag. Locking tells every socket with a "locked" refusal so
-   * editors flip read-only at once; unlocking sends nothing, the caller's own
-   * menu lowers the flag.
+   * editors flip read-only at once; either way every socket gets the new state,
+   * so an unlock reaches open editors too.
    */
   private async setLocked(url: URL): Promise<Response> {
     await this.store.ensureLoaded();
     await this.store.setLocked(url.searchParams.get("locked") === "1");
-    if (this.store.locked) {
-      for (const ws of this.peers.all()) {
-        this.refusals.reject(ws, "locked", "This document was locked; it is now read-only.", "notice");
-      }
+    for (const ws of this.peers.all()) {
+      if (this.store.locked) this.refusals.reject(ws, "locked", "This document was locked; it is now read-only.", "notice");
+      this.sendState(ws);
     }
     return Response.json({ locked: this.store.locked });
+  }
+
+  /** Mirror the trash flag: writes stop while the document is in the trash, and every open editor is told either way. */
+  private setTrashed(url: URL): Response {
+    this.store.trashed = url.searchParams.get("trashed") === "1";
+    for (const ws of this.peers.all()) this.sendState(ws);
+    return Response.json({ trashed: this.store.trashed });
+  }
+
+  /**
+   * The comments changed: every open page re-reads them. The comments live in
+   * the node's database, so the actor only passes the word on, and an actor
+   * with no one connected has no one to tell.
+   */
+  private commentsChanged(): Response {
+    this.peers.broadcast(encodeEmpty(Opcode.COMMENTS_CHANGED));
+    return new Response(null, { status: 204 });
+  }
+
+  /** Someone renamed the document: every open page shows the new title, and who chose it. */
+  private titleChanged(url: URL): Response {
+    const payload: TitleChangedPayload = { title: url.searchParams.get("title") ?? "", by: url.searchParams.get("by") ?? "" };
+    this.peers.broadcast(encodeJson(Opcode.TITLE_CHANGED, payload));
+    return new Response(null, { status: 204 });
+  }
+
+  /** What this socket may do now, as a level the client sets its editor from. */
+  private sendState(ws: DocSocket): void {
+    const state: DocStatePayload = { locked: this.store.locked, trashed: this.store.trashed, can_write: ws.meta.canWrite };
+    safeSend(ws, encodeJson(Opcode.DOC_STATE, state));
   }
 
   private async connect(req: Request, url: URL): Promise<Response> {
@@ -215,9 +253,17 @@ export class DocActor implements Actor<SessionMeta> {
     const meta = parseSession(url);
     if (!meta) return new Response("connect requires alias, write, principal and workspaceId", { status: 400 });
     await this.store.ensureLoaded();
+    // The node read the row just now; a trash or restore after that read pushes its own word.
+    this.store.trashed = url.searchParams.get("trashed") === "1";
 
     const pair = new SocketPair<SessionMeta>();
     this.state.acceptWebSocket(pair.server, meta);
+    // A page from an older build would delete the nodes its editor cannot read, for everyone. Closed
+    // before a frame is sent, it reloads (DOC_RESET) into the current build first.
+    if (editorPredatesText(url)) {
+      pair.server.close(CloseCode.DOC_RESET, "the page is older than this document's text");
+      return upgradeResponse(pair.client);
+    }
     if (meta.agent) console.info("ws agent connected", { docId: this.store.docId, agent: meta.agent, canWrite: meta.canWrite });
     this.peers.logConnectionCounts(this.store.docId, "connect");
 
@@ -317,6 +363,8 @@ export class DocActor implements Actor<SessionMeta> {
       case Opcode.SYNC_STEP_1: {
         safeSend(ws, encodeBinary(Opcode.SYNC_STEP_2, Y.encodeStateAsUpdate(store.doc, frame.payload)));
         safeSend(ws, encodeEmpty(Opcode.SYNC_DONE));
+        // Again on every reconnect, so a tab that missed a change (an unlock, a restore, a new tier) catches up.
+        this.sendState(ws);
         // The degraded flag is edge-triggered, so a socket arriving mid-outage is told here.
         if (store.persistDegraded) {
           safeSend(ws, encodeJson(Opcode.PERSIST_DEGRADED, { degraded: true } satisfies PersistDegradedPayload));
@@ -341,6 +389,7 @@ export class DocActor implements Actor<SessionMeta> {
         const verdict = judgeWrite(frame.opcode, frame.payload, ws, {
           docId: store.docId,
           locked: store.locked,
+          trashed: store.trashed,
           epoch: store.epoch,
           doc: store.doc,
           rate: this.rate,
@@ -371,4 +420,10 @@ export class DocActor implements Actor<SessionMeta> {
         break;
     }
   }
+}
+
+/** Whether a page opened this socket with an editor older than the text (`editorSchema`, set by the node for a page only). */
+function editorPredatesText(url: URL): boolean {
+  const sent = url.searchParams.get("editorSchema");
+  return sent !== null && !(Number(sent) >= TEXT_SCHEMA_VERSION);
 }

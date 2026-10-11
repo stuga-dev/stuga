@@ -26,6 +26,8 @@ export async function serveMedia(
   if (!image && !opts.files) return error(404, "media not found");
   const headers = new Headers();
   headers.set("content-type", contentType ?? "application/octet-stream");
+  // A HEAD answers with this alone, which is how a document shows a file's size beside its name.
+  if (Number.isSafeInteger(obj.size)) headers.set("content-length", String(obj.size));
   if (!image) headers.set("content-disposition", attachment(opts.name));
   // Private: a shared cache would hand an authorized response to the next caller.
   headers.set("cache-control", "private, max-age=31536000, immutable");

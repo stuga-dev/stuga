@@ -133,7 +133,7 @@ describe("search strictness copy", () => {
 
   it("shows the measured distance of the chosen level, and nothing to measure while semantic search is off", () => {
     const s = measured();
-    expect(strictnessNote(s, toForm(s))).toEqual({ text: "Distance 0.34 for this model", measureAgain: true });
+    expect(strictnessNote(s, toForm(s))).toEqual({ text: "Measured for this model: 0.34", measureAgain: true });
     const off = measured({ running: false });
     expect(strictnessNote(off, toForm(off))).toEqual({ text: "Measured once semantic search is on.", measureAgain: false });
   });

@@ -1,8 +1,10 @@
 {
   "cancel": "Abbrechen",
+  "back": "Zurück",
   "save": "Speichern",
   "close": "Schließen",
   "done": "Fertig",
+  "advanced": "Erweitert",
   "retry": "Erneut versuchen",
   "loading": "Wird geladen…",
   "remove": "Entfernen",
@@ -39,5 +41,6 @@
   "notifications": "Benachrichtigungen",
   "actionsFor": "Aktionen für {name}",
   "tooLong": "Zu lang: {count, number} Zeichen, das Limit liegt bei {limit, number}.",
-  "savedLive": "Gespeichert – sofort aktiv, ohne Neustart."
+  "savedLive": "Gespeichert – sofort aktiv, ohne Neustart.",
+  "foundByMeaning": "Nach Bedeutung gefunden"
 }

@@ -64,6 +64,11 @@ export function rememberWorkspaceReturn(path: string): void {
   if (usableReturn(path, ["/onboarding"])) writeStored("session", WORKSPACE_RETURN_KEY, path);
 }
 
+/** Invite and share link pages: they sign in where they are, and redeem with or without a workspace. */
+export function onLinkPage(pathname: string): boolean {
+  return /^\/(join|s)\//.test(pathname);
+}
+
 /**
  * Strict on purpose: tokens are a prefix plus base64url, only /join links carry
  * one (share links at /s/ are another flow), and nothing is percent-decoded, so

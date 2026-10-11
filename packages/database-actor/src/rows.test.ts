@@ -302,6 +302,67 @@ describe("/rows/update and /rows/delete", () => {
     expect(list.rows[0]![colId(starter, "Done")]).toBe(1);
   });
 
+  it("leaves a cell that moved on since the writer read it, and says what it holds now", async () => {
+    const { actor } = makeActor();
+    const starter = await initStarter(actor);
+    const name = colId(starter, "Name");
+    const ins = await doJson<{ row_ids: string[] }>(actor, "/rows/insert", { table_id: starter.table_id, rows: [{ Name: "start" }], actor: HUMAN });
+    const id = ins.row_ids[0]!;
+    const opCount = async () => (await doJson<{ ops: unknown[] }>(actor, "/ops")).ops.length;
+
+    // Someone else saves first.
+    await doJson(actor, "/rows/update", { table_id: starter.table_id, updates: [{ _id: id, values: { Name: "theirs" } }], actor: HUMAN });
+    const before = await opCount();
+    const out = await doJson<{ updated: number; conflicts?: Array<{ _id: string; values: Record<string, unknown> }> }>(actor, "/rows/update", {
+      table_id: starter.table_id,
+      updates: [{ _id: id, values: { Name: "mine" }, expect: { Name: "start" } }],
+      actor: HUMAN,
+    });
+    expect(out.updated).toBe(0);
+    expect(out.conflicts).toEqual([{ _id: id, values: { [name]: "theirs" } }]);
+    expect(await opCount()).toBe(before);
+    const list = await doJson<ListOut>(actor, "/rows/list", { table_id: starter.table_id });
+    expect(list.rows[0]![name]).toBe("theirs");
+
+    // Expecting what is there writes as usual.
+    const ok = await doJson<{ updated: number; conflicts?: unknown }>(actor, "/rows/update", {
+      table_id: starter.table_id,
+      updates: [{ _id: id, values: { Name: "mine" }, expect: { [name]: "theirs" } }],
+      actor: HUMAN,
+    });
+    expect(ok.updated).toBe(1);
+    expect(ok.conflicts).toBeUndefined();
+  });
+
+  it("leaves a row that moved on out of the change's inverse, so a revert never writes it back", async () => {
+    const { actor } = makeActor();
+    const starter = await initStarter(actor);
+    const name = colId(starter, "Name");
+    const ins = await doJson<{ row_ids: string[] }>(actor, "/rows/insert", { table_id: starter.table_id, rows: [{ Name: "a" }, { Name: "b" }], actor: HUMAN });
+    const [a, b] = ins.row_ids as [string, string];
+    await doJson(actor, "/rows/update", { table_id: starter.table_id, updates: [{ _id: a, values: { Name: "theirs" } }], actor: HUMAN });
+
+    const out = await doJson<{ updated: number; conflicts?: unknown[] }>(actor, "/rows/update", {
+      table_id: starter.table_id,
+      updates: [
+        { _id: a, values: { Name: "mine a" }, expect: { Name: "a" } },
+        { _id: b, values: { Name: "mine b" }, expect: { Name: "b" } },
+      ],
+      actor: HUMAN,
+    });
+    expect(out.updated).toBe(1);
+    expect(out.conflicts).toHaveLength(1);
+    const { ops } = await doJson<{ ops: Array<{ op_id: string }> }>(actor, "/ops");
+
+    // A later change to the row the update left alone survives the update's revert.
+    await doJson(actor, "/rows/update", { table_id: starter.table_id, updates: [{ _id: a, values: { Name: "later" } }], actor: HUMAN });
+    await doJson(actor, "/ops/revert", { op_id: ops[0]!.op_id, actor: HUMAN });
+    const list = await doJson<ListOut>(actor, "/rows/list", { table_id: starter.table_id });
+    const byId = new Map(list.rows.map((r) => [r._id, r[name]]));
+    expect(byId.get(a)).toBe("later");
+    expect(byId.get(b)).toBe("b");
+  });
+
   it("rejects invalid update values with the column named", async () => {
     const { actor } = makeActor();
     const starter = await initStarter(actor);

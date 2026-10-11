@@ -13,7 +13,8 @@ import { Server } from "lucide-react";
 import { t } from "../../../i18n/i18n";
 import { LoadFailed } from "../../../ui/LoadFailed";
 import { PageColumn } from "../../../ui/PageColumn";
-import { asNodeCategory, type NodeCategory } from "./categories";
+import { NODE_CATEGORIES, asNodeCategory, type NodeCategory } from "./categories";
+import { SettingsTitle } from "../SettingsTitle";
 import { useNodeSettings } from "./useNodeSettings";
 import { AiSection } from "./AiSection";
 import { NotificationsSection } from "./NotificationsSection";
@@ -65,10 +66,13 @@ export function NodeSettingsPage() {
   // Access and Remote access load their own parts.
   const needs = category === "ai" ? ai : category === "access" || category === "remote" ? true : ops;
   const shown = (key: NodeCategory) => (key === category ? "visible" : "hidden");
+  // The page is titled as the rail names it; a section's own headings sit under that.
+  const title = NODE_CATEGORIES.find((c) => c.key === category)!.label;
 
   return (
     <PageColumn>
       <VStack gap={5}>
+        <SettingsTitle>{title}</SettingsTitle>
         {staleAiKey && (
           <Banner
             status="warning"

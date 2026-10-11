@@ -67,7 +67,7 @@ describe("Start with", () => {
 
     await chooseSegment(host, "Import");
     expect(host.querySelector<HTMLInputElement>('input[type="file"]')?.accept).toBe(".zip,application/zip");
-    expect(host.textContent).toContain("Choose a Notion export, a zipped Obsidian vault or Markdown folder, or a .stuga.zip");
+    expect(host.textContent).toContain("A .zip from Notion, a zipped folder of notes, or a .stuga.zip");
     expect(state()).toMatchObject({ kind: "file", picked: null, ready: false });
     await chooseSegment(host, "Empty");
     expect(host.querySelector('input[type="file"]')).toBeNull();
@@ -265,7 +265,7 @@ describe("creating from a start", () => {
   });
 
   it("holds a file that would leave files out, importing it only when asked", async () => {
-    const held = { import_id: "wsi_2", name: "Notion", expires_at: "2026-09-28T01:00:00Z", left_out: { count: 1, files: ["Home/Brief.pdf"] } };
+    const held = { import_id: "wsi_2", name: "Notion", expires_at: "2026-09-28T01:00:00Z", left_out: { count: 1, files: [{ path: "Home/Brief.pdf", reason: "not_linked" as const }] } };
     workspaces.checkImport.mockResolvedValue(held);
     expect(await createWorkspaceFrom({ kind: "file", file: ARCHIVE }, "", "private")).toEqual({ held });
     expect(workspaces.importHeld).not.toHaveBeenCalled();

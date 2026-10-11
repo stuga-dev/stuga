@@ -22,6 +22,7 @@ const TYPES: BlockType[] = [
   { id: "h3", labelKey: "editor.blocks.heading3", isActive: (e) => e.isActive("heading", { level: 3 }), apply: (e) => e.chain().focus().toggleHeading({ level: 3 }).run() },
   { id: "bullet", labelKey: "editor.blocks.bulletList", isActive: (e) => e.isActive("bulletList"), apply: (e) => e.chain().focus().toggleBulletList().run() },
   { id: "ordered", labelKey: "editor.blocks.numberedList", isActive: (e) => e.isActive("orderedList"), apply: (e) => e.chain().focus().toggleOrderedList().run() },
+  { id: "task", labelKey: "editor.blocks.taskList", isActive: (e) => e.isActive("taskList"), apply: (e) => e.chain().focus().toggleTaskList().run() },
   { id: "quote", labelKey: "editor.blocks.quote", isActive: (e) => e.isActive("blockquote"), apply: (e) => e.chain().focus().toggleBlockquote().run() },
   // Before "Code block", which also matches a mermaid block: the first match labels the trigger.
   { id: "mermaid", labelKey: "editor.blocks.mermaid", isActive: (e) => e.isActive("codeBlock", { language: "mermaid" }), apply: (e) => e.chain().focus().setCodeBlock({ language: "mermaid" }).run() },

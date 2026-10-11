@@ -3,7 +3,8 @@
  * to the server's default, and what it starts with, the samples asked for as it opens. Reopening
  * resets every field. The dialog stays open while the workspace is made, and says so there if it
  * could not be, or if an import it stopped waiting for may still finish. A file that would leave
- * files out lists them first, and is imported only once the person says so.
+ * files out lists them first, each with why, and is imported only once the person says so; an
+ * import from a file ends with its summary, and the workspace opens from there.
  */
 import { useEffect, useState } from "react";
 import { Dialog } from "@astryxdesign/core/Dialog";
@@ -31,7 +32,8 @@ import {
   type Creation,
   type StartChoice,
 } from "./StartWith";
-import { WORKSPACE_ACCESS_OPTIONS, WORKSPACE_ACCESS_HELP } from "./workspace-access";
+import { ImportSummary } from "./ImportSummary";
+import { WORKSPACE_ACCESS_OPTIONS, WORKSPACE_ACCESS_HELP, WORKSPACE_ACCESS_LABEL } from "./workspace-access";
 
 interface CreateWorkspaceDialogProps {
   isOpen: boolean;
@@ -54,6 +56,8 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
   const mayFinishRef = useBannerInView(mayFinish);
   /** A file the node holds until the person accepts what it would leave out. */
   const [held, setHeld] = useState<HeldImport | null>(null);
+  /** A workspace imported from a file, whose summary shows before it opens. */
+  const [imported, setImported] = useState<CreatedWorkspace | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -63,11 +67,18 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
     setError(null);
     setMayFinish(false);
     setHeld(null);
+    setImported(null);
   }, [isOpen, reset]);
 
   function open(workspace: CreatedWorkspace) {
     onOpen(workspace);
     onClose();
+  }
+
+  /** A workspace made from a file says first what came in; any other opens at once. */
+  function made(workspace: CreatedWorkspace) {
+    if (start.kind === "file") setImported(workspace);
+    else open(workspace);
   }
 
   /** Run `work` busy, showing what goes wrong here. */
@@ -88,12 +99,12 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
   const submit = () =>
     ready &&
     attempt(async () => {
-      const made = await onSubmit(name.trim(), access, start);
-      if ("held" in made) setHeld(made.held);
-      else open(made.workspace);
+      const creation = await onSubmit(name.trim(), access, start);
+      if ("held" in creation) setHeld(creation.held);
+      else made(creation.workspace);
     });
 
-  const importHeld = () => held && attempt(async () => open(await importHeldFile(held, name.trim(), access)));
+  const importHeld = () => held && attempt(async () => made(await importHeldFile(held, name.trim(), access)));
 
   /** Back to the form; the node lets the file go. */
   const letGo = () => {
@@ -102,9 +113,10 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
     setError(null);
   };
 
-  // Nothing closes the dialog while the workspace is being made.
+  // Nothing closes the dialog while the workspace is being made; once imported, closing opens it.
   const close = () => {
     if (busy) return;
+    if (imported) return open(imported);
     letGo();
     onClose();
   };
@@ -118,16 +130,33 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
     </>
   );
 
+  const title = imported
+    ? t("shell.importSummary.title", { name: imported.name })
+    : held
+      ? t("shell.createWorkspace.importTitle")
+      : t("shell.createWorkspace.title");
+
   return (
     <Dialog isOpen={isOpen} onOpenChange={(o) => !o && close()} purpose="form" width={420}>
       <Layout
-        header={<DialogHeader title={t("shell.createWorkspace.title")} onOpenChange={(o) => !o && close()} />}
+        header={<DialogHeader title={title} onOpenChange={(o) => !o && close()} />}
         content={
           <LayoutContent>
-            {held?.left_out ? (
+            {imported ? (
+              <ImportSummary workspace={imported} />
+            ) : held?.left_out ? (
               <VStack gap={4}>
                 {banners}
                 <LeftOutList leftOut={held.left_out} />
+                <TextInput
+                  label={t("shell.createWorkspace.name")}
+                  placeholder={held.name}
+                  value={name}
+                  onChange={setName}
+                  isOptional
+                  isDisabled={busy}
+                  onEnter={importHeld}
+                />
               </VStack>
             ) : (
               <VStack gap={4}>
@@ -139,12 +168,13 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
                   value={name}
                   onChange={setName}
                   isRequired={!nameOptional}
+                  isOptional={nameOptional}
                   hasAutoFocus
                   isDisabled={busy}
                   onEnter={submit}
                 />
                 <Selector
-                  label={t("shell.createWorkspace.access")}
+                  label={WORKSPACE_ACCESS_LABEL}
                   description={WORKSPACE_ACCESS_HELP}
                   value={access}
                   onChange={(v) => setAccess(v as DocAccessMode)}
@@ -158,9 +188,11 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
         footer={
           <LayoutFooter>
             <HStack gap={2} justify="end">
-              {held ? (
+              {imported ? (
+                <Button label={t("shell.importSummary.open")} variant="primary" onClick={() => open(imported)} />
+              ) : held ? (
                 <>
-                  <Button label={t("common.cancel")} variant="ghost" onClick={letGo} isDisabled={busy} />
+                  <Button label={t("common.back")} variant="ghost" onClick={letGo} isDisabled={busy} />
                   <Button label={t("common.import")} variant="primary" isDisabled={busy || mayFinish} isLoading={busy} onClick={importHeld} />
                 </>
               ) : (

@@ -4,7 +4,7 @@
  * catches an answer given before any tool returned material, and only citations
  * the prose references are returned. Tools run through the injected AskToolRunner.
  */
-import type { AskStep, AskStopReason } from "@stuga/protocol/api/ask";
+import { SEARCH_STEP_TITLES, type AskStep, type AskStopReason } from "@stuga/protocol/api/ask";
 import { DATABASE_ASK_QUERY_MAX_ROWS } from "@stuga/protocol/databases/limits";
 import { SQL_VALUE_CONVENTIONS } from "@stuga/protocol/databases/sql-guard";
 import type { AiCitation, AiHistoryItem } from "@stuga/protocol/wire/doc-socket";
@@ -122,7 +122,8 @@ Rules:
 - Write only the [^n] marker — do NOT write a "[^n]: ..." definition line; the app builds the source list.
 - Write every reply in the language the question is written in, whatever language the documents are in; a quotation stays in its own language.
 - If the tools do not turn up an answer, say only that you could not find an answer in their documents, as one sentence in the question's language (for an English question, exactly "${DONT_KNOW}"). Do not pad it with guesses or with what you know generally.
-- Be concise and synthesize; do not paste passages back verbatim.`;
+- Be concise and synthesize; do not paste passages back verbatim.
+- Say only what answers the question: never describe your tools or searches, or what the library lacks (no "there are no databases", no "I also checked your databases").`;
 
 /** Sent at most once, when the model answers before any tool returned material. */
 const NO_SEARCH_NUDGE =
@@ -210,7 +211,9 @@ export async function runAskAgentTurn(
         const found = await runner.search({ query, offset: citations.length });
         appendCitations(citations, found.citations);
         grounded = true;
-        step({ kind: "search", query, hits: found.citations.length });
+        // One title per document, so two documents of one name are both named.
+        const titles = [...new Map(found.citations.map((c) => [c.doc_id, c.title])).values()].slice(0, SEARCH_STEP_TITLES);
+        step({ kind: "search", query, hits: found.citations.length, titles });
         return found.text || "No relevant passages found.";
       },
     ),

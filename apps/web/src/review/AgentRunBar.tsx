@@ -41,19 +41,20 @@ function rejectedFeedbackId(run: AgentRunSummary, hunkIds?: string[]): string | 
   return newest?.id ?? null;
 }
 
-export function AgentRunBar() {
+/** `locked`: the document is locked, so its changes can be rejected but not accepted until it is unlocked. */
+export function AgentRunBar({ locked = false }: { locked?: boolean }) {
   const { openRuns, notices, dismissNotice, undo } = useAgentRuns();
   return (
     <>
       <RunNotices notices={notices} dismissNotice={dismissNotice} onUndoDecision={undo} />
       {openRuns.map((run) => (
-        <AgentRunBanner key={run.id} run={run} />
+        <AgentRunBanner key={run.id} run={run} locked={locked} />
       ))}
     </>
   );
 }
 
-function AgentRunBanner({ run }: { run: AgentRunSummary }) {
+function AgentRunBanner({ run, locked }: { run: AgentRunSummary; locked: boolean }) {
   const { busy, decide, preview } = useAgentRuns();
   const coauthor = useOptionalAiCoauthor();
   // Read again when the decision lands: the co-author may have started a turn while the dialog was open.
@@ -146,8 +147,11 @@ function AgentRunBanner({ run }: { run: AgentRunSummary }) {
             ? t("review.runBar.docTitle", { agent: runAgentLabel(run), count: n })
             : t("review.runBar.docTitleNoCount", { agent: runAgentLabel(run) })
         }
+        acceptBlocked={locked}
         hint={
-          unanchoredCount === 0
+          locked
+            ? t("review.runBar.lockedHint")
+            : unanchoredCount === 0
             ? t("review.runBar.docHint")
             : sharedReason
               ? t("review.runBar.unshownWhy", { count: unanchoredCount, reason: unshownReason(sharedReason) })

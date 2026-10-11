@@ -6,6 +6,7 @@ export * from "./databases";
 export * from "./docs";
 export * from "./favorites";
 export * from "./folders";
+export * from "./groups";
 export * from "./media";
 export * from "./node";
 export * from "./notifications";

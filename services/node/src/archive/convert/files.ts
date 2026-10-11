@@ -1,5 +1,6 @@
 /** Paths, links and text files as the converters read them from an export. */
 import { MAX_IMPORT_MARKDOWN_BYTES } from "@stuga/protocol/text/markdown-import";
+import type { LeftOutReason } from "./build.js";
 import type { SourceFile } from "./source.js";
 
 /** A file Stuga can show as an image, by its name; its bytes are checked when it is copied. */
@@ -41,6 +42,11 @@ export async function readText(file: SourceFile, maxBytes = MAX_IMPORT_MARKDOWN_
   }
   // eslint-disable-next-line no-control-regex
   return text.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+}
+
+/** Why readText gave no text for `file`, read with the same `maxBytes`. */
+export function unreadText(file: SourceFile, maxBytes = MAX_IMPORT_MARKDOWN_BYTES): LeftOutReason {
+  return file.size > maxBytes ? { reason: "too_large", size: file.size, limit: maxBytes } : { reason: "unreadable_text" };
 }
 
 /** How a converter writes a link it already resolved to a source file, for its resolver to read back. */

@@ -1,11 +1,14 @@
 import type { CommentMention } from "@stuga/protocol/domain/mentions";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
+import { t } from "../i18n/i18n";
 import { api } from "../lib/http/client";
 
 export interface DocSummary {
   doc_id: string;
   title: string;
+  /** "heading" while the title follows the document's first line; "user" once someone named it. */
+  title_source: "heading" | "user";
   /** Full principal: `user:<alias>` or `agent:<id>`. */
   owner: string;
   doc_type: "prose" | "database";
@@ -34,8 +37,11 @@ export interface SearchResult {
   /** Raw document text with highlights between ⟦ and ⟧; escape before rendering. */
   snippet: string;
   score: number;
+  /** Above zero when the document is near the query in meaning; zero when only its words matched. */
+  sem_score: number;
   page_of: string | null;
   page_row: string | null;
+  updated_at: string;
 }
 
 export interface Comment {
@@ -100,6 +106,28 @@ export interface AclModel {
   owner: string;
   /** The direct grants; everything else in acl_* is inherited from a parent folder. */
   own_grants: { p: string[]; w: string[]; c: string[] };
+  /** The caller may change the sharing: the owner or a workspace admin. */
+  can_manage: boolean;
+}
+
+export type ShareRole = "viewer" | "commenter" | "editor";
+
+/** A share link that still opens the document. */
+export interface ShareLinkInfo {
+  token_hash: string;
+  role: ShareRole;
+  created_by: string;
+  created_at: string;
+  expires_at: string | null;
+  /** Null for a link whose address the node cannot show again; it still works until turned off. */
+  link_url: string | null;
+}
+
+/** Someone who asked for access and still cannot open the item. */
+export interface AccessRequest {
+  /** `user:<alias>` */
+  principal: string;
+  requested_at: string;
 }
 
 /** An item's instructions for agents: its own text and what it inherits from the levels above it. */
@@ -144,28 +172,58 @@ export const Docs = {
   ) => api<DocSummary>(`/api/docs/${id}/state`, { method: "PATCH", body: JSON.stringify(state) }),
   /** Any reader may ask; saving needs `can_edit`. */
   instructions: (id: string) => api<ItemInstructions>(`/api/docs/${id}/instructions`),
-  /** The token is returned once. */
-  createShareLink: (id: string, opts: { role?: "viewer" | "commenter" | "editor"; expires_in_days?: number } = {}) =>
-    api<{ token: string; link_url: string; role: string; expires_at: string | null }>(
+  createShareLink: (id: string, opts: { role?: ShareRole; expires_in_days?: number } = {}) =>
+    api<{ token: string; link_url: string; role: ShareRole; expires_at: string | null }>(
       `/api/docs/${id}/share-links`,
       { method: "POST", body: JSON.stringify(opts) },
     ),
+  /** The links that still open the document, newest first; owner or workspace admin. */
+  shareLinks: (id: string) => api<{ links: ShareLinkInfo[] }>(`/api/docs/${id}/share-links`),
+  /** A live link's new level, at the same address; people who already opened it keep their access. */
+  setShareLinkRole: (id: string, tokenHash: string, role: ShareRole) =>
+    api<{ token_hash: string; role: ShareRole }>(`/api/docs/${id}/share-links/${tokenHash}`, { method: "PATCH", body: JSON.stringify({ role }) }),
+  /** People who already opened the link keep their access. */
+  revokeShareLink: (id: string, tokenHash: string) =>
+    api<{ revoked: boolean }>(`/api/docs/${id}/share-links/${tokenHash}`, { method: "DELETE" }),
+  /** Owner or workspace admin. */
+  accessRequests: (id: string) => api<{ requests: AccessRequest[] }>(`/api/docs/${id}/access-requests`),
+  dismissAccessRequest: (id: string, principal: string) =>
+    api<{ dismissed: number }>(`/api/docs/${id}/access-requests/${encodeURIComponent(principal)}`, { method: "DELETE" }),
   redeemShareLink: (token: string) =>
     api<{ doc_id: string; workspace_id: string; role: string }>("/api/share-links/redeem", {
       method: "POST",
       body: JSON.stringify({ token }),
     }),
-  /** A database arrives with its storage initialized, or the create fails as a whole. */
-  create: (title: string, parentId?: string | null, docType?: "prose" | "database") =>
+  /**
+   * A database arrives with its storage initialized, or the create fails as a whole. Its first table
+   * takes the database's name (and keeps following it), or "Table 1" in the creator's language while
+   * the database has none; it starts with Name, Notes and Done unless `columns` names its columns
+   * (none: an empty table).
+   */
+  create: (title: string, parentId?: string | null, docType?: "prose" | "database", columns?: Array<{ name: string; type: string }>) =>
     api<DocSummary>("/api/docs", {
       method: "POST",
-      body: JSON.stringify({ title, parent_id: parentId ?? undefined, doc_type: docType ?? undefined }),
+      body: JSON.stringify({
+        title,
+        parent_id: parentId ?? undefined,
+        doc_type: docType ?? undefined,
+        ...(docType === "database" && title.trim() === "" ? { table: t("database.tables.first") } : {}),
+        columns,
+      }),
     }),
   /** The server derives the title from the Markdown; `filename` is only its fallback. */
   createFromMarkdown: (markdown: string, filename?: string, parentId?: string | null) =>
     api<DocSummary>("/api/docs", {
       method: "POST",
       body: JSON.stringify({ markdown, filename, parent_id: parentId ?? undefined }),
+    }),
+  /** The document as Markdown, as the editor shows it now. */
+  markdown: (id: string) => api<{ markdown: string }>(`/api/docs/${id}/markdown`),
+  /** A copy of a document beside it, its body as written, named `title`. */
+  copy: (id: string, title: string, parentId: string | null) =>
+    api<DocSummary>("/api/docs", {
+      method: "POST",
+      body: JSON.stringify({ copy_of: id, title, parent_id: parentId ?? undefined }),
     }),
   move: (id: string, parentId: string | null) =>
     api<DocSummary>(`/api/docs/${id}`, { method: "PATCH", body: JSON.stringify({ parent_id: parentId }) }),

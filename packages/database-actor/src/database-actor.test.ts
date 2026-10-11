@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DATABASE_MUTATIONS_PER_MINUTE } from "@stuga/protocol/databases/limits";
 import type { DatabaseSchema } from "@stuga/protocol/databases/types";
+import type { DatabaseChangedPayload } from "@stuga/protocol/wire/db-socket";
+import { decodeJson } from "@stuga/protocol/wire/frame";
+import { CloseCode, Opcode } from "@stuga/protocol/wire/opcodes";
+import { connectActor } from "@stuga/runtime/testing";
 import { AGENT, DB_ID, HUMAN, blobKeys, doFetch, doJson, initStarter, makeActor, makeState } from "../test/harness.js";
 
 describe("dispatch plumbing", () => {
@@ -106,5 +110,29 @@ describe("harness fidelity tripwires", () => {
     });
     const rows = s.sql.exec("SELECT v FROM t").toArray();
     expect(rows).toEqual([{ v: 1 }]);
+  });
+});
+
+describe("open pages", () => {
+  const changes = (ws: { frames(): Array<{ opcode: number; payload: Uint8Array }> }) =>
+    ws
+      .frames()
+      .filter((f) => f.opcode === Opcode.DB_CHANGED)
+      .map((f) => decodeJson<DatabaseChangedPayload>(f.payload).reason);
+
+  it("hear a lock, an unlock and a trash or restore as a state change", async () => {
+    const { actor, h } = makeActor();
+    const ws = await connectActor(actor, h.state, { dbId: DB_ID, alias: "user:liv" });
+    await doFetch(actor, "/set-locked?locked=1", {});
+    await doFetch(actor, "/set-locked?locked=0", {});
+    await doFetch(actor, "/state-changed", {});
+    expect(changes(ws)).toEqual(["state", "state", "state"]);
+  });
+
+  it("are closed as deleted, not left to reconnect to an empty shell", async () => {
+    const { actor, h } = makeActor();
+    const ws = await connectActor(actor, h.state, { dbId: DB_ID, alias: "user:liv" });
+    await doFetch(actor, "/destroy", {});
+    expect(ws.closed).toMatchObject({ code: CloseCode.DOC_DELETED });
   });
 });

@@ -21,6 +21,8 @@ interface TicketCache {
   /** A usable ticket, minted when needed; a refusal is null, never a rejection. */
   ensure(key: string): Promise<string | null>;
   forget(key: string): void;
+  /** The last mint for `key` was refused outright (403 or 404): asking again will not help. */
+  refused(key: string): boolean;
 }
 
 function createTicketCache(opts: {
@@ -32,6 +34,7 @@ function createTicketCache(opts: {
 }): TicketCache {
   const held = new Map<string, HeldTicket>();
   const inflight = new Map<string, Promise<string | null>>();
+  const refusedKeys = new Set<string>();
 
   function usable(key: string): HeldTicket | null {
     const ticket = held.get(key);
@@ -47,6 +50,8 @@ function createTicketCache(opts: {
     const headers = await authHeaders();
     if (!headers.has("authorization")) return null;
     const res = await fetch(opts.url(key), { headers });
+    if (res.status === 403 || res.status === 404) refusedKeys.add(key);
+    else refusedKeys.delete(key);
     if (!res.ok) return null;
     const body = (await res.json()) as Record<string, unknown>;
     const value = opts.read(body);
@@ -79,6 +84,7 @@ function createTicketCache(opts: {
       return pending;
     },
     forget: (key) => void held.delete(key),
+    refused: (key) => refusedKeys.has(key),
   };
 }
 
@@ -95,6 +101,16 @@ export function cachedSocketTicket(docId: string): string | null {
 
 export function ensureSocketTicket(docId: string): Promise<string | null> {
   return socketTickets.ensure(docId);
+}
+
+/** The node refused this document's ticket: the caller cannot read it (any more). */
+export function socketTicketRefused(docId: string): boolean {
+  return socketTickets.refused(docId);
+}
+
+/** A ticket carries the write tier it was minted with: drop it once that may have changed, so the next socket asks again. */
+export function forgetSocketTicket(docId: string): void {
+  socketTickets.forget(docId);
 }
 
 /** The cookie is the credential; the cache only records that one is held. */

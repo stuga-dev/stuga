@@ -8,6 +8,7 @@ import {
   isWorkspaceInviteRedeemable,
   workspaceInviteStatus,
   listWorkspaceInvites,
+  previewWorkspaceInvite,
   provisionWorkspace,
   redeemWorkspaceInvite,
   revokeWorkspaceInvite,
@@ -50,7 +51,8 @@ describe.skipIf(!URL)("workspace invite links", () => {
     await invite("used-up", { maxUses: 1 });
     await invite("revoked");
     expect((await redeemWorkspaceInvite(sql, "used-up", "bob")).ok).toBe(true);
-    expect(await revokeWorkspaceInvite(sql, "revoked", WS)).toBe(true);
+    expect(await revokeWorkspaceInvite(sql, "revoked", WS)).toEqual({ role: "member", token_hint: null, note: null });
+    expect(await revokeWorkspaceInvite(sql, "revoked", WS)).toBeNull();
 
     const listed = await listWorkspaceInvites(sql, WS);
     expect(listed.map((i) => i.token_hash)).toEqual(["lapses-tomorrow", "reusable"]);
@@ -71,6 +73,43 @@ describe.skipIf(!URL)("workspace invite links", () => {
       maxUses: 1,
     });
     expect((await listWorkspaceInvites(sql, WS)).map((i) => i.token_hint)).toEqual(["wLl1"]);
+  });
+
+  it("keeps who a link is for, and names it on the redemption", async () => {
+    await insertWorkspaceInvite(sql, {
+      tokenHash: "for-sofia",
+      tokenHint: "Ab12",
+      note: "Sofia",
+      workspaceId: WS,
+      role: "guest",
+      createdBy: "alice",
+      expiresAt: null,
+      maxUses: 1,
+    });
+    expect((await listWorkspaceInvites(sql, WS)).map((i) => i.note)).toEqual(["Sofia"]);
+    const redeemed = await redeemWorkspaceInvite(sql, "for-sofia", "sofia");
+    expect(redeemed).toEqual({ ok: true, workspaceId: WS, role: "guest", invite: { role: "guest", token_hint: "Ab12", note: "Sofia" } });
+  });
+
+  it("shows a link's holder the workspace, the role and who made it, and nothing for a dead link", async () => {
+    await sql`INSERT INTO users (alias, username, display_name) VALUES ('alice', 'alice', 'Alice Baker')`;
+    await invite("live", { maxUses: 1, expiresAt: new Date(Date.now() + 86_400_000).toISOString() });
+    await invite("open");
+    await invite("spent", { maxUses: 1 });
+    expect((await redeemWorkspaceInvite(sql, "spent", "bob")).ok).toBe(true);
+
+    expect(await previewWorkspaceInvite(sql, "live", "remote")).toEqual({
+      status: "ok",
+      workspace_id: WS,
+      workspace_name: "Invites",
+      role: "member",
+      invited_by: "Alice Baker",
+    });
+    // A link refused at the remote address names neither the workspace nor its maker there.
+    expect(await previewWorkspaceInvite(sql, "open", "remote")).toEqual({ status: "local_only", workspace_id: WS });
+    expect((await previewWorkspaceInvite(sql, "open", "local")).status).toBe("ok");
+    expect(await previewWorkspaceInvite(sql, "spent", "local")).toEqual({ status: "invalid" });
+    expect(await previewWorkspaceInvite(sql, "made-up", "local")).toEqual({ status: "invalid" });
   });
 
   it("a one-person link admits one person when several redeem it at once", async () => {

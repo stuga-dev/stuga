@@ -12,6 +12,7 @@ import { TableRow } from "@tiptap/extension-table-row";
 import { TableHeader } from "@tiptap/extension-table-header";
 import { TableCell } from "@tiptap/extension-table-cell";
 import { Image } from "@tiptap/extension-image";
+import { TaskItem, TaskList } from "@tiptap/extension-list";
 import type { Schema } from "prosemirror-model";
 import { FootnoteReference, FootnoteDefinition } from "./footnote-nodes.js";
 import { Mention } from "./mention-node.js";
@@ -43,6 +44,9 @@ export function stugaExtensions(): Extensions {
     TableHeader,
     TableCell,
     Image.configure({ inline: false }),
+    // `nested` makes an item `paragraph block*`, like a list item, so a task can hold a sub-list.
+    TaskList,
+    TaskItem.configure({ nested: true }),
     FootnoteReference,
     FootnoteDefinition,
     Mention,

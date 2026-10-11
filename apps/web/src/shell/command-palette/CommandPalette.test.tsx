@@ -8,17 +8,18 @@ import { mountInto, typeInto } from "../../test/form-input";
 
 const folders = vi.hoisted(() => ({ create: vi.fn(), placementInstructions: vi.fn(async () => ({ inherited: [] })) }));
 const docs = vi.hoisted(() => ({ search: vi.fn(), create: vi.fn(), get: vi.fn() }));
+const workspaces = vi.hoisted(() => ({ list: vi.fn() }));
 
 vi.mock("../../api", async (orig) => ({
   ...(await orig<typeof import("../../api")>()),
   Folders: folders,
   Docs: docs,
   Me: { whoami: vi.fn(async () => ({ node_admin: false })) },
-  Workspaces: { list: vi.fn(async () => ({ workspaces: [], active: null })) },
+  Workspaces: workspaces,
 }));
 vi.mock("@astryxdesign/core/Toast", () => import("../../test/toast"));
 
-const { CommandPalette } = await import("./CommandPalette");
+const { CommandPalette, PALETTE_START } = await import("./CommandPalette");
 const { CommandPaletteProvider } = await import("./context");
 
 let host: HTMLDivElement;
@@ -44,7 +45,7 @@ async function click(el: Element | undefined) {
   await act(async () => el!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
-async function createFolder(name: string, instructions?: string) {
+async function createFolder(name: string) {
   await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true })));
   await click([...host.querySelectorAll("*")].find((el) => el.children.length === 0 && el.textContent === "New folder"));
   const input = [...host.querySelectorAll("input")].find(
@@ -52,19 +53,10 @@ async function createFolder(name: string, instructions?: string) {
   );
   expect(input).toBeTruthy();
   await typeInto(input, name);
-  if (instructions !== undefined) {
-    const area = host.querySelector("textarea")!;
-    await typeInto(area, instructions);
-  }
   await click([...host.querySelectorAll("button")].find((b) => b.textContent === "Create"));
 }
 
-beforeEach(async () => {
-  vi.clearAllMocks();
-  docs.search.mockImplementation(async () => ({ results: [], degraded: false }));
-  localStorage.clear();
-  toasts.shown = [];
-  ({ host, root } = mountInto());
+async function mountPalette() {
   await act(async () => {
     root.render(
       <MemoryRouter initialEntries={["/doc/d_1"]}>
@@ -77,6 +69,16 @@ beforeEach(async () => {
       </MemoryRouter>,
     );
   });
+}
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  workspaces.list.mockResolvedValue({ workspaces: [], active: null });
+  docs.search.mockImplementation(async () => ({ results: [], degraded: false }));
+  localStorage.clear();
+  toasts.shown = [];
+  ({ host, root } = mountInto());
+  await mountPalette();
 });
 
 describe("CommandPalette keyboard", () => {
@@ -97,7 +99,7 @@ describe("CommandPalette New folder", () => {
   it("shows the refusal and stays put when the folder cannot be created", async () => {
     folders.create.mockRejectedValue(new Error("A folder with that name exists"));
     await createFolder("Plans");
-    expect(folders.create).toHaveBeenCalledWith("Plans", null, "");
+    expect(folders.create).toHaveBeenCalledWith("Plans", null);
     expect(toasts.shown).toContainEqual({ body: "A folder with that name exists", type: "error" });
     expect(path()).toBe("/doc/d_1");
   });
@@ -109,21 +111,40 @@ describe("CommandPalette New folder", () => {
     expect(path()).toBe("/");
   });
 
-  it("creates the folder with the instructions written beside its name", async () => {
-    folders.create.mockResolvedValue({ folder_id: "f_1" });
-    await createFolder("Journal", "  One entry a day.  ");
-    expect(folders.create).toHaveBeenCalledWith("Journal", null, "One entry a day.");
+});
+
+describe("CommandPalette New document", () => {
+  const command = (label: string) => [...host.querySelectorAll('[role="option"]')].find((el) => el.textContent?.startsWith(label));
+
+  it("creates it without a title, which reads as Untitled until it has one", async () => {
+    docs.create.mockResolvedValue({ doc_id: "d_9" });
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true })));
+    await click(command("New document"));
+    expect(docs.create).toHaveBeenCalledWith("");
+    expect(path()).toBe("/doc/d_9");
+  });
+
+  it("offers a guest nothing to create", async () => {
+    workspaces.list.mockResolvedValue({ workspaces: [{ workspace_id: "w_1", role: "guest" }], active: "w_1" });
+    await act(async () => root.unmount());
+    ({ host, root } = mountInto());
+    await mountPalette();
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true })));
+    for (const label of ["New document", "New database", "New folder", "Import from Markdown"]) expect(command(label)).toBeUndefined();
+    expect(command("All documents")).toBeTruthy();
   });
 });
 
-const hit = (doc_id: string, title: string, snippet: string, doc_type: "prose" | "database" = "prose") => ({
+const hit = (doc_id: string, title: string, snippet: string, doc_type: "prose" | "database" = "prose", sem_score = 0) => ({
   doc_id,
   title,
   doc_type,
   snippet,
   score: 1,
+  sem_score,
   page_of: null,
   page_row: null,
+  updated_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
 });
 /** Past both of the palette's search passes, with their responses settled. */
 const debounce = () => act(async () => new Promise((r) => setTimeout(r, 500)));
@@ -138,7 +159,37 @@ async function search(text: string) {
 
 const options = () => [...host.querySelectorAll('[role="listbox"] [role="option"]')];
 
+describe("CommandPalette dialog", () => {
+  it("is named, and starts at the window's margin when 640px do not fit", async () => {
+    await mountPalette();
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true })));
+    const dialog = document.querySelector("dialog[open]");
+    expect(dialog?.getAttribute("aria-label")).toBe("Search documents or run a command");
+    // Centred while it fits; at 360px wide, 50% - 320px would put its start off the left edge.
+    expect(PALETTE_START).toBe("max(16px, calc(50% - 320px))");
+    expect(dialog?.getAttribute("style")).toContain(PALETTE_START);
+  });
+
+  it("offers the keyboard shortcuts", async () => {
+    await mountPalette();
+    await search("shortcuts");
+    expect(options().some((o) => o.textContent?.includes("Keyboard shortcuts"))).toBe(true);
+  });
+});
+
 describe("CommandPalette document search", () => {
+  it("says when each hit last changed, and which ones were found by meaning alone", async () => {
+    docs.search.mockResolvedValue({
+      results: [hit("d_1", "Notes", "It is ⟦cheap⟧ here.", "prose", 0.5), hit("d_2", "Shopping list", "Butter, flour, eggs.", "prose", 0.4)],
+      degraded: false,
+    });
+    await search("cheap");
+    const [words, meaning] = options();
+    expect(words!.textContent).toContain("3d ago");
+    expect(words!.textContent).not.toContain("Found by meaning");
+    expect(meaning!.textContent).toContain("Found by meaning");
+  });
+
   it("shows the passage that matched under each hit, and highlights the first hit", async () => {
     docs.search.mockResolvedValue({ results: [hit("d_9", "Start here", "Read this first. Find out ⟦where⟧ things live.")], degraded: false });
     const input = await search("where");

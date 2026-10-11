@@ -147,7 +147,7 @@ describe("POST /api/workspaces with a sample", () => {
     const res = await create({ name: "", sample: "privacy-laws", default_doc_access: "private" });
     expect(res.status).toBe(201);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(Object.keys(body).sort()).toEqual(["agent_instructions", "created_at", "default_doc_access", "name", "role", "start_doc_id", "workspace_id"]);
+    expect(Object.keys(body).sort()).toEqual(["agent_instructions", "created_at", "default_doc_access", "imported", "name", "role", "start_doc_id", "workspace_id"]);
     expect(body).toMatchObject({ name: "Privacy laws", role: "owner", default_doc_access: "private", start_doc_id: "d_start" });
     expect(catalog.download).toHaveBeenCalledWith(INDEX, INDEX.samples[1]);
     expect(mockProvision.mock.calls[0]![1]).toMatchObject({ name: "Privacy laws", owner: "u_liv", defaultDocAccess: "private" });

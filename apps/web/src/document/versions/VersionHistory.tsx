@@ -1,13 +1,14 @@
 /**
  * The version list, grouped by day and titled by time rather than by sequence
- * number. Each row shows its character counts; a version whose baseline was
- * pruned has no counts and shows none, rather than a misleading zero.
+ * number. Each row says how many characters it added and removed; a version whose
+ * baseline was pruned has no counts and shows none, rather than a misleading zero.
  */
 import { Fragment } from "react";
 import type { Version } from "../../api";
 import { authorLabel, nameLoading } from "../../state/identity";
-import { absoluteTime, dayLabel, fmtInt, timeOfDay, versionLabel } from "../../lib/format";
+import { absoluteTime, dayLabel, timeOfDay, versionLabel } from "../../lib/format";
 import { t } from "../../i18n/i18n";
+import { tRich } from "../../i18n/rich";
 import { nameList } from "../name-list";
 
 /**
@@ -37,7 +38,10 @@ function byDay(versions: Version[]): Array<{ day: string; items: Version[] }> {
   return groups;
 }
 
-/** `+312 −45`; "No text change" when the Markdown is identical, as after restoring an identical version. */
+/**
+ * "312 characters added, 45 removed" in words, green and red; "No text change" when the Markdown is
+ * identical, as after restoring an identical version.
+ */
 function ChangeCounts({ v }: { v: Version }) {
   const added = v.chars_added;
   const removed = v.chars_removed;
@@ -51,14 +55,21 @@ function ChangeCounts({ v }: { v: Version }) {
       </span>
     );
   }
-  const title =
-    count == null
-      ? t("document.versions.changeTitle", { added, removed })
-      : t("document.versions.changeTitleSized", { added, removed, count });
+  const title = count == null ? undefined : t("document.versions.changeTitleSized", { added, removed, count });
   return (
     <span className="vchange" title={title}>
-      {added > 0 && <span className="vchange__ins">+{fmtInt(added)}</span>}
-      {removed > 0 && <span className="vchange__del">−{fmtInt(removed)}</span>}
+      {removed === 0 ? (
+        <span className="vchange__ins">{t("document.versions.changeAdded", { count: added })}</span>
+      ) : added === 0 ? (
+        <span className="vchange__del">{t("document.versions.changeRemoved", { count: removed })}</span>
+      ) : (
+        tRich("document.versions.changeBoth", {
+          added,
+          removed,
+          ins: (chunks) => <span className="vchange__ins">{chunks}</span>,
+          del: (chunks) => <span className="vchange__del">{chunks}</span>,
+        })
+      )}
     </span>
   );
 }

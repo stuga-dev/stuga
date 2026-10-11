@@ -8,6 +8,11 @@ import { AuthLayout } from "./AuthLayout";
 import { setAuthConfigForTest } from "../lib/session/auth-config";
 import { resetSilentAttemptForTest } from "../lib/session/provider";
 import { mountInto, typeInto } from "../test/form-input";
+import { toastBodies, toasts } from "../test/toast";
+import { leaveNotice } from "../lib/session/notice";
+import { setSession } from "../lib/session/tokens";
+
+vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
 const fetchMock = vi.fn<typeof fetch>();
 const reply = (status: number, body: unknown) =>
@@ -92,6 +97,18 @@ describe("AuthLayout, signed out", () => {
     await click("Sign in");
     expect(where()).toBe("/join/inv_abc");
     expect(host.querySelector("#join")).toBeTruthy();
+  });
+
+  it("shows, once, the notice a change left before it reloaded the app", async () => {
+    fetchMock.mockImplementation(async () => reply(200, {}));
+    toasts.shown = [];
+    setSession({ accessToken: "at-1", expiresIn: 900 });
+    leaveNotice("Deleted “Liv's team”.");
+    await open("/doc/d1");
+    expect(host.querySelector("#doc")).toBeTruthy();
+    expect(toastBodies()).toEqual(["Deleted “Liv's team”."]);
+    await open("/doc/d1");
+    expect(toastBodies()).toEqual(["Deleted “Liv's team”."]);
   });
 
   it("sends any other page to /login, remembering where it was headed", async () => {

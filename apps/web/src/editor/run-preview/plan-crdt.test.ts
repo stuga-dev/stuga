@@ -817,12 +817,12 @@ const RENAMES: [find: string, replace: string][] = [
   ["(Points) Tasks are estimated in **points**,", "(Days) Tasks are estimated in **days**,"],
   // The same line in two checklists: the second hunk is unique only in run order.
   [
-    "## 5. Ready to Start\n\n* \\[ \\] Task has a clear visible result\n\n* \\[ \\] Task is `Walked` and estimated in points",
-    "## 5. Ready to Start\n\n* \\[ \\] Task has a clear visible result\n\n* \\[ \\] Task is `Walked` and estimated in days",
+    "## 5. Ready to Start\n\n* [ ] Task has a clear visible result\n\n* [ ] Task is `Walked` and estimated in points",
+    "## 5. Ready to Start\n\n* [ ] Task has a clear visible result\n\n* [ ] Task is `Walked` and estimated in days",
   ],
   [
-    "## 6. Done Means\n\n* \\[ \\] Task is `Walked` and estimated in points",
-    "## 6. Done Means\n\n* \\[ \\] Task is `Walked` and estimated in days, and ticked off daily",
+    "## 6. Done Means\n\n* [ ] Task is `Walked` and estimated in points",
+    "## 6. Done Means\n\n* [ ] Task is `Walked` and estimated in days, and ticked off daily",
   ],
 ];
 

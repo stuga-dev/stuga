@@ -181,3 +181,30 @@ describe("GET /api/docs/:id/versions", () => {
     expect((await list(admin())).can_manage).toBe(false);
   });
 });
+
+describe("POST /api/docs/:id/restore", () => {
+  async function restore(ctx: Ctx, seq: number): Promise<Response> {
+    const req = new Request("https://node.test/api/docs/d1/restore", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ seq }),
+    });
+    return routeWorkspaceRequest(ctx, req);
+  }
+
+  const actorUrl = () => new URL((actorFetch.mock.calls.at(-1) as unknown as [string])[0]);
+
+  it("names who restored which version, so every open page can say so", async () => {
+    mockListVersions.mockResolvedValueOnce([{ doc_id: "d1", seq: 40, ts: new Date("2026-10-09T11:52:00Z") }]);
+    expect((await restore(owner(), 40)).status).toBe(200);
+    const u = actorUrl();
+    expect(u.pathname).toBe("/restore");
+    expect(u.searchParams.get("by")).toBe("Ozzie");
+    expect(u.searchParams.get("at")).toBe("2026-10-09T11:52:00.000Z");
+  });
+
+  it("restores a version the list no longer shows without naming it", async () => {
+    expect((await restore(owner(), 40)).status).toBe(200);
+    expect(actorUrl().searchParams.has("by")).toBe(false);
+  });
+});

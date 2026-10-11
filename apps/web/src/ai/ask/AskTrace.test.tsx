@@ -27,6 +27,19 @@ describe("AskTrace", () => {
     expect(html).toContain("Checked “Tasks” — 3 rows");
   });
 
+  it("names the documents a search found, or that it found none", () => {
+    const html = renderToStaticMarkup(
+      <AskTrace
+        steps={[
+          { kind: "search", query: "flour", hits: 3, titles: ["Flour supplier", "Staff schedule"] },
+          { kind: "search", query: "rye", hits: 0, titles: [] },
+        ]}
+      />,
+    );
+    expect(html).toContain("Searched for “flour”, found in Flour supplier, Staff schedule");
+    expect(html).toContain("Searched for “rye”, nothing found");
+  });
+
   it("shows the SQL a database step ran as code under that step, and on no other step", () => {
     const html = renderToStaticMarkup(<AskTrace steps={steps} />);
     expect(html).toMatch(/Checked “Tasks” — 3 rows<\/span><code[^>]*>SELECT \* FROM tasks<\/code><\/li>/);

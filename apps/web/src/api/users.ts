@@ -92,6 +92,8 @@ export interface UserInfo {
   username: string | null;
   display_name: string;
   email: string | null;
+  /** From a mention search: whether they can open the document. */
+  can_open?: boolean;
 }
 
 /** Under the server's cap of 200 ids, and short enough for any proxy's URL limit. */
@@ -111,4 +113,9 @@ export const Users = {
   /** Substring search by username, full name or email. */
   search: (q: string, init?: { signal?: AbortSignal }) =>
     api<{ users: UserInfo[] }>(`/api/users/search?q=${encodeURIComponent(q)}`, init),
+  /** People to @mention in a document, marked with whether they can open it; any length, `""` included. */
+  searchForMention: (q: string, docId: string) =>
+    api<{ users: UserInfo[]; can_share: boolean; readers_only?: boolean }>(
+      `/api/users/search?q=${encodeURIComponent(q)}&doc=${encodeURIComponent(docId)}`,
+    ),
 };

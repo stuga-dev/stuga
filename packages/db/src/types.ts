@@ -310,6 +310,8 @@ export interface SearchResult {
   doc_type: "prose" | "database";
   page_of: string | null;
   page_row: string | null;
+  /** When the document last changed, so two hits with the same title can be told apart. */
+  updated_at: string;
   snippet: string;
   kw_rank: number;
   sem_score: number;
@@ -385,6 +387,8 @@ export interface ShareLinkRow {
 export interface WorkspaceInviteRow {
   token_hash: string;
   token_hint: string | null;
+  /** Who the link is for, in its maker's words; null when they gave none. */
+  note: string | null;
   workspace_id: string;
   role: WorkspaceRole;
   created_by: string;
@@ -402,6 +406,10 @@ export interface AgentRunRow {
   doc_id: string;
   doc_kind: "prose" | "database";
   doc_title: string;
+  /** The document's owner principal, which may decide any run on it. */
+  doc_owner: string;
+  /** Whether the caller may write the document, which deciding its changes needs. */
+  doc_writable: boolean;
   source: string;
   agent: string;
   agent_alias: string;

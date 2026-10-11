@@ -163,7 +163,7 @@ describe("a socket ticket", () => {
     live.add("sess-7@remote");
     const res = await upgrade("remote", ticket("remote", "sess-7"));
     expect(res.status).toBe(101);
-    expect(track).toHaveBeenCalledWith("sess-7", "liv", res, "remote");
+    expect(track).toHaveBeenCalledWith("sess-7", "liv", res, "remote", "ws1");
     expect(closeSessions).not.toHaveBeenCalled();
   });
 
@@ -174,7 +174,7 @@ describe("a socket ticket", () => {
     // Live when the ticket's context was built; revoked by the time the socket is tracked.
     vi.mocked(isSessionLive).mockResolvedValueOnce(false);
     const res = await upgrade("remote", ticket("remote", "sess-7"));
-    expect(track).toHaveBeenCalledWith("sess-7", "liv", res, "remote");
+    expect(track).toHaveBeenCalledWith("sess-7", "liv", res, "remote", "ws1");
     expect(closeSessions).toHaveBeenCalledWith(["sess-7"]);
   });
 });

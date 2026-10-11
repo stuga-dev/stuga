@@ -23,7 +23,9 @@ import {
   isKnownDevice,
   linkIdentity,
   peekOidcTicket,
+  passwordResetAlias,
   passwordResetIsLive,
+  previewWorkspaceInvite,
   redeemPasswordReset,
   rehashLocalPassword,
   rememberDevice,
@@ -42,6 +44,7 @@ import {
   workspaceInviteStatus,
   type AccountRow,
   type CredentialArrival,
+  type InvitePreview,
   type KnownDeviceKey,
   type LinkOutcome,
   type NewAccount,
@@ -160,6 +163,8 @@ export interface IdentityDb {
    * invite. `local_only`: an invite with no limit or no expiry, presented at the remote address.
    */
   inviteStatus(tokenHash: string, arrival: CredentialArrival): Promise<"ok" | "invalid" | "local_only">;
+  /** What an invite admits to, for its holder: the workspace, the role and who made it. */
+  invitePreview(tokenHash: string, arrival: CredentialArrival): Promise<InvitePreview>;
 
   /**
    * A new password and every sign-in ended, in one step, only while `requires` still holds. False
@@ -172,6 +177,8 @@ export interface IdentityDb {
   addLocalPassword(alias: string, passwordHash: string, requires?: StillHolds | null): Promise<boolean>;
   /** Whether a reset token would still work, checked before the new password is hashed. */
   passwordResetIsLive(tokenHash: string): Promise<boolean>;
+  /** The account a live reset token is for; null when it is unknown, expired or spent. */
+  passwordResetAlias(tokenHash: string): Promise<string | null>;
   /** Spend a reset and set the password; the alias, or null when unknown, expired or spent. */
   redeemPasswordReset(tokenHash: string, passwordHash: string): Promise<string | null>;
 
@@ -210,6 +217,7 @@ export function identityDb(sql: Sql): IdentityDb {
     rememberDevice: (input) => rememberDevice(sql, input),
     revokeEverything: (input) => revokeEverything(sql, input),
     inviteStatus: (tokenHash, arrival) => workspaceInviteStatus(sql, tokenHash, arrival),
+    invitePreview: (tokenHash, arrival) => previewWorkspaceInvite(sql, tokenHash, arrival),
     insertPasskey: (p, requires) => insertPasskey(sql, p, requires),
     findPasskey: (credentialId, rpId) => findPasskey(sql, credentialId, rpId),
     passkeyDescriptors: (alias, rpId) => passkeyDescriptors(sql, alias, rpId),
@@ -218,6 +226,7 @@ export function identityDb(sql: Sql): IdentityDb {
     replaceLocalPassword: (input) => replaceLocalPassword(sql, input),
     addLocalPassword: (alias, passwordHash, requires) => addLocalPassword(sql, alias, passwordHash, requires ?? null),
     passwordResetIsLive: (tokenHash) => passwordResetIsLive(sql, tokenHash),
+    passwordResetAlias: (tokenHash) => passwordResetAlias(sql, tokenHash),
     rehashLocalPassword: (alias, oldHash, newHash) => rehashLocalPassword(sql, alias, oldHash, newHash),
     redeemPasswordReset: (tokenHash, passwordHash) => redeemPasswordReset(sql, tokenHash, passwordHash),
     createOidcFlow: (input) => createOidcFlow(sql, input),

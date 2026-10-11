@@ -158,8 +158,10 @@ describe("checkArchive", () => {
     expect(nfd).toContain("Café.md: is stored under a decomposed Unicode name; rename it to its NFC form");
   });
 
-  it("refuses files the manifest does not name, but not images or a README", async () => {
+  it("refuses files the manifest does not name, but not images, a README or a table's copy for spreadsheets", async () => {
     expect(await problems((files) => (files["notes.txt"] = "x"))).toEqual(["notes.txt: is not part of the archive: stuga.json names no such file"]);
+    expect(await problems((files) => (files["Obligations/Obligations.csv"] = "\ufeffLaw\r\nGDPR\r\n"))).toEqual([]);
+    expect(await problems((files) => (files["Obligations/Other.csv"] = "x"))).toEqual(["Obligations/Other.csv: is not part of the archive: stuga.json names no such file"]);
     expect(await problems((files) => (files["Laws/README.md"] = "x"))).toEqual([
       "Laws/README.md: is not part of the archive: stuga.json names no such file",
     ]);

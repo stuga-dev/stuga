@@ -55,6 +55,12 @@ Intake work enters the board as a **sized** item and is estimated in points befo
   * Close anything the last review resolved.
 * Record the estimate in points against workstream 01.
 
+### Before the sprint opens
+
+* [x] The intake owner has signed off.
+* [ ] The estimate is in `plan/intake.yaml`.
+  * [ ] Checkpoint 1 is on the calendar.
+
 ### Estimation
 
 Sizing uses story points, not hours: a intake item worth 3 points is roughly one day of focused work for one engineer, and anything above 8 points is split before workstream 01 is scheduled.

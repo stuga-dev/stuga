@@ -5,7 +5,7 @@
  * It is also how an account that has only signed in through the identity
  * provider gets its first password, once the provider is gone.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Card } from "@astryxdesign/core/Card";
 import { Center } from "@astryxdesign/core/Center";
@@ -18,7 +18,7 @@ import { TextInput } from "@astryxdesign/core/TextInput";
 import { Brand, nodeName } from "../shell/Brand";
 import { AuthError, describeError } from "../lib/session/errors";
 import { takeLoginReturn } from "../lib/session/return-path";
-import { passwordOk, resetPassword } from "../lib/session/sign-in";
+import { passwordOk, previewReset, resetPassword } from "../lib/session/sign-in";
 import { setSession } from "../lib/session/tokens";
 import { notePasskeyOffer } from "../lib/session/passkey-offer";
 import { useRemoteStrength } from "../lib/session/password-strength";
@@ -33,8 +33,24 @@ export function ResetPassword() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The link names no account the page can show, so the hint scores without a username; the node checks with it at sign-in.
-  const strength = useRemoteStrength(password, { username: "" });
+  /** Whose account the link resets, as the node tells the link's holder; null until it answers. */
+  const [account, setAccount] = useState<{ username: string; display_name: string | null } | null>(null);
+  const strength = useRemoteStrength(password, { username: account?.username ?? "", displayName: account?.display_name ?? "" });
+
+  // A spent or expired link says so before a password is chosen for nothing.
+  useEffect(() => {
+    let alive = true;
+    previewReset(token)
+      .then((found) => alive && setAccount(found))
+      .catch((err: unknown) => {
+        if (alive && err instanceof AuthError && err.message === "reset_invalid") {
+          nav("/login", { replace: true, state: { notice: describeError(err) } });
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token, nav]);
 
   async function submit() {
     if (!passwordOk(password, strength.strong)) {
@@ -61,7 +77,7 @@ export function ResetPassword() {
   }
 
   return (
-    <Center axis="both" className="auth-page">
+    <Center axis="horizontal" className="auth-page">
       <Card width="100%" maxWidth={480} padding={8} elevation="med">
         <VStack gap={5}>
           <HStack gap={2} vAlign="center">
@@ -75,6 +91,13 @@ export function ResetPassword() {
             <Heading level={1} type="display-3">
               {t("auth.reset.title")}
             </Heading>
+            {account && (
+              <Text color="secondary">
+                {account.display_name
+                  ? t("auth.reset.forNamed", { name: account.display_name, username: account.username })
+                  : t("auth.reset.for", { username: account.username })}
+              </Text>
+            )}
             <Text type="supporting" color="secondary">
               {t("auth.reset.subtitle")}
             </Text>
@@ -94,7 +117,7 @@ export function ResetPassword() {
               autoComplete="new-password"
               onEnter={() => void submit()}
             />
-            {password.length > 0 && <PasswordRules password={password} strong={strength.strong} />}
+            <PasswordRules password={password} strong={strength.strong} />
             <PasswordStrengthHint password={password} strength={strength} />
             <Button label={t("auth.reset.setPassword")} variant="primary" size="lg" width="100%" isLoading={busy} onClick={() => void submit()} />
           </VStack>

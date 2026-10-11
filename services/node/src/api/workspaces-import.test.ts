@@ -145,7 +145,7 @@ describe("POST /api/workspaces/import", () => {
     const res = await post(archive(), "?name=%20Handbook%20&default_doc_access=private");
     expect(res.status).toBe(201);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(Object.keys(body).sort()).toEqual(["agent_instructions", "created_at", "default_doc_access", "name", "role", "start_doc_id", "workspace_id"]);
+    expect(Object.keys(body).sort()).toEqual(["agent_instructions", "created_at", "default_doc_access", "imported", "name", "role", "start_doc_id", "workspace_id"]);
     expect(body).toMatchObject({ name: "Handbook", role: "owner", default_doc_access: "private", start_doc_id: "d1", agent_instructions: "Answer with citations." });
     // Marked in the transaction that makes it, so no list shows it until the import is done.
     expect(mockProvision.mock.calls[0]![1]).toMatchObject({ name: "Handbook", owner: "u_liv", defaultDocAccess: "private", importing: true });
@@ -326,12 +326,14 @@ describe("importing a file held after its check", () => {
     const res = await check(vault);
     expect(res.status).toBe(201);
     const held = (await res.json()) as { import_id: string; name: string; expires_at: string; left_out: unknown };
-    expect(held).toMatchObject({ name: "Vault", left_out: { count: 1, files: ["Slides.pdf"] } });
+    expect(held).toMatchObject({ name: "Vault", left_out: { count: 1, files: [{ path: "Slides.pdf", reason: "not_linked" }] } });
     expect(mockProvision).not.toHaveBeenCalled();
     expect(snapshots.objects.size).toBe(1);
 
     const made = await confirm(held.import_id, { name: "Notes", default_doc_access: "private" });
     expect(made.status).toBe(201);
+    // The answer says what came in, and again what was left out, for the summary that ends an import.
+    expect(await made.json()).toMatchObject({ imported: expect.objectContaining({ docs: 1 }), left_out: { count: 1, files: [{ path: "Slides.pdf", reason: "not_linked" }] } });
     expect(mockProvision).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ name: "Notes", defaultDocAccess: "private", owner: "u_liv" }));
     expect(snapshots.objects.size).toBe(0);
     expect((await confirm(held.import_id)).status).toBe(404);

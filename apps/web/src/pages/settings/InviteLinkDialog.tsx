@@ -1,5 +1,5 @@
 /**
- * Create an invite link: who it admits, how many times, for how long, and, while
+ * Create an invite link: who it is for, who it admits, how many times, for how long, and, while
  * the remote address is on, whether it is for someone on this network or anywhere
  * (ui/LinkAddress.tsx). The link is shown once, in the same dialog, since the
  * node keeps only its hash. One for anywhere opens at the remote address, where a
@@ -15,7 +15,7 @@ import { StackItem } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { VStack } from "@astryxdesign/core/VStack";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../../ui/use-toast";
 import { Check, Copy } from "lucide-react";
 import { Workspaces } from "../../api";
 import type { InviteRole } from "@stuga/protocol/domain/roles";
@@ -23,7 +23,7 @@ import { errorMessage } from "../../lib/http/client";
 import { copyText } from "../../lib/clipboard";
 import { atRemoteAddress } from "../../lib/session/auth-config";
 import { t } from "../../i18n/i18n";
-import { LinkAddressSwitch, LocalOnlyNote, useLinkAddresses, type LinkAddress } from "../../ui/LinkAddress";
+import { LinkAddressSwitch, LinkReachNote, useLinkAddresses, type LinkAddress } from "../../ui/LinkAddress";
 
 /** How long a new link works, in days; "never" keeps it working until someone revokes it. */
 type LinkExpiry = "1" | "7" | "30" | "never";
@@ -74,6 +74,8 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
   const [role, setRole] = useState<InviteRole>("member");
   const [uses, setUses] = useState<LinkUses>("1");
   const [expiry, setExpiry] = useState<LinkExpiry>("7");
+  /** Who the link is for, in the maker's words: the list of links shows it. */
+  const [note, setNote] = useState("");
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<{ url: string; summary: string; address: LinkAddress } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -87,6 +89,7 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
     setRole("member");
     setUses("1");
     setExpiry("7");
+    setNote("");
     setPicked(null);
     setCreated(null);
     setCopied(false);
@@ -127,6 +130,7 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
         role,
         max_uses: effectiveUses === "unlimited" ? null : Number(effectiveUses),
         expires_in_days: expiry === "never" ? null : Number(expiry),
+        ...(note.trim() ? { note: note.trim() } : {}),
         // Only when there is a choice: otherwise the node points it where its maker is, as it always has.
         ...(addresses?.remote ? { address } : {}),
       });
@@ -170,13 +174,23 @@ export function InviteLinkDialog({ isOpen, workspaceId, canInviteAdmin, onCreate
                     onClick={() => void copy(created.url)}
                   />
                 </HStack>
-                <LocalOnlyNote addresses={addresses} address={created.address} />
+                <LinkReachNote addresses={addresses} address={created.address} />
                 <Text size="sm" color="secondary">
                   {t("settings.invite.notShownAgain")}
                 </Text>
               </VStack>
             ) : (
               <VStack gap={4}>
+                <TextInput
+                  label={t("settings.invite.forLabel")}
+                  description={t("settings.invite.forHint")}
+                  isOptional
+                  width="100%"
+                  value={note}
+                  // The node keeps 80 characters.
+                  onChange={(v) => setNote(v.slice(0, 80))}
+                  isDisabled={creating}
+                />
                 <LinkAddressSwitch addresses={addresses} value={address} onChange={pick} isDisabled={creating} />
                 <Selector
                   label={t("settings.invite.joinsAs")}

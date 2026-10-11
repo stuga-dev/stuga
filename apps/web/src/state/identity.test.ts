@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserInfo } from "../api";
-import { PEER_PALETTE, colorFor } from "./identity";
+import { PEER_PALETTE, colorFor, initials } from "./identity";
 
 const users = vi.hoisted(() => ({ resolve: vi.fn() }));
 vi.mock("../api", () => ({ Users: users }));
@@ -285,16 +285,18 @@ describe("the user directory", () => {
     expect(principalLabel(`user:${BOB}`)).toBe("Bob");
   });
 
-  it("reads someone the directory does not know, such as a former member, by the short alias", async () => {
+  it("reads an account the directory does not know as a former member, never by its id", async () => {
     const gone = "u_QH52formerMember";
     const { resolveNames, nameLoading, principalLabel, principalName, actorName } = await directory();
     resolveNames([gone]);
     await settle();
     expect(nameLoading(gone)).toBe(false);
-    expect(principalName(`user:${gone}`)).toBe("u_QH52…");
-    expect(principalLabel(`user:${gone}`)).toBe("u_QH52…");
-    // The ledger keeps the whole alias.
-    expect(actorName(gone)).toBe(gone);
+    expect(principalName(`user:${gone}`)).toBe("Former member");
+    expect(principalLabel(`user:${gone}`)).toBe("Former member");
+    // The ledger names them as everywhere else.
+    expect(actorName(gone)).toBe("Former member");
+    // The node's ledger holds accounts of other workspaces, which never left this one.
+    expect(actorName(gone, "node")).toBe("u_QH52…");
     resolveNames([gone]);
     await settle();
     expect(users.resolve).toHaveBeenCalledTimes(1);
@@ -352,5 +354,20 @@ describe("the user directory", () => {
     expect(actorHandle("u_ann")).toBe("ann@example.com");
     rememberUsers([{ alias: "u_ann", username: "ann", display_name: "Ann", email: "ann@example.com" }]);
     expect(actorHandle("u_ann")).toBe("@ann");
+  });
+});
+
+describe("initials", () => {
+  it("takes one capital per word, at most two, from letters of any script", () => {
+    expect(["Sofia Alvarez", "omar", "Liv", "émile zola", "Benjamin Carter 🍞", "李 小龙", "🍞", "Ana María de la Cruz"].map(initials)).toEqual([
+      "SA",
+      "O",
+      "L",
+      "ÉZ",
+      "BC",
+      "李小",
+      "?",
+      "AM",
+    ]);
   });
 });

@@ -7,6 +7,7 @@ import { FileExplorer, TableSkeleton } from "../library/FileExplorer";
 import { DocTable, docRow, type LibraryRow, type LibrarySort } from "../library/DocTable";
 import { TrashList } from "../library/TrashList";
 import { FolderPicker } from "../ui/FolderPicker";
+import { useMoveCheck } from "../library/use-move-check";
 import { CollectionsPane } from "../library/CollectionsPane";
 import { ImportMarkdownDialog } from "../library/ImportMarkdownDialog";
 import { ShareDialog, shareKindOfDoc, type ShareKind } from "../library/ShareDialog";
@@ -15,14 +16,18 @@ import { NotificationsBell } from "../shell/NotificationsBell";
 import { NewFolderDialog } from "../library/NewFolderDialog";
 import { WorkspaceSwitcher } from "../shell/WorkspaceSwitcher";
 import { LibraryNav, type LibraryView } from "../library/LibraryNav";
+import { ReviewQueueProvider } from "../review/review-queue";
 import { useDocStateMenu } from "../library/doc-state";
 import { useInstructionsDialog } from "../library/use-instructions-dialog";
+import { useLiveRefresh } from "../library/use-live-refresh";
+import { moveAndReport } from "../library/move-items";
+import { useWorkspaceRole } from "../state/workspace-role";
 import { pageParentLabel, usePageParents } from "../database/model/row-ref";
-import { useCommandPalette } from "../shell/command-palette/context";
+import { handOverImport } from "../database/handed-import";
+import { tableNameFromFile } from "../database/model/import-mapping";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { TopNav } from "@astryxdesign/core/TopNav";
 import { Button } from "@astryxdesign/core/Button";
-import { Kbd } from "@astryxdesign/core/Kbd";
 import { Item } from "@astryxdesign/core/Item";
 import { LinkProvider } from "@astryxdesign/core/Link";
 import { List } from "@astryxdesign/core/List";
@@ -30,16 +35,18 @@ import { Badge } from "@astryxdesign/core/Badge";
 import { Banner } from "@astryxdesign/core/Banner";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { Spinner } from "@astryxdesign/core/Spinner";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
-import { Brand, nodeName } from "../shell/Brand";
+import { BrandName } from "../shell/Brand";
+import { PhoneSearchButton, SearchBar } from "../shell/SearchTrigger";
+import { PageTitle } from "../state/branding";
 import { VStack } from "@astryxdesign/core/VStack";
-import { Database, FileText, Files, Search, Users as UsersIcon, Star, Share2, ExternalLink } from "lucide-react";
+import { Database, FileText, Files, Sparkles, Users as UsersIcon, Star, Share2, ExternalLink } from "lucide-react";
 import { errorMessage } from "../lib/http/client";
-import { Marked, Snippet, hitHref, markTerms, queryTerms } from "../lib/snippet";
+import { HitDescription, Marked, hitHref, markTerms, queryTerms } from "../lib/snippet";
 import { readStored, writeStored } from "../lib/storage";
-import { fmtInt } from "../lib/format";
+import { absoluteTime, fmtInt, relativeTime } from "../lib/format";
 import { formatLocale, t } from "../i18n/i18n";
 import "../styles/library.css";
 
@@ -75,7 +82,6 @@ function savedScroll(entry: string): number {
 }
 
 export function DocList() {
-  const palette = useCommandPalette();
   const [results, setResults] = useState<SearchResult[] | null>(null);
   // A row's page is listed under its database ("Tasks › Fix the login").
   usePageParents((results ?? []).map((r) => r.page_of));
@@ -102,6 +108,12 @@ export function DocList() {
   const nav = useNavigate();
   const location = useLocation();
   const toast = useToast();
+  const moveCheck = useMoveCheck();
+  // A guest creates nothing in the workspace; shown until the role is known, which is at once from cache.
+  const canCreate = useWorkspaceRole() !== "guest";
+  // Other people's changes arrive without a reload.
+  const refresh = useCallback(() => setExplorerKey((k) => k + 1), []);
+  useLiveRefresh(refresh);
 
   // Navigation lives in the URL (/?folder=<id>/<id>&sel=<docId>&trash=1), so Back steps through folders.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -186,9 +198,10 @@ export function DocList() {
   /** Leave search for the explorer underneath. */
   const clearSearch = useCallback(() => setExplorerParams({}), [setExplorerParams]);
 
-  /** Views are exclusive and reset the folder path and selection. */
+  /** Views are exclusive and reset the folder path and selection; choosing the view on screen again re-reads it. */
   const goToView = useCallback(
     (next: LibraryView) => {
+      if (next === view && path.length === 0 && !query) refresh();
       setExplorerParams({
         trash: next === "trash",
         shared: next === "shared",
@@ -198,51 +211,45 @@ export function DocList() {
         sel: null,
       });
     },
-    [setExplorerParams],
+    [setExplorerParams, view, path.length, query, refresh],
   );
 
   // Flat: a shared document may sit in a folder the caller cannot see.
   const [sharedDocs, setSharedDocs] = useState<DocSummary[] | null>(null);
   useEffect(() => {
+    if (!sharedView) setSharedDocs(null);
+  }, [sharedView]);
+  useEffect(() => {
     if (!sharedView) return;
-    setSharedDocs(null);
-    Docs.sharedWithMe().then((r) => setSharedDocs(r.docs)).catch(() => setSharedDocs([]));
+    // A re-read keeps the rows on screen; a failed one keeps them too.
+    Docs.sharedWithMe()
+      .then((r) => setSharedDocs(r.docs))
+      .catch(() => setSharedDocs((cur) => cur ?? []));
   }, [sharedView, explorerKey]);
 
   const favorites = useFavorites(explorerKey);
 
-  async function newFolder(title: string, instructions: string) {
+  async function newFolder(title: string) {
     try {
-      await Folders.create(title, currentFolder, instructions);
+      await Folders.create(title, currentFolder);
       setExplorerKey((k) => k + 1);
     } catch (e) {
       toast({ body: errorMessage(e, t("pages.docList.createFolderFailed")), type: "error" });
     }
   }
 
-  async function doMove(dest: string | null) {
+  async function doMove(dest: string | null, place: string) {
     const items = moving;
     setMoving(null);
     if (!items?.length) return;
-    // The picker offers no such destination, but a folder must never move into itself.
-    const legal = items.filter((i) => !(i.kind === "folder" && dest === i.id));
-    const results = await Promise.allSettled(
-      legal.map((i) => (i.kind === "folder" ? Folders.move(i.id, dest) : Docs.move(i.id, dest))),
-    );
-    const failed = results.filter((r) => r.status === "rejected").length;
-    if (failed === legal.length && failed > 0) {
-      const first = results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
-      toast({ body: errorMessage(first?.reason, t("pages.docList.moveFailed")), type: "error" });
-    } else if (failed > 0) {
-      toast({
-        body: t("pages.docList.movePartial", { moved: legal.length - failed, total: legal.length, failed }),
-        type: "error",
-      });
-    } else if (legal.length > 1) {
-      toast({ body: t("pages.docList.moved", { count: legal.length }), type: "info" });
-    }
+    // The picker offers no such destination, but a folder must never move into itself; nor is a move to where it is one.
+    const legal = items
+      .filter((i) => !(i.kind === "folder" && dest === i.id) && dest !== currentFolder)
+      .map((i) => ({ ...i, parentId: currentFolder }));
+    if (legal.length === 0) return;
+    if (!(await moveCheck.confirmMove(legal, dest))) return;
+    await moveAndReport(legal, { id: dest, title: place }, toast, refresh);
     setMovedAway((k) => k + 1);
-    setExplorerKey((k) => k + 1);
   }
 
   /** Outside the debounce, so Retry runs at once. */
@@ -358,13 +365,25 @@ export function DocList() {
 
   async function createItem(docType: "prose" | "database") {
     try {
-      const doc = await Docs.create(t("common.untitled"), currentFolder, docType);
+      // No title: the page shows "Untitled" until the first line or a rename names it.
+      const doc = await Docs.create("", currentFolder, docType);
       nav(`/doc/${doc.doc_id}`, docType === "prose" ? { state: { focusEditor: true } } : undefined);
     } catch (e) {
       toast({ body: errorMessage(e, t("pages.docList.createFailed")), type: "error" });
     }
   }
   const create = () => createItem("prose");
+
+  /** A database named after the file, with no columns yet: its page opens the import, which makes them from the file. */
+  async function createDatabaseFromFile(file: File) {
+    try {
+      const doc = await Docs.create(tableNameFromFile(file.name), currentFolder, "database", []);
+      handOverImport(doc.doc_id, file);
+      nav(`/doc/${doc.doc_id}?import`);
+    } catch (e) {
+      toast({ body: errorMessage(e, t("pages.docList.createFailed")), type: "error" });
+    }
+  }
 
   /** One clean import opens; a batch, or a run with failures still on screen, is revealed in place. */
   function afterImport(docs: DocSummary[], single: boolean) {
@@ -379,34 +398,18 @@ export function DocList() {
   const topNav = (
     <TopNav
       label={t("pages.docList.nav")}
+      // The heading slot, unlike the start content, stays in a phone's bar.
+      heading={<BrandName />}
       startContent={
         <HStack gap={3} vAlign="center">
-          <div className="brand">
-            <Brand />
-            <Heading level={1}>{nodeName()}</Heading>
-          </div>
           <span className="topnav__sep" aria-hidden="true" />
           <WorkspaceSwitcher />
         </HStack>
       }
-      /* A button that opens the ⌘K palette, not a second search box. */
-      centerContent={
-        <div className="topnav__search">
-          {/* The Kbd is hidden from the accessible name, which would otherwise
-              change with the OS; the palette answers both modifiers everywhere. */}
-          <Button
-            label={t("pages.docList.searchAll")}
-            icon={<Search size={16} />}
-            endContent={<Kbd keys="mod+k" aria-hidden="true" />}
-            aria-keyshortcuts="Meta+K Control+K"
-            variant="secondary"
-            width="100%"
-            onClick={palette.open}
-          />
-        </div>
-      }
+      centerContent={<SearchBar />}
       endContent={
         <HStack gap={1} vAlign="center">
+          <PhoneSearchButton />
           <NotificationsBell />
           <AccountMenu />
         </HStack>
@@ -429,20 +432,22 @@ export function DocList() {
   };
   const header = VIEW_HEADERS[view];
 
-  /** Browse has no title bar: its breadcrumb already names the place. */
+  /** Browse has no title bar: its breadcrumb already names the place, and titles the tab. */
   const contentHeader =
     view === "browse" ? null : (
       <div className="view-head">
+        <PageTitle name={header.title} />
         <HStack gap={2} vAlign="center">
-          <Heading level={2} type="display-3">
+          <Heading level={1} type="display-3">
             {header.title}
           </Heading>
-          {view === "trash" && <Badge variant="warning" label={t("pages.docList.trashRetention", { days: TRASH_RETENTION_DAYS })} />}
+          {view === "trash" && <Badge variant="neutral" label={t("pages.docList.trashRetention", { days: TRASH_RETENTION_DAYS })} />}
         </HStack>
       </div>
     );
 
   return (
+    <ReviewQueueProvider>
     <AppShell
       topNav={topNav}
       contentPadding={0}
@@ -451,10 +456,17 @@ export function DocList() {
           // No view is current while search results replace the explorer.
           view={query ? null : view}
           onViewChange={goToView}
-          onNewDoc={create}
-          onNewDatabase={() => createItem("database")}
-          onNewFolder={() => setShowNewFolder(true)}
-          onImport={() => setShowImport(true)}
+          createActions={
+            canCreate
+              ? {
+                  onNewDoc: create,
+                  onNewDatabase: () => createItem("database"),
+                  onNewDatabaseFromFile: (file) => void createDatabaseFromFile(file),
+                  onNewFolder: () => setShowNewFolder(true),
+                  onImport: () => setShowImport(true),
+                }
+              : null
+          }
           onAsk={() => nav("/ask")}
           onReview={() => nav("/review")}
           // The library is always inside a workspace, so its Settings opens that workspace's settings.
@@ -467,6 +479,7 @@ export function DocList() {
       {query ? (
         // Gated on the query, not the results, so a `?q=` link never paints the explorer first.
         <div className="doc-list" ref={listRef}>
+          <PageTitle name={t("pages.docList.search.title")} />
           <header className="doc-list-head">
             <div className="doc-list-head__title">
               <Heading level={1} type="display-3">{t("pages.docList.search.title")}</Heading>
@@ -525,8 +538,14 @@ export function DocList() {
                             <Marked parts={markTerms(r.title || t("common.untitled"), queryTerms(query))} />
                           </span>
                         }
-                        description={<Snippet text={r.snippet} />}
+                        description={<HitDescription hit={r} query={query} />}
                         startContent={r.doc_type === "database" ? <Database size={16} /> : <FileText size={16} />}
+                        // When it last changed, which tells two hits with one title apart.
+                        endContent={
+                          <Text type="supporting" color="secondary">
+                            <time dateTime={r.updated_at} title={absoluteTime(r.updated_at)}>{relativeTime(r.updated_at)}</time>
+                          </Text>
+                        }
                         // Opens at the passage that matched.
                         href={hitHref(r.doc_id, r, query)}
                       />
@@ -543,6 +562,7 @@ export function DocList() {
                     title={t("pages.docList.search.noMatches")}
                     description={t("pages.docList.search.noMatchesHint")}
                     icon={<FileText size={28} />}
+                    actions={<Button label={t("shell.palette.ask")} icon={<Sparkles size={16} />} variant="secondary" onClick={() => nav("/ask")} />}
                   />
                 )}
               </>
@@ -554,6 +574,7 @@ export function DocList() {
           {contentHeader}
           {collectionsView ? (
             <CollectionsPane
+              canCreate={canCreate}
               selectedId={selectedCollectionId}
               onSelect={(id) => setExplorerParams({ coll: true, cid: id })}
             />
@@ -590,7 +611,7 @@ export function DocList() {
               }
             />
           ) : trashed ? (
-            <TrashList key={explorerKey} />
+            <TrashList refreshKey={explorerKey} />
           ) : (
             <FileExplorer
               refreshKey={explorerKey}
@@ -607,10 +628,17 @@ export function DocList() {
               onMoveMany={(items) => setMoving(items)}
               onShareFolder={(id) => setSharingFolder(id)}
               onShareDoc={(id, kind) => setSharingDoc({ id, kind })}
+              canCreate={canCreate}
               onCreateDoc={create}
               onCreateDatabase={() => createItem("database")}
+              onCreateDatabaseFromFile={(file) => void createDatabaseFromFile(file)}
               onCreateFolder={() => setShowNewFolder(true)}
               onImport={() => setShowImport(true)}
+              onSearch={(q) => {
+                const sp = new URLSearchParams(searchParams);
+                sp.set("q", q);
+                setSearchParams(sp);
+              }}
             />
           )}
         </div>
@@ -643,8 +671,10 @@ export function DocList() {
         onImported={afterImport}
         onClose={() => setShowImport(false)}
       />
-      <NewFolderDialog isOpen={showNewFolder} parentId={currentFolder} onSubmit={newFolder} onClose={() => setShowNewFolder(false)} />
+      <NewFolderDialog isOpen={showNewFolder} onSubmit={newFolder} onClose={() => setShowNewFolder(false)} />
+      {moveCheck.dialog}
     </AppShell>
+    </ReviewQueueProvider>
   );
 }
 
@@ -714,7 +744,7 @@ function FlatDocTable({
                   type: "section" as const,
                   title: r.doc.doc_type === "database" ? t("common.database") : t("common.document"),
                   items: [
-                    ...stateMenu(r.doc, (next) => setStateEdits((cur) => ({ ...cur, [next.doc_id]: next }))),
+                    ...stateMenu.items(r.doc, (next) => setStateEdits((cur) => ({ ...cur, [next.doc_id]: next }))),
                     instructions.item({ kind: r.doc.doc_type === "database" ? "database" : "document", id: r.id, title: r.title }),
                   ],
                 },
@@ -724,6 +754,7 @@ function FlatDocTable({
         emptyState={emptyState}
       />
       {instructions.dialog}
+      {stateMenu.dialog}
     </div>
   );
 }

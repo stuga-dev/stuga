@@ -174,6 +174,22 @@ function cellToInline(cell: any): string {
   return parts.join(" ").replace(/\|/g, "\\|").replace(/\n+/g, " ").trim();
 }
 
+/**
+ * A list or task item. Its empty lead paragraph is skipped when the item has
+ * more content (the image hoist leaves that shape). Written out it becomes `* `
+ * plus a blank line, which ends the item on re-parse; the parser re-creates the
+ * paragraph the content spec requires.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function renderItem(state: any, node: any): void {
+  const first = node.firstChild;
+  if (node.childCount > 1 && first?.type.name === "paragraph" && first.childCount === 0) {
+    for (let i = 1; i < node.childCount; i++) state.render(node.child(i), node, i);
+    return;
+  }
+  state.renderContent(node);
+}
+
 let serializerCache: MarkdownSerializer | null = null;
 
 /** Past this many characters, all but the last TAIL_KEEP of the output are set aside. */
@@ -249,20 +265,17 @@ export function docToMarkdown(doc: PMNode): string {
           });
         },
         /**
-         * An item's empty lead paragraph is skipped when the item has more content
-         * (the image hoist leaves that shape). Written out it becomes `* ` plus a
-         * blank line, which ends the item on re-parse; the parser re-creates the
-         * paragraph the content spec requires.
+         * GFM's `* [ ] ` and `* [x] `. Its marker alternates only with other task
+         * lists: next to a plain list it fuses on re-parse, and the parser splits
+         * the runs again.
          */
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        listItem(state: any, node: any) {
-          const first = node.firstChild;
-          if (node.childCount > 1 && first?.type.name === "paragraph" && first.childCount === 0) {
-            for (let i = 1; i < node.childCount; i++) state.render(node.child(i), node, i);
-            return;
-          }
-          state.renderContent(node);
+        taskList(state: any, node: any, parent: any, index: number) {
+          const marker = siblingListRun(parent, index, node.type) % 2 === 0 ? "*" : "-";
+          state.renderList(node, "  ", (i: number) => `${marker} [${node.child(i).attrs.checked ? "x" : " "}] `);
         },
+        listItem: renderItem,
+        taskItem: renderItem,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         codeBlock(state: any, node: any) {
           const backticks: string[] | null = node.textContent.match(/`{3,}/gm);

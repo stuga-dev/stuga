@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import type { Root } from "react-dom/client";
-import { dropdown, mountInto } from "../../test/form-input";
+import { dropdown, mountInto, typeInto } from "../../test/form-input";
 
 const workspaces = vi.hoisted(() => ({ createInvite: vi.fn() }));
 const linkAddresses = vi.hoisted(() => vi.fn());
@@ -92,7 +92,7 @@ describe("the invite dialog", () => {
     expect(document.body.textContent).toContain("For someone on this network");
     await click(button("Create link"));
     expect(workspaces.createInvite).toHaveBeenCalledWith("ws1", { role: "member", max_uses: 1, expires_in_days: 7, address: "local" });
-    expect(document.body.textContent).toContain("Opens only on this network.");
+    expect(document.body.textContent).toContain("Opens on any device on this network.");
   });
 
   it("for someone anywhere, offers no open link and goes back to one person and seven days", async () => {
@@ -106,6 +106,7 @@ describe("the invite dialog", () => {
     await click(button("Create link"));
     expect(workspaces.createInvite).toHaveBeenCalledWith("ws1", { role: "member", max_uses: 1, expires_in_days: 7, address: "remote" });
     expect(document.body.textContent).not.toContain("Opens only on");
+    expect(document.body.textContent).toContain("Opens on any device, anywhere.");
   });
 
   it("calls the node's own side this computer, and starts on anywhere, when that is all it reaches", async () => {
@@ -133,6 +134,21 @@ describe("the invite dialog", () => {
     expect(document.body.textContent).not.toContain("For someone");
     await click(button("Create link"));
     expect(workspaces.createInvite).toHaveBeenCalledWith("ws1", { role: "member", max_uses: 1, expires_in_days: 7 });
-    expect(document.body.textContent).toContain("Opens only on this computer.");
+    expect(document.body.textContent).toContain("Opens only on this computer. Other devices can’t reach this node at this address.");
+  });
+
+  it("says a link works on other devices when the node's address does", async () => {
+    await open();
+    await click(button("Create link"));
+    expect(document.body.textContent).toContain("Opens on any device on this network.");
+    expect(document.body.textContent).not.toContain("only on this computer");
+  });
+
+  it("sends who the link is for, trimmed, when the maker says", async () => {
+    await open();
+    const field = [...document.querySelectorAll("label")].find((l) => l.textContent?.startsWith("Who it’s for"));
+    await typeInto(document.getElementById(field!.htmlFor) as HTMLInputElement, "  Sofia ");
+    await click(button("Create link"));
+    expect(workspaces.createInvite).toHaveBeenCalledWith("ws1", { role: "member", max_uses: 1, expires_in_days: 7, note: "Sofia" });
   });
 });

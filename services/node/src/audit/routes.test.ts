@@ -5,6 +5,7 @@ vi.mock("@stuga/db", async (orig) => ({
   getMemberRole: vi.fn(),
   listAuditEvents: vi.fn(),
   auditFacets: vi.fn(),
+  agentNames: vi.fn(async (_sql: unknown, ids: string[]) => new Map(ids.filter((id) => id === "agent-conn-1").map((id) => [id, "Claude on my laptop"]))),
 }));
 
 const { getMemberRole, listAuditEvents, auditFacets } = await import("@stuga/db");
@@ -58,8 +59,17 @@ describe("GET /api/audit", () => {
     mockList.mockResolvedValue(rows);
     const res = await get(ctxFor());
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ events: rows, next_before: null });
+    expect(await res.json()).toEqual({ events: rows, next_before: null, agent_names: {} });
     expect(mockList).toHaveBeenCalledWith({}, expect.objectContaining({ workspaceId: "ws1" }));
+  });
+
+  it("names each agent on the page by its key's current name, never only by its id", async () => {
+    mockList.mockResolvedValue([
+      { id: 2, action: "doc.propose", actor: "agent-conn-1", actor_kind: "agent" },
+      { id: 1, action: "doc.propose", actor: "agent-gone", actor_kind: "agent" },
+    ]);
+    const body = (await (await get(ctxFor())).json()) as { agent_names: Record<string, string> };
+    expect(body.agent_names).toEqual({ "agent-conn-1": "Claude on my laptop" });
   });
 
   it("passes every filter through and clamps the limit to 500", async () => {
@@ -326,6 +336,7 @@ describe("GET /api/audit/facets", () => {
       actions: [{ value: "acl.set", count: 5, last_at: "2026-09-01T10:00:00.000Z" }],
       statuses: [{ value: "denied", count: 2, last_at: "2026-09-02T09:00:00.000Z" }],
       truncated: true,
+      agent_names: {},
     });
     expect(mockFacets).toHaveBeenCalledWith(
       {},

@@ -12,6 +12,8 @@ import { EN } from "../../i18n/en";
 interface SlashItem {
   id: string;
   labelKey: MessageKey;
+  /** One line under the label: what the block is for. */
+  descKey: MessageKey;
   hint: string;
   /** Match terms for filtering (besides the label, translated and English). */
   terms: string[];
@@ -19,17 +21,18 @@ interface SlashItem {
 }
 
 const ITEMS: SlashItem[] = [
-  { id: "h1", labelKey: "editor.blocks.heading1", hint: "H1", terms: ["title", "h1"], run: (e) => e.chain().focus().toggleHeading({ level: 1 }).run() }, // i18n-exempt: H1–H3 are heading-level glyphs
-  { id: "h2", labelKey: "editor.blocks.heading2", hint: "H2", terms: ["h2"], run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run() }, // i18n-exempt: H1–H3 are heading-level glyphs
-  { id: "h3", labelKey: "editor.blocks.heading3", hint: "H3", terms: ["h3"], run: (e) => e.chain().focus().toggleHeading({ level: 3 }).run() }, // i18n-exempt: H1–H3 are heading-level glyphs
-  { id: "bullet", labelKey: "editor.blocks.bulletList", hint: "•", terms: ["ul", "unordered", "list"], run: (e) => e.chain().focus().toggleBulletList().run() },
-  { id: "ordered", labelKey: "editor.blocks.numberedList", hint: "1.", terms: ["ol", "ordered", "number", "list"], run: (e) => e.chain().focus().toggleOrderedList().run() },
-  { id: "quote", labelKey: "editor.blocks.quote", hint: "❝", terms: ["blockquote", "citation"], run: (e) => e.chain().focus().toggleBlockquote().run() },
-  { id: "code", labelKey: "editor.blocks.codeBlock", hint: "{ }", terms: ["pre", "snippet", "fence"], run: (e) => e.chain().focus().toggleCodeBlock().run() },
+  { id: "h1", labelKey: "editor.blocks.heading1", descKey: "editor.slash.desc.heading1", hint: "H1", terms: ["title", "h1"], run: (e) => e.chain().focus().toggleHeading({ level: 1 }).run() }, // i18n-exempt: H1–H3 are heading-level glyphs
+  { id: "h2", labelKey: "editor.blocks.heading2", descKey: "editor.slash.desc.heading2", hint: "H2", terms: ["h2"], run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run() }, // i18n-exempt: H1–H3 are heading-level glyphs
+  { id: "h3", labelKey: "editor.blocks.heading3", descKey: "editor.slash.desc.heading3", hint: "H3", terms: ["h3"], run: (e) => e.chain().focus().toggleHeading({ level: 3 }).run() }, // i18n-exempt: H1–H3 are heading-level glyphs
+  { id: "bullet", labelKey: "editor.blocks.bulletList", descKey: "editor.slash.desc.bulletList", hint: "•", terms: ["ul", "unordered", "list"], run: (e) => e.chain().focus().toggleBulletList().run() },
+  { id: "ordered", labelKey: "editor.blocks.numberedList", descKey: "editor.slash.desc.numberedList", hint: "1.", terms: ["ol", "ordered", "number", "list"], run: (e) => e.chain().focus().toggleOrderedList().run() },
+  { id: "task", labelKey: "editor.blocks.taskList", descKey: "editor.slash.desc.taskList", hint: "☐", terms: ["todo", "to-do", "task", "checklist", "checkbox", "list"], run: (e) => e.chain().focus().toggleTaskList().run() },
+  { id: "table", labelKey: "editor.blocks.table", descKey: "editor.slash.desc.table", hint: "⊞", terms: ["grid", "rows", "columns"], run: (e) => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+  { id: "divider", labelKey: "editor.blocks.divider", descKey: "editor.slash.desc.divider", hint: "―", terms: ["hr", "horizontal", "rule", "separator", "line"], run: (e) => e.chain().focus().setHorizontalRule().run() },
+  { id: "quote", labelKey: "editor.blocks.quote", descKey: "editor.slash.desc.quote", hint: "❝", terms: ["blockquote", "citation"], run: (e) => e.chain().focus().toggleBlockquote().run() },
+  { id: "code", labelKey: "editor.blocks.codeBlock", descKey: "editor.slash.desc.codeBlock", hint: "{ }", terms: ["pre", "snippet", "fence"], run: (e) => e.chain().focus().toggleCodeBlock().run() },
   // setCodeBlock, not toggle, so it also works from an empty block.
-  { id: "mermaid", labelKey: "editor.blocks.mermaid", hint: "◇", terms: ["diagram", "flowchart", "graph", "chart", "sequence"], run: (e) => e.chain().focus().setCodeBlock({ language: "mermaid" }).run() },
-  { id: "divider", labelKey: "editor.blocks.divider", hint: "―", terms: ["hr", "horizontal", "rule", "separator"], run: (e) => e.chain().focus().setHorizontalRule().run() },
-  { id: "table", labelKey: "editor.blocks.table", hint: "⊞", terms: ["grid", "rows", "columns"], run: (e) => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+  { id: "mermaid", labelKey: "editor.blocks.mermaid", descKey: "editor.slash.desc.mermaid", hint: "◇", terms: ["diagram", "flowchart", "graph", "chart", "sequence"], run: (e) => e.chain().focus().setCodeBlock({ language: "mermaid" }).run() },
 ];
 
 /**
@@ -74,10 +77,13 @@ export function SlashMenu({
   const activeRef = useRef(0);
   const filteredRef = useRef<SlashItem[]>([]);
 
+  // Uploads sit with the other things placed on the page, after Table and Divider.
+  const uploads = ITEMS.findIndex((it) => it.id === "divider") + 1;
   const allItems: SlashItem[] = [
-    ...ITEMS,
-    { id: "image", labelKey: "editor.blocks.image", hint: "▣", terms: ["img", "photo", "picture", "upload"], run: () => imageRef.current?.click() },
-    { id: "file", labelKey: "editor.blocks.file", hint: "⎘", terms: ["attachment", "attach", "pdf", "document", "upload"], run: () => fileRef.current?.click() },
+    ...ITEMS.slice(0, uploads),
+    { id: "image", labelKey: "editor.blocks.image", descKey: "editor.slash.desc.image", hint: "▣", terms: ["img", "photo", "picture", "upload"], run: () => imageRef.current?.click() },
+    { id: "file", labelKey: "editor.blocks.file", descKey: "editor.slash.desc.file", hint: "⎘", terms: ["attachment", "attach", "pdf", "document", "upload"], run: () => fileRef.current?.click() },
+    ...ITEMS.slice(uploads),
   ];
 
   const [state, hide] = useEditorAnchor(editor, (): SlashState | null => {
@@ -150,9 +156,9 @@ export function SlashMenu({
     if (files.length) onPickFiles(files);
   }
 
-  // The menu is about 240px wide and up to 320px tall.
-  const left = state ? Math.min(state.rect.left, window.innerWidth - 250) : 0;
-  const top = state ? Math.min(state.rect.top + 4, window.innerHeight - 320) : 0;
+  // The menu is about 270px wide and up to 360px tall.
+  const left = state ? Math.max(8, Math.min(state.rect.left, window.innerWidth - 280)) : 0;
+  const top = state ? Math.min(state.rect.top + 4, window.innerHeight - 370) : 0;
 
   // The input stays mounted outside the menu: the menu closes in the same tick
   // that `choose` clicks it, and a remounted input never delivers its file.
@@ -181,7 +187,10 @@ export function SlashMenu({
               onClick={() => choose(it)}
             >
               <span className="slash-item__hint" aria-hidden="true">{it.hint}</span>
-              <span className="slash-item__label">{t(it.labelKey)}</span>
+              <span className="slash-item__text">
+                <span className="slash-item__label">{t(it.labelKey)}</span>
+                <span className="slash-item__desc">{t(it.descKey)}</span>
+              </span>
             </button>
           ))}
         </div>

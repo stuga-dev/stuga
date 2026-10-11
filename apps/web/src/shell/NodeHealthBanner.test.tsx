@@ -74,7 +74,7 @@ describe("the node health banner", () => {
     fetchMock.mockImplementation(() => Promise.reject(new Error("network down")));
     await mount();
     await settle(TROUBLED_POLL_MS);
-    expect(text()).toMatch(/Can’t reach the server/i);
+    expect(text()).toMatch(/Can’t reach the node/i);
     expect(text()).not.toMatch(/database/i);
   });
 
@@ -82,7 +82,7 @@ describe("the node health banner", () => {
     fetchMock.mockImplementation(() => reply(502));
     await mount();
     await settle(TROUBLED_POLL_MS);
-    expect(text()).toMatch(/Can’t reach the server/i);
+    expect(text()).toMatch(/Can’t reach the node/i);
   });
 
   it("refuses to read a proxy's index.html fallback as health", async () => {

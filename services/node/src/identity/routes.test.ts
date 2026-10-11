@@ -599,6 +599,29 @@ describe("POST /auth/reset (admin-minted, one-time)", () => {
     const res = await router().handle(post("/auth/reset", { token: "never-minted", new_password: "battery staple" }));
     expect(res.status).toBe(403);
   });
+
+  it("tells the link's holder whose account it resets, and nothing once it is spent", async () => {
+    const preview = await router().handle(post("/auth/reset/preview", { token: TOKEN }));
+    expect(preview.status).toBe(200);
+    expect(await preview.json()).toEqual({ username: "ada", display_name: "Ada" });
+    expect((await router().handle(post("/auth/reset", { token: TOKEN, new_password: "battery staple" }))).status).toBe(200);
+    const spent = await router().handle(post("/auth/reset/preview", { token: TOKEN }));
+    expect(spent.status).toBe(403);
+    expect((await spent.json()).error).toBe("reset_invalid");
+    expect((await router().handle(post("/auth/reset/preview", { token: "never-minted" }))).status).toBe(403);
+  });
+});
+
+describe("POST /auth/invite/preview", () => {
+  it("names what a live link admits to, and says when a link is dead", async () => {
+    mem.invites.set(sha256Hex("live-invite"), { tokenHash: "", usesLeft: 1 });
+    const live = await router().handle(post("/auth/invite/preview", { token: "live-invite" }));
+    expect(live.status).toBe(200);
+    expect(await live.json()).toMatchObject({ status: "ok", workspace_name: "Workspace", role: "member" });
+    const dead = await router().handle(post("/auth/invite/preview", { token: "made-up" }));
+    expect(await dead.json()).toEqual({ status: "invalid" });
+    expect((await router().handle(post("/auth/invite/preview", {}))).status).toBe(400);
+  });
 });
 
 describe("credential throttling", () => {

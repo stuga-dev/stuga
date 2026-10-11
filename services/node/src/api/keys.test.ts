@@ -65,7 +65,8 @@ function keyRow(over: Record<string, unknown> = {}) {
   };
 }
 
-const humanCtx = (over: CtxOverrides = {}): Ctx => personCtx({ principals: ["user:human-1"], ...over });
+const humanCtx = (over: CtxOverrides = {}): Ctx =>
+  personCtx({ principals: ["user:human-1"], env: { sessionSockets: { closeMembership: () => 0, reopenMembership: () => 0 } }, ...over });
 
 async function route(ctx: Ctx, method: string, path: string, body?: unknown): Promise<Response> {
   const url = new URL(`https://node.test${path}`);

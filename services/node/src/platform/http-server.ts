@@ -79,7 +79,12 @@ export interface HttpServer {
 
 const BODYLESS_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-class BodyTooLarge extends Error {}
+class BodyTooLarge extends Error {
+  /** The ceiling the body passed, which the 413 names so a person can be told the limit. */
+  constructor(readonly maxBytes: number) {
+    super("request body too large");
+  }
+}
 class BodyTooSlow extends Error {}
 
 /** Buffer the request body up to `max` bytes, within `withinMs` when given. */
@@ -87,7 +92,7 @@ function readBody(req: IncomingMessage, max: number, withinMs?: number): Promise
   return new Promise((resolvePromise, reject) => {
     const declared = Number(req.headers["content-length"]);
     if (Number.isFinite(declared) && declared > max) {
-      reject(new BodyTooLarge());
+      reject(new BodyTooLarge(max));
       return;
     }
     const timer =
@@ -103,7 +108,7 @@ function readBody(req: IncomingMessage, max: number, withinMs?: number): Promise
       size += chunk.length;
       if (size > max) {
         if (timer) clearTimeout(timer);
-        reject(new BodyTooLarge());
+        reject(new BodyTooLarge(max));
         req.removeAllListeners("data");
         req.resume();
         return;
@@ -427,7 +432,12 @@ export function createRequestPipeline(options: RequestPipelineOptions): RequestP
       }
     } catch (e) {
       if (e instanceof BodyTooLarge) {
-        response = own(413, "request body too large");
+        response = decorate(
+          new Response(JSON.stringify({ error: "request body too large", max_bytes: e.maxBytes }), {
+            status: 413,
+            headers: { "content-type": "application/json" },
+          }),
+        );
         response.headers.set("connection", "close");
       } else if (e instanceof BodyTooSlow) {
         response = own(408, "request body too slow");

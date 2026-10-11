@@ -5,10 +5,12 @@
  */
 import { useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
+import { TextSelection } from "@tiptap/pm/state";
 import type { UserInfo } from "../../api";
 import { MentionList } from "../../mentions/MentionList";
 import { mentionQueryAt } from "../../mentions/mention-query";
 import { usePeopleSearch } from "../../mentions/use-people-search";
+import { useMentionPicked } from "../../mentions/mention-scope";
 import { useEditorAnchor } from "../use-editor-anchor";
 import { isComposingKey } from "../../lib/ime";
 
@@ -50,7 +52,13 @@ export function MentionMenu({ editor }: { editor: Editor }) {
     return { from, to: sel.from, query: at.query, rect: { top: coords.bottom, left: coords.left } };
   });
 
-  const { people, loading } = usePeopleSearch(state ? state.query : null);
+  const { people, loading, tooShort, canShare, readersOnly } = usePeopleSearch(state ? state.query : null);
+  const picked = useMentionPicked();
+  // The capture-phase key handler is bound once; it reads these through refs too.
+  const pickedRef = useRef(picked);
+  pickedRef.current = picked;
+  const canShareRef = useRef(canShare);
+  canShareRef.current = canShare;
   // A spaced query that matches no one is prose, not a name.
   const open = state !== null && !(state.query.includes(" ") && !loading && people.length === 0);
   stateRef.current = state;
@@ -91,15 +99,24 @@ export function MentionMenu({ editor }: { editor: Editor }) {
   function choose(u: UserInfo) {
     const st = stateRef.current;
     if (!st) return;
-    editor
+    const mention = { type: "mention", attrs: { alias: u.alias, label: u.username ?? u.display_name ?? u.alias } };
+    // One space after the mention: the one already there, else a new one. The caret goes past it.
+    const $to = editor.state.doc.resolve(st.to);
+    const next = $to.parent.textBetween($to.parentOffset, Math.min($to.parentOffset + 1, $to.parent.content.size), undefined, "\ufffc");
+    const spaced = /^\s/.test(next);
+    const chain = editor
       .chain()
       .focus()
-      .insertContentAt({ from: st.from, to: st.to }, [
-        { type: "mention", attrs: { alias: u.alias, label: u.username ?? u.display_name ?? u.alias } },
-        { type: "text", text: " " },
-      ])
-      .run();
+      .insertContentAt({ from: st.from, to: st.to }, spaced ? [mention] : [mention, { type: "text", text: " " }]);
+    if (spaced) {
+      chain.command(({ tr }) => {
+        tr.setSelection(TextSelection.create(tr.doc, tr.selection.from + 1));
+        return true;
+      });
+    }
+    chain.run();
     hide();
+    pickedRef.current(u, canShareRef.current);
   }
 
   if (!state || !open) return null;
@@ -113,6 +130,8 @@ export function MentionMenu({ editor }: { editor: Editor }) {
       query={state.query}
       people={people}
       loading={loading}
+      tooShort={tooShort}
+      readersOnly={readersOnly}
       active={Math.min(active, Math.max(people.length - 1, 0))}
       onActive={setActive}
       onChoose={choose}

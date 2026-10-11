@@ -465,32 +465,37 @@ function codeFor(type: DatabaseColumnType): DatabaseImportErrorCode {
   }
 }
 
-function levenshtein(a: string, b: string): number {
+/** Edits between two strings, a swap of neighbours counting as one: "Nmae" is one from "Name". */
+function editDistance(a: string, b: string): number {
   const m = Math.min(a.length, 64);
   const n = Math.min(b.length, 64);
-  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  const d: number[][] = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
   for (let i = 1; i <= m; i++) {
-    const cur = [i];
     for (let j = 1; j <= n; j++) {
-      cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i]![j] = Math.min(d[i - 1]![j]! + 1, d[i]![j - 1]! + 1, d[i - 1]![j - 1]! + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i]![j] = Math.min(d[i]![j]!, d[i - 2]![j - 2]! + 1);
     }
-    prev = cur;
   }
-  return prev[n]!;
+  return d[m]![n]!;
 }
 
-/** The candidate a typo away from `value`, if any (case-folded, spaces/dashes ignored). */
+/**
+ * The candidate a typo away from `value`, if any (case-folded, spaces/dashes
+ * ignored): one edit for every four characters, at least one, so "Pricee" finds
+ * "Price" and "Phone" does not find "Done".
+ */
 export function nearest(value: string, candidates: string[]): string | null {
   const fold = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
   const v = fold(value);
   if (v === "") return null;
   let best: { c: string; d: number } | null = null;
   for (const c of candidates) {
-    const d = levenshtein(v, fold(c));
+    const d = editDistance(v, fold(c));
     if (best === null || d < best.d) best = { c, d };
   }
   if (!best) return null;
-  return best.d <= Math.max(2, Math.floor(v.length / 3)) ? best.c : null;
+  return best.d <= Math.max(1, Math.floor(v.length / 4)) ? best.c : null;
 }
 
 export interface ValidatedImport {
@@ -550,10 +555,16 @@ export function validateImportRows(table: ImportTable, mapping: HeaderMapping, o
     })
     .filter((x) => x !== null);
 
+  let blank = 0;
   for (const [idx, cells] of table.rows.entries()) {
     const rowNo = idx + 1;
     if (badLines.has(rowNo)) {
       failed++;
+      continue;
+    }
+    // A line of only separators (`,,,`) is no row; the rows after it keep their numbers.
+    if (cells.every((c) => c === undefined || c === null || (typeof c === "string" && c.trim() === ""))) {
+      blank++;
       continue;
     }
     if (cells.length > mapping.headers.length) {
@@ -607,7 +618,7 @@ export function validateImportRows(table: ImportTable, mapping: HeaderMapping, o
   }
   return {
     rows,
-    rows_total: table.rows.length,
+    rows_total: table.rows.length - blank,
     rows_failed: failed,
     errors,
     errors_truncated: errorCount > errors.length,

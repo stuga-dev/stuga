@@ -40,7 +40,11 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
   or digit grouping into a message.
 - **Stuga’s own menu paths** (`Settings → Your AI agents`) use the translated labels from this file,
   joined with ` → `. Menu paths in other apps (Claude, Antigravity, macOS) stay in English verbatim
-  and in the language’s quotation marks. Stuga’s Mac menu-bar app is translated too: its items use
+  and in the language’s quotation marks. macOS folders are the exception: Finder shows them in the
+  Mac’s language, so they take Finder’s names, in the language’s quotation marks (Applications →
+  Utilities is zh-Hans 应用程序 → 实用工具, zh-Hant 應用程式 → 工具程式, ja アプリケーション →
+  ユーティリティ, ko 응용 프로그램 → 유틸리티, de Programme → Dienstprogramme, fr Applications →
+  Utilitaires, es Aplicaciones → Utilidades, pt-BR Aplicativos → Utilitários). Stuga’s Mac menu-bar app is translated too: its items use
   the rows under “Mac menu bar” below, identically in the web app and the Mac app.
 - **Quoting a name.** English `“{name}”` becomes zh-Hans `“{name}”`, zh-Hant `「{name}」`,
   ja `「{name}」`, ko `“{name}”`, de `„{name}“`, fr `« {name} »`, es `“{name}”` and
@@ -314,7 +318,7 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
 | Read and suggest changes | 读取并建议更改 | 讀取並建議變更 | 読み取りと変更の提案 | 읽기 및 변경 제안 | Lesen und Änderungen vorschlagen | Lecture et suggestion de modifications | Leer y sugerir cambios | Ler e sugerir alterações | Translate “Read and propose edits” the same way. |
 | instructions | 指令 | 指令 | 指示 | 지침 | Anweisungen | instructions | instrucciones | instruções | Text that stacks from the workspace down through folders to the item. It is advice to a model, not a rule; don’t word it as one. |
 | Instructions for agents | 智能体指令 | 代理指令 | エージェントへの指示 | 에이전트 지침 | Anweisungen für Agenten | Instructions pour les agents | Instrucciones para agentes | Instruções para agentes | |
-| run | 运行 | 執行 | 実行 | 실행 | Durchlauf | exécution | ejecución | execução | One agent’s editing session on one item. Never 会话 or session, which mean sign-in sessions. |
+| run | 运行 | 執行 | 実行 | 실행 | Durchlauf | exécution | ejecución | execução | One agent’s editing session on one item. Never 会话 or session, which mean sign-in sessions. The AI activity column “Sessions” counts runs: use this word there too. |
 | AI activity | AI 动态 | AI 動態 | AIアクティビティ | AI 활동 | KI-Aktivität | Activité de l’IA | Actividad de IA | Atividade da IA | Each agent’s record in the inbox. |
 | run ledger | 运行记录 | 執行紀錄 | 実行履歴 | 실행 기록 | Durchlaufprotokoll | journal des exécutions | registro de ejecuciones | registro de execuções | Docs wording. In the UI it is AI activity. |
 | provenance | 作者记录 | 作者紀錄 | 作成者の記録 | 작성자 기록 | Urheberschaft | provenance | procedencia | procedência | Which passages an agent wrote, and whether a person accepted them. |

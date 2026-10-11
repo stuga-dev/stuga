@@ -94,8 +94,9 @@ describe("VersionHistory", () => {
 
   it("prints how much text each version added and removed", () => {
     render([version({ seq: 7, ts: ago(HOUR), chars: 1280, chars_added: 312, chars_removed: 45 })]);
-    expect(text()).toContain("+312");
-    expect(text()).toContain("−45"); // U+2212, not a hyphen
+    expect(container.querySelector(".vchange")?.textContent).toBe("312 characters added, 45 removed");
+    expect(container.querySelector(".vchange__ins")?.textContent).toBe("312 characters added");
+    expect(container.querySelector(".vchange__del")?.textContent).toBe("45 removed");
     expect(container.querySelector(".vchange")?.getAttribute("title")).toContain("1,280 characters");
   });
 
@@ -104,10 +105,8 @@ describe("VersionHistory", () => {
       version({ seq: 7, ts: ago(HOUR), chars_added: 400, chars_removed: 0 }),
       version({ seq: 6, ts: ago(2 * HOUR), chars_added: 0, chars_removed: 90 }),
     ]);
-    expect(rows()[0]!.textContent).toContain("+400");
-    expect(rows()[0]!.textContent).not.toContain("−0");
-    expect(rows()[1]!.textContent).toContain("−90");
-    expect(rows()[1]!.textContent).not.toContain("+0");
+    expect(rows()[0]!.querySelector(".vchange")?.textContent).toBe("400 characters added");
+    expect(rows()[1]!.querySelector(".vchange")?.textContent).toBe("90 characters removed");
   });
 
   it("distinguishes a measured zero change from an unknown one", () => {

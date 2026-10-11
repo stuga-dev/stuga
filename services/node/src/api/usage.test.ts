@@ -78,9 +78,9 @@ describe("GET /api/usage", () => {
       by_model: Array<Record<string, unknown>>;
       by_principal: Array<Record<string, unknown>>;
     };
-    expect(body.totals).toEqual({ input_tokens: 90_442, output_tokens: 9_400 });
+    expect(body.totals).toEqual({ input_tokens: 90_442, output_tokens: 9_400, cache_read_tokens: 1_200, cache_write_tokens: 0 });
     expect(body.by_model[0]).toMatchObject({ model: "embed-large", input_tokens: 2342 });
-    expect(body.by_principal[0]).toMatchObject({ alias: "user:xin", model: "embed-large", calls: 2 });
+    expect(body.by_principal[0]).toMatchObject({ alias: "user:xin", model: "embed-large", calls: 2, cache_read_tokens: 0 });
   });
 
   it("splits a principal's use by model, keeping their rows together, heaviest principal first", async () => {

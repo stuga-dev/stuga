@@ -7,18 +7,25 @@ import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { Button } from "@astryxdesign/core/Button";
 import { Item } from "@astryxdesign/core/Item";
 import { HStack } from "@astryxdesign/core/HStack";
-import { ChevronRight, ChevronDown, Folder as FolderIcon, FileText } from "lucide-react";
+import { ChevronRight, ChevronDown, Folder as FolderIcon, Files } from "lucide-react";
+import { useFocusReturn } from "./use-focus-return";
 
 interface Props {
   /** Folders being moved: a folder cannot move into its own subtree, so these are not offered. */
   excludeSubtreeOf?: ReadonlySet<string>;
-  /** null is the top level. */
-  onPick: (folderId: string | null) => void;
+  /** null is the top level; `title` is the destination as people read it, for saying where something went. */
+  onPick: (folderId: string | null, title: string) => void;
   onClose: () => void;
 }
 
 export function FolderPicker({ excludeSubtreeOf, onPick, onClose }: Props) {
+  useFocusReturn();
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedTitle, setSelectedTitle] = useState(t("common.allDocuments"));
+  const select = (id: string | null, title: string) => {
+    setSelected(id);
+    setSelectedTitle(title);
+  };
   return (
     <Dialog isOpen onOpenChange={(o) => !o && onClose()} purpose="form" width={420}>
       <Layout
@@ -29,17 +36,17 @@ export function FolderPicker({ excludeSubtreeOf, onPick, onClose }: Props) {
               <Item
                 as="div"
                 density="compact"
-                label={t("ui.folderPicker.topLevel")}
-                startContent={<FileText size={15} />}
+                label={t("common.allDocuments")}
+                startContent={<Files size={15} />}
                 isSelected={selected === null}
-                onClick={() => setSelected(null)}
+                onClick={() => select(null, t("common.allDocuments"))}
               />
               <PickerLevel
                 parentId={null}
                 depth={0}
                 selected={selected}
                 exclude={excludeSubtreeOf}
-                onSelect={setSelected}
+                onSelect={select}
               />
             </div>
           </LayoutContent>
@@ -48,7 +55,7 @@ export function FolderPicker({ excludeSubtreeOf, onPick, onClose }: Props) {
           <LayoutFooter>
             <HStack gap={2} justify="end">
               <Button label={t("common.cancel")} variant="ghost" onClick={onClose} />
-              <Button label={t("ui.folderPicker.moveHere")} variant="primary" onClick={() => onPick(selected)} />
+              <Button label={t("ui.folderPicker.moveHere")} variant="primary" onClick={() => onPick(selected, selectedTitle)} />
             </HStack>
           </LayoutFooter>
         }
@@ -69,7 +76,7 @@ function PickerLevel({
   selected: string | null;
   /** Omitting a folder hides its subtree too, since a subtree is only reached by expanding it. */
   exclude?: ReadonlySet<string>;
-  onSelect: (id: string | null) => void;
+  onSelect: (id: string | null, title: string) => void;
 }) {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -104,7 +111,7 @@ function PickerLevel({
                 label={f.title}
                 labelLines={1}
                 isSelected={selected === f.folder_id}
-                onClick={() => onSelect(f.folder_id)}
+                onClick={() => onSelect(f.folder_id, f.title || t("common.untitledFolder"))}
                 marker={
                   <button className="folder-caret" onClick={toggle} title={open ? t("ui.folderPicker.collapse") : t("ui.folderPicker.expand")}>
                     {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

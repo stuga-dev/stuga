@@ -334,6 +334,8 @@ async function upgradeDocumentSocket(req: Request, url: URL, match: readonly str
   const docId = match[1]!;
   let ctx: Ctx;
   let writeCeiling = true;
+  // A page's editor names the text schema it holds; only a page opens with a ticket, so none named is "0".
+  let editorSchema: string | null = null;
   const socketTicket = url.searchParams.get("ticket");
   if (socketTicket) {
     const ticket = verifyWsTicket(env.internalSecret, socketTicket, arrivalOf(req));
@@ -345,6 +347,7 @@ async function upgradeDocumentSocket(req: Request, url: URL, match: readonly str
       return contextFailure(e, "ws", env, req);
     }
     writeCeiling = ticket.canWrite;
+    editorSchema = url.searchParams.get("schema") ?? "0";
   } else {
     try {
       ctx = await buildContext(req, env, "ws");
@@ -359,11 +362,12 @@ async function upgradeDocumentSocket(req: Request, url: URL, match: readonly str
     return limited;
   }
   // A 101 is not a denial and is never cloned.
-  const res = await routeWebSocket(ctx, env, docId, url.searchParams.get("agent"), writeCeiling);
-  // A person's socket closes when their sign-in ends. Tracked first, then looked up once more: a
-  // sign-in that ended while this socket was opening is missed by the closing that came with it.
+  const res = await routeWebSocket(ctx, env, docId, url.searchParams.get("agent"), writeCeiling, editorSchema);
+  // A person's socket closes when their sign-in ends, or their membership of its workspace does. Tracked
+  // first, then looked up once more: a sign-in that ended while this socket was opening is missed by the
+  // closing that came with it.
   if (!ctx.isAgent && isUpgradeResponse(res)) {
-    env.sessionSockets.track(ctx.sid, ctx.alias, res, ctx.arrival);
+    env.sessionSockets.track(ctx.sid, ctx.alias, res, ctx.arrival, ctx.workspaceId);
     if (!(await isSessionLive(env.sql, { sessionId: ctx.sid, alias: ctx.alias, arrival: ctx.arrival }))) {
       env.sessionSockets.closeSessions([ctx.sid]);
     }

@@ -5,7 +5,7 @@ import type { Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { RowRecord, TableSchema } from "@stuga/protocol/databases/types";
 import { toasts } from "../test/toast";
-import { mountInto } from "../test/form-input";
+import { mountInto, typeInto } from "../test/form-input";
 
 const databases = vi.hoisted(() => ({ listRows: vi.fn(), openRowPage: vi.fn(), updateRows: vi.fn() }));
 
@@ -109,5 +109,41 @@ describe("RowPanel's page actions", () => {
     await render();
     expect(button("Create page")).toBeTruthy();
     expect(button("Restore page")).toBeUndefined();
+  });
+});
+
+describe("RowPanel's fields", () => {
+  const WITH_PRICE: TableSchema = {
+    ...TABLE,
+    columns: [...TABLE.columns, { column_id: "c_price", name: "price", display: "Price", type: "number", position: 1, options: null }],
+  };
+
+  async function renderPrice(price: number | null) {
+    databases.listRows.mockResolvedValue({ rows: [{ ...row(), c_price: price }], total: 1 });
+    databases.updateRows.mockResolvedValue({ updated: 1, missing: [] });
+    await act(async () =>
+      root.render(
+        <MemoryRouter>
+          <RowPanel docId="db1" table={WITH_PRICE} rowId="r1" refreshKey={0} readOnly={false} onSaved={onSaved} onWriteDenied={() => {}} />
+        </MemoryRouter>,
+      ),
+    );
+    return host.querySelector<HTMLInputElement>('input[aria-label="Price"]')!;
+  }
+
+  it("reads a decimal comma as a decimal, never as thousands", async () => {
+    const field = await renderPrice(null);
+    await typeInto(field, "4,50");
+    await act(async () => field.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(databases.updateRows).toHaveBeenCalledWith("db1", "t1", [{ _id: "r1", values: { c_price: 4.5 } }]);
+  });
+
+  it("puts a refused number back to the row's value, and says why", async () => {
+    const field = await renderPrice(2);
+    await typeInto(field, "abc");
+    await act(async () => field.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(databases.updateRows).not.toHaveBeenCalled();
+    expect(field.value).toBe("2");
+    expect(toasts.shown.map((t) => t.body)).toEqual(["Enter a number."]);
   });
 });

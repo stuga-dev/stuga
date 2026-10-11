@@ -361,7 +361,11 @@ describe.skipIf(!URL)("a workspace exported and imported again", () => {
         ],
       })
     ).doc_id;
-    const tasks = (await call<DatabaseSchema>(ctx, "GET", `/api/databases/${tracker}/schema`)).tables[0]!.table_id;
+    const tasksTable = (await call<DatabaseSchema>(ctx, "GET", `/api/databases/${tracker}/schema`)).tables[0]!;
+    const tasks = tasksTable.table_id;
+    // A number column's format goes across too.
+    const estimate = tasksTable.columns.find((c) => c.display === "Estimate")!.column_id;
+    await call(ctx, "PATCH", `/api/databases/${tracker}/tables/${tasks}/columns/${estimate}`, { format: { style: "number", decimals: 1, grouping: true } });
     const people = (
       await post<{ table: TableSchema }>(`/api/databases/${tracker}/tables`, {
         display: "People",

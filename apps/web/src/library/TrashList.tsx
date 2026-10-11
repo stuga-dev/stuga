@@ -3,7 +3,7 @@
  * be gone too, so there is no hierarchy to browse. Each row shows where it was
  * and how long until it is deleted for good.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { VStack } from "@astryxdesign/core/VStack";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Text } from "@astryxdesign/core/Text";
@@ -12,7 +12,7 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { Undo2, Trash, Trash2 } from "lucide-react";
 import { TRASH_RETENTION_DAYS } from "@stuga/protocol/domain/limits";
 import { Docs, Folders, type DocSummary, type Folder } from "../api";
@@ -30,15 +30,17 @@ function daysLeft(trashedAt: string | null): number {
   return Math.max(0, Math.ceil((purgeAt - Date.now()) / DAY_MS));
 }
 
-export function TrashList() {
+/** `refreshKey` changes when the list should be read again; the rows on screen stay while it is. */
+export function TrashList({ refreshKey }: { refreshKey: number }) {
   const [docs, setDocs] = useState<DocSummary[] | null>(null);
   const [folders, setFolders] = useState<Map<string, Folder>>(new Map());
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const [confirming, setConfirming] = useState<DocSummary | null>(null);
   const toast = useToast();
 
-  const load = useCallback(() => {
-    setState("loading");
+  /** A quiet load keeps what is shown, and keeps it when the read fails. */
+  const load = useCallback((quiet = false) => {
+    if (!quiet) setState("loading");
     // Either failure is the error state: the folders are what name each row's location.
     Promise.all([Docs.list(true), Folders.list()])
       .then(([{ docs: d }, { folders: f }]) => {
@@ -46,10 +48,16 @@ export function TrashList() {
         setFolders(new Map(f.map((x) => [x.folder_id, x])));
         setState("ok");
       })
-      .catch(() => setState("error"));
+      .catch(() => {
+        if (!quiet) setState("error");
+      });
   }, []);
 
-  useEffect(() => load(), [load]);
+  const loaded = useRef(false);
+  useEffect(() => {
+    load(loaded.current);
+    loaded.current = true;
+  }, [load, refreshKey]);
 
   // "Projects / Q3", or "Top level"; the walk stops at an ancestor that no longer exists.
   const pathOf = useCallback(
@@ -82,7 +90,15 @@ export function TrashList() {
   }
 
   function restore(doc: DocSummary) {
-    return removeRow(doc, () => Docs.trash(doc.doc_id, false), t("library.trash.restoreFailed", { title: doc.title || t("common.untitled") }));
+    const title = doc.title || t("common.untitled");
+    return removeRow(
+      doc,
+      async () => {
+        await Docs.trash(doc.doc_id, false);
+        toast({ body: t("library.trash.restoredNamed", { title }), type: "info" });
+      },
+      t("library.trash.restoreFailed", { title }),
+    );
   }
 
   function deleteForever(doc: DocSummary) {
@@ -125,19 +141,25 @@ export function TrashList() {
       )}
       {state === "error" && (
         <div className="explorer-center">
-          <LoadFailed title={t("library.trash.loadFailed")} icon={<Trash size={28} />} onRetry={load} />
+          <LoadFailed title={t("library.trash.loadFailed")} icon={<Trash size={28} />} onRetry={() => load()} />
         </div>
       )}
       {state === "ok" && (
         <div className="flat-table">
           <DocTable
             rows={rows}
-            columns={["name", "location", "expires", "actions"]}
+            columns={["name", "location", "expires", "buttons"]}
             sort={sort}
             onSortChange={setSort}
-            rowActions={(r) => [
-              { label: t("library.trash.restore"), icon: <Undo2 size={15} />, onClick: () => r.doc && restore(r.doc) },
-              { label: t("library.trash.deleteForever"), icon: <Trash2 size={15} />, onClick: () => r.doc && setConfirming(r.doc) },
+            // Two actions, so they show on every row rather than behind a menu.
+            rowButtons={(r) => [
+              { label: t("library.trash.restore"), icon: <Undo2 size={15} />, onClick: () => r.doc && void restore(r.doc) },
+              {
+                label: t("library.trash.deleteForever"),
+                icon: <Trash2 size={15} />,
+                variant: "destructive",
+                onClick: () => r.doc && setConfirming(r.doc),
+              },
             ]}
             emptyState={
               <EmptyState

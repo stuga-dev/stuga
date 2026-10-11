@@ -208,15 +208,17 @@ describe.skipIf(!URL)("the BM25 keyword leg", () => {
 
   describe("the snippet of a row pdb.snippets cannot highlight", () => {
     const BODY = "Counts from the northern colonies were lower this year. ".repeat(6);
+    /** The text's first 200 characters, cut back to a whole word. */
+    const HEAD = BODY.slice(0, 200).replace(/\s\S*$/, "");
 
-    it("is the head of the text for a match on the title alone", async () => {
+    it("is the head of the text, in whole words, for a match on the title alone", async () => {
       await seed("titled", "Albatross survey", BODY);
       const [hit] = await search("albatross");
       expect(hit!.doc_id).toBe("titled");
-      expect(hit!.snippet).toBe(BODY.slice(0, 200));
+      expect(hit!.snippet).toBe(HEAD);
     });
 
-    it("is the head of the text for a document only the semantic leg found", async () => {
+    it("is the head of the text, in whole words, for a document only the semantic leg found", async () => {
       await createDoc(sql, { docId: "near", workspaceId: WS, owner: "user:alice", title: "Survey", aclPrincipals: ["user:alice"] });
       await indexDoc(sql, {
         embeddingDims: EMBEDDING_DIMS,
@@ -230,7 +232,7 @@ describe.skipIf(!URL)("the BM25 keyword leg", () => {
       const [hit] = await search("zzqxq", ALICE, axis(3));
       expect(hit!.doc_id).toBe("near");
       expect(hit!.kw_rank).toBe(0);
-      expect(hit!.snippet).toBe(BODY.slice(0, 200));
+      expect(hit!.snippet).toBe(HEAD);
     });
   });
 

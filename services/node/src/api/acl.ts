@@ -25,7 +25,7 @@ import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
 
 /**
- * One notification per person the grants reach. A `group:` grant is expanded to
+ * One notification per person the new grants reach. A `group:` grant is expanded to
  * its live members for addressing only; the ACL keeps the group principal.
  */
 async function enqueueGranteeNotifications(ctx: Ctx, docId: string, title: string, grants: string[]): Promise<void> {
@@ -131,6 +131,8 @@ export async function getAcl({ ctx, match }: WorkspaceCall): Promise<Response> {
     acl_commenters: "acl_commenters" in resource ? resource.acl_commenters : [],
     inherits: resource.inherits_perms,
     own_grants: resource.own_grants,
+    // Whether this caller may change any of it; anyone else sees the dialog read-only.
+    can_manage: manages(ctx, resource),
   });
 }
 
@@ -197,6 +199,9 @@ export async function setAcl({ ctx, req, match }: WorkspaceCall): Promise<Respon
   const inherits = body.inherits ?? false;
   // The direct grants are stored as given; the effective arrays add the parent folder's when inheriting.
   const own: OwnGrantsJson = { p: grants, w: writerGrants, c: commenterGrants };
+  // Only someone the save shares it with is told: saving again tells nobody twice.
+  const previous = new Set(resource.own_grants?.p ?? []);
+  const newGrants = grants.filter((g) => !previous.has(g));
   const parentId = resource.parent_id;
   const parentEff =
     inherits && parentId ? await folderEffectiveAcl(ctx.sql, parentId, ctx.workspaceId) : null;
@@ -205,13 +210,13 @@ export async function setAcl({ ctx, req, match }: WorkspaceCall): Promise<Respon
     await setFolderAcl(ctx.sql, id, eff.principals, eff.writers, inherits, own);
     // Re-materialize every inheriting descendant.
     await reflattenFolderSubtree(ctx, id);
-    await enqueueGranteeNotifications(ctx, id, resource.title, grants);
+    await enqueueGranteeNotifications(ctx, id, resource.title, newGrants);
   } else {
     await setDocAcl(ctx.sql, id, eff.principals, eff.writers, inherits, eff.commenters, own);
     // Searches filter on acl_principals live, so nothing is reindexed. Live
     // sockets of principals that lost access are dropped.
     await revokeDocAccess(ctx.env, id, eff.principals, (resource as DocRow).doc_type, eff.writers);
-    await enqueueGranteeNotifications(ctx, id, resource.title, grants);
+    await enqueueGranteeNotifications(ctx, id, resource.title, newGrants);
   }
   // The principals that entered and left the direct grants; a save that changes nobody's access writes nothing.
   const change = describeAclChange(

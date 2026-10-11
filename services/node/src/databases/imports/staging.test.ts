@@ -24,6 +24,7 @@ const { handleDatabaseImportUpload, importPageUrl, sweepExpiredImports } = await
 import type { Ctx } from "../../auth/context.js";
 import { personCtx, type CtxOverrides } from "../../testing/ctx.js";
 import type { BlobHead, BlobObject, BlobStore } from "@stuga/runtime";
+import { DATABASE_MAX_COLUMNS } from "@stuga/protocol/databases/limits";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockCreateDoc = createDoc as unknown as ReturnType<typeof vi.fn>;
@@ -105,6 +106,15 @@ const actorFetch = vi.fn(async (url: string, init?: RequestInit) => {
   actorCalls.push({ path, body: init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : {} });
   if (actorOverride && path === actorOverride.path) {
     return new Response(JSON.stringify(actorOverride.body), { status: actorOverride.status });
+  }
+  const body = init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : {};
+  // The actor's answers to a create echo what was asked for, ids minted from the names.
+  if (path === "/columns/add") {
+    return Response.json({ column: { column_id: `col_${String(body.display).toLowerCase()}`, display: body.display, type: body.type, position: 9, options: null } });
+  }
+  if (path === "/tables/create" && Array.isArray(body.columns)) {
+    const columns = (body.columns as Array<{ display: string; type: string }>).map((c, i) => ({ ...c, column_id: `col_${c.display.toLowerCase()}`, position: i }));
+    return Response.json({ table: { table_id: "tbl_new", name: "t", display: body.display, position: 1, row_count: 0, columns, views: [] } });
   }
   const canned: Record<string, unknown> = {
     "/schema": SCHEMA,
@@ -331,6 +341,104 @@ describe("the commit", () => {
     const other = ctxOf({ alias: "owner-1", principals: ["user:owner-1"] });
     expect((await call(other, "POST", `/api/databases/db1/imports/${t.import_id}/commit`, {})).status).toBe(403);
     expect((await call(ctxOf(), "POST", `/api/databases/db1/imports/imp_zz_000000000000000000/commit`, {})).status).toBe(404);
+  });
+});
+
+describe("columns from the file", () => {
+  async function staged(text: string, ctx = ctxOf()) {
+    const t = await stage(ctx);
+    await upload(t.upload_path, text);
+    const commit = (body: Record<string, unknown>) => call(ctx, "POST", `/api/databases/db1/imports/${t.import_id}/commit`, body);
+    return { commit };
+  }
+
+  it("says where each header goes: a column, a column a typo away, and the type a new one would get", async () => {
+    const { commit } = await staged("Bookng Ref,Phone,Price,Arrives\nB1,555-0100,4.50,2026-01-04\nB2,555-0101,12,2026-02-01\n");
+    const res = await commit({ dry_run: true });
+    expect(res.status).toBe(200);
+    const check = (await res.json()) as { headers: unknown[]; matched_columns: string[] };
+    expect(check.headers).toEqual([
+      { header: "Bookng Ref", column_id: null, new_type: "text", suggestion: "col_ref" },
+      // "Phone" is no typo of any column, "Status" included.
+      { header: "Phone", column_id: null, new_type: "text" },
+      { header: "Price", column_id: null, new_type: "number" },
+      { header: "Arrives", column_id: null, new_type: "date" },
+    ]);
+    expect(check.matched_columns).toEqual([]);
+  });
+
+  it("adds the headers a person names as new columns, typed by their values, only once the file validates", async () => {
+    const { commit } = await staged("Booking Ref,Price,Arrives\nB1,4.50,2026-01-04\n,,\nB2,12,2026-02-01\n");
+    const dry = (await (await commit({ dry_run: true, new_columns: ["Price", "Arrives"] })).json()) as Record<string, unknown>;
+    expect(dry).toMatchObject({ rows_total: 2, rows_ready: 2, matched_columns: ["Booking Ref"] });
+    expect(dry.headers).toEqual([
+      { header: "Booking Ref", column_id: "col_ref", new_type: "text" },
+      { header: "Price", column_id: null, new: true, new_type: "number" },
+      { header: "Arrives", column_id: null, new: true, new_type: "date" },
+    ]);
+    expect(actorCalls.some((c) => c.path === "/columns/add")).toBe(false);
+
+    const res = await commit({ new_columns: ["Price", "Arrives"] });
+    expect(res.status).toBe(200);
+    // The line of separators is no row.
+    expect(await res.json()).toMatchObject({ rows_total: 2, rows_ingested: 2, table_id: "tbl_1" });
+    expect(actorCalls.filter((c) => c.path === "/columns/add").map((c) => c.body)).toEqual([
+      expect.objectContaining({ table_id: "tbl_1", display: "Price", type: "number" }),
+      expect.objectContaining({ table_id: "tbl_1", display: "Arrives", type: "date" }),
+    ]);
+    expect(actorCalls.find((c) => c.path === "/rows/insert")!.body.rows).toEqual([
+      { col_ref: "B1", col_price: 4.5, col_arrives: "2026-01-04" },
+      { col_ref: "B2", col_price: 12, col_arrives: "2026-02-01" },
+    ]);
+  });
+
+  it("lands a file in a new table made from its headers, leaving out the skipped ones", async () => {
+    const { commit } = await staged("Item,Price,Note\nBread,4,fresh\nCake,12.5,\n");
+    const res = await commit({ new_table: " Prices ", column_map: { Note: null } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ rows_ingested: 2, table_id: "tbl_new", ignored_columns: ["Note"] });
+    expect(actorCalls.find((c) => c.path === "/tables/create")!.body).toMatchObject({
+      display: "Prices",
+      columns: [
+        { display: "Item", type: "text" },
+        { display: "Price", type: "number" },
+      ],
+    });
+    expect(actorCalls.find((c) => c.path === "/rows/insert")!.body).toMatchObject({
+      table_id: "tbl_new",
+      rows: [
+        { col_item: "Bread", col_price: 4 },
+        { col_item: "Cake", col_price: 12.5 },
+      ],
+    });
+  });
+
+  it("makes no column for a file that is refused", async () => {
+    const { commit } = await staged("Booking Ref,Status\nB1,Checked-Out\n");
+    const res = await commit({ new_columns: ["Nope"] });
+    expect(res.status).toBe(422);
+    expect(actorCalls.some((c) => c.path === "/columns/add" || c.path === "/tables/create")).toBe(false);
+  });
+
+  it("adds none of the new columns when they would not all fit the table", async () => {
+    const headers = Array.from({ length: DATABASE_MAX_COLUMNS }, (_, i) => `Extra ${i + 1}`);
+    const { commit } = await staged(`${headers.join(",")}\n${headers.map(() => "x").join(",")}\n`);
+    const res = await commit({ new_columns: headers });
+    expect(res.status).toBe(409);
+    expect(actorCalls.some((c) => c.path === "/columns/add" || c.path === "/rows/insert")).toBe(false);
+  });
+
+  it("refuses an agent new tables or columns through an import", async () => {
+    const { commit } = await staged("Booking Ref,Price\nB1,4\n", agent());
+    expect((await commit({ new_columns: ["Price"] })).status).toBe(403);
+    expect((await commit({ new_table: "Prices" })).status).toBe(403);
+    expect(actorCalls.some((c) => c.path === "/runs/propose")).toBe(false);
+  });
+
+  it("shape-checks new_columns and new_table", async () => {
+    const { commit } = await staged("Booking Ref\nB1\n");
+    expect((await commit({ new_columns: "Price" })).status).toBe(400);
+    expect((await commit({ new_table: "  " })).status).toBe(400);
   });
 });
 

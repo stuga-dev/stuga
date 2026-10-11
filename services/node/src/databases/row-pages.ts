@@ -11,6 +11,7 @@ import type { ColumnSpec, DatabaseSchema } from "@stuga/protocol/databases/types
 import { recordAudit, recordEvent } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
 import { canWriteDoc, READ_ONLY_MESSAGE } from "../authz/authz.js";
+import { pushTrashState } from "../documents/access.js";
 import { createProseDoc, discardCreatedDoc } from "../documents/create.js";
 import { actorRefusalStatus, afterDatabaseMutation, callDatabaseActor } from "./gate.js";
 
@@ -212,6 +213,7 @@ async function restoreRowPage(ctx: Ctx, db: DocRow, page: DocRow, tableId: strin
   if (page.locked) return { kind: "error", status: 423, message: "this row's page is locked in the trash; unlock it to restore it" };
   const restored = await updateDoc(ctx.sql, page.doc_id, { trashed: false });
   if (restored) {
+    await pushTrashState(ctx.env, page.doc_id, false, page.doc_type);
     recordAudit(ctx, {
       action: "doc.restore",
       targetKind: "doc",
@@ -256,6 +258,7 @@ async function setPagesTrashed(ctx: Ctx, db: DocRow, links: RowDocLink[], trashe
     if (!page || page.workspace_id !== ctx.workspaceId || page.trashed === trashed || page.locked) continue;
     const updated = await updateDoc(ctx.sql, link.doc_id, { trashed }).catch(() => null);
     if (!updated) continue;
+    await pushTrashState(ctx.env, link.doc_id, trashed, page.doc_type);
     if (trashed) recordEvent(ctx, "doc.trashed", link.doc_id, { title: updated.title, doc_type: updated.doc_type });
     recordAudit(ctx, {
       action: trashed ? "doc.trash" : "doc.restore",

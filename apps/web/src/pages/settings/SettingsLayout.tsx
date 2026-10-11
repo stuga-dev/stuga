@@ -8,16 +8,20 @@ import { Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { SideNav, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
-import { Bot, Gauge, Palette, Plug, ScrollText, SlidersHorizontal, UserRound, Users } from "lucide-react";
+import { Bot, Gauge, Palette, Plug, ScrollText, SlidersHorizontal, UserRound, Users, UsersRound } from "lucide-react";
 import { AppTopNav } from "../../shell/AppTopNav";
 import { CommandPalette } from "../../shell/command-palette/CommandPalette";
 import { CommandPaletteProvider } from "../../shell/command-palette/context";
 import { NODE_CATEGORIES } from "./node/categories";
+import { PageColumnFrame } from "../../ui/PageColumn";
 import { Me, NodeSettings, Workspaces, type AvailableUpdate, type WorkspaceInfo } from "../../api";
 import { getActiveWorkspace } from "../../lib/session/workspace-pointer";
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
 import { t } from "../../i18n/i18n";
 import "../../styles/settings.css";
+
+/** The widest settings page's column (the audit log's filters and tables); narrower pages start at its left edge. */
+const SETTINGS_FRAME_WIDTH = 920;
 
 /** What every settings page needs to know about who is asking and about what. */
 interface SettingsScope {
@@ -130,9 +134,29 @@ export function SettingsLayout() {
     />
   );
 
+  // The tab names the settings page on screen.
+  const pageLabels: Record<string, string> = {
+    "/settings/profile": t("settings.layout.profile"),
+    "/settings/appearance": t("settings.layout.appearance"),
+    "/settings/agents": t("common.yourAiAgents"),
+    "/settings/workspace": t("settings.layout.general"),
+    "/settings/workspace/members": t("settings.layout.members"),
+    "/settings/workspace/groups": t("settings.layout.groups"),
+    "/settings/workspace/agents": t("settings.layout.agents"),
+    "/settings/workspace/audit": t("settings.layout.auditLog"),
+    "/settings/workspace/usage": t("settings.layout.aiUsage"),
+    ...Object.fromEntries(NODE_CATEGORIES.map((c) => [`/settings/node/${c.key}`, c.label])),
+  };
+
   const shell = (
     <AppShell
-      topNav={<AppTopNav title={t("common.settings")} hasWorkspaceSwitcher={workspace !== null} />}
+      topNav={
+        <AppTopNav
+          title={t("common.settings")}
+          pageTitle={pageLabels[pathname] ?? t("common.settings")}
+          hasWorkspaceSwitcher={workspace !== null}
+        />
+      }
       contentPadding={0}
       sideNav={
         // The library and Ask rails' geometry, so the content edge does not jump between them.
@@ -147,6 +171,7 @@ export function SettingsLayout() {
             <SideNavSection title={t("settings.layout.thisWorkspace", { name: workspace.name })}>
               {item(t("settings.layout.general"), <SlidersHorizontal size={16} />, "/settings/workspace")}
               {item(t("settings.layout.members"), <Users size={16} />, "/settings/workspace/members")}
+              {scope.canManage && item(t("settings.layout.groups"), <UsersRound size={16} />, "/settings/workspace/groups")}
               {item(t("settings.layout.agents"), <Bot size={16} />, "/settings/workspace/agents")}
               {canSeeLedger && item(t("settings.layout.auditLog"), <ScrollText size={16} />, "/settings/workspace/audit")}
               {canSeeLedger && item(t("settings.layout.aiUsage"), <Gauge size={16} />, "/settings/workspace/usage")}
@@ -164,7 +189,9 @@ export function SettingsLayout() {
       }
     >
       <Ctx.Provider value={scope}>
-        <Outlet />
+        <PageColumnFrame width={SETTINGS_FRAME_WIDTH}>
+          <Outlet />
+        </PageColumnFrame>
       </Ctx.Provider>
     </AppShell>
   );

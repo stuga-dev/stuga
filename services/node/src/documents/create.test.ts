@@ -8,6 +8,7 @@ vi.mock("@stuga/db", async (importOriginal) => ({
   getFolder: vi.fn(async () => null),
   getWorkspace: vi.fn(async () => ({ default_doc_access: "workspace_edit" })),
   getMemberRole: vi.fn(async () => "member"),
+  updateDoc: vi.fn(async (_sql: unknown, docId: string, patch: { title?: string }) => ({ doc_id: docId, title: patch.title, title_source: "user" })),
 }));
 
 vi.mock("../jobs/snapshot-sweep.js", async (importOriginal) => ({
@@ -15,7 +16,7 @@ vi.mock("../jobs/snapshot-sweep.js", async (importOriginal) => ({
   queueSnapshotSweep: vi.fn(async () => {}),
 }));
 
-const { createDoc, deleteDoc, getDoc, getFolder, getWorkspace } = await import("@stuga/db");
+const { createDoc, deleteDoc, getDoc, getFolder, getWorkspace, updateDoc } = await import("@stuga/db");
 const { queueSnapshotSweep } = await import("../jobs/snapshot-sweep.js");
 const { createDocument, seedBody } = await import("./create.js");
 import type { Ctx } from "../auth/context.js";
@@ -86,8 +87,33 @@ describe("createDocument", () => {
     expect(row.owner).toBe("user:bob");
     expect(row.aclPrincipals).toEqual(expect.arrayContaining(["user:bob", "agent:agent-1", "group:ws1:design", "user:carol"]));
     expect(row.aclWriters).toEqual(expect.arrayContaining(["user:bob", "agent:agent-1"]));
-    // The agent is recorded as a direct grant, beside the workspace floor.
-    expect(row.ownGrants).toEqual({ p: ["agent:agent-1", "org:ws1"], w: ["agent:agent-1", "org:ws1"], c: [] });
+    // The agent is recorded as a direct grant; the folder does not reach the workspace, so neither does the floor.
+    expect(row.ownGrants).toEqual({ p: ["agent:agent-1"], w: ["agent:agent-1"], c: [] });
+  });
+
+  it("caps the workspace floor at what the parent folder gives the workspace", async () => {
+    mockGetFolder.mockResolvedValue({ ...FOLDER, acl_principals: [...FOLDER.acl_principals, "org:ws1"] } as never);
+    await createDocument(ctxOf(), { title: "Menu", parentId: "f1" });
+    // Everyone may read the folder but not edit in it: the document starts the same way.
+    expect(inserted().ownGrants).toEqual({ p: ["org:ws1"], w: [], c: [] });
+  });
+
+  it("keeps a blank title blank, for each reader to show as Untitled in their language", async () => {
+    await createDocument(ctxOf(), { title: "  " });
+    expect(inserted().title).toBe("");
+  });
+
+  it("keeps an agent's title as the document's name, which its first heading never replaces", async () => {
+    await createDocument(agent(), { title: "Weekly order notes" });
+    expect(inserted()).toMatchObject({ title: "Weekly order notes", titleSource: "user" });
+
+    vi.clearAllMocks();
+    // A person's new document comes titled "Untitled" by the app, a stand-in their first line replaces.
+    await createDocument(ctxOf(), { title: "Untitled" });
+    expect(inserted().titleSource).toBeUndefined();
+    vi.clearAllMocks();
+    await createDocument(agent(), {});
+    expect(inserted().titleSource).toBeUndefined();
   });
 
   it("gives a person's document the workspace's default visibility", async () => {
@@ -207,6 +233,24 @@ describe("createDocument", () => {
     expect(mockQueueSweep).toHaveBeenCalledWith({}, docId);
     expect(mockDeleteDoc).toHaveBeenCalledTimes(1);
     expect(actorCalls.some((c) => c.url === `http://actor/destroy?docId=${docId}`)).toBe(true);
+  });
+
+  it("copies a document as written under the name given, and keeps that name from its first line", async () => {
+    mockGetDoc.mockResolvedValue({ doc_id: "src", workspace_id: "ws1", doc_type: "prose", title: "Notes", trashed: false, parent_id: null, acl_principals: ["org:ws1"] } as never);
+    actorAnswer = { status: 200, body: { markdown: "Notes\n\n* [ ] Turn on ovens\n", applied: true } };
+    const copy = await createDocument(ctxOf(), { copyOf: "src", title: "Copy of Notes" });
+    expect(copy).toMatchObject({ ok: true, doc: { title: "Copy of Notes", title_source: "user" } });
+    expect(inserted().title).toBe("Copy of Notes");
+    // No heading is added: the copy reads like the original.
+    const seed = actorCalls.find((c) => c.url.includes("/apply-edits"))!;
+    expect(seed.body.str_edits).toEqual([{ old_string: "", new_string: "Notes\n\n* [ ] Turn on ovens" }]);
+    expect(vi.mocked(updateDoc)).toHaveBeenCalledWith(expect.anything(), inserted().docId, { title: "Copy of Notes" });
+
+    vi.clearAllMocks();
+    mockGetDoc.mockResolvedValue({ doc_id: "src", workspace_id: "ws1", doc_type: "prose", title: "Notes", trashed: false, parent_id: null, acl_principals: ["user:carol"] } as never);
+    expect(await createDocument(ctxOf(), { copyOf: "src" })).toMatchObject({ ok: false, status: 404 });
+    expect(await createDocument(ctxOf(), { copyOf: "src", markdown: "# x" })).toMatchObject({ ok: false, status: 400 });
+    expect(mockCreateDoc).not.toHaveBeenCalled();
   });
 
   it("asks the actor to save a seeded body before answering only when told to", async () => {

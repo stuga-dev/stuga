@@ -1,5 +1,11 @@
-import { DATABASE_MAX_CELL_BYTES, DATABASE_MAX_DISPLAY_LENGTH, DATABASE_MAX_FILES_PER_CELL, DATABASE_MAX_SELECT_CHOICES } from "./limits.js";
-import type { ColumnOptions, DatabaseColumnType, RowInputValue, RowValue } from "./types.js";
+import {
+  DATABASE_MAX_CELL_BYTES,
+  DATABASE_MAX_DISPLAY_LENGTH,
+  DATABASE_MAX_FILES_PER_CELL,
+  DATABASE_MAX_SELECT_CHOICES,
+  DATABASE_NUMBER_MAX_DECIMALS,
+} from "./limits.js";
+import type { ColumnOptions, DatabaseColumnType, NumberFormat, RowInputValue, RowValue } from "./types.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -118,6 +124,29 @@ export function validateSelectChoices(choices: unknown): { ok: true; choices: st
     seen.add(c);
   }
   return { ok: true, choices: choices as string[] };
+}
+
+const NUMBER_STYLES: ReadonlySet<string> = new Set(["number", "currency", "percent"]);
+
+/** Validate a number column's format; the result holds only the fields its style uses. */
+export function validateNumberFormat(raw: unknown): { ok: true; format: NumberFormat } | { ok: false; reason: string } {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, reason: "format must be an object" };
+  const f = raw as Record<string, unknown>;
+  if (typeof f.style !== "string" || !NUMBER_STYLES.has(f.style)) return { ok: false, reason: "format.style must be number, currency or percent" };
+  const format: NumberFormat = { style: f.style as NumberFormat["style"] };
+  if (f.decimals !== undefined && f.decimals !== null) {
+    if (typeof f.decimals !== "number" || !Number.isInteger(f.decimals) || f.decimals < 0 || f.decimals > DATABASE_NUMBER_MAX_DECIMALS) {
+      return { ok: false, reason: `format.decimals must be a whole number from 0 to ${DATABASE_NUMBER_MAX_DECIMALS}` };
+    }
+    format.decimals = f.decimals;
+  }
+  if (f.grouping !== undefined && typeof f.grouping !== "boolean") return { ok: false, reason: "format.grouping must be true or false" };
+  if (f.grouping === true) format.grouping = true;
+  if (format.style === "currency") {
+    if (typeof f.currency !== "string" || !/^[A-Z]{3}$/.test(f.currency)) return { ok: false, reason: "format.currency must be a three-letter currency code" };
+    format.currency = f.currency;
+  }
+  return { ok: true, format };
 }
 
 function utf8Length(s: string): number {

@@ -74,6 +74,21 @@ describe("runTableAgentTurn", () => {
     expect(system()).not.toContain("NOT applied until accepted");
   });
 
+  it("tells the model, with no documents in scope, to point the user at the Search scope menu", async () => {
+    const system = () => (sentBody<{ system?: Array<{ text?: string }> }>(0).system ?? []).map((b) => b.text ?? "").join("\n");
+    mockRounds([textRound("ok")]);
+    await runTableAgentTurn(CFG, INPUT, NOOP_RUNNER, () => {});
+    expect(system()).toContain("choose them in the Search scope menu");
+    mockRounds([textRound("ok")]);
+    await runTableAgentTurn(
+      CFG,
+      { ...INPUT, collectionEnabled: true },
+      { ...NOOP_RUNNER, searchCollection: async () => ({ text: "", citations: [] }) },
+      () => {},
+    );
+    expect(system()).not.toContain("Search scope menu");
+  });
+
   it("passes the model choice through to the resolved model id", async () => {
     // The ledger stores the CLIENT id the operator configured, not the
     // provider's wire model name — that survives a vendor renaming or

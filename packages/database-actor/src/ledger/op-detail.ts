@@ -21,6 +21,8 @@ export function describeOp(d: DatabaseOpChangeDetail): string {
       return `Changed column "${d.column}" in "${d.table}" to ${d.type} (${plural(d.coerced, "cell")} coerced)`;
     case "columns.set_description":
       return d.cleared ? `Cleared the description of column "${d.column}" in "${d.table}"` : `Described column "${d.column}" in "${d.table}"`;
+    case "columns.set_format":
+      return d.cleared ? `Cleared the number format of column "${d.column}" in "${d.table}"` : `Changed the number format of column "${d.column}" in "${d.table}"`;
     case "columns.delete":
       return `Deleted column "${d.column}" from "${d.table}"`;
     case "rows.insert":

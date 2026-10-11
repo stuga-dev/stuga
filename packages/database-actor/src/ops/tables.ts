@@ -8,6 +8,7 @@ import {
   getMeta,
   getTable,
   listRowDocs,
+  listTables,
   newId,
   renameTable,
   rowCount,
@@ -17,6 +18,7 @@ import {
   tableSchemaOf,
   type CreateColumnInput,
   type SqlHandle,
+  type TableMeta,
 } from "../schema-ops.js";
 import { parseColumnSpecs } from "./columns.js";
 import type { OpDef } from "./registry.js";
@@ -69,6 +71,21 @@ export function isInitialized(sql: SqlHandle): boolean {
   return getMeta(sql, "initialized") === "1";
 }
 
+/** The `_meta` key naming the table that takes the database's name, until someone renames it. */
+const TITLE_TABLE = "title_table";
+
+/** The database's only table, when it still follows the database's name. */
+export function titleTable(sql: SqlHandle): TableMeta | null {
+  const tables = listTables(sql);
+  const only = tables.length === 1 ? tables[0]! : null;
+  return only && getMeta(sql, TITLE_TABLE) === only.table_id ? only : null;
+}
+
+/** `tableId` follows the database's name from now on. */
+export function followTitle(sql: SqlHandle, tableId: string): void {
+  setMeta(sql, TITLE_TABLE, tableId);
+}
+
 /**
  * The first table of a new database: the creator's columns, or the starter
  * ones. An agent naming its schema must not inherit columns it may not remove.
@@ -95,6 +112,8 @@ export const tablesRename: OpDef<TablesRename> = {
   capture: (sql, p) => ({ kind: "tables.rename", table_id: p.table_id, prev_display: getTable(sql, p.table_id).display }),
   apply(sql, p, { now }) {
     const prev = getTable(sql, p.table_id);
+    // A table someone names keeps its name from then on.
+    if (getMeta(sql, TITLE_TABLE) === p.table_id) setMeta(sql, TITLE_TABLE, "");
     return {
       result: { table: renameTable(sql, p.table_id, p.display, now) },
       detail: { kind: "tables.rename", table: prev.display, to: p.display },

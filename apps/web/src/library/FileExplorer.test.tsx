@@ -6,7 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import type { DocSummary, Folder } from "../api";
 import type { LibraryRow } from "./DocTable";
-import { toasts } from "../test/toast";
+import { toastBodies, toasts } from "../test/toast";
 import { mountInto, typeInto } from "../test/form-input";
 
 const docs = vi.hoisted(() => ({
@@ -102,6 +102,7 @@ const { FileExplorer } = await import("./FileExplorer");
 const DOC: DocSummary = {
   doc_id: "d_1",
   title: "Plan",
+  title_source: "user",
   owner: "user:u_1",
   doc_type: "prose",
   created_at: "2026-09-01T00:00:00.000Z",
@@ -130,8 +131,10 @@ let root: Root;
 const onSelectDoc = vi.fn();
 const onCreateDoc = vi.fn();
 const onCreateDatabase = vi.fn();
+const onCreateDatabaseFromFile = vi.fn();
 const onCreateFolder = vi.fn();
 const onImport = vi.fn();
+const onSearch = vi.fn();
 
 const buttons = () => [...host.querySelectorAll("button")];
 const button = (label: string, row?: string) =>
@@ -158,13 +161,17 @@ async function rename(to: string) {
   await click(button("Rename"));
 }
 
-async function renderExplorer(path: string[] = [], onPathChange: (path: string[]) => void = () => {}) {
+async function renderExplorer(
+  path: string[] = [],
+  onPathChange: (path: string[]) => void = () => {},
+  { canCreate = true, refreshKey = 0 }: { canCreate?: boolean; refreshKey?: number } = {},
+) {
   await act(async () => {
     root.render(
       <MemoryRouter>
         <AppShell sideNav={<nav aria-label="Library">Library</nav>} contentPadding={0}>
           <FileExplorer
-            refreshKey={0}
+            refreshKey={refreshKey}
             movedAway={0}
             path={path}
             selectedDocId={DOC.doc_id}
@@ -179,8 +186,11 @@ async function renderExplorer(path: string[] = [], onPathChange: (path: string[]
             onShareDoc={() => {}}
             onCreateDoc={onCreateDoc}
             onCreateDatabase={onCreateDatabase}
+            onCreateDatabaseFromFile={onCreateDatabaseFromFile}
             onCreateFolder={onCreateFolder}
             onImport={onImport}
+            canCreate={canCreate}
+            onSearch={onSearch}
           />
         </AppShell>
       </MemoryRouter>,
@@ -198,6 +208,7 @@ beforeEach(async () => {
   viewport.width = 1280;
   onCreateDoc.mockReset();
   onCreateDatabase.mockReset();
+  onCreateDatabaseFromFile.mockReset();
   onCreateFolder.mockReset();
   onImport.mockReset();
   ({ host, root } = mountInto());
@@ -207,7 +218,11 @@ beforeEach(async () => {
 describe("FileExplorer row actions", () => {
   it("uses a page heading at the top level and labels the local filter distinctly", () => {
     expect(host.querySelector(".explorer-heading h1")?.textContent).toBe("All documents");
-    expect(host.querySelector('nav[aria-label="Folder path"]')).toBeNull();
+    // The trail is there at the top level too, so opening a folder does not move the heading.
+    const crumbs = [...host.querySelectorAll('nav[aria-label="Folder path"] li')];
+    expect(crumbs).toHaveLength(1);
+    expect(crumbs[0]?.textContent).toContain("All documents");
+    expect(crumbs[0]?.querySelector('[aria-current="page"]')).not.toBeNull();
     expect(host.querySelector('input[placeholder="Filter this list…"]')).not.toBeNull();
   });
 
@@ -273,6 +288,22 @@ describe("FileExplorer row actions", () => {
     }
   });
 
+  it("makes a database from a spreadsheet file chosen in the New menu", async () => {
+    viewport.width = 700;
+    await renderExplorer();
+    const input = host.querySelector<HTMLInputElement>("input[type=file]")!;
+    const picked = vi.spyOn(input, "click").mockImplementation(() => {});
+    await click(button("New"));
+    await click([...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find((el) => el.textContent === "New database from CSV…"));
+    expect(picked).toHaveBeenCalledOnce();
+
+    const file = new File(["Name,Price\nBread,4\n"], "Prices.csv", { type: "text/csv" });
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    expect(onCreateDatabaseFromFile).toHaveBeenCalledWith(file);
+    expect(onCreateDatabase).not.toHaveBeenCalled();
+  });
+
   it("shows the refusal and keeps the old title when a rename fails", async () => {
     docs.rename.mockRejectedValue(new Error("That title is taken"));
     expect(railTitle()).toBe("Plan");
@@ -284,6 +315,8 @@ describe("FileExplorer row actions", () => {
 
   it("puts the new title in the rail once the rename succeeds", async () => {
     docs.rename.mockResolvedValue({});
+    // The list read after the rename has it too.
+    docs.list.mockResolvedValue({ docs: [{ ...DOC, title: "Budget" }] });
     await rename("Budget");
     expect(toasts.shown).toEqual([]);
     expect(railTitle()).toBe("Budget");
@@ -298,11 +331,31 @@ describe("FileExplorer row actions", () => {
     expect(railTitle()).toBe("Plan");
   });
 
-  it("clears the selection once the document is in Trash", async () => {
+  it("clears the selection once the document is in Trash, and Undo brings it back", async () => {
     docs.trash.mockResolvedValue({});
     await click(button("Move to Trash", DOC.doc_id));
-    expect(toasts.shown).toEqual([]);
+    expect(toastBodies()).toEqual(["Moved “Plan” to Trash."]);
     expect(onSelectDoc).toHaveBeenCalledWith(null);
+    const { host: toastHost, root: toastRoot } = mountInto();
+    await act(async () => toastRoot.render(toasts.shown[0]!.endContent as React.ReactNode));
+    await click(toastHost.querySelector("button") ?? undefined);
+    expect(docs.trash).toHaveBeenLastCalledWith(DOC.doc_id, false);
+    expect(toastBodies().at(-1)).toBe("Restored “Plan”.");
+  });
+
+  it("asks before letting AI edits apply directly, and changes nothing on Cancel", async () => {
+    const inDialog = (label: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button, [role="dialog"] button')].find((b) => b.textContent === label);
+    await click(button("Let AI edits apply directly", DOC.doc_id));
+    expect(document.body.textContent).toContain("Edits from any AI will change this document without asking first.");
+    expect(docs.setState).not.toHaveBeenCalled();
+    await click(inDialog("Cancel"));
+    expect(docs.setState).not.toHaveBeenCalled();
+
+    docs.setState.mockResolvedValue({ ...DOC, agent_mode: "auto" });
+    await click(button("Let AI edits apply directly", DOC.doc_id));
+    await click(inDialog("Let AI edits apply directly"));
+    expect(docs.setState).toHaveBeenCalledExactlyOnceWith(DOC.doc_id, { agent_mode: "auto" });
   });
 
   it("opens the instructions for agents from a folder row and from a document row", async () => {
@@ -354,5 +407,62 @@ describe("FileExplorer breadcrumb", () => {
     expect(back?.textContent).toBe("…");
     await click(back ?? undefined);
     expect(onPathChange).toHaveBeenCalledWith(["f_a"]);
+  });
+});
+
+describe("FileExplorer for a guest", () => {
+  it("offers nothing to create, and an empty library says nothing has been shared yet", async () => {
+    docs.list.mockResolvedValue({ docs: [] });
+    folders.list.mockResolvedValue({ folders: [] });
+    await act(async () => root.unmount());
+    ({ host, root } = mountInto());
+    await renderExplorer([], () => {}, { canCreate: false });
+    expect(host.textContent).toContain("Nothing shared with you yet");
+    expect(host.textContent).not.toContain("No documents yet");
+    expect(buttons().some((b) => b.textContent === "New" || b.textContent === "Import from Markdown")).toBe(false);
+  });
+
+  it("offers no collections, which a guest cannot make", async () => {
+    expect(button("New collection…", DOC.doc_id)).toBeTruthy();
+    await renderExplorer([], () => {}, { canCreate: false });
+    expect(button("Rename…", DOC.doc_id)).toBeTruthy();
+    expect(button("New collection…", DOC.doc_id)).toBeUndefined();
+  });
+});
+
+describe("FileExplorer filter", () => {
+  const filter = () => host.querySelector<HTMLInputElement>('input[placeholder="Filter this list…"]')!;
+
+  it("offers a search of every folder when the filter finds nothing here", async () => {
+    await typeInto(filter(), "Shop opening");
+    expect(host.textContent).toContain("The filter checks this list only.");
+    await click(button("Search for “Shop opening”"));
+    expect(onSearch).toHaveBeenCalledWith("Shop opening");
+  });
+
+  it("starts empty in the folder the person opens", async () => {
+    await typeInto(filter(), "Contracts");
+    await renderExplorer([FOLDER.folder_id]);
+    expect(filter().value).toBe("");
+  });
+});
+
+describe("FileExplorer refresh", () => {
+  it("reads the folder again without the loading skeleton, keeping the rows meanwhile", async () => {
+    let answer!: (r: { docs: DocSummary[] }) => void;
+    docs.list.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    await renderExplorer([], () => {}, { refreshKey: 1 });
+    expect(host.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(button("Move to Trash", DOC.doc_id)).toBeTruthy();
+    await act(async () => answer({ docs: [{ ...DOC, doc_id: "d_2", title: "Budget" }] }));
+    expect(button("Move to Trash", DOC.doc_id)).toBeUndefined();
+    expect(button("Move to Trash", "d_2")).toBeTruthy();
+  });
+
+  it("keeps the rows on screen when a re-read fails", async () => {
+    docs.list.mockRejectedValueOnce(new Error("offline"));
+    await renderExplorer([], () => {}, { refreshKey: 1 });
+    expect(host.textContent).not.toContain("Couldn’t load");
+    expect(button("Move to Trash", DOC.doc_id)).toBeTruthy();
   });
 });

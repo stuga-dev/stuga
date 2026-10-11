@@ -24,12 +24,22 @@ export async function getDocSearchText(sql: Sql, docId: string): Promise<string 
   return rows[0]?.search_text ?? null;
 }
 
+/**
+ * A database's cell text, which the workspace search reads as a document's
+ * body. A database has no snapshots and no passages: only `search_text` moves.
+ */
+export async function setDatabaseSearchText(sql: Sql, docId: string, text: string): Promise<void> {
+  await sql`UPDATE docs SET search_text = ${text} WHERE doc_id = ${docId} AND doc_type = 'database' AND search_text IS DISTINCT FROM ${text}`;
+}
+
 export interface CreateDocInput {
   docId: string;
   workspaceId: string;
   /** Full principal: `user:<alias>` or `agent:<id>`. */
   owner: string;
   title?: string;
+  /** `user` when the title was given as the document's name, so its first line never retitles it; else `heading`. */
+  titleSource?: "heading" | "user";
   docType?: "prose" | "database";
   parentId?: string | null;
   aclPrincipals?: string[];
@@ -64,6 +74,7 @@ export async function createDoc(sql: Sql, input: CreateDocInput): Promise<DocRow
     workspace_id: input.workspaceId,
     owner,
     title: input.title ?? "",
+    ...(input.titleSource ? { title_source: input.titleSource } : {}),
     doc_type: input.docType ?? "prose",
     parent_id: input.parentId ?? null,
     created_by: input.createdBy ?? owner,

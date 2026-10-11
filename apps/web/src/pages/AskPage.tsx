@@ -11,32 +11,28 @@ import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
 import { denseFootnoteMap } from "@stuga/crdt-ops";
 import { renderAssistantHtml } from "../ai/render-markdown";
 import { CitationPopover } from "../ai/CitationPopover";
-import type { CitationDetail } from "../ai/citations";
+import { answerText, type CitationDetail } from "../ai/citations";
 import { AskThreadList } from "../ai/ask/AskThreadList";
 import { CollectionEditor } from "../library/CollectionEditor";
 import { PromptDialog } from "../ui/PromptDialog";
 import { AskTrace } from "../ai/ask/AskTrace";
 import { AskSources } from "../ai/ask/AskSources";
-import { AccountMenu } from "../shell/AccountMenu";
-import { NotificationsBell } from "../shell/NotificationsBell";
 import { AppShell } from "@astryxdesign/core/AppShell";
-import { TopNav } from "@astryxdesign/core/TopNav";
 import { Button } from "@astryxdesign/core/Button";
-import { IconButton } from "@astryxdesign/core/IconButton";
 import { Selector, type SelectorOptionType } from "@astryxdesign/core/Selector";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { Text } from "@astryxdesign/core/Text";
-import { Heading } from "@astryxdesign/core/Heading";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Spinner } from "@astryxdesign/core/Spinner";
-import { ArrowDown, ArrowLeft, Files, Library, Plus, Settings2, Sparkles } from "lucide-react";
+import { ArrowDown, Check, Copy, Files, Library, Plus, Settings2, Sparkles } from "lucide-react";
 import { LoadFailed } from "../ui/LoadFailed";
-import { Brand } from "../shell/Brand";
 import { takeStored, writeStored } from "../lib/storage";
 import { isComposingKey } from "../lib/ime";
+import { copyText } from "../lib/clipboard";
 import { useAiChat } from "../state/model-options";
 import { AiSetupNotice } from "../ai/AiSetupNotice";
 import { t } from "../i18n/i18n";
+import { AppTopNav } from "../shell/AppTopNav";
 import "../styles/ask.css";
 
 function AskTurnView({
@@ -46,9 +42,15 @@ function AskTurnView({
 }: {
   turn: AskUiTurn;
   onCitationClick: (e: React.MouseEvent, citations: AiCitation[]) => void;
-  /** Only the last turn: retrying replaces it. */
+  /** Only the last turn, when it failed or stopped. */
   onRetry?: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const id = window.setTimeout(() => setCopied(false), 2000);
+    return () => window.clearTimeout(id);
+  }, [copied]);
   // The renderer derives the same map, so the cards and the chips in the prose agree on numbers.
   const renumber = useMemo(() => denseFootnoteMap(turn.answer, 1), [turn.answer]);
   // Memoized: a streaming turn re-renders on every token. Citations arrive only at the end, so markers stay inert until then.
@@ -83,7 +85,24 @@ function AskTurnView({
           {onRetry && <Button label={t("pages.ask.tryAgain")} variant="secondary" size="sm" onClick={onRetry} />}
         </div>
       )}
-      {turn.notice && <div className="ask-notice">{turn.notice}</div>}
+      {turn.notice && (
+        <div className="ask-turn__notice">
+          <span className="ask-notice">{turn.notice}</span>
+          {onRetry && turn.stopped && <Button label={t("pages.ask.tryAgain")} variant="secondary" size="sm" onClick={onRetry} />}
+        </div>
+      )}
+
+      {turn.answer && !turn.streaming && (
+        <div className="ask-turn__actions">
+          <Button
+            label={copied ? t("common.copied") : t("pages.ask.copyAnswer")}
+            variant="ghost"
+            size="sm"
+            icon={copied ? <Check size={14} /> : <Copy size={14} />}
+            onClick={() => void copyText(answerText(turn.answer)).then(setCopied)}
+          />
+        </div>
+      )}
 
       <AskSources citations={turn.citations} renumber={renumber} />
     </article>
@@ -231,8 +250,8 @@ function AskConversation() {
           {empty && (
             <div className="ask-empty">
               <Sparkles size={22} aria-hidden />
-              <Text type="display-3" as="h1">
-                {t("pages.ask.title")}
+              <Text type="display-3" as="h2">
+                {t("pages.ask.empty.title")}
               </Text>
               <Text color="secondary" as="p">
                 {scopeName ? t("pages.ask.empty.bodyScoped", { name: scopeName }) : t("pages.ask.empty.body")}
@@ -260,7 +279,7 @@ function AskConversation() {
               key={`${threadId ?? "new"}-${i}`}
               turn={turn}
               onCitationClick={onCitationClick}
-              onRetry={i === turns.length - 1 && !!turn.error && !streaming ? () => void retryLast() : undefined}
+              onRetry={i === turns.length - 1 && (!!turn.error || !!turn.stopped) && !streaming ? () => void retryLast() : undefined}
             />
           ))}
           <div ref={bottomRef} />
@@ -381,26 +400,7 @@ export default function AskPage() {
   const { threadId } = useParams();
   const nav = useNavigate();
 
-  const topNav = (
-    <TopNav
-      label={t("pages.ask.nav")}
-      startContent={
-        <HStack gap={2} vAlign="center">
-          <IconButton label={t("common.allDocuments")} variant="ghost" icon={<ArrowLeft size={18} />} onClick={() => nav("/")} />
-          <div className="brand">
-            <Brand />
-            <Heading level={1}>{t("pages.ask.title")}</Heading>
-          </div>
-        </HStack>
-      }
-      endContent={
-        <HStack gap={1} vAlign="center">
-          <NotificationsBell />
-          <AccountMenu />
-        </HStack>
-      }
-    />
-  );
+  const topNav = <AppTopNav title={t("pages.ask.title")} />;
 
   return (
     <AskProvider threadId={threadId ?? null} onNavigate={(id) => nav(id ? `/ask/${id}` : "/ask", { replace: !id })}>

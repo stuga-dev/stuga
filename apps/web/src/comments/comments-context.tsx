@@ -6,12 +6,13 @@
  * sync so highlights repaint whenever the comment set changes.
  *
  * Comments are loaded over REST (matching the rest of Stuga) and updated
- * optimistically; there is no live WS comment channel yet, so collaborators see
- * each other's comments on their next load / reconnect.
+ * optimistically. The document's socket says when anyone's comments changed,
+ * and whenever it reconnects; each word re-reads the list.
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type * as Y from "yjs";
 import { Docs, type Comment, type CommentAnchor } from "../api";
+import type { StugaProvider } from "../sync/stuga-provider";
 import { useSharedEditor } from "../editor/editor-context";
 import { anchorFromSelection, resolveAnchorRange } from "./anchor";
 import { commentRange } from "./comment-highlight";
@@ -45,7 +46,8 @@ interface CommentsCtx {
   del: (num: number) => void;
   /** Post a reply to a thread (parentNum = the root comment's num). Resolves true on success. */
   reply: (parentNum: number, body: string) => Promise<boolean>;
-  reload: () => void;
+  /** Re-read the list; resolves once it is in, false when the read failed. Overlapping calls share reads. */
+  reload: () => Promise<boolean>;
 }
 
 const Ctx = createContext<CommentsCtx | null>(null);
@@ -53,11 +55,14 @@ const Ctx = createContext<CommentsCtx | null>(null);
 export function CommentsProvider({
   docId,
   ydoc,
+  provider,
   onReveal,
   children,
 }: {
   docId: string;
   ydoc: Y.Doc | null;
+  /** The document's socket, which says when the comments changed. */
+  provider?: StugaProvider | null;
   /** Called when a comment is clicked in the editor or the panel; the page brings the Comments panel into view. */
   onReveal?: (num: number) => void;
   children: ReactNode;
@@ -72,15 +77,45 @@ export function CommentsProvider({
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashFrame = useRef<number | null>(null);
 
-  const reload = useCallback(() => {
-    Docs.comments(docId)
-      .then((r) => setComments(r.comments))
-      .catch(() => {});
+  // One read at a time; a word that lands during it asks for one more after, so the last word is never answered by an older read.
+  const inflight = useRef<Promise<boolean> | null>(null);
+  const queued = useRef<Promise<boolean> | null>(null);
+  const reload = useCallback((): Promise<boolean> => {
+    const start = (): Promise<boolean> => {
+      const read: Promise<boolean> = Docs.comments(docId)
+        .then(
+          (r) => {
+            setComments(r.comments);
+            return true;
+          },
+          () => false,
+        )
+        .finally(() => {
+          if (inflight.current === read) inflight.current = null;
+        });
+      inflight.current = read;
+      return read;
+    };
+    if (!inflight.current) return start();
+    queued.current ??= inflight.current.then(() => {
+      queued.current = null;
+      return start();
+    });
+    return queued.current;
   }, [docId]);
 
   useEffect(() => {
-    reload();
+    void reload();
   }, [reload]);
+
+  // Someone added, resolved or deleted a comment, or the socket came back after a drop.
+  useEffect(() => {
+    if (!provider) return;
+    provider.commentsListener = () => void reload();
+    return () => {
+      if (provider.commentsListener) provider.commentsListener = null;
+    };
+  }, [provider, reload]);
 
   // Mirror comments + active state into the highlight extension's storage, then
   // dispatch a no-op transaction so its decorations recompute.
@@ -176,18 +211,20 @@ export function CommentsProvider({
       if (!text || !pending) return false;
       try {
         const c = await Docs.addComment(docId, text, pending.anchor);
-        setComments((cs) => [...cs, c]);
+        setComments((cs) => (cs.some((x) => x.num === c.num) ? cs : [...cs, c]));
         setPending(null);
         setActiveNum(c.num);
+        // The new thread, in the panel, is what says it was posted.
+        onReveal?.(c.num);
         return true;
       } catch {
         // Don't drop the user's text: keep the composer open and resync from the
         // server (covers a num-collision retry that already landed, etc.).
-        reload();
+        void reload();
         return false;
       }
     },
-    [docId, pending, reload],
+    [docId, pending, reload, onReveal],
   );
 
   const cancel = useCallback(() => setPending(null), []);
@@ -196,7 +233,8 @@ export function CommentsProvider({
     (num: number) => {
       setActiveNum(num);
       onReveal?.(num);
-      if (!editor || !ydoc) return;
+      // A frame late, as from a link, the page may have closed meanwhile.
+      if (!editor || editor.isDestroyed || !ydoc) return;
       const c = comments.find((x) => x.num === num);
       if (!c) return;
       const range = commentRange(ydoc, editor.state, c);
@@ -241,6 +279,7 @@ export function CommentsProvider({
       }
       editor.chain().focus().setTextSelection(range.from).run();
       requestAnimationFrame(() => {
+        if (editor.isDestroyed) return;
         const dom = editor.view.domAtPos(range.from);
         const node = dom.node instanceof HTMLElement ? dom.node : dom.node.parentElement;
         node?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -253,7 +292,7 @@ export function CommentsProvider({
     (num: number, resolved: boolean) => {
       setComments((cs) => cs.map((c) => (c.num === num ? { ...c, resolved } : c)));
       if (activeNum === num && resolved) setActiveNum(null);
-      Docs.resolveComment(docId, num, resolved).catch(() => reload());
+      Docs.resolveComment(docId, num, resolved).catch(() => void reload());
     },
     [docId, activeNum, reload],
   );
@@ -266,7 +305,7 @@ export function CommentsProvider({
       // thread vanishes immediately).
       setComments((cs) => cs.filter((c) => c.num !== num && c.parent_num !== num));
       if (activeNum === num) setActiveNum(null);
-      Docs.deleteComment(docId, num).catch(() => reload());
+      Docs.deleteComment(docId, num).catch(() => void reload());
     },
     [docId, activeNum, reload],
   );
@@ -277,11 +316,12 @@ export function CommentsProvider({
       if (!text) return false;
       try {
         const c = await Docs.replyComment(docId, parentNum, text);
-        setComments((cs) => [...cs, c]);
+        // The socket's word may have brought it in already.
+        setComments((cs) => (cs.some((x) => x.num === c.num) ? cs : [...cs, c]));
         return true;
       } catch {
         // Keep the draft (the reply box won't clear) and resync.
-        reload();
+        void reload();
         return false;
       }
     },

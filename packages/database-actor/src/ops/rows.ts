@@ -143,21 +143,31 @@ export const rowsUpdate: OpDef<DbRunOpRowsUpdate> = {
       }
       const values = cellsOf(table.columns, upd.values);
       if (Object.keys(values).length === 0) throw new OpError(400, "validation", `update for ${upd._id} has no values`);
-      return { _id: upd._id, values };
+      // A proposal is decided later, against whatever the cells hold then; only a direct write compares.
+      const expect = view.proposal || upd.expect === undefined ? null : expectedOf(table.columns, upd.expect);
+      return { _id: upd._id, values, ...(expect ? { expect } : {}) };
     });
     if (view.proposal) table.checkRows(parsed.map((u) => u._id));
     return { kind: "rows.update", table_id: table.table_id, updates: parsed };
   },
+  unchanged(sql, p) {
+    // Every row moved on since the writer read it: nothing to write, and nothing to ledger.
+    const meta = getTable(sql, p.table_id);
+    const conflicts = conflictsOf(sql, meta, p.updates);
+    return conflicts.length > 0 && conflicts.length === p.updates.length ? { updated: 0, missing: [], conflicts } : null;
+  },
   capture(sql, p) {
     const meta = getTable(sql, p.table_id);
     const byId = new Map(getColumns(sql, meta.table_id).map((c) => [c.column_id, c]));
+    // A row apply leaves alone is no part of the change, so a revert must not write it back.
+    const conflicted = new Set(conflictsOf(sql, meta, p.updates).map((c) => c._id));
     return {
       kind: "rows.update",
       table_id: p.table_id,
       cells: p.updates.flatMap((u) => {
         // A column dropped since is skipped here; apply refuses the write anyway.
         const touched = Object.keys(u.values).flatMap((id) => byId.get(id) ?? []);
-        if (touched.length === 0) return [];
+        if (touched.length === 0 || conflicted.has(u._id)) return [];
         const row = sql.exec(`SELECT ${touched.map((c) => ident(c.name)).join(", ")} FROM ${ident(meta.name)} WHERE _id = ?`, u._id).toArray()[0];
         if (!row) return [];
         const values: Record<string, RowValue> = {};
@@ -172,11 +182,14 @@ export const rowsUpdate: OpDef<DbRunOpRowsUpdate> = {
     const exists = existingRowIds(sql, meta.name, p.updates.map((u) => u._id));
     let updated = 0;
     const missing: string[] = [];
+    const conflicts = conflictsOf(sql, meta, p.updates);
+    const conflicted = new Set(conflicts.map((c) => c._id));
     for (const u of p.updates) {
       if (!exists.has(u._id)) {
         missing.push(u._id);
         continue;
       }
+      if (conflicted.has(u._id)) continue;
       const entries = Object.entries(u.values);
       const sets = entries.map(([columnId]) => `${ident(byId.get(columnId)!.name)} = ?`).join(", ");
       sql.exec(`UPDATE ${ident(meta.name)} SET ${sets}, _updated_at = ? WHERE _id = ?`, ...entries.map(([, v]) => v), now, u._id);
@@ -186,7 +199,7 @@ export const rowsUpdate: OpDef<DbRunOpRowsUpdate> = {
     // The grid saves one cell at a time, so the column names are what tell entries apart.
     const touched = [...new Set(p.updates.flatMap((u) => Object.keys(u.values)))].map((id) => byId.get(id)!.display);
     return {
-      result: { updated, missing },
+      result: { updated, missing, ...(conflicts.length > 0 ? { conflicts } : {}) },
       detail: { kind: "rows.update", table: meta.display, rows: updated, columns: touched.slice(0, 3), more_columns: touched.length > 3 },
     };
   },
@@ -196,6 +209,37 @@ export const rowsUpdate: OpDef<DbRunOpRowsUpdate> = {
     references: (p) => [p.table_id, ...p.updates.flatMap((u) => [u._id, ...Object.keys(u.values)])],
   },
 };
+
+/** A direct write's `expect`: column ref → the value the writer last saw, normalized as a cell is. */
+function expectedOf(columns: ColumnSpec[], obj: unknown): Record<string, RowValue> {
+  const row = requireObject(obj, "expect must be an object of column → value");
+  const out: Record<string, RowValue> = {};
+  for (const [ref, raw] of Object.entries(row)) {
+    const col = resolveColRef(columns, ref);
+    const v = validateCellValue(col.type, col.options, raw as RowInputValue);
+    // A value that could never be stored can never match: the write goes through and reports nothing.
+    if (v.ok) out[col.column_id] = v.value;
+  }
+  return out;
+}
+
+/** The rows whose cells no longer hold what their update expected, with what they hold now. */
+function conflictsOf(
+  sql: SqlHandle,
+  meta: TableMeta,
+  updates: DbRunOpRowsUpdate["updates"],
+): Array<{ _id: string; values: Record<string, RowValue> }> {
+  const byId = new Map(getColumns(sql, meta.table_id).map((c) => [c.column_id, c]));
+  return updates.flatMap((u) => {
+    const expected = Object.entries(u.expect ?? {}).filter(([id]) => byId.has(id));
+    if (expected.length === 0) return [];
+    const row = sql.exec(`SELECT ${expected.map(([id]) => ident(byId.get(id)!.name)).join(", ")} FROM ${ident(meta.name)} WHERE _id = ?`, u._id).toArray()[0];
+    if (!row) return [];
+    const now: Record<string, RowValue> = {};
+    for (const [id] of expected) now[id] = (row[byId.get(id)!.name] ?? null) as RowValue;
+    return expected.some(([id, v]) => now[id] !== v) ? [{ _id: u._id, values: now }] : [];
+  });
+}
 
 /** The rows.delete inverse: whole rows, cells keyed by column_id, with each row's page. */
 function captureDeletedRows(sql: SqlHandle, meta: TableMeta, rowIds: string[]): InverseJson {

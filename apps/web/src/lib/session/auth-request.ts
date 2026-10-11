@@ -15,10 +15,13 @@ export async function authRequest<T>(path: string, body: Record<string, unknown>
   if (!res.ok) {
     const text = (key: string) => (typeof json?.[key] === "string" ? (json[key] as string) : undefined);
     const methods = Array.isArray(json?.methods) ? json.methods.filter((m): m is string => typeof m === "string") : undefined;
+    // Delay-seconds only: the node never sends an HTTP date.
+    const retryAfter = Number(res.headers.get("retry-after"));
     throw new AuthError(res.status, text("error") ?? `${path} → ${res.status}`, {
       detail: text("message"),
       suggestion: text("suggestion"),
       ...(methods ? { methods } : {}),
+      ...(Number.isFinite(retryAfter) && retryAfter > 0 ? { retryAfter } : {}),
     });
   }
   return json as T | null;

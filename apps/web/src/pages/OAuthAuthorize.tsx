@@ -16,6 +16,7 @@ import { Text, Heading } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Link } from "@astryxdesign/core/Link";
+import { Banner } from "@astryxdesign/core/Banner";
 import { Workspaces, type WorkspaceInfo } from "../api";
 import { Brand, nodeName } from "../shell/Brand";
 import { authHeaders } from "../lib/http/client";
@@ -98,6 +99,18 @@ function hostOf(uri: string): string {
   }
 }
 
+/** A redirect back to this computer (localhost, 127.x, ::1): an app running here, whatever its port. */
+export function isLoopbackRedirect(uri: string): boolean {
+  try {
+    const url = new URL(uri);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return host === "localhost" || host.endsWith(".localhost") || /^127(\.\d{1,3}){3}$/.test(host) || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
 export function OAuthAuthorize() {
   const nav = useNavigate();
   const params = new URLSearchParams(window.location.search);
@@ -134,6 +147,9 @@ export function OAuthAuthorize() {
   }, [request.clientId]);
 
   const redirectHost = hostOf(request.redirectUri);
+  // A loopback port says nothing to a person; "an app on this computer" says where the answer goes.
+  const local = isLoopbackRedirect(request.redirectUri);
+  const strong = (chunks: React.ReactNode) => <strong>{chunks}</strong>;
   const valid = Boolean(request.clientId && redirectHost && request.codeChallenge);
   // The app's own name is self-asserted unless the node fetched it from a host that vouches for it.
   const appName = client?.client_name || null;
@@ -182,11 +198,20 @@ export function OAuthAuthorize() {
         ) : (
           <>
             <Heading level={2}>{appName ? t("auth.oauth.connect", { app: appName }) : t("auth.oauth.connectUnnamed")}</Heading>
-            <Text type="supporting" color="secondary">
-              {client?.verified_host
-                ? tRich("auth.oauth.verified", { host: client.verified_host, redirect: redirectHost, strong: (chunks) => <strong>{chunks}</strong> })
-                : tRich("auth.oauth.unverified", { redirect: redirectHost, strong: (chunks) => <strong>{chunks}</strong> })}
-            </Text>
+            {client?.verified_host ? (
+              <Text type="supporting" color="secondary">
+                {local
+                  ? tRich("auth.oauth.verifiedLocal", { host: client.verified_host, strong })
+                  : tRich("auth.oauth.verified", { host: client.verified_host, redirect: redirectHost, strong })}
+              </Text>
+            ) : (
+              // Its name is whatever it registered itself as, so the warning is a callout, not small print.
+              <Banner
+                status="warning"
+                title={t("auth.oauth.unverifiedTitle")}
+                description={local ? t("auth.oauth.unverifiedLocal") : tRich("auth.oauth.unverified", { redirect: redirectHost, strong })}
+              />
+            )}
             {workspaces && (
               <VStack gap={2}>
                 <CheckboxList label={t("auth.oauth.workspaces")} value={chosen} onChange={setChosen} density="compact" isDisabled={later}>
@@ -199,7 +224,7 @@ export function OAuthAuthorize() {
             )}
             <RadioList label={t("common.access")} value={access} onChange={(v) => setAccess(v === "read" ? "read" : "propose")}>
               <RadioListItem value="propose" label={t("auth.oauth.readAndSuggest")} description={t("auth.oauth.readAndSuggestHint")} />
-              <RadioListItem value="read" label={t("auth.oauth.readOnly")} />
+              <RadioListItem value="read" label={t("auth.oauth.readOnly")} description={t("auth.oauth.readOnlyHint")} />
             </RadioList>
             <Text type="supporting" color="secondary">
               {tRich("auth.oauth.revoke", {
@@ -212,6 +237,11 @@ export function OAuthAuthorize() {
                 ),
               })}
             </Text>
+            {!canAllow && (
+              <Text type="supporting" color="secondary">
+                {t("auth.oauth.chooseWorkspace")}
+              </Text>
+            )}
             {err && (
               <Text type="supporting" color="secondary">
                 {err}

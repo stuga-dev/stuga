@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "overrides": [
+    {
+      "files": ["apps/web/src/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@astryxdesign/core/Toast",
+                "importNames": ["useToast"],
+                "message": "Use useToast from apps/web/src/ui/use-toast: its toasts hide themselves and collapse repeats."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

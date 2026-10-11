@@ -193,6 +193,7 @@ describe("text direction", () => {
     const doc: DocSummary = {
       doc_id: "d_1",
       title: "قانون العمل",
+      title_source: "user",
       owner: "user:u_liv",
       doc_type: "prose",
       created_at: "2026-09-01T00:00:00.000Z",

@@ -11,7 +11,8 @@
  * Durability is a separate, server-sourced axis (PERSIST_DEGRADED): a receipt
  * proves acceptance, never storage, so no wording here says "saved".
  */
-import { t } from "../i18n/i18n";
+import { t, type MessageKey } from "../i18n/i18n";
+import type { SyncEnding } from "./stuga-provider";
 
 /** An outage shows a label only after this long, past the first reconnect attempts. */
 export const SHOW_RECONNECT_LABEL_AFTER_MS = 3_000;
@@ -35,6 +36,8 @@ type IndicatorPhase =
   | "reconnecting"
   /** Transport down past SHOW_RECONNECT_LABEL_AFTER_MS. */
   | "delayed"
+  /** Transport down, and the browser says it has no network. */
+  | "offline"
   /** A local edit has no receipt. */
   | "at-risk"
   /** Stranded past STRANDED_ESCALATION_MS. */
@@ -43,7 +46,11 @@ type IndicatorPhase =
   | "undurable"
   | "undurable-prolonged"
   /** Access revoked. Terminal. */
-  | "revoked";
+  | "revoked"
+  /** The item was deleted. Terminal. */
+  | "deleted"
+  /** The person is no longer a member of its workspace. Terminal. */
+  | "removed";
 
 /** One of the design system's StatusDot variants. */
 type IndicatorTone = "neutral" | "success" | "warning" | "error";
@@ -72,7 +79,8 @@ export interface LinkHealth {
   /** Its own clock, so a transport blip cannot restart the escalation. */
   undurableSince: number | null;
   flashUntil: number | null;
-  dead: boolean;
+  /** Why syncing stopped for good, or null while it goes on. */
+  ended: SyncEnding | null;
 }
 
 export function newLinkHealth(): LinkHealth {
@@ -83,7 +91,7 @@ export function newLinkHealth(): LinkHealth {
     undurable: false,
     undurableSince: null,
     flashUntil: null,
-    dead: false,
+    ended: null,
   };
 }
 
@@ -98,7 +106,8 @@ export type LinkEvent =
   | { kind: "write-refused" }
   | { kind: "persist-degraded"; at: number }
   | { kind: "persist-recovered" }
-  | { kind: "access-revoked" }
+  /** The server closed the link for good. */
+  | { kind: "ended"; why: SyncEnding }
   /** Lets the recovery flash expire. */
   | { kind: "clock"; at: number };
 
@@ -151,8 +160,8 @@ export function advance(h: LinkHealth, e: LinkEvent): LinkHealth {
       if (!h.undurable) return h;
       return { ...h, undurable: false, undurableSince: null };
     }
-    case "access-revoked":
-      return { ...h, dead: true, stranded: false, undurable: false, undurableSince: null, flashUntil: null };
+    case "ended":
+      return { ...h, ended: e.why, stranded: false, undurable: false, undurableSince: null, flashUntil: null };
     case "clock": {
       if (h.flashUntil !== null && e.at >= h.flashUntil) return { ...h, flashUntil: null };
       return h;
@@ -160,36 +169,48 @@ export function advance(h: LinkHealth, e: LinkEvent): LinkHealth {
   }
 }
 
+/** Local edits the node has not confirmed: leaving the page now would lose them. */
+export function hasUnsentEdits(r: IndicatorReadout): boolean {
+  return r.phase === "at-risk" || r.phase === "prolonged";
+}
+
 /** Whether elapsed time can still change the readout, so the hook keeps a clock running. */
 export function wantsTicks(h: LinkHealth, transportUp: boolean): boolean {
-  if (h.dead) return false;
+  if (h.ended) return false;
   if (h.flashUntil !== null) return true;
   if (h.stranded) return true;
   if (h.undurable) return true;
   return !(transportUp && h.handshake === "current");
 }
 
-/** What the indicator shows, worst news first. The retrying is this tab's, so no sentence names the workspace. */
-export function readout(h: LinkHealth, transportUp: boolean, at: number): IndicatorReadout {
-  if (h.dead) {
-    return {
-      phase: "revoked",
-      tone: "error",
-      label: t("ui.linkHealth.noAccess"),
-      srText: t("ui.linkHealth.noAccessDetail"),
-      expanded: true,
-      persistent: true,
-    };
+/** The pill's words and the full sentence, per ending. */
+const ENDED_WORDS: Record<SyncEnding, [pill: MessageKey, sentence: MessageKey]> = {
+  revoked: ["ui.linkHealth.noAccess", "ui.linkHealth.noAccessDetail"],
+  deleted: ["ui.linkHealth.deleted", "ui.linkHealth.deletedDetail"],
+  removed: ["ui.linkHealth.removed", "ui.linkHealth.removedDetail"],
+};
+
+/**
+ * What the indicator shows, worst news first. The retrying is this tab's, so no
+ * sentence names the workspace. `online` is the browser's word on the network:
+ * it only picks the wording once the link is known to be down, since a node on
+ * this computer keeps working offline.
+ */
+export function readout(h: LinkHealth, transportUp: boolean, at: number, online = true): IndicatorReadout {
+  if (h.ended) {
+    const [pill, sentence] = ENDED_WORDS[h.ended];
+    return { phase: h.ended, tone: "error", label: t(pill), srText: t(sentence), expanded: true, persistent: true };
   }
 
   if (h.stranded) {
     const age = h.troubleSince === null ? 0 : Math.max(0, at - h.troubleSince);
     const loud = age >= STRANDED_ESCALATION_MS;
+    // One wording; only the tone escalates.
     return {
       phase: loud ? "prolonged" : "at-risk",
       tone: loud ? "error" : "warning",
-      label: loud ? t("ui.linkHealth.notReaching") : t("ui.linkHealth.waiting"),
-      srText: loud ? t("ui.linkHealth.notReachingDetail") : t("ui.linkHealth.waitingDetail"),
+      label: t("ui.linkHealth.unsent"),
+      srText: online ? t("ui.linkHealth.unsentDetail") : t("ui.linkHealth.unsentOfflineDetail"),
       expanded: true,
       persistent: true,
     };
@@ -231,13 +252,24 @@ export function readout(h: LinkHealth, transportUp: boolean, at: number): Indica
     };
   }
 
+  if (!online) {
+    return {
+      phase: "offline",
+      tone: "warning",
+      label: t("ui.linkHealth.offline"),
+      srText: t("ui.linkHealth.offlineDetail"),
+      expanded: true,
+      persistent: false,
+    };
+  }
+
   const age = h.troubleSince === null ? 0 : Math.max(0, at - h.troubleSince);
   const labelled = age >= SHOW_RECONNECT_LABEL_AFTER_MS;
   return {
     phase: labelled ? "delayed" : "reconnecting",
     tone: "warning",
     label: labelled ? t("ui.linkHealth.reconnecting") : null,
-    srText: labelled ? t("ui.linkHealth.pausedDetail") : t("ui.linkHealth.interruptedDetail"),
+    srText: t("ui.linkHealth.reconnectingDetail"),
     expanded: labelled,
     persistent: false,
   };

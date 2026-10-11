@@ -3,6 +3,8 @@
  * rendered as text and <mark> elements, never as HTML, so a document cannot inject markup.
  */
 import { SNIPPET_MIN, stripMarkdown } from "../ai/citations";
+import type { ReactNode } from "react";
+import { t } from "../i18n/i18n";
 
 export interface SnippetPart {
   text: string;
@@ -40,6 +42,31 @@ export function windowParts(parts: SnippetPart[], lead: number): SnippetPart[] {
   return [{ text: `…${kept}`, hit: false }, ...parts.slice(first)];
 }
 
+/**
+ * `parts` without the document's title at their start: a document's opening often
+ * repeats it as a heading, and the result already shows the title above.
+ */
+export function withoutTitle(parts: SnippetPart[], title: string): SnippetPart[] {
+  const name = title.replace(/\s+/g, " ").trim();
+  const text = parts.map((p) => p.text).join("");
+  // Compared at the title's own length: lowercasing can change a string's length ("İ").
+  if (!name || text.slice(0, name.length).toLowerCase() !== name.toLowerCase()) return parts;
+  const rest = text.slice(name.length);
+  // Only a whole title: "Price list" does not open "Price lists are…".
+  if (rest && !/^[\s:·–—-]/.test(rest)) return parts;
+  let drop = name.length + (/^[\s:·–—-]+/.exec(rest)?.[0].length ?? 0);
+  const kept: SnippetPart[] = [];
+  for (const p of parts) {
+    if (drop >= p.text.length) {
+      drop -= p.text.length;
+      continue;
+    }
+    kept.push(drop > 0 ? { ...p, text: p.text.slice(drop) } : p);
+    drop = 0;
+  }
+  return kept;
+}
+
 /** The query's words worth marking in a title: two characters or more, or any non-ASCII character. */
 export function queryTerms(query: string): string[] {
   return [...new Set(query.toLowerCase().split(/\s+/))].filter((t) => t.length >= 2 || /[^\u0020-\u007e]/.test(t));
@@ -65,14 +92,58 @@ export function Marked({ parts }: { parts: SnippetPart[] }) {
   return <>{parts.map((p, i) => (p.hit ? <mark key={i}>{p.text}</mark> : p.text))}</>;
 }
 
-/** A search hit's excerpt; `lead` windows it around the first hit. */
-export function Snippet({ text, lead, className = "snippet" }: { text: string; lead?: number; className?: string }) {
-  const parts = snippetParts(text);
+/**
+ * Whether a hit was found by meaning alone: near the query in meaning, with none of
+ * its words highlighted in the title or the excerpt. Such a hit reads as a mistake
+ * unless it says so.
+ */
+export function foundByMeaning(hit: { title: string; snippet: string; sem_score: number }, query: string): boolean {
+  if (!(hit.sem_score > 0) || hit.snippet.includes("⟦")) return false;
+  return !markTerms(hit.title, queryTerms(query)).some((p) => p.hit);
+}
+
+/**
+ * A search hit's excerpt, without a repeat of `title` at its start; `lead` windows it around the
+ * first hit, and `label` goes before it on its first line.
+ */
+export function Snippet({
+  text,
+  title,
+  lead,
+  label,
+  className = "snippet",
+}: {
+  text: string;
+  title?: string;
+  lead?: number;
+  label?: ReactNode;
+  className?: string;
+}) {
+  const parts = title ? withoutTitle(snippetParts(text), title) : snippetParts(text);
+  const shown = lead === undefined ? parts : windowParts(parts, lead);
   return (
     <span className={className}>
-      <Marked parts={lead === undefined ? parts : windowParts(parts, lead)} />
+      {label}
+      {label && shown.length > 0 && " · "}
+      <Marked parts={shown} />
     </span>
   );
+}
+
+/** A search hit's description: its excerpt, after a label when it was found by meaning alone. */
+export function HitDescription({
+  hit,
+  query,
+  lead,
+  className,
+}: {
+  hit: { title: string; snippet: string; sem_score: number };
+  query: string;
+  lead?: number;
+  className?: string;
+}) {
+  const label = foundByMeaning(hit, query) ? <span className="hit-meaning">{t("common.foundByMeaning")}</span> : undefined;
+  return <Snippet text={hit.snippet} title={hit.title} lead={lead} label={label} className={className} />;
 }
 
 /** The URL parameter that carries a search hit's passage to the opened document (see CitationJump). */
@@ -126,7 +197,8 @@ const THEMATIC_BREAK = /^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 function pageText(line: string): string {
   const code: string[] = [];
   const shown = line
-    .replace(/^[ \t]*(?:>[ \t]?)*[ \t]*(?:#{1,6}[ \t]+|(?:[-+*]|\d+[.)])[ \t]+)?/, "")
+    // A task item's box goes with its list marker: the page shows a checkbox, not "[x]".
+    .replace(/^[ \t]*(?:>[ \t]?)*[ \t]*(?:#{1,6}[ \t]+|(?:[-+*]|\d+[.)])[ \t]+(?:\[[ xX]\](?:[ \t]+|$))?)?/, "")
     .replace(CODE_SPAN, (m: string, ticks?: string, body = "") => {
       if (!ticks) return m;
       // The serializer pads a span that holds a backtick with a space each side, which the page does not show.
@@ -280,6 +352,8 @@ function mendCut(line: string, first: boolean, last: boolean, cut?: (remnant: st
     if (close) line = reopenHead(line, close);
   }
   if (last) {
+    // A character reference the cut ended inside ("do&#32").
+    line = line.replace(/(?<!\\)&#(?:\d{0,7}|[xX][0-9a-fA-F]{0,6})$/, "");
     const open = strayTicks(line);
     const link = END_REMNANT.exec(line);
     if (link && (!cut || !open || link.index < open.index)) line = line.replace(END_REMNANT, shown);

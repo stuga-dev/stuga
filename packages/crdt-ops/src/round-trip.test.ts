@@ -386,13 +386,16 @@ function makeGen(seed: number) {
     });
   }
 
-  function listItems(depth: number): PMNode[] {
+  /** Items of a list, or of a task list with `task`. */
+  function listItems(depth: number, task = false): PMNode[] {
     const items: PMNode[] = [];
+    const item = (kids: PMNode[]): PMNode =>
+      task ? schema.nodes.taskItem!.create({ checked: chance(0.5) }, kids) : schema.nodes.listItem!.create(null, kids);
     for (let i = count(1, 3); i > 0; i--) {
       // A list item whose first block is an image: what the image hoist leaves for `* ![x](x.png) tail`.
       if (chance(0.15)) {
         items.push(
-          schema.nodes.listItem!.create(null, [
+          item([
             schema.nodes.paragraph!.create(),
             image(),
             schema.nodes.paragraph!.create(null, inline(false)),
@@ -402,7 +405,7 @@ function makeGen(seed: number) {
       }
       const kids: PMNode[] = [schema.nodes.paragraph!.create(null, inline(true))];
       if (depth < 2 && chance(0.3)) kids.push(block(depth + 1, /* inList */ true));
-      items.push(schema.nodes.listItem!.create(null, kids));
+      items.push(item(kids));
     }
     return items;
   }
@@ -432,8 +435,8 @@ function makeGen(seed: number) {
 
   function block(depth: number, inList = false): PMNode {
     const kinds = inList
-      ? (["bulletList", "orderedList", "blockquote", "codeBlock", "paragraph"] as const)
-      : (["paragraph", "heading", "bulletList", "orderedList", "blockquote", "codeBlock", "horizontalRule", "table", "footnoteDefinition", "image"] as const);
+      ? (["bulletList", "orderedList", "taskList", "blockquote", "codeBlock", "paragraph"] as const)
+      : (["paragraph", "heading", "bulletList", "orderedList", "taskList", "blockquote", "codeBlock", "horizontalRule", "table", "footnoteDefinition", "image"] as const);
     switch (pick(kinds)) {
       case "heading":
         return schema.nodes.heading!.create({ level: count(1, 6) }, inline(false));
@@ -441,6 +444,8 @@ function makeGen(seed: number) {
         return schema.nodes.bulletList!.create(null, listItems(depth));
       case "orderedList":
         return schema.nodes.orderedList!.create({ start: count(0, 12) }, listItems(depth));
+      case "taskList":
+        return schema.nodes.taskList!.create(null, listItems(depth, true));
       case "blockquote":
         return schema.nodes.blockquote!.create(null, [
           schema.nodes.paragraph!.create(null, inline(true)),
@@ -929,5 +934,50 @@ describe("mentions", () => {
       names.push(n.type.name);
     });
     expect(names).not.toContain("mention");
+  });
+});
+
+describe("task lists", () => {
+  const kinds = (md: string): string[] => {
+    const out: string[] = [];
+    markdownToDoc(md, schema).forEach((n) => out.push(n.type.name));
+    return out;
+  };
+
+  it("parse GFM task items into ticked and unticked tasks, and write them back the same", () => {
+    const doc = markdownToDoc("- [ ] Turn on ovens\n- [x] Unlock back door", schema);
+    const list = doc.firstChild!;
+    expect(list.type.name).toBe("taskList");
+    expect(list.content.content.map((i) => [i.attrs.checked, i.textContent])).toEqual([
+      [false, "Turn on ovens"],
+      [true, "Unlock back door"],
+    ]);
+    expect(docToMarkdown(doc)).toBe("* [ ] Turn on ovens\n\n* [x] Unlock back door");
+    assertDocRoundTrip(doc, "task list");
+  });
+
+  it("split a list that mixes tasks and plain items into runs, keeping an ordered list's numbers", () => {
+    expect(kinds("- a\n- [ ] b\n- c")).toEqual(["bulletList", "taskList", "bulletList"]);
+    const ordered = markdownToDoc("1. a\n2. [x] b\n3. c", schema);
+    expect(ordered.lastChild!.attrs.start).toBe(3);
+    assertDocRoundTrip(markdownToDoc("- a\n- [ ] b\n- c", schema), "mixed list");
+    assertDocRoundTrip(ordered, "mixed ordered list");
+  });
+
+  it("keep an escaped box, a box in a paragraph and a reference link as text", () => {
+    expect(kinds("* \\[ \\] not a task")).toEqual(["bulletList"]);
+    expect(kinds("[ ] not a task")).toEqual(["paragraph"]);
+    expect(kinds("- [x] ref\n\n[x]: https://x.com/")).toEqual(["bulletList"]);
+    const literal = schema.nodes.bulletList!.create(null, [
+      schema.nodes.listItem!.create(null, [schema.nodes.paragraph!.create(null, [schema.text("[ ] typed")])]),
+    ]);
+    assertDocRoundTrip(schema.topNodeType.create(null, [literal]), "a bullet item that starts with a box");
+  });
+
+  it("keep an empty task and a nested list", () => {
+    assertDocRoundTrip(markdownToDoc("- [ ]\n- [x] y", schema), "empty task");
+    const nested = markdownToDoc("- [ ] a\n  - [ ] nested\n  - plain", schema);
+    expect(nested.firstChild!.firstChild!.childCount).toBe(3);
+    assertDocRoundTrip(nested, "nested task list");
   });
 });

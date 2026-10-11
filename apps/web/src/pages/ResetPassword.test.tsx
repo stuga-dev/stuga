@@ -70,13 +70,20 @@ beforeEach(() => {
   ({ host, root } = mountInto());
 });
 
+/** The node's answers: the link's account to the preview, `reset` to the redemption. */
+function node(reset: () => Response, preview: () => Response = () => reply(200, { username: "ada", display_name: "Ada Lovelace" })) {
+  fetchMock.mockImplementation(async (url) => (String(url) === "/auth/reset/preview" ? preview() : reset()));
+}
+
 describe("ResetPassword", () => {
-  it("sets the new password with the link's token, signs in, and goes where the visitor was headed", async () => {
+  it("names the account, sets the new password with the link's token, signs in, and goes where the visitor was headed", async () => {
     rememberLoginReturn("/doc/d1");
-    fetchMock.mockImplementation(async () => reply(200, SESSION));
+    node(() => reply(200, SESSION));
     await open("/reset/rst_abc");
 
     expect(host.textContent).toContain("Choose a new password");
+    expect(sent("/auth/reset/preview")).toEqual({ token: "rst_abc" });
+    expect(host.textContent).toContain("For Ada Lovelace (@ada)");
     await type("New password", "battery staple 9");
     await click("Set password");
     expect(sent("/auth/reset")).toEqual({ token: "rst_abc", new_password: "battery staple 9" });
@@ -84,17 +91,26 @@ describe("ResetPassword", () => {
     expect(landed()?.path).toBe("/doc/d1");
   });
 
-  it("asks for a password the node would accept before sending anything", async () => {
+  it("shows the rules from the start, and asks for a password the node would accept before sending it", async () => {
+    node(() => reply(200, SESSION));
     await open("/reset/rst_abc");
+    expect(host.textContent).toContain("At least 8 characters");
     await type("New password", "short");
     await click("Set password");
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sent("/auth/reset")).toBeNull();
     expect(host.textContent).toContain("Choose a password that meets all the requirements below.");
-    expect(host.textContent).toContain("At least 8 characters");
   });
 
-  it("sends a spent or expired link back to sign in, saying why", async () => {
-    fetchMock.mockImplementation(async () => reply(403, { error: "reset_invalid", message: "invalid" }));
+  it("sends a spent or expired link back to sign in, saying why, before a password is typed", async () => {
+    const spent = () => reply(403, { error: "reset_invalid", message: "invalid" });
+    node(spent, spent);
+    await open("/reset/rst_old");
+    expect(landed()).toEqual({ path: "/login", state: { notice: "This reset link is invalid, expired, or already used." } });
+    expect(sent("/auth/reset")).toBeNull();
+  });
+
+  it("sends a link spent meanwhile back to sign in on submit", async () => {
+    node(() => reply(403, { error: "reset_invalid", message: "invalid" }));
     await open("/reset/rst_old");
     await type("New password", "battery staple 9");
     await click("Set password");
@@ -103,7 +119,7 @@ describe("ResetPassword", () => {
   });
 
   it("keeps the form up for any other refusal", async () => {
-    fetchMock.mockImplementation(async () => reply(429, { error: "rate_limited", message: "too many attempts" }));
+    node(() => reply(429, { error: "rate_limited", message: "too many attempts" }));
     await open("/reset/rst_abc");
     await type("New password", "battery staple 9");
     await click("Set password");

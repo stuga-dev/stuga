@@ -1,16 +1,19 @@
 /**
- * Who is in the document, from Yjs awareness. People are de-duplicated by
- * `label`: the alias can collide across email domains, and a client id is per
- * tab. This is the only non-visual channel for presence, since carets are
- * aria-hidden, so badges are buttons that jump to that person's cursor, the
- * stack is a labelled group, and arrivals and departures go to a live region.
+ * Who is in the document, from Yjs awareness: you first, then everyone else
+ * in order of arrival, in the colours their carets have. People are
+ * de-duplicated by account (roomPeople), then by `label`: the alias can
+ * collide across email domains, and a client id is per tab. This is the only
+ * non-visual channel for presence, since carets are aria-hidden, so badges
+ * are buttons that jump to that person's cursor, the stack is a labelled
+ * group, and arrivals and departures go to a live region.
  * Badges are drawn here, not with Astryx Avatar, for white-on-colour contrast.
  */
 import { useCallback, useEffect, useState } from "react";
 import * as Y from "yjs";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { resolveRelRange } from "../editor/rel-range";
+import { roomPeople } from "../editor/peer-carets";
 import { initials } from "../state/identity";
 import { useSharedEditor } from "../editor/editor-context";
 import { jumpTo } from "../editor/use-citation-jump";
@@ -93,20 +96,21 @@ export function PresenceStack({ provider }: { provider: StugaProvider }) {
         }
       }
 
+      // In order of arrival, with the colour the room gave each person, as every other screen shows them.
       const seen = new Map<string, Peer>();
-      for (const [clientId, state] of aw.getStates()) {
-        const u = (state as { user?: { name?: string; label?: string; color?: string; agent?: boolean } }).user;
-        if (!u?.name) continue;
+      for (const person of roomPeople(aw.getStates() as Map<number, Record<string, unknown>>)) {
+        const u = person.user;
+        if (!u.name) continue;
         const label = u.label ?? u.name;
         const existing = seen.get(label);
-        if (existing) existing.clientIds.push(clientId);
+        if (existing) existing.clientIds.push(...person.clientIds);
         else {
           seen.set(label, {
             name: u.name,
             label,
-            color: u.color ?? "#888",
+            color: person.color,
             agent: !!u.agent,
-            clientIds: [clientId],
+            clientIds: [...person.clientIds],
             isSelf: false,
           });
         }
@@ -117,7 +121,9 @@ export function PresenceStack({ provider }: { provider: StugaProvider }) {
         if (peer.isSelf) selfLabel = peer.label;
         for (const clientId of peer.clientIds) labelOf.set(clientId, peer.label);
       }
-      setPeers([...seen.values()]);
+      // You first, then everyone else in the order they arrived, which is the same on every screen.
+      const ordered = [...seen.values()];
+      setPeers([...ordered.filter((p) => p.isSelf), ...ordered.filter((p) => !p.isSelf)]);
 
       if (!armed) {
         announced.clear();
@@ -231,7 +237,7 @@ export function PresenceStack({ provider }: { provider: StugaProvider }) {
             touchTrigger="tap"
             content={
               <span className="presence-tip">
-                <strong>{p.name}</strong>
+                <strong>{p.isSelf ? t("document.presence.self", { name: p.name }) : p.name}</strong>
                 {p.label !== p.name && <span className="presence-tip__sub">{p.label}</span>}
               </span>
             }

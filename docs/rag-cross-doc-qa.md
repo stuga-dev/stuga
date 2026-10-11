@@ -157,8 +157,10 @@ characters. A thread belongs to the credential that created it, in one workspace
 or an agent key's own, which its person does not see. Asking only reads, so a read-only key may ask,
 create, rename and delete its own threads, and its turns are kept. A request without a thread may
 send `history` itself, the last six messages, cut the same way. A question is cut to 4,000
-characters, so one request cannot run up input cost. Threads with no new question for the period set
-on the **Storage** settings page are deleted.
+characters, so one request cannot run up input cost. A turn is stored however it ended, a stopped one
+too (the asker pressed Stop or left the page mid-answer), and `GET /api/ask/threads/:id` gives each
+turn's `stop_reason`, so the page can say it stopped and offer **Try again**. Threads with no new
+question for the period set on the **Storage** settings page are deleted.
 
 ## Surfaces
 

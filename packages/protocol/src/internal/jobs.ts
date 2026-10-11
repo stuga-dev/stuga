@@ -105,6 +105,8 @@ export type NotifyMessage = {
   docId: string;
   /** Who caused it: an alias, or an agent's id. */
   actor: string;
+  /** The comment it is about: its link opens that comment, and two mentions are two notifications. */
+  commentNum?: number;
 } & DocNotification;
 
 /**

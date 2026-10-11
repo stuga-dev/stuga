@@ -14,14 +14,18 @@ import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/VStack";
-import { useToast } from "@astryxdesign/core/Toast";
-import { Share2, Table2, Database, Upload } from "lucide-react";
+import { useToast } from "../ui/use-toast";
+import { Share2, Table2, Database, Download, Upload } from "lucide-react";
 import { DockToggle } from "../ui/Dock";
 import { ItemOptionsMenu } from "../library/ItemOptionsMenu";
 import { ItemTitle, useTitleRename } from "./ItemTitle";
-import { Databases, type DocSummary } from "../api";
-import type { DatabaseSchema, TableSchema } from "@stuga/protocol/databases/types";
+import { usePageTitle } from "../state/branding";
+import { Databases, Docs, type DocSummary } from "../api";
+import { EndedBanner } from "../document/ItemStateBanner";
+import { csvFileName } from "@stuga/protocol/databases/csv";
+import type { DatabaseImportResult, DatabaseSchema, TableSchema } from "@stuga/protocol/databases/types";
 import { ShareDialog } from "../library/ShareDialog";
+import { useShareRequested } from "../library/share-request";
 import { DocStateChips } from "../library/DocStateChips";
 import { ConnectionStatus } from "../document/ConnectionStatus";
 import { LoadFailed } from "../ui/LoadFailed";
@@ -38,6 +42,9 @@ import { DbRunBar } from "../review/DbRunBar";
 import { DbCatchUpCard } from "../review/DbCatchUpCard";
 import { DatabaseDock, useDatabaseDock } from "../database/DatabaseDock";
 import { ImportDialog } from "../database/ImportDialog";
+import { takeHandedImport } from "../database/handed-import";
+import type { GridListing } from "../database/DatabaseGrid";
+import { saveBlob } from "../lib/download";
 import { Brand } from "../shell/Brand";
 import { DbRunsProvider } from "../review/db-runs-context";
 import { DatabaseSocket } from "../sync/database-socket";
@@ -56,7 +63,8 @@ function linkGaveUpReadout(): IndicatorReadout {
   };
 }
 
-export function DatabasePage({ doc }: { doc: DocSummary }) {
+/** `onTrashed`: the database went into the trash while open; the page hands over to the trash card. */
+export function DatabasePage({ doc, onTrashed }: { doc: DocSummary; onTrashed?: (doc: DocSummary) => void }) {
   const nav = useNavigate();
   // The open table, view and row live in the URL, so a reload or a shared link
   // lands on the same place. `?import` (the link an agent hands over when it
@@ -81,24 +89,44 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
   const [writeDenied, setWriteDenied] = useState(false);
 
   const [showShare, setShowShare] = useState(false);
+  // An access request's notification opens the page with the Share dialog up.
+  useShareRequested(() => setShowShare(true));
   const [dockW, setDockW] = usePanelWidth("stuga_db_dock_w", 360, 280, 640);
 
   const [newTableOpen, setNewTableOpen] = useState(false);
   const [renamingTable, setRenamingTable] = useState<TableSchema | null>(null);
   const [deletingTable, setDeletingTable] = useState<TableSchema | null>(null);
   const [deleteTableBusy, setDeleteTableBusy] = useState(false);
+  /** A file chosen in the library for this new database, imported as soon as the page opens. */
+  const [handedFile, setHandedFile] = useState<File | null>(null);
+  useEffect(() => {
+    const f = takeHandedImport(docId);
+    if (f) setHandedFile(f);
+  }, [docId]);
+  /** What the grid shows of the open table: a download writes those rows and columns. */
+  const listingRef = useRef<GridListing | null>(null);
 
   // Seeded from the prop: the ⋯ menu updates it optimistically and again with the server's row.
   const [docState, setDocState] = useState<DocSummary>(doc);
   const locked = !!docState.locked;
   const searchHidden = !!docState.search_hidden;
   const agentAuto = docState.agent_mode === "auto";
-  const readOnly = locked || writeDenied || (schema ? !schema.can_write : false);
+  /** The live channel closed for good: deleted, or the membership ended. */
+  const [ended, setEnded] = useState<"deleted" | "removed" | null>(null);
+  /** Read-only for a reason the state chips show: the lock or the caller's access. */
+  const chipsReadOnly = locked || writeDenied || (schema ? !schema.can_write : false);
+  const readOnly = chipsReadOnly || ended !== null;
 
   const dock = useDatabaseDock({ rowOpen: openRowId !== null, readOnly });
   // In a compact window Share gives up its label, as on the document page.
   const isCompact = useIsCompact();
-  const rename = useTitleRename(docId, doc.title, readOnly, noteWriteError);
+  // The item as last read: a rename elsewhere re-reads it, so the new title shows here too. A new
+  // database's one table follows its name (the node renames it), so the tabs are read again.
+  const rename = useTitleRename(docId, docState.title, readOnly, noteWriteError, (row) => {
+    setDocState(row);
+    void loadSchema();
+  });
+  usePageTitle(rename.name);
   // A row arriving through the URL opens its panel; hiding the dock sticks until another row opens.
   useEffect(() => {
     if (openRowId) dock.open("row");
@@ -181,8 +209,11 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
         setLinkGaveUp(false);
       } else if (st === "gave_up") {
         // The model's terminal event stops its clock; linkGaveUpReadout() hides its wording.
-        connSignals.onRevoked();
+        connSignals.onEnded("revoked");
         setLinkGaveUp(true);
+      } else if (st === "deleted" || st === "removed") {
+        connSignals.onEnded(st);
+        setEnded(st);
       } else {
         connSignals.onSocketDown();
       }
@@ -194,6 +225,8 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
     };
   }, [docId, connSignals]);
 
+  const onTrashedRef = useRef(onTrashed);
+  onTrashedRef.current = onTrashed;
   // Debounced, and deferred while a cell editor has focus so a refetch cannot wipe an edit.
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -210,13 +243,27 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
         void loadSchema();
       }, delay);
     };
-    socket.changedListener = () => scheduleRefresh(600);
+    // A lock, unlock, trash or restore: the item itself is read again, and the trash card takes over.
+    const refreshItem = () => {
+      Docs.get(docId)
+        .then((d) => {
+          if (d.trashed) {
+            onTrashedRef.current?.(d);
+            return;
+          }
+          setDocState(d);
+          setWriteDenied(false);
+          void loadSchema();
+        })
+        .catch(() => {});
+    };
+    socket.changedListener = (change) => (change.reason === "state" ? refreshItem() : scheduleRefresh(600));
     return () => {
       socket.changedListener = null;
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
       refreshTimer.current = null;
     };
-  }, [socket, loadSchema]);
+  }, [socket, loadSchema, docId]);
 
   async function createTable(display: string) {
     try {
@@ -238,6 +285,29 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
       noteWriteError(e);
       toast({ body: errorMessage(e, t("pages.database.renameTableFailed")), type: "error" });
     }
+  }
+
+  /** The delete confirmation names what goes, counted now: the schema on screen may be minutes old. */
+  async function askDeleteTable(table: TableSchema) {
+    const fresh = await Databases.schema(docId)
+      .then((s) => s.tables.find((x) => x.table_id === table.table_id))
+      .catch(() => undefined);
+    setDeletingTable(fresh ?? table);
+  }
+
+  async function downloadCsv(table: TableSchema) {
+    const shown = listingRef.current?.tableId === table.table_id ? listingRef.current : null;
+    try {
+      const blob = await Databases.downloadCsv(docId, table.table_id, shown ? { ...shown.listing, columns: shown.columns } : {});
+      saveBlob(blob, csvFileName(table.display || t("database.tables.untitled")));
+    } catch (e) {
+      toast({ body: errorMessage(e, t("database.export.failed")), type: "error" });
+    }
+  }
+
+  async function afterImport(result: DatabaseImportResult) {
+    await loadSchema();
+    if (result.table_id && result.table_id !== activeTidRef.current) selectTable(result.table_id);
   }
 
   async function deleteTable() {
@@ -308,7 +378,8 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
       onSelect={selectTable}
       onCreate={() => setNewTableOpen(true)}
       onRename={setRenamingTable}
-      onDelete={setDeletingTable}
+      onDelete={(table) => void askDeleteTable(table)}
+      onDownload={(table) => void downloadCsv(table)}
     />
   );
 
@@ -328,7 +399,7 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
               locked={locked}
               searchHidden={searchHidden}
               agentAuto={agentAuto}
-              readOnly={readOnly}
+              readOnly={chipsReadOnly}
               noun="database"
             />
             <ConnectionStatus status={linkGaveUp ? linkGaveUpReadout() : connStatus} />
@@ -349,6 +420,12 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
                   isDisabled: readOnly || !activeTable,
                   onClick: () => setImportOpen(true),
                 },
+                {
+                  label: t("database.export.csv"),
+                  icon: <Download size={15} />,
+                  isDisabled: !activeTable,
+                  onClick: () => activeTable && void downloadCsv(activeTable),
+                },
               ]}
             />
             <Button label={t("common.share")} variant="secondary" icon={<Share2 size={16} />} isIconOnly={isCompact} onClick={() => setShowShare(true)} />
@@ -357,6 +434,7 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
           </HStack>
         }
       />
+      {ended && <EndedBanner why={ended} noun="database" />}
       {linkGaveUp && (
         <Banner
           status="warning"
@@ -385,7 +463,7 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
             <>
               {/* Tables are the top level; the proposals, views and grid below all belong to the one chosen here. */}
               <div className="db-tablebar">{tableTabs}</div>
-              <DbRunBar tables={tables} activeTableId={activeTable?.table_id ?? null} />
+              <DbRunBar tables={tables} activeTableId={activeTable?.table_id ?? null} locked={locked} />
               <DbCatchUpCard onViewActivity={() => dock.open("activity")} />
               {activeTable ? (
                 <DatabaseGrid
@@ -401,6 +479,9 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
                   onOpenRow={openRow}
                   openRowId={openRowId}
                   onRowsMutated={() => setEditsKey((k) => k + 1)}
+                  onListing={(listing) => {
+                    listingRef.current = listing;
+                  }}
                 />
               ) : (
                 <div className="db-grid-center">
@@ -445,8 +526,12 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
           isOpen={importOpen}
           docId={docId}
           table={activeTable}
-          onClose={() => setImportOpen(false)}
-          onImported={() => void loadSchema()}
+          initialFile={handedFile}
+          onClose={() => {
+            setImportOpen(false);
+            setHandedFile(null);
+          }}
+          onImported={(result) => void afterImport(result)}
         />
       )}
       <PromptDialog
@@ -470,7 +555,7 @@ export function DatabasePage({ doc }: { doc: DocSummary }) {
         isOpen={deletingTable !== null}
         onOpenChange={(o) => !o && !deleteTableBusy && setDeletingTable(null)}
         title={t("pages.database.deleteTable.title", { name: deletingTable?.display ?? "" })}
-        description={t("pages.database.deleteTable.body", { count: deletingTable?.row_count ?? 0 })}
+        description={t("pages.database.deleteTable.counts", { rows: deletingTable?.row_count ?? 0, columns: deletingTable?.columns.length ?? 0 })}
         actionLabel={t("pages.database.deleteTable.action")}
         isActionLoading={deleteTableBusy}
         onAction={deleteTable}

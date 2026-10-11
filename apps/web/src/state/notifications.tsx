@@ -1,12 +1,14 @@
 /**
  * The notification tray, shared by every mounted bell. The poll asks only for the
- * unread count; the rows are fetched when a tray opens.
+ * unread count, often enough that a mention shows within seconds; the rows are
+ * fetched when a tray opens. A row stays unread until it is opened or everything
+ * is marked read.
  */
 import { useCallback, useEffect } from "react";
 import { Notifications, type Notification } from "../api";
 import { createStore, useStore } from "../lib/store";
 
-const POLL_INTERVAL_MS = 60 * 1000;
+const POLL_INTERVAL_MS = 10 * 1000;
 
 interface TrayState {
   /** Unread count for the dot; null until the first poll lands. */
@@ -30,13 +32,15 @@ let generation = 0;
  * relight what was just cleared.
  */
 let readThrough: string | null = null;
+/** Rows this client marked read one by one, re-applied like `readThrough`. */
+const readIds = new Set<string>();
 let pollingStarted = false;
 let subscribers = 0;
 
 function applyLocalReads(list: Notification[]): Notification[] {
   const through = readThrough;
-  if (!through) return list;
-  return list.map((n) => (!n.read && n.created_at <= through ? { ...n, read: true } : n));
+  if (!through && readIds.size === 0) return list;
+  return list.map((n) => (!n.read && ((through !== null && n.created_at <= through) || readIds.has(n.id)) ? { ...n, read: true } : n));
 }
 
 async function loadCount(): Promise<void> {
@@ -78,6 +82,7 @@ export function resetNotificationsForTest(): void {
   countInflight = null;
   rowsInflight = null;
   readThrough = null;
+  readIds.clear();
   generation++;
   tray.set(EMPTY);
 }
@@ -129,6 +134,26 @@ export function useNotifications() {
     }
   }, []);
 
+  /** Mark one row read, as opening it does; the dot goes down at once. */
+  const markRead = useCallback(async (id: string): Promise<void> => {
+    const row = tray.get().rows?.find((n) => n.id === id);
+    if (!row || row.read) return;
+    generation++;
+    readIds.add(id);
+    tray.update((s) => ({
+      ...s,
+      rows: s.rows?.map((n) => (n.id === id ? { ...n, read: true } : n)) ?? null,
+      count: Math.max(0, (s.count ?? 1) - 1),
+    }));
+    try {
+      await Notifications.markRead({ ids: [id] });
+    } catch {
+      readIds.delete(id);
+      void (countInflight ?? Promise.resolve()).then(() => refreshNotifications());
+      refreshNotificationRows();
+    }
+  }, []);
+
   return {
     /** Newest first; null until a tray has been opened. */
     notifications: state.rows,
@@ -136,6 +161,7 @@ export function useNotifications() {
     /** The server's unread total, which counts rows beyond the tray's window. */
     unread: state.count ?? 0,
     markAllRead,
+    markRead,
     loadRows: refreshNotificationRows,
     refresh: refreshNotifications,
   };

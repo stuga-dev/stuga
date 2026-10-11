@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { encodeBinary } from "@stuga/protocol/wire/frame";
-import { Opcode } from "@stuga/protocol/wire/opcodes";
+import { CloseCode, Opcode } from "@stuga/protocol/wire/opcodes";
 import { DocActor } from "./doc-actor.js";
 import { harness, makeActor, connect, disconnect, frameBuffer } from "../test/harness.js";
 
@@ -38,15 +38,15 @@ describe("/destroy", () => {
     expect(await h.state.storage.getAlarm()).toBeNull();
   });
 
-  it("closes every open socket with 4404", async () => {
+  it("closes every open socket with DOC_DELETED", async () => {
     const h = harness();
     const doc = makeActor(h);
     const a = await connect(doc, h, { docId: "d1", alias: "u1" });
     const b = await connect(doc, h, { docId: "d1", alias: "u2" });
 
     await destroy(doc, "d1");
-    expect(a.closed).toMatchObject({ code: 4404, reason: "document deleted" });
-    expect(b.closed).toMatchObject({ code: 4404, reason: "document deleted" });
+    expect(a.closed).toMatchObject({ code: CloseCode.DOC_DELETED, reason: "document deleted" });
+    expect(b.closed).toMatchObject({ code: CloseCode.DOC_DELETED, reason: "document deleted" });
     expect(h.state.getWebSockets()).toEqual([]);
   });
 

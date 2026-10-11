@@ -4,16 +4,19 @@ vi.mock("@stuga/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@stuga/db")>()),
   getDoc: vi.fn(),
   addComment: vi.fn(),
+  getComment: vi.fn(),
+  setCommentResolved: vi.fn(),
+  deleteComment: vi.fn(),
   getMembersByUsername: vi.fn(),
   getMemberRole: vi.fn(),
   getGroupsForMember: vi.fn(async () => []),
 }));
 
-const { getDoc, addComment, getMembersByUsername, getMemberRole } = await import("@stuga/db");
+const { getDoc, addComment, getMembersByUsername, getMemberRole, getComment, setCommentResolved, deleteComment } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import type { Ctx } from "../auth/context.js";
-import { personCtx, type CtxOverrides } from "../testing/ctx.js";
+import { actorsAnswering, personCtx, type CtxOverrides } from "../testing/ctx.js";
 
 const mockGetDoc = getDoc as unknown as ReturnType<typeof vi.fn>;
 const mockAddComment = addComment as unknown as ReturnType<typeof vi.fn>;
@@ -40,9 +43,17 @@ const DOC = {
 };
 
 let sent: IndexMessage[];
+/** What the node asked the document's actor, by path. */
+const actorFetch = vi.fn(async (_url: string) => new Response(null, { status: 204 }));
+const actorPaths = () => actorFetch.mock.calls.map(([url]) => new URL(url).pathname);
 
 function ctx(over: CtxOverrides = {}): Ctx {
-  return personCtx({ alias: "human-7f3a", displayName: "Ada Lovelace", env: { jobs: { send: async (m: IndexMessage) => void sent.push(m) } }, ...over });
+  return personCtx({
+    alias: "human-7f3a",
+    displayName: "Ada Lovelace",
+    env: { jobs: { send: async (m: IndexMessage) => void sent.push(m) }, docs: actorsAnswering(actorFetch) },
+    ...over,
+  });
 }
 
 function comment(c: Ctx, body: Record<string, unknown>): Promise<Response> {
@@ -62,6 +73,7 @@ const mentionNotices = () =>
 
 beforeEach(() => {
   sent = [];
+  actorFetch.mockClear();
   mockGetDoc.mockReset().mockResolvedValue({ ...DOC });
   mockAddComment
     .mockReset()
@@ -127,5 +139,52 @@ describe("POST /api/docs/:id/comments", () => {
     await comment(ctx(), { body: "@owner please review" });
     expect(mentionNotices().map((m) => m.recipient)).toEqual(["owner-1"]);
     expect(ownerNotice()).toBeUndefined();
+  });
+});
+
+describe("comments reach open pages", () => {
+  function call(c: Ctx, method: string, path: string, body?: unknown): Promise<Response> {
+    return routeWorkspaceRequest(
+      c,
+      new Request(`https://node.test/api/docs/d1/comments${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }),
+    );
+  }
+
+  beforeEach(() => {
+    vi.mocked(getComment).mockReset().mockResolvedValue({ num: 1, author: "human-7f3a", parent_num: null } as never);
+    vi.mocked(setCommentResolved).mockReset().mockResolvedValue({ num: 1, resolved: true } as never);
+    vi.mocked(deleteComment).mockReset().mockResolvedValue(true as never);
+  });
+
+  it("tells the document's open pages after a comment, a resolve and a delete", async () => {
+    await comment(ctx(), { body: "Looks good" });
+    expect(actorPaths()).toEqual(["/comments-changed"]);
+    await call(ctx(), "PATCH", "/1", { resolved: true });
+    await call(ctx(), "DELETE", "/1");
+    expect(actorPaths()).toEqual(["/comments-changed", "/comments-changed", "/comments-changed"]);
+  });
+
+  it("opens no document actor for a database's comments", async () => {
+    mockGetDoc.mockResolvedValue({ ...DOC, doc_type: "database" });
+    expect((await comment(ctx(), { body: "Row 3 looks off" })).status).toBe(201);
+    await call(ctx(), "DELETE", "/1");
+    expect(actorPaths()).toEqual([]);
+  });
+
+  it("tells nobody when nothing changed", async () => {
+    vi.mocked(deleteComment).mockResolvedValue(false as never);
+    expect((await call(ctx(), "DELETE", "/1")).status).toBe(404);
+    expect(actorPaths()).toEqual([]);
+  });
+
+  it("names the comment in each notification, so it opens there and two comments are two notifications", async () => {
+    mockAddComment.mockImplementation(async () => ({ num: 7, parent_num: null, mentions: [{ alias: "u_bob", username: "bob" }] }));
+    await comment(ctx(), { body: "@bob please check" });
+    expect(mentionNotices()[0]).toMatchObject({ recipient: "u_bob", commentNum: 7 });
+    expect(ownerNotice()).toMatchObject({ commentNum: 7 });
   });
 });

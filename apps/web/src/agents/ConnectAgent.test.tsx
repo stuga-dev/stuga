@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
 import { act } from "react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { Root } from "react-dom/client";
 import { mountInto, typeInto } from "../test/form-input";
 import { toastBodies, toasts } from "../test/toast";
@@ -182,9 +183,9 @@ describe("ConnectAgent", () => {
     clickTab(tab);
     expect(text()).toContain(`curl -fsSL 'https://stuga.team.example.com/api/agent-install/${tab}' | sh`);
     expect(text()).toContain(
-      tab === "codex" ? "Installs Stuga and opens browser sign-in" : "Settings → Customizations → Installed MCP Servers",
+      tab === "codex" ? "It installs Stuga and opens a browser tab to sign in" : "Settings → Customizations → Installed MCP Servers",
     );
-    expect(text()).toContain(`Restart ${host}`);
+    expect(text()).toMatch(new RegExp(`restart ${host}`, "i"));
     expect(text()).not.toContain("can you access my Stuga workspace?");
     // Nothing on the page mints, shows or asks for a key: the sign-in grants the access.
     expect(text()).not.toContain("?key=");
@@ -327,15 +328,43 @@ describe("ConnectAgent", () => {
     expect(text()).toContain("fully restart Claude");
   });
 
-  it("does not offer a connector this node cannot answer", async () => {
+  it("does not offer a connector this node cannot answer, and says what it would take", async () => {
     await mount(LOCAL);
     expect(offered()).not.toContain("Claude");
     expect(text()).not.toContain("Add custom connector");
+    expect(text()).toContain("Claude on the web needs this node at a public https address. An administrator can set that up under Remote access.");
+  });
+
+  it("takes an administrator to Remote access from that line", async () => {
+    act(() => root.unmount());
+    container.remove();
+    agents.setup.mockResolvedValue(LOCAL);
+    ({ host: container, root } = mountInto());
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/settings/agents"]}>
+          <Routes>
+            <Route path="/settings/agents" element={<ConnectAgent onKeyCreated={() => {}} isNodeAdmin />} />
+            <Route path="/settings/node/remote" element={<p>Remote access page</p>} />
+          </Routes>
+        </MemoryRouter>,
+      ),
+    );
+    act(() => link(/^Remote access$/)!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(text()).toContain("Remote access page");
+  });
+
+  it("says whether the address works beyond this computer", async () => {
+    await mount(LOCAL);
+    expect(text()).toContain("Address http://localhost:8787 · This computer only");
+    await mount(LAN);
+    expect(text()).toContain("Address http://192.168.1.50:8787 · Reachable from other devices");
   });
 
   it("keeps the connector where a node can actually be dialled", async () => {
     await mount(REACHABLE);
     expect(offered()).toContain("Claude");
+    expect(text()).not.toContain("needs this node at a public https address");
     clickTab("claude");
     expect(text()).toContain("Add custom connector");
   });
@@ -429,16 +458,16 @@ describe("ConnectAgent", () => {
 
   it("keeps the hand-written config underneath the one-click path, not instead of it", async () => {
     await mount(LOCAL);
+    // A disclosure row of its own, like Uninstall's, so neither reads as the other's heading.
     const toggle = link(/Set it up by hand instead/);
-    expect(toggle).toBeTruthy();
-    const manual = document.querySelector('[data-testid="manual-setup"]');
-    expect(manual!.hasAttribute("hidden")).toBe(true);
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(link(/Uninstall from Claude Desktop/)?.getAttribute("aria-expanded")).toBe("false");
     expect(text()).toContain('"command": "/usr/local/bin/node"');
     expect(text()).toContain("Settings → Developer");
     act(() => {
       toggle!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(document.querySelector('[data-testid="manual-setup"]')!.hasAttribute("hidden")).toBe(false);
+    expect(link(/Set it up by hand instead/)?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("says a development run has no extension, without sending anyone to build a copy of Stuga", async () => {
@@ -451,8 +480,8 @@ describe("ConnectAgent", () => {
   it("opens the hand-written config by itself when it is the only path", async () => {
     await mount({ ...LOCAL, bundle: { available: false } });
     expect(button(/Add to Claude Desktop/)).toBeUndefined();
-    expect(document.querySelector('[data-testid="manual-setup"]')!.hasAttribute("hidden")).toBe(false);
-    expect(link(/Set it up by hand instead/)).toBeUndefined();
+    expect(document.querySelector('[data-testid="manual-setup"]')).toBeTruthy();
+    expect(link(/Set it up by hand instead/)?.getAttribute("aria-expanded")).toBe("true");
     expect(text()).toContain(`"${ENTRY}"`);
   });
 
@@ -558,14 +587,14 @@ describe("ConnectAgent — Pi tab", () => {
 });
 
 describe("ConnectAgent — the client picker", () => {
-  it("groups the clients, with Other clients last", () => {
+  it("groups the clients, with Other apps last", () => {
     const trigger = pickerTrigger()!;
     act(() => trigger.click());
     expect(text()).toContain("Chat apps");
     expect(text()).toContain("Editors");
     expect(text()).toContain("Coding agents");
     act(() => trigger.click());
-    expect(offered().at(-1)).toBe("Other clients");
+    expect(offered().at(-1)).toBe("Other apps");
   });
 
   it("opens where this browser last left it", async () => {

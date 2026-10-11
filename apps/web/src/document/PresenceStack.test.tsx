@@ -98,9 +98,9 @@ function posOf(phrase: string): number {
 }
 
 /** A remote collaborator, optionally with a caret somewhere in the document. */
-function connect(label: string, opts: { at?: string; selecting?: [string, string]; name?: string } = {}) {
+function connect(label: string, opts: { at?: string; selecting?: [string, string]; name?: string; since?: number; color?: string } = {}) {
   const peer = new Awareness(new Y.Doc());
-  const user = { name: opts.name ?? label.split("@")[0], label, color: "#2563eb" };
+  const user = { name: opts.name ?? label.split("@")[0], label, color: opts.color ?? "#2563eb", since: opts.since };
   let cursor: unknown = null;
   if (opts.selecting) {
     // A real selection: anchor where they started, head where their caret is.
@@ -158,7 +158,7 @@ describe("the roster as an accessibility surface", () => {
     const badge = buttonFor("ada@acme.com");
     expect(badge.tagName).toBe("BUTTON");
     expect(badge.getAttribute("type")).toBe("button");
-    expect(badge.textContent).toBe("AD");
+    expect(badge.textContent).toBe("A");
   });
 
   it("keeps the overflow count out of the a11y tree, since the group already names everyone", () => {
@@ -181,6 +181,45 @@ describe("the roster as an accessibility surface", () => {
 
     expect(badges()).toHaveLength(1 + LOCAL);
     buttonFor("ada@acme.com"); // asserts there is exactly one
+  });
+});
+
+describe("order and colour", () => {
+  it("puts you first, then everyone else in the order they arrived", () => {
+    connect("grace@acme.com", { since: 200 });
+    connect("ada@acme.com", { since: 100 });
+    connect("liv@acme.com", { since: 300 });
+    render();
+
+    const [first, ...rest] = badges();
+    expect(first!.tagName, "your own badge is not a button").toBe("SPAN");
+    expect(rest.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Go to ada@acme.com",
+      "Go to grace@acme.com",
+      "Go to liv@acme.com",
+    ]);
+  });
+
+  it("gives everyone present a colour of their own, though they publish the same one", () => {
+    connect("ada@acme.com", { since: 100 });
+    connect("grace@acme.com", { since: 200 });
+    render();
+
+    const colours = badges().map((b) => b.style.background);
+    expect(colours).toHaveLength(3);
+    expect(new Set(colours).size).toBe(3);
+  });
+
+  it("keeps the first to arrive in the colour they publish", () => {
+    connect("ada@acme.com", { since: 100, color: "#0f766e" });
+    connect("grace@acme.com", { since: 200, color: "#0f766e" });
+    render();
+
+    const ada = buttonFor("ada@acme.com");
+    const grace = buttonFor("grace@acme.com");
+    // jsdom reports the background as rgb().
+    expect(ada.style.background).toBe("rgb(15, 118, 110)");
+    expect(grace.style.background).not.toBe("rgb(15, 118, 110)");
   });
 });
 

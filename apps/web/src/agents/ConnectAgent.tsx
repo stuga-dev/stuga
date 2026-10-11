@@ -11,11 +11,14 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Selector, type SelectorProps } from "@astryxdesign/core/Selector";
 import { Spinner } from "@astryxdesign/core/Spinner";
+import { Link } from "@astryxdesign/core/Link";
 import { Plug } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
 import { Agents } from "../api";
 import { LoadFailed } from "../ui/LoadFailed";
 import { t } from "../i18n/i18n";
+import { tRich } from "../i18n/rich";
 import { CLIENT_GROUPS, clientConfigs, clientTabs, type ClientTab, tabLabel } from "./client-configs";
 import { useMintKey } from "./MintKey";
 import { ClaudeCodeTab } from "./tabs/ClaudeCodeTab";
@@ -30,18 +33,26 @@ import { OtherClientsTab } from "./tabs/OtherClientsTab";
 interface AgentClientsProps {
   /** A key was minted, so a list of keys can reload. */
   onKeyCreated: () => void;
+  /** Whether the viewer can turn remote access on, so the page can take them there. */
+  isNodeAdmin?: boolean;
 }
 
-export function ConnectAgent({ onKeyCreated }: AgentClientsProps) {
+export function ConnectAgent({ onKeyCreated, isNodeAdmin }: AgentClientsProps) {
   return (
     <Card>
       <VStack gap={3} style={{ padding: 20 }}>
         <Heading level={2}>{t("agents.connect.title")}</Heading>
         <Text color="secondary">{t("agents.connect.intro")}</Text>
-        <AgentClients onKeyCreated={onKeyCreated} />
+        <AgentClients onKeyCreated={onKeyCreated} isNodeAdmin={isNodeAdmin} />
       </VStack>
     </Card>
   );
+}
+
+/** Remote access, reached in-app: a full page load would drop the in-memory session. */
+function RemoteAccessLink({ children }: { children: React.ReactNode }) {
+  const nav = useNavigate();
+  return <Link onClick={() => nav("/settings/node/remote")}>{children}</Link>;
 }
 
 /** Which client this browser last picked: a per-viewer convenience, so storage may be missing or refuse. */
@@ -64,7 +75,7 @@ function writePicked(tab: ClientTab): void {
 }
 
 /** A picker of clients with the chosen one's setup for this node, also offered at first run. */
-export function AgentClients({ onKeyCreated }: AgentClientsProps) {
+export function AgentClients({ onKeyCreated, isNodeAdmin = false }: AgentClientsProps) {
   const [setup, setSetup] = useState<AgentSetup | null>(null);
   const [failed, setFailed] = useState(false);
   // The client the user picked, here or last time; until then the node's answer decides the first one.
@@ -91,7 +102,7 @@ export function AgentClients({ onKeyCreated }: AgentClientsProps) {
       </VStack>
     );
   }
-  return <ClientTabs setup={setup} tab={tab} onTab={pick} mint={mint} />;
+  return <ClientTabs setup={setup} tab={tab} onTab={pick} mint={mint} isNodeAdmin={isNodeAdmin} />;
 }
 
 function ClientTabs({
@@ -99,11 +110,13 @@ function ClientTabs({
   tab,
   onTab,
   mint,
+  isNodeAdmin,
 }: {
   setup: AgentSetup;
   tab: ClientTab | null;
   onTab: (tab: ClientTab) => void;
   mint: ReturnType<typeof useMintKey>;
+  isNodeAdmin: boolean;
 }) {
   const tabs = clientTabs(setup);
   const active = tab !== null && tabs.includes(tab) ? tab : tabs[0];
@@ -128,6 +141,22 @@ function ClientTabs({
         searchPlaceholder={t("agents.connect.searchApps")}
         width="min(100%, 20rem)"
       />
+      {/* Claude on the web dials from its own cloud: say why it is not offered, and where that changes. */}
+      {!tabs.includes("claude") && (
+        <Text size="sm" color="secondary">
+          {isNodeAdmin
+            ? tRich("agents.connect.webNeedsPublicAdmin", { link: (chunks) => <RemoteAccessLink>{chunks}</RemoteAccessLink> })
+            : t("agents.connect.webNeedsPublic")}
+        </Text>
+      )}
+      {active !== "claude" && (
+        <Text size="sm" color="secondary">
+          {tRich(configs.address.thisComputerOnly ? "agents.address.thisComputer" : "agents.address.otherDevices", {
+            url: configs.address.url,
+            code: (chunks) => <code>{chunks}</code>,
+          })}
+        </Text>
+      )}
       {active === "claude" && <ClaudeConnectorTab mcpUrl={configs.hostedMcpUrl} />}
       {active === "claude-desktop" && (
         <ClaudeDesktopTab

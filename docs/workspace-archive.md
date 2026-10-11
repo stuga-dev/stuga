@@ -21,17 +21,23 @@ workspace, and converts a Notion export or a folder of Markdown into one first
 
 ```
 stuga.json                      the manifest
+README.md                       optional: what the files are, for people
 Start here.md                   a document
 Laws/个人信息保护法.md          a document in the folder Laws
 Obligations/                    a database's folder
   Obligations.jsonl             a table's rows
+  Obligations.csv               optional: the same rows for a spreadsheet
   pages/gdpr-breach.md          a row's page
 media/<sha256>.png              an image, named for its bytes
 media/<sha256>/Brief.pdf        a file a body links to, named for its bytes and its name
 ```
 
 Text files are UTF-8, with `\n` line ends and no byte order mark. A folder needs no entry of its
-own: the manifest lists it. Nothing else belongs in an archive.
+own: the manifest lists it. Two files are for people, and an import does not read them: a
+top-level `README.md` no item uses, and beside each rows file a `.csv` of the same name, the table
+as a spreadsheet opens it (a byte order mark, a header of column names, `\r\n` line ends; a
+checkbox `TRUE` or `FALSE`, a files cell its paths). Stuga's export writes both. Nothing else
+belongs in an archive.
 
 An import also reads a zip whose files all sit in one folder at its top, which is what a Mac's
 **Compress** makes of the folder Safari unzips a download into, and leaves `__MACOSX/` aside.
@@ -97,11 +103,12 @@ characters, one line, with no space at either end.
 
 - `name` is unique in the database, ignoring case. `file` is a `.jsonl` file directly in the
   database's folder.
-- `columns`: at most 64, each `{name, type, choices?, description?}`. `type` is `text`, `number`,
+- `columns`: at most 64, each `{name, type, choices?, description?, format?}`. `type` is `text`, `number`,
   `checkbox`, `date`, `single_select` or `files`. A name is unique in the table ignoring case, and is not
   `_id`, `_created_at`, `_updated_at` or `_doc_id`. Only a `single_select` column has `choices`: 1
   to 50 distinct strings. A `description` is 1 to 500 characters, with no space or line break at
-  either end.
+  either end. Only a `number` column has a `format`, how its cells show: `{style, decimals?,
+  grouping?, currency?}` as a column `PATCH` takes it ([API](api.md)).
 - `views`: at most 20, each `{name, kind, position, filter, sorts, group_by, hidden_columns,
   config}`, with names unique in the table ignoring case. `kind` is `table`, and `position` a whole
   number, 0 or more. A view names columns by name; `filter`, `sorts` and `group_by` may also name
@@ -121,8 +128,8 @@ characters, one line, with no space at either end.
 ## Bodies
 
 A body file holds the document's Markdown as Stuga writes it, followed by one newline; an empty
-document is an empty file. Stuga's Markdown is CommonMark with strikethrough, GFM tables and
-footnotes, and no raw HTML.
+document is an empty file. Stuga's Markdown is CommonMark with strikethrough, GFM tables and task
+lists (`* [ ] ` and `* [x] `), and footnotes, and no raw HTML.
 
 With `title_source: "heading"`, the first line of the body's text, written as a title is, is the
 title, as a heading or not: `# Start here` gives `Start here`.
@@ -260,7 +267,7 @@ checks an unzipped archive against this page: the manifest, that every file it n
 nothing else is, that each body is Markdown as Stuga writes it (it prints the lines that differ)
 and gives its title, every row, every link and image, and every sample step, replayed as an import
 proposes it. It holds images to 10 MB, the upload limit every node starts with. Names starting with
-a dot are skipped, and a top-level `README.md` that no item uses is allowed. It exits 0 when the
+a dot are skipped, and a top-level `README.md` that no item uses, and a table's `.csv`, are allowed. It exits 0 when the
 archive passes and 2 when it does not. `--json` writes one object: `{ok, counts, issues: [{at,
 message, diff?}]}`.
 

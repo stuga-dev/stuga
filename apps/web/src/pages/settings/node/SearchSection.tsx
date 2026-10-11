@@ -7,6 +7,9 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 import { NodeSettings as NodeApi, type NodeOperationalSettings } from "../../../api";
 import { t } from "../../../i18n/i18n";
+import { tRich } from "../../../i18n/rich";
+import { Link } from "@astryxdesign/core/Link";
+import { useNavigate } from "react-router-dom";
 import { presentServerMessage } from "../../../lib/http/server-messages";
 import { SEARCH_LANGUAGES_LABEL, SearchLanguageList } from "../../../ui/SearchLanguageList";
 import { SectionStatusBanners, useSectionStatus } from "./status";
@@ -16,6 +19,7 @@ const POLL_MS = 2000;
 
 /** The languages search gets a tokenizer for; a change rebuilds the index while search keeps answering. */
 export function SearchSection({ ops, onSaved }: { ops: NodeOperationalSettings; onSaved: (s: NodeOperationalSettings) => void }) {
+  const nav = useNavigate();
   const status = useSectionStatus();
   const [languages, setLanguages] = useState(ops.search.languages);
   const [busy, setBusy] = useState(false);
@@ -80,6 +84,15 @@ export function SearchSection({ ops, onSaved }: { ops: NodeOperationalSettings; 
           )}
         </HStack>
       </VStack>
+      <Text type="supporting" color="secondary">
+        {tRich("node.search.strictnessWhere", {
+          link: (chunks) => (
+            <Link type="supporting" onClick={() => nav("/settings/node/ai")}>
+              {chunks}
+            </Link>
+          ),
+        })}
+      </Text>
     </VStack>
   );
 }

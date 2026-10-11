@@ -25,6 +25,7 @@ import {
   peerName,
   peerSelectionAttrs,
   renderPeerCaret,
+  roomPeople,
 } from "./peer-carets";
 
 // A mention's node view looks its person up.
@@ -35,6 +36,9 @@ vi.mock("../api", async (orig) => {
 
 /** Where a client that published nothing usable lands in the palette. */
 const paletteFor = (clientId: number) => PEER_PALETTE[clientId % PEER_PALETTE.length]!;
+
+/** A palette colour well apart from the local user's (`colorFor("me")`, blue). */
+const AMBER = "#b45309";
 
 /** What y-tiptap substitutes for a peer with no colour. */
 const Y_TIPTAP_ORANGE = "#ffa500";
@@ -145,6 +149,94 @@ describe("peerColor", () => {
   it("survives a client id that is not a usable number", () => {
     expect(peerColor({}, Number.NaN)).toBe(PEER_PALETTE[0]);
     expect(peerColor({}, -7)).toBe(paletteFor(7));
+  });
+});
+
+describe("roomPeople", () => {
+  const TEAL = "#0f766e";
+  const BLUE = "#2563eb";
+  const states = (entries: [number, Record<string, unknown>][]) => new Map(entries.map(([id, user]) => [id, { user }]));
+
+  it("gives two people who share a home colour different colours, the earlier keeping theirs", () => {
+    const people = roomPeople(
+      states([
+        [7, { name: "Omar", id: "u_omar", color: TEAL, since: 2_000 }],
+        [3, { name: "Ada", id: "u_ada", color: TEAL, since: 1_000 }],
+        [5, { name: "Lin", id: "u_lin", color: BLUE, since: 3_000 }],
+      ]),
+    );
+
+    expect(people.map((p) => p.user.name)).toEqual(["Ada", "Omar", "Lin"]);
+    expect(people[0]!.color).toBe(TEAL);
+    expect(people[1]!.color).not.toBe(TEAL);
+    expect(new Set(people.map((p) => p.color)).size).toBe(3);
+  });
+
+  it("comes out the same on every screen, whatever order the states arrived in", () => {
+    const a: [number, Record<string, unknown>][] = [
+      [1, { name: "Ada", id: "u_a", color: TEAL, since: 5 }],
+      [2, { name: "Grace", id: "u_g", color: TEAL, since: 5 }],
+      [3, { name: "Liv", id: "u_l", color: TEAL, since: 9 }],
+    ];
+    const colours = (entries: typeof a) => Object.fromEntries(roomPeople(states(entries)).map((p) => [p.key, p.color]));
+
+    expect(colours([...a].reverse())).toEqual(colours(a));
+  });
+
+  it("counts a person's tabs as one person, dated from the first", () => {
+    const people = roomPeople(
+      states([
+        [1, { name: "Ada", id: "u_ada", color: TEAL, since: 50 }],
+        [2, { name: "Omar", id: "u_omar", color: TEAL, since: 20 }],
+        [3, { name: "Ada", id: "u_ada", color: TEAL, since: 10 }],
+      ]),
+    );
+
+    expect(people).toHaveLength(2);
+    expect(people[0]!.clientIds.sort()).toEqual([1, 3]);
+    expect(people[0]!.color).toBe(TEAL);
+    expect(people[1]!.color).not.toBe(TEAL);
+  });
+
+  it("moves someone whose home colour is a near neighbour of one in use", () => {
+    const RED = "#dc2626";
+    const ORANGE = "#c2410c";
+    const people = roomPeople(
+      states([
+        [1, { name: "Liv", id: "u_liv", color: RED, since: 1 }],
+        [2, { name: "Omar", id: "u_omar", color: ORANGE, since: 2 }],
+      ]),
+    );
+
+    expect(people[0]!.color).toBe(RED);
+    expect(people[1]!.color).not.toBe(ORANGE);
+    const slot = (c: string) => (PEER_PALETTE as readonly string[]).indexOf(c);
+    const gap = Math.abs(slot(people[0]!.color) - slot(people[1]!.color));
+    expect(Math.min(gap, PEER_PALETTE.length - gap), "far apart on the wheel").toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps everyone's home colour when they already stand apart", () => {
+    const people = roomPeople(
+      states([
+        [1, { name: "Liv", id: "u_liv", color: "#2563eb", since: 1 }],
+        [2, { name: "Omar", id: "u_omar", color: "#dc2626", since: 2 }],
+        [3, { name: "Ada", id: "u_ada", color: "#15803d", since: 3 }],
+      ]),
+    );
+
+    expect(people.map((p) => p.color)).toEqual(["#2563eb", "#dc2626", "#15803d"]);
+  });
+
+  it("hands colours back as people leave, so a newcomer gets their home colour when it is free", () => {
+    const ada: [number, Record<string, unknown>] = [1, { name: "Ada", id: "u_ada", color: TEAL, since: 1 }];
+    const omar: [number, Record<string, unknown>] = [2, { name: "Omar", id: "u_omar", color: TEAL, since: 2 }];
+
+    expect(roomPeople(states([ada, omar]))[1]!.color).not.toBe(TEAL);
+    expect(roomPeople(states([omar]))[0]!.color).toBe(TEAL);
+  });
+
+  it("ignores states with no user, as a tab that has not published yet", () => {
+    expect(roomPeople(new Map([[1, {}], [2, { user: null }]]))).toEqual([]);
   });
 });
 
@@ -266,15 +358,37 @@ describe("a collaborator's caret in a live editor", () => {
   const isLit = (id: number) => caretFor(id)?.hasAttribute("data-active") ?? false;
   const litCarets = () => editor.view.dom.querySelectorAll("[data-peer-caret][data-active]").length;
 
+  describe("copying", () => {
+    it("never carries a caret, or its word joiner, into what is copied", () => {
+      const peer = connectPeer();
+      peer.moveTo(posOf("brown"));
+      expect(caretFor(peer.clientID)!.textContent).toBe("\u2060");
+
+      editor.commands.setTextSelection({ from: posOf("The quick"), to: posOf("jumps.") + "jumps.".length });
+      const data = new Map<string, string>();
+      const copy = Object.assign(new Event("copy", { bubbles: true, cancelable: true }), {
+        clipboardData: { clearData: () => data.clear(), setData: (type: string, value: string) => data.set(type, value) },
+      });
+      editor.view.dom.dispatchEvent(copy);
+
+      // The editor's own copy serializes the document, where carets do not exist.
+      expect(copy.defaultPrevented).toBe(true);
+      expect(data.get("text/plain")).toBe("The quick brown fox jumps.");
+      expect(data.get("text/html")).not.toContain("\u2060");
+      expect(data.get("text/html")).not.toContain("collaboration-carets");
+    });
+  });
+
   describe("markup", () => {
     it("paints a thin caret and an inline name tag, not a block across the paragraph", () => {
-      const peer = connectPeer();
+      // Amber stands apart from the local user's colour, so the room leaves it as published.
+      const peer = connectPeer("Liv", AMBER);
       peer.moveTo(posOf("brown"), posOf("brown") + "brown fox".length);
 
       const caret = caretFor(peer.clientID);
       expect(caret, "the peer published a cursor, so there is a caret").not.toBeNull();
       expect(caret!.tagName).toBe("SPAN");
-      expect(caret!.style.getPropertyValue("--peer-color")).toBe(colorFor("Liv"));
+      expect(caret!.style.getPropertyValue("--peer-color")).toBe(AMBER);
 
       const label = caret!.querySelector(".collaboration-carets__label");
       expect(label!.tagName).toBe("SPAN");
@@ -283,13 +397,13 @@ describe("a collaborator's caret in a live editor", () => {
     });
 
     it("paints the peer's selected range through --peer-color", () => {
-      const peer = connectPeer();
+      const peer = connectPeer("Liv", AMBER);
       peer.moveTo(posOf("brown"), posOf("brown") + "brown fox".length);
 
       const selection = editor.view.dom.querySelector<HTMLElement>(".collaboration-carets__selection");
       expect(selection, "a peer with a non-empty range gets an inline decoration").not.toBeNull();
-      expect(selection!.getAttribute("style")).toContain(`--peer-color: ${colorFor("Liv")}`);
-      expect(selection!.style.getPropertyValue("--peer-color")).toBe(colorFor("Liv"));
+      expect(selection!.getAttribute("style")).toContain(`--peer-color: ${AMBER}`);
+      expect(selection!.style.getPropertyValue("--peer-color")).toBe(AMBER);
       // On the computed value: a browser normalises a hex alpha suffix to rgba().
       expect(selection!.style.backgroundColor).toBe("");
     });
@@ -325,12 +439,27 @@ describe("a collaborator's caret in a live editor", () => {
       expect(published.color).toMatch(/^#[0-9a-f]{6}$/);
     });
 
+    it("colours the local caret from the account alias, as the person's avatar is", () => {
+      const mounted = stugaEditorExtensions({
+        ydoc: new Y.Doc(),
+        awareness: {},
+        alias: "Liv Berg",
+        account: "u_liv",
+        onClickComment: () => {},
+      }).find((extension) => extension.name === "collaborationCaret");
+
+      const published = (mounted!.options as { user: { name: string; color: string } }).user;
+      expect(published.color).toBe(colorFor("u_liv"));
+      expect(published.name).toBe("Liv Berg");
+    });
+
     it("gives a peer who published no colour a palette hue, not y-tiptap's orange", () => {
       const peer = connectPeer("Ada", null);
       peer.moveTo(posOf("fox"));
 
+      // Their client's palette slot, unless the room moves it away from the local user's colour.
       const painted = caretFor(peer.clientID)!.style.getPropertyValue("--peer-color");
-      expect(painted).toBe(paletteFor(peer.clientID));
+      expect(PEER_PALETTE as readonly string[]).toContain(painted);
       expect(painted).not.toBe(Y_TIPTAP_ORANGE);
     });
 
@@ -346,14 +475,28 @@ describe("a collaborator's caret in a live editor", () => {
       expect(nameOn(node!)).toBe("Livia");
     });
 
+    it("paints two peers who publish the same colour in different colours", () => {
+      const ada = connectPeer("Ada", "#0f766e");
+      ada.moveTo(posOf("quick"));
+      const grace = connectPeer("Grace", "#0f766e");
+      grace.moveTo(posOf("lazy"));
+
+      const adaColour = caretFor(ada.clientID)!.style.getPropertyValue("--peer-color");
+      const graceColour = caretFor(grace.clientID)!.style.getPropertyValue("--peer-color");
+      expect(adaColour).toMatch(/^#[0-9a-f]{6}$/);
+      expect(graceColour).toMatch(/^#[0-9a-f]{6}$/);
+      expect(adaColour).not.toBe(graceColour);
+    });
+
     it("still paints a caret for a peer whose colour it cannot use", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const peer = connectPeer("Ada", "hsl(300,70%,55%)");
       peer.moveTo(posOf("quick"), posOf("quick") + 5);
 
-      expect(caretFor(peer.clientID)!.style.getPropertyValue("--peer-color")).toBe(paletteFor(peer.clientID));
+      const painted = caretFor(peer.clientID)!.style.getPropertyValue("--peer-color");
+      expect(PEER_PALETTE as readonly string[]).toContain(painted);
       const selection = editor.view.dom.querySelector<HTMLElement>(".collaboration-carets__selection");
-      expect(selection!.style.getPropertyValue("--peer-color")).toBe(paletteFor(peer.clientID));
+      expect(selection!.style.getPropertyValue("--peer-color")).toBe(painted);
       warn.mockRestore();
     });
 

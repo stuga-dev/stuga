@@ -9,7 +9,7 @@
  */
 import type { markdownToDoc } from "@stuga/crdt-ops";
 import type { SafeImageMime } from "@stuga/protocol/api/media";
-import { validateCellValue, validateSelectChoices } from "@stuga/protocol/databases/cells";
+import { validateCellValue, validateNumberFormat, validateSelectChoices } from "@stuga/protocol/databases/cells";
 import { filterOpNeedsValue } from "@stuga/protocol/databases/filters";
 import {
   DATABASE_FILTER_MAX_DEPTH,
@@ -31,9 +31,11 @@ import {
   ROW_FILTER_OPS,
   type DatabaseColumnType,
   type DatabaseViewKind,
+  type NumberFormat,
   type RowFilterOp,
   type RowValue,
 } from "@stuga/protocol/databases/types";
+import { CSV_BOM, csvCell } from "@stuga/protocol/domain/audit";
 import { MAX_AGENT_INSTRUCTIONS_CHARS } from "@stuga/protocol/domain/limits";
 import { UNSAFE_TEXT, hasVisibleText } from "@stuga/protocol/domain/node-name";
 import { WORKSPACE_IMPORT_MAX_BYTES } from "@stuga/protocol/domain/workspaces";
@@ -165,6 +167,8 @@ export interface ArchiveColumn {
   /** single_select only. */
   choices?: string[];
   description?: string;
+  /** number only: how its cells show, as currency, a percent or a set number of decimals. */
+  format?: NumberFormat;
 }
 
 /** A leaf names its column by name, or one of a row's own fields (`_id`, `_created_at`, `_updated_at`, `_doc_id`). */
@@ -564,6 +568,12 @@ function parseColumn(raw: unknown, at: string, seen: Set<string>): ArchiveColumn
   }
   if (o.description !== undefined) {
     column.description = text(o, "description", at, { max: DATABASE_MAX_COLUMN_DESCRIPTION_CHARS, multiline: true, trimmed: true });
+  }
+  if (o.format !== undefined) {
+    if (type !== "number") fail(`${at}.format`, "only a number column has a format");
+    const format = validateNumberFormat(o.format);
+    if (!format.ok) fail(`${at}.format`, format.reason);
+    column.format = format.format;
   }
   return column;
 }
@@ -1081,6 +1091,29 @@ export function formatTableRows(table: ArchiveTable, rows: readonly ArchiveRow[]
       return `${JSON.stringify(line)}\n`;
     })
     .join("");
+}
+
+/** Where a table's copy for spreadsheets sits: beside its rows file, `Tasks/Tasks.csv`. An import does not read it. */
+export const tableCsvPath = (rowsFile: string): string => rowsFile.replace(/\.jsonl$/, ".csv");
+
+/**
+ * A table as a spreadsheet opens it: a byte order mark, so Excel reads UTF-8, a header of the
+ * column names, and a line per row, `\r\n` ended. A checkbox is TRUE or FALSE and a files cell its
+ * files' paths, one per line; text that would start a formula is kept as text.
+ */
+export function tableCsv(table: ArchiveTable, rows: readonly ArchiveRow[]): string {
+  const line = (cells: string[]): string => `${cells.join(",")}\r\n`;
+  const cell = (column: ArchiveColumn, value: RowValue | undefined): string => {
+    if (value === null || value === undefined) return "";
+    if (column.type === "checkbox") return value === 1 ? "TRUE" : "FALSE";
+    if (typeof value === "number") return String(value);
+    return csvCell(column.type === "files" ? cellFilePaths(value).join("\n") : value);
+  };
+  return (
+    CSV_BOM +
+    line(table.columns.map((column) => csvCell(column.name))) +
+    rows.map((row) => line(table.columns.map((column) => cell(column, Object.hasOwn(row.values, column.name) ? row.values[column.name] : undefined)))).join("")
+  );
 }
 
 // ---- Links and media ------------------------------------------------------------------------------

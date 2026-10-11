@@ -5,7 +5,7 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { Banner } from "@astryxdesign/core/Banner";
 import { MultiSelector } from "@astryxdesign/core/MultiSelector";
 import { Selector } from "@astryxdesign/core/Selector";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { KeyRound } from "lucide-react";
 import { AgentKeys, Folders, type Folder, type KeyNarrowing } from "../api";
 import { errorMessage } from "../lib/http/client";

@@ -345,8 +345,8 @@ async function boot(): Promise<void> {
         .then((languages) => searchLanguages.rebuild(languages ?? []))
         .catch((err: unknown) => console.warn("[node] could not read the search languages setup chose", err));
     },
-    onInviteRedeemed: ({ alias, tokenHash, workspaceId, role }) =>
-      recordSignInAudit(jobs, alias, workspaceId, inviteRedeemedAudit(tokenHash, role)),
+    onInviteRedeemed: ({ alias, tokenHash, workspaceId, role, invite }) =>
+      recordSignInAudit(jobs, alias, workspaceId, inviteRedeemedAudit(tokenHash, role, invite)),
     // Node-level rows, like a minted password reset: how a person signs in belongs to no workspace.
     onIdentityChange: ({ alias, action, detail }) =>
       recordSignInAudit(jobs, alias, null, { action, targetKind: "node", targetId: cfg.publicOrigin, detail }),

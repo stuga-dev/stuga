@@ -8,7 +8,7 @@ import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import type { AccountRow, CredentialArrival, DirectoryRow, NodeAdminRow, RefreshSessionRow, SignedInWith, UserRow } from "./types.js";
 import { liveSessionQuery, lockSignIns, stillHolds, type StillHolds } from "./session-live.js";
 import { daysAgo, escapeLike } from "./sql.js";
-import { redeemWorkspaceInviteIn } from "./workspaces.js";
+import { redeemWorkspaceInviteIn, type InviteLabel } from "./workspaces.js";
 import type { Sql } from "./client.js";
 
 // ---- Directory ------------------------------------------------------------------
@@ -164,6 +164,8 @@ const ACCOUNT = (sql: Sql) => sql`
 export interface InviteJoin {
   workspaceId: string;
   role: WorkspaceRole;
+  /** The link it joined with, as its row in the audit log names it. */
+  invite?: InviteLabel;
 }
 
 /**
@@ -221,7 +223,7 @@ async function spendInvite(
   if (!inviteHash) return null;
   const redeemed = await redeemWorkspaceInviteIn(tx, inviteHash, alias, arrival);
   if (!redeemed.ok) throw new InviteRefused(redeemed.reason === "local_only" ? "invite_local_only" : "invite_invalid");
-  return { workspaceId: redeemed.workspaceId, role: redeemed.role };
+  return { workspaceId: redeemed.workspaceId, role: redeemed.role, invite: redeemed.invite };
 }
 
 /**
@@ -577,8 +579,14 @@ export async function redeemPasswordReset(sql: Sql, tokenHash: string, passwordH
 
 /** Whether a reset token would still work: a cheap refusal before a new password is hashed. */
 export async function passwordResetIsLive(sql: Sql, tokenHash: string): Promise<boolean> {
-  const rows = await sql`SELECT 1 FROM password_resets WHERE token_hash = ${tokenHash} AND used_at IS NULL AND expires_at > now()`;
-  return rows.length > 0;
+  return (await passwordResetAlias(sql, tokenHash)) !== null;
+}
+
+/** The account a live reset token is for; null when it is unknown, expired or spent. */
+export async function passwordResetAlias(sql: Sql, tokenHash: string): Promise<string | null> {
+  const rows = await sql<{ alias: string }[]>`
+    SELECT alias FROM password_resets WHERE token_hash = ${tokenHash} AND used_at IS NULL AND expires_at > now()`;
+  return rows[0]?.alias ?? null;
 }
 
 export async function purgePasswordResets(sql: Sql): Promise<number> {

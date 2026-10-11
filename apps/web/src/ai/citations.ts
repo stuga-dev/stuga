@@ -52,12 +52,26 @@ export function readableExcerpt(content?: string | null): string {
   return stripMarkdown(body);
 }
 
-/** A distinctive slice of the excerpt's prose, cut on a word boundary so it can still match. */
+/**
+ * A distinctive slice of the excerpt's prose, cut on a word boundary so it can
+ * still match. It comes from one line, the first long enough to be the passage:
+ * the opened document matches block by block, so text joined across two
+ * paragraphs would never be found.
+ */
 export function excerptSnippet(content?: string | null): string {
-  const cleaned = readableExcerpt(content);
-  if (cleaned.length < SNIPPET_MIN) return "";
-  if (cleaned.length <= SNIPPET_CHARS) return cleaned;
-  const cut = cleaned.slice(0, SNIPPET_CHARS);
+  if (!content) return "";
+  for (const line of content.split("\n")) {
+    if (line.trim().startsWith("#")) continue;
+    const cleaned = stripMarkdown(line);
+    if (cleaned.length >= SNIPPET_MIN) return wordPrefix(cleaned, SNIPPET_CHARS);
+  }
+  return "";
+}
+
+/** At most `max` characters of `s`, ending on a word boundary when one is far enough in. */
+export function wordPrefix(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
   const lastSpace = cut.lastIndexOf(" ");
   return lastSpace > SNIPPET_MIN ? cut.slice(0, lastSpace) : cut;
 }
@@ -84,6 +98,14 @@ export function citationHref(c: Pick<CitationDetail, "doc_id" | "heading_path" |
   if (sec) params.set("sec", sec);
   const qs = params.toString();
   return `/doc/${c.doc_id}${qs ? `?${qs}` : ""}`;
+}
+
+/** An answer as text to paste elsewhere: its markers point at source cards that do not travel with it. */
+export function answerText(answer: string): string {
+  return answer
+    .replace(/[ \t]*\[\^\d+\]/g, "")
+    .replace(/[ \t]+$/gm, "")
+    .trim();
 }
 
 /** One entry per cited document, in first-cited order (a search returns several passages per document). */

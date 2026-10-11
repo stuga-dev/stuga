@@ -2,16 +2,18 @@
  * What a document's store holds is pinned to DOC_STORE_VERSION: the keys it writes, the shape of
  * each value (checked by the type checker, since values are stored as they are typed), and the SQL
  * schema of its file as the real host leaves it. A change to any of them raises the version, with
- * the step in the host that brings an older store forward.
+ * the step in the host that brings an older store forward. So does a new node or mark type in the
+ * text, which an older build's schema cannot read: those are pinned from version 3 on.
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
-import { Heartbeat } from "@stuga/protocol/wire/opcodes";
+import { Heartbeat, TEXT_SCHEMA_VERSION } from "@stuga/protocol/wire/opcodes";
 import { createActorNamespace, type ActorHandle } from "@stuga/runtime";
 import { storeSchema } from "@stuga/runtime/testing";
+import { getStugaSchema } from "@stuga/crdt-ops";
 import { DocActor } from "./doc-actor.js";
 import type { StoredRun } from "./ledger/run-store.js";
 import type { RingState } from "./store/retention.js";
@@ -25,6 +27,19 @@ import { harness } from "../test/harness.js";
 const PINNED: Record<number, { keys: string[]; schema: string }> = {
   1: { keys: ["locked", "meta", "pending", "run-active:*", "run-order", "run:*"], schema: "f5c5bd82901d11de" },
   2: { keys: ["feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"], schema: "d0ecfe622f413eda" },
+  3: { keys: ["feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"], schema: "ac9d0a3f63b2affa" },
+};
+
+/** Per version from 3 on: the node and mark types the text may hold. A released version's entry never changes. */
+const TEXT_TYPES: Record<number, { nodes: string[]; marks: string[] }> = {
+  3: {
+    nodes: [
+      "blockquote", "bulletList", "codeBlock", "doc", "footnoteDefinition", "footnoteReference", "hardBreak", "heading",
+      "horizontalRule", "image", "listItem", "mention", "orderedList", "paragraph", "table", "tableCell", "tableHeader",
+      "tableRow", "taskItem", "taskList", "text",
+    ],
+    marks: ["bold", "code", "italic", "link", "strike", "underline"],
+  },
 };
 
 const RAISE =
@@ -96,6 +111,21 @@ describe("a document's store", () => {
       storeVersion: version,
       ...(upgrades ? { storeUpgrades: upgrades } : {}),
     });
+
+  it("holds text of the node and mark types DOC_STORE_VERSION pins", () => {
+    const schema = getStugaSchema();
+    expect(
+      { nodes: Object.keys(schema.nodes).sort(), marks: Object.keys(schema.marks).sort() },
+      `the text a document holds may have other node or mark types. ${RAISE}`,
+    ).toEqual(TEXT_TYPES[DOC_STORE_VERSION]);
+  });
+
+  it("reloads a page whose editor predates the text types it may hold", () => {
+    // TEXT_SCHEMA_VERSION is the store version that brought in the current text types.
+    const current = JSON.stringify(TEXT_TYPES[DOC_STORE_VERSION]);
+    const since = Math.min(...Object.keys(TEXT_TYPES).map(Number).filter((v) => JSON.stringify(TEXT_TYPES[v]) === current));
+    expect(TEXT_SCHEMA_VERSION, "raise TEXT_SCHEMA_VERSION (packages/protocol/src/wire/opcodes.ts) with the text types").toBe(since);
+  });
 
   it("holds the keys and the SQL schema DOC_STORE_VERSION pins", async () => {
     dir = mkdtempSync(join(tmpdir(), "stuga-doc-store-"));

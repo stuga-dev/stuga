@@ -1,7 +1,7 @@
 /**
  * Where a link someone makes for another person opens (GET /api/link-addresses): on this node's
  * network, or anywhere, through the remote address while it is on. The invite and password link
- * dialogs share this switch and the line under a link that opens only nearby.
+ * dialogs share this switch and the line under a new link that says who can open it.
  */
 import { useEffect, useState } from "react";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
@@ -48,15 +48,19 @@ export function LinkAddressSwitch({
   );
 }
 
-/** "Opens only on this network." under a link to the node's own address, when that is not obvious. */
-export function localOnlyNote(addresses: LinkAddresses | null, address: LinkAddress): string | null {
-  if (!addresses || address !== "local") return null;
-  if (addresses.local === "computer") return t("ui.linkAddress.onlyComputer");
-  return addresses.remote ? t("ui.linkAddress.onlyNetwork") : null;
+/**
+ * Who can open a link that was just made, under it: only this computer when the node's own address
+ * is this computer's (PUBLIC_ORIGIN on loopback), other devices on its network, or any device
+ * through the remote address. Null until the addresses are known.
+ */
+export function linkReachNote(addresses: LinkAddresses | null, address: LinkAddress): string | null {
+  if (!addresses) return null;
+  if (address === "remote") return t("ui.linkAddress.opensAnywhere");
+  return addresses.local === "computer" ? t("ui.linkAddress.onlyComputer") : t("ui.linkAddress.onlyNetwork");
 }
 
-export function LocalOnlyNote({ addresses, address }: { addresses: LinkAddresses | null; address: LinkAddress }) {
-  const note = localOnlyNote(addresses, address);
+export function LinkReachNote({ addresses, address }: { addresses: LinkAddresses | null; address: LinkAddress }) {
+  const note = linkReachNote(addresses, address);
   return note ? (
     <Text size="sm" color="secondary">
       {note}

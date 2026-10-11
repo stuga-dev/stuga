@@ -1,10 +1,14 @@
 /**
- * Floating link editor. With the caret inside a link it shows the URL with
- * Open / Edit / Remove; after the toolbar's Link button (which bumps
- * `editTick`) it shows a URL input that sets or, when emptied, removes the link.
+ * Floating link editor. With the caret inside a link it names where the link goes (a web
+ * address, an attached file's name, or the title of a page in Stuga) with Open or Download,
+ * Edit and Remove; after the toolbar's Link button (which bumps `editTick`) it shows a URL
+ * input that sets or, when emptied, removes the link.
  */
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { getMarkRange, type Editor } from "@tiptap/react";
+import { Docs } from "../../api";
+import { attachedFileName, linkedDocId } from "../file-links";
 import { clampCentre, useEditorAnchor } from "../use-editor-anchor";
 import { isComposingKey } from "../../lib/ime";
 import { t } from "../../i18n/i18n";
@@ -18,11 +22,31 @@ function normalizeUrl(raw: string): string {
   return /^[a-z][\w+.-]*:/i.test(url) || url.startsWith("//") ? url : `https://${url}`;
 }
 
+/** A page link's title, once fetched; the address until then or when it cannot be read. */
+function useLinkedTitle(docId: string | null): string | null {
+  const [title, setTitle] = useState<{ id: string; title: string } | null>(null);
+  useEffect(() => {
+    if (!docId) return;
+    let alive = true;
+    Docs.get(docId)
+      .then((d) => alive && setTitle({ id: docId, title: d.title || t("common.untitled") }))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [docId]);
+  return title && title.id === docId ? title.title : null;
+}
+
 export function LinkPopover({ editor, editTick }: { editor: Editor; editTick: number }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [href, setHref] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const nav = useNavigate();
+  const fileName = attachedFileName(href);
+  const docId = linkedDocId(href);
+  const docTitle = useLinkedTitle(docId);
 
   const [anchor, hide] = useEditorAnchor(
     editor,
@@ -111,9 +135,30 @@ export function LinkPopover({ editor, editTick }: { editor: Editor; editTick: nu
         </>
       ) : (
         <>
-          <a className="link-popover__url" href={href} target="_blank" rel="noopener noreferrer" title={href}>
-            {href}
-          </a>
+          {docId ? (
+            <a
+              className="link-popover__url"
+              href={href}
+              title={docTitle ?? href}
+              onClick={(e) => {
+                e.preventDefault();
+                nav(href);
+              }}
+            >
+              {docTitle ?? href}
+            </a>
+          ) : (
+            <a className="link-popover__url" href={href} target="_blank" rel="noopener noreferrer" title={fileName ?? href}>
+              {fileName ?? href}
+            </a>
+          )}
+          {docId ? (
+            <button className="link-popover__btn" onClick={() => nav(href)}>{t("common.open")}</button>
+          ) : (
+            <a className="link-popover__btn" href={href} target="_blank" rel="noopener noreferrer">
+              {fileName ? t("editor.link.download") : t("common.open")}
+            </a>
+          )}
           <button
             className="link-popover__btn"
             title={t("editor.link.editLabel")}

@@ -97,6 +97,33 @@ describe.skipIf(!URL)("agent governance queries", () => {
       const attention = await listAgentRuns(sql, { workspaceId: WS, principals: ALICE, filter: "attention" });
       expect(attention.map((r) => r.run_id).sort()).toEqual(["r-auto", "r-pending"]);
     });
+    it("`attention` for a decider holds only the runs they can decide", async () => {
+      await upsertAgentRun(sql, entry({ runId: "r-alice" }));
+      await upsertAgentRun(sql, entry({ runId: "r-carol", reviewer: "carol" }));
+      const asBob = (admin: boolean) =>
+        listAgentRuns(sql, { workspaceId: WS, principals: BOB, filter: "attention", decider: { alias: "bob", admin } });
+      // Bob neither reviews these nor owns the document; as an admin he may decide them, but only on a document he can write.
+      expect(await asBob(false)).toEqual([]);
+      expect(await asBob(true)).toEqual([]);
+      await sql`UPDATE docs SET acl_writers = ${["user:alice", "user:bob"]} WHERE doc_id = 'd-shared'`;
+      expect((await asBob(true)).map((r) => [r.run_id, r.doc_writable]).sort()).toEqual([
+        ["r-alice", true],
+        ["r-carol", true],
+      ]);
+      await sql`UPDATE docs SET acl_writers = ${["user:alice"]} WHERE doc_id = 'd-shared'`;
+      // Something applied at once asks only to be looked at, which a reader may do.
+      await upsertAgentRun(sql, entry({ runId: "r-auto", reviewer: "bob", pending: 0, applied: 1, autoApplied: true }));
+      expect((await asBob(false)).map((r) => [r.run_id, r.doc_writable])).toEqual([["r-auto", false]]);
+      await sql`DELETE FROM agent_runs WHERE run_id = 'r-auto'`;
+      // Alice owns the document, so she may decide Carol's run too.
+      const alice = await listAgentRuns(sql, { workspaceId: WS, principals: ALICE, filter: "attention", decider: { alias: "alice", admin: false } });
+      expect(alice.map((r) => [r.run_id, r.doc_owner]).sort()).toEqual([
+        ["r-alice", "user:alice"],
+        ["r-carol", "user:alice"],
+      ]);
+      // Every other view still lists them, for reading.
+      expect(await listAgentRuns(sql, { workspaceId: WS, principals: BOB, filter: "all", decider: { alias: "bob", admin: false } })).toHaveLength(2);
+    });
     it("`open` is what still collects changes, by the actors' idle rule; `closed` is the rest", async () => {
       const now = Date.now();
       await upsertAgentRun(sql, entry({ runId: "r-waiting", pending: 1, updatedAt: 2_000 }));

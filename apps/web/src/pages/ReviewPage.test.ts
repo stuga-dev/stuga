@@ -10,7 +10,7 @@ import { toasts } from "../test/toast";
 import { mountInto } from "../test/form-input";
 
 const inbox = vi.hoisted(() => ({ list: vi.fn(), stats: vi.fn() }));
-const docRuns = vi.hoisted(() => ({ decide: vi.fn(), revert: vi.fn(), ack: vi.fn() }));
+const docRuns = vi.hoisted(() => ({ decide: vi.fn(), revert: vi.fn(), ack: vi.fn(), detail: vi.fn() }));
 
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
@@ -78,14 +78,18 @@ describe("review inbox status", () => {
     expect(runStatus(run({ auto_applied: true, applied: 2, conflicts: 1 }))).toBe(
       "2 applied automatically · 1 couldn’t be applied · Check the result",
     );
-    expect(runStatus(run({ status: "applied", accepted: 1, conflicts: 2 }))).toBe("1 kept · 2 couldn’t be applied");
+    expect(runStatus(run({ status: "applied", accepted: 1, conflicts: 2 }))).toBe("1 accepted · 2 couldn’t be applied");
     // A database marks a run auto-applied only when something landed.
     expect(runStatus(run({ conflicts: 1 }))).toBe("1 couldn’t be applied");
   });
 
   it("summarizes decided runs in plain language", () => {
-    expect(runStatus(decided)).toBe("2 kept · 1 skipped");
-    expect(runStatus(allSkipped)).toBe("3 skipped");
+    expect(runStatus(decided)).toBe("2 accepted · 1 rejected");
+    expect(runStatus(allSkipped)).toBe("3 rejected");
+  });
+
+  it("names who decides a run the reader cannot", () => {
+    expect(runStatus(run({ pending: 1, reviewer: "liv", can_decide: false }))).toBe("1 change waiting for liv");
   });
 
   it("reads a reverted run as reverted", () => {
@@ -109,6 +113,11 @@ describe("review inbox actions", () => {
     expect(runActions(autoSession)).toEqual({ decide: false, revert: true, dismiss: true });
     expect(runActions(autoRolledOver)).toEqual({ decide: false, revert: true, dismiss: true });
     expect(runActions(autoChecked)).toEqual({ decide: false, revert: true, dismiss: false });
+  });
+
+  it("offers nothing on a run someone else decides", () => {
+    expect(runActions({ ...parked, can_decide: false })).toEqual({ decide: false, revert: false, dismiss: false });
+    expect(runActions({ ...autoSession, can_decide: false })).toEqual({ decide: false, revert: false, dismiss: false });
   });
 
   it("offers revert only while something landed and the run was not reverted", () => {
@@ -150,6 +159,7 @@ describe("the inbox page", () => {
   }
 
   beforeEach(() => {
+    docRuns.detail.mockResolvedValue({ run: { hunks: [] } });
     ({ host, root } = mountInto());
   });
 
@@ -163,9 +173,25 @@ describe("the inbox page", () => {
     expect(host.querySelector("h2")?.textContent).toBe("1 item needs review");
   });
 
-  it("names the page itself on a phone, where the top bar's title sits in the menu", async () => {
+  it("leaves naming the page to the top bar, which keeps its title on a phone", async () => {
     await render(true);
-    expect([...host.querySelectorAll("h1")].map((h) => h.textContent)).toEqual(["Review AI edits"]);
+    expect(host.querySelectorAll("h1")).toHaveLength(0);
+  });
+
+  it("previews what a waiting run would change, and offers no blind Accept all", async () => {
+    docRuns.detail.mockResolvedValue({
+      run: {
+        hunks: [
+          { id: "h1", old_string: "We open at 7.", new_string: "We open at 6.", status: "pending" },
+          { id: "h2", old_string: "", new_string: "Closed on Sundays.", status: "pending" },
+          { id: "h3", old_string: "a", new_string: "b", status: "accepted" },
+        ],
+      },
+    });
+    await render(false);
+    expect(host.textContent).toContain("7. → 6. · and 1 more change");
+    expect(host.textContent).not.toContain("Accept all");
+    expect(host.textContent).toContain("Reject all suggestions");
   });
 
   it("gives the status dot a short label, since the status line beside it is read out too", async () => {

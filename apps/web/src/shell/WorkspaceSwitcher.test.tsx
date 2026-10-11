@@ -35,13 +35,14 @@ interface MenuRow {
 }
 
 /** The rows last handed to the menu, to reach a handler a disabled button would not run, and what opening it runs. */
-const menu = vi.hoisted(() => ({ items: [] as MenuRow[], onOpenChange: undefined as ((isOpen: boolean) => void) | undefined }));
+const menu = vi.hoisted(() => ({ items: [] as MenuRow[], onOpenChange: undefined as ((isOpen: boolean) => void) | undefined, label: "" }));
 
 // The menu stands in as its rows: a section's title when it has one, as Astryx renders it, then each row as a button.
 vi.mock("@astryxdesign/core/DropdownMenu", () => ({
-  DropdownMenu: ({ items, onOpenChange }: { items: MenuRow[]; onOpenChange?: (isOpen: boolean) => void }) => {
+  DropdownMenu: ({ items, onOpenChange, button }: { items: MenuRow[]; onOpenChange?: (isOpen: boolean) => void; button: { label: string } }) => {
     menu.items = items;
     menu.onOpenChange = onOpenChange;
+    menu.label = button.label;
     const row = (item: MenuRow) => (
       <button key={item.id ?? item.label} data-description={item.description} disabled={item.isDisabled} onClick={item.onClick}>
         {item.label}
@@ -68,7 +69,7 @@ vi.mock("@astryxdesign/core/DropdownMenu", () => ({
 
 const { bookmarkHost, openableOrigin, survivesSwitch, WorkspaceSwitcher } = await import("./WorkspaceSwitcher");
 const { setAuthConfigForTest } = await import("../lib/session/auth-config");
-const { getActiveWorkspace } = await import("../lib/session/workspace-pointer");
+const { getActiveWorkspace, rememberWorkspaceName, setActiveWorkspace } = await import("../lib/session/workspace-pointer");
 import { chooseRadio, chooseSegment, mountInto, pickFile, typeInto } from "../test/form-input";
 
 describe("survivesSwitch", () => {
@@ -161,6 +162,17 @@ describe("the switcher's menu", () => {
   afterEach(() => {
     Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
     setAuthConfigForTest(null);
+  });
+
+  it("names the active workspace, and the name last seen while the list cannot load", async () => {
+    expect(menu.label).toBe("Acme");
+    act(() => root.unmount());
+    setActiveWorkspace("ws1");
+    rememberWorkspaceName("ws1", "Acme");
+    workspaces.list.mockRejectedValue(new Error("offline"));
+    ({ host, root } = mountInto());
+    await act(async () => root.render(<WorkspaceSwitcher />));
+    expect(menu.label).toBe("Acme");
   });
 
   it("is headed by the node's name over its workspaces, with Other nodes below Create workspace", () => {
@@ -285,6 +297,9 @@ describe("the switcher's menu", () => {
       await act(async () => dialogButton("Create workspace").click());
       expect(workspaces.checkImport).toHaveBeenCalledWith(file);
       expect(workspaces.importHeld).toHaveBeenCalledWith("wsi_1", "", "workspace_edit");
+      // The import's summary first; the workspace opens from there.
+      expect(getActiveWorkspace()).not.toBe("ws3");
+      await act(async () => dialogButton("Open workspace").click());
       expect(getActiveWorkspace()).toBe("ws3");
       expect(assign).toHaveBeenCalledWith("/doc/d9");
     });

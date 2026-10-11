@@ -10,18 +10,40 @@ import type {
   DatabaseOpSummary,
   DatabaseRunSummary,
   DatabaseSchema,
+  NumberFormat,
   RowFilterNode,
   RowGroup,
   RowInputValue,
   RowRecord,
   RowSort,
+  RowValue,
   TableSchema,
   ViewInput,
   ViewSpec,
 } from "@stuga/protocol/databases/types";
 import { t } from "../i18n/i18n";
-import { api, apiFailure, networkFailure, type ApiError } from "../lib/http/client";
+import { api, apiFailure, authedFetch, networkFailure, UPLOAD_TIMEOUT_MS, type ApiError } from "../lib/http/client";
 import { openSse } from "../lib/http/sse";
+
+/** What selects a listing's rows and their order. */
+export interface RowListing {
+  sort?: RowSort | RowSort[];
+  filter?: RowFilterNode | null;
+  group_by?: string | null;
+  view_id?: string;
+  search?: string;
+}
+
+/**
+ * Where an import's columns go. `column_map` sends a file header to a column (or null to skip it);
+ * `new_columns` adds headers as new columns; `new_table` lands the file in a new table of that name.
+ */
+export interface ImportShape {
+  column_map?: Record<string, string | null>;
+  new_columns?: string[];
+  new_table?: string;
+  date_order?: "mdy" | "dmy";
+}
 
 /**
  * A database's data plane. `:id` is the docs row id; rename, trash, share and move
@@ -68,14 +90,19 @@ export const Databases = {
       method: "PATCH",
       body: JSON.stringify({ description }),
     }),
+  /** How a number column reads; null clears it. Sent alone, like a description. People only. */
+  setColumnFormat: (id: string, tableId: string, columnId: string, format: NumberFormat | null) =>
+    api<{ column: ColumnSpec }>(`/api/databases/${id}/tables/${tableId}/columns/${columnId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ format }),
+    }),
   deleteColumn: (id: string, tableId: string, columnId: string) =>
     api<{ deleted: true }>(`/api/databases/${id}/tables/${tableId}/columns/${columnId}`, { method: "DELETE" }),
-  /** A POST because filters do not fit a query string. Grouped listings come back ordered by the key, with counts over the whole filtered set. */
-  listRows: (
-    id: string,
-    tableId: string,
-    opts: { limit?: number; offset?: number; sort?: RowSort | RowSort[]; filter?: RowFilterNode | null; group_by?: string | null; view_id?: string } = {},
-  ) =>
+  /**
+   * A POST because filters do not fit a query string. Grouped listings come back ordered by the key, with counts over the whole
+   * filtered set. `search` keeps the rows with those words in any text, choice, number or date cell.
+   */
+  listRows: (id: string, tableId: string, opts: RowListing & { limit?: number; offset?: number } = {}) =>
     api<{ rows: RowRecord[]; total: number; groups?: RowGroup[]; groups_truncated?: boolean; group_by?: string }>(
       `/api/databases/${id}/tables/${tableId}/rows/list`,
       {
@@ -83,6 +110,18 @@ export const Databases = {
         body: JSON.stringify(opts),
       },
     ),
+  /** Every row a listing selects, in its order, as a spreadsheet's CSV; `columns` are the column ids to write, in order. */
+  downloadCsv: async (id: string, tableId: string, opts: RowListing & { columns?: string[] } = {}): Promise<Blob> => {
+    const path = `/api/databases/${id}/tables/${tableId}/rows/csv`;
+    const res = await authedFetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(opts),
+      timeoutMs: UPLOAD_TIMEOUT_MS,
+    });
+    if (!res.ok) throw await apiFailure(path, "POST", res);
+    return res.blob();
+  },
   /** Views are shared; anyone with write access may change them. */
   createView: (id: string, tableId: string, input: ViewInput & { name: string }) =>
     api<{ view: ViewSpec }>(`/api/databases/${id}/tables/${tableId}/views`, {
@@ -102,9 +141,17 @@ export const Databases = {
       method: "POST",
       body: JSON.stringify({ rows }),
     }),
-  /** `missing`: rows deleted underneath the caller, a reason to refetch rather than an error. */
-  updateRows: (id: string, tableId: string, updates: Array<{ _id: string; values: Record<string, RowInputValue> }>) =>
-    api<{ updated: number; missing: string[] }>(`/api/databases/${id}/tables/${tableId}/rows`, {
+  /**
+   * `missing`: rows deleted underneath the caller, a reason to refetch rather than an error. An update
+   * with `expect` (the values the person last saw) is left out when a cell moved on since, and its
+   * row comes back in `conflicts` with what the cells hold now.
+   */
+  updateRows: (
+    id: string,
+    tableId: string,
+    updates: Array<{ _id: string; values: Record<string, RowInputValue>; expect?: Record<string, RowValue> }>,
+  ) =>
+    api<{ updated: number; missing: string[]; conflicts?: Array<{ _id: string; values: Record<string, RowValue> }> }>(`/api/databases/${id}/tables/${tableId}/rows`, {
       method: "PATCH",
       body: JSON.stringify({ updates }),
     }),
@@ -126,17 +173,13 @@ export const Databases = {
       body: JSON.stringify({ table_id: tableId, format }),
     }),
   /** Lands the staged file as one change; a 422 carries the row-level report in `ApiError.report`. */
-  commitImport: (
-    id: string,
-    importId: string,
-    opts: { column_map?: Record<string, string | null>; on_error?: "abort" | "skip_bad_rows"; max_bad_rows?: number; date_order?: "mdy" | "dmy" } = {},
-  ) =>
+  commitImport: (id: string, importId: string, opts: ImportShape & { on_error?: "abort" | "skip_bad_rows"; max_bad_rows?: number } = {}) =>
     api<DatabaseImportResult>(`/api/databases/${id}/imports/${importId}/commit`, {
       method: "POST",
       body: JSON.stringify(opts),
     }),
   /** A dry run of the commit. */
-  checkImport: (id: string, importId: string, opts: { column_map?: Record<string, string | null>; date_order?: "mdy" | "dmy" } = {}) =>
+  checkImport: (id: string, importId: string, opts: ImportShape = {}) =>
     api<DatabaseImportCheck>(`/api/databases/${id}/imports/${importId}/commit`, {
       method: "POST",
       body: JSON.stringify({ ...opts, dry_run: true }),
@@ -163,7 +206,7 @@ export const Databases = {
     id: string,
     tableId: string,
     file: File,
-    opts: { on_error?: "abort" | "skip_bad_rows"; date_order?: "mdy" | "dmy" } = {},
+    opts: ImportShape & { on_error?: "abort" | "skip_bad_rows" } = {},
   ): Promise<DatabaseImportResult> => {
     const ticket = await Databases.stageImport(id, tableId, file);
     return Databases.commitImport(id, ticket.import_id, opts);
@@ -174,7 +217,8 @@ export const Databases = {
     if (opts.limit !== undefined) qs.set("limit", String(opts.limit));
     if (opts.before_seq !== undefined) qs.set("before_seq", String(opts.before_seq));
     const q = qs.toString();
-    return api<{ ops: DatabaseOpSummary[] }>(`/api/databases/${id}/ops${q ? `?${q}` : ""}`);
+    // `agent_names`: the agents among them, by the name their key or connection has now.
+    return api<{ ops: DatabaseOpSummary[]; agent_names?: Record<string, string> }>(`/api/databases/${id}/ops${q ? `?${q}` : ""}`);
   },
   /** People only. Restores what still exists and reports what did not. */
   revertOp: (id: string, opId: string) =>

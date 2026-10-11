@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Heading, Text } from "@astryxdesign/core/Text";
+import { Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Button } from "@astryxdesign/core/Button";
@@ -14,6 +14,12 @@ import { toOpsForm, type OpsForm } from "./ops-form";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 import { t } from "../../../i18n/i18n";
 
+/** The colour the node takes: what its own check accepts. */
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+/** What the swatch shows while no colour is chosen. */
+const DEFAULT_SWATCH = "#262626";
+
 export function BrandingSection({ ops, onSaved }: { ops: NodeOperationalSettings; onSaved: (ops: NodeOperationalSettings) => void }) {
   const status = useSectionStatus();
   const [opsForm, setOpsForm] = useState<OpsForm>(() => toOpsForm(ops));
@@ -22,13 +28,16 @@ export function BrandingSection({ ops, onSaved }: { ops: NodeOperationalSettings
   /** Emptied, the app goes back to the product's name; anything typed is checked as it is typed. */
   const name = opsForm.nodeName.trim();
   const nameProblem = name ? plainTextProblem(name, MAX_NODE_NAME_CHARS) : null;
+  /** Emptied, the default marker; otherwise the 6-digit hex the node takes. */
+  const color = opsForm.brandAccentColor.trim();
+  const colorProblem = color && !HEX_COLOR.test(color) ? t("nodeAccess.branding.hexInvalid") : null;
 
   async function save() {
-    if (nameProblem || busy) return;
+    if (nameProblem || colorProblem || busy) return;
     setBusy(true);
     status.clear();
     try {
-      const res = await NodeApi.saveSettings({ node_name: name, branding: { accent_color: opsForm.brandAccentColor.trim() } });
+      const res = await NodeApi.saveSettings({ node_name: name, branding: { accent_color: color } });
       updateBranding({
         node: { name: res.node_name, label: res.node_label },
         branding: { accentColor: res.branding.accent_color },
@@ -47,7 +56,6 @@ export function BrandingSection({ ops, onSaved }: { ops: NodeOperationalSettings
     <>
       <SectionStatusBanners status={status} />
       <VStack gap={3}>
-        <Heading level={2}>{t("nodeAccess.branding.heading")}</Heading>
         <Text type="supporting" color="secondary">
           {t("nodeAccess.branding.intro")}
         </Text>
@@ -71,12 +79,24 @@ export function BrandingSection({ ops, onSaved }: { ops: NodeOperationalSettings
           <Text type="supporting" color="secondary">
             {t("nodeAccess.branding.colorHelp")}
           </Text>
-          <HStack gap={2} vAlign="center">
+          <HStack gap={2} vAlign="start">
+            {/* The swatch picks; the field beside it shows the value and takes a pasted one. */}
             <input
               type="color"
-              value={opsForm.brandAccentColor || "#262626"}
+              aria-label={t("nodeAccess.branding.color")}
+              value={HEX_COLOR.test(color) ? color : DEFAULT_SWATCH}
               onChange={(e) => setOpsForm({ ...opsForm, brandAccentColor: e.target.value })}
               style={{ width: 40, height: 32, padding: 0, border: "1px solid var(--color-border)", borderRadius: "var(--radius-element)" }}
+            />
+            <TextInput
+              label={t("nodeAccess.branding.hex")}
+              isLabelHidden
+              width={130}
+              value={opsForm.brandAccentColor}
+              placeholder={t("nodeAccess.branding.defaultColor")}
+              onChange={(brandAccentColor) => setOpsForm({ ...opsForm, brandAccentColor })}
+              onEnter={() => void save()}
+              {...(colorProblem ? { status: { type: "error" as const, message: colorProblem } } : {})}
             />
             {opsForm.brandAccentColor && (
               <Button
@@ -89,14 +109,14 @@ export function BrandingSection({ ops, onSaved }: { ops: NodeOperationalSettings
           </HStack>
         </VStack>
 
-        <BrandingPreview accentColor={opsForm.brandAccentColor} nodeName={name} />
+        <BrandingPreview accentColor={colorProblem ? "" : color} nodeName={name} />
 
         <HStack gap={2} vAlign="center">
           <Button
             label={t("common.save")}
             variant="primary"
             size="sm"
-            isDisabled={nameProblem !== null}
+            isDisabled={nameProblem !== null || colorProblem !== null}
             isLoading={busy}
             onClick={() => void save()}
           />

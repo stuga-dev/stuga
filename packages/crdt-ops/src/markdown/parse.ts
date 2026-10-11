@@ -1,6 +1,6 @@
 /**
  * Markdown → ProseMirror for the Stuga schema (CommonMark + strikethrough + GFM
- * tables + footnotes, no raw HTML).
+ * tables and task lists + footnotes, no raw HTML).
  *
  * Contract with serialize.ts, for every document reachable in the product:
  *
@@ -144,6 +144,11 @@ function tokenizer(): MarkdownItInstance {
     state.tokens = out;
     return true;
   });
+  // GFM task items, before the image hoist splits their first paragraph.
+  md.core.ruler.push("stuga_task_lists", (state) => {
+    state.tokens = taskLists(state.tokens, state.Token as unknown as TokenCtor);
+    return true;
+  });
   // Hoist images out of inline content. `image` is a block node in this schema
   // (it must match the editor's), and prosemirror-markdown drops a whole
   // paragraph whose inline content contains one. So split the paragraph around
@@ -275,6 +280,90 @@ function tokenizer(): MarkdownItInstance {
   return md;
 }
 
+type MdToken = ReturnType<MarkdownItInstance["parse"]>[number];
+type TokenCtor = new (type: string, tag: string, nesting: -1 | 0 | 1) => MdToken;
+
+/** A task box at the start of an item's text: `[ ]` or `[x]`, then whitespace or nothing. */
+const TASK_BOX = /^\[([ xX])\](?:[ \t]+|$)/;
+
+/**
+ * Whether the list item opening at `at` starts with a task box, and whether it is ticked. The box
+ * must be plain source text, so an escaped `\[ \]` and a reference link `[x]` stay what they are.
+ */
+function taskBoxAt(tokens: MdToken[], at: number): { checked: boolean; length: number } | null {
+  const inline = tokens[at + 2];
+  if (tokens[at + 1]?.type !== "paragraph_open" || inline?.type !== "inline") return null;
+  const m = TASK_BOX.exec(inline.content);
+  const first = inline.children?.[0];
+  if (!m || first?.type !== "text" || !first.content.startsWith(m[0])) return null;
+  return { checked: m[1] !== " ", length: m[0].length };
+}
+
+/**
+ * Lists with task items as `task_list`/`task_item` tokens. A list that mixes them is split into
+ * runs, each its own list, and an ordered run after a split keeps its numbers. The serializer
+ * writes adjacent task and plain lists with the same marker, so they fuse on re-parse and split
+ * again the same way.
+ */
+function taskLists(tokens: MdToken[], Token: TokenCtor): MdToken[] {
+  if (!tokens.some((t) => t.type === "inline" && t.content.startsWith("["))) return tokens;
+  const out: MdToken[] = [];
+  // One frame per open list: its own open token, the kind of run being written, and the next item's index.
+  const lists: { open: MdToken; run: "task" | "plain" | null; index: number }[] = [];
+  // Per open item, whether it is a task.
+  const items: boolean[] = [];
+  const closeRun = (list: (typeof lists)[number]): MdToken =>
+    list.run === "task" ? new Token("task_list_close", "ul", -1) : new Token(list.open.type.replace(/_open$/, "_close"), list.open.tag, -1);
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]!;
+    if (tok.type === "bullet_list_open" || tok.type === "ordered_list_open") {
+      lists.push({ open: tok, run: null, index: 0 });
+      continue;
+    }
+    if (tok.type === "bullet_list_close" || tok.type === "ordered_list_close") {
+      out.push(closeRun(lists.pop()!));
+      continue;
+    }
+    if (tok.type === "list_item_open") {
+      const list = lists[lists.length - 1]!;
+      const box = taskBoxAt(tokens, i);
+      const run = box ? "task" : "plain";
+      if (list.run !== run) {
+        if (list.run !== null) out.push(closeRun(list));
+        if (run === "task") out.push(new Token("task_list_open", "ul", 1));
+        else if (list.index === 0) out.push(list.open);
+        else {
+          const open = new Token(list.open.type, list.open.tag, 1);
+          open.markup = list.open.markup;
+          const start = Number(list.open.attrGet("start") ?? 1);
+          if (list.open.type === "ordered_list_open") open.attrSet("start", String(start + list.index));
+          out.push(open);
+        }
+        list.run = run;
+      }
+      list.index++;
+      items.push(!!box);
+      if (!box) {
+        out.push(tok);
+        continue;
+      }
+      const item = new Token("task_item_open", "li", 1);
+      item.meta = { checked: box.checked };
+      out.push(item);
+      const inline = tokens[i + 2]!;
+      inline.content = inline.content.slice(box.length);
+      inline.children![0]!.content = inline.children![0]!.content.slice(box.length);
+      continue;
+    }
+    if (tok.type === "list_item_close") {
+      out.push(items.pop() ? new Token("task_item_close", "li", -1) : tok);
+      continue;
+    }
+    out.push(tok);
+  }
+  return out;
+}
+
 interface TokenAttrs {
   attrGet(n: string): string | null;
 }
@@ -309,6 +398,8 @@ const TOKENS = {
   paragraph: { block: "paragraph" },
   list_item: { block: "listItem" },
   bullet_list: { block: "bulletList" },
+  task_list: { block: "taskList" },
+  task_item: { block: "taskItem", getAttrs: (tok: { meta?: { checked?: boolean } }) => ({ checked: tok.meta?.checked === true }) },
   ordered_list: {
     block: "orderedList",
     // A start of 0 is legal and must not become 1.

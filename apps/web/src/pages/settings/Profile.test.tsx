@@ -155,7 +155,7 @@ describe("Profile · password", () => {
     await click("Set password");
 
     expect(request("/auth/password")).toEqual({ body: { new_password: "battery staple 9" }, authorization: "Bearer at-1" });
-    expect(toasts.shown.at(-1)).toEqual({ body: "Password set.", type: "info" });
+    expect(toasts.shown.at(-1)).toEqual({ body: "Password set.", type: "info", uniqueID: "settings-password" });
     // Now it has one, so the next change asks for it.
     expect(button("Change password")).toBeTruthy();
   });
@@ -214,6 +214,7 @@ describe("Profile · password", () => {
     expect(toasts.shown.at(-1)).toEqual({
       body: "From outside this network, sign in with a passkey or a password of 15 characters or more that is hard to guess.",
       type: "error",
+      uniqueID: "settings-password",
     });
   });
 
@@ -280,10 +281,9 @@ describe("Profile · password", () => {
       await type("New password", "battery9");
       await click("Set password");
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(toasts.shown.at(-1)).toEqual({
-        body: "Choose another password. At least 8 characters, with a letter, a number and a symbol.",
-        type: "error",
-      });
+      // On the field, not in a toast that would stack under the next outcome.
+      expect(hint("New password")).toContain("Choose another password. At least 8 characters, with a letter, a number and a symbol.");
+      expect(toasts.shown).toEqual([]);
     } finally {
       PASSWORD_RULES.pop();
     }
@@ -297,8 +297,30 @@ describe("Profile · password", () => {
     await type("Current password", "nope");
     await type("New password", "battery staple 9");
     await click("Change password");
-    expect(toasts.shown.at(-1)).toEqual({ body: "That isn’t your current password.", type: "error" });
+    expect(hint("Current password")).toContain("That isn’t your current password.");
+    expect(toasts.shown).toEqual([]);
     expect(getToken()).toBe("at-1");
+
+    // Typing again clears it.
+    await type("Current password", "nope again");
+    expect(hint("Current password") ?? "").not.toContain("That isn’t your current password.");
+  });
+
+  it("ends a change that took tries in one message, not a stack of them", async () => {
+    me.whoami.mockResolvedValue({ ...PERSON, has_password: true, provider_linked: false });
+    fetchMock.mockResolvedValueOnce(reply(401, { error: "invalid_credentials", message: "invalid" }));
+    fetchMock.mockResolvedValueOnce(reply(200, { access_token: "at-2", refresh_token: "rt-2", expires_in: 900, token_type: "Bearer" }));
+    await open();
+
+    await type("Current password", "nope");
+    await type("New password", "short1");
+    await click("Change password");
+    await type("New password", "battery staple 9");
+    await click("Change password");
+    await type("Current password", "correct horse 1");
+    await click("Change password");
+
+    expect(toasts.shown).toEqual([{ body: "Password changed. You’re signed out everywhere else.", type: "info", uniqueID: "settings-password" }]);
   });
 
   it("offers no fallback name the node does not have", async () => {
@@ -408,7 +430,7 @@ describe("Profile · identity provider", () => {
   });
 });
 
-describe("Profile · Revoke everything", () => {
+describe("Profile · Sign out everywhere", () => {
   const COUNTS = { sessions: 3, passkeys: 0, provider: true, apps: 2, api_keys: 1, invites: 1, share_links: 2 };
   const dialog = () => [...host.querySelectorAll("dialog")].find((d) => d.textContent?.includes("Choose a new password"));
   const inDialog = (label: string) =>
@@ -423,17 +445,17 @@ describe("Profile · Revoke everything", () => {
   it("says what it takes, then signs this browser in with the new password", async () => {
     fetchMock.mockResolvedValue(reply(200, { access_token: "at-9", refresh_token: "rt-9", expires_in: 900, token_type: "Bearer" }));
     await open();
-    await click("Revoke everything");
+    await click("Sign out everywhere");
     expect(dialog()?.textContent).toContain(
       "Signs you out everywhere and removes Okta sign-in, 2 connected apps, an API key and 3 links you shared. Choose a new password to sign in with.",
     );
     await typeInto(inDialog("New password"), "battery staple 9");
-    await act(async () => dialogButton("Revoke everything")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => dialogButton("Sign out everywhere")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await settle();
 
     expect(request("/auth/revoke-everything")).toEqual({ body: { new_password: "battery staple 9" }, authorization: "Bearer at-1" });
     expect(getToken()).toBe("at-9");
-    expect(toasts.shown.at(-1)).toEqual({ body: "Everything was revoked. You’re signed in here with your new password.", type: "info" });
+    expect(toasts.shown.at(-1)).toEqual({ body: "Signed out everywhere. You’re signed in here with your new password.", type: "info", uniqueID: "settings-revoke" });
   });
 
   it("opens from an alert's link, once", async () => {
@@ -446,11 +468,11 @@ describe("Profile · Revoke everything", () => {
   it("asks for a confirmation the page cannot give here, and says so", async () => {
     fetchMock.mockResolvedValue(reply(401, { error: "reauth_required", message: "confirm it's you", methods: ["password"] }));
     await open();
-    await click("Revoke everything");
+    await click("Sign out everywhere");
     await typeInto(inDialog("New password"), "battery staple 9");
-    await act(async () => dialogButton("Revoke everything")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => dialogButton("Sign out everywhere")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await settle();
-    expect(toasts.shown.at(-1)).toEqual({ body: "Confirm it’s you to continue.", type: "error" });
+    expect(toasts.shown.at(-1)).toEqual({ body: "Confirm it’s you to continue.", type: "error", uniqueID: "settings-revoke" });
     expect(getToken()).toBe("at-1");
   });
 

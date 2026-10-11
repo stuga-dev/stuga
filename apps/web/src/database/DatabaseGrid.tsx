@@ -6,7 +6,7 @@
  * seeds a working shape that stays local until "Save view". Pending agent
  * proposals for this table paint over the rows.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
@@ -15,20 +15,23 @@ import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
-import { useToast } from "@astryxdesign/core/Toast";
-import { Columns3, Filter as FilterIcon, Plus, Rows3, Trash2, X } from "lucide-react";
-import { validateCellValue } from "@stuga/protocol/databases/cells";
-import type { ColumnSpec, RowInputValue, RowRecord, TableSchema, ViewSpec } from "@stuga/protocol/databases/types";
+import { useToast } from "../ui/use-toast";
+import { Columns3, Filter as FilterIcon, Plus, Rows3, Search, Trash2, X } from "lucide-react";
+import { DATABASE_MAX_ROWS_PER_WRITE, DATABASE_ROW_SEARCH_MAX_CHARS } from "@stuga/protocol/databases/limits";
+import type { ColumnSpec, RowRecord, RowValue, TableSchema, ViewSpec } from "@stuga/protocol/databases/types";
 import { Databases } from "../api";
+import type { RowListing } from "../api/databases";
 import { itemKey } from "../review/run-ledger";
 import { useDbRuns } from "../review/db-runs-context";
 import { PromptDialog } from "../ui/PromptDialog";
 import { ColumnMenu } from "./ColumnMenu";
 import { ColumnDialog, type ColumnDialogSubmit } from "./ColumnDialog";
 import { ColumnDescriptionDialog } from "./ColumnDescriptionDialog";
+import { NumberFormatDialog } from "./NumberFormatDialog";
+import type { CommitVia } from "./CellEditor";
 import { ViewTabs } from "./ViewTabs";
 import { ViewToolbar } from "./ViewToolbar";
-import { GhostInsertRows, GridRow, GroupSection } from "./grid/GridRow";
+import { cellDisplay, GhostInsertRows, GridRow, GroupSection, type CellHandlers } from "./grid/GridRow";
 import { pendingOverlay } from "./grid/pending-overlay";
 import { useRowWindow } from "./grid/use-row-window";
 import {
@@ -43,13 +46,38 @@ import {
   sortDirOf,
   type ViewShape,
 } from "./model/view-shape";
-import { errorMessage } from "../lib/http/client";
+import { errorMessage, type ApiError } from "../lib/http/client";
 import { useElementWidth } from "../lib/use-element-width";
+import { isComposingKey } from "../lib/ime";
 import { t } from "../i18n/i18n";
-import { cellProblem } from "./model/cell-problems";
+import { checkCell, type FieldInput } from "./model/field-input";
+import { copiedText, parseClipboard, pastedInput, planPaste } from "./model/clipboard";
+import { isNumberSeed } from "./model/numbers";
 
 /** Below this the view bar's buttons drop their labels, as when the dock takes half the page. */
 const COMPACT_BAR_WIDTH = 640;
+/** Quiet time after the last key before a search of the table goes to the node. */
+const SEARCH_DELAY_MS = 250;
+
+/** What the grid shows of its table: the rows a listing selects, and the columns on screen in their order. */
+export interface GridListing {
+  tableId: string;
+  listing: RowListing;
+  columns: string[];
+}
+
+/** A key that types one character: no shortcut modifier (AltGr's Ctrl+Alt still types), and no input method mid-word. */
+function isPrintableKey(e: KeyboardEvent): boolean {
+  return [...e.key].length === 1 && !e.metaKey && !(e.ctrlKey && !e.altKey) && !isComposingKey(e);
+}
+
+/** A write that named a column deleted since, as the node refuses it. */
+function columnGone(e: ApiError): boolean {
+  return (
+    (e.code ?? "").startsWith("unknown column reference ") ||
+    e.code === "a column this change writes no longer exists — the schema changed after the change was made"
+  );
+}
 
 export function DatabaseGrid({
   docId,
@@ -63,6 +91,7 @@ export function DatabaseGrid({
   onSelectView,
   onOpenRow,
   openRowId,
+  onListing,
 }: {
   docId: string;
   table: TableSchema;
@@ -80,6 +109,8 @@ export function DatabaseGrid({
   onSelectView: (viewId: string | null) => void;
   onOpenRow: (rowId: string) => void;
   openRowId: string | null;
+  /** Told what the grid shows whenever that changes, so a download can write the same. */
+  onListing?: (listing: GridListing) => void;
 }) {
   const toast = useToast();
   const runs = useDbRuns();
@@ -112,13 +143,36 @@ export function DatabaseGrid({
   const groupCol = effShape.group_by === null ? undefined : columns.find((c) => c.column_id === effShape.group_by);
   const filtered = effShape.filter !== null;
 
-  const win = useRowWindow(docId, table.table_id, effShape, rowsKey);
+  // What the search box holds, and what the grid was last asked for once typing paused.
+  const [searchText, setSearchText] = useState("");
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    // Cut to what the node takes, so a long paste searches its start rather than failing the listing.
+    const next = searchText.trim().slice(0, DATABASE_ROW_SEARCH_MAX_CHARS).trim();
+    if (next === search) return;
+    const timer = setTimeout(() => setSearch(next), next === "" ? 0 : SEARCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [searchText, search]);
+  const searching = search !== "";
+
+  const win = useRowWindow(docId, table.table_id, effShape, search, rowsKey);
+  const listingKey = JSON.stringify([effShape.sorts, effShape.filter, effShape.group_by, search, visibleColumns.map((c) => c.column_id)]);
+  useEffect(() => {
+    onListing?.({
+      tableId: table.table_id,
+      listing: { sort: effShape.sorts, filter: effShape.filter, group_by: effShape.group_by, ...(searching ? { search } : {}) },
+      columns: visibleColumns.map((c) => c.column_id),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- listingKey stands for every input
+  }, [table.table_id, listingKey]);
   const { rows, total } = win;
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
   const { ref: barRef, width: barWidth } = useElementWidth();
   const compact = barWidth > 0 && barWidth < COMPACT_BAR_WIDTH;
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [editing, setEditing] = useState<{ rowId: string; columnId: string } | null>(null);
+  const [editing, setEditing] = useState<{ rowId: string; columnId: string; seed?: string } | null>(null);
   useEffect(() => {
     setSelected(new Set());
     setEditing(null);
@@ -128,6 +182,7 @@ export function DatabaseGrid({
   const [colBusy, setColBusy] = useState(false);
   const [renamingCol, setRenamingCol] = useState<ColumnSpec | null>(null);
   const [describingCol, setDescribingCol] = useState<ColumnSpec | null>(null);
+  const [formattingCol, setFormattingCol] = useState<ColumnSpec | null>(null);
   const [deletingCol, setDeletingCol] = useState<ColumnSpec | null>(null);
   const [deleteColBusy, setDeleteColBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -137,36 +192,197 @@ export function DatabaseGrid({
   const [deletingView, setDeletingView] = useState<ViewSpec | null>(null);
   const [deleteViewBusy, setDeleteViewBusy] = useState(false);
 
+  // The rows in the order they are on screen: what the arrow keys walk and a paste fills.
+  const groupedRows =
+    groupCol && win.groups !== null ? segmentGroups(rows, win.groups, (row) => row[groupCol.column_id] ?? null) : null;
+  const shownRows = groupedRows ? groupedRows.flatMap((seg) => (collapsed.has(groupKey(seg.value)) ? [] : seg.rows)) : rows;
+
+  // A cell to focus once the render that closes an editor lands, as Enter and Escape hand focus back to the grid.
+  const tableRef = useRef<HTMLTableElement>(null);
+  const pendingFocus = useRef<{ rowId: string; columnId: string } | null>(null);
+  useLayoutEffect(() => {
+    const p = pendingFocus.current;
+    if (!p || editing !== null) return;
+    pendingFocus.current = null;
+    focusCell(p.rowId, p.columnId);
+  });
+
+  function focusCell(rowId: string, columnId: string) {
+    const td = tableRef.current?.querySelector<HTMLElement>(`tr[data-row="${rowId}"] > td[data-col="${columnId}"]`);
+    const target = td?.querySelector<HTMLElement>("button.db-cell, input[type=checkbox], .db-files a, .db-files button") ?? td;
+    target?.focus();
+  }
+
+  /** The cell `dRow` rows and `dCol` columns away, held at the grid's edges. */
+  function moveFocus(rowId: string, columnId: string, dRow: number, dCol: number) {
+    const r = shownRows.findIndex((row) => row._id === rowId);
+    const c = visibleColumns.findIndex((col) => col.column_id === columnId);
+    if (r === -1 || c === -1) return;
+    const row = shownRows[Math.min(shownRows.length - 1, Math.max(0, r + dRow))]!;
+    const col = visibleColumns[Math.min(visibleColumns.length - 1, Math.max(0, c + dCol))]!;
+    focusCell(row._id, col.column_id);
+  }
+
   function surfaceError(e: unknown, fallback: string) {
     if ((e as { status?: number }).status === 403) onWriteDenied();
     toast({ body: errorMessage(e, fallback), type: "error" });
   }
 
+  /** One toast for whatever a cell refused last; a second refusal replaces it rather than stacking. */
+  function cellProblemToast(problem: string) {
+    if (problem) toast({ body: problem, type: "error", uniqueID: "db-cell-problem" });
+  }
+
   /** False when the input is invalid, so the editor stays open for a fix. */
-  function commitCell(rowId: string, col: ColumnSpec, input: RowInputValue): boolean {
-    const v = validateCellValue(col.type, col.options, input);
+  function commitCell(rowId: string, col: ColumnSpec, input: FieldInput, via: CommitVia): boolean {
+    const v = checkCell(col, input);
     if (!v.ok) {
-      toast({ body: cellProblem(v.reason), type: "error" });
+      cellProblemToast(v.problem);
       return false;
     }
     setEditing(null);
-    const row = rows.find((r) => r._id === rowId);
-    if (!row || (row[col.column_id] ?? null) === v.value) return true;
-    win.patchCell(rowId, col.column_id, v.value);
-    Databases.updateRows(docId, table.table_id, [{ _id: rowId, values: { [col.column_id]: v.value } }])
+    // The rows as they are now: a commit can come from a closure older than the last change, such as an Undo.
+    const row = rowsRef.current.find((r) => r._id === rowId);
+    if (via === "enter") {
+      const below = shownRows[shownRows.findIndex((r) => r._id === rowId) + 1];
+      pendingFocus.current = { rowId: below?._id ?? rowId, columnId: col.column_id };
+    } else if (via === "pick" && col.type === "single_select") {
+      pendingFocus.current = { rowId, columnId: col.column_id };
+    }
+    const before = row ? (row[col.column_id] ?? null) : null;
+    if (!row || before === v.value) return true;
+    // An edit says what it started from, so someone else's newer value is never overwritten unseen. A toggle or
+    // a file list is built on the value as it is, so it needs no such check.
+    const expected = col.type === "checkbox" || col.type === "files" ? undefined : before;
+    writeCell(rowId, col, v.value, expected);
+    return true;
+  }
+
+  function writeCell(rowId: string, col: ColumnSpec, value: RowValue, expected: RowValue | undefined) {
+    win.patchCell(rowId, col.column_id, value);
+    const update = { _id: rowId, values: { [col.column_id]: value }, ...(expected === undefined ? {} : { expect: { [col.column_id]: expected } }) };
+    Databases.updateRows(docId, table.table_id, [update])
       .then((r) => {
         onRowsMutated();
         if (r.missing.length > 0) {
           toast({ body: t("database.row.deletedElsewhere"), type: "error" });
           win.refetch();
         }
+        const conflict = r.conflicts?.find((c) => c._id === rowId);
+        if (conflict) {
+          const theirs = conflict.values[col.column_id] ?? null;
+          win.patchCell(rowId, col.column_id, theirs);
+          const useMine = () => {
+            dismiss();
+            writeCell(rowId, col, value, theirs);
+          };
+          const dismiss = toast({
+            body:
+              theirs === null
+                ? t("database.row.clearedWhileEditing")
+                : t("database.row.changedWhileEditing", { value: cellDisplay(col, theirs) }),
+            type: "error",
+            uniqueID: `db-cell-conflict:${rowId}:${col.column_id}`,
+            endContent: <Button label={t("database.row.useMine")} variant="ghost" size="sm" onClick={useMine} />,
+          });
+        }
       })
-      .catch((e) => {
+      .catch((e: ApiError) => {
         // Refetch instead of restoring the old value, which could clobber a newer save that raced this one.
-        surfaceError(e, t("database.row.saveFailed"));
         win.refetch();
+        if (columnGone(e)) {
+          // The typed text goes nowhere now, so the message carries it for the person to copy.
+          const typed = value === null ? "" : cellDisplay(col, value);
+          toast({
+            body: typed === "" ? t("database.row.columnDeletedWhileEditing") : t("database.row.columnDeletedTyped", { text: typed }),
+            type: "error",
+            uniqueID: `db-column-gone:${col.column_id}`,
+          });
+          onSchemaChange();
+          return;
+        }
+        surfaceError(e, t("database.row.saveFailed"));
       });
-    return true;
+  }
+
+  const cells: CellHandlers = {
+    edit: (rowId, columnId, seed) => setEditing({ rowId, columnId, ...(seed === undefined ? {} : { seed }) }),
+    commit: commitCell,
+    cancel(rowId, columnId, via) {
+      setEditing(null);
+      if (via === "escape") pendingFocus.current = { rowId, columnId };
+    },
+    key: onCellKey,
+    copy(e, rowId, col) {
+      // A selection of page text is the reader's to copy.
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed && selection.toString() !== "") return;
+      const row = rows.find((r) => r._id === rowId);
+      e.preventDefault();
+      e.clipboardData.setData("text/plain", copiedText(col, row?.[col.column_id]));
+    },
+    paste: (text, rowId, col) => void pasteAt(text, rowId, col),
+  };
+
+  /** Keys on a cell that is not being edited, spreadsheet style. */
+  function onCellKey(e: KeyboardEvent, rowId: string, col: ColumnSpec) {
+    if (e.defaultPrevented || (e.altKey && e.key.startsWith("Arrow"))) return;
+    const step = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
+    if (step && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+      e.preventDefault();
+      moveFocus(rowId, col.column_id, step[0]!, step[1]!);
+      return;
+    }
+    // The rest acts on a text-like cell's own button; a checkbox or a file link keeps its keys.
+    const target = e.target as HTMLElement;
+    if (!target.classList.contains("db-cell") || target.getAttribute("aria-disabled") === "true") return;
+    if (e.key === "F2") {
+      e.preventDefault();
+      cells.edit(rowId, col.column_id);
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      commitCell(rowId, col, { ok: true, value: null }, "pick");
+    } else if (isPrintableKey(e)) {
+      // A date picker cannot start from a typed character, and a number only from one that can begin a number.
+      if (col.type === "date" || (col.type === "number" && !isNumberSeed(e.key))) return;
+      e.preventDefault();
+      cells.edit(rowId, col.column_id, col.type === "single_select" ? undefined : e.key);
+    }
+  }
+
+  /**
+   * Pasted text from `rowId`/`col` on: one value goes through the cell like a typed one, a block
+   * fills cells right and down, adding rows past the last, as one update and one insert.
+   */
+  async function pasteAt(text: string, rowId: string, col: ColumnSpec) {
+    setEditing(null);
+    if (readOnly) return;
+    const block = parseClipboard(text);
+    if (block.length === 1 && block[0]!.length === 1) {
+      if (col.type !== "files") commitCell(rowId, col, pastedInput(col, block[0]![0]!), "pick");
+      return;
+    }
+    if (block.length > DATABASE_MAX_ROWS_PER_WRITE) {
+      toast({ body: t("database.grid.pasteTooLarge", { max: DATABASE_MAX_ROWS_PER_WRITE }), type: "error" });
+      return;
+    }
+    const plan = planPaste({ block, rows: shownRows, columns: visibleColumns, rowId, columnId: col.column_id, canAddRows: rows.length >= total });
+    try {
+      if (plan.updates.length > 0) await Databases.updateRows(docId, table.table_id, plan.updates);
+      if (plan.inserts.length > 0) await Databases.insertRows(docId, table.table_id, plan.inserts);
+      onRowsMutated();
+      win.refetch();
+      toast({
+        body:
+          plan.skipped > 0
+            ? t("database.grid.pastedSkipped", { rows: plan.rows, columns: plan.columns, skipped: plan.skipped })
+            : t("database.grid.pasted", { rows: plan.rows, columns: plan.columns }),
+        type: plan.skipped > 0 ? "error" : "info",
+      });
+    } catch (e) {
+      surfaceError(e, t("database.grid.pasteFailed"));
+      win.refetch();
+    }
   }
 
   async function addRow() {
@@ -324,9 +540,8 @@ export function DatabaseGrid({
       isOpen={openRowId === row._id}
       onOpenRow={onOpenRow}
       readOnly={readOnly}
-      editingColumnId={editing?.rowId === row._id ? editing.columnId : null}
-      onEdit={(columnId) => setEditing(columnId === null ? null : { rowId: row._id, columnId })}
-      onCommit={(col, input) => commitCell(row._id, col, input)}
+      editing={editing?.rowId === row._id ? editing : null}
+      cells={cells}
     />
   );
 
@@ -361,6 +576,8 @@ export function DatabaseGrid({
           columns.length > 0 && (
             <ViewToolbar
               columns={columns}
+              search={searchText}
+              onSearch={setSearchText}
               shape={effShape}
               onShape={setShape}
               dirty={dirty}
@@ -391,18 +608,20 @@ export function DatabaseGrid({
           </div>
         ) : (
           <>
-            <table className="db-grid">
+            <table className={`db-grid${selected.size > 0 ? " db-grid--selecting" : ""}`} ref={tableRef}>
               <thead>
                 <tr>
                   <th className="db-grid__check">
-                    <CheckboxInput
-                      label={t("database.grid.selectAll")}
-                      isLabelHidden
-                      size="sm"
-                      value={headerCheck}
-                      isDisabled={rows.length === 0}
-                      onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r._id)))}
-                    />
+                    <span className="db-row__check">
+                      <CheckboxInput
+                        label={t("database.grid.selectAll")}
+                        isLabelHidden
+                        size="sm"
+                        value={headerCheck}
+                        isDisabled={rows.length === 0}
+                        onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r._id)))}
+                      />
+                    </span>
                   </th>
                   {visibleColumns.map((c) => (
                     <th key={c.column_id}>
@@ -418,6 +637,7 @@ export function DatabaseGrid({
                         }
                         onRename={() => setRenamingCol(c)}
                         onChangeType={() => setColDialog({ retypeOf: c })}
+                        onNumberFormat={() => setFormattingCol(c)}
                         onDescribe={() => setDescribingCol(c)}
                         onDelete={() => setDeletingCol(c)}
                       />
@@ -437,8 +657,8 @@ export function DatabaseGrid({
                 </tr>
               </thead>
               <tbody>
-                {groupCol && win.groups !== null
-                  ? segmentGroups(rows, win.groups, (row) => row[groupCol.column_id] ?? null).map((seg) => {
+                {groupedRows
+                  ? groupedRows.map((seg) => {
                       const key = groupKey(seg.value);
                       const isCollapsed = collapsed.has(key);
                       return (
@@ -496,17 +716,23 @@ export function DatabaseGrid({
             {isEmpty ? (
               <div className="db-grid-center">
                 <EmptyState
-                  title={filtered ? t("database.grid.noMatches") : t("database.grid.noRows")}
-                  description={
-                    filtered
-                      ? t("database.grid.noMatchesHelp")
-                      : readOnly
-                        ? t("database.grid.noRowsReader")
-                        : t("database.grid.noRowsWriter")
+                  title={
+                    searching ? t("database.grid.noSearchMatches", { query: search }) : filtered ? t("database.grid.noMatches") : t("database.grid.noRows")
                   }
-                  icon={filtered ? <FilterIcon size={26} /> : <Rows3 size={26} />}
+                  description={
+                    searching
+                      ? t("database.grid.noSearchMatchesHelp")
+                      : filtered
+                        ? t("database.grid.noMatchesHelp")
+                        : readOnly
+                          ? t("database.grid.noRowsReader")
+                          : t("database.grid.noRowsWriter")
+                  }
+                  icon={searching ? <Search size={26} /> : filtered ? <FilterIcon size={26} /> : <Rows3 size={26} />}
                   actions={
-                    filtered ? (
+                    searching ? (
+                      <Button label={t("database.search.clear")} variant="secondary" size="sm" onClick={() => setSearchText("")} />
+                    ) : filtered ? (
                       <Button label={t("database.filter.clear")} variant="secondary" size="sm" onClick={() => setShape((sh) => ({ ...sh, filter: null }))} />
                     ) : readOnly ? undefined : (
                       <Button label={t("database.grid.newRow")} variant="primary" size="sm" icon={<Plus size={15} />} onClick={addRow} />
@@ -567,6 +793,15 @@ export function DatabaseGrid({
         onSaved={onSchemaChange}
         onError={surfaceError}
         onClose={() => setDescribingCol(null)}
+      />
+      <NumberFormatDialog
+        isOpen={formattingCol !== null}
+        docId={docId}
+        tableId={table.table_id}
+        column={formattingCol}
+        onSaved={onSchemaChange}
+        onError={surfaceError}
+        onClose={() => setFormattingCol(null)}
       />
       <PromptDialog
         isOpen={renamingCol !== null}

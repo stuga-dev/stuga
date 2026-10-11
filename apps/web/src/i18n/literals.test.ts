@@ -19,8 +19,8 @@ const baselinePath = join(here, "literals-baseline.json");
 const TEXT_KEYS = new Set([
   "label", "title", "description", "aria-label", "aria-description", "aria-valuetext", "alt", "placeholder",
   "tooltip", "body", "heading", "subheading", "message", "hint", "note", "caption", "subtitle", "detail",
-  "actionLabel", "submitLabel", "confirmLabel", "cancelLabel", "dismissLabel", "removeLabel", "removedNote",
-  "searchPlaceholder", "emptySearchResultsText", "emptyText", "emptyLabel", "disabledMessage", "unchangedText",
+  "actionLabel", "submitLabel", "confirmLabel", "cancelLabel", "dismissLabel", "removeLabel", "removedNote", "removedLabel", "addedLabel",
+  "searchPlaceholder", "emptySearchText", "emptyText", "emptyLabel", "disabledMessage", "unchangedText",
   "helperText", "errorMessage", "summary", "text", "prompt", "trigger", "name", "defaultName", "about", "signIn",
 ]);
 /** Props that are never text, whatever their value looks like. */

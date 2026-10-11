@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Opcode } from "./opcodes.js";
+import { CloseCode, Opcode } from "./opcodes.js";
 
 /** Everything below this byte is reserved. */
 const OPCODE_MIN = 0x20;
@@ -23,6 +23,17 @@ describe("opcode table", () => {
       expect(Number.isInteger(value), `${name} must be an integer`).toBe(true);
       expect(value, `${name} must be >= OPCODE_MIN`).toBeGreaterThanOrEqual(OPCODE_MIN);
       expect(value, `${name} must fit in one byte`).toBeLessThanOrEqual(0xff);
+    }
+  });
+});
+
+describe("close codes", () => {
+  it("are distinct and in the range kept for applications", () => {
+    const codes = Object.values(CloseCode);
+    expect(new Set(codes).size).toBe(codes.length);
+    for (const code of codes) {
+      expect(code).toBeGreaterThanOrEqual(4000);
+      expect(code).toBeLessThanOrEqual(4999);
     }
   });
 });

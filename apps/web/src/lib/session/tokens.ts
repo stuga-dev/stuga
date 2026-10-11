@@ -5,6 +5,7 @@ import { AuthError, StorageBlockedError } from "./errors";
 import { noteSignOut } from "./provider";
 import { clearMediaTicket } from "./tickets";
 import { setActiveWorkspace } from "./workspace-pointer";
+import { clearMembershipEnded } from "./endings";
 import { clearRecentDocs } from "../recent-docs";
 import { forgetLanguageChoice } from "../../i18n/choice-cache";
 import { t } from "../../i18n/i18n";
@@ -62,8 +63,9 @@ function getTokenSet(): TokenSet | null {
 
 export function clearTokens(): void {
   removeStored("local", SESSION_KEY);
-  // The workspace pointer and what was opened belong to the session, not to the browser.
+  // The workspace pointer, what was opened and a membership that ended belong to the session, not to the browser.
   setActiveWorkspace(null);
+  clearMembershipEnded();
   clearRecentDocs();
   forgetLanguageChoice();
 }

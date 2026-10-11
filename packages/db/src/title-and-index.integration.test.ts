@@ -109,4 +109,10 @@ describe.skipIf(!URL)("title provenance across index runs", () => {
     expect(row!.title).toBe("Q3 Report");
     expect(row!.title_source).toBe("user");
   });
+
+  it("a document created with its name keeps it through a reindex", async () => {
+    await createDoc(sql, { workspaceId: WS, docId: "d10", owner: "user:alice", title: "Weekly order notes", titleSource: "user" });
+    await flush("d10", 1, "Order notes", "body text");
+    expect(await getDoc(sql, "d10")).toMatchObject({ title: "Weekly order notes", title_source: "user" });
+  });
 });

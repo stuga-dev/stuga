@@ -242,3 +242,15 @@ describe("remote access", () => {
     expect(servers(c.httpJson).stuga!.url).toBe("http://192.168.1.50:8787/mcp");
   });
 });
+
+describe("the address local clients use", () => {
+  it("is this computer's alone on a loopback node, and reaches other devices otherwise", () => {
+    expect(clientConfigs(LOCAL, null).address).toEqual({ url: "http://localhost:8787", thisComputerOnly: true });
+    expect(clientConfigs(LAN, null).address).toEqual({ url: "http://192.168.1.50:8787", thisComputerOnly: false });
+    expect(clientConfigs(PUBLIC, null).address.thisComputerOnly).toBe(false);
+  });
+
+  it("is the remote address, reachable anywhere, for a page opened there", () => {
+    expect(clientConfigs({ ...LAN_WITH_REMOTE, loopback: true }, null, REMOTE).address).toEqual({ url: REMOTE, thisComputerOnly: false });
+  });
+});

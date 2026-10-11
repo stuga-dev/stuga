@@ -283,6 +283,22 @@ describe("nearest", () => {
     expect(nearest("Checked-Out", ["Confirmed", "Checked Out"])).toBe("Checked Out");
     expect(nearest("Banana", ["Confirmed", "Checked Out"])).toBeNull();
   });
+
+  it("allows one edit per four characters, a swap of neighbours counting as one", () => {
+    expect(nearest("Pricee", ["Name", "Price"])).toBe("Price");
+    expect(nearest("Nmae", ["Name", "Notes"])).toBe("Name");
+    expect(nearest("Phone", ["Name", "Notes", "Done"])).toBeNull();
+  });
+});
+
+describe("blank lines in an import", () => {
+  it("skips a line of only separators without counting it or renumbering the rows after it", () => {
+    const table = csvToTable("booking_ref,nightly_rate\nB1,10\n,\nB2,n/a\n");
+    const out = validateImportRows(table, mapHeaders(table.headers, COLUMNS));
+    expect(out.rows_total).toBe(2);
+    expect(out.rows).toHaveLength(1);
+    expect(out.errors).toEqual([expect.objectContaining({ row: 3, column: "nightly_rate" })]);
+  });
 });
 
 describe("import ids and upload signatures", () => {

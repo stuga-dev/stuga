@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completionPrefix } from "./search.js";
+import { completionPrefix, typoTolerant } from "./search.js";
 
 describe("completionPrefix", () => {
   it("splits off the last word, lowercased, from the finished ones", () => {
@@ -17,5 +17,23 @@ describe("completionPrefix", () => {
     expect(completionPrefix("データ")).toBeNull();
     expect(completionPrefix("e-mail")).toBeNull();
     expect(completionPrefix("(2026)")).toBeNull();
+  });
+});
+
+describe("typoTolerant", () => {
+  it("allows a typo when every word has four characters or more", () => {
+    expect(typoTolerant("croisant")).toBe(true);
+    expect(typoTolerant("croisant recipe")).toBe(true);
+    expect(typoTolerant("Brot 2026")).toBe(true);
+  });
+
+  it("refuses a short word anywhere in the query, or a script written without spaces", () => {
+    expect(typoTolerant("x")).toBe(false);
+    expect(typoTolerant("ab")).toBe(false);
+    expect(typoTolerant("croisant de")).toBe(false);
+    expect(typoTolerant("煎饼")).toBe(false);
+    expect(typoTolerant("人工智能技术")).toBe(false);
+    expect(typoTolerant("データベース")).toBe(false);
+    expect(typoTolerant("  ")).toBe(false);
   });
 });

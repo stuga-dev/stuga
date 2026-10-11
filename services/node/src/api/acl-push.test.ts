@@ -119,3 +119,24 @@ describe("PUT /api/folders/:id/acl", () => {
     expect(revoke().searchParams.get("writersStated")).toBe("1");
   });
 });
+
+describe("who a share tells", () => {
+  async function shareWith(grants: string[]) {
+    const jobs = recordingJobs();
+    const fetch = vi.fn(async () => new Response("{}"));
+    const ctx = personCtx({ sql: { unsafe: (q: string) => q }, alias: "owner-1", role: "owner", env: { jobs, docs: actorsAnswering(fetch) } });
+    const req = new Request("https://node.test/api/docs/d1/acl", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ grants }),
+    });
+    expect((await routeWorkspaceRequest(ctx, req)).status).toBe(200);
+    return jobs.sent().filter((msg) => msg.kind === "notify").map((msg) => msg.recipient);
+  }
+
+  it("tells only the people the save adds, so saving again sends nothing twice", async () => {
+    m(getDoc).mockResolvedValue({ ...DOC, own_grants: { p: ["user:bob"], w: ["user:bob"], c: [] } });
+    expect(await shareWith(["user:bob", "user:cy"])).toEqual(["cy"]);
+    expect(await shareWith(["user:bob"])).toEqual([]);
+  });
+});

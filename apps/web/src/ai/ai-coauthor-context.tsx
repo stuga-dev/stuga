@@ -1,7 +1,8 @@
 /**
  * A document's AI co-author conversation. It never writes to the document: a
  * turn's edits go into the run ledger server-side and are reviewed where the
- * text is. The conversation is React state only.
+ * text is. The conversation lives in this tab's memory only, kept per account
+ * and document so leaving the document and coming back finds it again.
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { StugaProvider } from "../sync/stuga-provider";
@@ -12,8 +13,31 @@ import { Media } from "../api";
 import { citedSources } from "./citations";
 import { coauthorActivityText, coauthorErrorText, coauthorNoticesText } from "./turn-text";
 import { t } from "../i18n/i18n";
-import { errorMessage } from "../lib/http/client";
+import { errorMessage, getAlias } from "../lib/http/client";
 import type { ChatTurn } from "./ChatTranscript";
+
+/** Conversations by account and document, most recent last; never written anywhere. */
+const keptChats = new Map<string, ChatTurn[]>();
+const KEPT_CHATS_MAX = 20;
+
+function chatKey(docId: string): string {
+  return `${getAlias() ?? ""}\u0000${docId}`;
+}
+
+/** A reply cut off by leaving the page says so when the conversation reopens, rather than "Thinking…" forever. */
+function interrupted(turns: ChatTurn[]): ChatTurn[] {
+  const last = turns[turns.length - 1];
+  if (!last || last.role !== "assistant") return turns;
+  return [...turns.slice(0, -1), { ...last, status: undefined, notice: t("ai.transcript.interrupted") }];
+}
+
+function keepChat(docId: string, turns: ChatTurn[]): void {
+  const key = chatKey(docId);
+  keptChats.delete(key);
+  if (turns.length === 0) return;
+  keptChats.set(key, turns);
+  if (keptChats.size > KEPT_CHATS_MAX) keptChats.delete(keptChats.keys().next().value!);
+}
 
 /**
  * An image attached to the next turn. It uploads over HTTP as soon as it is
@@ -128,7 +152,8 @@ export function AiCoauthorProvider({
 }) {
   const { editor } = useSharedEditor();
   const available = useAiChat() === "on";
-  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [turns, setTurns] = useState<ChatTurn[]>(() => keptChats.get(chatKey(docId)) ?? []);
+  useEffect(() => keepChat(docId, turns), [docId, turns]);
   const [streaming, setStreaming] = useState(false);
   const [model, setModel] = useState("auto");
   const [collectionId, setCollectionId] = useState<string | null>(null);
@@ -149,6 +174,14 @@ export function AiCoauthorProvider({
   /** Whether the last turn to end was stopped or failed. */
   const halted = useRef(false);
   const [receipts, setReceipts] = useState(0);
+  const turnsRef = useRef(turns);
+  turnsRef.current = turns;
+  useEffect(
+    () => () => {
+      if (turnOpen.current) keepChat(docId, interrupted(turnsRef.current));
+    },
+    [docId],
+  );
   const setQueue = (next: QueuedRevision[], paused = false) => {
     queuedRef.current = next;
     pausedRef.current = paused;
@@ -229,6 +262,7 @@ export function AiCoauthorProvider({
           shown: opts.shown,
           quote,
           images: ready.length ? ready.map((a) => ({ url: a.previewUrl, name: a.name })) : undefined,
+          ...(opts.revise ? { revises: opts.revise.map((r) => r.feedback_id) } : {}),
         },
         { role: "assistant", text: "", status: t("ai.status.thinking") },
       ]);
@@ -287,6 +321,10 @@ export function AiCoauthorProvider({
               }
               if (payload.staged > 0) next.staged = payload.staged;
               if (payload.applied > 0) next.applied = payload.applied;
+              if (payload.run_id && payload.hunk_ids?.length) {
+                next.runId = payload.run_id;
+                next.hunkIds = payload.hunk_ids;
+              }
               if (payload.cross_docs?.length) next.crossDocs = payload.cross_docs;
               if (payload.error) next.proposeError = coauthorErrorText(payload.error);
               const notice = coauthorNoticesText(payload.notices);

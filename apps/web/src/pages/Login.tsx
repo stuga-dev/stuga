@@ -14,6 +14,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Center } from "@astryxdesign/core/Center";
 import { Heading, Text } from "@astryxdesign/core/Text";
+import { Link } from "@astryxdesign/core/Link";
 import { Button } from "@astryxdesign/core/Button";
 import { Divider } from "@astryxdesign/core/Divider";
 import { Banner } from "@astryxdesign/core/Banner";
@@ -33,7 +34,8 @@ import {
 } from "../lib/session/provider";
 import { setSession, getToken, type Session } from "../lib/session/tokens";
 import { takeLoginReturn, peekLoginReturn, pendingInviteToken } from "../lib/session/return-path";
-import { signUp, signInWithPassword, passwordOk, PASSWORD_RULES } from "../lib/session/sign-in";
+import { clearSessionEnded, sessionEnded } from "../lib/session/endings";
+import { signUp, signInWithPassword, passwordOk, previewInvite, PASSWORD_RULES, type InvitePreview } from "../lib/session/sign-in";
 import { AuthError, describeError } from "../lib/session/errors";
 import { usePageRestored } from "../lib/use-page-restored";
 import { AuthErrorBanner } from "../ui/AuthErrorBanner";
@@ -57,7 +59,7 @@ const COLUMN_MIN_WIDTH = 260;
  * Setup greets with the product: nobody has named the node yet.
  */
 function headingsFor(view: View): { title: string; subtitle?: string } {
-  if (view === "setup") return { title: t("auth.login.welcome", { product: PRODUCT_NAME }) };
+  if (view === "setup") return { title: t("auth.login.welcome", { product: PRODUCT_NAME }), subtitle: t("auth.login.setupSubtitle") };
   if (view === "signin") return { title: t("auth.login.welcomeBack"), subtitle: t("auth.login.signInTo", { node: nodeName() }) };
   return { title: t("auth.createYourAccount") };
 }
@@ -69,6 +71,13 @@ function browserTimeZone(): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** What an invite link admits to, as the page greets its holder with; the generic line until the node has said. */
+function inviteGreeting(invite: InvitePreview | null): string {
+  if (invite?.status !== "ok") return t("auth.login.inviteNotice");
+  const { workspace_name: workspace, role, invited_by: inviter } = invite;
+  return inviter ? t("auth.login.invitedBy", { inviter, workspace, role }) : t("auth.login.invitedTo", { workspace, role });
 }
 
 /** `path` with ?provider=failed, as the node sends a failed link back to the page that started it. */
@@ -110,6 +119,10 @@ export function Login() {
   );
   /** Peeked, not consumed: enter() spends the stash, and signing in still returns to /join/:token. */
   const [inviteToken] = useState(pendingInviteToken);
+  /** What the link admits to, checked before anything is typed; null until the node answers. */
+  const [invite, setInvite] = useState<InvitePreview | null>(null);
+  /** Used up, turned off, expired, made up, or for the node's own network only: no account can be made with it here. */
+  const deadInvite = invite !== null && invite.status !== "ok";
   // Someone holding an invite link most likely has no account yet, so the link opens on sign-up.
   const [view, setView] = useState<View>(() => (nodeUnclaimed() ? "setup" : inviteToken !== null ? "signup" : "signin"));
   const [username, setUsername] = useState("");
@@ -143,10 +156,44 @@ export function Login() {
   const [suggestion, setSuggestion] = useState<string | null>(null);
   /** Stays up across a switch between sign-in and sign-up: it is why the visitor is here. */
   // The lowest-priority seeded notice: a routed failure and an unreachable server outrank it.
-  const inviteNotice = inviteToken ? t("auth.login.inviteNotice") : null;
+  // A shared document's link brings its visitor here first; sign-up stays by invite, so they are told how to get one.
+  const fromShareLink = !inviteToken && peekLoginReturn().startsWith("/s/");
+  const inviteNotice = inviteToken
+    ? deadInvite
+      ? null
+      : inviteGreeting(invite)
+    : fromShareLink
+      ? t("auth.login.shareLinkNotice")
+      : null;
+  /** The sign-in ended under the page that sent the person here; signing in goes back to it. */
+  const endedNotice = sessionEnded() ? t("auth.login.sessionEnded") : null;
   const [notice, setNotice] = useState<string | null>(
-    typeof routedNotice === "string" ? routedNotice : authConfigUnavailable() ? t("auth.login.configNotice") : inviteNotice,
+    typeof routedNotice === "string"
+      ? routedNotice
+      : authConfigUnavailable()
+        ? t("auth.login.configNotice")
+        : (endedNotice ?? inviteNotice),
   );
+  // Said once: a later visit to this page is not about that ending.
+  useEffect(() => clearSessionEnded(), []);
+
+  // The greeting names the workspace, the role and who invited once the node says; a dead link turns to sign-in.
+  useEffect(() => {
+    if (!inviteToken) return;
+    let alive = true;
+    previewInvite(inviteToken)
+      .then((found) => {
+        if (!alive) return;
+        setInvite(found);
+        setNotice((shown) => (shown === t("auth.login.inviteNotice") ? (found.status === "ok" ? inviteGreeting(found) : null) : shown));
+        if (found.status !== "ok") setView((v) => (v === "signup" ? "signin" : v));
+      })
+      // Unchecked, the form stays as it was: the node still refuses a dead link on submit.
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [inviteToken]);
 
   // A round trip that failed or never finished: the hint must not send the next visit straight back out.
   useEffect(() => {
@@ -233,14 +280,14 @@ export function Login() {
 
   if (silent) {
     return (
-      <Center axis="both" className="auth-page">
+      <Center axis="horizontal" className="auth-page">
         <Spinner label={t("auth.signingIn")} />
       </Center>
     );
   }
 
-  // After setup, an account is created only with an invite link.
-  const canSignUp = inviteToken !== null;
+  // After setup, an account is created only with an invite link, and only one that still works.
+  const canSignUp = inviteToken !== null && !deadInvite;
 
   function go(next: View, message?: string) {
     setView(next);
@@ -353,10 +400,11 @@ export function Login() {
 
   const heading = headingsFor(view);
   const creating = view === "setup" || view === "signup";
-  const showPasswordRules = creating && password.length > 0;
+  // From the start, so the rules are read before a password is chosen, not learnt from a refusal.
+  const showPasswordRules = creating;
 
   return (
-    <Center axis="both" className="auth-page">
+    <Center axis="horizontal" className="auth-page">
       <div className="auth-card">
         <Card padding={0} width="100%" elevation="med">
           <Grid
@@ -396,6 +444,12 @@ export function Login() {
                 />
               )}
               {notice && !error && <Banner status="info" title={notice} />}
+              {deadInvite && !error && (
+                <Banner
+                  status="warning"
+                  title={invite?.status === "local_only" ? t("auth.errors.inviteLocalOnly") : t("auth.errors.inviteInvalid")}
+                />
+              )}
 
               {view === "signin" && (
                 <VStack gap={4}>
@@ -418,6 +472,7 @@ export function Login() {
                       htmlName="password"
                       onEnter={() => void submitSignIn()}
                     />
+                    <ForgotPassword />
                   </VStack>
                   <Button
                     label={t("auth.signIn")}
@@ -468,12 +523,14 @@ export function Login() {
                       onChange={setName}
                       htmlName="name"
                     />
+                    {/* Usernames are lowercase: capitals turn lowercase as they are typed, so what is shown is what is kept. */}
                     <TextInput
                       label={t("common.username")}
+                      description={t("auth.username.hint")}
                       size="lg"
                       isRequired
                       value={username}
-                      onChange={setUsername}
+                      onChange={(v: string) => setUsername(v.toLowerCase())}
                       htmlName="username"
                       autoComplete="username"
                     />
@@ -535,7 +592,8 @@ export function Login() {
                     <Button label={t("auth.createAccount")} variant="secondary" size="lg" width="100%" onClick={() => go("signup")} />
                   </VStack>
                 )}
-                {view === "signin" && !inviteToken && (
+                {/* The share link's notice already says how to get an invite. */}
+                {view === "signin" && !inviteToken && !fromShareLink && (
                   <Text type="supporting" color="secondary">
                     {t("auth.login.askForInvite")}
                   </Text>
@@ -564,7 +622,29 @@ export function Login() {
   );
 }
 
-/** The password policy as a live checklist, shown once the user starts typing. */
+/**
+ * "Forgot password?" under the sign-in form: a reset link comes from an administrator of this node,
+ * so the line says whom to ask, and that they make it under Settings.
+ */
+function ForgotPassword() {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <HStack>
+        <Link onClick={() => setOpen(true)}>
+          <Text type="supporting">{t("auth.login.forgotPassword")}</Text>
+        </Link>
+      </HStack>
+    );
+  }
+  return (
+    <Text type="supporting" color="secondary">
+      {t("auth.login.forgotPasswordHelp", { node: nodeName() })}
+    </Text>
+  );
+}
+
+/** The password policy as a checklist that ticks as the password meets it. */
 export function PasswordRules({ password, strong = false }: { password: string; strong?: boolean }) {
   return (
     <VStack gap={1} className="auth-rules">

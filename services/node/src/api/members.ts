@@ -4,6 +4,7 @@ import {
   countWorkspaceOwners,
   getAnyUserAliasByHandle,
   getMemberRole,
+  getUserDisplayName,
   getWorkspace,
   isWorkspaceMember,
   listWorkspaceMembers,
@@ -15,8 +16,23 @@ import {
   userExists,
 } from "@stuga/db";
 import { type WorkspaceRole, canGrantRole, isWorkspaceRole } from "@stuga/protocol/domain/roles";
+import { recordAudit } from "../audit/record.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
+
+/**
+ * A change to who is in a workspace, as the audit log keeps it: the person by alias, with the name
+ * they had then, so the row still reads after they rename or leave.
+ */
+async function recordMemberChange(
+  { ctx, match }: Pick<WorkspaceCall, "ctx" | "match">,
+  action: "member.add" | "member.role" | "member.remove",
+  alias: string,
+  detail: Record<string, unknown>,
+): Promise<void> {
+  const name = await getUserDisplayName(ctx.sql, alias).catch(() => null);
+  recordAudit({ ...ctx, workspaceId: match[1]! }, { action, targetKind: "user", targetId: alias, targetLabel: name || null, detail });
+}
 
 // Any member, guests included, may see who is in the workspace.
 export async function listMembers({ ctx, match }: WorkspaceCall): Promise<Response> {
@@ -63,6 +79,12 @@ export async function inviteMember({ ctx, req, match }: WorkspaceCall): Promise<
   }
   const seat = await addOrPromoteWorkspaceMember(ctx.sql, wsId, alias, role);
   if (!seat) return error(404, "workspace not found");
+  if (seat.outcome === "added") await recordMemberChange({ ctx, match }, "member.add", alias, { role: seat.role });
+  if (seat.outcome === "promoted") {
+    await recordMemberChange({ ctx, match }, "member.role", alias, { before: "guest", after: seat.role });
+    // As for a role change: their open pages reconnect with the member's reach.
+    ctx.env.sessionSockets.reopenMembership(alias, wsId);
+  }
   // The stored role: an existing member is not promoted.
   return json({ invited: alias, role: seat.role, status: seat.outcome });
 }
@@ -91,13 +113,18 @@ export async function changeMemberRole({ ctx, req, match }: WorkspaceCall): Prom
   }
   const changed = await updateMemberRole(ctx.sql, wsId, target, newRole);
   if (changed === "not_a_member") return error(404, "not a member");
+  if (targetRole !== newRole) {
+    await recordMemberChange({ ctx, match }, "member.role", target, { before: targetRole, after: newRole });
+    // An open socket holds the reach it was admitted with; it opens again with the new one.
+    ctx.env.sessionSockets.reopenMembership(target, wsId);
+  }
   return json({ alias: target, role: newRole });
 }
 
 // Remove a member, or leave. Direct grants on documents survive (they are inert
 // without membership), but the person's agent keys in this workspace are revoked,
 // and their apps' sign-ins stop naming it: either would otherwise resume working
-// on re-invitation.
+// on re-invitation. Their open pages there stop syncing at once.
 export async function removeMember({ ctx, match }: WorkspaceCall): Promise<Response> {
   const wsId = match[1]!;
   const target = match[2]!;
@@ -115,8 +142,10 @@ export async function removeMember({ ctx, match }: WorkspaceCall): Promise<Respo
     return error(400, "a workspace must keep at least one owner");
   }
   await removeWorkspaceMember(ctx.sql, wsId, target);
+  ctx.env.sessionSockets.closeMembership(target, wsId);
   // After the removal, so a failed removal never cuts off a member's agents.
   const orphaned = await revokeWorkspaceApiKeysForOwner(ctx.sql, wsId, target, ctx.alias);
   const connections = await dropWorkspaceFromOwnerGrants(ctx.sql, wsId, target, ctx.alias);
+  await recordMemberChange({ ctx, match }, "member.remove", target, { role: targetRole, left: self });
   return json({ removed: target, keys_revoked: orphaned.length, connections_revoked: connections });
 }

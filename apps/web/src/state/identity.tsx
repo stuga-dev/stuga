@@ -31,6 +31,8 @@ const pending = new Set<string>();
 const failed = new Set<string>();
 /** Aliases the directory has no row for, such as a former member or an agent's name: not asked about again. */
 const unknown = new Set<string>();
+/** Agent alias → the name of the key or connection it acts through now, as the pages listing agents hand them over. */
+const agentLabels = new Map<string, string>();
 
 /** The person a principal or ledger alias names; null for agents, groups, the workspace and imported authors. */
 function personAlias(principal: string): string | null {
@@ -51,15 +53,36 @@ function isAccountAlias(alias: string): boolean {
   return /^u_[A-Za-z0-9_-]{16}$/.test(alias);
 }
 
+/**
+ * Whose ledger a name is read for: the workspace's, whose directory knows every member, so an account
+ * it has no row for has left; or the whole node's, whose accounts may belong to another workspace or none.
+ */
+export type NameScope = "workspace" | "node";
+
+/** An account alias as people read it without its name: "Former member" once the workspace's directory has no row for it. */
+function unnamedAccount(alias: string, scope: NameScope = "workspace"): string {
+  return scope === "workspace" && unknown.has(alias) ? t("ui.principal.formerMember") : `${alias.slice(0, 6)}…`;
+}
+
 /** A principal's full name from the cache. Emails stay whole, so two people sharing a local part stay distinct. */
 export function principalName(principal: string): string {
   if (principal.startsWith("org:")) return t("ui.principal.everyone");
   if (principal.startsWith("group:")) return t("ui.principal.group", { name: principal.slice("group:".length) });
   if (principal.startsWith("user:")) {
     const alias = principal.slice("user:".length);
-    return names.get(alias) ?? (isAccountAlias(alias) ? `${alias.slice(0, 6)}…` : alias);
+    return names.get(alias) ?? (isAccountAlias(alias) ? unnamedAccount(alias) : alias);
   }
   return principal;
+}
+
+/** A person's name as the directory has it now, or null until it is known (and for a former member). */
+export function personName(alias: string): string | null {
+  return names.get(alias) ?? null;
+}
+
+/** Called whenever names arrive, for markup outside React such as an editor node view. */
+export function onNamesResolved(listener: () => void): () => void {
+  return resolved.subscribe(listener);
 }
 
 /** A short label from the cache: an email is cut to its local part. */
@@ -70,12 +93,14 @@ export function principalLabel(principal: string): string {
   return at > 0 ? name.slice(0, at) : name;
 }
 
-/** A ledger alias: the co-author label, an agent's id, or a person's name. */
-export function actorName(alias: string): string {
+/** A ledger alias: the co-author label, an agent's current name (else its id), or a person's name. */
+export function actorName(alias: string, scope: NameScope = "workspace"): string {
   if (principalHuman(alias) !== null) return aiCoauthorLabel();
+  const agent = agentLabels.get(alias);
+  if (agent) return agent;
   if (alias.startsWith("agent:")) return alias.slice("agent:".length);
   const person = alias.startsWith("user:") ? alias.slice("user:".length) : alias;
-  return names.get(person) ?? person;
+  return names.get(person) ?? (isAccountAlias(person) ? unnamedAccount(person, scope) : person);
 }
 
 /** What tells apart two people of one name; null for agents and co-authors, and when the name already is the handle. */
@@ -139,11 +164,18 @@ export function colorFor(seed: string): string {
   return PEER_PALETTE[h % PEER_PALETTE.length]!;
 }
 
+/**
+ * One letter per word of a name, at most two, in capitals: "Sofia Alvarez" is SA, "omar" is O.
+ * Letters of any script count; an emoji or punctuation does not.
+ */
 export function initials(label: string): string {
-  const clean = label.replace(/[^A-Za-z0-9 ]/g, " ").trim();
-  if (!clean) return "?";
-  const parts = clean.split(/\s+/);
-  return (parts.length > 1 ? parts[0]![0]! + parts[1]![0]! : clean.slice(0, 2)).toUpperCase();
+  const words = label.replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "?";
+  return words
+    .slice(0, 2)
+    .map((w) => [...w][0]!)
+    .join("")
+    .toLocaleUpperCase();
 }
 
 async function flush(): Promise<void> {
@@ -182,6 +214,24 @@ export function rememberUsers(users: readonly { alias: string; username: string 
   if (changed) resolved.update((n) => n + 1);
 }
 
+/** A person renamed in this tab: every label and avatar that reads the cache shows the new name at once. */
+export function rememberName(alias: string, name: string): void {
+  if (!name || names.get(alias) === name) return;
+  names.set(alias, name);
+  resolved.update((n) => n + 1);
+}
+
+/** Remember agents' current names, as a page that shows their ids received them, so every label of them names them. */
+export function rememberAgentNames(byAlias: Readonly<Record<string, string>> | undefined): void {
+  let changed = false;
+  for (const [alias, name] of Object.entries(byAlias ?? {})) {
+    if (agentLabels.get(alias) === name) continue;
+    agentLabels.set(alias, name);
+    changed = true;
+  }
+  if (changed) resolved.update((n) => n + 1);
+}
+
 /** Look up the people these principals or ledger aliases name, in the background. */
 export function resolveNames(principals: readonly (string | null)[]): void {
   let added = false;
@@ -211,10 +261,15 @@ export function useUserNames(principals: string[]): number {
   return version;
 }
 
-/** A circular avatar with initials on the principal's identity colour; no initials while the name loads. */
-export function Avatar({ principal, size = 22 }: { principal: string; size?: number }) {
-  useUserNames([principal]);
-  const label = nameLoading(principal) ? null : principalLabel(principal);
+/**
+ * A circular avatar with initials on the principal's identity colour; no initials while the name loads.
+ * The one avatar for a person everywhere, so they keep one colour and one set of initials; `name`
+ * stands in for the cached one, as a name being edited is previewed.
+ */
+export function Avatar({ principal, size = 22, name }: { principal: string; size?: number; name?: string }) {
+  // A given name needs no lookup.
+  useUserNames(name ? [] : [principal]);
+  const label = name || (nameLoading(principal) ? null : principalLabel(principal));
   const seed = principal.startsWith("user:") ? principal.slice("user:".length) : principal;
   return (
     <span

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from "vitest";
 import { setAuthConfigForTest } from "../lib/session/auth-config";
-import { applyBranding, brandColor, updateBranding } from "./branding";
+import { applyBranding, brandColor, setPageTitle, updateBranding } from "./branding";
 
 /** HSL lightness, the axis the clamps work on. */
 function lightness(hex: string): number {
@@ -72,6 +72,7 @@ describe("applyBranding", () => {
   afterEach(() => {
     setAuthConfigForTest(null);
     document.getElementById("stuga-branding-accent")?.remove();
+    setPageTitle(null);
     document.title = "";
   });
 
@@ -102,5 +103,19 @@ describe("applyBranding", () => {
     updateBranding({ node: { name: null, label: "livs-air" }, branding: { accentColor: null } });
     expect(document.title).toBe("Stuga");
     expect(document.getElementById("stuga-branding-accent")).toBeNull();
+  });
+
+  it("puts the page's name before the node's, and keeps it through a rename of the node", () => {
+    setAuthConfigForTest(null);
+    setPageTitle("  Croissant\n recipe ");
+    expect(document.title).toBe("Croissant recipe - Stuga");
+
+    updateBranding({ node: { name: "Acme Docs", label: "Acme Docs" } });
+    expect(document.title).toBe("Croissant recipe - Acme Docs");
+
+    setPageTitle(null);
+    expect(document.title).toBe("Acme Docs");
+    setPageTitle("   ");
+    expect(document.title).toBe("Acme Docs");
   });
 });

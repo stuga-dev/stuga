@@ -10,6 +10,7 @@ import {
   parseAuditLimit,
 } from "./read.js";
 import { AUDIT_DEDUP_MS, noteAuditWindow, recordAudit } from "./record.js";
+import { agentNameMap } from "../agents/names.js";
 import { error, json, download } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
 
@@ -69,7 +70,8 @@ export async function listAudit({ ctx, url }: WorkspaceCall): Promise<Response> 
     before: cursor.value,
     limit,
   });
-  return json({ events, next_before: nextAuditCursor(events, limit) });
+  const agents = events.filter((e) => e.actor_kind === "agent").map((e) => e.actor);
+  return json({ events, next_before: nextAuditCursor(events, limit), agent_names: await agentNameMap(ctx.sql, agents) });
 }
 
 // The filter menus' vocabulary for a time window. Only the window narrows it: a
@@ -95,6 +97,7 @@ export async function listAuditFacets({ ctx, url }: WorkspaceCall): Promise<Resp
       statuses: wire(facets.statuses),
       // An axis cut short holds its busiest values, not the whole vocabulary.
       truncated: facets.truncated,
+      agent_names: await agentNameMap(ctx.sql, facets.agents.map((f) => f.value)),
     },
   );
 }

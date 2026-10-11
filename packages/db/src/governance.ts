@@ -61,6 +61,12 @@ export interface ListAgentRunsInput {
   /** Keyset cursor: rows strictly older than this (updated_at, run_id). */
   before?: { updatedAt: string; runId: string };
   limit?: number;
+  /**
+   * Who is asking, for `attention`: a run needs their attention only when they can decide it, as its
+   * reviewer, the document's owner, or a workspace admin (`admin`). Deciding changes the item, so
+   * pending changes also need write access to it; dismissing what was applied at once does not.
+   */
+  decider?: { alias: string; admin: boolean };
 }
 
 /** The inbox page, newest activity first, gated on the document's ACL and hidden with trashed documents. */
@@ -70,7 +76,8 @@ export async function listAgentRuns(sql: Sql, input: ListAgentRunsInput): Promis
   const collecting = sql`(r.status = 'open' AND (r.pending > 0 OR r.updated_at > now() - make_interval(secs => ${RUN_IDLE_MS / 1000})))`;
   return sql<AgentRunRow[]>`
     SELECT r.run_id, r.workspace_id, r.doc_id, r.doc_kind,
-           coalesce(nullif(d.title, ''), r.doc_title) AS doc_title,
+           coalesce(nullif(d.title, ''), r.doc_title) AS doc_title, d.owner AS doc_owner,
+           (d.acl_writers && ${input.principals}) AS doc_writable,
            r.source, r.agent, r.agent_alias, r.client, r.model, r.reviewer, r.status, r.review_mode,
            r.auto_applied, r.reverted, r.acknowledged,
            r.pending, r.accepted, r.rejected, r.conflicts, r.applied,
@@ -83,7 +90,13 @@ export async function listAgentRuns(sql: Sql, input: ListAgentRunsInput): Promis
       AND d.acl_principals && ${input.principals}
       ${
         filter === "attention"
-          ? sql`AND ((r.status = 'open' AND r.pending > 0) OR (r.auto_applied AND NOT r.acknowledged AND NOT r.reverted))`
+          ? sql`AND ((r.status = 'open' AND r.pending > 0 AND d.acl_writers && ${input.principals})
+                     OR (r.auto_applied AND NOT r.acknowledged AND NOT r.reverted))
+                ${
+                  input.decider && !input.decider.admin
+                    ? sql`AND (r.reviewer = ${input.decider.alias} OR d.owner = ${`user:${input.decider.alias}`})`
+                    : sql``
+                }`
           : filter === "open"
             ? sql`AND ${collecting}`
             : filter === "closed"

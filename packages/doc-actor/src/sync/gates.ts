@@ -1,7 +1,7 @@
 /**
  * The gates a client's SYNC_STEP_2 or UPDATE passes before it may touch the
- * CRDT, in order: lock, rollback fence, editor tier, agent gate, rate window,
- * table growth. Each refusal kind says which one said no.
+ * CRDT, in order: lock, trash, rollback fence, editor tier, agent gate, rate
+ * window, table growth. Each refusal kind says which one said no.
  */
 import * as Y from "yjs";
 import { MAX_TABLE_COLS, MAX_TABLE_GROWTH_PER_WINDOW, MAX_TABLE_ROWS } from "@stuga/protocol/domain/limits";
@@ -17,6 +17,7 @@ const MAX_AI_PER_WINDOW = 10;
 
 const LOCKED_MESSAGE = "This document is locked; unlock it to make changes.";
 const VIEW_ONLY_MESSAGE = "You have view-only access to this document.";
+const TRASHED_MESSAGE = "This document is in the trash; restore it to make changes.";
 
 interface RateWindow {
   start: number;
@@ -71,6 +72,7 @@ export type WriteVerdict =
 export interface GateState {
   docId: string;
   locked: boolean;
+  trashed: boolean;
   /** Rollback generation; 0 means the document was never restored. */
   epoch: number;
   doc: Y.Doc;
@@ -85,10 +87,12 @@ export function judgeWrite(opcode: number, update: Uint8Array, ws: DocSocket, s:
   const opening = opcode === Opcode.SYNC_STEP_2 && addsNothing(s.doc, update);
   if (opening) {
     if (s.locked) return { verdict: "refuse", kind: "locked", message: LOCKED_MESSAGE, notice: true };
+    if (s.trashed) return { verdict: "refuse", kind: "trashed", message: TRASHED_MESSAGE, notice: true };
     if (!meta.canWrite) return { verdict: "refuse", kind: "acl", message: VIEW_ONLY_MESSAGE, notice: true };
     return { verdict: "ack" };
   }
   if (s.locked) return { verdict: "refuse", kind: "locked", message: LOCKED_MESSAGE };
+  if (s.trashed) return { verdict: "refuse", kind: "trashed", message: TRASHED_MESSAGE };
   // Rollback fence: after a restore, a socket that has not acked the current
   // generation holds superseded state that would re-merge rolled-back content.
   // At epoch 0 there is no superseded generation to protect.

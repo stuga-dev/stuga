@@ -1,4 +1,5 @@
 /** Sign-in, sign-up and the account's own credentials, against the node's auth routes. */
+import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
 import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { formatLocale, t } from "../../i18n/i18n";
 import { atRemoteAddress } from "./auth-config";
@@ -155,6 +156,32 @@ export async function changePassword(username: string, currentPassword: string, 
  */
 export async function resetPassword(token: string, newPassword: string): Promise<Session> {
   return toSession(await authPost("/auth/reset", { token, new_password: newPassword }));
+}
+
+/** Whose account a reset link is for; throws `reset_invalid` for one that can no longer be used. */
+export async function previewReset(token: string): Promise<{ username: string; display_name: string | null }> {
+  const found = await authRequest<{ username: string; display_name: string | null }>("/auth/reset/preview", { token });
+  if (!found) throw new AuthError(204, "reset_invalid");
+  return found;
+}
+
+/**
+ * What an invite link admits to, as the node tells its holder; `invalid` for one that is used up, expired,
+ * revoked or made up. A link that works only on the node's own network names only the workspace's id here.
+ */
+export type InvitePreview =
+  | {
+      status: "ok";
+      workspace_id: string;
+      workspace_name: string;
+      role: WorkspaceRole;
+      invited_by: string | null;
+    }
+  | { status: "local_only"; workspace_id: string }
+  | { status: "invalid" };
+
+export async function previewInvite(token: string): Promise<InvitePreview> {
+  return (await authRequest<InvitePreview>("/auth/invite/preview", { token })) ?? { status: "invalid" };
 }
 
 /**

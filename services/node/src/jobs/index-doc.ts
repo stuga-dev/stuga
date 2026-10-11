@@ -93,10 +93,26 @@ async function notifyNewMentions(
   }
 }
 
+/**
+ * A database's search text: what its cells say, read from its actor, so the
+ * workspace search finds a table by an order number or a product name. Kept to
+ * `search_text` under the database's own row, so whoever can read the database
+ * finds it and nobody else; no passages are embedded, as Ask reads tables
+ * through its own tools.
+ */
+async function indexDatabaseText(env: JobsEnv, deps: JobDeps, docId: string): Promise<void> {
+  const res = await env.databases.get(docId).fetch(`http://actor/search-text?dbId=${encodeURIComponent(docId)}`);
+  if (!res.ok) throw new Error(`database search text: actor answered ${res.status}`);
+  const body = (await res.json()) as { text?: unknown };
+  if (typeof body.text !== "string") throw new Error("database search text: no text in the actor's answer");
+  await deps.db.setDatabaseSearchText(docId, body.text);
+}
+
 export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocMessage): Promise<void> {
   const { db, log } = deps;
   const doc = await db.getDoc(msg.docId);
   if (!doc) return;
+  if (doc.doc_type === "database") return indexDatabaseText(env, deps, doc.doc_id);
 
   // A forced reindex with no seq of its own reads the row's snapshot; before the first flush there is none.
   const snapshotSeq = msg.snapshotSeq ?? doc.snapshot_seq;
@@ -232,9 +248,10 @@ export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocM
         embeddedTokens: totalTokens,
       });
 
-      // Attributed once for the document: its first editor, else its owner.
+      // Attributed once for the document: its first editor, else its owner. A restore, a
+      // recovery or an import names its marker ("restore:v5", "system:recovered", "imported:…") as the editor, which is no one.
       if (totalTokens > 0) {
-        const alias = editors[0] ?? principalId(doc.owner);
+        const alias = editors.find((a) => !/^(restore|system|imported):/.test(a)) ?? principalId(doc.owner);
         await db
           .insertAiUsage({
             alias,

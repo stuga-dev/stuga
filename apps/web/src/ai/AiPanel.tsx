@@ -10,12 +10,14 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { FileText, ImagePlus, SquarePen, X } from "lucide-react";
 import { ALL_DOCUMENTS_SCOPE } from "@stuga/protocol/wire/doc-socket";
 import { useAiCoauthor } from "./ai-coauthor-context";
+import { useAgentRuns } from "../review/agent-runs-context";
 import { useSharedEditor } from "../editor/editor-context";
 import { useEditorTick } from "../editor/use-editor-tick";
 import { AiScopePicker } from "./AiScopePicker";
 import { ChatComposer } from "./ChatComposer";
 import { ChatTranscript } from "./ChatTranscript";
-import { t } from "../i18n/i18n";
+import { t, type MessageKey } from "../i18n/i18n";
+import { useAiChat } from "../state/model-options";
 
 /** Sent when the user attaches an image without typing anything. */
 // i18n-exempt: a prompt sent to the model
@@ -38,6 +40,9 @@ export function AiNewChatButton() {
   );
 }
 
+/** What an empty chat offers to ask. */
+const EXAMPLES = ["ai.panel.exampleOutline", "ai.panel.exampleSummary", "ai.panel.exampleTable"] as const satisfies readonly MessageKey[];
+
 export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
   const {
     turns,
@@ -56,7 +61,9 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
     reviseNow,
     cancelRevisions,
   } = useAiCoauthor();
+  const { runs } = useAgentRuns();
   const [input, setInput] = useState("");
+  const aiChat = useAiChat();
   const fileRef = useRef<HTMLInputElement>(null);
   // Send waits for uploads: a turn that dropped a just-attached image looks like the AI ignored it.
   const uploading = attachments.some((a) => !a.path && !a.error);
@@ -91,10 +98,22 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
         turns={turns}
         streaming={streaming}
         reviewIn="document"
+        runs={runs}
         empty={
-          <>
-            {t("ai.panel.emptyIntro")} {agentAuto ? t("ai.panel.emptyAuto") : t("ai.panel.emptyReview")}
-          </>
+          <span className="ai-empty">
+            <span className="ai-empty__lead">{t("ai.panel.emptyLead")}</span>
+            {/* A tap fills the box, to send as is or change first; with AI off there is no box. */}
+            {aiChat !== "off" && (
+              <span className="ai-empty__examples">
+                {EXAMPLES.map((key) => (
+                  <button key={key} type="button" className="ai-empty__example" onClick={() => setInput(t(key))}>
+                    {t(key)}
+                  </button>
+                ))}
+              </span>
+            )}
+            <span className="ai-empty__note">{agentAuto ? t("ai.panel.emptyAuto") : t("ai.panel.emptyReview")}</span>
+          </span>
         }
       />
       <ChatComposer

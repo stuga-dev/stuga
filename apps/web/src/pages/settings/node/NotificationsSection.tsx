@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Heading, Text } from "@astryxdesign/core/Text";
+import { Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Button } from "@astryxdesign/core/Button";
@@ -65,7 +65,6 @@ export function NotificationsSection({ ops, onSaved }: { ops: NodeOperationalSet
     <>
       <SectionStatusBanners status={status} />
       <VStack gap={3}>
-        <Heading level={2}>{t("common.notifications")}</Heading>
         <Text type="supporting" color="secondary">
           {t("nodeAccess.notify.intro")}
         </Text>

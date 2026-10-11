@@ -48,6 +48,9 @@
   padding: var(--spacing-4) var(--spacing-4) var(--spacing-3);
   flex: 0 0 auto;
 }
+/* A crumb that goes somewhere is a small button; the top level's lone crumb is text. Both rows
+   take the button's height, so opening a folder does not move the heading. */
+.explorer-heading .astryx-breadcrumb-item { min-height: var(--size-element-sm); }
 .library-toolbar {
   display: flex; align-items: center; gap: var(--spacing-2);
   padding: var(--spacing-2) var(--spacing-4);
@@ -117,7 +120,9 @@
 }
 /* Titles and names read in their own text's direction, and a cut one loses its end, not its start. */
 .doc-table__title, .doc-table__page-mark-name, .doc-table__muted { unicode-bidi: plaintext; text-align: start; }
-.doc-table__chev { color: var(--color-text-secondary); flex: 0 0 auto; }
+/* The time a narrow table shows after the name, in place of its Last edited column. */
+.doc-table__when { flex: 0 0 auto; margin-inline-start: auto; font-size: 12px; }
+.doc-table__buttons { display: inline-flex; gap: var(--spacing-1); }
 /* Never truncated: the title is what ellipses. */
 .doc-state-marks { display: inline-flex; align-items: center; gap: 0.25rem; flex: 0 0 auto; }
 .doc-state-mark { display: inline-flex; color: var(--color-text-secondary); }
@@ -140,14 +145,21 @@
 }
 .doc-table--drop { box-shadow: inset 0 0 0 2px var(--color-accent); border-radius: var(--radius-container); }
 .crumb-drop { border-radius: var(--radius-inner); box-shadow: inset 0 0 0 2px var(--color-accent); }
+/* A gutter between the row's last control and the window edge or scrollbar. */
+.doc-table :is(td, th):last-child { padding-inline-end: var(--spacing-4); }
 /* Truncation would paint an ellipsis beside a control that is invisible until hover. */
 .doc-table td:has(.doc-table__star),
-.doc-table td:has(.doc-table__more) { text-overflow: clip; }
+.doc-table td:has(.doc-table__more),
+.doc-table td:has(.doc-table__buttons) { text-overflow: clip; }
 /* Revealed on hover; a starred row keeps its star. */
 .doc-table__star, .doc-table__more { opacity: 0; transition: opacity 0.12s; }
 .doc-table__star--on,
 .doc-row:hover .doc-table__star, .doc-row:focus-within .doc-table__star,
 .doc-row:hover .doc-table__more, .doc-row:focus-within .doc-table__more { opacity: 1; }
+/* Nothing hovers on a touch screen, so there the row actions always show. */
+@media (hover: none) {
+  .doc-table__star, .doc-table__more { opacity: 1; }
+}
 .doc-table__star {
   display: inline-flex; background: transparent; border: none; color: var(--color-text-secondary);
   cursor: pointer; padding: 0.2rem; border-radius: var(--radius-inner);
@@ -219,6 +231,14 @@
 
 /* Share dialog: a non-person row's icon sits in the avatar's round slot. */
 .share-row-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--color-background-muted); color: var(--color-text-secondary); flex-shrink: 0; }
-/* An inherited row's note fills the column the others' access menus use. */
-.share-row-note { width: 132px; text-align: end; padding-inline-end: var(--spacing-2); white-space: nowrap; }
+/* An inherited row's note fills the column the others' access menus use, and wraps rather than cut a word. */
+.share-row-note { display: block; width: 132px; text-align: end; padding-inline-end: var(--spacing-2); }
 .share-row-note--revoked { color: var(--color-text-red); }
+/* Access menus share one column; a longer translation widens it rather than cutting the level short. */
+.share-role { min-width: 132px; }
+.share-role--removed { color: var(--color-text-red); }
+/* Descriptions wrap: on a phone and in longer languages they say what the access means. */
+.share-row-label { white-space: normal; overflow-wrap: anywhere; }
+.share-row-desc { display: flex; flex-direction: column; white-space: normal; overflow-wrap: anywhere; }
+/* Rows that are not grants: an inline confirmation, and the live link with its Copy button. */
+.share-confirm, .share-link-copy { list-style: none; padding-block: var(--spacing-1); }

@@ -309,6 +309,27 @@ export function AgentRunsProvider({
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
+/** The runs, where the page has them: panels that also render outside a document read them this way. */
+export function useOptionalAgentRuns(): AgentRunsCtx | null {
+  return useContext(Ctx);
+}
+
+/**
+ * Changes when an agent's change lands in the document after `since`, or a person accepts or reverts
+ * one: what version history follows, since such a change is recorded at once when a version is due.
+ */
+export function useLandedRunsKey(since: number): string {
+  const runs = useOptionalAgentRuns()?.runs;
+  return useMemo(
+    () =>
+      (runs ?? [])
+        .filter((r) => r.updated_at > since)
+        .map((r) => `${r.id}:${r.hunks.filter((h) => h.status === "accepted" || h.status === "auto_applied").length}:${r.reverted ? 1 : 0}`)
+        .join("|"),
+    [runs, since],
+  );
+}
+
 export function useAgentRuns(): AgentRunsCtx {
   const ctx = useContext(Ctx);
   if (!ctx) throw new Error("useAgentRuns must be used within an AgentRunsProvider");

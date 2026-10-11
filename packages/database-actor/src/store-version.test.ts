@@ -25,6 +25,7 @@ const PINNED: Record<number, string> = {
   1: "20487a4d32855891",
   2: "8d9ed624efe89b80",
   3: "d3f3a5ba37b6da61",
+  4: "dfdc1d1458cd3df0",
 };
 
 let dir = "";

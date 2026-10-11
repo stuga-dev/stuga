@@ -8,13 +8,14 @@ import { Docs, type Comment } from "../api";
 import { useComments } from "../comments/comments-context";
 import { t } from "../i18n/i18n";
 import { tRich } from "../i18n/rich";
-import { importedAuthor } from "../lib/format";
+import { absoluteTime, importedAuthor, relativeTime } from "../lib/format";
 import { isComposingKey } from "../lib/ime";
 import { authorLabel, nameLoading, useUserNames } from "../state/identity";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Button } from "@astryxdesign/core/Button";
+import { IconButton } from "@astryxdesign/core/IconButton";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
-import { ChevronRight, MessageSquareText } from "lucide-react";
+import { ChevronRight, MessageSquareText, Trash2 } from "lucide-react";
 import { CommentText } from "../mentions/CommentText";
 import { MentionTextArea } from "../mentions/MentionTextArea";
 
@@ -39,7 +40,7 @@ export function CommentsPanel({ docId }: { docId: string }) {
     if (!body) return;
     await Docs.addComment(docId, body);
     setDraft("");
-    reload();
+    void reload();
   }
 
   // Threads: roots with their replies in order. A resolved root hides its whole thread.
@@ -171,6 +172,20 @@ function authorTitle(author: string): string | undefined {
   return importedAuthor(author) === null ? author : undefined;
 }
 
+/** When a comment was written, beside its author; the exact time on hover. */
+function CommentTime({ at }: { at: string }) {
+  return (
+    <time className="comment-time" dateTime={at} title={absoluteTime(at)}>
+      {relativeTime(at)}
+    </time>
+  );
+}
+
+/** Delete, apart from Resolve and quieter than it: an icon that names itself on hover. */
+function DeleteButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return <IconButton label={label} tooltip={label} variant="ghost" size="sm" icon={<Trash2 size={14} aria-hidden="true" />} onClick={onClick} />;
+}
+
 /** A root comment, its replies, and a reply box. */
 function CommentThread({
   ref,
@@ -211,12 +226,15 @@ function CommentThread({
         </button>
       )}
       <div className="comment-head">
-        <strong title={authorTitle(root.author)}>
-          <AuthorName author={root.author} />
-        </strong>
+        <span className="comment-byline">
+          <strong title={authorTitle(root.author)}>
+            <AuthorName author={root.author} />
+          </strong>
+          <CommentTime at={root.created_at} />
+        </span>
         <span className="comment-actions">
           <Button label={root.resolved ? t("document.comments.reopen") : t("document.comments.resolve")} variant="ghost" size="sm" onClick={onResolve} />
-          <Button label={t("common.delete")} variant="ghost" size="sm" onClick={() => onDelete(root.num)} tooltip={t("document.comments.deleteComment")} />
+          <DeleteButton label={t("document.comments.deleteComment")} onClick={() => onDelete(root.num)} />
         </span>
       </div>
       <CommentText body={root.body} mentions={root.mentions} />
@@ -226,11 +244,14 @@ function CommentThread({
           {replies.map((r) => (
             <li key={r.num} className="comment-reply">
               <div className="comment-head">
-                <strong title={authorTitle(r.author)}>
-                  <AuthorName author={r.author} />
-                </strong>
+                <span className="comment-byline">
+                  <strong title={authorTitle(r.author)}>
+                    <AuthorName author={r.author} />
+                  </strong>
+                  <CommentTime at={r.created_at} />
+                </span>
                 <span className="comment-actions">
-                  <Button label={t("common.delete")} variant="ghost" size="sm" onClick={() => onDelete(r.num)} tooltip={t("document.comments.deleteReply")} />
+                  <DeleteButton label={t("document.comments.deleteReply")} onClick={() => onDelete(r.num)} />
                 </span>
               </div>
               <CommentText body={r.body} mentions={r.mentions} />

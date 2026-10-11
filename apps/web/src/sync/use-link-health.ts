@@ -4,6 +4,7 @@
  * provider's lifecycle events, never from polling `readyState`.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useOnline } from "../lib/use-online";
 import {
   advance,
   newLinkHealth,
@@ -13,6 +14,7 @@ import {
   type LinkEvent,
   type LinkHealth,
 } from "./link-health";
+import type { SyncEnding } from "./stuga-provider";
 
 /** Tick while a threshold or the recovery flash is pending; the thresholds are seconds-scale. */
 const CLOCK_MS = 500;
@@ -26,7 +28,8 @@ interface LinkSignals {
   onWriteRejected: () => void;
   /** The server's durable-write state as a level. */
   onPersistDegraded: (degraded: boolean) => void;
-  onRevoked: () => void;
+  /** Syncing stopped for good. */
+  onEnded: (why: SyncEnding) => void;
 }
 
 /** Health resets whenever `docId` changes. */
@@ -34,6 +37,7 @@ export function useLinkHealth(docId: string | undefined): { status: IndicatorRea
   const [health, setHealth] = useState<LinkHealth>(newLinkHealth);
   const [transportUp, setTransportUp] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const online = useOnline();
 
   useEffect(() => {
     setHealth(newLinkHealth());
@@ -56,9 +60,9 @@ export function useLinkHealth(docId: string | undefined): { status: IndicatorRea
       onWriteRejected: () => dispatch({ kind: "write-refused" }),
       onPersistDegraded: (degraded) =>
         dispatch(degraded ? { kind: "persist-degraded", at: Date.now() } : { kind: "persist-recovered" }),
-      onRevoked: () => {
+      onEnded: (why) => {
         setTransportUp(false);
-        dispatch({ kind: "access-revoked" });
+        dispatch({ kind: "ended", why });
       },
     };
   }
@@ -74,6 +78,6 @@ export function useLinkHealth(docId: string | undefined): { status: IndicatorRea
     return () => clearInterval(id);
   }, [ticking]);
 
-  const status = useMemo(() => readout(health, transportUp, now), [health, transportUp, now]);
+  const status = useMemo(() => readout(health, transportUp, now, online), [health, transportUp, now, online]);
   return { status, signals: signalsRef.current };
 }

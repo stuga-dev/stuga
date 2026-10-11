@@ -2,18 +2,21 @@
  * The ⋯ menu beside Share on an open document or database: what changes the
  * item for everyone or where it lives. Rename, move and trash are refused for a
  * viewer and on a locked item, so they are disabled on the page's read-only flag;
- * Copy link, the state toggles and the instructions for agents stay live.
+ * the state toggles are disabled for anyone but the owner or an admin; Copy link
+ * and the instructions for agents stay live. A move that lets more people in asks first.
  */
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { MoreMenu } from "@astryxdesign/core/MoreMenu";
-import { useToast } from "@astryxdesign/core/Toast";
+import { FittedMoreMenu } from "../ui/FittedMoreMenu";
+import { useToast } from "../ui/use-toast";
 import { FolderInput, Link as LinkIcon, Pencil, Trash2 } from "lucide-react";
 import { Docs, type DocSummary } from "../api";
 import { nodeLink } from "../lib/session/auth-config";
 import { useDocStateMenu } from "./doc-state";
 import { useInstructionsDialog } from "./use-instructions-dialog";
+import { useMoveCheck } from "./use-move-check";
 import { FolderPicker } from "../ui/FolderPicker";
+import { showUndoToast } from "./undo-toast";
 import { t } from "../i18n/i18n";
 
 /** A page-specific entry in the item section, such as a database's Import. */
@@ -46,6 +49,7 @@ export function ItemOptionsMenu({
   const toast = useToast();
   const stateMenu = useDocStateMenu();
   const instructions = useInstructionsDialog();
+  const moveCheck = useMoveCheck();
   const [showMove, setShowMove] = useState(false);
   const noun = doc?.doc_type === "database" ? "database" : "document";
   const nounTitle = noun === "database" ? t("common.database") : t("common.document");
@@ -59,13 +63,19 @@ export function ItemOptionsMenu({
     }
   }
 
-  async function moveTo(parentId: string | null) {
+  async function moveTo(parentId: string | null, place: string) {
     setShowMove(false);
     if (!doc) return;
+    if (!(await moveCheck.confirmMove([{ kind: "doc", id: doc.doc_id }], parentId))) return;
+    const from = doc.parent_id;
     try {
       await Docs.move(doc.doc_id, parentId);
       onStateChanged({ ...doc, parent_id: parentId });
-      toast({ body: parentId ? t("library.options.moved") : t("library.options.movedTop"), type: "info" });
+      showUndoToast(toast, t("library.move.movedTo", { count: 1, place }), async () => {
+        await Docs.move(doc.doc_id, from);
+        onStateChanged({ ...doc, parent_id: from });
+        return t("library.move.movedBack", { count: 1 });
+      });
     } catch (err) {
       const status = (err as { status?: number }).status;
       toast({
@@ -75,13 +85,20 @@ export function ItemOptionsMenu({
     }
   }
 
-  // Trash can be undone from the library, so there is no confirmation.
+  // Trash can be undone, from the toast or the Trash, so there is no confirmation.
   async function moveToTrash() {
     if (!doc) return;
     try {
-      await Docs.trash(doc.doc_id, true);
-      toast({ body: t("library.options.trashed", { title: doc.title || t("common.untitled") }), type: "info" });
+      // The answer carries the title as it is now; this page's copy may predate a rename.
+      const trashed = await Docs.trash(doc.doc_id, true);
+      const title = trashed.title || t("common.untitled");
+      const back = location.pathname + location.search;
       nav(afterTrash);
+      showUndoToast(toast, t("library.options.trashed", { title }), async () => {
+        await Docs.trash(doc.doc_id, false);
+        nav(back);
+        return t("library.trash.restoredNamed", { title });
+      });
     } catch (err) {
       const status = (err as { status?: number }).status;
       toast({
@@ -94,11 +111,8 @@ export function ItemOptionsMenu({
 
   return (
     <>
-      <MoreMenu
+      <FittedMoreMenu
         label={t("library.options.menuLabel", { noun })}
-        variant="ghost"
-        size="sm"
-        alignment="end"
         isDisabled={!doc}
         items={[
           {
@@ -115,15 +129,17 @@ export function ItemOptionsMenu({
             type: "section",
             title: t("common.access"),
             items: doc
-              ? [...stateMenu(doc, onStateChanged), instructions.item({ kind: noun, id: doc.doc_id, title: doc.title })]
+              ? [...stateMenu.items(doc, onStateChanged), instructions.item({ kind: noun, id: doc.doc_id, title: doc.title })]
               : [],
           },
           { type: "divider" },
           { label: t("library.item.moveToTrash"), icon: <Trash2 size={15} />, variant: "destructive", isDisabled: readOnly, onClick: () => void moveToTrash() },
         ]}
       />
-      {showMove && <FolderPicker onPick={(id) => void moveTo(id)} onClose={() => setShowMove(false)} />}
+      {showMove && <FolderPicker onPick={(id, place) => void moveTo(id, place)} onClose={() => setShowMove(false)} />}
       {instructions.dialog}
+      {moveCheck.dialog}
+      {stateMenu.dialog}
     </>
   );
 }

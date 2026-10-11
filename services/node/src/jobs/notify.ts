@@ -60,10 +60,14 @@ export async function payloadFor(
 
 /** Store an in-app notification; a new one also queues its delivery to the configured sink. */
 export async function handleNotify(env: JobsEnv, deps: JobDeps, msg: NotifyMessage): Promise<void> {
-  const { recipient, eventType, docId, params } = msg;
-  // Bucketed by hour: a repeated share or comment within the hour is one notification and one ping.
-  const id = `${eventType}:${docId}:${recipient}:${Math.floor(Date.now() / HOUR_MS)}`;
-  const url = `${env.publicOrigin}/doc/${docId}`;
+  const { recipient, eventType, docId, params, commentNum } = msg;
+  // Bucketed by hour: a flurry of shares or comments within the hour is one notification and one
+  // ping, whose link opens the first comment. Each mention is its own, and access requests are per
+  // requester, since each is answered on its own.
+  const about = commentNum === undefined || eventType !== "MENTIONED_IN_COMMENT" ? docId : `${docId}#${commentNum}`;
+  const from = eventType === "REQUEST_ACCESS" ? `${msg.actor}:` : "";
+  const id = `${eventType}:${about}:${recipient}:${from}${Math.floor(Date.now() / HOUR_MS)}`;
+  const url = commentNum === undefined ? `${env.publicOrigin}/doc/${docId}` : `${env.publicOrigin}/doc/${docId}?comment=${commentNum}`;
   const delivery = sinkDelivery(env.settings.current().notify, { recipient, eventType, params, url });
 
   await deps.db.insertNotification(

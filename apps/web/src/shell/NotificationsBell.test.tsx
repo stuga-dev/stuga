@@ -53,7 +53,7 @@ let root: Root;
 /** The router's current path. */
 function LocationProbe() {
   const loc = useLocation();
-  return <div data-testid="loc">{loc.pathname}</div>;
+  return <div data-testid="loc">{`${loc.pathname}${loc.search}`}</div>;
 }
 
 async function mount({ withRows = true }: { withRows?: boolean } = {}): Promise<void> {
@@ -88,6 +88,11 @@ async function releaseGets(): Promise<void> {
   await act(async () => {
     for (const release of pendingGets.splice(0)) release();
   });
+}
+
+/** A button anywhere on the page by its text. */
+function button(label: string): HTMLElement | undefined {
+  return [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === label);
 }
 
 function bell(): HTMLElement {
@@ -126,22 +131,20 @@ beforeEach(() => {
 });
 
 describe("NotificationsBell", () => {
-  it("claims nothing while the first load is in flight, and marks the rows once they land", async () => {
+  it("claims nothing while the first load is in flight, then shows the rows unread", async () => {
     gateGets = true;
     responder = serve([notif("n1"), notif("n2")], 2);
     await mount({ withRows: false });
     await click(bell());
 
     expect(document.body.textContent).not.toContain("You’re all caught up.");
-    expect(calls.some((c) => c.method === "POST")).toBe(false);
-
     await releaseGets();
 
-    const post = calls.find((c) => c.method === "POST");
-    expect(post?.url).toBe("/api/notifications/read");
-    expect(post?.body).toEqual({ before: T0 });
     expect(document.body.textContent).toContain('alice shared “Plan” with you');
-    expect(document.querySelector(".notif-dot")).toBeNull();
+    expect(document.querySelectorAll(".notif-unread-mark--on")).toHaveLength(2);
+    // Opening reads; it marks nothing.
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    expect(document.querySelector(".notif-dot")).not.toBeNull();
   });
 
   it("shows the dot and counts unread in the accessible name", async () => {
@@ -151,28 +154,42 @@ describe("NotificationsBell", () => {
     expect(bell().getAttribute("aria-label")).toBe("Notifications (2 unread)");
   });
 
-  it("opening the tray marks the seen backlog read and puts the dot out immediately", async () => {
+  it("reads the count again when it opens, so a new mention shows at once", async () => {
+    responder = serve([]);
+    await mount();
+    responder = serve([notif("n1")]);
+    calls.length = 0;
+    await click(bell());
+    expect(calls.some((c) => c.url.includes("/unread"))).toBe(true);
+    expect(document.querySelector(".notif-dot")).not.toBeNull();
+  });
+
+  it("Mark all as read marks up to the newest row shown and puts the dot out at once", async () => {
     responder = serve([notif("n1"), notif("n2")], 2);
     await mount();
     await click(bell());
+    await click(button("Mark all as read")!);
 
     const post = calls.find((c) => c.method === "POST");
     expect(post?.url).toBe("/api/notifications/read");
     // Bounded by the newest row shown, so a row that arrived since keeps its unread state.
     expect(post?.body).toEqual({ before: T0 });
     expect(document.querySelector(".notif-dot")).toBeNull();
+    expect(document.querySelectorAll(".notif-unread-mark--on")).toHaveLength(0);
     expect(bell().getAttribute("aria-label")).toBe("Notifications");
+    expect(button("Mark all as read")).toBeUndefined();
   });
 
   it("a count poll from before the mark cannot relight the dot", async () => {
     responder = serve([notif("n1")]);
     await mount();
+    await click(bell());
 
     gateUnread = true;
     await act(async () => {
       refreshNotifications();
     });
-    await click(bell());
+    await click(button("Mark all as read")!);
     expect(document.querySelector(".notif-dot")).toBeNull();
 
     await releaseGets();
@@ -182,22 +199,19 @@ describe("NotificationsBell", () => {
 
   it("a rows response from before the mark does not un-read the tray", async () => {
     responder = serve([notif("n1")]);
-    await mount({ withRows: false });
-    gateGets = true;
+    await mount();
     await click(bell());
-    gateGets = false;
-    await releaseGets();
+    await click(button("Mark all as read")!);
 
-    expect(document.querySelector(".notif-dot")).toBeNull();
-    expect(document.body.textContent).toContain('alice shared “Plan” with you');
     // The same rows again, still unread server-side.
     await act(async () => {
       refreshNotificationRows();
     });
     expect(document.querySelector(".notif-dot")).toBeNull();
+    expect(document.querySelectorAll(".notif-unread-mark--on")).toHaveLength(0);
   });
 
-  it("fetches the rows once per open, and marks once", async () => {
+  it("fetches the rows once per open, and marks nothing", async () => {
     // Uncached rows, as on a session's first open, where a second fetch would not coalesce.
     responder = serve([notif("n1"), notif("n2")], 2);
     await mount({ withRows: false });
@@ -205,7 +219,7 @@ describe("NotificationsBell", () => {
     await click(bell());
 
     expect(calls.filter((c) => c.method === "GET" && !c.url.includes("/unread"))).toHaveLength(1);
-    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
   it("still pulls rows that arrive while the tray is open", async () => {
@@ -242,14 +256,15 @@ describe("NotificationsBell", () => {
     expect(document.body.textContent).toContain("Couldn’t load notifications.");
   });
 
-  it("does not POST at all when nothing is unread", async () => {
+  it("offers nothing to mark when nothing is unread", async () => {
     responder = serve([notif("n1", { read: true })]);
     await mount();
     await click(bell());
+    expect(button("Mark all as read")).toBeUndefined();
     expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
 
-  it("navigates document rows to the document", async () => {
+  it("navigates document rows to the document, marking that row read", async () => {
     responder = serve([notif("n1")]);
     await mount();
     await click(bell());
@@ -261,6 +276,23 @@ describe("NotificationsBell", () => {
     const target = row!.querySelector<HTMLElement>("button, [role='button'], a") ?? row!;
     await click(target);
     expect(document.querySelector("[data-testid='loc']")?.textContent).toBe("/doc/d1");
+    expect(calls.find((c) => c.method === "POST")?.body).toEqual({ ids: ["n1"] });
+    expect(document.querySelector(".notif-dot")).toBeNull();
+  });
+
+  it("opens a comment's notification at that comment", async () => {
+    responder = serve([
+      notif("n1", {
+        event_type: "MENTIONED_IN_COMMENT",
+        payload: { actor: "alice", doc: "Plan", excerpt: "see this" },
+        resource_url: "https://node.example/doc/d1?comment=7",
+      }),
+    ]);
+    await mount();
+    await click(bell());
+    const row = [...document.querySelectorAll<HTMLElement>("li")].find((el) => el.textContent?.includes("Plan"));
+    await click(row!.querySelector<HTMLElement>("button, [role='button'], a") ?? row!);
+    expect(document.querySelector("[data-testid='loc']")?.textContent).toBe("/doc/d1?comment=7");
   });
 
   it("names the workspace only on rows from another one", async () => {
@@ -299,8 +331,8 @@ describe("NotificationsBell", () => {
     );
     expect(row).toBeTruthy();
     expect(row!.textContent).not.toContain("null");
-    // A row about the node says whether it also went out.
-    expect(row!.textContent).toContain("Shown in Stuga only.");
+    // With no channel on the node, the bell is the only place it went, which needs no saying.
+    expect(row!.textContent).not.toContain("Stuga only");
     const target = row!.querySelector<HTMLElement>("button, [role='button'], a") ?? row!;
     await click(target);
     expect(getActiveWorkspace()).toBe(before);
@@ -325,7 +357,7 @@ describe("NotificationsBell", () => {
 
 describe("whether an alert also went out", () => {
   it("says so in each of its states, the channel by name", () => {
-    expect(deliveryLine({ delivery_channel: "none" })).toBe("Shown in Stuga only.");
+    expect(deliveryLine({ delivery_channel: "none" })).toBeUndefined();
     // A row from before this was kept says nothing, rather than claim it was never sent.
     expect(deliveryLine({ delivery_channel: null })).toBeUndefined();
     expect(deliveryLine({})).toBeUndefined();
@@ -357,7 +389,7 @@ describe("in the reader’s language", () => {
     await mount();
     await click(bell());
     expect(document.body.textContent).toContain("alice hat „Plan“ mit dir geteilt");
-    expect(bell().getAttribute("aria-label")).toBe("Benachrichtigungen");
+    expect(bell().getAttribute("aria-label")).toBe("Benachrichtigungen (1 ungelesen)");
     expect(deliveryLine({ delivery_channel: "email", delivered_at: null, delivery_error: "email_not_set_up" })).toBe(
       "Nicht per E-Mail gesendet: E-Mail ist nicht eingerichtet.",
     );

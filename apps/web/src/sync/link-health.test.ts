@@ -12,6 +12,7 @@ import {
   UNDURABLE_ESCALATION_MS,
   advance,
   newLinkHealth,
+  hasUnsentEdits,
   readout,
   wantsTicks,
   type LinkEvent,
@@ -40,7 +41,7 @@ describe("evidence ranking", () => {
     const r = readout(h, /* transportUp */ true, T + 1);
     expect(r.phase).toBe("at-risk");
     expect(r.tone).toBe("warning");
-    expect(r.label).toBe("Changes are waiting for connection");
+    expect(r.label).toBe("Changes not sent yet");
     expect(r.persistent).toBe(true);
   });
 
@@ -54,16 +55,24 @@ describe("evidence ranking", () => {
     const loud = readout(h, false, T + STRANDED_ESCALATION_MS);
     expect(loud.phase).toBe("prolonged");
     expect(loud.tone).toBe("error");
-    expect(loud.label).toBe("Changes are not reaching the server");
+    // The words stay; only the tone escalates.
+    expect(loud.label).toBe("Changes not sent yet");
   });
 
   it("lets revocation outrank even stranded edits", () => {
     const h = run(
       { kind: "handshake", at: T },
       { kind: "edit-stranded", at: T },
-      { kind: "access-revoked" },
+      { kind: "ended", why: "revoked" },
     );
     expect(readout(h, true, T + 1).phase).toBe("revoked");
+  });
+
+  it("names a deletion and an ended membership as such, not as lost access", () => {
+    const deleted = readout(run({ kind: "handshake", at: T }, { kind: "ended", why: "deleted" }), false, T + 1);
+    expect([deleted.phase, deleted.tone, deleted.label]).toEqual(["deleted", "error", "Deleted"]);
+    const removed = readout(run({ kind: "handshake", at: T }, { kind: "ended", why: "removed" }), false, T + 1);
+    expect([removed.phase, removed.label]).toEqual(["removed", "Not a member"]);
   });
 
   it("never lets a reopened socket clear stranded edits by itself", () => {
@@ -244,13 +253,13 @@ describe("wantsTicks", () => {
   });
 
   it("stops once access is revoked — nothing can change again", () => {
-    expect(wantsTicks(advance(healthy(), { kind: "access-revoked" }), false)).toBe(false);
+    expect(wantsTicks(advance(healthy(), { kind: "ended", why: "revoked" }), false)).toBe(false);
   });
 });
 
 describe("per-document lifecycle", () => {
   it("makes revocation terminal within a document", () => {
-    let h = advance(healthy(), { kind: "access-revoked" });
+    let h = advance(healthy(), { kind: "ended", why: "revoked" });
     h = advance(h, { kind: "handshake", at: T + 100 });
     expect(readout(h, true, T + 100).phase).toBe("revoked");
     h = advance(h, { kind: "edits-confirmed", at: T + 200 });
@@ -260,7 +269,7 @@ describe("per-document lifecycle", () => {
 
   it("reads a reset model as a quiet first load, not a stale outage", () => {
     const stale = [
-      advance(healthy(), { kind: "access-revoked" }),
+      advance(healthy(), { kind: "ended", why: "revoked" }),
       advance(outage(), { kind: "edit-stranded", at: T }),
     ];
     for (const prev of stale) {
@@ -330,7 +339,7 @@ describe("the durability axis", () => {
   });
 
   it("yields to revocation, which makes the question moot", () => {
-    const h = advance(undurable(), { kind: "access-revoked" });
+    const h = advance(undurable(), { kind: "ended", why: "revoked" });
     expect(readout(h, false, T + 1).phase).toBe("revoked");
   });
 });
@@ -344,12 +353,12 @@ describe("wording never overpromises", () => {
       outage(),
       advance(outage(), { kind: "edit-stranded", at: T }),
       advance(advance(outage(), { kind: "edit-stranded", at: T }), { kind: "handshake", at: T + 1 }),
-      advance(healthy(), { kind: "access-revoked" }),
+      advance(healthy(), { kind: "ended", why: "revoked" }),
       undurable(),
     ];
     const seen = new Set<string>();
     for (const h of states) {
-      for (const transportUp of [true, false]) {
+      for (const [transportUp, online] of [[true, true], [false, true], [false, false]] as const) {
         for (const at of [
           T,
           T + SHOW_RECONNECT_LABEL_AFTER_MS,
@@ -357,7 +366,7 @@ describe("wording never overpromises", () => {
           T + UNDURABLE_ESCALATION_MS,
           T + 120_000,
         ]) {
-          const { phase, label, srText } = readout(h, transportUp, at);
+          const { phase, label, srText } = readout(h, transportUp, at, online);
           seen.add(phase);
           expect(label ?? "").not.toMatch(forbidden);
           expect(srText).not.toMatch(forbidden);
@@ -365,21 +374,76 @@ describe("wording never overpromises", () => {
       }
     }
     // Fails when a phase is added that the sequences above never reach.
-    expect(seen.size).toBeGreaterThanOrEqual(9);
+    expect(seen.size).toBeGreaterThanOrEqual(10);
   });
 
-  it("says the tab is what keeps retrying, naming no workspace or product", () => {
+  it("says the page is what keeps the edits, naming no workspace or product", () => {
     const stranded = advance(healthy(), { kind: "edit-stranded", at: T });
     for (const at of [T, T + STRANDED_ESCALATION_MS]) {
-      expect(readout(stranded, true, at).srText).toContain("Keep this tab open");
+      expect(readout(stranded, true, at).srText).toContain("Keep this page open");
       expect(readout(stranded, true, at).srText).not.toContain("Stuga");
+      expect(readout(stranded, false, at, false).srText).toContain("stay on this page");
     }
-    expect(readout(outage(), false, T + SHOW_RECONNECT_LABEL_AFTER_MS).srText).toBe("Live updates are paused until the connection returns");
+    expect(readout(outage(), false, T + SHOW_RECONNECT_LABEL_AFTER_MS).srText).toBe("Can’t reach the node right now. Trying again.");
+  });
+
+  it("speaks of the node, never the server", () => {
+    const readouts = [
+      readout(healthy(), true, T),
+      readout(outage(), false, T + SHOW_RECONNECT_LABEL_AFTER_MS),
+      readout(outage(), false, T, false),
+      readout(undurable(), true, T),
+      readout(undurable(), true, T + UNDURABLE_ESCALATION_MS),
+      readout(advance(healthy(), { kind: "edit-stranded", at: T }), true, T + STRANDED_ESCALATION_MS),
+    ];
+    for (const r of readouts) expect(`${r.label ?? ""} ${r.srText}`).not.toMatch(/server/i);
   });
 
   it("always exposes accessible text, even as a bare dot", () => {
     const r = readout(healthy(), true, T);
     expect(r.label).toBeNull();
     expect(r.srText.length).toBeGreaterThan(0);
+  });
+});
+
+describe("an offline browser", () => {
+  it("says offline at once when the link is down, without the reconnect delay", () => {
+    const r = readout(outage(), false, T + 1, /* online */ false);
+    expect(r.phase).toBe("offline");
+    expect(r.tone).toBe("warning");
+    expect(r.label).toBe("Offline");
+    expect(r.expanded).toBe(true);
+  });
+
+  it("stays green while the socket still answers: a node on this computer works offline", () => {
+    expect(readout(healthy(), true, T + 1, false).phase).toBe("connected");
+  });
+
+  it("keeps the unsent wording ahead of the offline one", () => {
+    const h = advance(outage(), { kind: "edit-stranded", at: T });
+    const r = readout(h, false, T + 1, false);
+    expect(r.phase).toBe("at-risk");
+    expect(r.label).toBe("Changes not sent yet");
+    expect(r.srText).toBe("You’re offline. Your latest changes stay on this page and are sent when you’re back.");
+  });
+});
+
+describe("unsent edits", () => {
+  it("are what a stranded edit leaves, in either tone", () => {
+    const h = advance(outage(), { kind: "edit-stranded", at: T });
+    expect(hasUnsentEdits(readout(h, false, T + 1))).toBe(true);
+    expect(hasUnsentEdits(readout(h, false, T + STRANDED_ESCALATION_MS))).toBe(true);
+  });
+
+  it("are not an outage with nothing typed, a node that cannot store, or an ending", () => {
+    expect(hasUnsentEdits(readout(outage(), false, T + 60_000, false))).toBe(false);
+    expect(hasUnsentEdits(readout(undurable(), true, T + UNDURABLE_ESCALATION_MS))).toBe(false);
+    const ended = advance(advance(outage(), { kind: "edit-stranded", at: T }), { kind: "ended", why: "deleted" });
+    expect(hasUnsentEdits(readout(ended, false, T + 1))).toBe(false);
+  });
+
+  it("are cleared by the handshake that re-delivers them", () => {
+    const h = advance(advance(outage(), { kind: "edit-stranded", at: T }), { kind: "handshake", at: T + 5 });
+    expect(hasUnsentEdits(readout(h, true, T + 6))).toBe(false);
   });
 });

@@ -5,7 +5,7 @@
  * folder) or on a breadcrumb segment (any ancestor); "Move to folder…" is the
  * keyboard path to the same moves.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Section } from "@astryxdesign/core/Section";
 import { useAppShellMobile } from "@astryxdesign/core/AppShell";
@@ -19,12 +19,14 @@ import { Button } from "@astryxdesign/core/Button";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Skeleton } from "@astryxdesign/core/Skeleton";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { LoadFailed } from "../ui/LoadFailed";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
-import { useToast } from "@astryxdesign/core/Toast";
-import { Folder as FolderIcon, FileText, FolderInput, Trash2, Pencil, Share2, Files, Library } from "lucide-react";
+import { useToast } from "../ui/use-toast";
+import { Folder as FolderIcon, FileText, FileUp, FolderInput, Trash2, Pencil, Share2, Files, Library, Search, Users as UsersIcon } from "lucide-react";
 import { LIBRARY_LIST_CAP, TRASH_RETENTION_DAYS } from "@stuga/protocol/domain/limits";
 import { Docs, Folders, type DocSummary } from "../api";
 import { errorMessage, getAlias } from "../lib/http/client";
+import { SetupCard } from "./SetupCard";
 import { useFavorites } from "../state/favorites";
 import { PromptDialog } from "../ui/PromptDialog";
 import { ResizeHandle, usePanelWidth } from "../ui/ResizeHandle";
@@ -36,18 +38,13 @@ import { LibraryToolbar, LibrarySelectionBar, type OwnerFilter, type TypeFilter 
 import { useLibrarySelection } from "./use-library-selection";
 import { useCollectionsMenu } from "./use-collections-menu";
 import { useInstructionsDialog } from "./use-instructions-dialog";
+import { useMoveCheck } from "./use-move-check";
+import { useDocFileActions } from "./doc-file-actions";
 import { useIsCompact, useIsNarrow } from "../ui/narrow";
 import { LibraryCreateMenu } from "./LibraryCreateMenu";
-import {
-  moveEach,
-  moveReport,
-  movableTo,
-  trashEach,
-  trashReport,
-  type LibraryDragItem,
-  type LibraryItemRef,
-} from "./move-items";
+import { moveAndReport, movableTo, trashAndReport, type LibraryDragItem, type LibraryItemRef } from "./move-items";
 import { t } from "../i18n/i18n";
+import { usePageTitle } from "../state/branding";
 
 interface FileExplorerProps {
   /** Bumped by the parent to force a reload. */
@@ -68,11 +65,16 @@ interface FileExplorerProps {
   onMoveMany: (items: LibraryItemRef[]) => void;
   onShareFolder: (folderId: string) => void;
   onShareDoc: (docId: string, kind: ShareKind) => void;
+  /** False for a guest, who creates nothing here: no New, and an empty library says nothing has been shared yet. */
+  canCreate: boolean;
   /** Creation actions, offered beside the heading while the side nav is hidden and in empty states. */
   onCreateDoc: () => void;
   onCreateDatabase: () => void;
+  onCreateDatabaseFromFile: (file: File) => void;
   onCreateFolder: () => void;
   onImport: () => void;
+  /** Search the whole workspace, for a filter that found nothing in this folder. */
+  onSearch: (query: string) => void;
 }
 
 export function FileExplorer({
@@ -89,10 +91,13 @@ export function FileExplorer({
   onMoveMany,
   onShareFolder,
   onShareDoc,
+  canCreate,
   onCreateDoc,
   onCreateDatabase,
+  onCreateDatabaseFromFile,
   onCreateFolder,
   onImport,
+  onSearch,
 }: FileExplorerProps) {
   const [renaming, setRenaming] = useState<{ kind: "folder" | "doc"; id: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState<{ id: string; title: string; counts: { docs: number; folders: number } | null } | null>(null);
@@ -110,6 +115,12 @@ export function FileExplorer({
   const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>("anyone");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [nameFilter, setNameFilter] = useState("");
+  // The name filter narrows one folder's rows, so it does not follow the person into another.
+  const [filterFolder, setFilterFolder] = useState(path.at(-1) ?? null);
+  if (filterFolder !== (path.at(-1) ?? null)) {
+    setFilterFolder(path.at(-1) ?? null);
+    setNameFilter("");
+  }
   const [railWidth, setRailWidth] = usePanelWidth("stuga_library_detail_w", 320, 300, 400);
 
   const favorites = useFavorites(refreshKey);
@@ -123,6 +134,8 @@ export function FileExplorer({
   const stateMenu = useDocStateMenu();
 
   const currentFolder = path.at(-1) ?? null;
+  const hereName = currentFolder ? (crumbTitles[currentFolder] ?? t("common.folder")) : t("common.allDocuments");
+  usePageTitle(hereName);
   const bump = useCallback(() => setLocalKey((k) => k + 1), []);
 
   const { selectedIds, previewDoc, setPreviewDoc, railVisible, select, forget } = useLibrarySelection({
@@ -134,6 +147,8 @@ export function FileExplorer({
   });
   const collectionsMenu = useCollectionsMenu({ refreshKey: refreshKey + localKey, setBusy: setBulkBusy });
   const instructions = useInstructionsDialog();
+  const moveCheck = useMoveCheck();
+  const fileActions = useDocFileActions({ onCopied: bump });
 
   /** A state change shows on the row and in the rail together. */
   const applyDocState = useCallback(
@@ -164,9 +179,14 @@ export function FileExplorer({
     };
   }, [currentFolder, refreshKey]);
 
+  /** Which listing the rows on screen answer; a re-read of the same one swaps rows in place, without the skeleton. */
+  const shownListing = useRef<string | null>(null);
+  const listing = `${currentFolder ?? ""}|${sort.key}|${sort.direction}|${ownerFilter}`;
+
   useEffect(() => {
     let live = true;
-    setLoadState("loading");
+    const rereading = shownListing.current === listing;
+    if (!rereading) setLoadState("loading");
     const alias = ownerFilter === "me" ? getAlias() : null;
     const owner = alias ? `user:${alias}` : undefined;
     const order = sort.direction === "ascending" ? "asc" : "desc";
@@ -176,6 +196,9 @@ export function FileExplorer({
     ])
       .then(([folders, docs]) => {
         if (!live) return;
+        shownListing.current = listing;
+        // A document's newer title and state reach the rail too.
+        setPreviewDoc((cur) => (cur ? (docs.find((d) => d.doc_id === cur.doc_id) ?? cur) : cur));
         setRows([
           ...folders.map(
             (f): LibraryRow => ({
@@ -193,11 +216,14 @@ export function FileExplorer({
         setAtCap(docs.length >= LIBRARY_LIST_CAP);
         setLoadState("ok");
       })
-      .catch(() => live && setLoadState("error"));
+      // A failed re-read keeps the rows on screen; the next one tries again.
+      .catch(() => {
+        if (live && !rereading) setLoadState("error");
+      });
     return () => {
       live = false;
     };
-  }, [currentFolder, refreshKey, localKey, sort.key, sort.direction, ownerFilter]);
+  }, [currentFolder, refreshKey, localKey, sort.key, sort.direction, ownerFilter, listing, setPreviewDoc]);
 
   /** The name and type filters narrow what the server returned. */
   const visibleRows = useMemo(() => {
@@ -240,14 +266,7 @@ export function FileExplorer({
   }
 
   async function trashRow(row: LibraryRow) {
-    try {
-      await Docs.trash(row.id, true);
-    } catch (e) {
-      toast({ body: errorMessage(e, t("library.explorer.trashFailed", { title: row.title || t("common.untitled") })), type: "error" });
-      return;
-    }
-    forget(new Set([row.id]));
-    bump();
+    forget(await trashAndReport([{ id: row.id, title: row.title }], toast, bump));
   }
 
   /** Opens the confirmation at once and fills in what the folder holds when that arrives. */
@@ -283,36 +302,45 @@ export function FileExplorer({
     }
   }
 
+  /** A drop target's name for the toast: a folder row, a crumb, or the top level. */
+  const placeName = useCallback(
+    (destId: string | null): string => {
+      if (destId === null) return t("common.allDocuments");
+      const title = rows?.find((r) => r.id === destId)?.title ?? crumbTitles[destId];
+      return title || t("common.untitledFolder");
+    },
+    [rows, crumbTitles],
+  );
+
   /** The server re-checks every move; `ancestors` are the folders enclosing the destination. */
   const moveItems = useCallback(
     async (items: LibraryDragItem[], destId: string | null, ancestors: string[]) => {
       const legal = movableTo(items, destId, ancestors);
       if (legal.length === 0) return;
+      if (!(await moveCheck.confirmMove(legal, destId))) return;
       setBulkBusy(true);
-      const failures = await moveEach(legal, destId);
+      await moveAndReport(legal, { id: destId, title: placeName(destId) }, toast, bump);
       setBulkBusy(false);
-      const report = moveReport(legal.length, failures);
-      if (report) toast(report);
       // Only this batch: the user may have selected something else while it ran.
       forget(new Set(legal.map((i) => i.id)));
-      bump();
     },
-    [bump, toast, forget],
+    [bump, toast, forget, placeName, moveCheck.confirmMove],
   );
 
   const trashSelected = useCallback(async () => {
-    const ids = selectedRows.filter((r) => r.kind === "doc").map((r) => r.id);
-    if (ids.length === 0) return;
+    const docs = selectedRows.filter((r) => r.kind === "doc").map((r) => ({ id: r.id, title: r.title }));
+    if (docs.length === 0) return;
     setBulkBusy(true);
-    const failed = await trashEach(ids);
+    const trashed = await trashAndReport(docs, toast, bump);
     setBulkBusy(false);
-    toast(trashReport(ids.length, failed));
-    forget(new Set(ids));
-    bump();
+    forget(trashed);
   }, [selectedRows, bump, toast, forget]);
 
   function rowActions(row: LibraryRow) {
-    const addToCollection = { type: "section" as const, title: t("library.item.addToCollection"), items: collectionsMenu.menuItems(refsOf([row])) };
+    // A submenu, so the row's menu keeps its length however many collections there are; a guest makes none.
+    const addToCollection = canCreate
+      ? [{ label: t("library.item.addToCollection"), icon: <Library size={15} />, items: collectionsMenu.menuItems(refsOf([row])) }]
+      : [];
     const instructionsItem = (kind: "folder" | "document" | "database") => instructions.item({ kind, id: row.id, title: row.title });
     if (row.kind === "folder") {
       return [
@@ -320,7 +348,7 @@ export function FileExplorer({
         { label: t("common.renameEllipsis"), icon: <Pencil size={15} />, onClick: () => setRenaming({ kind: "folder", id: row.id, title: row.title }) },
         instructionsItem("folder"),
         { label: t("library.item.moveToFolder"), icon: <FolderInput size={15} />, onClick: () => onMoveFolder(row.id) },
-        addToCollection,
+        ...addToCollection,
         { label: t("library.item.deleteFolder"), icon: <Trash2 size={15} />, onClick: () => askDelete(row.id, row.title) },
       ];
     }
@@ -328,19 +356,20 @@ export function FileExplorer({
       { label: t("library.item.share"), icon: <Share2 size={15} />, onClick: () => onShareDoc(row.id, shareKindOfDoc(row.doc)) },
       { label: t("common.renameEllipsis"), icon: <Pencil size={15} />, onClick: () => setRenaming({ kind: "doc", id: row.id, title: row.title }) },
       { label: t("library.item.moveToFolder"), icon: <FolderInput size={15} />, onClick: () => onMoveDoc(row.id) },
+      ...fileActions.items(row.doc ?? null),
       ...(row.doc
         ? [
             {
               type: "section" as const,
               title: row.doc.doc_type === "database" ? t("common.database") : t("common.document"),
               items: [
-                ...stateMenu(row.doc, applyDocState),
+                ...stateMenu.items(row.doc, applyDocState),
                 instructionsItem(row.doc.doc_type === "database" ? "database" : "document"),
               ],
             },
           ]
         : []),
-      addToCollection,
+      ...addToCollection,
       { label: t("library.item.moveToTrash"), icon: <Trash2 size={15} />, onClick: () => void trashRow(row) },
     ];
   }
@@ -378,42 +407,66 @@ export function FileExplorer({
     <LibraryCreateMenu
       onNewDoc={onCreateDoc}
       onNewDatabase={onCreateDatabase}
+      onNewDatabaseFromFile={onCreateDatabaseFromFile}
       onNewFolder={onCreateFolder}
       onImport={onImport}
       alignment={alignment}
     />
   );
   // While the side nav is hidden, New sits beside the heading and an empty state repeats none.
-  const emptyActions = sideNavHidden ? undefined : createMenu();
+  const emptyActions = sideNavHidden || !canCreate ? undefined : createMenu();
+  const searchFor = nameFilter.trim();
   const emptyState = filtering ? (
     <EmptyState
       title={t("library.explorer.noMatches")}
-      description={t("library.explorer.noMatchesBody")}
+      // The filter narrows this folder's rows only; search reaches into every folder.
+      description={currentFolder === null ? t("library.explorer.noMatchesTop") : t("library.explorer.noMatchesFolder")}
       icon={<FileText size={26} />}
       actions={
-        <Button
-          label={t("library.explorer.clearFilters")}
-          variant="secondary"
-          size="sm"
-          onClick={() => {
-            setNameFilter("");
-            setTypeFilter("all");
-            setOwnerFilter("anyone");
-          }}
-        />
+        <HStack gap={2} hAlign="center" wrap="wrap">
+          {searchFor && (
+            <Button
+              label={t("library.explorer.searchEverywhere", { query: searchFor })}
+              icon={<Search size={15} />}
+              variant="secondary"
+              size="sm"
+              onClick={() => onSearch(searchFor)}
+            />
+          )}
+          <Button
+            label={t("library.explorer.clearFilters")}
+            variant={searchFor ? "ghost" : "secondary"}
+            size="sm"
+            onClick={() => {
+              setNameFilter("");
+              setTypeFilter("all");
+              setOwnerFilter("anyone");
+            }}
+          />
+        </HStack>
       }
     />
+  ) : currentFolder === null && !canCreate ? (
+    <EmptyState title={t("library.explorer.guestEmpty")} description={t("library.explorer.guestEmptyBody")} icon={<UsersIcon size={26} />} />
   ) : currentFolder === null ? (
-    <EmptyState
-      title={t("library.explorer.noDocs")}
-      description={t("library.explorer.noDocsBody")}
-      icon={<FileText size={26} />}
-      actions={emptyActions}
-    />
+    <VStack gap={6} hAlign="center">
+      <EmptyState
+        title={t("library.explorer.noDocs")}
+        description={t("library.explorer.noDocsBody")}
+        icon={<FileText size={26} />}
+        actions={
+          <HStack gap={2} hAlign="center" wrap="wrap">
+            {emptyActions}
+            <Button label={t("library.create.importMarkdown")} icon={<FileUp size={15} />} variant="secondary" size="sm" onClick={onImport} />
+          </HStack>
+        }
+      />
+      <SetupCard />
+    </VStack>
   ) : (
     <EmptyState
       title={t("library.explorer.emptyFolder")}
-      description={t("library.explorer.emptyFolderBody")}
+      description={canCreate ? t("library.explorer.emptyFolderBody") : undefined}
       icon={<FolderIcon size={26} />}
       actions={emptyActions}
     />
@@ -423,31 +476,36 @@ export function FileExplorer({
     <div className="explorer">
       <HStack className="explorer-heading" gap={2} vAlign="center" justify="between" wrap="wrap">
         <VStack gap={1}>
-          {path.length > 0 && (
-            <Breadcrumbs label={t("library.explorer.folderPath")} variant="supporting">
+          {/* Shown at the top level too, so opening a folder does not push the heading down. */}
+          <Breadcrumbs label={t("library.explorer.folderPath")} variant="supporting">
+            {path.length === 0 ? (
+              <BreadcrumbItem isCurrent startIcon={<Files size={14} />}>
+                {t("common.allDocuments")}
+              </BreadcrumbItem>
+            ) : (
               <BreadcrumbItem onClick={() => onPathChange([])} startIcon={<Files size={14} />} {...crumbDropProps(-1)}>
                 {t("common.allDocuments")}
               </BreadcrumbItem>
-              {path.map((id, i) =>
-                crumbTitles[id] === null ? (
-                  // A folder the caller cannot read is a place in the chain, nowhere to open or drop into.
-                  <BreadcrumbItem key={id} isCurrent={i === path.length - 1}>
-                    <span aria-hidden="true">…</span>
-                    <VisuallyHidden>{t("library.explorer.folderNoAccess")}</VisuallyHidden>
-                  </BreadcrumbItem>
-                ) : (
-                  <BreadcrumbItem key={id} isCurrent={i === path.length - 1} onClick={() => onPathChange(path.slice(0, i + 1))} {...crumbDropProps(i)}>
-                    {crumbTitles[id] ?? "…"}
-                  </BreadcrumbItem>
-                ),
-              )}
-            </Breadcrumbs>
-          )}
+            )}
+            {path.map((id, i) =>
+              crumbTitles[id] === null ? (
+                // A folder the caller cannot read is a place in the chain, nowhere to open or drop into.
+                <BreadcrumbItem key={id} isCurrent={i === path.length - 1}>
+                  <span aria-hidden="true">…</span>
+                  <VisuallyHidden>{t("library.explorer.folderNoAccess")}</VisuallyHidden>
+                </BreadcrumbItem>
+              ) : (
+                <BreadcrumbItem key={id} isCurrent={i === path.length - 1} onClick={() => onPathChange(path.slice(0, i + 1))} {...crumbDropProps(i)}>
+                  {crumbTitles[id] ?? "…"}
+                </BreadcrumbItem>
+              ),
+            )}
+          </Breadcrumbs>
           <Heading level={1} maxLines={1}>
-            {currentFolder ? (crumbTitles[currentFolder] ?? t("common.folder")) : t("common.allDocuments")}
+            {hereName}
           </Heading>
         </VStack>
-        {sideNavHidden && createMenu("end")}
+        {sideNavHidden && canCreate && createMenu("end")}
       </HStack>
 
       {selectedIds.size > 1 ? (
@@ -456,7 +514,9 @@ export function FileExplorer({
           isBusy={bulkBusy}
           onClear={() => select([], null)}
           actions={[
-            { label: t("library.item.addToCollectionEllipsis"), icon: <Library size={15} />, items: collectionsMenu.menuItems(refsOf(selectedRows)) },
+            ...(canCreate
+              ? [{ label: t("library.item.addToCollectionEllipsis"), icon: <Library size={15} />, items: collectionsMenu.menuItems(refsOf(selectedRows)) }]
+              : []),
             { label: t("library.item.moveToFolder"), icon: <FolderInput size={15} />, onClick: () => onMoveMany(refsOf(selectedRows)) },
             ...(selectedRows.some((r) => r.kind === "doc")
               ? [{ label: t("library.item.moveToTrash"), icon: <Trash2 size={15} />, onClick: () => void trashSelected() }]
@@ -485,11 +545,11 @@ export function FileExplorer({
           )}
           {loadState === "error" ? (
             <div className="explorer-center">
-              <EmptyState
+              <LoadFailed
                 title={t("library.explorer.loadFailed")}
                 description={t("library.explorer.loadFailedBody")}
                 icon={<FolderIcon size={26} />}
-                actions={<Button label={t("common.retry")} variant="secondary" size="sm" onClick={bump} />}
+                onRetry={bump}
               />
             </div>
           ) : loadState === "loading" ? (
@@ -505,6 +565,7 @@ export function FileExplorer({
               sort={sort}
               onSortChange={onSortChange}
               onActivate={activateRow}
+              folderHref={(id) => `/?${new URLSearchParams({ folder: [...path, id].join("/") })}`}
               onToggleFavorite={toggleFav}
               rowActions={rowActions}
               emptyState={emptyState}
@@ -558,6 +619,8 @@ export function FileExplorer({
       />
       {collectionsMenu.dialog}
       {instructions.dialog}
+      {moveCheck.dialog}
+      {stateMenu.dialog}
       <AlertDialog
         isOpen={deleting !== null}
         onOpenChange={(o) => !o && !deleteBusy && setDeleting(null)}

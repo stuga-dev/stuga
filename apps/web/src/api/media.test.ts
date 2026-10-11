@@ -76,6 +76,18 @@ describe("Media.uploadWithProgress", () => {
     });
   });
 
+  it("names the file, its size and the node's limit when the request was too large to read", async () => {
+    FakeXhr.reply = { status: 413, body: JSON.stringify({ error: "request body too large", max_bytes: 10 * 1024 * 1024 + 64 * 1024 }) };
+    const big = new File([new Uint8Array(12 * 1024 * 1024)], "Big report.pdf", { type: "application/pdf" });
+    await expect(Media.uploadWithProgress("d1", big, () => {})).rejects.toMatchObject({
+      message: "“Big report.pdf” is 12 MB. Files can be up to 10 MB.",
+    });
+    FakeXhr.reply = { status: 413, body: "<html>Too large</html>" };
+    await expect(Media.uploadWithProgress("d1", big, () => {})).rejects.toMatchObject({
+      message: "“Big report.pdf” is 12 MB, more than this node accepts.",
+    });
+  });
+
   it("ends the session on a 401, as any other request does", async () => {
     FakeXhr.reply = { status: 401, body: JSON.stringify({ error: "unauthorized" }) };
     await expect(Media.uploadWithProgress("d1", file(), () => {})).rejects.toMatchObject({ status: 401 });

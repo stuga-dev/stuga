@@ -39,9 +39,17 @@ const LABEL_FLIP_PX = 168;
 export const PEER_LABELS_MUTED = "data-peer-labels-muted";
 
 /** The `user` object a peer publishes through awareness. Everything is optional: it comes off the wire. */
-interface PeerUser {
+export interface PeerUser {
   name?: string;
+  /** Display name or email, for the presence tooltip. */
+  label?: string;
+  /** Their home colour: the identity colour their avatar has everywhere else. */
   color?: string;
+  /** Their account alias, which tells two people of one name apart. */
+  id?: string;
+  /** When they opened the document (ms), which orders the room the same way on every screen. */
+  since?: number;
+  agent?: boolean;
   [key: string]: unknown;
 }
 
@@ -51,6 +59,89 @@ export function peerColor(user: PeerUser, clientId: number): string {
   if (HEX_COLOR.test(published) && published !== Y_TIPTAP_DEFAULT_COLOR) return published;
   const slot = Number.isFinite(clientId) ? Math.abs(Math.trunc(clientId)) : 0;
   return PEER_PALETTE[slot % PEER_PALETTE.length]!;
+}
+
+/** One person however many tabs they have open: their account, else the name they publish. */
+export function peerKey(user: PeerUser, clientId: number): string {
+  if (typeof user.id === "string" && user.id !== "") return `id:${user.id}`;
+  const label = user.label ?? user.name;
+  return label == null || label === "" ? `client:${clientId}` : `name:${String(label)}`;
+}
+
+/** When a person arrived; one who published no time sorts last. */
+const arrival = (user: PeerUser): number => (typeof user.since === "number" && Number.isFinite(user.since) ? user.since : Number.POSITIVE_INFINITY);
+
+export interface RoomPerson {
+  key: string;
+  user: PeerUser;
+  /** Every connection this person has open. */
+  clientIds: number[];
+  since: number;
+  color: string;
+}
+
+/** Steps between two palette slots around the wheel; neighbours (red and orange, teal and cyan) are 1 apart and look alike. */
+function hueGap(a: number, b: number): number {
+  const d = Math.abs(a - b) % PEER_PALETTE.length;
+  return Math.min(d, PEER_PALETTE.length - d);
+}
+
+/** How close the nearest colour already in the room is to slot `i`; the whole wheel when the room is empty. */
+function nearestTaken(i: number, taken: readonly number[]): number {
+  return taken.reduce((min, t) => Math.min(min, hueGap(i, t)), PEER_PALETTE.length);
+}
+
+/**
+ * The people in a document, in order of arrival, each with a colour that
+ * stands apart from everyone's who came earlier. A person keeps their home
+ * colour while it is free and not a near neighbour of one in use; otherwise
+ * they take the free colour farthest from those in use, the first such after
+ * their home colour. Every screen computes this from the same awareness
+ * states, so a person has one colour for everyone, in the caret and the avatar.
+ */
+export function roomPeople(states: ReadonlyMap<number, Record<string, unknown>>): RoomPerson[] {
+  const byKey = new Map<string, RoomPerson>();
+  for (const [clientId, state] of states) {
+    const user = state.user;
+    if (!user || typeof user !== "object") continue;
+    const u = user as PeerUser;
+    const key = peerKey(u, clientId);
+    const since = arrival(u);
+    const person = byKey.get(key);
+    if (!person) byKey.set(key, { key, user: u, clientIds: [clientId], since, color: peerColor(u, clientId) });
+    else {
+      person.clientIds.push(clientId);
+      // The earliest tab speaks for the person.
+      if (since < person.since) Object.assign(person, { user: u, since, color: peerColor(u, clientId) });
+    }
+  }
+  const people = [...byKey.values()].sort((a, b) => a.since - b.since || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const palette = PEER_PALETTE as readonly string[];
+  const taken: number[] = [];
+  for (const person of people) {
+    const home = palette.indexOf(person.color);
+    // A colour from outside the palette (an older client) is kept as it is.
+    if (home < 0) continue;
+    let best = home;
+    if (nearestTaken(home, taken) < 2) {
+      let bestGap = -1;
+      for (let step = 0; step < palette.length; step++) {
+        const slot = (home + step) % palette.length;
+        const gap = nearestTaken(slot, taken);
+        if (gap > bestGap) [best, bestGap] = [slot, gap];
+      }
+    }
+    person.color = palette[best]!;
+    taken.push(best);
+  }
+  return people;
+}
+
+/** The colour a connection shows in this room. */
+export function roomColor(awareness: Pick<Awareness, "getStates">, clientId: number): string {
+  const states = awareness.getStates() as Map<number, Record<string, unknown>>;
+  const person = roomPeople(states).find((p) => p.clientIds.includes(clientId));
+  return person?.color ?? peerColor((states.get(clientId)?.user ?? {}) as PeerUser, clientId);
 }
 
 /** Coerced: a name off the wire may not be a string, and a peer that published one still named itself. */
@@ -137,10 +228,11 @@ function peerLabelActivityPlugin(awareness: Awareness, lingerMs: number = PEER_L
         timers.delete(id);
       };
 
-      // `render` baked in the name and colour when the widget was built; `updateUser` changes them.
+      // `render` baked in the name and colour when the widget was built; `updateUser` changes them,
+      // and so can someone else arriving or leaving, since colours are shared out across the room.
       const refreshIdentity = (caret: HTMLElement, id: number) => {
         const user = (awareness.getStates().get(id)?.user ?? {}) as PeerUser;
-        caret.style.setProperty("--peer-color", peerColor(user, id));
+        caret.style.setProperty("--peer-color", roomColor(awareness, id));
         const label = caret.querySelector<HTMLElement>(".collaboration-carets__label");
         const name = peerName(user, id);
         if (label && label.getAttribute("data-name") !== name) label.setAttribute("data-name", name);
@@ -165,11 +257,13 @@ function peerLabelActivityPlugin(awareness: Awareness, lingerMs: number = PEER_L
           // Zero width means no layout to read (jsdom, a detached view).
           const hostRight = view.dom.clientWidth > 0 ? view.dom.getBoundingClientRect().right : null;
 
+          for (const caret of view.dom.querySelectorAll<HTMLElement>("[data-peer-caret]")) {
+            refreshIdentity(caret, Number(caret.getAttribute("data-peer-caret")));
+          }
           for (const id of pending) {
             const caret = caretFor(id);
             // Missing while a local structural edit outruns the Yjs mapping; the next publish restores it.
             if (!caret) continue;
-            refreshIdentity(caret, id);
 
             // Past the text column the tag would widen the scroll area.
             if (hostRight !== null) {
@@ -387,11 +481,16 @@ export const PeerCarets = CollaborationCaret.extend<PeerCaretsOptions>({
     // getSchema() builds extensions without awareness.
     if (!awareness || typeof awareness.on !== "function") return plugins;
     const { render, selectionRender } = this.options;
+    // The colour the room gives them, which may not be the one they publish; peerColor() still sanitizes.
+    const inRoom = (user: PeerUser, clientId: number): PeerUser => ({ ...user, color: roomColor(awareness, clientId) });
     return [
-      // The parent's wrapped builders drop the clientId y-tiptap passes, so the cursor plugin is rebuilt; peerColor() still sanitizes.
+      // The parent's wrapped builders drop the clientId y-tiptap passes, so the cursor plugin is rebuilt.
       ...plugins.map((plugin) =>
         plugin.spec.key === yCursorPluginKey
-          ? yCursorPlugin(awareness, { cursorBuilder: render, selectionBuilder: selectionRender })
+          ? yCursorPlugin(awareness, {
+              cursorBuilder: (user: PeerUser, clientId: number) => render(inRoom(user, clientId), clientId),
+              selectionBuilder: (user: PeerUser, clientId: number) => selectionRender(inRoom(user, clientId), clientId),
+            })
           : plugin,
       ),
       peerLabelActivityPlugin(awareness),

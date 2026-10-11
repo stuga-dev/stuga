@@ -4,6 +4,8 @@ import type { DocRow, FolderRow } from "@stuga/db";
 const DOC_SUMMARY_KEYS = [
   "doc_id",
   "title",
+  // "heading" while the title follows the first line; "user" once someone named it.
+  "title_source",
   "owner",
   "doc_type",
   "parent_id",

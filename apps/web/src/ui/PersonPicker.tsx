@@ -20,10 +20,10 @@ interface PersonPickerProps {
   onChange: (item: PersonItem | null) => void;
   /** Aliases never offered, such as people who already hold what is being given. */
   exclude?: readonly string[];
-  emptySearchResultsText?: string;
+  emptySearchText?: string;
 }
 
-export function PersonPicker({ label, search, value, onChange, exclude, emptySearchResultsText }: PersonPickerProps) {
+export function PersonPicker({ label, search, value, onChange, exclude, emptySearchText }: PersonPickerProps) {
   // Read at search time, so a new function or list each render does not rebuild the source.
   const latest = useRef({ search, exclude });
   latest.current = { search, exclude };
@@ -62,7 +62,7 @@ export function PersonPicker({ label, search, value, onChange, exclude, emptySea
       searchSource={source}
       value={value}
       onChange={onChange}
-      emptySearchResultsText={emptySearchResultsText ?? t("ui.personPicker.noMatch")}
+      emptySearchText={emptySearchText ?? t("ui.personPicker.noMatch")}
       renderItem={(item) => (
         <TypeaheadItem
           item={item}

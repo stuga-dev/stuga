@@ -8,7 +8,7 @@
 import { setTimeout as wait } from "node:timers/promises";
 import { type DocRow, type ImportedComment, importComments } from "@stuga/db";
 import type { SafeImageMime } from "@stuga/protocol/api/media";
-import type { DatabaseColumnType, DatabaseSchema, TableSchema, RowValue, ViewSpec } from "@stuga/protocol/databases/types";
+import type { DatabaseColumnType, DatabaseSchema, NumberFormat, TableSchema, RowValue, ViewSpec } from "@stuga/protocol/databases/types";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { Ctx } from "../auth/context.js";
 import { canCommentDoc, canWriteDoc } from "../authz/authz.js";
@@ -46,6 +46,8 @@ export interface ImportClient {
   /** A database and the table every database starts with. */
   createDatabase(db: { title: string; parentId: string | null; table: string; columns: ColumnInput[] }): Promise<{ docId: string; table: TableSchema }>;
   createTable(databaseId: string, table: { display: string; columns: ColumnInput[] }): Promise<TableSchema>;
+  /** How a number column's cells show; a column is created without one. */
+  setColumnFormat(databaseId: string, tableId: string, columnId: string, format: NumberFormat): Promise<void>;
   deleteTable(databaseId: string, tableId: string): Promise<void>;
   /** Rows by column id, as one write; the new rows' ids in the same order. */
   insertRows(databaseId: string, table: Pick<TableSchema, "table_id" | "display">, rows: Array<Record<string, RowValue>>): Promise<string[]>;
@@ -168,6 +170,9 @@ export function workspaceImportClient(ctx: Ctx, opts: WriteOptions = {}): Import
     },
     async createTable(databaseId, table) {
       return (await call<{ table: TableSchema }>("POST", `/api/databases/${enc(databaseId)}/tables`, table)).table;
+    },
+    async setColumnFormat(databaseId, tableId, columnId, format) {
+      await call("PATCH", `/api/databases/${enc(databaseId)}/tables/${enc(tableId)}/columns/${enc(columnId)}`, { format });
     },
     async deleteTable(databaseId, tableId) {
       await call("DELETE", `/api/databases/${enc(databaseId)}/tables/${enc(tableId)}`);

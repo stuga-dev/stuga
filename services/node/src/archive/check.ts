@@ -30,6 +30,7 @@ import {
   isArchiveHref,
   mediaPath,
   parseManifest,
+  tableCsvPath,
   parseFilePath,
   parseMediaPath,
   parseTableRows,
@@ -392,8 +393,8 @@ export async function checkArchive(files: ArchiveFiles): Promise<ArchiveCheck> {
   for (const [path, body] of shown) if (!files.sizes.has(path)) problem(body, `shows ${path}, which is missing`);
   for (const [path, body] of linked) if (!files.sizes.has(path)) problem(body, `links to ${path}, which is missing`);
 
-  // Nothing else: an import reads only what the manifest names.
-  const named = new Set<string>([MANIFEST_NAME, ...index.bodies.keys(), ...index.tables.keys()]);
+  // Nothing else, but each table's copy for spreadsheets: an import reads only what the manifest names.
+  const named = new Set<string>([MANIFEST_NAME, ...index.bodies.keys(), ...index.tables.keys(), ...[...index.tables.keys()].map(tableCsvPath)]);
   for (const path of files.sizes.keys()) {
     if (named.has(path) || path.startsWith(`${MEDIA_DIR}/`) || path === README) continue;
     problem(path, `is not part of the archive: ${MANIFEST_NAME} names no such file`);

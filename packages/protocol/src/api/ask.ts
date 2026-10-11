@@ -1,9 +1,13 @@
 import type { AiCitation } from "../wire/doc-socket.js";
 import type { AskNotice } from "./ai-turn.js";
 
+/** How many document titles a search step names. */
+export const SEARCH_STEP_TITLES = 5;
+
 /** One research step the ask agent took, streamed as it completes and stored with the turn. */
 export type AskStep =
-  | { kind: "search"; query: string; hits: number }
+  /** `titles`: the documents the passages came from, distinct, in rank order, at most SEARCH_STEP_TITLES. */
+  | { kind: "search"; query: string; hits: number; titles?: string[] }
   | { kind: "read"; doc_id: string; title: string; chars: number }
   | { kind: "list"; count: number; folders: number; query: string | null }
   /** A read-only SQL query against one structured database. */

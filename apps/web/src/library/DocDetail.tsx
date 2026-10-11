@@ -8,15 +8,14 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { Badge } from "@astryxdesign/core/Badge";
 import { Divider } from "@astryxdesign/core/Divider";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
-import { Avatar } from "@astryxdesign/core/Avatar";
 import { ExternalLink, Star, Share2, FileText, Database, X } from "lucide-react";
-import { MoreMenu } from "@astryxdesign/core/MoreMenu";
+import { FittedMoreMenu } from "../ui/FittedMoreMenu";
 import { DOC_STATE_FLAGS, docStateOf, useDocStateMenu } from "./doc-state";
 import { useInstructionsDialog } from "./use-instructions-dialog";
 import { Databases, type DocSummary } from "../api";
 import type { DatabaseSchema } from "@stuga/protocol/databases/types";
 import { relativeTime, absoluteTime } from "../lib/format";
-import { principalName, useUserNames } from "../state/identity";
+import { Avatar, principalName, useUserNames } from "../state/identity";
 import { t } from "../i18n/i18n";
 import { tRich } from "../i18n/rich";
 
@@ -87,32 +86,35 @@ export function DocDetail({ doc, isFavorite, onToggleFavorite, onOpen, onShare, 
           </Text>
         </VStack>
 
-        <HStack gap={2} vAlign="center" wrap="wrap">
-          <Button label={t("common.open")} variant="primary" icon={<ExternalLink size={16} />} onClick={onOpen} />
-          <Button label={t("common.share")} variant="secondary" icon={<Share2 size={16} />} onClick={onShare} />
-          <IconButton
-            label={isFavorite ? t("library.favorites.remove") : t("library.favorites.add")}
-            variant="ghost"
-            onClick={onToggleFavorite}
-            icon={
-              <Star
-                size={17}
-                fill={isFavorite ? "currentColor" : "none"} // i18n-exempt: an SVG paint value
-                className={isFavorite ? "doc-detail__star--on" : undefined}
-              />
-            }
-          />
-          <MoreMenu
-            label={t("library.detail.settingsFor", { title })}
-            variant="ghost"
-            size="sm"
-            alignment="end"
-            items={[
-              ...stateMenu(doc, onStateChange),
-              instructions.item({ kind: isDatabase ? "database" : "document", id: doc.doc_id, title: doc.title }),
-            ]}
-          />
-        </HStack>
+        <VStack gap={2}>
+          <HStack gap={2} vAlign="center" wrap="wrap">
+            <Button label={t("common.open")} variant="primary" icon={<ExternalLink size={16} />} onClick={onOpen} />
+            <Button label={t("common.share")} variant="secondary" icon={<Share2 size={16} />} onClick={onShare} />
+            <IconButton
+              label={isFavorite ? t("library.favorites.remove") : t("library.favorites.add")}
+              variant="ghost"
+              onClick={onToggleFavorite}
+              icon={
+                <Star
+                  size={17}
+                  fill={isFavorite ? "currentColor" : "none"} // i18n-exempt: an SVG paint value
+                  className={isFavorite ? "doc-detail__star--on" : undefined}
+                />
+              }
+            />
+            <FittedMoreMenu
+              label={t("library.detail.settingsFor", { title })}
+              items={[
+                ...stateMenu.items(doc, onStateChange),
+                instructions.item({ kind: isDatabase ? "database" : "document", id: doc.doc_id, title: doc.title }),
+              ]}
+            />
+          </HStack>
+          {/* A click in the list selects, which shows these details; the hint says how to skip them. */}
+          <Text type="supporting" color="secondary">
+            {t("library.detail.openHint")}
+          </Text>
+        </VStack>
 
         {isDatabase && dbSchema && dbSchema.tables.length > 0 && (
           <>
@@ -141,7 +143,7 @@ export function DocDetail({ doc, isFavorite, onToggleFavorite, onOpen, onShare, 
         <MetadataList title={t("library.detail.details")}>
           <MetadataListItem label={t("library.table.owner")}>
             <HStack gap={2} vAlign="center">
-              <Avatar name={owner} size="xsm" />
+              <Avatar principal={doc.owner} size={20} />
               <span title={doc.owner}>{owner}</span>
             </HStack>
           </MetadataListItem>
@@ -154,6 +156,7 @@ export function DocDetail({ doc, isFavorite, onToggleFavorite, onOpen, onShare, 
         </MetadataList>
       </VStack>
       {instructions.dialog}
+      {stateMenu.dialog}
     </div>
   );
 }

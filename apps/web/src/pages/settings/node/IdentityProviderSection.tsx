@@ -6,6 +6,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Banner } from "@astryxdesign/core/Banner";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
 import {
   NodeSettings as NodeApi,
   type IdentityProviderSettings,
@@ -86,7 +87,10 @@ function changeConsequence(withoutPassword: number): string {
   return t("nodeAccess.identity.relinkLockedOut", { count: withoutPassword });
 }
 
-/** The one identity provider the sign-in page offers beside passwords. */
+/**
+ * The one identity provider the sign-in page offers beside passwords. Its connection fields are
+ * for whoever runs the provider, so they sit in a fold under one plain line.
+ */
 export function IdentityProviderSection({
   ops,
   onSaved,
@@ -146,7 +150,7 @@ export function IdentityProviderSection({
     <VStack gap={3}>
       <Heading level={2}>{t("nodeAccess.identity.heading")}</Heading>
       <Text type="supporting" color="secondary">
-        {t("nodeAccess.identity.intro")}
+        {ip.issuer !== null ? t("nodeAccess.identity.on", { provider: ip.label || ip.default_label || ip.issuer }) : t("nodeAccess.identity.intro")}
       </Text>
       <SectionStatusBanners status={status} />
       {status.error && detail && (
@@ -161,77 +165,81 @@ export function IdentityProviderSection({
           description={t("nodeAccess.identity.secretStaleHelp")}
         />
       )}
-      <TextInput
-        label={t("nodeAccess.identity.issuer")}
-        value={form.issuer}
-        placeholder="https://id.example.com"
-        onChange={(v: string) => setForm({ ...form, issuer: v })}
-      />
-      <TextInput label={t("nodeAccess.identity.clientId")} value={form.clientId} onChange={(v: string) => setForm({ ...form, clientId: v })} />
-      <VStack gap={1}>
-        <TextInput
-          label={t("nodeAccess.identity.clientSecret")}
-          type="password"
-          isOptional
-          value={form.clientSecret}
-          isDisabled={secretRemoved}
-          placeholder={ip.client_secret_set ? t("nodeAccess.secret.keepOnFile") : t("nodeAccess.identity.publicClient")}
-          onChange={(v: string) => setForm({ ...form, clientSecret: v })}
-        />
-        <StoredSecret
-          onFile={ip.client_secret_set ? onFileBadge(ip.client_secret_label) : null}
-          removed={secretRemoved}
-          onRemove={() => setSecretRemoved(true)}
-          removeLabel={t("common.remove")}
-          removedNote={t("nodeAccess.secret.removedNote")}
-        />
-      </VStack>
-      <TextInput
-        label={t("nodeAccess.identity.buttonLabel")}
-        isOptional
-        value={form.label}
-        placeholder={hostOf(form.issuer) ?? ip.default_label ?? ""}
-        onChange={(v: string) => setForm({ ...form, label: v })}
-      />
-      <TextInput
-        label={t("nodeAccess.identity.scopes")}
-        isOptional
-        value={form.scopes}
-        placeholder={ip.default_scopes}
-        onChange={(v: string) => setForm({ ...form, scopes: v })}
-      />
-      {ip.callback_urls.length > 0 && (
-        <VStack gap={1}>
-          <Text size="sm" color="secondary">
-            {t("nodeAccess.identity.callbackUrls")}
-          </Text>
-          {ip.callback_urls.map((url) => (
-            <HStack key={url} gap={2} vAlign="center">
-              <Text>{url}</Text>
-              <Button label={copied === url ? t("common.copied") : t("common.copy")} variant="ghost" size="sm" onClick={() => void copy(url)} />
-            </HStack>
-          ))}
-        </VStack>
-      )}
-      <HStack gap={2} vAlign="center">
-        <Button
-          label={t("common.save")}
-          variant="primary"
-          size="sm"
-          isDisabled={!form.issuer.trim() || !form.clientId.trim()}
-          isLoading={busy === "save"}
-          onClick={() => (ip.issuer !== null && !sameIssuer(form.issuer, ip.issuer) ? setConfirmChange(true) : save())}
-        />
-        {ip.issuer !== null && (
-          <Button
-            label={t("nodeAccess.identity.removeProvider")}
-            variant="ghost"
-            size="sm"
-            isLoading={busy === "remove"}
-            onClick={() => setConfirmRemove(true)}
+      <Collapsible trigger={t("nodeAccess.identity.details")} defaultIsOpen={ip.client_secret_stale}>
+        <VStack gap={3}>
+          <TextInput
+            label={t("nodeAccess.identity.issuer")}
+            value={form.issuer}
+            placeholder="https://id.example.com"
+            onChange={(v: string) => setForm({ ...form, issuer: v })}
           />
-        )}
-      </HStack>
+          <TextInput label={t("nodeAccess.identity.clientId")} value={form.clientId} onChange={(v: string) => setForm({ ...form, clientId: v })} />
+          <VStack gap={1}>
+            <TextInput
+              label={t("nodeAccess.identity.clientSecret")}
+              type="password"
+              isOptional
+              value={form.clientSecret}
+              isDisabled={secretRemoved}
+              placeholder={ip.client_secret_set ? t("nodeAccess.secret.keepOnFile") : t("nodeAccess.identity.publicClient")}
+              onChange={(v: string) => setForm({ ...form, clientSecret: v })}
+            />
+            <StoredSecret
+              onFile={ip.client_secret_set ? onFileBadge(ip.client_secret_label) : null}
+              removed={secretRemoved}
+              onRemove={() => setSecretRemoved(true)}
+              removeLabel={t("common.remove")}
+              removedNote={t("nodeAccess.secret.removedNote")}
+            />
+          </VStack>
+          <TextInput
+            label={t("nodeAccess.identity.buttonLabel")}
+            isOptional
+            value={form.label}
+            placeholder={hostOf(form.issuer) ?? ip.default_label ?? ""}
+            onChange={(v: string) => setForm({ ...form, label: v })}
+          />
+          <TextInput
+            label={t("nodeAccess.identity.scopes")}
+            isOptional
+            value={form.scopes}
+            placeholder={ip.default_scopes}
+            onChange={(v: string) => setForm({ ...form, scopes: v })}
+          />
+          {ip.callback_urls.length > 0 && (
+            <VStack gap={1}>
+              <Text size="sm" color="secondary">
+                {t("nodeAccess.identity.callbackUrls")}
+              </Text>
+              {ip.callback_urls.map((url) => (
+                <HStack key={url} gap={2} vAlign="center">
+                  <Text>{url}</Text>
+                  <Button label={copied === url ? t("common.copied") : t("common.copy")} variant="ghost" size="sm" onClick={() => void copy(url)} />
+                </HStack>
+              ))}
+            </VStack>
+          )}
+          <HStack gap={2} vAlign="center">
+            <Button
+              label={t("common.save")}
+              variant="primary"
+              size="sm"
+              isDisabled={!form.issuer.trim() || !form.clientId.trim()}
+              isLoading={busy === "save"}
+              onClick={() => (ip.issuer !== null && !sameIssuer(form.issuer, ip.issuer) ? setConfirmChange(true) : save())}
+            />
+            {ip.issuer !== null && (
+              <Button
+                label={t("nodeAccess.identity.removeProvider")}
+                variant="ghost"
+                size="sm"
+                isLoading={busy === "remove"}
+                onClick={() => setConfirmRemove(true)}
+              />
+            )}
+          </HStack>
+        </VStack>
+      </Collapsible>
       <AlertDialog
         isOpen={confirmRemove}
         title={t("nodeAccess.identity.confirmRemove")}

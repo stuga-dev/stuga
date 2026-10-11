@@ -15,27 +15,29 @@ import type { ISODateString } from "@astryxdesign/core/Calendar";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import { DateRangeInput, type DateRange } from "@astryxdesign/core/DateRangeInput";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
-import { Heading, Text } from "@astryxdesign/core/Text";
+import { Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Link } from "@astryxdesign/core/Link";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { Table, proportional, pixel, useTableRowExpansion } from "@astryxdesign/core/Table";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../../ui/use-toast";
 import { Token } from "@astryxdesign/core/Token";
 import { VStack } from "@astryxdesign/core/VStack";
 import { Download, ScrollText } from "lucide-react";
 import { LoadFailed } from "../../ui/LoadFailed";
 import { ActorName } from "../../ui/ActorName";
 import { PageColumn } from "../../ui/PageColumn";
-import { actionLabel, actionName, sourceLabel } from "./audit-labels";
+import { SettingsTitle } from "./SettingsTitle";
+import { actionLabel, actionName, actionSummary, foldAgentCalls, principalsIn, sourceLabel, targetName as recordedTargetName } from "./audit-labels";
 import { aiCoauthorLabel, relativeTime, absoluteTime, principalHuman } from "../../lib/format";
 import { Audit, type AuditCursor, type AuditEvent, type AuditExportFilters, type AuditFacets } from "../../api";
-import { actorHandle, actorName, resolveNames, useNamesVersion } from "../../state/identity";
+import { actorHandle, actorName, rememberAgentNames, resolveNames, useNamesVersion } from "../../state/identity";
 import { errorMessage, type ApiError } from "../../lib/http/client";
 import { saveBlob } from "../../lib/download";
 import { t, type MessageKey } from "../../i18n/i18n";
+import { useSettingsScope } from "./SettingsLayout";
 
 /** "all" sends no bound; "custom" takes its bounds from the `from` and `to` days. */
 const RANGES: { value: string; label: MessageKey; ms: number | null }[] = [
@@ -98,6 +100,7 @@ const KEEP = { flex: "0 0 auto" } as const;
 
 export function AuditLog() {
   const nav = useNavigate();
+  const { workspace } = useSettingsScope();
   const toast = useToast();
   const [params, setParams] = useSearchParams();
   const read = (key: string): string => params.get(key) ?? "";
@@ -161,7 +164,14 @@ export function AuditLog() {
       [...new Set([...prev, ...rows.filter((e) => e.actor_kind === "agent").map((e) => e.actor)])].sort(),
     );
     setSeenActions((prev) => [...new Set([...prev, ...rows.map((e) => e.action)])].sort());
-    resolveNames(rows.flatMap((e) => [e.actor_kind === "human" ? e.actor : null, e.on_behalf_of]));
+    resolveNames(
+      rows.flatMap((e) => [
+        e.actor_kind === "human" ? e.actor : null,
+        e.on_behalf_of,
+        e.target_kind === "user" ? e.target_id : null,
+        ...principalsIn(e),
+      ]),
+    );
   }
 
   useEffect(() => {
@@ -171,8 +181,9 @@ export function AuditLog() {
     setExpandedKeys(new Set());
     setRefreshing(true);
     Audit.list({ ...filtersNow(), limit: PAGE_SIZE })
-      .then(({ events: page, next_before }) => {
+      .then(({ events: page, next_before, agent_names }) => {
         if (query.current !== gen) return;
+        rememberAgentNames(agent_names);
         setRefreshing(false);
         setError(null);
         setEvents(page);
@@ -202,6 +213,7 @@ export function AuditLog() {
       .then((f) => {
         if (!alive) return;
         setFacets(f);
+        rememberAgentNames(f.agent_names);
         // Facets name people no loaded row carries.
         resolveNames([...f.principals.map((a) => a.value), ...f.agents.map((a) => a.value)]);
       })
@@ -217,13 +229,14 @@ export function AuditLog() {
     const gen = query.current;
     setLoadingOlder(true);
     try {
-      const { events: page, next_before } = await Audit.list({
+      const { events: page, next_before, agent_names } = await Audit.list({
         ...filtersNow(),
         limit: PAGE_SIZE,
         before_at: cursor.at,
         before_id: cursor.id,
       });
       if (query.current !== gen) return;
+      rememberAgentNames(agent_names);
       setEvents((prev) => [...(prev ?? []), ...page]);
       setCursor(next_before);
       absorb(page);
@@ -292,10 +305,14 @@ export function AuditLog() {
     });
   }, [facets]);
 
+  // One row per agent action: the tool call behind a row that already says what it did folds into it.
+  const shownEvents = useMemo(() => foldAgentCalls(events ?? []), [events]);
+
   const narrowToTarget = (kind: string, id: string): void => setFilters({ target_kind: kind, target_id: id });
 
   /** A deep link carries only the id; a loaded row supplies the recorded name. */
-  const targetName = targetId ? (events?.find((e) => e.target_id === targetId)?.target_label ?? targetId) : "";
+  const narrowedRow = targetId ? events?.find((e) => e.target_id === targetId) : undefined;
+  const targetName = targetId ? ((narrowedRow && recordedTargetName(narrowedRow)) ?? targetId) : "";
 
   const expansion = useTableRowExpansion<AuditEvent>({
     expandedKeys,
@@ -355,25 +372,36 @@ export function AuditLog() {
       key: "action",
       header: t("settings.audit.what"),
       width: proportional(1),
-      renderCell: (e: AuditEvent) => (
-        <HStack gap={2} vAlign="center" style={{ minWidth: 0 }}>
-          {e.status !== "ok" && (
-            <HStack style={KEEP}>
-              <Token label={t("settings.audit.refused")} color="red" size="sm" />
+      renderCell: (e: AuditEvent) => {
+        const summary = actionSummary(e);
+        return (
+          <VStack gap={0} style={{ minWidth: 0 }}>
+            <HStack gap={2} vAlign="center" style={{ minWidth: 0 }}>
+              {e.status !== "ok" && (
+                <HStack style={KEEP}>
+                  <Token label={t("settings.audit.refused")} color="red" size="sm" />
+                </HStack>
+              )}
+              <span title={e.action} style={CLAMP}>
+                {actionLabel(e)}
+              </span>
             </HStack>
-          )}
-          <span title={e.action} style={CLAMP}>
-            {actionLabel(e)}
-          </span>
-        </HStack>
-      ),
+            {/* What changed for whom, wrapped rather than cut: it is the point of the row. */}
+            {summary && (
+              <Text type="supporting" color="secondary">
+                {summary}
+              </Text>
+            )}
+          </VStack>
+        );
+      },
     },
     {
       key: "target",
       header: t("settings.audit.target"),
       width: proportional(1),
       renderCell: (e: AuditEvent) => (
-        <TargetCell event={e} onOpenItem={(id) => nav(`/doc/${id}`)} onNarrow={narrowToTarget} />
+        <TargetCell event={e} workspace={workspace} onOpenItem={(id) => nav(`/doc/${id}`)} onNarrow={narrowToTarget} />
       ),
     },
     { key: "source", header: t("settings.audit.via"), width: pixel(120), renderCell: (e: AuditEvent) => sourceLabel(e.source) },
@@ -437,7 +465,10 @@ export function AuditLog() {
   return (
     <PageColumn width={920}>
       <VStack gap={3}>
-        <Heading level={2}>{t("settings.audit.heading")}</Heading>
+        <SettingsTitle>{t("settings.audit.heading")}</SettingsTitle>
+        <Text type="supporting" color="secondary">
+          {t("settings.audit.contentNote")}
+        </Text>
         <HStack gap={2} vAlign="end" justify="between" wrap="wrap">
           {/* The five widths plus gaps fit the 920px column; wider and the row breaks 4 + 1. */}
           <HStack gap={2} vAlign="end" wrap="wrap">
@@ -531,7 +562,7 @@ export function AuditLog() {
         ) : (
           <>
             <Table
-              data={events}
+              data={shownEvents}
               columns={columns}
               idKey="id"
               plugins={{ expansion }}
@@ -572,10 +603,13 @@ export function AuditLog() {
 /** The recorded name, opening documents and databases, with the id under it narrowing the table to that target. */
 function TargetCell({
   event,
+  workspace,
   onOpenItem,
   onNarrow,
 }: {
   event: AuditEvent;
+  /** This workspace, so a row about it reads by its name rather than its id. */
+  workspace: { workspace_id: string; name: string } | null;
   onOpenItem: (docId: string) => void;
   onNarrow: (kind: string, id: string) => void;
 }) {
@@ -583,13 +617,16 @@ function TargetCell({
   if (!target_kind && !target_id) return <>—</>;
   const id = target_id ?? "";
   const opensAsItem = (target_kind === "doc" || target_kind === "database") && !!id;
-  const head = target_label ?? (id || target_kind || "—");
+  // A person reads by the name they had then, or now; an invite link by who it was for, never its reference.
+  const named = target_kind === "user" || target_kind === "invite";
+  const thisWorkspace = target_kind === "workspace" && !!workspace && id === workspace.workspace_id ? workspace.name : null;
+  const head = recordedTargetName(event) ?? thisWorkspace ?? (target_kind === "user" && id ? actorName(id) : id || target_kind || "—");
   return (
     <VStack gap={0} style={{ minWidth: 0 }}>
       <span title={`${target_kind ?? "?"} · ${id}`} style={CLAMP}>
         {opensAsItem ? <Link onClick={() => onOpenItem(id)}>{head}</Link> : head}
       </span>
-      {target_label && id && (
+      {target_label && id && !named && (
         <span title={t("settings.audit.onlyThisTarget")} style={CLAMP}>
           <Link onClick={() => onNarrow(target_kind ?? "", id)}>
             <Text type="supporting" color="secondary" as="span">

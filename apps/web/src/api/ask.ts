@@ -1,6 +1,6 @@
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
 import type { AskActivity } from "@stuga/protocol/api/ai-turn";
-import type { AskDone, AskStep } from "@stuga/protocol/api/ask";
+import type { AskDone, AskStep, AskStopReason } from "@stuga/protocol/api/ask";
 import { api } from "../lib/http/client";
 import { openSse } from "../lib/http/sse";
 
@@ -28,6 +28,8 @@ export interface AskTurn {
   answer: string;
   citations: AiCitation[];
   steps: AskStep[];
+  /** How the turn ended; "aborted" when it was stopped or the page was left mid-answer. */
+  stop_reason: AskStopReason;
   created_at: string;
 }
 

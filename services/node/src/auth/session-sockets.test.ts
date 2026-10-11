@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CloseCode } from "@stuga/protocol/wire/opcodes";
 import { createSessionSockets, SESSION_ENDED_CLOSE_CODE, TRY_AGAIN_CLOSE_CODE } from "./session-sockets.js";
 
 /** A server socket as far as this needs one: whether it is closed, and how it was. */
@@ -16,11 +17,11 @@ function socket() {
 function harness() {
   const of = new Map<Response, ReturnType<typeof socket>>();
   const sockets = createSessionSockets((res) => of.get(res)!);
-  const open = (sid: string, alias: string) => {
+  const open = (sid: string, alias: string, workspace = "ws1") => {
     const s = socket();
     const res = new Response(null);
     of.set(res, s);
-    sockets.track(sid, alias, res, "remote");
+    sockets.track(sid, alias, res, "remote", workspace);
     return s;
   };
   return { sockets, open };
@@ -47,6 +48,29 @@ describe("the sockets a sign-in has open", () => {
     expect(sockets.closeAccount("liv")).toBe(2);
     expect(mine.every((s) => s.closed?.code === SESSION_ENDED_CLOSE_CODE)).toBe(true);
     expect(theirs.closed).toBeNull();
+  });
+
+  it("close for good in the workspace a membership ended in, and stay open elsewhere", async () => {
+    const { sockets, open } = harness();
+    const there = [open("s1", "liv", "ws1"), open("s2", "liv", "ws1")];
+    const elsewhere = open("s1", "liv", "ws2");
+    const theirs = open("s3", "bo", "ws1");
+    expect(sockets.closeMembership("liv", "ws1")).toBe(2);
+    expect(there.every((s) => s.closed?.code === CloseCode.MEMBERSHIP_ENDED)).toBe(true);
+    expect(elsewhere.closed).toBeNull();
+    expect(theirs.closed).toBeNull();
+    // The sign-in itself goes on: its socket in the other workspace still closes when it ends.
+    expect(sockets.closeSessions(["s1"])).toBe(1);
+    expect(elsewhere.closed?.code).toBe(SESSION_ENDED_CLOSE_CODE);
+  });
+
+  it("close to open again in the workspace a role changed in", async () => {
+    const { sockets, open } = harness();
+    const there = open("s1", "liv", "ws1");
+    const elsewhere = open("s1", "liv", "ws2");
+    expect(sockets.reopenMembership("liv", "ws1")).toBe(1);
+    expect(there.closed?.code).toBe(CloseCode.ROLE_CHANGED);
+    expect(elsewhere.closed).toBeNull();
   });
 
   it("forget a socket that closed on its own", async () => {
@@ -99,7 +123,7 @@ describe("each message a socket sends", () => {
       const s = Object.assign(socket(), { gate: null as import("@stuga/runtime").InboundGate | null });
       const res = new Response(null);
       of.set(res, s);
-      sockets.track(sid, "liv", res, "remote");
+      sockets.track(sid, "liv", res, "remote", "ws1");
       return s;
     };
     return {
@@ -253,7 +277,7 @@ describe("each message a socket sends", () => {
     const s = Object.assign(socket(), { gate: undefined as import("@stuga/runtime").InboundGate | null | undefined });
     const res = new Response(null);
     of.set(res, s);
-    sockets.track("s1", "liv", res, "remote");
+    sockets.track("s1", "liv", res, "remote", "ws1");
     expect(s.gate).toBeUndefined();
   });
 });

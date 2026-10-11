@@ -3,6 +3,7 @@
  * head that could not be read. Both are the same operation on different bytes.
  */
 import * as Y from "yjs";
+import type { DocResetPayload } from "@stuga/protocol/wire/opcodes";
 import { SNAPSHOT_KEEP, snapshotKey } from "@stuga/protocol/domain/limits";
 import { applyMarkdownToYXmlFragment } from "@stuga/crdt-ops";
 import type { Peers } from "../session.js";
@@ -28,6 +29,7 @@ async function installHead(
   reason: string,
   detail: Record<string, unknown>,
   checkpoint: boolean,
+  notice?: DocResetPayload,
 ): Promise<number> {
   return store.exclusive(async () => {
     if (checkpoint) await store.checkpoint();
@@ -64,7 +66,7 @@ async function installHead(
       });
     }
 
-    for (const ws of peers.all()) peers.resetSocket(ws, `head replaced (${reason})`);
+    for (const ws of peers.all()) peers.resetSocket(ws, `head replaced (${reason})`, notice);
     // After the fan-out, which must not wait on a blob delete.
     await pruneUnretained(env.snapshots, store.docId, store.seq, store.ring, evictedVersion);
     // Also forgets who wrote the replaced document, so no later version names them.
@@ -76,14 +78,22 @@ async function installHead(
 /**
  * Roll back to a historical snapshot, after recording what it replaces, so the
  * restore can be undone. Returns the new head seq, or null when the target is gone.
+ * `by` names the person, so every open page can say who restored which version.
  */
-export async function restoreToVersion(store: DocStore, env: StoreEnv, peers: Peers, targetSeq: number): Promise<number | null> {
+export async function restoreToVersion(
+  store: DocStore,
+  env: StoreEnv,
+  peers: Peers,
+  targetSeq: number,
+  by?: { name: string; at: string },
+): Promise<number | null> {
   await store.ensureLoaded();
   const obj = await env.snapshots.get(snapshotKey(store.docId, targetSeq));
   if (!obj) return null;
   const restored = new Y.Doc();
   Y.applyUpdate(restored, new Uint8Array(await obj.arrayBuffer()), "restore");
-  return installHead(store, env, peers, restored, [`restore:v${targetSeq}`], "restore", { fromSeq: targetSeq }, true);
+  const notice: DocResetPayload | undefined = by ? { restored: { by: by.name, at: by.at, seq: targetSeq } } : undefined;
+  return installHead(store, env, peers, restored, [`restore:v${targetSeq}`], "restore", { fromSeq: targetSeq }, true, notice);
 }
 
 /**

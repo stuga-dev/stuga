@@ -2,6 +2,7 @@
  * Every route the app answers, in match order. The first route whose method and
  * path match wins, so a group's catch-all comes after the routes it covers.
  */
+import { dismissDocAccessRequest, listDocAccessRequests } from "../api/access-requests.js";
 import { getAcl, setAcl } from "../api/acl.js";
 import { getRevokeEverythingCounts, getUiLanguagePreference, getWhoami, setUiLanguagePreference, updateWhoami } from "../api/account.js";
 import { dismissOwnPasskeyOffer, listOwnPasskeys, removeOwnPasskey, renameOwnPasskey } from "../api/passkeys.js";
@@ -45,7 +46,7 @@ import {
   updateFolderRoute,
   getPlacementInstructions,
 } from "../api/folders.js";
-import { syncGroup } from "../api/groups.js";
+import { listGroupsRoute, syncGroup } from "../api/groups.js";
 import { createInvite, listInvites, redeemInvite, revokeInvite } from "../api/invites.js";
 import { listKeys, mintKey, revokeKey, rotateKey, updateKey } from "../api/keys.js";
 import { listConnections, revokeConnection, updateConnection } from "../api/connections.js";
@@ -88,7 +89,7 @@ import { listNotificationsRoute, markNotificationsReadRoute, unreadNotifications
 import { addOtherNode, listOtherNodes, removeOtherNode } from "../api/other-nodes.js";
 import { ackDocRun, decideDocRun, getDocRun, listDocRuns, proposeEdit, revertDocRun, undoDocRun } from "../api/runs.js";
 import { retrieve, search } from "../api/search.js";
-import { createShareLink, listDocShareLinks, redeemShareLink, revokeDocShareLink } from "../api/share-links.js";
+import { changeShareLinkRole, createShareLink, listDocShareLinks, redeemShareLink, revokeDocShareLink } from "../api/share-links.js";
 import { getUsage } from "../api/usage.js";
 import { listUsers, searchDirectory } from "../api/users.js";
 import {
@@ -138,6 +139,7 @@ import {
   listDatabaseRuns,
   listOps,
   listRows,
+  exportRowsCsv,
   openRowPageRoute,
   queryDatabase,
   renameTable,
@@ -235,6 +237,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: "GET", path: "/api/media/ticket", auth: "workspace", unmetered: true, handler: mintMediaTicketRoute },
   { method: "*", path: "/api/media/ticket", auth: "none", handler: methodNotAllowed },
   { method: "GET", path: MEDIA_GET_PATH, auth: "none", handler: readMedia },
+  { method: "HEAD", path: MEDIA_GET_PATH, auth: "none", handler: readMedia },
 
   // OAuth for agent connectors: consent verifies the human's token itself, token verifies the PKCE code.
   { method: "*", path: "/.well-known/oauth-authorization-server", auth: "none", handler: async ({ env, req }) => wellKnownAuthorizationServer(env, req) },
@@ -332,6 +335,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   // Opening a live page only reads; restoring or creating one is refused inside to a caller who cannot write.
   api("POST", re(`${DATABASE}/tables/([^/]+)/rows/([^/]+)/page`), databaseRoute(openRowPageRoute), READS),
   api("POST", re(`${DATABASE}/tables/([^/]+)/rows/list`), databaseRoute(listRows), READS),
+  api("POST", re(`${DATABASE}/tables/([^/]+)/rows/csv`), databaseRoute(exportRowsCsv), READS),
   api("POST", re(`${DATABASE}/tables/([^/]+)/rows`), databaseRoute(insertRows)),
   api("PATCH", re(`${DATABASE}/tables/([^/]+)/rows`), databaseRoute(updateRows)),
   api("POST", re(`${DATABASE}/tables/([^/]+)/rows/delete`), databaseRoute(deleteRows)),
@@ -424,6 +428,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("PATCH", re(DOC), updateDocument),
   api("DELETE", re(DOC), deleteDocument),
   api("POST", re(`${DOC}/request-access`), requestAccess, { humanOnly: "agents cannot request access" }),
+  api("GET", re(`${DOC}/access-requests`), listDocAccessRequests),
+  api("DELETE", re(`${DOC}/access-requests/([^/]+)`), dismissDocAccessRequest),
   api("GET", re(`${DOC}/runs`), listDocRuns),
   api("GET", re(`${DOC}/runs/([^/]+)`), getDocRun),
   api("POST", re(`${DOC}/runs/([^/]+)/decision`), decideDocRun),
@@ -448,6 +454,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("PATCH", re(`${DOC}/state`), updateDocState),
   api("POST", re(`${DOC}/share-links`), createShareLink),
   api("GET", re(`${DOC}/share-links`), listDocShareLinks),
+  api("PATCH", re(`${DOC}/share-links/([^/]+)`), changeShareLinkRole),
   api("DELETE", re(`${DOC}/share-links/([^/]+)`), revokeDocShareLink),
 
   api("GET", "/api/folders", listFolderChildren),
@@ -473,6 +480,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("PATCH", /^\/api\/ask\/threads\/([^/]+)$/, renameAskThreadRoute, OWN_ASK_THREADS),
   api("DELETE", /^\/api\/ask\/threads\/([^/]+)$/, deleteAskThreadRoute, OWN_ASK_THREADS),
 
+  api("GET", "/api/groups", listGroupsRoute),
   api("PUT", /^\/api\/groups\/([^/]+)$/, syncGroup),
   api("POST", "/api/search", search, READS),
   api("POST", "/api/ask", ask, READS),

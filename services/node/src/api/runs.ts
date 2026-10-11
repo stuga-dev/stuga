@@ -56,12 +56,13 @@ export async function decideDocRun({ ctx, req, match }: WorkspaceCall): Promise<
   const doc = proseOnly(await authorizedDoc(ctx, docId));
   if (!doc) return error(404, "not found");
   if (!canWriteDoc(ctx, doc)) return error(403, "view-only access");
-  const lk = lockedError(doc);
-  if (lk) return lk;
   const body = (await req.json().catch(() => ({}))) as { decision?: string; hunk_ids?: unknown; note?: unknown };
   if (body.decision !== "accept" && body.decision !== "reject") {
     return error(400, "decision must be accept or reject");
   }
+  // A lock holds the text as it is: accepting would change it, rejecting leaves it alone.
+  const lk = body.decision === "accept" ? lockedError(doc) : null;
+  if (lk) return lk;
   const note = parseDecisionNote(body.decision, body.note);
   if (!note.ok) return error(400, note.message);
   const hunkIds = Array.isArray(body.hunk_ids) ? body.hunk_ids.filter((h): h is string => typeof h === "string") : undefined;
@@ -144,16 +145,17 @@ export async function undoDocRun({ ctx, req, match }: WorkspaceCall): Promise<Re
   const doc = proseOnly(await authorizedDoc(ctx, docId));
   if (!doc) return error(404, "not found");
   if (!canWriteDoc(ctx, doc)) return error(403, "view-only access");
-  const lk = lockedError(doc);
-  if (lk) return lk;
+  // A lock holds the text: undoing a rejection leaves it alone, so only the actor, which knows each
+  // change's decision, can tell whether an undo would take accepted text back out.
   const body = (await req.json().catch(() => ({}))) as { hunk_ids?: unknown };
   const hunkIds = Array.isArray(body.hunk_ids) ? body.hunk_ids.filter((h): h is string => typeof h === "string") : [];
   if (hunkIds.length === 0) return error(400, "hunk_ids must list the changes to undo");
   const res = await ctx.env.docs.get(docId).fetch(`http://actor/runs/undo?docId=${encodeURIComponent(docId)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ run_id: match[2]!, hunk_ids: hunkIds, requested_by: ctx.alias, manager_override: manages(ctx, doc) }),
+    body: JSON.stringify({ run_id: match[2]!, hunk_ids: hunkIds, requested_by: ctx.alias, manager_override: manages(ctx, doc), locked: doc.locked }),
   });
+  if (res.status === 423) return lockedError(doc) ?? error(423, "this document is locked; unlock it to make changes");
   if (res.status === 409) return json(await res.json(), { status: 409 });
   if (!res.ok) return runRefusal(res, "undo failed");
   const undone = (await res.json()) as { run?: AgentRunSummary; reopened?: number };

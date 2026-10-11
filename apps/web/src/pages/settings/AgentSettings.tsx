@@ -8,6 +8,7 @@ import { Badge } from "@astryxdesign/core/Badge";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Divider } from "@astryxdesign/core/Divider";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
@@ -19,10 +20,11 @@ import { Table, proportional, pixel } from "@astryxdesign/core/Table";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { VStack } from "@astryxdesign/core/VStack";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../../ui/use-toast";
 import { isWorkspaceEventType, type WorkspaceEventType } from "@stuga/protocol/domain/events";
 import { useSettingsScope } from "./SettingsLayout";
 import { PageColumn } from "../../ui/PageColumn";
+import { SettingsTitle } from "./SettingsTitle";
 import { relativeTime, absoluteTime, listOf } from "../../lib/format";
 import { Folders, Webhooks, Workspaces, type Folder, type WebhookInfo } from "../../api";
 import { errorMessage } from "../../lib/http/client";
@@ -66,9 +68,13 @@ export function AgentSettings() {
   const [newSecret, setNewSecret] = useState<{ url: string; secret: string } | null>(null);
 
   const load = useCallback(async () => {
+    // Webhooks are admin-only on the server; a member has no section, and asking would only be refused (and ledgered).
+    if (!canManage) {
+      setHooks(null);
+      return;
+    }
     // Folders name a webhook's scope; nothing else on this page needs them.
     setFolders((await Folders.list()).folders);
-    // Webhooks are admin-only on the server; a member simply has no section.
     try {
       const w = await Webhooks.list();
       setHooks(w.webhooks);
@@ -76,7 +82,7 @@ export function AgentSettings() {
     } catch {
       setHooks(null);
     }
-  }, []);
+  }, [canManage]);
 
   useEffect(() => {
     if (!workspace) return;
@@ -204,6 +210,15 @@ export function AgentSettings() {
   return (
     <PageColumn width={920}>
       <VStack gap={6}>
+        <VStack gap={2}>
+          <SettingsTitle>{t("settings.layout.agents")}</SettingsTitle>
+          {/* Whose page this is: the workspace's, beside the personal Your AI agents. */}
+          <Text color="secondary">
+            {tRich("settings.agents.intro", {
+              link: (chunks) => <Link onClick={() => nav("/settings/agents")}>{chunks}</Link>,
+            })}
+          </Text>
+        </VStack>
         <VStack gap={3}>
           <Heading level={2}>{t("settings.agents.instructions.heading")}</Heading>
           <Text color="secondary">{t("settings.agents.instructions.intro")}</Text>
@@ -244,11 +259,7 @@ export function AgentSettings() {
             <Divider />
             <VStack gap={3}>
               <Heading level={2}>{t("settings.agents.webhooks.heading")}</Heading>
-              <Text color="secondary">
-                {tRich("settings.agents.webhooks.intro", {
-                  header: <code>X-Stuga-Signature</code>, // i18n-exempt: an HTTP header name
-                })}
-              </Text>
+              <Text color="secondary">{t("settings.agents.webhooks.about")}</Text>
               {newSecret && (
                 <VStack gap={2}>
                   <Banner
@@ -269,10 +280,14 @@ export function AgentSettings() {
               )}
               <VStack gap={2}>
                 <Text type="supporting" color="secondary">{t("settings.agents.webhooks.addHeading")}</Text>
-                <HStack gap={2} vAlign="end" style={{ flexWrap: "wrap", rowGap: 8 }}>
-                  <TextInput label={t("settings.agents.webhooks.url")} size="sm" width={340} value={hookUrl} onChange={setHookUrl} placeholder="https://example.com/hooks/stuga" />
+                {/* One size and a set width each, so the labels and controls line up on one baseline. */}
+                <HStack gap={2} vAlign="end" wrap="wrap">
+                  <TextInput label={t("settings.agents.webhooks.url")} size="sm" width={300} value={hookUrl} onChange={setHookUrl} placeholder="https://example.com/hooks/stuga" />
                   <MultiSelector
                     label={t("settings.agents.webhooks.events")}
+                    size="sm"
+                    width={200}
+                    placeholder={t("settings.agents.webhooks.allEvents")}
                     options={eventTypes.map((type) => ({ value: type, label: eventLabel(type), description: type }))}
                     value={hookEvents}
                     onChange={(v: string[]) => setHookEvents(v)}
@@ -281,6 +296,14 @@ export function AgentSettings() {
                   <Button label={t("settings.agents.webhooks.add")} variant="secondary" size="sm" onClick={() => void addHook()} isDisabled={!hookUrl.trim()} isLoading={savingHook} />
                 </HStack>
               </VStack>
+              {/* What a receiving app's developer needs; nobody else has to read it. */}
+              <Collapsible trigger={t("common.advanced")} defaultIsOpen={false}>
+                <Text type="supporting" color="secondary">
+                  {tRich("settings.agents.webhooks.signature", {
+                    header: <code>X-Stuga-Signature</code>, // i18n-exempt: an HTTP header name
+                  })}
+                </Text>
+              </Collapsible>
             </VStack>
           </>
         )}

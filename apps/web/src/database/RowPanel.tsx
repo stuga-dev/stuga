@@ -11,18 +11,20 @@ import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { Text } from "@astryxdesign/core/Text";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
+import { DateInput } from "@astryxdesign/core/DateInput";
+import type { ISODateString } from "@astryxdesign/core/Calendar";
+import { Selector } from "@astryxdesign/core/Selector";
 import { FileText, FilePlus2, RotateCcw } from "lucide-react";
-import { validateCellValue } from "@stuga/protocol/databases/cells";
 import { Databases } from "../api";
-import type { ColumnSpec, RowInputValue, RowRecord, RowValue, TableSchema } from "@stuga/protocol/databases/types";
+import type { ColumnSpec, RowRecord, RowValue, TableSchema } from "@stuga/protocol/databases/types";
 import { absoluteTime } from "../lib/format";
 import { pageHref, pageStateOf, rowTitle } from "./model/row-ref";
-import { parseFieldInput } from "./model/field-input";
+import { checkCell, DATE_MAX, DATE_MIN, parseFieldInput, type FieldInput } from "./model/field-input";
+import { numberForEditing } from "./model/numbers";
 import { FilesCell } from "./FilesCell";
 import { errorMessage } from "../lib/http/client";
-import { t, type MessageKey } from "../i18n/i18n";
-import { cellProblem } from "./model/cell-problems";
+import { formatLocale, t, type MessageKey } from "../i18n/i18n";
 import { columnTypeLabel } from "./model/column-types";
 
 /** What a page button does; the one in flight labels its button. */
@@ -86,10 +88,11 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
   }
 
   /** False when the input was rejected, so the field keeps the draft for a fix. */
-  function commitField(col: ColumnSpec, input: RowInputValue): boolean {
-    const v = validateCellValue(col.type, col.options, input);
+  function commitField(col: ColumnSpec, input: FieldInput): boolean {
+    const v = checkCell(col, input);
     if (!v.ok) {
-      toast({ body: cellProblem(v.reason), type: "error" });
+      // One toast for the last refusal: a field refused again on blur replaces it rather than stacking.
+      toast({ body: v.problem, type: "error", uniqueID: "db-cell-problem" });
       return false;
     }
     if (!row || (row[col.column_id] ?? null) === v.value) return true;
@@ -198,10 +201,10 @@ export function RowPanel({ docId, table, rowId, refreshKey, readOnly, onSaved, o
                       size="sm"
                       value={value === 1}
                       isDisabled={readOnly}
-                      onChange={(v) => commitField(col, v === true)}
+                      onChange={(v) => commitField(col, { ok: true, value: v === true })}
                     />
                   ) : col.type === "files" ? (
-                    <FilesCell databaseId={docId} label={col.display} value={value} readOnly={readOnly} wrap onChange={(v) => commitField(col, v)} />
+                    <FilesCell databaseId={docId} label={col.display} value={value} readOnly={readOnly} wrap onChange={(v) => commitField(col, { ok: true, value: v })} />
                   ) : (
                     <FieldEditor
                       // Keyed on the applied value, so a save or a refetch re-seeds the draft.
@@ -250,13 +253,15 @@ interface FieldEditorProps {
   value: RowValue;
   disabled: boolean;
   /** False keeps the draft: the input was rejected. */
-  onCommit: (input: RowInputValue) => boolean;
+  onCommit: (input: FieldInput) => boolean;
 }
 
 /** A non-checkbox field. Saves on blur or Enter (⌘/Ctrl+Enter in a text area); Escape drops the draft. */
 function FieldEditor({ column, value, disabled, onCommit }: FieldEditorProps) {
-  const applied = value === null ? "" : String(value);
+  const applied = value === null ? "" : column.type === "number" && typeof value === "number" ? numberForEditing(value, formatLocale()) : String(value);
   const [raw, setRaw] = useState(applied);
+  // A refused pick remounts the picker on the value it had.
+  const [pickKey, setPickKey] = useState(0);
 
   function commit() {
     if (raw !== applied) onCommit(parseFieldInput(column.type, raw));
@@ -265,20 +270,34 @@ function FieldEditor({ column, value, disabled, onCommit }: FieldEditorProps) {
   if (column.type === "single_select") {
     const choices = column.options?.choices ?? [];
     return (
-      <select
-        className="db-select row-panel__select"
-        aria-label={column.display}
+      <Selector
+        label={column.display}
+        isLabelHidden
+        size="sm"
+        options={[{ value: "", label: "—" }, ...choices.map((c) => ({ value: c, label: c }))]}
         value={applied}
-        disabled={disabled}
-        onChange={(e) => onCommit(e.target.value === "" ? null : e.target.value)}
-      >
-        <option value="">—</option>
-        {choices.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-      </select>
+        isDisabled={disabled}
+        onChange={(v) => onCommit({ ok: true, value: v === "" ? null : String(v) })}
+      />
+    );
+  }
+
+  if (column.type === "date") {
+    return (
+      <DateInput
+        key={pickKey}
+        label={column.display}
+        isLabelHidden
+        size="sm"
+        value={applied === "" ? undefined : (applied as ISODateString)}
+        min={DATE_MIN as ISODateString}
+        max={DATE_MAX as ISODateString}
+        isDisabled={disabled}
+        onChange={(v) => {
+          if ((v ?? "") === applied) return;
+          if (!onCommit({ ok: true, value: v ?? null })) setPickKey((k) => k + 1);
+        }}
+      />
     );
   }
 
@@ -310,12 +329,14 @@ function FieldEditor({ column, value, disabled, onCommit }: FieldEditorProps) {
     <input
       className="row-panel__input"
       aria-label={column.display}
-      type={column.type === "number" ? "number" : "date"}
-      step={column.type === "number" ? "any" : undefined}
+      // Text, as in the grid: a number input drops "4,50" before anyone can say why.
+      type="text"
+      inputMode="decimal"
       value={raw}
       disabled={disabled}
       onChange={(e) => setRaw(e.target.value)}
-      onBlur={commit}
+      // A refused number goes back to the value it had, so the field never holds what the row does not.
+      onBlur={() => raw !== applied && !onCommit(parseFieldInput(column.type, raw)) && setRaw(applied)}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           e.preventDefault();

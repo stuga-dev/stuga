@@ -23,6 +23,11 @@ function heldGroupIds(sql: Sql, userPrincipal: string, workspaceIdExpr: Fragment
     )`;
 }
 
+/** A workspace's groups, by name. */
+export async function listGroups(sql: Sql, workspaceId: string): Promise<GroupRow[]> {
+  return sql<GroupRow[]>`SELECT * FROM groups WHERE workspace_id = ${workspaceId} ORDER BY lower(group_id)`;
+}
+
 /** Write a group's membership and return what it held before, or null for a new group. */
 export async function upsertGroup(sql: Sql, groupId: string, members: string[], workspaceId: string): Promise<string[] | null> {
   const rows = await sql<{ members: string[] }[]>`
@@ -343,6 +348,8 @@ export async function insertWorkspaceInvite(
   input: {
     tokenHash: string;
     tokenHint?: string | null;
+    /** Who the link is for, in its maker's words. */
+    note?: string | null;
     workspaceId: string;
     role: WorkspaceRole;
     createdBy: string;
@@ -354,6 +361,7 @@ export async function insertWorkspaceInvite(
     INSERT INTO workspace_invites ${sql({
       token_hash: input.tokenHash,
       token_hint: input.tokenHint ?? null,
+      note: input.note ?? null,
       workspace_id: input.workspaceId,
       role: input.role,
       created_by: input.createdBy,
@@ -373,12 +381,16 @@ export async function listWorkspaceInvites(sql: Sql, workspaceId: string): Promi
     ORDER BY created_at DESC`;
 }
 
-export async function revokeWorkspaceInvite(sql: Sql, tokenHash: string, workspaceId: string): Promise<boolean> {
-  const rows = await sql<{ token_hash: string }[]>`
+/** How a link is told apart from the others: what it admits as, its last characters and who it is for. */
+export type InviteLabel = Pick<WorkspaceInviteRow, "role" | "token_hint" | "note">;
+
+/** The revoked link's label, or null when there was no live link to revoke. */
+export async function revokeWorkspaceInvite(sql: Sql, tokenHash: string, workspaceId: string): Promise<InviteLabel | null> {
+  const rows = await sql<InviteLabel[]>`
     UPDATE workspace_invites SET revoked_at = now()
     WHERE token_hash = ${tokenHash} AND workspace_id = ${workspaceId} AND revoked_at IS NULL
-    RETURNING token_hash`;
-  return rows.length > 0;
+    RETURNING role, token_hint, note`;
+  return rows[0] ?? null;
 }
 
 /**
@@ -386,7 +398,9 @@ export async function revokeWorkspaceInvite(sql: Sql, tokenHash: string, workspa
  * no use limit or no expiry, presented at the remote address, where it would be an open sign-up for
  * anyone it leaked to; it works only on the node's own network.
  */
-export type InviteRedemption = { ok: true; workspaceId: string; role: WorkspaceRole } | { ok: false; reason: "invalid" | "local_only" };
+export type InviteRedemption =
+  | { ok: true; workspaceId: string; role: WorkspaceRole; invite: InviteLabel }
+  | { ok: false; reason: "invalid" | "local_only" };
 
 /** Whether an invite with these limits may be redeemed at `arrival`: an unlimited one only on the node's own network. */
 export function inviteWorksAt(invite: Pick<WorkspaceInviteRow, "expires_at" | "max_uses">, arrival: CredentialArrival): boolean {
@@ -439,7 +453,12 @@ export async function redeemWorkspaceInviteIn(
     await tx`INSERT INTO workspace_members ${tx({ workspace_id: invite.workspace_id, alias, role: invite.role })}`;
   }
   await tx`UPDATE workspace_invites SET use_count = use_count + 1 WHERE token_hash = ${tokenHash}`;
-  return { ok: true, workspaceId: invite.workspace_id, role: existing ?? invite.role };
+  return {
+    ok: true,
+    workspaceId: invite.workspace_id,
+    role: existing ?? invite.role,
+    invite: { role: invite.role, token_hint: invite.token_hint, note: invite.note },
+  };
 }
 
 /** Whether an invite could be redeemed right now: not revoked, not expired, uses left. */
@@ -458,4 +477,45 @@ export async function workspaceInviteStatus(sql: Sql, tokenHash: string, arrival
   const invite = rows[0];
   if (!invite) return "invalid";
   return inviteWorksAt(invite, arrival) ? "ok" : "local_only";
+}
+
+/**
+ * What an invite link's holder may know before using it: the workspace, the role it admits as and
+ * who made it. Only the token reaches this, and a link that cannot be redeemed shows nothing. A link
+ * that works only on the node's own network names nothing at another address either: only the opaque
+ * workspace id, so a member can be told they already belong.
+ */
+export type InvitePreview =
+  | {
+      status: "ok";
+      workspace_id: string;
+      workspace_name: string;
+      role: WorkspaceRole;
+      /** The maker's name, or null when they have since left the node. */
+      invited_by: string | null;
+    }
+  | { status: "local_only"; workspace_id: string }
+  | { status: "invalid" };
+
+export async function previewWorkspaceInvite(sql: Sql, tokenHash: string, arrival: CredentialArrival): Promise<InvitePreview> {
+  const rows = await sql<(Pick<WorkspaceInviteRow, "expires_at" | "max_uses" | "workspace_id" | "role"> & { workspace_name: string; invited_by: string | null })[]>`
+    SELECT i.expires_at, i.max_uses, i.workspace_id, i.role, w.name AS workspace_name,
+           NULLIF(COALESCE(NULLIF(u.display_name, ''), u.username), '') AS invited_by
+    FROM workspace_invites i
+    JOIN workspaces w ON w.workspace_id = i.workspace_id
+    LEFT JOIN users u ON u.alias = i.created_by
+    WHERE i.token_hash = ${tokenHash}
+      AND i.revoked_at IS NULL
+      AND (i.expires_at IS NULL OR i.expires_at > now())
+      AND (i.max_uses IS NULL OR i.use_count < i.max_uses)`;
+  const invite = rows[0];
+  if (!invite) return { status: "invalid" };
+  if (!inviteWorksAt(invite, arrival)) return { status: "local_only", workspace_id: invite.workspace_id };
+  return {
+    status: "ok",
+    workspace_id: invite.workspace_id,
+    workspace_name: invite.workspace_name,
+    role: invite.role,
+    invited_by: invite.invited_by,
+  };
 }

@@ -114,8 +114,10 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
 
       <Divider />
 
+      {/* Four limits under one Save: one section, each limit a sub-heading. */}
       <VStack gap={3}>
-        <Heading level={2}>{t("node.storage.auditRetention")}</Heading>
+        <Heading level={2}>{t("node.storage.historyHeading")}</Heading>
+        <Heading level={3}>{t("node.storage.auditRetention")}</Heading>
         <Text type="supporting" color="secondary">
           {t("node.storage.auditRetentionNote")}
         </Text>
@@ -129,7 +131,7 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
             onChange={(v: number) => setOpsForm({ ...opsForm, auditRetentionDays: v })}
           />
         </VStack>
-        <Heading level={2}>{t("node.storage.databaseActivity")}</Heading>
+        <Heading level={3}>{t("node.storage.databaseActivity")}</Heading>
         <Text type="supporting" color="secondary">
           {t("node.storage.databaseActivityNote")}
         </Text>
@@ -143,7 +145,7 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
             onChange={(v: number) => setOpsForm({ ...opsForm, databaseOpsKeep: v })}
           />
         </VStack>
-        <Heading level={2}>{t("node.storage.aiUsage")}</Heading>
+        <Heading level={3}>{t("node.storage.aiUsage")}</Heading>
         <Text type="supporting" color="secondary">
           {t("node.storage.aiUsageNote")}
         </Text>
@@ -157,7 +159,7 @@ export function StorageSection({ ops, onSaved }: { ops: NodeOperationalSettings;
             onChange={(v: number) => setOpsForm({ ...opsForm, aiUsageRetentionDays: v })}
           />
         </VStack>
-        <Heading level={2}>{t("node.storage.askThreads")}</Heading>
+        <Heading level={3}>{t("node.storage.askThreads")}</Heading>
         <Text type="supporting" color="secondary">
           {t("node.storage.askThreadsNote")}
         </Text>

@@ -423,6 +423,7 @@ export const SERVER_MESSAGES: readonly ServerMessage[] = [
   { match: "nothing to import (the markdown is empty)", key: "errors.server.markdownImportEmpty", from: "documents/create.ts" },
   { match: "could not write the imported content", key: "errors.server.couldNotWriteImportedContent", from: "documents/create.ts" },
   { match: "could not initialize the database", key: "errors.server.couldNotInitializeDatabase", from: "documents/create.ts" },
+  { match: "document to copy not found", key: "errors.server.documentToCopyNotFound", from: "documents/create.ts" },
   // databases/imports/staging.ts: committing a staged database import
   { match: "no such import — it was never staged here, has expired, or the id is wrong", key: "errors.server.noSuchImportStagedHere", from: "databases/imports/staging.ts" },
   { match: "this import was staged by another credential", key: "errors.server.importStagedAnotherCredential", from: "databases/imports/staging.ts" },
@@ -464,6 +465,8 @@ export const SERVER_MESSAGES: readonly ServerMessage[] = [
   { match: /^column "(.*)": (.+) \(the schema changed after the change was made\)$/s, key: "errors.server.cellNoLongerValid", values: (g) => ({ column: g[1], reason: cellProblem(g[2]!) }), from: "../../../packages/database-actor/src/ops/rows.ts" },
   { match: /^column "(.*)": (.+)$/s, key: "errors.server.cellInvalid", values: (g) => ({ column: g[1], reason: cellProblem(g[2]!) }), from: "../../../packages/database-actor/src/ops/rows.ts" },
   { match: "a column this change writes no longer exists — the schema changed after the change was made", key: "errors.server.columnWrittenGone", from: "../../../packages/database-actor/src/ops/rows.ts" },
+  // The reference is an internal column id, which says nothing to a person.
+  { match: /^unknown column reference "(.*)"$/s, key: "errors.server.unknownColumnReference", from: "../../../packages/database-actor/src/schema-ops.ts" },
   { match: "none of the proposed rows exist any more", key: "errors.server.proposedRowsGone", from: "../../../packages/database-actor/src/ops/rows.ts" },
   { match: "a column this view refers to no longer exists — the schema changed after the change was made", key: "errors.server.viewColumnGone", from: "../../../packages/database-actor/src/ops/views.ts" },
   { match: "this view was already created", key: "errors.server.viewAlreadyCreated", from: "../../../packages/database-actor/src/ops/views.ts" },

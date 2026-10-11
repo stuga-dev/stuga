@@ -1,15 +1,19 @@
 /**
  * A document's lock, search visibility and agent mode: the flags as the library
  * marks, badges and chips show them, and the menu items that change them. The
- * server allows the change only to the owner or a workspace admin, so the menu
- * applies it optimistically and rolls back on a refusal.
+ * server allows the change only to the owner or a workspace admin, so anyone
+ * else finds the items disabled with the reason, and the menu applies a change
+ * optimistically and rolls back on a refusal.
  */
-import { useCallback, type ReactNode } from "react";
-import { Lock, LockOpen, Eye, EyeOff, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useCallback, useMemo, type ReactNode } from "react";
+import { Lock, LockOpen, Eye, EyeOff, ListChecks, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
+import { useReviewQueue } from "../review/review-queue";
+import { useToast } from "../ui/use-toast";
+import { useImperativeAlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Docs, type DocSummary } from "../api";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { t, type MessageKey } from "../i18n/i18n";
+import { useManages } from "./use-manages";
 
 interface DocState {
   locked: boolean;
@@ -80,12 +84,19 @@ export const DOC_STATE_FLAGS: readonly DocStateFlag[] = [
 
 /** Icons beside a title in a list row, where worded badges would push the title into an ellipsis. */
 export function DocStateMarks({ doc }: { doc: DocSummary | undefined }) {
+  // AI edits waiting for this person's decision, where the library knows of them.
+  const waiting = useReviewQueue()?.waiting.has(doc?.doc_id ?? "") === true;
   if (!doc) return null;
   const state = docStateOf(doc);
   const on = DOC_STATE_FLAGS.filter((f) => f.isOn(state));
-  if (on.length === 0) return null;
+  if (on.length === 0 && !waiting) return null;
   return (
     <span className="doc-state-marks">
+      {waiting && (
+        <span className="doc-state-mark doc-state-mark--waiting" title={t("library.state.aiEditsWaiting")} aria-label={t("library.state.aiEditsWaiting")}>
+          <ListChecks size={13} />
+        </span>
+      )}
       {on.map(({ label, mark, icon: Icon }) => (
         <span key={label} className="doc-state-mark" title={mark} aria-label={label}>
           <Icon size={13} />
@@ -99,15 +110,23 @@ interface StateMenuItem {
   label: string;
   icon: ReactNode;
   onClick: () => void;
+  isDisabled?: boolean;
+  description?: string;
 }
 
 /**
  * The toggles for a document. `onChanged` runs once optimistically and again
- * with the server's row, or with the original on a refusal.
+ * with the server's row, or with the original on a refusal. Letting AI edits apply
+ * directly asks first, in `dialog`, which the caller renders.
  */
-export function useDocStateMenu(): (doc: DocSummary, onChanged: (next: DocSummary) => void) => StateMenuItem[] {
+export function useDocStateMenu(): {
+  items: (doc: DocSummary, onChanged: (next: DocSummary) => void) => StateMenuItem[];
+  dialog: ReactNode;
+} {
   const toast = useToast();
-  return useCallback(
+  const manages = useManages();
+  const confirm = useImperativeAlertDialog();
+  const items = useCallback(
     (doc: DocSummary, onChanged: (next: DocSummary) => void): StateMenuItem[] => {
       const noun: Noun = doc.doc_type === "database" ? "database" : "document";
       const agentAuto = doc.agent_mode === "auto";
@@ -128,7 +147,7 @@ export function useDocStateMenu(): (doc: DocSummary, onChanged: (next: DocSummar
           toast({ body: t(status === 403 ? refusal.denied : refusal.failed, { noun }), type: "error" });
         }
       }
-      return [
+      const entries: StateMenuItem[] = [
         {
           label: doc.locked ? t("library.state.unlock") : t("library.state.lock"),
           icon: doc.locked ? <LockOpen size={15} /> : <Lock size={15} />,
@@ -154,18 +173,31 @@ export function useDocStateMenu(): (doc: DocSummary, onChanged: (next: DocSummar
         {
           label: agentAuto ? t("library.state.makeReview") : t("library.state.makeAuto"),
           icon: agentAuto ? <ShieldCheck size={15} /> : <Sparkles size={15} />,
+          // Only the permissive direction asks first and is confirmed: it is the one that gives something away.
           onClick: () =>
-            void apply(
-              { agent_mode: agentAuto ? "review" : "auto" },
-              agentAuto
-                ? { denied: "library.state.reviewDenied", failed: "library.state.reviewFailed" }
-                : { denied: "library.state.autoDenied", failed: "library.state.autoFailed" },
-              // Only the permissive direction is confirmed: it is the one that gives something away.
-              agentAuto ? undefined : t("library.state.agentAutoDone"),
-            ),
+            agentAuto
+              ? void apply({ agent_mode: "review" }, { denied: "library.state.reviewDenied", failed: "library.state.reviewFailed" })
+              : confirm.show({
+                  title: t("library.state.makeAutoConfirmTitle"),
+                  description: t("library.state.makeAutoConfirm", { noun }),
+                  actionLabel: t("library.state.makeAuto"),
+                  actionVariant: "primary",
+                  onAction: () => {
+                    confirm.hide();
+                    void apply(
+                      { agent_mode: "auto" },
+                      { denied: "library.state.autoDenied", failed: "library.state.autoFailed" },
+                      t("library.state.agentAutoDone"),
+                    );
+                  },
+                }),
         },
       ];
+      if (manages(doc.owner)) return entries;
+      // The reason once, under the first of the three it covers.
+      return entries.map((item, i) => ({ ...item, isDisabled: true, ...(i === 0 ? { description: t("library.state.managersOnly") } : {}) }));
     },
-    [toast],
+    [toast, manages, confirm.show, confirm.hide],
   );
+  return useMemo(() => ({ items, dialog: confirm.element }), [items, confirm.element]);
 }

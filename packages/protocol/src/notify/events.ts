@@ -27,6 +27,7 @@ export type DatabaseChange =
         | "column_added"
         | "column_described"
         | "column_type_changed"
+        | "column_format_changed"
         | "column_renamed"
         | "column_deleted"
         | "view_created"

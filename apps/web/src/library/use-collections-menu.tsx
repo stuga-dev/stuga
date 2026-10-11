@@ -1,5 +1,5 @@
 import { useCallback, useState, type ReactNode } from "react";
-import { useToast } from "@astryxdesign/core/Toast";
+import { useToast } from "../ui/use-toast";
 import { Library, Plus } from "lucide-react";
 import { Collections } from "../api";
 import { useCollections } from "../ai/use-collections";

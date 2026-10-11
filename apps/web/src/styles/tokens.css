@@ -11,3 +11,19 @@
    and light-dark() follows the chosen theme rather than the OS. */
 html[data-theme="dark"] { color-scheme: dark; }
 html[data-theme="light"] { color-scheme: light; }
+
+/* A document's sheet on the canvas. In dark, the theme's surface is only a shade above the canvas,
+   so the sheet is lifted a little further and its edge drawn firmer. */
+:root {
+  --paper: var(--color-background-surface);
+  --paper-border: var(--color-border);
+}
+html[data-theme="dark"] {
+  --paper: color-mix(in srgb, var(--color-background-surface), var(--color-text-primary) 5%);
+  --paper-border: color-mix(in srgb, var(--color-border), var(--color-text-primary) 8%);
+}
+
+/* Astryx dims a disabled button to half opacity, which on the dark canvas leaves its label near 3.5:1.
+   A little less dimming keeps it readable and still plainly off. */
+html[data-theme="dark"] .astryx-button:disabled,
+html[data-theme="dark"] .astryx-button[aria-disabled="true"] { opacity: 0.65; }

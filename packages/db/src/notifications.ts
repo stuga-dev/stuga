@@ -188,3 +188,32 @@ export async function failUnfinishedDeliveries(sql: Sql, eventType: string, erro
     RETURNING id`;
   return rows.count;
 }
+
+/**
+ * Who has asked for access to a document: one row per person, their latest request first. A
+ * request is the REQUEST_ACCESS notification its owner received; there is no other record of it.
+ */
+export async function listAccessRequests(
+  sql: Queryable,
+  workspaceId: string,
+  docId: string,
+): Promise<Array<{ alias: string; requested_at: string }>> {
+  return sql<Array<{ alias: string; requested_at: string }>>`
+    SELECT actor_alias AS alias, max(created_at) AS requested_at
+    FROM notifications
+    WHERE event_type = 'REQUEST_ACCESS' AND workspace_id = ${workspaceId} AND resource_id = ${docId}
+      AND actor_alias IS NOT NULL
+    GROUP BY actor_alias
+    ORDER BY requested_at DESC
+    LIMIT 50`;
+}
+
+/** Dismiss one person's requests for access to a document; resolves to how many there were. */
+export async function dismissAccessRequests(sql: Queryable, workspaceId: string, docId: string, alias: string): Promise<number> {
+  const rows = await sql`
+    DELETE FROM notifications
+    WHERE event_type = 'REQUEST_ACCESS' AND workspace_id = ${workspaceId} AND resource_id = ${docId}
+      AND actor_alias = ${alias}
+    RETURNING id`;
+  return rows.count;
+}

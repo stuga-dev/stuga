@@ -13,6 +13,7 @@ import {
   type ColumnSpec,
   type DatabaseColumnType,
   type DatabaseSchema,
+  type NumberFormat,
   type RowFilterNode,
   type RowValue,
   type TableSchema,
@@ -39,11 +40,12 @@ export function ident(name: string): string {
 // ---- meta schema ----------------------------------------------------------------
 
 /**
- * The version of what a database keeps in its actor storage: the meta tables below and how a user
- * table is laid out. The host stamps each store with it and refuses one stamped higher. A change
- * to either raises it, together with the step in the host that brings an older store forward.
+ * The version of what a database keeps in its actor storage: the meta tables below, the ops and
+ * `_meta` keys they hold, and how a user table is laid out. The host stamps each store with it and
+ * refuses one stamped higher. A change to any of them raises it, together with the step in the host
+ * that brings an older store forward.
  */
-export const DATABASE_STORE_VERSION = 3;
+export const DATABASE_STORE_VERSION = 4;
 
 /** The steps that bring an older store forward, keyed by the version each reaches. */
 export const DATABASE_STORE_UPGRADES: Record<number, StoreUpgrade> = {
@@ -61,6 +63,11 @@ export const DATABASE_STORE_UPGRADES: Record<number, StoreUpgrade> = {
       if (columns.length > 0 && !columns.some((c) => c.name === "detail")) db.exec(`ALTER TABLE ${table} ADD COLUMN detail TEXT`);
     }
   },
+  // 4: a number column's display format (`format` in its options) and the `columns.set_format` op that
+  // sets it, and `_meta.title_table`, the first table that follows the database's name. An older build
+  // could not revert that op and would not stop the follow on a rename, so it must not open the store.
+  // All three are new and optional, so a version 3 store is read as it is.
+  4: () => {},
 };
 
 /**
@@ -168,8 +175,8 @@ export function getTable(sql: SqlHandle, tableId: unknown): TableMeta {
  * What `_columns.options` holds: the wire options plus the column's
  * description. The actor is the only layer that knows this: a description is
  * read out of the blob and presented on the ColumnSpec itself, and the options
- * handed out are rebuilt from `choices` alone, so `description` never leaks
- * back into them.
+ * handed out are rebuilt from `choices` and `format` alone, so `description`
+ * never leaks back into them.
  */
 interface StoredColumnOptions extends ColumnOptions {
   description?: string;
@@ -179,13 +186,21 @@ function readStoredOptions(raw: unknown): StoredColumnOptions | null {
   return raw == null ? null : (JSON.parse(String(raw)) as StoredColumnOptions);
 }
 
-/** The blob to store for a column, or null when it has neither choices nor a description. */
+/** The blob to store for a column, or null when it has no choices, format or description. */
 function storedOptionsJson(options: ColumnOptions | null, description: string | null): string | null {
   const stored: StoredColumnOptions = {
-    ...(options?.choices ? { choices: options.choices } : {}),
+    ...wireOptions(options),
     ...(description ? { description } : {}),
   };
   return Object.keys(stored).length === 0 ? null : JSON.stringify(stored);
+}
+
+/** The options a column hands out: its choices and its number format, nothing else of the blob. */
+function wireOptions(stored: ColumnOptions | null): ColumnOptions {
+  return {
+    ...(stored?.choices ? { choices: stored.choices } : {}),
+    ...(stored?.format ? { format: stored.format } : {}),
+  };
 }
 
 function asColumnSpec(row: Record<string, unknown>): ColumnSpec {
@@ -196,7 +211,7 @@ function asColumnSpec(row: Record<string, unknown>): ColumnSpec {
     display: String(row.display),
     type: String(row.type) as DatabaseColumnType,
     position: Number(row.position),
-    options: stored?.choices ? { choices: stored.choices } : null,
+    options: stored?.choices || stored?.format ? wireOptions(stored) : null,
     ...(stored?.description ? { description: stored.description } : {}),
   };
 }
@@ -391,13 +406,32 @@ export function dropColumn(sql: SqlHandle, tableId: string, columnId: string, no
   }
 }
 
-/** A type change rewrites the options blob, so the description already in it is carried over: a retype never erases it. */
+/**
+ * A type change rewrites the options blob, so the description already in it is carried over: a
+ * retype never erases it. A number format stays only while the column stays a number.
+ */
 export function setColumnTypeMeta(sql: SqlHandle, columnId: string, type: DatabaseColumnType, options: ColumnOptions | null): void {
-  const kept = readStoredOptions(sql.exec(`SELECT options FROM _columns WHERE column_id = ?`, columnId).toArray()[0]?.options)?.description ?? null;
-  sql.exec(`UPDATE _columns SET type = ?, options = ? WHERE column_id = ?`, type, storedOptionsJson(options, kept), columnId);
+  const row = sql.exec(`SELECT type, options FROM _columns WHERE column_id = ?`, columnId).toArray()[0];
+  const stored = readStoredOptions(row?.options);
+  const format = type === "number" && row?.type === "number" && !options?.format ? stored?.format : undefined;
+  sql.exec(
+    `UPDATE _columns SET type = ?, options = ? WHERE column_id = ?`,
+    type,
+    storedOptionsJson(format ? { ...options, format } : options, stored?.description ?? null),
+    columnId,
+  );
 }
 
-/** Write a column's description (null clears it), keeping its choices. */
+/** Write a number column's format (null clears it), keeping its description. */
+export function setColumnFormatMeta(sql: SqlHandle, tableId: string, columnId: string, format: NumberFormat | null): ColumnSpec {
+  const col = getColumn(sql, tableId, columnId);
+  const options: ColumnOptions = { ...wireOptions(col.options), ...(format ? { format } : {}) };
+  if (!format) delete options.format;
+  sql.exec(`UPDATE _columns SET options = ? WHERE column_id = ?`, storedOptionsJson(options, col.description ?? null), columnId);
+  return getColumn(sql, tableId, columnId);
+}
+
+/** Write a column's description (null clears it), keeping its choices and format. */
 export function setColumnDescriptionMeta(sql: SqlHandle, tableId: string, columnId: string, description: string | null): ColumnSpec {
   const col = getColumn(sql, tableId, columnId);
   sql.exec(`UPDATE _columns SET options = ? WHERE column_id = ?`, storedOptionsJson(col.options, description), columnId);

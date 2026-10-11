@@ -30,15 +30,30 @@ beforeEach(() => {
 });
 
 describe("a files cell", () => {
-  it("links each file to download it under its name, and removes one", async () => {
+  it("downloads a file under its name, previews an image, and removes one with an Undo", async () => {
     await render(`${BRIEF}\n${CHART}`);
     const links = [...host.querySelectorAll("a")];
     expect(links.map((a) => [a.getAttribute("href"), a.getAttribute("download"), a.textContent])).toEqual([
       [BRIEF, "Q3 brief.pdf", "Q3 brief.pdf"],
-      [CHART, "chart.png", "chart.png"],
+      [CHART, null, "chart.png"],
     ]);
+    await act(async () => links[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 })));
+    expect(host.ownerDocument.querySelector('img[alt="chart.png"]')).toBeTruthy();
+
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Remove Q3 brief.pdf"]')!.click());
     expect(onChange).toHaveBeenCalledWith(CHART);
+    expect(toasts.shown.map((t) => t.body)).toEqual(["Removed Q3 brief.pdf."]);
+
+    // Undo puts it back in its place, once the cell holds the removal.
+    await render(CHART);
+    const undo = (toasts.shown[0] as unknown as { endContent: { props: { onClick: () => void } } }).endContent.props.onClick;
+    act(() => undo());
+    expect(onChange).toHaveBeenLastCalledWith(`${BRIEF}\n${CHART}`);
+  });
+
+  it("shows an empty cell's add button as a hint", async () => {
+    await render(null);
+    expect(host.querySelector(".db-files--empty .db-files__add")).toBeTruthy();
   });
 
   it("uploads picked files into the database and adds their links; a failed one is named", async () => {

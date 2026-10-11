@@ -111,7 +111,7 @@ and node administrators also see **This node**.
 | This node → **Access** | The node's address and accepted origins, and its remote address once it has one (read-only), the [identity provider](#identity-provider), administrators, the node's audit log, and account recovery links. |
 | This node → **Remote access** | Where the packaging offers it: the node's public https address, turned on with a code and off again, with where it stands and the connector's command ([Remote access](remote-access.md)). |
 | This node → **Storage** | The largest upload, such as an image (a workspace import takes up to 512 MB whatever it is), how long audit history, AI usage records and idle Ask threads are kept, and how many changes each database keeps in its Activity feed. |
-| This node → **Search** | **Languages in your documents**: the [search languages](#search-languages), English always and each other off unless chosen. |
+| This node → **Search** | **Languages in your documents**: the [search languages](#search-languages), English always and each other off unless chosen, and where [search strictness](#search-strictness) is set. |
 | This node → **Backups** | The scheduled backup, on unless turned off: every day or once a week, at an hour in the node's time zone, which first-run setup takes from the browser; how many backups are kept; **Back up now**; and the backups the node keeps ([Operations](operations.md#the-nodes-own-backups)). |
 | This node → **Branding** | The node's name and the colour that marks the selected item. |
 | This node → **About** | The address, listen address, data directory, database, the node's [name](#the-nodes-name-and-id) as agents know it, node ID, and the version with the day it was released. Under **Updates**: a newer version when the node knows of one, with **Update now** on a Mac, and **Check for new versions** ([Operations](operations.md#learning-of-a-new-version)). |
@@ -125,7 +125,7 @@ URL entered in Settings are kept under `DATA_DIR/secrets`, not in the database.
 
 The search box drops a passage found only by meaning when it sits too far from the query. How far
 depends on the embedding model, so the node measures its model and sets the distance from that.
-Choose a level under **Search strictness** in the **Edit** of **Semantic search** in **Settings → This
+Choose a level under **Advanced** → **Search strictness** in the **Edit** of **Semantic search** in **Settings → This
 node → AI providers**; it applies to the next search once saved, and nothing is re-indexed.
 
 | Level | Set where this share of the node's unrelated sample pairs falls |
@@ -133,7 +133,7 @@ node → AI providers**; it applies to the next search once saved, and nothing i
 | **Strict** | 1 in 1,000 |
 | **Balanced** (default) | 1 in 100 |
 | **Loose** | 1 in 20 |
-| **Off** | Every passage: the nearest show, however far |
+| **No limit** | Every passage: the nearest show, however far |
 
 The share in a workspace differs, with the model, the language and how much of the workspace is
 unrelated to a search: on the MIRACL test sets, **Balanced** kept 96–100% of the relevant passages

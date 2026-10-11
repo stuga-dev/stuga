@@ -182,19 +182,26 @@ in `packages/runtime/src/interfaces.ts`, and the host guarantees:
   restart or a backup's pause closes every socket with 1012. Clients reconnect and re-sync; one that
   leaves while the actor waits to close has its last frames and its close handled first.
 - **Heartbeat in the host.** The client sends the text frame `ping` on a timer, and the host answers
-  `pong` without entering the actor, so a keepalive never waits behind the actor's lock.
+  `pong` without entering the actor, so a keepalive never waits behind the actor's lock. The client
+  also asks when the browser reports a network change and treats a ping left unanswered for four
+  seconds as a dropped link, since a browser that lost its network keeps the socket looking open.
 
 **The document actor** (`@stuga/doc-actor`) holds the live Yjs document. Clients sync over one
 binary socket per open document, with frames of a one-byte opcode and a payload
-(`packages/protocol/src/wire/opcodes.ts`): sync steps and updates, awareness, receipts (update
-acknowledgement, sync done, write rejected, document reset, document epoch, persistence degraded),
-the co-author's request, response, edits and cancel, and run-ledger updates. Unknown opcodes are
+(`packages/protocol/src/wire/opcodes.ts`): sync steps and updates, awareness, word that the
+comments changed or the document was renamed (the node passes it on; pages re-read), receipts (update
+acknowledgement, sync done, write rejected, document reset, document epoch, persistence degraded,
+document state), the co-author's request, response, edits and cancel, and run-ledger updates. Unknown opcodes are
 ignored at both ends, so no version handshake is needed. The actor journals updates to its own
 storage and flushes a snapshot to `env.snapshots` after 100 updates, 30 seconds after an unflushed
 edit, when a socket closes, and before it answers a workspace import's write of a body. It records
 versions with their authors and hosts the co-author turn.
 It refuses raw Yjs writes from an agent's socket (`approval_required`): agent content arrives only as
-proposals.
+proposals. The node mirrors the lock and the trash into it, so it refuses writes while either holds,
+and every open socket is sent the document's state after each handshake and whenever the lock, the
+trash or its write tier changes. Close codes say why a socket ended (`CloseCode`): access revoked,
+the document deleted or the membership of its workspace ended, which are final, and a role changed,
+after which the client opens it again with a fresh ticket.
 
 **The database actor** (`@stuga/database-actor`) holds one structured database as typed tables in
 its SQLite file. Schema changes, row edits and queries all serialize through it, so a reader never
@@ -249,7 +256,8 @@ field: jieba for Chinese, a Lindera dictionary for Japanese or Korean, or a lang
 field sees only text containing its script, so a Chinese document costs the Latin-script languages
 nothing, and the Chinese field skips text with kana. An index name that would pass Postgres's 63 characters carries a
 hash of its languages in place of their codes. The search box needs every non-stopword term of the query (a query of stopwords alone
-matches them as written) and tolerates a one-letter typo in a title. A keyword hit's excerpt is the
+matches them as written) and tolerates a one-letter typo in a title when every word of the query has
+four characters or more and none is in a script written without spaces. A keyword hit's excerpt is the
 passage of its text, among the first 64 holding a match, showing the most different matching words
 (`breach` and `breaches` count as two), then the most matches, then the first, so it stays the same
 whatever else the node's index holds. The semantic leg is pgvector

@@ -12,6 +12,54 @@ Releases before 0.1.7 were previews. Their notes are on their
 ### Added
 
 - Stuga speaks your language: the app, its notifications and alerts, and the Mac menu bar and installer come in English, 简体中文, 繁體中文, 日本語, 한국어, Deutsch, Français, Español and Português (Brasil). The app follows your browser until you pick a language in **Settings → Appearance**, which then goes with your account; the menu bar follows your Mac.
+- A database grid works like a spreadsheet from the keyboard: typing on a cell starts editing with that character, the arrow keys move between cells, F2 edits, Delete clears, and Enter moves down.
+- Paste a block copied from a spreadsheet into a database: it fills the cells right and down, adding rows as needed. Copy a cell with ⌘C or Ctrl+C.
+- A number column can show money, percentages, fixed decimals and grouped thousands (**Number format…** in the column's menu). Numbers show in your locale, and each column header shows its type.
+- An image in a files column opens in a preview, and removing a file offers Undo.
+- **Download as CSV** in a database's menu and each table's menu writes the rows and columns on screen, filters and sort included, as a file Excel and Numbers open, Chinese text too.
+- Import a spreadsheet as it is: each of the file's columns goes to a column you pick, to a new column, or nowhere, and **New database from CSV…** makes a database from a file. A file can also land in a new table of its own.
+- **Search this table** in a database's toolbar, and the workspace search finds a database by what its cells say, such as an order number or a product name.
+- Task lists in documents: type `[ ] `, or choose **Task list** in the toolbar or the `/` menu. Markdown, Notion and Obsidian to-dos import as tasks, and agents read and write them as `* [ ]`.
+- **Download as Markdown**, **Print…** (which also saves a PDF) and **Make a copy** in a document's ⋯ menu; a library row offers Download and Make a copy.
+- An attached file shows as a chip with its name and size, and a link to a Stuga page shows its title.
+- A summary after importing a workspace: what came in, which files were left out and why, and what changed on the way in. An export holds a README and a CSV copy of each table.
+- **Settings → This workspace → Groups**, where an admin makes groups and changes who is in them.
+- An invite link can say who it is for, and the sign-in page has **Forgot password?**.
+- A share link can be turned off, and someone without access can ask for it; the people who manage the document see the request in **Share**.
+- **Keyboard shortcuts** (press `?`, or ⌘/ or Ctrl+/) lists the shortcuts the app has.
+
+### Fixed
+
+- Typing into a database cell reached with Tab no longer loses what comes before the first space.
+- A number cell refuses what is not one number, such as "1.2.3" or "abc", reads "4,50" as four and a half, and refuses a whole number too large to store exactly.
+- A date cell refuses years before 1900 or after 2100, and a refused date no longer leaves its editor stuck open.
+- A new database's table takes the database's name, and keeps following it until you name the table yourself.
+- Deleting a table says how many rows and columns go with it, counted when you ask.
+- An import no longer says "All 4 columns matched" under "None of the rows can be imported", nor suggests a column that merely looks alike, and lines of only commas are no longer imported as rows.
+- The table assistant says where to let it read your documents when a request needs them.
+- When someone else changed a cell while you were editing it, your edit no longer replaces theirs unseen: the cell shows their value and **Use mine** puts yours back. A column deleted while you edit it says so in plain words.
+- Open pages follow a lock, unlock, trash, restore, permanent delete, change of access or role, or removal at once: read-only, with a banner and the text kept to copy. A page whose sign-in ended says so and comes back after signing in again.
+- A page left open across an upgrade reloads into the new version before it syncs, so it can no longer drop what it cannot show, such as a task list.
+- Leaving a document whose latest changes have not reached the node asks first. A lost connection shows within seconds, in plain words ("Offline", "Reconnecting", "Changes not sent yet"), and a page that failed to load while offline loads by itself when the network is back.
+- Comments, replies, resolves and renames reach everyone with the document open, a mention notification opens its comment, and the bell shows what is unread.
+- A new document's header takes its first line as you type, restoring a version tells the other editors who restored which version, and version history says how much was added or removed.
+- Collaborators' colours no longer clash in a document, their name flags no longer cover the line above, and `@` lists the people who can open the document.
+- A new document or folder is shared no wider than the folder it is made in, and people added in **Share** start at Can view.
+- Rejecting an AI edit on a locked document or database works, and so does undoing that rejection; only accepting waits for an unlock.
+- **Review AI edits** counts only the changes you can decide.
+- Pasting lines into a database cell you are editing keeps them in that cell; a range copied from a spreadsheet still fills the cells around it.
+- A workspace export keeps each number column's format.
+- Renaming selects the whole name, so typing replaces it, and a new item no longer starts with the text "Untitled".
+- Inserting an image or a file after another, or with the caret in the title, adds it below instead of replacing what was there.
+- An AI rewrite shows the old sentence struck through and the new one in full, instead of interleaved words, and the AI calls its edits suggestions and leaves the count to the page.
+- Opening a cited passage from an answer no longer reports that it could not be found, and leaving Ask mid-answer shows **Stopped** with **Try again**.
+- With **Let AI edits apply directly**, the open page shows at once what the AI changed.
+- Error messages go away by themselves, show once, and no longer cover Send or the panel's buttons.
+- On a phone, search opens inside the screen, and buttons are large enough to tap.
+- The library updates as others add, rename or move items, a folder opens from its name, and a right click opens the item's menu.
+- Moving an item into a folder that shares it more widely asks first and names who gains access; **Share** shows where each person's access comes from.
+- A browser tab shows the name of the page it holds.
+- Search for a one-letter or Chinese word no longer lists unrelated documents.
 
 ## [0.1.13] - 2026-10-08
 

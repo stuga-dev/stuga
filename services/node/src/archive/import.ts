@@ -21,6 +21,7 @@ import { type AccountCtx, workspaceContextFor } from "../auth/context.js";
 import { openZip, ZipError, type ZipArchive, type ZipEntryInfo } from "../lib/zip.js";
 import { MediaValidationError, mediaUrl, validateImageBytes } from "../media/media.js";
 import { type ColumnInput, type DocState, type ImportClient, type ViewInput, workspaceImportClient } from "./client.js";
+import type { Changed, LeftOut } from "./convert/build.js";
 import { convertExport, type ExportKind } from "./convert/index.js";
 import {
   ARCHIVE_MAX_BODY_BYTES,
@@ -68,8 +69,10 @@ export const IMPORT_PAGES_PER_WRITE = DATABASE_MAX_ROWS_PER_WRITE;
 export interface ArchiveContents {
   /** What the zip held: a Stuga archive, or another app's export converted into one. */
   kind: "stuga" | ExportKind;
-  /** A converted export's files the archive does not carry, by path. */
-  leftOut: string[];
+  /** A converted export's files the archive does not carry, by path, with why. */
+  leftOut: LeftOut[];
+  /** What converting the export spelled differently. */
+  changed: Changed[];
   manifest: ArchiveManifest;
   index: ArchiveIndex;
   /** By body path: whether the body holds an archive link or image, or a mention, which the import rewrites. */
@@ -231,11 +234,12 @@ async function readZippedArchive(bytes: Uint8Array, maxImageBytes: number, conve
   });
   let zip = archiveRoot(opened);
   let kind: ArchiveContents["kind"] = "stuga";
-  let leftOut: string[] = [];
+  let leftOut: LeftOut[] = [];
+  let changed: Changed[] = [];
   if (!zip.files.has(MANIFEST_NAME) && convert) {
     const converted = await convertExport(opened, { maxImageBytes });
     if (!converted) refuse("", "this is not a Stuga archive, a Notion export or a folder of Markdown files");
-    ({ zip, kind, leftOut } = converted);
+    ({ zip, kind, leftOut, changed } = converted);
   }
   // Counted as an export counts them, and as the format's caps do: files, not folders or a Mac's forks.
   if (zip.files.size > ARCHIVE_MAX_ENTRIES) refuse("", `the archive holds ${zip.files.size} files, more than ${ARCHIVE_MAX_ENTRIES}`);
@@ -342,6 +346,7 @@ async function readZippedArchive(bytes: Uint8Array, maxImageBytes: number, conve
   return {
     kind,
     leftOut,
+    changed,
     manifest,
     index,
     rewrites,
@@ -564,6 +569,9 @@ export async function importArchive(client: ImportClient, contents: ArchiveConte
         const schema = i === 0 ? created.table : await client.createTable(created.docId, { display: table.name, columns: table.columns.map(columnInput) });
         const imported: ImportedTable = { tableId: schema.table_id, columns: columnIds(schema, table.columns), views: new Map(), rows: new Map() };
         tables.set(table.name, imported);
+        for (const column of table.columns) {
+          if (column.format) await client.setColumnFormat(created.docId, imported.tableId, imported.columns.get(column.name)!, column.format);
+        }
         await importRows(client, created.docId, table, await contents.rows(table.file), imported, fileLink);
         counts.rows += imported.rows.size;
         for (const view of table.views) imported.views.set(view.name, await client.createView(created.docId, imported.tableId, viewInput(view, imported)));

@@ -2,18 +2,20 @@
  * Two markdown texts diffed block by block and rendered as rich text: blocks only
  * in the base are struck, blocks only in the target are green.
  */
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import MarkdownIt from "markdown-it";
 import { blockDiffMarkdown, type BlockDiffMarkdown } from "@stuga/crdt-ops";
 import { Switch } from "@astryxdesign/core/Switch";
 import { renderImageCaptions } from "../editor/image-caption-markdown";
 import { renderTextDirection } from "../editor/text-direction-markdown";
+import { renderTaskBoxes } from "../editor/task-list-markdown";
 import { t } from "../i18n/i18n";
 
 // html:false escapes raw HTML in document text, so the output is safe to inject.
 const md = new MarkdownIt({ html: false, linkify: true });
 renderImageCaptions(md);
 renderTextDirection(md);
+renderTaskBoxes(md);
 
 export function useBlockDiff(base: string | null, target: string | null): { blocks: BlockDiffMarkdown[]; changed: boolean } {
   return useMemo(() => {
@@ -28,16 +30,17 @@ export function BlockDiffView({
   loading,
   failed = false,
   unchangedText,
-  removedNote,
-  addedNote,
+  removedLabel,
+  addedLabel,
 }: {
   blocks: BlockDiffMarkdown[];
   changed: boolean;
   loading: boolean;
   failed?: boolean;
   unchangedText: string;
-  removedNote?: ReactNode;
-  addedNote?: ReactNode;
+  /** What the red and the green mean, in place of "Removed" and "Added". */
+  removedLabel?: string;
+  addedLabel?: string;
 }) {
   const [onlyDiff, setOnlyDiff] = useState(true);
   const shown = onlyDiff ? blocks.filter((b) => b.type !== "eq") : blocks;
@@ -46,9 +49,9 @@ export function BlockDiffView({
       <div className="vcompare-controls">
         <p className="vcompare-legend">
           <span className="vcompare-legend-swatch vcompare-legend-swatch--del" />
-          {t("review.diff.removed")} {removedNote && <span className="vcompare-legend-note">{removedNote}</span>}
+          {removedLabel ?? t("review.diff.removed")}
           <span className="vcompare-legend-swatch vcompare-legend-swatch--ins" />
-          {t("review.diff.added")} {addedNote && <span className="vcompare-legend-note">{addedNote}</span>}
+          {addedLabel ?? t("review.diff.added")}
         </p>
         <Switch label={t("review.diff.onlyChanges")} value={onlyDiff} onChange={setOnlyDiff} />
       </div>

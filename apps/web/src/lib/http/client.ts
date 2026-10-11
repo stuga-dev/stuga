@@ -7,8 +7,11 @@ import type { DatabaseImportError } from "@stuga/protocol/databases/types";
 import { REAUTH_HEADER, confirmIdentity, reauthMethods } from "../session/reauth";
 import { clearTokens, ensureFreshToken, getToken } from "../session/tokens";
 import { getActiveWorkspace, setActiveWorkspace } from "../session/workspace-pointer";
+import { noteMembershipEnded, noteSessionEnded } from "../session/endings";
+import { onLinkPage, rememberLoginReturn } from "../session/return-path";
 import { t } from "../../i18n/i18n";
 import { presentServerMessage } from "./server-messages";
+import { isOffline } from "../use-online";
 
 let cachedAlias: string | null = null;
 let cachedDisplayName: string | null = null;
@@ -43,12 +46,22 @@ interface AuthedFetchInit extends RequestInit {
   timeoutMs?: number;
 }
 
+/** A page is showing that the membership ended, with text to copy; its own way out goes on from there. */
+let endingOnScreen = false;
+
+/** Hold the onboarding redirect while a page shows its own ending, so a background request cannot take the text away. */
+export function holdForEnding(hold: boolean): void {
+  endingOnScreen = hold;
+}
+
 /**
  * Applied to every authed response, whatever carried it: capture the identity
  * headers; on a 401 drop the credentials before leaving for /login (or the
  * sign-in page reads the dead token and bounces back), except the one that asks
- * for a confirmation, whose session is fine; on the no-membership marker drop
- * the workspace pointer and go to onboarding.
+ * for a confirmation, whose session is fine, and say why there and come back
+ * here after; on the no-membership marker drop the workspace pointer and go to
+ * onboarding, which names the workspace that was left. An invite or share link
+ * page stays put: redeeming it is how a member of no workspace joins one.
  */
 export function observeResponse(status: number, header: (name: string) => string | null): void {
   const user = header("x-stuga-user");
@@ -61,11 +74,17 @@ export function observeResponse(status: number, header: (name: string) => string
       cachedDisplayName = name;
     }
   }
+  const { pathname, search, hash } = window.location;
   if (status === 401 && !header(REAUTH_HEADER)) {
     clearTokens();
-    if (!window.location.pathname.startsWith("/login")) window.location.href = "/login";
+    if (!pathname.startsWith("/login")) {
+      rememberLoginReturn(pathname + search + hash);
+      noteSessionEnded();
+      window.location.href = "/login";
+    }
   }
-  if (header("x-stuga-workspace-required") && !window.location.pathname.startsWith("/onboarding")) {
+  if (header("x-stuga-workspace-required") && !pathname.startsWith("/onboarding") && !onLinkPage(pathname) && !endingOnScreen) {
+    noteMembershipEnded();
     setActiveWorkspace(null);
     window.location.href = "/onboarding";
   }
@@ -116,7 +135,7 @@ export interface ApiError extends Error {
 
 /** A request that never reached the node: the browser's own words ("Failed to fetch", "Load failed") stay in `cause`. */
 export function networkFailure(cause?: unknown): ApiError {
-  const err = new Error(t("errors.client.offline"), { cause }) as ApiError;
+  const err = new Error(isOffline() ? t("errors.client.noNetwork") : t("errors.client.offline"), { cause }) as ApiError;
   err.code = "network";
   return err;
 }

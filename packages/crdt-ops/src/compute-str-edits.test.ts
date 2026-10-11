@@ -316,7 +316,7 @@ describe("computeStrEdits minimality inside container blocks", () => {
       .join("\n\n");
     const edits = roundTrip(CHECKLIST, next);
     expect(edits).toHaveLength(1);
-    expect(edits[0]!.old_string).toBe("* \\[ \\] Task is Walked and estimated in points (§4.4)\n\n");
+    expect(edits[0]!.old_string).toBe("* [ ] Task is Walked and estimated in points (§4.4)\n\n");
     expect(edits[0]!.new_string).toBe("");
     // None of the five surviving bullets — nor the heading/tail — is in the hunk.
     expectNoneMention(edits, [
@@ -340,7 +340,7 @@ describe("computeStrEdits minimality inside container blocks", () => {
       .join("\n\n");
     const edits = roundTrip(CHECKLIST, next);
     expect(edits).toHaveLength(1);
-    expect(edits[0]!.old_string).toBe("* \\[ \\] Safety plan agreed\n\n");
+    expect(edits[0]!.old_string).toBe("* [ ] Safety plan agreed\n\n");
     expect(edits[0]!.new_string).toBe("");
     expectNoneMention(edits, [
       "Task is Walked",
@@ -357,15 +357,15 @@ describe("computeStrEdits minimality inside container blocks", () => {
     const next = CHECKLIST.replace("Photos are attached", "Photos are attached and reviewed");
     const edits = roundTrip(CHECKLIST, next);
     expect(edits).toHaveLength(1);
-    expect(edits[0]!.old_string).toBe("* \\[ \\] Photos are attached\n");
-    expect(edits[0]!.new_string).toBe("* \\[ \\] Photos are attached and reviewed\n");
+    expect(edits[0]!.old_string).toBe("* [ ] Photos are attached\n");
+    expect(edits[0]!.new_string).toBe("* [ ] Photos are attached and reviewed\n");
     expectNoneMention(edits, ["Task is Walked", "Finish checks", "Owner assigned", "Tail paragraph"]);
   });
 
   it("adding an item mid-list anchors on ONE neighbouring item", () => {
     const next = CHECKLIST.replace(
-      "* \\[ \\] Materials are ordered",
-      "* \\[ \\] Materials are ordered\n\n* \\[ \\] Hazards are logged",
+      "* [ ] Materials are ordered",
+      "* [ ] Materials are ordered\n\n* [ ] Hazards are logged",
     );
     const edits = roundTrip(CHECKLIST, next);
     expect(edits).toHaveLength(1);
@@ -550,10 +550,10 @@ describe("computeStrEdits hunks are independently applicable", () => {
     // own section — no heading swallowed, no merge with the other hunk, no
     // whole-document fallback.
     expect(edits[0]!.old_string).toBe(
-      "* \\[ \\] Task is `Walked` and estimated in points\n\n* \\[ \\] Finish checks are written",
+      "* [ ] Task is `Walked` and estimated in points\n\n* [ ] Finish checks are written",
     );
     expect(edits[1]!.old_string).toBe(
-      "* \\[ \\] Task is `Walked` and estimated in points\n\n* \\[ \\] Before-and-after photo taken",
+      "* [ ] Task is `Walked` and estimated in points\n\n* [ ] Before-and-after photo taken",
     );
     expectNoneMention([edits[0]!], ["Ready to Start", "Done Means", "Before-and-after photo taken"]);
     expectNoneMention([edits[1]!], ["Ready to Start", "Done Means", "Finish checks"]);

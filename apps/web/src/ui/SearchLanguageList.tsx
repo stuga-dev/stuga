@@ -52,6 +52,7 @@ export function SearchLanguageList({ choices, value, onChange, isDisabled, isLab
     <MultiSelector
       label={SEARCH_LANGUAGES_LABEL}
       isLabelHidden={isLabelHidden}
+      description={t("ui.searchLanguages.hint")}
       isOptional
       options={[
         { type: "section", title: t("ui.searchLanguages.alwaysOn"), options: [alwaysOn] },

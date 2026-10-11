@@ -43,6 +43,8 @@ export function TableAiPanel({
         empty={
           <>
             {t("database.ai.empty")} {agentAuto ? t("database.ai.emptyAuto") : t("database.ai.emptyReview")}
+            {/* The table assistant reads this database alone until someone widens it; say where. */}
+            {ai.collectionId === null && <> {t("database.ai.scopeHint")}</>}
           </>
         }
       />

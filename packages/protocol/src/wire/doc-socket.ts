@@ -76,6 +76,8 @@ export interface AiEditsPayload {
   applied: number;
   /** The run they landed in, or null when there were none. */
   run_id: string | null;
+  /** This turn's changes in that run, so the chat can follow what became of them. */
+  hunk_ids?: string[];
   /** Proposals raised in other documents this turn. */
   cross_docs: AiCrossDocProposal[];
   citations?: AiCitation[];

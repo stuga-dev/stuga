@@ -23,6 +23,8 @@
   "op.columnTypeChanged": "Spalte „{column}“ in „{table}“ in {type} geändert ({coerced, plural, one {# Zelle} other {# Zellen}} umgewandelt)",
   "op.columnDescribed": "Spalte „{column}“ in „{table}“ beschrieben",
   "op.columnDescriptionCleared": "Beschreibung der Spalte „{column}“ in „{table}“ entfernt",
+  "op.columnFormatChanged": "Zahlenformat der Spalte „{column}“ in „{table}“ geändert",
+  "op.columnFormatCleared": "Zahlenformat der Spalte „{column}“ in „{table}“ entfernt",
   "op.columnDeleted": "Spalte „{column}“ aus „{table}“ gelöscht",
   "op.rowsInserted": "{rows, plural, one {# Zeile} other {# Zeilen}} in „{table}“ eingefügt",
   "op.rowsImported": "{rows, plural, one {# Zeile} other {# Zeilen}} in „{table}“ importiert",

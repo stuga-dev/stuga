@@ -132,6 +132,7 @@ export function coauthorNoticesText(notices: readonly CoauthorNotice[] | undefin
 
 const COAUTHOR_ERROR: Record<Exclude<CoauthorError["code"], "failed" | "propose_failed" | "review_backlog">, MessageKey> = {
   locked: "ai.error.locked",
+  trashed: "ai.error.trashed",
   view_only: "ai.error.viewOnly",
   rate_limited: "ai.error.rateLimited",
   unreadable: "ai.error.unreadable",

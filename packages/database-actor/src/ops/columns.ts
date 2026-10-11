@@ -1,6 +1,6 @@
-import { validateSelectChoices } from "@stuga/protocol/databases/cells";
+import { validateNumberFormat, validateSelectChoices } from "@stuga/protocol/databases/cells";
 import { DATABASE_MAX_COLUMNS } from "@stuga/protocol/databases/limits";
-import type { ColumnOptions, DatabaseColumnType, DbRunOpColumnsAdd } from "@stuga/protocol/databases/types";
+import type { ColumnOptions, DatabaseColumnType, DbRunOpColumnsAdd, NumberFormat } from "@stuga/protocol/databases/types";
 import { OpError, conflict, parseDescription, requireDisplay, requireObject } from "../request.js";
 import {
   addColumn,
@@ -15,6 +15,7 @@ import {
   renameColumn,
   selectNonNullCells,
   setColumnDescriptionMeta,
+  setColumnFormatMeta,
   setColumnTypeMeta,
   type CreateColumnInput,
 } from "../schema-ops.js";
@@ -24,6 +25,8 @@ type ColumnsRename = { kind: "columns.rename"; table_id: string; column_id: stri
 type ColumnsSetType = { kind: "columns.set_type"; table_id: string; column_id: string; type: DatabaseColumnType; options: ColumnOptions | null };
 /** `null` clears the description. People only: an agent describes a column when it adds it, and not after. */
 type ColumnsSetDescription = { kind: "columns.set_description"; table_id: string; column_id: string; description: string | null };
+/** `null` clears the format. People only, like a retype. */
+type ColumnsSetFormat = { kind: "columns.set_format"; table_id: string; column_id: string; format: NumberFormat | null };
 type ColumnsDelete = { kind: "columns.delete"; table_id: string; column_id: string };
 
 function requireColumnType(type: unknown, label = "unknown column type: "): DatabaseColumnType {
@@ -155,6 +158,41 @@ export const columnsSetDescription: OpDef<ColumnsSetDescription> = {
     return {
       result: { column: setColumnDescriptionMeta(sql, p.table_id, p.column_id, p.description) },
       detail: { kind: "columns.set_description", table: meta.display, column: col.display, cleared: p.description === null },
+    };
+  },
+};
+
+/** How a number column reads. Display only: it lives in the options blob and touches no cell. */
+export const columnsSetFormat: OpDef<ColumnsSetFormat> = {
+  parse(input, view) {
+    const table = view.table(input);
+    const col = getColumn(view.sql, table.table_id, input.column_id);
+    if (col.type !== "number") throw new OpError(400, "validation", `column "${col.display}" is not a number column`);
+    let format: NumberFormat | null = null;
+    if (input.format !== null && input.format !== undefined) {
+      const v = validateNumberFormat(input.format);
+      if (!v.ok) throw new OpError(400, "validation", v.reason);
+      format = v.format;
+    }
+    return { kind: "columns.set_format", table_id: table.table_id, column_id: col.column_id, format };
+  },
+  capture: (sql, p) => ({
+    kind: "columns.set_format",
+    table_id: p.table_id,
+    column_id: p.column_id,
+    prev_format: getColumn(sql, p.table_id, p.column_id).options?.format ?? null,
+  }),
+  unchanged(sql, p) {
+    const col = getColumn(sql, p.table_id, p.column_id);
+    return JSON.stringify(col.options?.format ?? null) === JSON.stringify(p.format) ? { column: col } : null;
+  },
+  apply(sql, p) {
+    const meta = getTable(sql, p.table_id);
+    const col = getColumn(sql, p.table_id, p.column_id);
+    if (col.type !== "number") throw conflict(`column "${col.display}" is no longer a number column`);
+    return {
+      result: { column: setColumnFormatMeta(sql, p.table_id, p.column_id, p.format) },
+      detail: { kind: "columns.set_format", table: meta.display, column: col.display, cleared: p.format === null },
     };
   },
 };

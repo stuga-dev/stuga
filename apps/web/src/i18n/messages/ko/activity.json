@@ -23,6 +23,8 @@
   "op.columnTypeChanged": "“{table}”의 열 “{column}” 유형을 {type}(으)로 변경(셀 {coerced, plural, other {#개}} 변환)",
   "op.columnDescribed": "“{table}”의 열 “{column}”에 설명 추가",
   "op.columnDescriptionCleared": "“{table}”의 열 “{column}” 설명 삭제",
+  "op.columnFormatChanged": "“{table}”의 열 “{column}” 숫자 형식 변경",
+  "op.columnFormatCleared": "“{table}”의 열 “{column}” 숫자 형식 지우기",
   "op.columnDeleted": "“{table}”에서 열 “{column}” 삭제",
   "op.rowsInserted": "“{table}”에 행 {rows, plural, other {#개}} 추가",
   "op.rowsImported": "“{table}”에 행 {rows, plural, other {#개}} 가져옴",

@@ -4,20 +4,20 @@
  * listing is capped and sorting one page here would mislabel it; the only local
  * order is folders above documents.
  */
-import { useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Table, proportional, pixel, type TableColumn, type TablePlugin, type TableSortState } from "@astryxdesign/core/Table";
 import { useTableSortable } from "@astryxdesign/core/Table";
-import { MoreMenu } from "@astryxdesign/core/MoreMenu";
-import { Avatar } from "@astryxdesign/core/Avatar";
+import { FittedMoreMenu } from "../ui/FittedMoreMenu";
 import { Badge } from "@astryxdesign/core/Badge";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Link } from "@astryxdesign/core/Link";
-import { Folder as FolderIcon, FileText, Database, Star, ChevronRight } from "lucide-react";
+import { Button } from "@astryxdesign/core/Button";
+import { Folder as FolderIcon, FileText, Database, Star } from "lucide-react";
 import { getAlias } from "../lib/http/client";
 import { useElementWidth } from "../lib/use-element-width";
 import type { DocSummary, Folder } from "../api";
 import { relativeTime, absoluteTime } from "../lib/format";
-import { principalName, useUserNames } from "../state/identity";
+import { Avatar, nameLoading, principalName, useUserNames } from "../state/identity";
 import { DocStateMarks } from "./doc-state";
 import { movableTo, type LibraryDragItem } from "./move-items";
 import { pageParentLabel, usePageParents } from "../database/model/row-ref";
@@ -57,7 +57,8 @@ export function docRow(d: DocSummary): LibraryRow {
   };
 }
 
-type LibraryColumn = "name" | "updated" | "owner" | "location" | "expires" | "star" | "actions";
+/** `actions` is the ⋯ menu; `buttons` shows a short list of actions as buttons on every row. */
+type LibraryColumn = "name" | "updated" | "owner" | "location" | "expires" | "star" | "actions" | "buttons";
 type LibrarySortKey = "title" | "updated_at" | "created_at";
 export interface LibrarySort {
   key: LibrarySortKey;
@@ -80,9 +81,13 @@ interface DocTableDnd {
 
 type SelectMode = "replace" | "toggle" | "range";
 
-type RowMenuLeaf = { label: string; icon?: React.ReactNode; onClick: () => void };
-/** Astryx MoreMenu sections hold leaves only. */
-type RowMenuItem = RowMenuLeaf | { type: "divider" } | { type: "section"; title: string; items: RowMenuLeaf[] };
+type RowMenuLeaf = { label: string; icon?: React.ReactNode; variant?: "destructive"; onClick: () => void };
+/** Astryx menu sections hold leaves only. */
+type RowMenuItem =
+  | RowMenuLeaf
+  | { type: "divider" }
+  | { type: "section"; title: string; items: RowMenuLeaf[] }
+  | { label: string; icon?: React.ReactNode; items: RowMenuLeaf[] };
 
 interface DocTableProps {
   rows: LibraryRow[];
@@ -96,10 +101,15 @@ interface DocTableProps {
   sort: LibrarySort;
   onSortChange: (next: LibrarySort) => void;
   columns?: LibraryColumn[];
-  /** A plain click on the document name, a double click or Enter on a row, or one tap on a phone. */
+  /** A plain click on the item's name, a double click or Enter on a row, or one tap on a phone. */
   onActivate?: (row: LibraryRow) => void;
+  /** Where a folder's name links, so it opens in a new tab too; without it a folder's name is plain text. */
+  folderHref?: (folderId: string) => string;
   onToggleFavorite?: (docId: string) => void;
-  rowActions: (row: LibraryRow) => RowMenuItem[];
+  /** The ⋯ menu, which a right-click on the row opens too. */
+  rowActions?: (row: LibraryRow) => RowMenuItem[];
+  /** The `buttons` column's actions. */
+  rowButtons?: (row: LibraryRow) => RowMenuLeaf[];
   /** Omitted, rows are not draggable. */
   dnd?: DocTableDnd;
   emptyState?: React.ReactNode;
@@ -110,8 +120,9 @@ export const DND_MIME = "application/x-stuga-item";
 
 const DEFAULT_COLUMNS: LibraryColumn[] = ["name", "updated", "owner", "star", "actions"];
 const NONE: ReadonlySet<string> = new Set();
+const NO_ACTIONS = (): RowMenuItem[] => [];
 
-/** The row is the table's one tab stop and opens its ⋯ menu on Shift+F10; MoreMenu has no tabIndex prop. */
+/** The row is the table's one tab stop and opens its ⋯ menu on Shift+F10; the menu has no tabIndex prop. */
 const outOfTabOrder = (el: HTMLButtonElement | null) => el?.setAttribute("tabindex", "-1");
 
 export function DocTable({
@@ -124,8 +135,10 @@ export function DocTable({
   onSortChange,
   columns = DEFAULT_COLUMNS,
   onActivate,
+  folderHref,
   onToggleFavorite,
-  rowActions,
+  rowActions = NO_ACTIONS,
+  rowButtons,
   dnd,
   emptyState,
 }: DocTableProps) {
@@ -200,6 +213,19 @@ export function DocTable({
     },
   });
 
+  const { ref: wrapRef, width: wrapWidth } = useElementWidth();
+  let keep = columns;
+  if (allRowsAreMine) keep = keep.filter((c) => c !== "owner");
+  // Shed metadata before Name is squeezed: Owner first as the widest, Last edited only when Name would drop under ~260px.
+  if (wrapWidth > 0) {
+    if (wrapWidth < 720) keep = keep.filter((c) => c !== "owner");
+    if (wrapWidth < 460) keep = keep.filter((c) => c !== "updated" && c !== "location");
+    // A phone has no room for a row of buttons beside the name: they go behind the ⋯ menu.
+    if (wrapWidth < 460) keep = keep.map((c) => (c === "buttons" ? "actions" : c));
+  }
+  const buttonsWidth = useButtonsWidth(wrapRef, keep.includes("buttons"));
+
+  // Not memoised: the cells close over the caller's current handlers.
   const allColumns: Record<LibraryColumn, TableColumn<LibraryRow>> = {
     name: {
       key: "name",
@@ -212,9 +238,9 @@ export function DocTable({
             {r.kind === "folder" ? <FolderIcon size={16} /> : r.doc?.doc_type === "database" ? <Database size={16} /> : <FileText size={16} />}
           </span>
           <span className="doc-table__title" data-col="name">
-            {r.kind === "doc" && onActivate && !r.doc?.trashed ? (
+            {onActivate && !r.doc?.trashed && (r.kind === "doc" || folderHref) ? (
               <Link
-                href={`/doc/${r.id}`}
+                href={r.kind === "doc" ? `/doc/${r.id}` : folderHref!(r.id)}
                 color="inherit"
                 isStandalone
                 // The row is the roving tab stop; Enter on it opens the same document.
@@ -229,7 +255,7 @@ export function DocTable({
                 }}
               >
                 {/* Link and its Text are flex boxes, so the direction and the ellipsis go on the text's own box. */}
-                <span className="bidi-line">{r.title || t("common.untitled")}</span>
+                <span className="bidi-line">{r.title || (r.kind === "folder" ? t("common.untitledFolder") : t("common.untitled"))}</span>
               </Link>
             ) : (
               r.title || (r.kind === "folder" ? t("common.untitledFolder") : t("common.untitled"))
@@ -246,7 +272,12 @@ export function DocTable({
             </span>
           )}
           <DocStateMarks doc={r.doc} />
-          {r.kind === "folder" && <ChevronRight size={14} className="doc-table__chev" />}
+          {/* Without room for the Last edited column, the time follows the name. */}
+          {!keep.includes("updated") && columns.includes("updated") && (
+            <span className="doc-table__muted doc-table__when" title={absoluteTime(r.updated_at)}>
+              {relativeTime(r.updated_at)}
+            </span>
+          )}
         </HStack>
       ),
     },
@@ -268,10 +299,12 @@ export function DocTable({
       width: pixel(190),
       // Not sortable: the server has no owner sort.
       renderCell: (r) => {
+        // Blank while the name loads, rather than an account id.
+        if (nameLoading(r.owner)) return null;
         const name = principalName(r.owner);
         return (
           <HStack gap={2} vAlign="center">
-            <Avatar name={name} size="xsm" tooltip={false} />
+            <Avatar principal={r.owner} size={20} />
             <span className="doc-table__muted" data-col="owner" title={r.owner}>
               {name}
             </span>
@@ -334,29 +367,37 @@ export function DocTable({
     actions: {
       key: "actions",
       header: "",
-      width: pixel(52),
+      // The button and the table's end gutter.
+      width: pixel(60),
       resizable: false,
       renderCell: (r) => {
-        const items = rowActions(r);
+        // The `buttons` column's actions, where it gave way to this one.
+        const own = rowActions(r);
+        const items = own.length > 0 ? own : (rowButtons?.(r) ?? []);
         if (items.length === 0) return null;
         return (
           <span className="doc-table__more" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-            <MoreMenu ref={outOfTabOrder} label={t("common.actionsFor", { name: r.title || t("common.untitled") })} variant="ghost" size="sm" alignment="end" items={items} />
+            <FittedMoreMenu ref={outOfTabOrder} label={t("common.actionsFor", { name: r.title || t("common.untitled") })} items={items} />
           </span>
         );
       },
     },
+    buttons: {
+      key: "buttons",
+      header: "",
+      width: pixel(buttonsWidth),
+      resizable: false,
+      renderCell: (r) => (
+        // The row owns click and double click.
+        <span className="doc-table__buttons" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+          {(rowButtons?.(r) ?? []).map((b) => (
+            <Button key={b.label} label={b.label} icon={b.icon} variant={b.variant ?? "secondary"} size="sm" onClick={b.onClick} />
+          ))}
+        </span>
+      ),
+    },
   };
 
-  // Not memoised: the cells close over the caller's current handlers.
-  const { ref: wrapRef, width: wrapWidth } = useElementWidth();
-  let keep = columns;
-  if (allRowsAreMine) keep = keep.filter((c) => c !== "owner");
-  // Shed metadata before Name is squeezed: Owner first as the widest, Last edited only when Name would drop under ~260px.
-  if (wrapWidth > 0) {
-    if (wrapWidth < 720) keep = keep.filter((c) => c !== "owner");
-    if (wrapWidth < 460) keep = keep.filter((c) => c !== "updated" && c !== "location");
-  }
   const cols = keep.map((c) => allColumns[c]);
 
   return (
@@ -462,6 +503,15 @@ function useRowInteraction(cfg: {
             if ((e.target as Element).closest("a, button, [role='button']")) return;
             onActivate?.(item);
           },
+          // A right-click opens the row's ⋯ menu. On a name, which is a link, the browser's own
+          // menu stays, for opening it in a new tab.
+          onContextMenu: (e: React.MouseEvent<HTMLTableRowElement>) => {
+            if ((e.target as Element).closest("a")) return;
+            const menu = e.currentTarget.querySelector<HTMLButtonElement>(".doc-table__more button");
+            if (!menu) return;
+            e.preventDefault();
+            menu.click();
+          },
           onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
             // Only the row's own keys: a button and the open ⋯ menu, whose keys reach here through
             // its portal, keep theirs. The name link, which a click can focus, keeps only Enter.
@@ -530,4 +580,25 @@ function useRowInteraction(cfg: {
       };
     },
   };
+}
+
+/** Before the buttons render: room for two short ones. */
+const BUTTONS_FALLBACK_WIDTH = 300;
+
+/**
+ * The `buttons` column as wide as its buttons are in the reader's language, measured once a row
+ * shows them, so a long translation is neither clipped nor padded out.
+ */
+function useButtonsWidth(wrapRef: React.RefObject<HTMLElement | null>, shown: boolean): number {
+  const [width, setWidth] = useState(BUTTONS_FALLBACK_WIDTH);
+  useLayoutEffect(() => {
+    if (!shown) return;
+    const buttons = wrapRef.current?.querySelector<HTMLElement>(".doc-table__buttons");
+    const cell = buttons?.closest("td");
+    if (!buttons || !cell) return;
+    const style = getComputedStyle(cell);
+    const needed = Math.ceil(buttons.scrollWidth + parseFloat(style.paddingLeft || "0") + parseFloat(style.paddingRight || "0"));
+    if (needed > 0 && Math.abs(needed - width) > 1) setWidth(needed);
+  });
+  return width;
 }

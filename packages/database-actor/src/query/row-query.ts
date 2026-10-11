@@ -11,6 +11,7 @@ import {
   DATABASE_MAX_DISPLAY_LENGTH,
   DATABASE_MAX_GROUPS,
   DATABASE_MAX_SORTS,
+  DATABASE_ROW_SEARCH_MAX_CHARS,
   DATABASE_ROWS_PAGE_MAX,
 } from "@stuga/protocol/databases/limits";
 import {
@@ -181,6 +182,28 @@ function filterSql(columns: ColumnSpec[], node: RowFilterNode): { where: string;
   }
 }
 
+/** The column types a row search reads: what a person types and sees as text. */
+const SEARCHED_TYPES: ReadonlySet<ColumnSpec["type"]> = new Set(["text", "single_select", "number", "date"]);
+
+/** `search` as a listing takes it: words to find in any text, choice, number or date cell, or null for none. */
+function normalizeSearch(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string") throw new OpError(400, "validation", "search must be a string");
+  const needle = raw.trim();
+  if (needle.length > DATABASE_ROW_SEARCH_MAX_CHARS) throw new OpError(400, "validation", `search is at most ${DATABASE_ROW_SEARCH_MAX_CHARS} characters`);
+  return needle === "" ? null : needle;
+}
+
+/** A row matches when any searched cell contains the needle, as a `contains` filter reads it. */
+function searchSql(columns: ColumnSpec[], needle: string): { where: string; params: unknown[] } {
+  const searched = columns.filter((c) => SEARCHED_TYPES.has(c.type));
+  if (searched.length === 0) return { where: "0", params: [] };
+  return {
+    where: `(${searched.map((c) => `${colExpr(c.name)} LIKE '%' || ? || '%' ESCAPE '\\'`).join(" OR ")})`,
+    params: searched.map(() => escapeLike(needle)),
+  };
+}
+
 /** ORDER BY for normalized sorts, led by the group key and ending on rowid so pages are stable. */
 function orderSql(columns: ColumnSpec[], sorts: RowSort[], groupBy: string | null): string {
   const keys: string[] = [];
@@ -228,19 +251,27 @@ function parseAfter(raw: unknown): RowCursor | null {
 
 /**
  * One page of a table. `sort`, `filter` and `group_by` shape it; `view_id`
- * seeds all three from a saved view, and any of them named in the body wins. A
- * grouped page orders by the group key first and counts every group over the
- * whole filtered set.
+ * seeds all three from a saved view, and any of them named in the body wins.
+ * `search` narrows further to rows with the words in any text, choice, number
+ * or date cell; it is never part of a view. A grouped page orders by the group
+ * key first and counts every group over the whole filtered set. `maxLimit`
+ * raises the page cap for a caller that reads the whole result at once.
  *
  * `after` pages the whole table in the order its rows were added, from where
  * the page before ended, so a row deleted or added meanwhile moves no other
  * row past a page's edge; it takes none of the above, nor `offset`.
  */
-export function listRowPage(sql: SqlHandle, meta: TableMeta, body: Body): { page: RowPage; offset: number } {
+export function listRowPage(
+  sql: SqlHandle,
+  meta: TableMeta,
+  body: Body,
+  opts: { maxLimit?: number } = {},
+): { page: RowPage; offset: number } {
   const columns = getColumns(sql, meta.table_id);
-  const rawLimit = body.limit === undefined ? DATABASE_ROWS_PAGE_MAX : Number(body.limit);
+  const maxLimit = opts.maxLimit ?? DATABASE_ROWS_PAGE_MAX;
+  const rawLimit = body.limit === undefined ? maxLimit : Number(body.limit);
   if (!Number.isInteger(rawLimit) || rawLimit < 1) throw new OpError(400, "validation", "limit must be a positive integer");
-  const limit = Math.min(rawLimit, DATABASE_ROWS_PAGE_MAX);
+  const limit = Math.min(rawLimit, maxLimit);
   if (body.after !== undefined) return { page: listRowsAfter(sql, meta, columns, body, limit), offset: 0 };
   const offset = body.offset === undefined ? 0 : Number(body.offset);
   if (!Number.isInteger(offset) || offset < 0) throw new OpError(400, "validation", "offset must be a non-negative integer");
@@ -255,7 +286,9 @@ export function listRowPage(sql: SqlHandle, meta: TableMeta, body: Body): { page
         : resolveQueryColumn(columns, body.group_by, "group_by").key
       : (view?.group_by ?? null);
 
-  const built = filter === null ? { where: "", params: [] as unknown[] } : filterSql(columns, filter);
+  const search = normalizeSearch(body.search);
+  const parts = [...(filter === null ? [] : [filterSql(columns, filter)]), ...(search === null ? [] : [searchSql(columns, search)])];
+  const built = { where: parts.map((p) => p.where).join(" AND "), params: parts.flatMap((p) => p.params) };
   const whereSql = built.where === "" ? "" : ` WHERE ${built.where}`;
   const t = ident(meta.name);
   const stored = sql
@@ -285,7 +318,7 @@ function listedRow(columns: ColumnSpec[], row: Record<string, unknown>): ListedR
 
 /** A page of the whole table in the order its rows were added, past the cursor `body.after` names. */
 function listRowsAfter(sql: SqlHandle, meta: TableMeta, columns: ColumnSpec[], body: Body, limit: number): RowPage {
-  const shaped = ["offset", "sort", "filter", "group_by", "view_id"].filter((k) => body[k] !== undefined && body[k] !== null);
+  const shaped = ["offset", "sort", "filter", "group_by", "view_id", "search"].filter((k) => body[k] !== undefined && body[k] !== null);
   if (shaped.length > 0) throw new OpError(400, "validation", `after pages the whole table in the order its rows were added; it takes no ${shaped.join(", ")}`);
   const after = parseAfter(body.after);
   const past = after === null ? "" : ` WHERE ("_created_at" > ? OR ("_created_at" = ? AND rowid > ?))`;
