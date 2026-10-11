@@ -26,7 +26,7 @@ Only report that Stuga is unavailable after searching the available MCP tools an
 
 Reading:
 
-- `search` finds documents. `docs` action:list lists a workspace or one folder (`parent_id`), action:metadata inspects one document. `folders` lists folders.
+- `search` finds documents, and databases by what their cells say. `docs` action:list lists a workspace or one folder (`parent_id`), action:metadata inspects one document. `folders` lists folders.
 - `retrieve` returns cited passages to answer a question from. Prefer it to reading whole documents.
 - `markdown` action:read reads a known document; action:status reports what became of your edits.
 - `databases` action:list and action:schema, then `query` for read-only SQL. `databases` action:page finds a row's page.
@@ -34,7 +34,7 @@ Reading:
 
 Writing, where your access is `propose`:
 
-- `docs_create` makes a document. `markdown_append` adds text; `markdown_edit` changes it (prefer a small `str_replace` to a whole `write`).
+- `docs_create` makes a document. `markdown_append` adds text; `markdown_edit` changes it (prefer a small `str_replace` to a whole `write`). A to-do is a task item, `- [ ] Order flour`; reads give `* [ ]` and `* [x]`.
 - `databases_add` adds databases, tables, columns, rows, views and row pages; load data with its action:import, never row by row. `databases_change` updates or deletes rows and changes views.
 - `media_upload` stores an image or file into a document, or a file into a database for a files column's cell.
 - `comments_add` and `collections_edit`.
