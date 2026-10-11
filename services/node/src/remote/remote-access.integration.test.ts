@@ -369,7 +369,8 @@ describe.skipIf(!URL_ || !pebble)("remote access, against Pebble and the fake se
         return last.iat > before.iat ? last : null;
       });
       expect(next.iat).toBeGreaterThanOrEqual(before.iat + 1);
-      expect(readFileSync(join(remoteDir, "relay-1.jwt"), "utf8")).toBe(`${next.credential}\n`);
+      // The service records the credential as it answers; the node writes it to disk a moment later.
+      await until("the new credential on disk", async () => readFileSync(join(remoteDir, "relay-1.jwt"), "utf8") === `${next.credential}\n`);
     } finally {
       fake.undeny(id());
     }
