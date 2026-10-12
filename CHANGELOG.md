@@ -9,10 +9,25 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-10-12
+
+Security fixes: the node checks the address of every connection it makes for someone else's URL, and
+the Docker images move to Debian 13 with its current security updates. Search moves to pg_search
+0.26, which is why there is no going back from this release.
+
+### Upgrade notes
+
+- Going back from 0.1.15 to an earlier release is refused, even with the backup taken before upgrading: 0.1.15 updates the search engine (pg_search 0.26), and an earlier release can't use its indexes.
+- The first start after upgrading rebuilds the keyword search indexes once, so a large node takes longer to be ready.
+
 ### Security
 
 - Images and files by URL, webhook deliveries and apps' metadata documents check the address of each connection as it is made, so a name that resolves to a public address when checked and a private one when fetched no longer reaches the node's network. Reserved ranges, the node's own addresses and its IPv6 network are refused too. Behind a fake-IP proxy such as Clash or Surge, these need real DNS ([Troubleshooting](docs/troubleshooting.md#uploads-and-disk)).
-- The Docker images carry Debian's current security updates, among them perl, OpenSSL and PCRE2, and the node image no longer carries npm.
+- The Docker images are built on Debian 13 (trixie) and carry its current security updates, and the node image no longer carries npm.
+
+### Changed
+
+- Search runs on pg_search 0.26.1, and the node on Node.js 26.11.1.
 
 ## [0.1.14] - 2026-10-10
 
