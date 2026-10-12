@@ -8,10 +8,11 @@ Stuga runs on a Mac with Apple silicon, on macOS 15 or later. There are two ways
 
 ## Install the package
 
-Download [Stuga.pkg](https://github.com/stuga-dev/stuga/releases/latest/download/Stuga.pkg) and open
-it. The installer asks for an administrator's password. When it finishes, the Stuga mark appears in
-the menu bar, and once Stuga runs your browser opens its setup page with the node's setup code filled
-in. Continue with [Getting started](../getting-started.md).
+Download [the package](https://stuga.dev/download/mac), or `Stuga-<version>.pkg` from the
+[latest release](https://github.com/stuga-dev/stuga/releases/latest) on GitHub, and open it. The
+installer asks for an administrator's password. When it finishes, the Stuga mark appears in the menu
+bar, and once Stuga runs your browser opens its setup page with the node's setup code filled in.
+Continue with [Getting started](../getting-started.md).
 
 Stuga then runs as two system services, its Postgres and its node, under the hidden account
 `_stuga`; while remote access is on, a third runs its connector under `_stugaremote`. They start
@@ -74,8 +75,8 @@ or block it by that identifier. Blocking the developer's Team ID blocks Stuga's 
 
 **Settings → This node → About** names a newer version once the node knows of one, and **Update
 now** installs it: the Mac downloads that release's package, checks that Apple notarized it and that
-Stuga's developer signed it, and installs it. Opening a newer `Stuga.pkg` yourself does the same.
-Either way the new version backs up the data before it changes anything.
+Stuga's developer signed it, and installs it. Opening a newer `Stuga-<version>.pkg` yourself does
+the same. Either way the new version backs up the data before it changes anything.
 
 The node backs itself up every day at 03:00, into `/Library/Application Support/Stuga/data/backups`,
 keeping the newest three; **Settings → This node → Backups** changes both
@@ -106,9 +107,9 @@ go forward.
 
 Going back reaches 0.1.12 and later releases that run the same Postgres major, pg_search and
 pgvector as the version running; a release that changes one says so in its upgrade notes. To
-restore a backup of a newer version's data, update first. Opening an earlier `Stuga.pkg` instead
-changes no data: from 0.1.12 on, an earlier Stuga refuses data a newer one served, and the menu says
-`Stuga is older than its data`.
+restore a backup of a newer version's data, update first. Opening an earlier `Stuga-<version>.pkg`
+instead changes no data: from 0.1.12 on, an earlier Stuga refuses data a newer one served, and the
+menu says `Stuga is older than its data`.
 
 ### Where things live
 

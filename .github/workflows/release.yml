@@ -575,8 +575,8 @@ jobs:
           CONNECTOR_SHA256: ${{ needs.connector.outputs.sha256 }}
         run: echo "$CONNECTOR_SHA256  stuga-connector-darwin-arm64.zip" | sha256sum --check --strict
       # Signed build provenance for every asset: `gh attestation verify <file> --repo stuga-dev/stuga`
-      # names the commit and the run that built it. Stuga.pkg is a copy of Stuga-<version>.pkg, and frpc
-      # is the binary in the connector's zip, attested on its own so the unpacked file verifies too.
+      # names the commit and the run that built it. frpc is the binary in the connector's zip, attested
+      # on its own so the unpacked file verifies too.
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
@@ -596,17 +596,17 @@ jobs:
           TODAY: ${{ needs.today.outputs.date }}
         run: |
           set -euo pipefail
-          cat >> notes.md <<'ASSETS'
+          V="${GITHUB_REF_NAME#v}"
+          # The Mac package goes up by its versioned name only; stuga.dev/download/mac redirects to the
+          # Latest release's. Unquoted for $V, so the Markdown's backticks are escaped.
+          cat >> notes.md <<ASSETS
 
           ## Install
 
-          - Mac: `Stuga.pkg` below ([guide](https://github.com/stuga-dev/stuga/blob/main/docs/install/macos.md)).
-          - Docker: `curl -fsSL https://github.com/stuga-dev/stuga/releases/latest/download/install.sh | bash` ([guide](https://github.com/stuga-dev/stuga/blob/main/docs/install/docker.md)).
+          - Mac: \`Stuga-$V.pkg\` below ([guide](https://github.com/stuga-dev/stuga/blob/main/docs/install/macos.md)).
+          - Docker: \`curl -fsSL https://github.com/stuga-dev/stuga/releases/latest/download/install.sh | bash\` ([guide](https://github.com/stuga-dev/stuga/blob/main/docs/install/docker.md)).
           ASSETS
-          V="${GITHUB_REF_NAME#v}"
-          # A name without the version, so releases/latest/download/Stuga.pkg is always the newest.
-          cp "Stuga-$V.pkg" Stuga.pkg
-          ASSETS=(compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg" Stuga.pkg
+          ASSETS=(compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg"
             "stuga-runtime-$V.cdx.json" stuga-connector-darwin-arm64.zip)
           # Assets go up to a draft, which stays editable, and publishing comes last: a published release
           # is immutable (repository setting). A re-run finishes the draft a failed run left behind.

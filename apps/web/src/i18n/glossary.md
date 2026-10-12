@@ -400,7 +400,7 @@ Leave these exactly as written in every language. Grammar may go around them (`S
   (`goose://…`, `https://`); placeholder formats such as `XXXX-XXXX-XXXX-XXXX` and
   `gpt-4.1=GPT-4.1, o3-mini=o3 mini`; model ids.
 - **File names and extensions:** `.stuga.zip`, `.pkg`, `.zip`, `.md`, `.csv`, `.jsonl`, `.env`,
-  `Stuga.pkg`.
+  `Stuga-<version>.pkg`.
 - **Keys and symbols:** ⌘ ⇧ ⌥ ⌃ ↩ ⋯ →, the shortcuts `⌘B`, `⌘Z` and `⌘⇧Z`, `H1`–`H3`, `@` for
   mentions, `/` for the slash menu, and the key names **Enter** and **Shift**.
 - **Menu paths in other apps:** `Settings → Connectors → Add custom connector`,

@@ -9,6 +9,10 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Changed
+
+- A release carries the Mac package as `Stuga-<version>.pkg` only, and [stuga.dev/download/mac](https://stuga.dev/download/mac) always downloads the newest. Links to `releases/latest/download/Stuga.pkg` stop working once this release is out.
+
 ## [0.1.15] - 2026-10-12
 
 Security fixes: the node checks the address of every connection it makes for someone else's URL, and

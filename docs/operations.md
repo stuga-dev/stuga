@@ -275,7 +275,7 @@ of releases, follow them from a machine that is online:
 
 Such a node upgrades from files carried to it, with the same backup and the same way back as any
 other ([Docker](install/docker.md#without-a-connection-to-the-registry)). On a Mac, open a newer
-`Stuga.pkg` on it ([macOS](install/macos.md#updates-and-backups)).
+`Stuga-<version>.pkg` on it ([macOS](install/macos.md#updates-and-backups)).
 
 The node never upgrades itself. An upgrade replaces the software and migrates the database, so it
 runs on the machine: on Docker, `./stuga upgrade` or a NAS app store's update; on a Mac, the
@@ -288,8 +288,8 @@ changes it.
 
 A new version backs up the database before it changes anything
 ([The node's own backups](#the-nodes-own-backups)), however it arrived: **Update now** or a newer
-`Stuga.pkg` on a Mac, `./stuga upgrade`, a NAS app store's update, or images pulled by hand. The
-install docs have the commands for [Docker](install/docker.md#upgrade) and
+`Stuga-<version>.pkg` on a Mac, `./stuga upgrade`, a NAS app store's update, or images pulled by
+hand. The install docs have the commands for [Docker](install/docker.md#upgrade) and
 [macOS](install/macos.md#updates-and-backups).
 
 Any release upgrades straight to the newest one. There are no versions you have to stop at on the

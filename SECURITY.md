@@ -37,8 +37,8 @@ you would rather not be.
   tokens it keeps, the Claude Desktop extension, and the installer scripts the node serves.
 - **The packaging:** the `stuga-node`, `stuga-postgres` and `stuga-remote` container images and the Docker release
   assets (`compose.yml`, `env.example`, the `stuga` script and `install.sh`) that a release
-  publishes, and the Mac package, `Stuga.pkg`, and the Stuga.app that `packaging/macos` builds, with
-  their launchd jobs, the upgrade helper that runs as root, and Postgres configuration.
+  publishes, and the Mac package, `Stuga-<version>.pkg`, and the Stuga.app that `packaging/macos`
+  builds, with their launchd jobs, the upgrade helper that runs as root, and Postgres configuration.
 - **The source** in this repository.
 
 Out of scope, because Stuga does not claim to protect against them:
