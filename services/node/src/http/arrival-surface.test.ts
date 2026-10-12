@@ -6,8 +6,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { AuthError, createVerifier, loadOrCreateSigningKey, type AuthConfig, type LocalKeys } from "@stuga/auth";
+import addressCheck from "../remote/testing/contract/address-check.json" with { type: "json" };
 
 vi.mock("@stuga/db", async (orig) => ({
   ...(await orig<typeof import("@stuga/db")>()),
@@ -43,6 +45,8 @@ const REMOTE_HOST = "k7f3q2.stuga.test";
 const REMOTE_ORIGIN = `https://${REMOTE_HOST}`;
 const SECRET = "internal-secret-for-tests";
 const HASH = "a".repeat(64);
+/** The web app as it ships: its index.html is the page every remote address opens on. */
+const WEB_DIR = fileURLToPath(new URL("../../../../apps/web/", import.meta.url));
 
 const dir = mkdtempSync(join(tmpdir(), "stuga-surface-"));
 let keys: LocalKeys;
@@ -57,12 +61,12 @@ afterEach(async () => {
   for (const fn of cleanups.splice(0).reverse()) await fn();
 });
 
-const bound = (enabled: boolean): RemoteAccessView => ({
-  current: () => ({ enabled, id: "k7f3q2", hostname: REMOTE_HOST, origin: REMOTE_ORIGIN }),
+const bound = (enabled: boolean, hostname = REMOTE_HOST): RemoteAccessView => ({
+  current: () => ({ enabled, id: hostname.split(".")[0]!, hostname, origin: `https://${hostname}` }),
 });
 
-/** A node at PUBLIC_ORIGIN with nothing in its database but what each route here reads. */
-function nodeAt(publicOrigin: string, remote?: RemoteAccessView) {
+/** A node at PUBLIC_ORIGIN with nothing in its database but what each route here reads; its pages from `spaDir`. */
+function nodeAt(publicOrigin: string, remote?: RemoteAccessView, spaDir = dir) {
   const env = {
     publicOrigin,
     extraOrigins: [EXTRA_ORIGIN],
@@ -108,7 +112,7 @@ function nodeAt(publicOrigin: string, remote?: RemoteAccessView) {
     remoteOrigin: () => (remote?.current().enabled ? remote.current().origin : null),
   });
   const gate = createServingGate();
-  gate.open({ handler: createRequestHandler({ identity, app, spa: serveStatic(dir) }), upgrade: (req) => app.upgrade(req) });
+  gate.open({ handler: createRequestHandler({ identity, app, spa: serveStatic(spaDir) }), upgrade: (req) => app.upgrade(req) });
   return { env, gate };
 }
 
@@ -144,15 +148,15 @@ async function lan(publicOrigin: string, remote?: RemoteAccessView) {
     });
 }
 
-/** The remote listener for REMOTE_HOST, over a socket in a fresh directory, behind its front door. */
-async function remoteListener(publicOrigin: string) {
-  const { gate, env } = nodeAt(publicOrigin, bound(true));
+/** The remote listener for `hostname`, over a socket in a fresh directory, behind its front door. */
+async function remoteListener(publicOrigin: string, { hostname = REMOTE_HOST, spaDir = dir }: { hostname?: string; spaDir?: string } = {}) {
+  const { gate, env } = nodeAt(publicOrigin, bound(true, hostname), spaDir);
   const socketDir = mkdtempSync(join(tmpdir(), "stuga-surface-sock-"));
   cleanups.push(() => rmSync(socketDir, { recursive: true, force: true }));
   const socketPath = join(socketDir, "https.sock");
   const listener = createRemoteListener({
     socketPath,
-    hostname: REMOTE_HOST,
+    hostname,
     handler: withRemoteHeaders(withSecurityHeaders(gate.handler)),
     upgrade: withRemoteHeaders(withSecurityHeaders(gate.upgrade)),
     decorate: applyRemoteHeaders,
@@ -161,11 +165,11 @@ async function remoteListener(publicOrigin: string) {
     frontDoor: behindGate(gate, createFrontDoor({ env })),
     onError: () => {},
   });
-  listener.setCertificate(makeTestCert({ dnsNames: [REMOTE_HOST] }));
+  listener.setCertificate(makeTestCert({ dnsNames: [hostname] }));
   await listener.listen();
   cleanups.push(() => listener.close());
   return async (path: string, headers: Record<string, string> = {}, method = "GET", body?: string): Promise<Answer> => {
-    const res = await remoteRequest(await dialRemote(socketPath, { servername: REMOTE_HOST }), {
+    const res = await remoteRequest(await dialRemote(socketPath, { servername: hostname }), {
       path,
       method,
       headers: body === undefined ? headers : { ...headers, "content-length": String(Buffer.byteLength(body)) },
@@ -218,6 +222,39 @@ describe("the remote address, to a visitor who has not signed in", () => {
     expect((await get("/api/models")).status).toBe(401);
     expect((await get("/auth/passkey/add", { "content-type": "application/json" }, "POST", "{}")).status).toBe(401);
     expect((await get("/api/no-such-route", {}, "POST")).status).toBe(401);
+  });
+});
+
+/**
+ * What the platform's address check asks of every remote address (its contract fixture,
+ * address-check.json): sign-in's config names the address, and / is the app's page. With the app's
+ * real index.html, so a change that would make every node look like something else fails here.
+ */
+describe("the remote address, to the platform's address check", () => {
+  const mediaType = (value: string | string[] | undefined) => String(value ?? "").split(";")[0]!.trim().toLowerCase();
+
+  it("is Stuga: /auth/config names the address, and / is the app's page", async () => {
+    const get = await remoteListener(PUBLIC_ORIGIN, { hostname: new URL(addressCheck.address).hostname, spaDir: WEB_DIR });
+    const ask = (step: { path: string; accept: string }) => get(step.path, { ...addressCheck.headers, accept: step.accept });
+
+    const config = await ask(addressCheck.config);
+    expect(config.status).toBe(addressCheck.config.status);
+    expect(mediaType(config.headers["content-type"])).toBe(addressCheck.config.content_type);
+    expect(Buffer.byteLength(config.text)).toBeLessThanOrEqual(addressCheck.max_body_bytes);
+    const body: unknown = JSON.parse(config.text);
+    expect(body !== null && typeof body === "object" && !Array.isArray(body)).toBe(true);
+    const { origin, unclaimed } = body as Record<string, unknown>;
+    expect(origin).toBe(addressCheck.config.origin);
+    expect(typeof unclaimed).toBe(addressCheck.config.unclaimed);
+
+    const page = await ask(addressCheck.page);
+    expect(page.status).toBe(addressCheck.page.status);
+    expect(mediaType(page.headers["content-type"])).toBe(addressCheck.page.content_type);
+    // What the check reads: the first max_body_bytes, where a comment holds no element.
+    const html = Buffer.from(page.text).subarray(0, addressCheck.max_body_bytes).toString().replace(/<!--[\s\S]*?-->/g, "");
+    expect(/<title(?:\s[^>]*)?>([^<]*)<\/title>/i.exec(html)?.[1]?.trim()).toBe(addressCheck.page.title);
+    const [tag, id] = addressCheck.page.element.split("#");
+    expect(html).toMatch(new RegExp(`<${tag}\\s(?:[^>]*\\s)?id\\s*=\\s*["']?${id}["'\\s/>]`, "i"));
   });
 });
 

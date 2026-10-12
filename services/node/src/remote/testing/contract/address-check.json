@@ -1,0 +1,23 @@
+{
+  "address": "https://k7f3q2.mystuga.com",
+  "headers": {
+    "user-agent": "stuga-address-check/1 (+https://stuga.dev/privacy)"
+  },
+  "max_body_bytes": 65536,
+  "config": {
+    "path": "/auth/config",
+    "accept": "application/json",
+    "status": 200,
+    "content_type": "application/json",
+    "origin": "https://k7f3q2.mystuga.com",
+    "unclaimed": "boolean"
+  },
+  "page": {
+    "path": "/",
+    "accept": "text/html",
+    "status": 200,
+    "content_type": "text/html",
+    "title": "Stuga",
+    "element": "div#root"
+  }
+}
