@@ -22,13 +22,15 @@ const golden = readFileSync(new URL("../../../services/node/src/remote/frpc-conf
 const GOLDEN = /const GOLDEN = `([^`]*)`;/.exec(golden)[1];
 const GOLDEN_DIR = "/Users/liv/.stuga-remote";
 
-// Records its arguments and the config it was given, then runs until TERM, or exits as told.
+// Records the config it was given and its arguments, then runs until TERM, or exits as told.
+// started.<pid> comes last and whole (a rename): once it is there, so is config.<pid>.
 const FRPC = String.raw`#!/bin/bash
 here="$(cd "$(dirname "$0")" && pwd)"
 # Before it says it started: a TERM right after that is its to handle.
 trap 'echo "frpc got TERM"; exit 0' TERM
-{ printf '%s\n' "$@"; } > "$here/../../started.$$"
 cp "$2" "$here/../../config.$$"
+{ printf '%s\n' "$@"; } > "$here/../../.started.$$"
+mv "$here/../../.started.$$" "$here/../../started.$$"
 echo "frpc says hello"
 [ ! -f "$here/../../exit-now" ] || exit 3
 while :; do sleep 0.1; done
@@ -70,23 +72,45 @@ function runToEnd(h) {
   return spawnSync("/bin/bash", [h.wrapper], { env: h.env, encoding: "utf8", timeout: 20_000 });
 }
 
-/** Starts the wrapper; resolves once `count` connectors are running. */
-async function start(h, count = 1) {
-  const child = spawn("/bin/bash", [h.wrapper], { env: h.env, stdio: ["ignore", "ignore", "pipe"] });
+/**
+ * Spawns the wrapper in a process group of its own. However the test ends, it is stopped after it
+ * (TERM, then KILL for the whole group), so a failure never leaves the runner waiting on it.
+ */
+function spawnWrapper(t, h) {
+  const child = spawn("/bin/bash", [h.wrapper], { env: h.env, stdio: ["ignore", "ignore", "pipe"], detached: true });
   let stderr = "";
   child.stderr.on("data", (d) => (stderr += d));
-  const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal, stderr: () => stderr })));
-  for (let i = 0; i < 100 && h.started().length < count; i++) await delay(50);
-  assert.equal(h.started().length, count, stderr);
-  return { child, exited };
+  const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
+  const running = () => child.exitCode === null && child.signalCode === null;
+  t.after(async () => {
+    if (running()) {
+      child.kill("SIGTERM");
+      await Promise.race([exited, delay(5_000)]);
+    }
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      // The group is gone already.
+    }
+    child.stderr.destroy();
+  });
+  return { child, exited, stderr: () => stderr };
 }
 
-test("starts one connector per relay from a private copy, with --strict-config, and stops on TERM", { skip }, async () => {
+/** Starts the wrapper; resolves once `count` connectors are running. */
+async function start(t, h, count = 1) {
+  const wrapper = spawnWrapper(t, h);
+  for (let i = 0; i < 100 && h.started().length < count; i++) await delay(50);
+  assert.equal(h.started().length, count, wrapper.stderr());
+  return wrapper;
+}
+
+test("starts one connector per relay from a private copy, with --strict-config, and stops on TERM", { skip, timeout: 60_000 }, async (t) => {
   const h = setup();
   h.write(h.config("relay-1"), "relay-1");
   h.write(h.config("relay-2").replace('log.level = "info"', 'log.level = "warn"'), "relay-2");
 
-  const { child, exited } = await start(h, 2);
+  const { child, exited, stderr } = await start(t, h, 2);
   const started = h.started();
   for (const args of started) {
     assert.equal(args.length, 3, args.join(" "));
@@ -99,7 +123,7 @@ test("starts one connector per relay from a private copy, with --strict-config, 
   const copies = started.map((args) => args[1]);
 
   child.kill("SIGTERM");
-  const { code, stderr } = await exited;
+  const { code } = await exited;
   assert.equal(code, 0, stderr());
   assert.match(stderr(), /stop requested/);
   for (const copy of copies) assert.ok(!existsSync(copy), "the private copy goes");
@@ -110,13 +134,12 @@ test("starts one connector per relay from a private copy, with --strict-config, 
   assert.match(text, /frpc got TERM/, "the connectors' last lines reach the log");
 });
 
-test("a stop that comes while the connectors start leaves none of them running", { skip }, async () => {
+test("a stop that comes while the connectors start leaves none of them running", { skip, timeout: 60_000 }, async (t) => {
   for (let round = 0; round < 3; round++) {
     const h = setup();
     // Twenty relays, and the TERM the moment the first connector is up: the others are still starting.
     for (let r = 1; r <= 20; r++) h.write(h.config(`relay-${r}`), `relay-${r}`);
-    const child = spawn("/bin/bash", [h.wrapper], { env: h.env, stdio: ["ignore", "ignore", "ignore"] });
-    const exited = new Promise((resolve) => child.on("exit", resolve));
+    const { child, exited } = spawnWrapper(t, h);
     const started = () => readdirSync(h.root).filter((n) => n.startsWith("started."));
     for (let i = 0; i < 5000 && started().length === 0; i++) await delay(1);
     child.kill("SIGTERM");
@@ -137,16 +160,14 @@ test("a stop that comes while the connectors start leaves none of them running",
   }
 });
 
-test("a connector that exits stops the others, and the wrapper exits 1", { skip }, async () => {
+test("a connector that exits stops the others, and the wrapper exits 1", { skip, timeout: 60_000 }, async (t) => {
   const h = setup();
   h.write(h.config());
   writeFileSync(join(h.root, "exit-now"), "");
-  const child = spawn("/bin/bash", [h.wrapper], { env: h.env, stdio: ["ignore", "ignore", "pipe"] });
-  let stderr = "";
-  child.stderr.on("data", (d) => (stderr += d));
-  const code = await new Promise((resolve) => child.on("exit", resolve));
-  assert.equal(code, 1, stderr);
-  assert.match(stderr, /exited with status 3/);
+  const { exited, stderr } = spawnWrapper(t, h);
+  const { code } = await exited;
+  assert.equal(code, 1, stderr());
+  assert.match(stderr(), /exited with status 3/);
 });
 
 test("with no config it runs nothing and exits 0", { skip }, () => {

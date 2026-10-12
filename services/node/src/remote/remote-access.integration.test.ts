@@ -274,6 +274,20 @@ describe.skipIf(!URL_ || !pebble)("remote access, against Pebble and the fake se
     });
   }
 
+  /** The fake's request count once it has held still for a second, so a request already on its way is in it. */
+  async function settledRequests(): Promise<number> {
+    let count = fake.requests.length;
+    let since = Date.now();
+    const { settled } = await until("the service to hear nothing for a second", async () => {
+      if (fake.requests.length !== count) {
+        count = fake.requests.length;
+        since = Date.now();
+      }
+      return Date.now() - since >= 1_000 && { settled: count };
+    });
+    return settled;
+  }
+
   /** Wait for a scheduled renewal when the certificate is close to one, so a flow that counts orders has a quiet minute. */
   async function quietMinute(): Promise<void> {
     const r = await row();
@@ -491,7 +505,8 @@ describe.skipIf(!URL_ || !pebble)("remote access, against Pebble and the fake se
     expect(status).toMatchObject({ enabled: false, state: "off" });
     expect(existsSync(socketPath)).toBe(false);
     for (const name of ["relay-1.jwt", "relay-1.toml", "relay-1.ca.pem"]) expect(existsSync(join(remoteDir, name)), name).toBe(false);
-    const heard = fake.requests.length;
+    // A request sent before it turned off may still be arriving.
+    const heard = await settledRequests();
     remote.kick();
     await sleep(3_000);
     expect(fake.requests.length).toBe(heard);
