@@ -13,6 +13,8 @@
 #   - an extension's SQL loads a module lib/postgresql lacks, or `requires` names an
 #     extension without a control file.
 #   - the server major, pgvector or pg_search differ from packaging/versions.env.
+#   - a library in lib/ belongs to no component of the runtime's component list (lib/components.sh),
+#     so a Postgres.app that adds one fails here until it is listed, with its license.
 #
 # LC_ID_DYLIB is only counted: dyld never reads a library's own install name when loading.
 # Not visible here: paths passed to dlopen() at run time (see libpq-oauth in prune.sh).
@@ -23,6 +25,8 @@ here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/../../versions.env"
 # shellcheck source=lib/devtools.sh
 . "$here/lib/devtools.sh"
+# shellcheck source=lib/components.sh
+. "$here/lib/components.sh"
 
 tree="${1:-}"
 [ -n "$tree" ] || { echo "usage: $0 <tree>" >&2; exit 2; }
@@ -140,6 +144,14 @@ while IFS= read -r -d '' f; do
     esac
   done < "$scratch/commands"
 done < "$scratch/files"
+
+for f in "$tree"/lib/*.dylib; do
+  [ -e "$f" ] || [ -L "$f" ] || continue
+  if ! dylib_component "$(basename "$f")" > /dev/null; then
+    echo "FAIL lib/$(basename "$f"): no component in lib/components.sh"
+    fail=1
+  fi
+done
 
 module_exists() { is_macho "$tree/lib/postgresql/$1.dylib" || is_macho "$tree/lib/postgresql/$1"; }
 

@@ -82,23 +82,13 @@ zip_name=stuga-connector-$goos-$goarch.zip
 
 say "go $GO_VERSION"
 tarball="$(fetch "$(go_url "$go_platform")" "$go_sha")"
-tar -xzf "$tarball" -C "$work"
-# Only this Go, only the public proxy and checksum database, and nothing from the caller's go env.
-unset GOOS GOARCH GOARM64 GOAMD64 GOEXPERIMENT GOFIPS140 GODEBUG GOBIN
-export GOROOT="$work/go" PATH="$work/go/bin:$PATH" GOTOOLCHAIN=local GOENV=off GOWORK=off \
-  GOFLAGS=-modcacherw GOPATH="$work/gopath" GOMODCACHE="$work/gopath/pkg/mod" GOCACHE="$work/gocache" \
-  GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOPRIVATE="" GONOPROXY="" GONOSUMDB="" \
-  GOINSECURE="" CGO_ENABLED=0
-[ "$(go env GOVERSION)" = "go$GO_VERSION" ] || fail "the unpacked Go is $(go env GOVERSION), not go$GO_VERSION"
+use_go "$tarball" "$work" || exit 1
 
 say "go-licenses $GO_LICENSES_VERSION"
 GOBIN="$work/bin" go install "github.com/google/go-licenses/v2@$GO_LICENSES_VERSION"
 
 say "frp $FRP_VERSION"
-git -c advice.detachedHead=false clone --quiet --depth 1 --branch "v$FRP_VERSION" \
-  https://github.com/fatedier/frp.git "$src"
-head="$(git -C "$src" rev-parse HEAD)"
-[ "$head" = "$FRP_COMMIT" ] || fail "frp's tag v$FRP_VERSION is $head, not the pinned $FRP_COMMIT"
+clone_frp "$src" || exit 1
 
 say "frpc for $target"
 (cd "$src" && GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "-s -w" -tags frpc,noweb \

@@ -11,11 +11,15 @@ ARG PG_SEARCH_VERSION=0.25.9
 ARG PG_SEARCH_DEB_AMD64_SHA256=8f70e992f03493dafe9f93d84781779625a23450c5eb85b6791501032d190bcb
 ARG PG_SEARCH_DEB_ARM64_SHA256=5e0fcdf88b3b156d39679217f53de5c016de48e8a42faed57a9271e3160361bf
 ARG TARGETARCH
+# The UTC date (restore-drill.sh, release.yml). Each new day reruns the upgrade below, so a cached
+# layer never ships packages Debian or PGDG has since fixed.
+ARG APT_REFRESH
 
 # A GitHub release asset can be replaced in place, and installing a local .deb checks no signature:
 # the checksum is the pin.
 RUN set -eux; \
     apt-get update; \
+    apt-get -y upgrade; \
     apt-get install -y --no-install-recommends curl ca-certificates; \
     case "${TARGETARCH:-amd64}" in \
       amd64) sha="${PG_SEARCH_DEB_AMD64_SHA256}" ;; \

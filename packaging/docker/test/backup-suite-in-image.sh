@@ -15,15 +15,23 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 image="${1:-}"
 if [ -z "$image" ]; then
   image=stuga-node-backup-suite-base
-  docker build -f "$ROOT/packaging/docker/node.Dockerfile" -t "$image" "$ROOT"
+  docker build -f "$ROOT/packaging/docker/node.Dockerfile" --build-arg "APT_REFRESH=$(date -u +%F)" -t "$image" "$ROOT"
 fi
 
 suite=stuga-node-backup-suite
-docker build -t "$suite" --build-arg NODE_IMAGE="$image" --build-arg PNPM_VERSION="$PNPM_VERSION" -f - "$ROOT" <<'DOCKERFILE'
+docker build -t "$suite" --build-arg NODE_IMAGE="$image" --build-arg NODE_VERSION="$NODE_VERSION" \
+  --build-arg DEBIAN_SUITE="$DEBIAN_SUITE" --build-arg PNPM_VERSION="$PNPM_VERSION" -f - "$ROOT" <<'DOCKERFILE'
 ARG NODE_IMAGE
-FROM ${NODE_IMAGE}
+ARG NODE_VERSION
+ARG DEBIAN_SUITE
+# The node image has no npm, so pnpm is installed beside the official Node and copied over.
+FROM node:${NODE_VERSION}-${DEBIAN_SUITE}-slim AS pnpm
 ARG PNPM_VERSION
 RUN npm install -g "pnpm@${PNPM_VERSION}"
+
+FROM ${NODE_IMAGE}
+COPY --from=pnpm /usr/local/lib/node_modules/pnpm /usr/local/lib/node_modules/pnpm
+RUN ln -s ../lib/node_modules/pnpm/pnpm /usr/local/bin/pnpm
 # The image runs as production; the suite needs the workspace's dev dependencies.
 ENV NODE_ENV=test
 WORKDIR /src

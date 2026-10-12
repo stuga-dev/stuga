@@ -46,9 +46,13 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SELF="$ROOT/packaging/docker/test/restore-drill.sh"
 
 if [ "${1:-}" != --no-build ]; then
-  docker build -f "$ROOT/packaging/docker/postgres.Dockerfile" -t "$POSTGRES_IMAGE" "$ROOT"
-  docker build -f "$ROOT/packaging/docker/node.Dockerfile" --build-arg STUGA_VERSION="$VERSION" -t "$NODE_IMAGE" "$ROOT"
-  docker build -f "$ROOT/packaging/docker/remote.Dockerfile" --build-arg STUGA_VERSION="$VERSION" -t "$REMOTE_IMAGE" "$ROOT"
+  # Today's Debian packages, as a release builds them; the cached layers are reused within a day.
+  refresh="APT_REFRESH=$(date -u +%F)"
+  docker build -f "$ROOT/packaging/docker/postgres.Dockerfile" --build-arg "$refresh" -t "$POSTGRES_IMAGE" "$ROOT"
+  docker build -f "$ROOT/packaging/docker/node.Dockerfile" --build-arg "$refresh" --build-arg STUGA_VERSION="$VERSION" \
+    -t "$NODE_IMAGE" "$ROOT"
+  docker build -f "$ROOT/packaging/docker/remote.Dockerfile" --build-arg "$refresh" --build-arg STUGA_VERSION="$VERSION" \
+    -t "$REMOTE_IMAGE" "$ROOT"
 fi
 
 # Physical path: Docker Desktop shares /private/var/folders, and a bind mount through the /var symlink can land in its VM instead.

@@ -40,6 +40,22 @@ test("each target builds natively, with its own platform's Go", () => {
   assert.equal(go("linux/386", "Linux", "i686"), "none");
 });
 
+test("this machine is a target only where a Go is pinned for it", () => {
+  const native = (os, machine) => run('native_target "$1" "$2" || echo none', [os, machine]).trim();
+  assert.equal(native("Darwin", "arm64"), "darwin/arm64");
+  assert.equal(native("Linux", "x86_64"), "linux/amd64");
+  assert.equal(native("Linux", "aarch64"), "linux/arm64");
+  assert.equal(native("Darwin", "x86_64"), "none");
+});
+
+test("vulncheck.sh checks the connector alone, and refuses an option it does not know", () => {
+  const vulncheck = new URL("../connector/vulncheck.sh", import.meta.url).pathname;
+  const args = [vulncheck, "--out", scratch(), "--pins", join(scratch(), "versions.env"), "--cmd", "frps"];
+  const result = spawnSync("bash", args, { env: { PATH: process.env.PATH }, encoding: "utf8", timeout: 10_000 });
+  assert.equal(result.status, 2);
+  assert.equal(result.stderr, "error: unknown option --cmd\npackaging/shared/connector/vulncheck.sh --out <dir> [--pins <versions.env>]\n");
+});
+
 /** build.sh with these arguments, for the ones it refuses before it downloads anything. */
 function refused(args) {
   const result = spawnSync("bash", [build, ...args], { env: { PATH: process.env.PATH }, encoding: "utf8", timeout: 10_000 });

@@ -71,6 +71,33 @@ node that looks for new versions tells its administrators about one, in the app 
 notification sink; a node that cannot reach the internet has to be followed from a machine that can
 ([docs/operations.md](docs/operations.md#learning-of-a-new-version)).
 
+## Dependencies
+
+Every pull request and every release checks what Stuga ships against public advisories:
+
+| What | Checked by | Blocks a release |
+|---|---|---|
+| Every npm package in `pnpm-lock.yaml`, development ones included | osv-scanner | High or critical, fixed or not |
+| The remote-access connector's Go code and standard library, for each platform it is built for | govulncheck | Any the connector's code can reach |
+| The Debian packages in the three images | Trivy | High or critical, once Debian has a fix |
+| Node.js at the pinned version | The Node.js security working group's list | High or critical |
+
+An npm or Node.js finding without a severity counts as high, and a scan that does not finish
+blocks too. The rest is reported. The images are scanned again, by digest, before a release's floating tags move to
+them. Every day the latest release is scanned again, the pinned Go and the Mac runtime's PostgreSQL
+and OpenSSL are compared with their newest releases, and frp, pg_search, pgvector and Postgres.app
+with their published advisories.
+
+**Fix targets**, which are also the longest an exception may last: critical 7 days, high 30,
+anything else 90, the daily watch's findings included. Go findings, which govulncheck does not
+rate, count as high, as do npm and Node.js findings without a severity. An exception is an entry in
+[`.github/security/accepted-risks.json`](.github/security/accepted-risks.json), with its reason and
+the day it expires; the gate refuses one that has expired or outlasts its target.
+
+**What each release carries:** the images have SBOMs and build provenance, and each release
+publishes the Mac runtime's component list, `stuga-runtime-<version>.cdx.json` (CycloneDX), with
+provenance like its other assets.
+
 ## What we will not do
 
 We will not ask you to sign anything before reporting, and we will not treat a good-faith report

@@ -10,11 +10,33 @@ on:
 permissions:
   contents: read
 
+# One release at a time, never cancelled: two overlapping runs could each decide they are the newest
+# and move the floating tags, npm's latest, the Latest release or the plugin back.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  # The day every vulnerability gate of this run judges accepted risks by, so an exception that
+  # expires mid-run fails nothing after the images are pushed. A re-run of failed jobs keeps it, so
+  # each job that publishes checks that it is still that day (UTC) as it starts and again right before
+  # it publishes.
+  today:
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      date: ${{ steps.date.outputs.date }}
+    steps:
+      - id: date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
   verify:
+    needs: today
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
+    with:
+      today: ${{ needs.today.outputs.date }}
 
   # CHANGELOG.md is what a release says about itself: its notes, its date, and whether it fixes a
   # vulnerability. A tag whose entry was never written fails here, before anything is pushed.
@@ -107,6 +129,8 @@ jobs:
               printf '%s=%s\n' "$key" "${!key}"
             done < <(sed -n 's/^\([A-Z0-9_]*\)=.*/\1/p' packaging/versions.env)
             echo "STUGA_VERSION=${{ steps.meta.outputs.version }}"
+            # Today's Debian packages: a new day reruns the apt steps the GHA cache would replay.
+            echo "APT_REFRESH=$(date -u +%F)"
             echo "ARGS"
           } >> "$GITHUB_OUTPUT"
 
@@ -217,6 +241,45 @@ jobs:
             release-assets/env.example
             release-assets/stuga
             release-assets/install.sh
+
+  # The pushed images, each architecture by digest, scanned again before a floating tag points at
+  # them. verify scanned the same Dockerfiles, so this catches only what was published since; a
+  # failure here leaves the version unreleased, and the fix is the next patch.
+  image-scan:
+    needs: [today, docker-package]
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Scan both architectures of each image
+        env:
+          TODAY: ${{ needs.today.outputs.date }}
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          bash scripts/vuln-tools.sh "$RUNNER_TEMP/bin"
+          scans=()
+          for img in stuga-node stuga-postgres stuga-remote; do
+            ref="ghcr.io/${{ github.repository_owner }}/$img"
+            digest="$(docker buildx imagetools inspect "$ref:$V" --format '{{.Manifest.Digest}}')"
+            for arch in amd64 arm64; do
+              out="$RUNNER_TEMP/trivy-$img-$arch.json"
+              "$RUNNER_TEMP/bin/trivy" image --config "" --ignorefile "" --disable-telemetry --skip-version-check \
+                --image-src remote --platform "linux/$arch" --scanners vuln \
+                --format json --quiet --output "$out" "$ref@$digest"
+              scans+=(--trivy "$out")
+            done
+          done
+          node scripts/vuln-gate.mjs --today "$TODAY" "${scans[@]}"
 
   # The only test of what an operator downloads: the stamped compose.yml booting the published images.
   docker-smoke:
@@ -391,21 +454,35 @@ jobs:
             exit 1
           fi
           bash packaging/macos/test/smoke.sh "$runtime"
+          # What the runtime carries, at which versions: a release asset, attested with the package.
+          cp "$runtime/conf/components.cdx.json" "$RUNNER_TEMP/pkg/stuga-runtime-$V.cdx.json"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-pkg
-          path: ${{ runner.temp }}/pkg/Stuga-*.pkg
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/pkg/Stuga-*.pkg
+            ${{ runner.temp }}/pkg/stuga-runtime-*.cdx.json
 
   # The floating tags point at the digest smoke booted; imagetools re-tags, it never rebuilds. A
-  # release moves only the tags it is the newest of: a patch to an older line leaves :MAJOR alone.
+  # release moves only the tags it is the newest of: a patch to an older line leaves :MAJOR alone. A
+  # tag already on a newer version stays.
   promote:
-    needs: [docker-smoke, macos-pkg]
+    needs: [today, docker-smoke, image-scan, macos-pkg]
     permissions:
       contents: read
       packages: write
     runs-on: ubuntu-latest
     steps:
+      - name: Still the run's day (UTC)
+        env:
+          TODAY: ${{ needs.today.outputs.date }}
+        run: |
+          if [ "$(date -u +%F)" != "$TODAY" ]; then
+            echo "::error::This run's vulnerability gates judged accepted risks on $TODAY, and today is $(date -u +%F), so it publishes nothing: tag the next patch version."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -416,12 +493,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Point the floating tags at the tested digest
+        env:
+          TODAY: ${{ needs.today.outputs.date }}
         run: |
           set -euo pipefail
           V="${GITHUB_REF_NAME#v}"
           MINOR="${V%.*}"
           MAJOR="${V%%.*}"
           newest() { git tag -l "$1" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1; }
+          # The version an image tag is on, from its version label; nothing when the tag doesn't exist yet.
+          held() {
+            local json
+            if json="$(docker buildx imagetools inspect "$1" --format '{{json .Image}}' 2>"$RUNNER_TEMP/held.err")"; then
+              jq -r '.. | .Labels? // empty | .["org.opencontainers.image.version"] // empty' <<<"$json" | sort -V | tail -1
+            elif ! grep -qF "$1: not found" "$RUNNER_TEMP/held.err"; then
+              cat "$RUNNER_TEMP/held.err" >&2
+              return 1
+            fi
+          }
           tags=()
           if [ "$(newest "v$MINOR.*")" = "$GITHUB_REF_NAME" ]; then tags+=("$MINOR"); fi
           if [ "$(newest "v$MAJOR.*.*")" = "$GITHUB_REF_NAME" ]; then tags+=("$MAJOR"); fi
@@ -431,24 +520,43 @@ jobs:
           fi
           for img in stuga-node stuga-postgres stuga-remote; do
             SRC="ghcr.io/${{ github.repository_owner }}/$img:$V"
-            for t in "${tags[@]}"; do
-              docker buildx imagetools create --tag "ghcr.io/${{ github.repository_owner }}/$img:$t" "$SRC"
-            done
             want="$(docker buildx imagetools inspect "$SRC" --format '{{.Manifest.Digest}}')"
             for t in "${tags[@]}"; do
-              got="$(docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/$img:$t" --format '{{.Manifest.Digest}}')"
+              DST="ghcr.io/${{ github.repository_owner }}/$img:$t"
+              # Never back: a newer release that overlapped this run may have moved the tag already.
+              cur="$(held "$DST")"
+              if [ "$(printf '%s\n' "$cur" "$V" | sort -V | tail -1)" != "$V" ]; then
+                echo "::notice::$img:$t is on $cur, newer than $V, so it stays"
+                continue
+              fi
+              # Right before each tag moves: still the run's day (UTC). A registry can't move tags
+              # together, so a stop here leaves those moved already (RELEASING.md).
+              if [ "$(date -u +%F)" != "$TODAY" ]; then
+                echo "::error::This run's vulnerability gates judged accepted risks on $TODAY, and today is $(date -u +%F), so it moves no more floating tags: tag the next patch version."
+                exit 1
+              fi
+              docker buildx imagetools create --tag "$DST" "$SRC"
+              got="$(docker buildx imagetools inspect "$DST" --format '{{.Manifest.Digest}}')"
               [ "$got" = "$want" ] || { echo "::error::$img:$t is $got, not the tested $want"; exit 1; }
             done
           done
 
   release:
-    needs: [docker-smoke, connector, macos-pkg, promote]
+    needs: [today, docker-smoke, connector, macos-pkg, promote]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
+      - name: Still the run's day (UTC)
+        env:
+          TODAY: ${{ needs.today.outputs.date }}
+        run: |
+          if [ "$(date -u +%F)" != "$TODAY" ]; then
+            echo "::error::This run's vulnerability gates judged accepted risks on $TODAY, and today is $(date -u +%F), so it publishes nothing: tag the next patch version."
+            exit 1
+          fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-assets
@@ -473,6 +581,7 @@ jobs:
         with:
           subject-path: |
             Stuga-*.pkg
+            stuga-runtime-*.cdx.json
             stuga-connector-darwin-arm64.zip
             frpc
             stuga
@@ -484,6 +593,7 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TODAY: ${{ needs.today.outputs.date }}
         run: |
           set -euo pipefail
           cat >> notes.md <<'ASSETS'
@@ -497,7 +607,7 @@ jobs:
           # A name without the version, so releases/latest/download/Stuga.pkg is always the newest.
           cp "Stuga-$V.pkg" Stuga.pkg
           ASSETS=(compose.yml env.example stuga install.sh releases.json "Stuga-$V.pkg" Stuga.pkg
-            stuga-connector-darwin-arm64.zip)
+            "stuga-runtime-$V.cdx.json" stuga-connector-darwin-arm64.zip)
           # Assets go up to a draft, which stays editable, and publishing comes last: a published release
           # is immutable (repository setting). A re-run finishes the draft a failed run left behind.
           if draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>"$RUNNER_TEMP/view.err"); then
@@ -516,12 +626,17 @@ jobs:
           # Only the newest version is Latest, which releases/latest/download/ follows (as in `plugin`).
           newest=$(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate --jq '.[].name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
           if [ "$newest" = "$GITHUB_REF_NAME" ]; then latest=true; else latest=false; fi
+          # Right before publishing, after any wait or upload: still the run's day (UTC).
+          if [ "$(date -u +%F)" != "$TODAY" ]; then
+            echo "::error::This run's vulnerability gates judged accepted risks on $TODAY, and today is $(date -u +%F), so it publishes nothing: tag the next patch version."
+            exit 1
+          fi
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest="$latest"
 
   # The stdio server as the npm package @stuga/mcp, which the Claude plugin in integrations/ runs with
   # npx. Published by npm trusted publishing, so the package's provenance points back at this run.
   npm:
-    needs: [release]
+    needs: [today, release]
     runs-on: ubuntu-latest
     # The one job that records a deployment: the release is out and on npm. The other jobs in this
     # environment set deployment: false. Trusted publishing stays on the default path.
@@ -530,6 +645,14 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Still the run's day (UTC)
+        env:
+          TODAY: ${{ needs.today.outputs.date }}
+        run: |
+          if [ "$(date -u +%F)" != "$TODAY" ]; then
+            echo "::error::This run's vulnerability gates judged accepted risks on $TODAY, and today is $(date -u +%F), so it publishes nothing: tag the next patch version."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -546,10 +669,17 @@ jobs:
       # A re-run finds the version published already: the first release publishes it by hand.
       - name: Publish, unless npm has this version
         working-directory: services/mcp/dist
+        env:
+          TODAY: ${{ needs.today.outputs.date }}
         run: |
           if npm view "@stuga/mcp@${GITHUB_REF_NAME#v}" version > /dev/null 2>&1; then
             echo "::notice::@stuga/mcp@${GITHUB_REF_NAME#v} is on npm already"
           else
+            # Right before publishing, after any wait or upload: still the run's day (UTC).
+            if [ "$(date -u +%F)" != "$TODAY" ]; then
+              echo "::error::This run's vulnerability gates judged accepted risks on $TODAY, and today is $(date -u +%F), so it publishes nothing: tag the next patch version."
+              exit 1
+            fi
             npm publish
           fi
 
@@ -557,7 +687,7 @@ jobs:
   # the Claude plugin directory and every marketplace read. Only the newest release moves it, once npm
   # serves the @stuga/mcp it pins. It pushes as the Stuga Release app, installed on that repository alone.
   plugin:
-    needs: [npm]
+    needs: [today, npm]
     runs-on: ubuntu-latest
     environment:
       name: release
@@ -565,6 +695,14 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Still the run's day (UTC)
+        env:
+          TODAY: ${{ needs.today.outputs.date }}
+        run: |
+          if [ "$(date -u +%F)" != "$TODAY" ]; then
+            echo "::error::This run's vulnerability gates judged accepted risks on $TODAY, and today is $(date -u +%F), so it publishes nothing: tag the next patch version."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -611,6 +749,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           SLUG: ${{ steps.app.outputs.app-slug }}
+          TODAY: ${{ needs.today.outputs.date }}
         run: |
           set -euo pipefail
           git init -q -b main "$RUNNER_TEMP/published"
@@ -634,4 +773,9 @@ jobs:
           git config user.email "$(gh api "/users/$SLUG%5Bbot%5D" --jq .id)+$SLUG[bot]@users.noreply.github.com"
           git commit -q -m "Release $GITHUB_REF_NAME from $GITHUB_REPOSITORY@${GITHUB_SHA::7}"
           git tag -a "$GITHUB_REF_NAME" -m "$GITHUB_REF_NAME"
+          # Right before publishing, after any wait or upload: still the run's day (UTC).
+          if [ "$(date -u +%F)" != "$TODAY" ]; then
+            echo "::error::This run's vulnerability gates judged accepted risks on $TODAY, and today is $(date -u +%F), so it publishes nothing: tag the next patch version."
+            exit 1
+          fi
           git push --atomic origin main "refs/tags/$GITHUB_REF_NAME"

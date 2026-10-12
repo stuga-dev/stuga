@@ -1,5 +1,17 @@
 # shellcheck shell=bash
-# Sourced by build.sh. Tested by packaging/shared/test/connector.test.mjs.
+# Sourced by build.sh and vulncheck.sh, after packaging/versions.env. Tested by
+# packaging/shared/test/connector.test.mjs.
+
+# native_target <uname -s> <uname -m>: this machine as a target such as linux/amd64, when
+# versions.env pins a Go for it; nothing, and 1, otherwise.
+native_target() {
+  case "$1/$2" in
+    Darwin/arm64) echo darwin/arm64 ;;
+    Linux/x86_64) echo linux/amd64 ;;
+    Linux/aarch64 | Linux/arm64) echo linux/arm64 ;;
+    *) return 1 ;;
+  esac
+}
 
 # go_for_target <target> <uname -s> <uname -m>: the Go download (os-arch) and the versions.env key of
 # its sha256, when this machine builds the target natively; nothing, and 1, otherwise.
@@ -38,4 +50,31 @@ notice_files() {
       if [ -f "$file" ]; then printf '%s\n' "$file"; fi
     done
   done
+}
+
+# use_go <tarball> <work>: unpacks the pinned Go into <work> and points go at it alone: only the
+# public proxy and checksum database, caches in <work>, and nothing from the caller's go env.
+use_go() {
+  tar -xzf "$1" -C "$2" || return 1
+  unset GOOS GOARCH GOARM64 GOAMD64 GOEXPERIMENT GOFIPS140 GODEBUG GOBIN
+  export GOROOT="$2/go" PATH="$2/go/bin:$PATH" GOTOOLCHAIN=local GOENV=off GOWORK=off \
+    GOFLAGS=-modcacherw GOPATH="$2/gopath" GOMODCACHE="$2/gopath/pkg/mod" GOCACHE="$2/gocache" \
+    GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GOPRIVATE="" GONOPROXY="" GONOSUMDB="" \
+    GOINSECURE="" CGO_ENABLED=0
+  if [ "$(go env GOVERSION)" != "go$GO_VERSION" ]; then
+    echo "error: the unpacked Go is $(go env GOVERSION), not go$GO_VERSION" >&2
+    return 1
+  fi
+}
+
+# clone_frp <dir>: frp's tag v$FRP_VERSION, refused unless it points at the pinned FRP_COMMIT.
+clone_frp() {
+  local head
+  git -c advice.detachedHead=false clone --quiet --depth 1 --branch "v$FRP_VERSION" \
+    https://github.com/fatedier/frp.git "$1" || return 1
+  head="$(git -C "$1" rev-parse HEAD)" || return 1
+  if [ "$head" != "$FRP_COMMIT" ]; then
+    echo "error: frp's tag v$FRP_VERSION is $head, not the pinned $FRP_COMMIT" >&2
+    return 1
+  fi
 }

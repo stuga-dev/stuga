@@ -27,6 +27,14 @@ LABEL org.opencontainers.image.title="Stuga remote access" \
       org.opencontainers.image.version="${STUGA_VERSION:-0.0.0-dev}" \
       org.opencontainers.image.source="https://github.com/stuga-dev/stuga" \
       org.opencontainers.image.licenses="AGPL-3.0-only AND Apache-2.0"
+# The UTC date (restore-drill.sh, release.yml). Each new day reruns the upgrade below, so a cached
+# layer never ships packages Debian has since fixed.
+ARG APT_REFRESH
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get -y upgrade; \
+    rm -rf /var/lib/apt/lists/*
 
 # The node lays out the shared volume at every start; a new volume mounted here first starts out
 # the same way. The subdirectories come first, so they do not inherit the setgid bit.

@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
+    inputs:
+      # The day accepted risks are judged by, which a release fixes for its whole run.
+      today:
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -29,13 +34,56 @@ jobs:
       # Chromium, at the version playwright-core pins, for the passkey test's virtual authenticator.
       - run: pnpm --filter @stuga/node exec playwright-core install --with-deps chromium
       - run: pnpm test
-      - run: node --test "packaging/**/*.test.mjs"
+      - run: node --test "packaging/**/*.test.mjs" "scripts/**/*.test.mjs"
       - run: bash packaging/check-pins.sh
       - name: shellcheck
         run: |
           find packaging scripts -type f -name '*.sh' -print0 | sort -z \
             | xargs -0 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 -x -P SCRIPTDIR packaging/docker/stuga \
               packaging/macos/runtime/bin/stuga packaging/macos/pkg/scripts/preinstall packaging/macos/pkg/scripts/postinstall
+
+  # Known vulnerabilities in what a release ships: every npm package in the lockfile, development ones
+  # too; the connector's Go, as built for each platform; and the pinned Node. restore-drill scans the
+  # images. scripts/vuln-gate.mjs judges them by SECURITY.md#dependencies and the exceptions in
+  # .github/security/accepted-risks.json.
+  vulns:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # accepted-risks.json is the only ignore list: a scanner's own config or ignore file is refused,
+      # and every scan runs with an empty one.
+      - name: No scanner's own ignore file
+        run: |
+          found="$(git ls-files -- ':(glob)**/osv-scanner.toml' ':(glob)**/.trivyignore' ':(glob)**/.trivyignore.yaml' \
+            ':(glob)**/trivy.yaml' | tr '\n' ' ')"
+          if [ -n "$found" ]; then
+            echo "::error::.github/security/accepted-risks.json is the only ignore list; remove $found"
+            exit 1
+          fi
+      - run: bash scripts/vuln-tools.sh "$RUNNER_TEMP/bin"
+      # osv-scanner exits 1 when it finds something, which is the gate's to judge.
+      - name: npm packages
+        run: |
+          : > "$RUNNER_TEMP/osv-scanner.toml"
+          "$RUNNER_TEMP/bin/osv-scanner" scan source --config "$RUNNER_TEMP/osv-scanner.toml" --lockfile pnpm-lock.yaml \
+            --all-packages --format json > "$RUNNER_TEMP/osv.json" || [ $? = 1 ]
+      - name: The connector's Go
+        run: bash packaging/shared/connector/vulncheck.sh --out "$RUNNER_TEMP/go"
+      - name: Node.js
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/node-core.json" \
+            https://raw.githubusercontent.com/nodejs/security-wg/main/vuln/core/index.json
+      - name: Gate
+        env:
+          TODAY: ${{ inputs.today }}
+        run: |
+          node scripts/vuln-gate.mjs --today "${TODAY:-$(date -u +%F)}" --osv "$RUNNER_TEMP/osv.json" --lockfile pnpm-lock.yaml \
+            --govulncheck "$RUNNER_TEMP/go/govulncheck-frpc-darwin-arm64.json" \
+            --govulncheck "$RUNNER_TEMP/go/govulncheck-frpc-linux-amd64.json" \
+            --govulncheck "$RUNNER_TEMP/go/govulncheck-frpc-linux-arm64.json" \
+            --node-core "$RUNNER_TEMP/node-core.json"
 
   db-integration:
     runs-on: ubuntu-latest
@@ -65,6 +113,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: bash packaging/docker/test/restore-drill.sh
+      # The three images as built: a fixable high or critical finding in their Debian packages blocks.
+      - name: Scan the images
+        env:
+          TODAY: ${{ inputs.today }}
+        run: |
+          set -euo pipefail
+          bash scripts/vuln-tools.sh "$RUNNER_TEMP/bin"
+          scans=()
+          for image in stuga-node stuga-postgres stuga-remote; do
+            "$RUNNER_TEMP/bin/trivy" image --config "" --ignorefile "" --disable-telemetry --skip-version-check \
+              --image-src docker --scanners vuln --format json --quiet \
+              --output "$RUNNER_TEMP/trivy-$image.json" "ghcr.io/stuga-dev/$image:0.0.0-drill"
+            scans+=(--trivy "$RUNNER_TEMP/trivy-$image.json")
+          done
+          node scripts/vuln-gate.mjs --today "${TODAY:-$(date -u +%F)}" "${scans[@]}"
       - run: bash packaging/docker/test/db-password.sh --no-build
       - run: bash packaging/docker/test/going-back.sh --no-build
       - run: bash packaging/docker/test/backup-suite-in-image.sh ghcr.io/stuga-dev/stuga-node:0.0.0-drill

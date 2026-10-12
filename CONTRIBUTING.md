@@ -40,7 +40,8 @@ packaging/
 integrations/        the Stuga Skill, which the Codex and Antigravity installers put in place, and the
                      Claude plugin that carries it with the stdio server, which each release
                      publishes to stuga-dev/stuga-plugin
-scripts/             test-integration.sh
+scripts/             test-integration.sh, and vuln-gate.mjs, which judges what the vulnerability
+                     scanners find (SECURITY.md#dependencies)
 ```
 
 TypeScript throughout: ESM with `verbatimModuleSyntax`, and workspace imports by package name
@@ -181,11 +182,18 @@ Scope a turbo-driven command to one package with a filter: `pnpm --filter @stuga
   keeps the stack on the previous release, and `./stuga upgrade` to the release that served the
   data takes that out again; `install.sh` over a newer volume stops at once.
 
-- **Packaging checks:** `bash packaging/check-pins.sh`, and `node --test "packaging/**/*.test.mjs"`
-  for the image's health check, `./stuga`'s version, backup, restore and upgrade handling, the
-  developer tools lookup, the Mac log rotation and the package's postinstall, and, on macOS only,
-  the launchd plists, the helper, `bin/stuga restore`, the hold mark and the connector's wrapper.
+- **Packaging checks:** `bash packaging/check-pins.sh`, and
+  `node --test "packaging/**/*.test.mjs" "scripts/**/*.test.mjs"` for the vulnerability gate, the
+  Mac runtime's component list, the image's health check, `./stuga`'s version, backup, restore and
+  upgrade handling, the developer tools lookup, the Mac log rotation and the package's postinstall,
+  and, on macOS only, the launchd plists, the helper, `bin/stuga restore`, the hold mark and the
+  connector's wrapper.
   CI also runs shellcheck over every script in `packaging/` and `scripts/`.
+
+- **Known vulnerabilities:** CI's `vulns` job and the restore drill run the pinned scanners and
+  `scripts/vuln-gate.mjs`, which fails on what [SECURITY.md](SECURITY.md#dependencies) says blocks a
+  release. One that has to ship anyway goes in `.github/security/accepted-risks.json`
+  ([RELEASING.md](RELEASING.md#accepted-risks)).
 
 CI (`.github/workflows/ci.yml`) runs all of these on every pull request and every push to `main`,
 on Linux and on macOS.

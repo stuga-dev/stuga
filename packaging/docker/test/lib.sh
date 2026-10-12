@@ -36,8 +36,10 @@ step() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 die()  { printf '\033[31mFAIL:\033[0m %s\n' "$*" >&2; exit 1; }
 
 if [ "${1:-}" != --no-build ]; then
-  docker build -f "$ROOT/packaging/docker/postgres.Dockerfile" -t "$POSTGRES_IMAGE" "$ROOT"
-  docker build -f "$ROOT/packaging/docker/node.Dockerfile" --build-arg STUGA_VERSION="$VERSION" -t "$NODE_IMAGE" "$ROOT"
+  refresh="APT_REFRESH=$(date -u +%F)"
+  docker build -f "$ROOT/packaging/docker/postgres.Dockerfile" --build-arg "$refresh" -t "$POSTGRES_IMAGE" "$ROOT"
+  docker build -f "$ROOT/packaging/docker/node.Dockerfile" --build-arg "$refresh" --build-arg STUGA_VERSION="$VERSION" \
+    -t "$NODE_IMAGE" "$ROOT"
 fi
 
 # Physical path: Docker Desktop shares /private/var/folders, and a bind mount through the /var symlink can land in its VM instead.

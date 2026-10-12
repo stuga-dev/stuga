@@ -13,8 +13,10 @@
 #   bin        stuga-job, the launchd wrappers it runs (the connector's too, with its check-toml.sh),
 #              init-cluster.sh, rotate-log.mjs, the helper with release.sh and hold.sh, stuga, the
 #              operator's commands, and timemachine.sh, which it shares with postinstall
-#   conf       the Postgres configuration templates and versions.env, and with --connector-sha256
-#              connector.sha256: the one stuga-connector-darwin-arm64.zip the helper installs
+#   conf       the Postgres configuration templates and versions.env; components.cdx.json, what the
+#              runtime carries at the versions its files state (lib/components.sh); and with
+#              --connector-sha256 connector.sha256: the one stuga-connector-darwin-arm64.zip the
+#              helper installs
 #   THIRD-PARTY-NOTICES.txt   the licenses of everything the runtime redistributes
 #
 # An existing runtime of the same version is replaced; nothing may be running from it.
@@ -28,6 +30,8 @@ macos="$(cd "$here/.." && pwd)"
 . "$here/lib/fetch.sh"
 # shellcheck source=lib/devtools.sh
 . "$here/lib/devtools.sh"
+# shellcheck source=lib/components.sh
+. "$here/lib/components.sh"
 
 usage() { sed -n '4,5p' "$0" | sed 's/^# \{0,3\}//' >&2; exit 2; }
 
@@ -105,6 +109,9 @@ cc -O2 -Wall -Werror -arch arm64 -mmacosx-version-min=15.0 -o "$staging/bin/stug
 cp "$macos/runtime/conf/postgresql.conf" "$macos/runtime/conf/pg_hba.conf" \
   "$macos/runtime/conf/pg_ident.conf" "$macos/../versions.env" "$staging/conf/"
 [ -z "$connector_sha256" ] || printf '%s\n' "$connector_sha256" > "$staging/conf/connector.sha256"
+write_components "$staging" "$version" "$connector_sha256" > "$staging/conf/components.cdx.json"
+"$staging/node/bin/node" -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' \
+  "$staging/conf/components.cdx.json"
 sed -e "s/@PG_MAJOR@/$PG_MAJOR/g" -e "s/@POSTGRES_APP_VERSION@/$POSTGRES_APP_VERSION/g" \
   -e "s/@PG_SEARCH_VERSION@/$PG_SEARCH_VERSION/g" -e "s/@NODE_VERSION@/$NODE_VERSION/g" \
   "$macos/runtime/THIRD-PARTY-NOTICES.txt.in" > "$staging/THIRD-PARTY-NOTICES.txt"

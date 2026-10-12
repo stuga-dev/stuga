@@ -22,11 +22,19 @@ FROM node:${NODE_VERSION}-${DEBIAN_SUITE}-slim AS runtime
 ARG DEBIAN_SUITE
 ARG PG_MAJOR=18
 ARG PGDG_KEY_SHA256=0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76
+# The UTC date (restore-drill.sh, release.yml). Each new day reruns the apt steps below, so a cached
+# layer never ships packages Debian has since fixed.
+ARG APT_REFRESH
+
+# npm, npx and corepack stay in the build stage: nothing here runs them.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+      /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 # pg_dump refuses a server newer than itself and Debian's own client is older, so the client
 # comes from the PostgreSQL project's repository, whose key is pinned by checksum.
 RUN set -eux; \
     apt-get update; \
+    apt-get -y upgrade; \
     apt-get install -y --no-install-recommends ca-certificates curl; \
     install -d /usr/share/postgresql-common/pgdg; \
     curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; \

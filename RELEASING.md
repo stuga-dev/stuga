@@ -53,7 +53,9 @@ Released nodes read `releases.json` as it is today, `{"releases": [{"version", "
 
 ## Before tagging
 
-Check that CI is green on the commit you are tagging.
+Check that CI is green on the commit you are tagging, `vulns` included, and read the entries in
+`.github/security/accepted-risks.json`: each is a known vulnerability the release ships
+([Accepted risks](#accepted-risks)).
 
 Turn `## [Unreleased]` in CHANGELOG.md into the version's entry, `## [1.2.3] - 2026-01-31`, and put
 an empty `## [Unreleased]` above it. Give it a **Security** section if it fixes a vulnerability, and
@@ -74,6 +76,9 @@ git tag -a v1.2.3 -m v1.2.3
 git push origin v1.2.3
 ```
 
+Releases run one at a time. Tag the next only once the last run has finished: GitHub keeps one run
+waiting and cancels any earlier one still waiting.
+
 ## The release gate
 
 `.github/workflows/release.yml` publishes a Release only after the Docker artifact and the Mac
@@ -81,24 +86,38 @@ runtime have both been built at the tag's version and booted.
 
 | Job | Runs after | Checks |
 |---|---|---|
+| `today` | | Notes the day every vulnerability gate of the run judges accepted risks by, so an exception that expires during the run fails nothing after the images are pushed. `promote`, `release`, `npm` and `plugin` check that it is still that day (UTC) as they start and again right before they publish (below). |
 | `changelog` | | The tag's version is the newest entry in CHANGELOG.md. Writes `releases.json` and the Release notes from it. |
-| `verify` | | All of CI (`ci.yml`): lint, typecheck, unit tests, the packaging checks, the integration suites, the Docker restore drill, the database password test, the going-back test and the backup suite inside the node image, and the macOS job (integration suites on the Mac Postgres tree, a runtime build, its smoke test, restore drill and go-back drill, and an unsigned connector build). |
-| `docker-images` | `verify`, `changelog` | Refuses a version whose images already exist. Builds `stuga-node` and `stuga-postgres` for `linux/amd64` and `linux/arm64` with the build arguments in `packaging/versions.env`, and pushes only the exact version tag, with provenance and an SBOM. Builds `stuga-remote` natively on an amd64 and an arm64 runner, `frpc` with `packaging/shared/connector/build.sh --target linux/<arch>` (the checks of `connector` below, unsigned), and pushes each by digest, with provenance and an SBOM. |
+| `verify` | `today` | All of CI (`ci.yml`): lint, typecheck, unit tests, the packaging checks, the integration suites, the Docker restore drill, the database password test, the going-back test and the backup suite inside the node image, the vulnerability gate (`vulns`: every npm package in the lockfile, the connector's Go for each platform, Node.js) and a scan of the three images the restore drill built, and the macOS job (integration suites on the Mac Postgres tree, a runtime build with its component list, its smoke test, restore drill and go-back drill, and an unsigned connector build). |
+| `docker-images` | `verify`, `changelog` | Refuses a version whose images already exist. Builds `stuga-node` and `stuga-postgres` for `linux/amd64` and `linux/arm64` with the build arguments in `packaging/versions.env`, and pushes only the exact version tag, with provenance and an SBOM. Builds `stuga-remote` natively on an amd64 and an arm64 runner, `frpc` with `packaging/shared/connector/build.sh --target linux/<arch>` (the checks of `connector` below, unsigned), and pushes each by digest, with provenance and an SBOM. Every image is built with `APT_REFRESH`, the day's date, so it takes that day's Debian updates rather than a cached layer's. |
 | `docker-remote` | `docker-images` | Tags the two `stuga-remote` digests together as the exact version. |
 | `docker-package` | `docker-images`, `docker-remote` | Lays out the Docker release assets with `package.sh` (`compose.yml` pinned to the version, `env.example`, `stuga`), checks that `compose.yml` names the three images at the version, and checks that both architectures of each were published. |
+| `image-scan` | `today`, `docker-package` | Scans both architectures of each pushed image, by digest, with Trivy, and runs the vulnerability gate on them. `verify` scanned the same Dockerfiles, so this catches only what was published since; a failure leaves the version unreleased. |
 | `docker-smoke` | `docker-package` | On an amd64 and an arm64 runner, boots the stamped `compose.yml` against the published images. Checks that remote access is off with the default `.env`, then names `STUGA_REMOTE_SERVICE` there and checks the connector. Checks that `/ready` answers, `/` serves the web app, the image's `/app/VERSION` is the version, and the boot line names it; that `frpc --version` in `stuga-remote` is `FRP_VERSION`, and the `remote` service is healthy, runs no `frpc` and reports the node's `off` as `stopped`. |
 | `connector` | `verify`, `changelog` | On macOS, builds the remote-access connector with `packaging/shared/connector/build.sh --target darwin/arm64`: `frpc` from frp's pinned commit (`FRP_VERSION`, `FRP_COMMIT`) with the pinned Go (`GO_VERSION`, its sha256 checked), without the web UI, and refuses it unless `go version -m` shows that commit, an unmodified tree and the `frpc,noweb` tags. Writes `THIRD-PARTY-NOTICES.txt` with the pinned `go-licenses` and refuses it unless it names every module `frpc` links, at the version linked, with a known license, and adds the modules' NOTICE files. Signs `frpc` as `dev.stuga.remote` with the hardened runtime, refuses it unless it meets the requirement the helper checks (a Developer ID of `STUGA_TEAM_ID`), and notarizes `stuga-connector-darwin-arm64.zip` (`frpc`, frp's `LICENSE`, the notices), failing unless Apple accepts it with no issues. Its output is the zip's sha256. Needs the same secrets as `macos-pkg`. |
-| `macos-pkg` | `verify`, `changelog`, `connector` | On macOS, builds `Stuga-<version>.pkg` with `packaging/macos/pkg/build-pkg.sh`: the runtime at the version, Stuga.app and the install scripts, every binary signed with the Developer ID Application identity (Node with only `allow-jit`), the package signed with the Developer ID Installer identity, notarized and stapled. The runtime's `conf/connector.sha256` names the `connector` job's zip, the only connector its helper installs, and the job checks that it does. Then boots the runtime the package carries with `packaging/macos/test/smoke.sh`, which checks `/ready`, the web app, the boot line, a clean stop, `backup` and `verify`, and a clean Postgres shutdown. Needs the secrets `MACOS_CERTS_P12` (one p12 with both identities, base64, of the team the upgrade helper trusts: `STUGA_TEAM_ID` in `packaging/macos/runtime/bin/release.sh`), `MACOS_CERTS_PASSWORD`, and an App Store Connect API key for notarytool: `NOTARY_KEY` (the .p8, base64), `NOTARY_KEY_ID`, `NOTARY_ISSUER`. |
-| `promote` | `docker-smoke`, `macos-pkg` | Points the `:1.2` and `:1` tags of the three images at the digests the smoke test booted, each only when the tag is the newest release of that line, and reads them back to confirm. `latest` is never published. |
-| `release` | `docker-smoke`, `connector`, `macos-pkg`, `promote` | Creates the GitHub Release, with the notes from the changelog and `compose.yml`, `env.example`, `stuga`, `install.sh`, `releases.json`, `Stuga-<version>.pkg`, the same package as `Stuga.pkg`, which `releases/latest/download/` always names, and `stuga-connector-darwin-arm64.zip`. A Mac node's **Update now** downloads the versioned name, and its helper downloads the connector from the version it runs. First checks the zip against the sha256 the package carries, and attests each asset's build provenance, and that of the `frpc` in the zip, so `gh attestation verify <file> --repo stuga-dev/stuga` names the commit and run that built it. The repository has immutable releases on: once published, a release's assets and tag never change, so the job uploads to a draft and publishes last, marking it Latest only when its tag is the newest `v*.*.*`. |
-| `npm` | `release` | Builds `services/mcp` stamped with the version and publishes `services/mcp/dist` as `@stuga/mcp` through npm trusted publishing, from the `release` environment, unless npm has the version already. The package's provenance names this run. |
-| `plugin` | `npm` | For the newest version only, and once npm serves `@stuga/mcp` at it: stamps `integrations/` with the version and the `@stuga/mcp@<version>` pin (`packaging/release/plugin.mjs`), and pushes it to [stuga-dev/stuga-plugin](https://github.com/stuga-dev/stuga-plugin) as one commit and the tag `v<version>`, as the Stuga Release app. Anthropic's plugin directory and every marketplace read that repository. Needs `STUGA_RELEASE_APP_CLIENT_ID` (a variable) and `STUGA_RELEASE_APP_KEY` (a secret) in the `release` environment, of an app installed on stuga-plugin alone. |
+| `macos-pkg` | `verify`, `changelog`, `connector` | On macOS, builds `Stuga-<version>.pkg` with `packaging/macos/pkg/build-pkg.sh`: the runtime at the version, Stuga.app and the install scripts, every binary signed with the Developer ID Application identity (Node with only `allow-jit`), the package signed with the Developer ID Installer identity, notarized and stapled. The runtime's `conf/connector.sha256` names the `connector` job's zip, the only connector its helper installs, and the job checks that it does. Then boots the runtime the package carries with `packaging/macos/test/smoke.sh`, which checks `/ready`, the web app, the boot line, a clean stop, `backup` and `verify`, and a clean Postgres shutdown, and keeps its component list, `conf/components.cdx.json`, as `stuga-runtime-<version>.cdx.json`. Needs the secrets `MACOS_CERTS_P12` (one p12 with both identities, base64, of the team the upgrade helper trusts: `STUGA_TEAM_ID` in `packaging/macos/runtime/bin/release.sh`), `MACOS_CERTS_PASSWORD`, and an App Store Connect API key for notarytool: `NOTARY_KEY` (the .p8, base64), `NOTARY_KEY_ID`, `NOTARY_ISSUER`. |
+| `promote` | `today`, `docker-smoke`, `image-scan`, `macos-pkg` | Points the `:1.2` and `:1` tags of the three images at the digests the smoke test booted, each only when the tag is the newest release of that line and isn't on a newer version already (its `org.opencontainers.image.version` label), so an older release that finishes late never moves it back, and reads them back to confirm. `latest` is never published. |
+| `release` | `today`, `docker-smoke`, `connector`, `macos-pkg`, `promote` | Creates the GitHub Release, with the notes from the changelog and `compose.yml`, `env.example`, `stuga`, `install.sh`, `releases.json`, `Stuga-<version>.pkg`, the same package as `Stuga.pkg`, which `releases/latest/download/` always names, `stuga-runtime-<version>.cdx.json` and `stuga-connector-darwin-arm64.zip`. A Mac node's **Update now** downloads the versioned name, and its helper downloads the connector from the version it runs. First checks the zip against the sha256 the package carries, and attests each asset's build provenance, and that of the `frpc` in the zip, so `gh attestation verify <file> --repo stuga-dev/stuga` names the commit and run that built it. The repository has immutable releases on: once published, a release's assets and tag never change, so the job uploads to a draft and publishes last, marking it Latest only when its tag is the newest `v*.*.*`. |
+| `npm` | `today`, `release` | Builds `services/mcp` stamped with the version and publishes `services/mcp/dist` as `@stuga/mcp` through npm trusted publishing, from the `release` environment, unless npm has the version already. The package's provenance names this run. |
+| `plugin` | `today`, `npm` | For the newest version only, and once npm serves `@stuga/mcp` at it: stamps `integrations/` with the version and the `@stuga/mcp@<version>` pin (`packaging/release/plugin.mjs`), and pushes it to [stuga-dev/stuga-plugin](https://github.com/stuga-dev/stuga-plugin) as one commit and the tag `v<version>`, as the Stuga Release app. Anthropic's plugin directory and every marketplace read that repository. Needs `STUGA_RELEASE_APP_CLIENT_ID` (a variable) and `STUGA_RELEASE_APP_KEY` (a secret) in the `release` environment, of an app installed on stuga-plugin alone. |
 
 A pushed tag is never deleted or reused. You can re-run a job that failed for a transient reason;
 re-running `release` finishes the draft a failed run left behind, and fails on a published release.
 A failure that needs a code change is fixed in the next patch version. Once `docker-images` has
 pushed, that version's images exist with no Release or floating tag pointing at them, and
 `docker-images` refuses to build the version again.
+
+A re-run of failed jobs keeps the run's `today`. `promote`, `release`, `npm` and `plugin` each check
+that the UTC date is still `today` as they start, and again right before each publishing command:
+`promote` before each floating tag it moves, `release` before it publishes the draft, `npm` before
+`npm publish`, `plugin` before its push. A failed check stops that job before it publishes. So each of
+those commands starts on the day the run's gates judged accepted risks; one that starts in the last
+seconds of the day may finish after midnight. A `promote` stopped after midnight leaves the floating
+tags it moved already on this version's tested images and the rest where they were, since a registry
+can't move tags together. What earlier jobs published stays (floating tags with no Release, say), and
+the next patch version completes it. Not covered: `docker-images` pushes the version's images, and
+`release` attests the assets and uploads them to the unpublished draft, before these checks. Re-run
+failed jobs only on the day the run started, and tag early in the UTC day.
 
 ## After the release
 
@@ -123,8 +142,8 @@ npm accepts trusted publishing only for a package that already exists, so the fi
 job fails. Publish that version by hand from the tag (`STUGA_VERSION=<version> pnpm --filter
 @stuga/mcp build`, then `npm publish` in `services/mcp/dist`), set the package's trusted publisher
 on npmjs.com to this repository, `release.yml`, environment `release`, require two-factor
-authentication to publish it (`npm access set mfa=publish @stuga/mcp`), and re-run the failed jobs:
-`npm` finds the version published and `plugin` runs.
+authentication to publish it (`npm access set mfa=publish @stuga/mcp`), and re-run the failed jobs the
+same day (UTC): `npm` finds the version published and `plugin` runs.
 
 stuga-plugin's rulesets let only the Stuga Release app create or update `main` and create `v*` tags,
 and nobody move or delete them. A bad plugin version is superseded by the next patch release, like
@@ -132,6 +151,33 @@ any other. The app ([github.com/apps/stuga-release](https://github.com/apps/stug
 the stuga-dev organization) has only contents: write and is installed on stuga-plugin alone. To
 rotate its key, generate a new private key on the app's settings page, replace
 `STUGA_RELEASE_APP_KEY` in the `release` environment, and delete the old key there.
+
+## Accepted risks
+
+`.github/security/accepted-risks.json` is the one place a known vulnerability is let through. The
+scanners run with an empty config, and CI refuses an `osv-scanner.toml`, `.trivyignore`,
+`.trivyignore.yaml` or `trivy.yaml` in the tree. An entry names the advisory (any of its IDs), the
+package, the scope it was found in (`lockfile`, `go`, `image`, `node` or `watch`), a reason, the day
+it was added and the day it expires, and optionally the issue that tracks it:
+
+```json
+[{"id": "GHSA-xxxx-xxxx-xxxx", "package": "sharp", "scope": "lockfile", "reason": "…",
+  "added": "2026-10-11", "expires": "2026-11-10", "issue": "#12"}]
+```
+
+`scripts/vuln-gate.mjs` refuses an entry that is malformed, expired, or longer than its finding's
+fix target, and warns about one that matches nothing. Fix targets: critical 7 days, high 30,
+anything else 90, the daily watch's findings included. Go findings, which govulncheck does not
+rate, count as high, as do npm and Node.js findings without a severity. An entry is held to its
+finding's target only by a run that scans its scope, so a `watch` entry only by the daily watch.
+Every run lists the entries with their days left. The reason is public: whether a finding can be
+exploited goes in a draft security advisory.
+
+`.github/workflows/vuln-watch.yml` runs every day against the latest release. It keeps one issue
+per blocking advisory ID, labelled `vuln-watch` and assigned to the repository variable
+`SECURITY_OWNER`, and closes it once the finding clears or is accepted. It opens one too for an
+entry that expires within 7 days. A scan or lookup that cannot finish fails the run before any
+issue changes; an entry the gate refuses fails it after, since that entry accepts nothing.
 
 ## Yanking
 
@@ -157,11 +203,19 @@ Bump a version and its checksums together, then run `bash packaging/check-pins.s
 every other file that must follow. Release a pin bump on its own: pgvector and pg_search own index
 formats, and every per-actor store runs on Node's `node:sqlite`.
 
-A Go security release is a reason to bump `GO_VERSION` (with both of its checksums from
-[go.dev/dl](https://go.dev/dl/)), since the connector links Go's standard library. An frp bump
-changes `FRP_VERSION` and `FRP_COMMIT` together, the commit its tag points at; the connector build
-refuses a tag that points elsewhere. Every release carries a newly built connector either way.
+A Go security release is a reason to bump `GO_VERSION` (with its three checksums from
+[go.dev/dl](https://go.dev/dl/)), since the connector links Go's standard library: a govulncheck
+finding in `stdlib` is fixed by that bump, and one in a module by an frp bump. An frp bump changes
+`FRP_VERSION` and `FRP_COMMIT` together, the commit its tag points at; the connector build refuses
+a tag that points elsewhere. The relay's frps moves to the same frp release. Every release carries
+a newly built connector either way.
+
+The scanners are pinned in `.github/security/tools.env`, osv-scanner and Trivy by sha256 from
+their releases' checksum files and govulncheck by module version. `scripts/vuln-tools.sh` and
+`packaging/shared/connector/vulncheck.sh` download them.
 
 A Postgres.app bump can change which libraries and extensions the Mac runtime carries. Compare
 `postgres/lib` of a runtime built with it against the list in
 `packaging/macos/runtime/THIRD-PARTY-NOTICES.txt.in`, and add the license of anything new.
+`check-tree.sh` refuses a library in `postgres/lib` that `packaging/macos/build/lib/components.sh`
+does not name, so a new one goes there too, with how to read its version.
