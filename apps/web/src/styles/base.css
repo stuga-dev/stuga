@@ -8,6 +8,9 @@ body {
 /* For the few bare <button>s that carry their own styles. */
 button { font: inherit; }
 
+/* Astryx clips a List sideways for swipe actions, which Stuga does not use; the clip cut the sides off its rows' focus rings. */
+.astryx-list { overflow: visible; }
+
 /* <Avatar>: size and background come inline. White initials, which PEER_PALETTE is chosen to contrast with. */
 .avatar {
   display: inline-flex; align-items: center; justify-content: center;

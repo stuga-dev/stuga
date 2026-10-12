@@ -51,7 +51,7 @@ fi
 
 if [ -z "${TEST_DATABASE_URL:-}" ]; then
   started_postgres=1
-  "${postgres[@]}" up -d --wait
+  "${postgres[@]}" up -d --wait --build
   export TEST_DATABASE_URL=postgres://stuga:stuga@127.0.0.1:55432/stuga_test
 fi
 

@@ -2,14 +2,14 @@
 # The defaults below are packaging/versions.env; packaging/check-pins.sh keeps them equal.
 ARG PGVECTOR_VERSION=0.8.6
 ARG PG_MAJOR=18
-ARG DEBIAN_SUITE=bookworm
+ARG DEBIAN_SUITE=trixie
 FROM pgvector/pgvector:${PGVECTOR_VERSION}-pg${PG_MAJOR}-${DEBIAN_SUITE}
 
 # PG_MAJOR comes from the base image's environment.
 ARG DEBIAN_SUITE
-ARG PG_SEARCH_VERSION=0.25.9
-ARG PG_SEARCH_DEB_AMD64_SHA256=8f70e992f03493dafe9f93d84781779625a23450c5eb85b6791501032d190bcb
-ARG PG_SEARCH_DEB_ARM64_SHA256=5e0fcdf88b3b156d39679217f53de5c016de48e8a42faed57a9271e3160361bf
+ARG PG_SEARCH_VERSION=0.26.1
+ARG PG_SEARCH_DEB_AMD64_SHA256=9f8dd4ed23ab1cea34b5a0fb145ec06657698fc84ce3ff80e03c56544d59126b
+ARG PG_SEARCH_DEB_ARM64_SHA256=740e9b05c724c737ce9bc26d5e17030a13c9ec52c0bd1c7a0320432d9bbf8c9f
 ARG TARGETARCH
 # The UTC date (restore-drill.sh, release.yml). Each new day reruns the upgrade below, so a cached
 # layer never ships packages Debian or PGDG has since fixed.

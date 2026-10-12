@@ -9,7 +9,7 @@ allowBuilds:
   esbuild: true
   protobufjs: false
 overrides:
-  "@types/node": "~26.6.4"
+  "@types/node": "~26.6.5"
   "@tiptap/core": "3.31.4"
   "@tiptap/pm": "3.31.4"
   "@tiptap/react": "3.31.4"
@@ -25,4 +25,5 @@ overrides:
   "@tiptap/extension-table-header": "3.31.4"
   "@tiptap/extension-table-row": "3.31.4"
   "@tiptap/y-tiptap": "3.0.9"
-  "lodash-es@<4.18.1": "^4.18.1"
+  # Astryx still asks for 11, which would ship a second copy in the web bundle.
+  "@astryxdesign/core>intl-messageformat": "^12.1.3"

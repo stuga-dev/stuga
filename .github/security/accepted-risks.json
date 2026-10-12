@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "id": "OpenSSL-3.5.9",
+    "package": "openssl",
+    "scope": "watch",
+    "reason": "The Mac runtime's OpenSSL comes from Postgres.app, whose newest release (2.9.6) ships 3.5.7; it moves with Postgres.app's next release.",
+    "added": "2026-10-12",
+    "expires": "2026-11-30"
+  }
+]

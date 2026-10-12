@@ -3,7 +3,7 @@
 # remote access is turned on. Build from the repository root, natively on each architecture:
 #   docker build -f packaging/docker/remote.Dockerfile --build-arg STUGA_VERSION=1.2.3 .
 # The default below is packaging/versions.env; packaging/check-pins.sh keeps it equal.
-ARG DEBIAN_SUITE=bookworm
+ARG DEBIAN_SUITE=trixie
 
 FROM debian:${DEBIAN_SUITE}-slim AS build
 ARG TARGETARCH
