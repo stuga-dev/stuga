@@ -97,7 +97,8 @@ it starts, and a backup taken at another `PUBLIC_ORIGIN`, after which everyone s
 
 `verify --going-back` also compares the current database's extensions with the backup's, and
 refuses when one both hold is at another version: an older pg_search or pgvector never opens indexes
-a newer one wrote. The packagings' restore commands pass it when they go back.
+a newer one wrote. The packagings' restore commands pass it when they go back, and the backup's own
+release then serves it at its own schema, so no note says it migrates.
 
 ### list
 

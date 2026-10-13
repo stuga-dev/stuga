@@ -58,7 +58,7 @@ import { createHttpServer, type TlsOptions } from "../platform/http-server.js";
 import { createInternalApi } from "../platform/internal-api.js";
 import { startInterval } from "../platform/interval.js";
 import { serveStatic } from "../platform/static.js";
-import { VERSION, bootSummary } from "../version.js";
+import { VERSION, bootSummary, previousBuild } from "../version.js";
 import { holdWriterLock } from "../writer-lock.js";
 import { assertDatabaseLocale, assertPgSearch, assertPostgresVersion } from "./preflight.js";
 import { runShutdown, SHUTDOWN_DEADLINE_MS } from "./shutdown.js";
@@ -308,7 +308,7 @@ async function boot(): Promise<void> {
     searchLanguages,
     verifier,
     sessionSockets,
-    previousVersion,
+    previousVersion: previousBuild(previousVersion, VERSION),
     nodeId,
   };
   internalEnv = env;

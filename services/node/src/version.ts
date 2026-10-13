@@ -36,15 +36,24 @@ export const BUILD = running.build;
 /** YYYY-MM-DD. What tells an administrator how old this build is on a node that cannot look for a newer one. */
 export const RELEASED_AT = running.releasedAt;
 
+/**
+ * The build that served the data before this one, from the version the last boot recorded: null when
+ * that was this build, as after a restart or after going back to the backup's own release, or when
+ * no node has booted on the data.
+ */
+export function previousBuild(lastBooted: string | null, version: string): string | null {
+  return lastBooted !== null && lastBooted !== version ? lastBooted : null;
+}
+
 /** The boot line naming this build, the previous one and the schema; printed on every boot, changed or not. */
 export function bootSummary(input: {
   version: string;
   previousVersion: string | null;
   schema: { from: number; to: number };
 }): string {
-  const { version, previousVersion, schema } = input;
-  const build =
-    previousVersion && previousVersion !== version ? `stuga ${previousVersion} → ${version}` : `stuga ${version}`;
+  const { version, schema } = input;
+  const previous = previousBuild(input.previousVersion, version);
+  const build = previous ? `stuga ${previous} → ${version}` : `stuga ${version}`;
   const db =
     schema.from === 0
       ? `schema ${schema.to} (new database)`

@@ -15,6 +15,17 @@ Releases before 0.1.7 were previews. Their notes are on their
 - **Reranking** lists the models the service offers to choose from: Jev's versions on TypeSafe, and every decision model on OpenRouter, such as Microsoft-Decision-1, Perplexity's decider and Liquid's d1.
 - AI setup forms no longer link to each service's key page.
 
+### Fixed
+
+- Going back to an earlier version on a Mac or with Docker no longer notes that the node will migrate the backup's schema: the earlier version serves it at its own.
+- `GET /api/node/version` names a `previous_version` only when another version served the data before, so a restart or going back to the backup's own version answers null.
+- `stuga list` on a Mac, and `stuga-node`'s `list`, `verify`, `restore` and `backup`, write their answer to stdout, so it can be piped or saved; progress and notes stay on stderr.
+- The node no longer prints a warning about `localStorage` each time it starts or runs a command.
+- On a Mac, `/Library/Logs/Stuga/helper.log` has a line for each step of an update it installs, naming the version and why one did not install, and for each change to remote access.
+- Going back on a Mac without a connection names the address of the package to download and pass with `--pkg`.
+- A restore asks for the backup's name after saying that work done since the backup is kept aside, on a Mac and with Docker.
+- A backup name piped into a restore ends the prompt's line, so the next step starts on a line of its own.
+
 ## [0.1.15] - 2026-10-12
 
 Security fixes: the node checks the address of every connection it makes for someone else's URL, and

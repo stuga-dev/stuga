@@ -536,6 +536,17 @@ test("a request that changes during a run is taken in another round", { skip }, 
   assert.ok(!h.calls().includes("launchctl enable system/dev.stuga.remote"));
 });
 
+test("helper.log says when a request changed during a run, and what each round did", { skip }, () => {
+  const h = setup();
+  const script = join(h.stub, "on-download");
+  writeFileSync(script, `#!/bin/bash\nrm -f "$STUGA_ROOT/requests/remote"\necho off > "$STUGA_ROOT/requests/remote"\n`);
+  chmodSync(script, 0o755);
+  h.request(on());
+  const lines = h.run().stdout.split("\n").filter(Boolean).map((line) => line.slice(21));
+  assert.ok(lines.includes("a request came while this ran; taking it now"), lines.join("\n"));
+  assert.equal(lines.at(-1), "remote access (stopped): remote access is off");
+});
+
 test("upgrade: a pending off goes before the download", { skip }, () => {
   const h = setup();
   h.request(on());
@@ -586,6 +597,23 @@ test("upgrade: a newer release, notarized, Stuga's and that version, is installe
   const order = ["curl", "spctl", "xar", "installer"].map((tool) => calls.findIndex((c) => c.startsWith(tool)));
   assert.deepEqual([...order].sort((a, b) => a - b), order, calls.join("\n"));
   assert.ok(!existsSync(install.split(" ")[2]), "the package's directory goes");
+});
+
+test("upgrade: helper.log has one line per step, naming the version, and why it did not install", { skip }, () => {
+  const h = setup();
+  servePackage(h, "1.3.0");
+  writeFileSync(join(h.root, "requests", "upgrade"), "1.3.0\n");
+  const done = h.run().stdout.split("\n").filter(Boolean);
+  for (const line of done) assert.match(line, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ /);
+  assert.deepEqual(
+    done.map((line) => line.slice(21)),
+    ["downloading Stuga 1.3.0", "checking the package's signature", "installing Stuga 1.3.0", "installed Stuga 1.3.0"],
+  );
+
+  writeFileSync(join(h.root, "requests", "upgrade"), "1.4.0\n");
+  assert.match(h.run().stdout, /Z did not install Stuga 1\.4\.0: could not download Stuga 1\.4\.0\n$/);
+  writeFileSync(join(h.root, "requests", "upgrade"), "latest\n");
+  assert.match(h.run().stdout, /Z did not install: the request did not name a version\n$/);
 });
 
 for (const [what, why, change] of [

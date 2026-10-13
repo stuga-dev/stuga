@@ -240,7 +240,7 @@ restore() {
     else
       say "Downloading Stuga $target…"
       fetch_package "$target" "$package" ||
-        fail 3 "could not download Stuga $target. Nothing was changed. Without a connection, download Stuga-$target.pkg elsewhere and pass --pkg."
+        fail 3 "could not download Stuga $target. Nothing was changed. Without a connection, download $(package_url "$target") elsewhere and pass it with --pkg <file>."
     fi
     check_package "$package" "$target" || fail 2 "$package_problem. Nothing was changed."
     same_pins "$package" "$target" "$installed_dir" || fail 2 "$pins_problem. Nothing was changed."
@@ -249,8 +249,10 @@ restore() {
   if [ "$yes" = no ]; then
     local answer="" change=""
     [ "$install" = no ] || change=", and goes back from Stuga $installed to Stuga $target"
-    printf "This replaces Stuga's data with %s%s. Type the backup name to confirm: " "$name" "$change" >&2
+    printf "This replaces Stuga's data with %s%s.\nWork done since the backup is kept aside; the restore says where.\nType the backup name to confirm: " "$name" "$change" >&2
     read -r answer || true
+    # A name typed at a terminal ends the line; one piped in does not.
+    [ -t 0 ] || printf '\n' >&2
     [ "$answer" = "$name" ] || fail 2 "not confirmed. Nothing was changed."
   fi
 

@@ -728,13 +728,36 @@ test("without --yes it asks for the backup's name", { skip }, () => {
   const h = setup({ backup: "0.1.13" });
   let run = h.stuga(["restore", NAME], { input: "yes\n" });
   assert.equal(run.status, 2);
-  assert.ok(run.stderr.includes(`This replaces Stuga's data with ${NAME}, and goes back from Stuga 0.1.14 to Stuga 0.1.13. Type the backup name to confirm: `), run.stderr);
-  assert.match(run.stderr, /error: not confirmed\. Nothing was changed\./);
+  assert.ok(
+    run.stderr.includes(
+      `This replaces Stuga's data with ${NAME}, and goes back from Stuga 0.1.14 to Stuga 0.1.13.\n` +
+        "Work done since the backup is kept aside; the restore says where.\n" +
+        "Type the backup name to confirm: \n",
+    ),
+    run.stderr,
+  );
+  assert.match(run.stderr, /^error: not confirmed\. Nothing was changed\.$/m);
   nothingChanged(h);
 
   const same = setup();
   run = same.stuga(["restore", NAME], { input: `${NAME}\n` });
   assert.equal(run.status, 0, run.stderr);
+  // A name piped in ends the prompt's line, so what follows starts on its own.
+  assert.ok(run.stderr.includes("Type the backup name to confirm: \n"), run.stderr);
+});
+
+test("going back offline without --pkg: refused before anything stops, naming the package to download", { skip }, () => {
+  const h = setup({ backup: "0.1.13" });
+  rmSync(join(h.stub, "serve", "Stuga-0.1.13.pkg"));
+  const run = h.stuga(["restore", "--yes", NAME]);
+  assert.equal(run.status, 3);
+  assert.ok(
+    run.stderr.includes(
+      `error: could not download Stuga 0.1.13. Nothing was changed. Without a connection, download ${RELEASES}/v0.1.13/Stuga-0.1.13.pkg elsewhere and pass it with --pkg <file>.`,
+    ),
+    run.stderr,
+  );
+  nothingChanged(h);
 });
 
 test("the other commands are stuga-node's, run as the node, with its exit status", { skip }, () => {

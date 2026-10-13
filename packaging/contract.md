@@ -79,16 +79,16 @@ The version appears in these places:
 |---|---|
 | `serve` | Run the node. |
 | `backup [--json]` | Back up the database and the data directory into `BACKUP_DIR`, verified, pruned to the number the node's settings keep. |
-| `verify <backup> [--going-back] [--json]` | Check that a backup is whole and that this build can restore it. With `--going-back`, also refuse when an extension both the current database and the backup hold is at another version. Builds before 0.1.12 ignore the flag. |
+| `verify <backup> [--going-back] [--json]` | Check that a backup is whole and that this build can restore it. With `--going-back`, the backup's own release restores it: also refuse when an extension both the current database and the backup hold is at another version, and leave out the note that the node migrates an older schema. Builds before 0.1.12 ignore the flag. |
 | `restore <backup> [--yes] [--json]` | Replace the database and the data directory. The current ones are kept beside the restored ones. |
 | `list [--json]` | List backups, marking those taken before an upgrade, unfinished work, and what restores kept. |
 | `reset-password <username>` | Print a password reset link. |
 | `media-scan [--reclaim] [--empty-trash[=<days>]] [--grace-hours=<hours>]` | Report or reclaim media that no document references. |
 | `archive check <directory> [--json]` | Check an unzipped workspace archive against format version 1, `docs/workspace-archive.md`. Exits 2 when it does not pass. |
 
-A `<backup>` is a path, or a bare name under `BACKUP_DIR`. With `--json`, a command writes one JSON
-object to stdout and writes notes and errors to stderr. Without it, `backup` prints
-`Backup complete: <path>`. In `list --json`, each backup's keys come in this order, and later ones
+A `<backup>` is a path, or a bare name under `BACKUP_DIR`. A command's answer goes to stdout:
+with `--json` one JSON object, without it text, such as `backup`'s `Backup complete: <path>` and
+`list`'s listing. Progress, notes and errors go to stderr. In `list --json`, each backup's keys come in this order, and later ones
 are only ever appended: `name`, `path`, `database`, `created_at`, `stuga_version`,
 `schema_version`, `bytes`, `runtime_version`, `before_upgrade`.
 

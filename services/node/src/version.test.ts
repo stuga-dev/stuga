@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DEV_VERSION, bootSummary, compareVersions, isReleaseVersion, readVersion, versionChange } from "./version.js";
+import { DEV_VERSION, bootSummary, compareVersions, isReleaseVersion, previousBuild, readVersion, versionChange } from "./version.js";
 
 describe("readVersion", () => {
   let root: string;
@@ -31,6 +31,17 @@ describe("readVersion", () => {
     // A date with no version beside it says nothing about what is running.
     writeFileSync(join(root, "RELEASED"), "2026-10-01\n");
     expect(readVersion(root).releasedAt).toBeNull();
+  });
+});
+
+describe("previousBuild", () => {
+  it("is the build the last boot recorded, when that was another one", () => {
+    expect(previousBuild("0.2.0", "0.3.0")).toBe("0.2.0");
+  });
+
+  it("is null when the last boot was this build: a restart, or going back to the backup's own release", () => {
+    expect(previousBuild("0.3.0", "0.3.0")).toBeNull();
+    expect(previousBuild(null, "0.3.0")).toBeNull();
   });
 });
 

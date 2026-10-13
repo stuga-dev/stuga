@@ -67,14 +67,15 @@ describe("stuga-node", { timeout: 30_000 }, () => {
       // Nothing listens on port 1: the backups are read from disk, the server's leftovers are left out.
       const env = { DATABASE_URL: "postgres://stuga@127.0.0.1:1/stuga", DATA_DIR: join(root, "node"), BACKUP_DIR: join(root, "backups") };
 
+      // The listing is the answer: on stdout, where a pipe or a redirect takes it.
       const text = stugaNode(["list"], env);
       expect(text.status).toBe(0);
-      // Only the backups' lines: a Node runtime may print a warning of its own.
-      const lines = text.stderr.split("\n").filter((l) => l.startsWith("2026-"));
-      expect(lines).toEqual([
+      expect(text.stdout.split("\n").filter(Boolean)).toEqual([
         "2026-10-02T030000Z  stuga 1.1.0, schema 2, 20 bytes",
         "2026-10-01T030000Z  stuga 1.0.0, schema 2, 20 bytes, taken before upgrading from 1.0.0 to 1.1.0",
       ]);
+      // A library that looks for web storage finds none, so Node has nothing to warn about.
+      expect(text.stderr).not.toContain("localStorage");
 
       const json = stugaNode(["list", "--json"], env);
       expect(json.status).toBe(0);

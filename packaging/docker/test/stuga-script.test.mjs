@@ -378,16 +378,19 @@ function stack({ pin, containers, served, list = listing(), manifests = {}, pres
     STUGA_READY_QUIET_SECONDS: "4",
     STUGA_READY_MAX_SECONDS: "4",
   };
-  return {
+  const s = {
     dir,
-    run: (...args) => {
-      const r = spawnSync("bash", ["./stuga", ...args], { cwd: dir, env, encoding: "utf8", input: "" });
+    run: (...args) => s.answering("", ...args),
+    /** ./stuga with `input` piped in. */
+    answering: (input, ...args) => {
+      const r = spawnSync("bash", ["./stuga", ...args], { cwd: dir, env, encoding: "utf8", input });
       return { code: r.status, out: r.stdout + r.stderr };
     },
     state: () => JSON.parse(readFileSync(statePath, "utf8")),
     calls: () => readFileSync(calls, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)),
     read: (name) => readFileSync(join(dir, name), "utf8"),
   };
+  return s;
 }
 
 /** The compose subcommand of a logged call, after its -f files. */
@@ -446,6 +449,30 @@ describe("restore", () => {
     assert.ok(!verify.args.includes("--going-back"));
     assert.equal(s.read("compose.rollback.yml"), rollback("9.1.0"));
     assert.match(r.out, /compose\.yml names stuga 9\.0\.0; get matching files with: \.\/stuga upgrade 9\.1\.0/);
+  });
+
+  test("without --yes it asks for the backup's name, saying the current data is kept", () => {
+    const s = stack({
+      pin: "9.0.0",
+      containers: { postgres: "9.0.0", node: "9.0.0", remote: "9.0.0" },
+      served: "9.0.0",
+      manifests: { "2026-10-03T030000Z": manifest("9.0.0", "9.0.0") },
+    });
+    let r = s.answering("yes\n", "restore", "2026-10-03T030000Z");
+    assert.equal(r.code, 2, r.out);
+    assert.ok(
+      r.out.includes(
+        "This REPLACES the current database and data directory.\n" +
+          "Work done since the backup is kept aside; the restore says where.\n" +
+          "Type the backup name to confirm: \n",
+      ),
+      r.out,
+    );
+    assert.ok(!did(s.calls(), "stop"));
+    r = s.answering("2026-10-03T030000Z\n", "restore", "2026-10-03T030000Z");
+    assert.equal(r.code, 0, r.out);
+    // A name piped in ends the prompt's line, so what follows starts on its own.
+    assert.match(r.out, /Type the backup name to confirm: \n/);
   });
 
   test("an image that cannot be pulled stops nothing", () => {

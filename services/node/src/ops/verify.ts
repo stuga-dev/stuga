@@ -4,10 +4,11 @@
  * the dump reads back through pg_restore and the archive through tar.
  * Restorable here: the Postgres major matches this runtime and the server, the
  * schema is not newer than this runtime's, no newer release served the data,
- * and the embedding width matches the node's. Going back (--going-back), an
- * extension both hold must also be at the backup's version: an older extension
- * must never open indexes a newer one wrote. Verify only reads; a restore runs
- * all of it but the extension check first.
+ * and the embedding width matches the node's. Going back (--going-back), the
+ * backup's own release restores it, at its own schema, and an extension both
+ * hold must also be at the backup's version: an older extension must never
+ * open indexes a newer one wrote. Verify only reads; a restore runs all of it
+ * but the extension check first.
  */
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -66,9 +67,15 @@ export async function verifyIntegrity(env: BackupEnv, dir: string, signal?: Abor
 /**
  * The restorable-here half, against this runtime and (when given) the server's
  * own version. Returns notes; refuses on anything that would fail after a
- * restore had already replaced the current data.
+ * restore had already replaced the current data. Going back, the backup's own
+ * release serves it, so no note says this runtime migrates it.
  */
-export function checkCompatibility(env: BackupEnv, manifest: Manifest, serverVersionNum: number | null): string[] {
+export function checkCompatibility(
+  env: BackupEnv,
+  manifest: Manifest,
+  serverVersionNum: number | null,
+  opts: { goingBack?: boolean } = {},
+): string[] {
   const notes: string[] = [];
   const want = major(PG_MIN);
   if (manifest.postgres_version_num < PG_MIN || manifest.postgres_version_num >= PG_MAX_EXCLUSIVE) {
@@ -96,7 +103,7 @@ export function checkCompatibility(env: BackupEnv, manifest: Manifest, serverVer
         `Restore it with Stuga ${served} or newer. Nothing was changed.`,
     );
   }
-  if (manifest.schema_version < SCHEMA_VERSION) {
+  if (manifest.schema_version < SCHEMA_VERSION && !opts.goingBack) {
     notes.push(`the backup is at schema ${manifest.schema_version}; the node migrates it to schema ${SCHEMA_VERSION} when it starts`);
   }
   if (manifest.embedding_dims !== null && manifest.embedding_dims !== env.embeddingDims) {
@@ -122,7 +129,7 @@ export async function runVerify(env: BackupEnv, dir: string, opts: { goingBack?:
     .then((rows) => Number(rows[0]!.v))
     .catch(() => null)
     .finally(() => sql.end({ timeout: 5 }).catch(() => {}));
-  const notes = checkCompatibility(env, manifest, serverVersionNum);
+  const notes = checkCompatibility(env, manifest, serverVersionNum, opts);
   if (serverVersionNum === null) notes.push("the server did not answer; its major was not compared");
   if (opts.goingBack) {
     const live = await liveExtensions(env.databaseUrl);

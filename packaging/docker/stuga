@@ -699,8 +699,12 @@ cmd_restore() {
   verify_backup "$cpath"
 
   if [ "$assume_yes" = no ]; then
-    printf 'This REPLACES the current database and data directory. Type the backup name to confirm: '
+    say "This REPLACES the current database and data directory."
+    say "Work done since the backup is kept aside; the restore says where."
+    printf 'Type the backup name to confirm: '
     read -r answer || true
+    # A name typed at a terminal ends the line; one piped in does not.
+    [ -t 0 ] || say ""
     [ "$answer" = "$(basename "${src%/}")" ] || fail 2 "not confirmed — nothing has been changed"
   fi
 
@@ -1060,7 +1064,8 @@ cmd_status() {
 
 cmd_list() {
   pin_image "$(created_node_image)"
-  # Paths as this machine names them, not as the one-off container did.
+  # Paths as this machine names them, not as the one-off container did. Both streams: releases up to
+  # 0.1.15 print the listing on stderr, and an error can name a path too.
   node_cli list 2>&1 | sed -e "s#/parent/#$DATA_PARENT/#g" -e "s#/backups/#$BACKUP_DIR/#g"
 }
 

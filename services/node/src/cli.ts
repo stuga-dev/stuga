@@ -1,9 +1,11 @@
 /**
  * stuga-node serve|backup|verify|restore|list|reset-password|media-scan|archive.
  *
- * backup, verify, restore, list and archive check take --json for one JSON object on stdout; with
- * it only notes and errors go to stderr. verify --going-back also compares the version of each
- * extension the current database and the backup both hold. Operator command exit codes: 0 done,
+ * A command's answer goes to stdout, so it can be piped or redirected: as text, or with --json
+ * (backup, verify, restore, list and archive check) as one JSON object. Progress, notes and errors
+ * go to stderr. verify --going-back also compares the version of each extension the current
+ * database and the backup both hold, and leaves out that the node migrates an older schema: the
+ * backup's own release restores it. Operator command exit codes: 0 done,
  * 2 refused with nothing changed, 3 failed with nothing changed, 4 failed after a change; serve
  * exits 1 when it cannot start. Operator commands never boot a node, so none is a second writer
  * beside a running one; reset-password and media-scan refuse data a newer version served, as the
@@ -34,6 +36,7 @@ const USAGE = `usage:
   ${MEDIA_SCAN_USAGE}
   stuga-node archive check <directory> [--json]`;
 
+/** Progress, notes and errors: stderr, whatever the command answers. */
 const tell = (line: string): void => void process.stderr.write(`${line}\n`);
 
 /** A backup named by path, or by its bare name under BACKUP_DIR. */
@@ -46,7 +49,9 @@ async function confirmInteractively(name: string): Promise<boolean> {
   if (!process.stdin.isTTY) return false;
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    const answer = await rl.question(`This REPLACES the current database and data directory. Type the backup name to confirm: `);
+    tell("This REPLACES the current database and data directory.");
+    tell("Work done since the backup is kept aside; the restore says where.");
+    const answer = await rl.question("Type the backup name to confirm: ");
     return answer.trim() === name;
   } finally {
     rl.close();
@@ -101,7 +106,11 @@ async function run(argv: string[]): Promise<ExitCode> {
   const args = rest.filter((a) => !a.startsWith("--"));
   const flags = new Set(rest.filter((a) => a.startsWith("--")));
   const json = flags.has("--json");
+  // The answer as text; with --json, `out` gives it instead.
   const say = (line: string): void => {
+    if (!json) process.stdout.write(`${line}\n`);
+  };
+  const progress = (line: string): void => {
     if (!json) tell(line);
   };
   const out = (value: unknown): void => {
@@ -127,7 +136,7 @@ async function run(argv: string[]): Promise<ExitCode> {
     const env = parseBackupEnv(process.env);
 
     if (command === "backup") {
-      say(`Backing up database and ${env.dataDir} to ${env.backupDir}`);
+      progress(`Backing up database and ${env.dataDir} to ${env.backupDir}`);
       const result = await interruptible((signal) => runBackup(env, { signal }));
       say(`Backup complete: ${result.path}`);
       for (const name of result.pruned) tell(`  removed old backup ${name}`);

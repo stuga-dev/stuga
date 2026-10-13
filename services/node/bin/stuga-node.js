@@ -5,6 +5,10 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+// The node keeps nothing in web storage. Node's own localStorage warns on its first read without
+// --localstorage-file, and lib0 (under yjs) reads it as it loads: gone, it finds none and nothing warns.
+delete globalThis.localStorage;
+
 const bundle = new URL("../dist/stuga-node.mjs", import.meta.url);
 if (existsSync(bundle)) {
   // Stack traces name the source files, through the map beside the bundle.

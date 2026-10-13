@@ -25,7 +25,8 @@
 #
 # Files the node can reach are never trusted: a request must be a plain file and is read for one
 # short line; status is written into a directory only root can write. A request that changes while
-# this runs is taken in another round, and a pending `off` goes before any long step.
+# this runs is taken in another round, and a pending `off` goes before any long step. Each status
+# written is also one line of launchd's log for this job, helper.log.
 set -euo pipefail
 # $0 is this script's path: stuga-job runs it with /bin/bash.
 # shellcheck source=release.sh
@@ -50,17 +51,19 @@ main() {
 
   local round seen
   for round in 1 2 3 4 5 6 7 8 9 10; do
-    seen="$(requests_seen)"
+    seen="$(remote_seen)"
     upgrade
     remote
-    [ "$(requests_seen)" != "$seen" ] || break
-    echo "round $round: the requests changed meanwhile; again"
+    # upgrade takes its request as it reads it, so one there now came meanwhile.
+    if [ ! -e "$requests/upgrade" ] && [ ! -L "$requests/upgrade" ] && [ "$(remote_seen)" = "$seen" ]; then break; fi
+    [ "$round" -lt 10 ] || break
+    log "a request came while this ran; taking it now"
   done
 }
 
-# requests_seen: the two requests' names, inodes, times and sizes. The node renames each into place.
-requests_seen() {
-  stat -f '%N %i %Fm %z' "$requests/upgrade" "$requests/remote" 2> /dev/null || true
+# remote_seen: the remote request's inode, time and size. The node renames it into place.
+remote_seen() {
+  stat -f '%i %Fm %z' "$requests/remote" 2> /dev/null || true
 }
 
 # write_status <file> <json>: a new file renamed into place, so nothing the node made is written through.
@@ -78,6 +81,9 @@ json_text() {
 }
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# log <text>: one line of helper.log, with the time, as short as a status message.
+log() { printf '%s %s\n' "$(now)" "$(json_text "$*")"; }
 
 # ---- upgrade
 
@@ -149,6 +155,10 @@ upgrade() {
 upgrade_status() {
   write_status upgrade.json "$(printf '{"version":"%s","state":"%s","message":"%s","at":"%s"}' \
     "$wanted" "$1" "$(json_text "$2")" "$(now)")"
+  case "$1" in
+    failed | refused) log "did not install${wanted:+ Stuga $wanted}: $2" ;;
+    *) log "$2" ;;
+  esac
 }
 
 # ---- remote access
@@ -188,6 +198,7 @@ remote_status() {
   if [ -n "${4:-}" ]; then config="\"$4\""; fi
   write_status remote.json "$(printf '{"state":"%s","message":"%s","at":"%s","connector_sha":%s,"config_sha":%s}' \
     "$1" "$(json_text "$2")" "$(now)" "$connector" "$config")"
+  log "remote access ($1): $2"
 }
 
 # job_field <regex>: the first top-level `<name> = <value>` of the job's launchctl print, or nothing.

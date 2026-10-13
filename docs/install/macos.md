@@ -122,7 +122,7 @@ menu says `Stuga is older than its data`.
 | `/Library/Application Support/Stuga/remote/` | What the node shares with the connector (`STUGA_REMOTE_DIR`): its settings, its credential and the node's socket. |
 | `/Library/Application Support/Stuga/connector/` | The connector this version names, in a directory named by its checksum; `current` points at it. Only `_stugaremote` can run it. |
 | `/Library/LaunchDaemons/dev.stuga.{postgres,node,helper,remote}.plist` | The services' definitions. `helper` installs a newer package, and starts and stops the connector, when the node asks. `remote` runs the connector, and is off until remote access is turned on. |
-| `/Library/Logs/Stuga/` | The node's log, one file per weekday, and the services' own; the connector's are in `remote/`. |
+| `/Library/Logs/Stuga/` | The node's log, one file per weekday, and the services' own; the connector's are in `remote/`. `helper.log` has a line for each step of an update the helper installs, and for each change to remote access. |
 
 To set another environment variable from [Configuration](../configuration.md), add it to
 `/Library/LaunchDaemons/dev.stuga.node.plist` and reload the node:

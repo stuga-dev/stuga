@@ -98,7 +98,7 @@ interface NodeServices {
   internal: InternalApi;
   /** A pooled Postgres client. Shared and long-lived; callers never end it. */
   sql: Sql;
-  /** The version the boot before this one recorded, or null on the first boot. */
+  /** The build that served the data before this one: null when this one did, or no node has. */
   previousVersion: string | null;
   /** Chosen by the first boot against this database and kept for good; the name can change, this cannot. */
   nodeId: string;
