@@ -389,6 +389,12 @@ export const NodeSettings = {
       method: "POST",
       body: JSON.stringify({ which, provider, base_url: baseUrl || undefined, api_key: apiKey || undefined }),
     }),
+  /** The System One models a ranking service lists; with no key typed, the saved ranker's key at its own address. */
+  discoverRerankModels: (baseUrl: string, apiKey?: string) =>
+    api<{ models: string[]; message?: string }>("/api/node/ai-settings/models", {
+      method: "POST",
+      body: JSON.stringify({ which: "rerank", base_url: baseUrl, api_key: apiKey || undefined }),
+    }),
 
   admins: () => api<{ admins: NodeAdmin[] }>("/api/node/admins"),
   addAdmin: (username: string) =>

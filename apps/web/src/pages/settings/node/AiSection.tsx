@@ -39,6 +39,7 @@ import {
   calibrationBanner,
   chatInputWith,
   endpointLabel,
+  isServiceAddress,
   modelIds,
   modelOptions,
   presetFor,
@@ -59,7 +60,7 @@ import {
   type Form,
   type RerankForm,
 } from "./ai-form";
-import { ConnectForm, KeyLink, type Connected } from "./ConnectForm";
+import { ConnectForm, KEY_CHECK_DELAY_MS, type Connected } from "./ConnectForm";
 import { SectionStatusBanners, useSectionStatus } from "./status";
 import { StoredSecret } from "./StoredSecret";
 
@@ -209,6 +210,58 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   const setSearchForm = (f: Form) => setForm(asksKey(f.embedProvider, f.embedBaseUrl, settings.embed.api_key_set) ? f : { ...f, embedKey: "" });
   const [rerankKeyCleared, setRerankKeyCleared] = useState(false);
   const rerankSetUp = !!settings.rerank.model;
+  /**
+   * What the ranking service listed, and for which address and key; `failed` when it did not answer
+   * with a list, `refused` when it wanted a key it was not given.
+   */
+  const [rerankListed, setRerankListed] = useState<{ for: string; models: string[]; failed: boolean; refused: boolean } | null>(null);
+  /** The address last left or entered in the address field: an address of one's own is asked only then, never half-typed. */
+  const [rerankAddressDone, setRerankAddressDone] = useState("");
+  const rerankAddress = rerankDraft?.baseUrl.trim() ?? "";
+  const rerankKey = rerankDraft?.key.trim() ?? "";
+  const rerankSignature = `${rerankAddress}|${rerankKey}`;
+  const rerankListing = rerankListed?.for === rerankSignature ? rerankListed : null;
+  const rerankAsks = isServiceAddress(rerankAddress) && (rerankPresetFor(rerankAddress) !== "custom" || rerankAddressDone === rerankAddress);
+
+  /** Asks the service at this render's address with this render's key; the answer is for that pair only. */
+  const listRerankModels = () => {
+    const signature = rerankSignature;
+    return NodeApi.discoverRerankModels(rerankAddress, rerankKey || undefined)
+      .then((r) => r, () => ({ models: [] as string[], message: "unreachable" }))
+      .then((r) => {
+        const failed = r.models.length === 0 && !!r.message;
+        return { for: signature, models: r.models, failed, refused: failed && /\b(401|403)\b/.test(r.message ?? "") };
+      });
+  };
+
+  // The service's models are listed when the form opens, when a service is picked or an address entered, and once typing a key pauses.
+  useEffect(() => {
+    if (!rerankDraft || !rerankAsks || rerankListing) return;
+    let current = true;
+    const timer = window.setTimeout(
+      () =>
+        void listRerankModels().then((listed) => {
+          if (current) setRerankListed(listed);
+        }),
+      rerankKey ? KEY_CHECK_DELAY_MS : 0,
+    );
+    return () => {
+      current = false;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lists once per address and key, reading this render's draft
+  }, [rerankDraft !== null, rerankAsks, rerankSignature, rerankListing === null]);
+
+  // A service that did not list is asked again when the page is back in front. What it said before stays
+  // until it answers, so a model being typed keeps its field.
+  useEffect(() => {
+    if (!rerankListing?.failed) return;
+    const again = () =>
+      void listRerankModels().then((listed) => setRerankListed((shown) => (shown?.for === listed.for ? listed : shown)));
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- asks for this render's address and key
+  }, [rerankListing]);
 
   // Bumped by every save, so a poll that set out before it cannot apply older settings.
   const savedAt = useRef(0);
@@ -406,8 +459,11 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
 
   function editRerank() {
     clearOutcome();
-    setRerankDraft(rerankFormOf(settings));
+    const form = rerankFormOf(settings);
+    setRerankDraft(form);
     setRerankKeyCleared(false);
+    setRerankListed(null);
+    setRerankAddressDone(form.baseUrl.trim());
   }
 
   const saveRerank = () =>
@@ -435,8 +491,6 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   /** What reranks passages while no reranker is set up. */
   const chatReranks = settings.chat.running;
   const rerankLabel = (baseUrl: string) => RERANK_PRESETS.find((p) => p.value === rerankPresetFor(baseUrl) && p.value !== "custom")?.label ?? baseUrl;
-  const rerankPreset = rerankDraft ? RERANK_PRESETS.find((p) => p.value === rerankPresetFor(rerankDraft.baseUrl)) : undefined;
-  const rerankKeyUrl = rerankPreset?.keyUrl ? { url: rerankPreset.keyUrl, label: rerankPreset.label } : null;
 
   // ---- the page ----
 
@@ -846,11 +900,35 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                   removeLabel={t("node.ai.removeKey")}
                   removedNote={t("node.ai.keyRemovedOnSave")}
                 />
-                {rerankKeyUrl && <KeyLink url={rerankKeyUrl.url} label={t("nodeAccess.connect.getKey", { service: rerankKeyUrl.label })} />}
               </VStack>
-              <TextInput label={t("node.ai.model")} value={rerankDraft.model} onChange={(v: string) => setRerankDraft({ ...rerankDraft, model: v })} />
+              {rerankAsks && (!rerankListing || rerankListing.models.length > 0 || (rerankListing.refused && !rerankKey)) ? (
+                <Selector
+                  label={t("node.ai.model")}
+                  description={rerankListing?.refused ? t("nodeAccess.connect.enterKey") : undefined}
+                  placeholder={rerankListing ? t("nodeAccess.connect.chooseModel") : t("nodeAccess.connect.listingModels")}
+                  options={modelOptions(rerankListing?.models ?? [], rerankDraft.model)}
+                  value={rerankDraft.model}
+                  hasSearch
+                  isDisabled={!rerankListing || rerankListing.refused}
+                  onChange={(v: string) => setRerankDraft({ ...rerankDraft, model: v })}
+                />
+              ) : (
+                // Nothing listed, or nowhere to ask yet: the id can still be typed.
+                <TextInput
+                  label={t("node.ai.model")}
+                  value={rerankDraft.model}
+                  description={rerankListing && !rerankListing.failed ? t("nodeAccess.connect.noModelsListed") : undefined}
+                  onChange={(v: string) => setRerankDraft({ ...rerankDraft, model: v })}
+                />
+              )}
               <Collapsible trigger={t("node.ai.advanced")} defaultIsOpen={rerankPresetFor(rerankDraft.baseUrl) === "custom"}>
-                <TextInput label={t("node.ai.baseUrl")} value={rerankDraft.baseUrl} onChange={(v: string) => setRerankDraft({ ...rerankDraft, baseUrl: v })} />
+                <TextInput
+                  label={t("node.ai.baseUrl")}
+                  value={rerankDraft.baseUrl}
+                  onChange={(v: string) => setRerankDraft({ ...rerankDraft, baseUrl: v })}
+                  onBlur={() => setRerankAddressDone(rerankAddress)}
+                  onEnter={() => setRerankAddressDone(rerankAddress)}
+                />
               </Collapsible>
               <HStack gap={2}>
                 <Button label={t("common.save")} variant="primary" size="sm" isLoading={busy === "save-rerank"} onClick={() => void saveRerank()} />

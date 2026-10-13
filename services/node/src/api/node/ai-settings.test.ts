@@ -453,6 +453,31 @@ describe("each half's switch", () => {
       expect((await get()).rerank).toMatchObject({ enabled: false, running: false, model: "jev-latest", api_key_set: true });
     });
 
+    it("lists its models with the saved key only at the saved address", async () => {
+      systemOne();
+      await put(admin(), { rerank: { ...JEV, api_key: "ts-key" } });
+      const auth: Array<string | null> = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          auth.push(new Headers(init?.headers).get("authorization"));
+          expect(url).toMatch(/\/models\?output_modalities=decisions$/);
+          return new Response(JSON.stringify({ models: [{ name: "jev-latest" }, { name: "jev-preview" }] }), { status: 200 });
+        }),
+      );
+      const list = async (body: unknown) =>
+        (await routeWorkspaceRequest(
+          admin(),
+          new Request("http://node.test/api/node/ai-settings/models", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+        ))!;
+      const saved = await list({ which: "rerank", base_url: JEV.base_url });
+      expect(await saved.json()).toEqual({ models: ["jev-latest", "jev-preview"] });
+      await list({ which: "rerank", base_url: "https://elsewhere.test/v1" });
+      await list({ which: "rerank", base_url: "https://elsewhere.test/v1", api_key: "typed" });
+      expect(auth).toEqual(["Bearer ts-key", null, "Bearer typed"]);
+      expect((await list({ which: "rerank" })).status).toBe(400);
+    });
+
     it("is removed by clearing its model, which forgets its key", async () => {
       systemOne();
       await put(admin(), { rerank: { ...JEV, api_key: "ts-key" } });

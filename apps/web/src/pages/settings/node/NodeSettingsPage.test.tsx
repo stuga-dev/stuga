@@ -15,6 +15,7 @@ const nodeApi = vi.hoisted(() => ({
   testAi: vi.fn(),
   calibrateAi: vi.fn(),
   discoverModels: vi.fn(),
+  discoverRerankModels: vi.fn(),
   settings: vi.fn(),
   saveSettings: vi.fn(),
   admins: vi.fn(),
@@ -355,6 +356,7 @@ beforeEach(() => {
   setAuthConfigForTest(null);
   me.whoami.mockResolvedValue({ node_admin: true });
   nodeApi.ai.mockResolvedValue(AI);
+  nodeApi.discoverRerankModels.mockResolvedValue({ models: ["jev-preview", "jev-latest"] });
   nodeApi.settings.mockResolvedValue(OPS);
   nodeApi.admins.mockResolvedValue({ admins: [] });
   nodeApi.version.mockResolvedValue(SOURCE);
@@ -446,12 +448,11 @@ describe("NodeSettingsPage", () => {
     expect(host.textContent).not.toContain("didn’t accept that key");
   });
 
-  it("links to where each service hands out keys", async () => {
+  it("asks for the key without sending anyone to the service's key page", async () => {
     await renderWith(FRESH);
     await clickNth("Set up", 0);
-    const link = [...host.querySelectorAll("a")].find((a) => a.textContent?.startsWith("Get a key from OpenAI"));
-    expect(link?.getAttribute("href")).toBe("https://platform.openai.com/api-keys");
-    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(inputs("API key")).toHaveLength(1);
+    expect(host.textContent).not.toContain("Get a key");
   });
 
   it("answers an address that is not one in plain words, without asking the service", async () => {
@@ -695,6 +696,96 @@ describe("NodeSettingsPage", () => {
     await click("Save");
     await settle();
     expect(nodeApi.saveAi).toHaveBeenCalledWith({ rerank: { base_url: "https://api.typesafe.ai/v1", model: "jev-latest", api_key: "ts-key" } });
+  });
+
+  it("lists the ranking service's models once its key is typed, and saves the one chosen", async () => {
+    nodeApi.discoverRerankModels.mockResolvedValueOnce({ models: [], message: "models 403: Must supply an API key" });
+    await renderWith(AI);
+    savedAs(AI);
+    await clickNth("Set up", 1);
+    await settle();
+    expect(nodeApi.discoverRerankModels).toHaveBeenCalledWith("https://api.typesafe.ai/v1", undefined);
+    expect(host.textContent).toContain("Enter the key to list models");
+
+    await typeInto(inputs("API key")[0], "ts-key");
+    await act(async () => new Promise((r) => setTimeout(r, 700)));
+    await settle();
+    expect(nodeApi.discoverRerankModels).toHaveBeenLastCalledWith("https://api.typesafe.ai/v1", "ts-key");
+    await choose("Model", "jev-preview");
+    await click("Save");
+    await settle();
+    expect(nodeApi.saveAi).toHaveBeenCalledWith({ rerank: { base_url: "https://api.typesafe.ai/v1", model: "jev-preview", api_key: "ts-key" } });
+  });
+
+  it("offers every decision model OpenRouter lists", async () => {
+    nodeApi.discoverRerankModels.mockResolvedValue({ models: ["microsoft/microsoft-decision-1", "~typesafe/jev-latest"] });
+    await renderWith(AI);
+    savedAs(AI);
+    await clickNth("Set up", 1);
+    await choose("Service", "OpenRouter");
+    await settle();
+    expect(nodeApi.discoverRerankModels).toHaveBeenLastCalledWith("https://openrouter.ai/api/v1", undefined);
+    await choose("Model", "microsoft/microsoft-decision-1");
+    await typeInto(inputs("API key")[0], "or-key");
+    await click("Save");
+    await settle();
+    expect(nodeApi.saveAi).toHaveBeenCalledWith({ rerank: { base_url: "https://openrouter.ai/api/v1", model: "microsoft/microsoft-decision-1", api_key: "or-key" } });
+  });
+
+  it("asks a ranker at an address of one's own only once the address is entered, never half-typed", async () => {
+    await renderWith(AI);
+    await clickNth("Set up", 1);
+    await settle();
+    nodeApi.discoverRerankModels.mockClear();
+    await choose("Service", "Something else…");
+    if (inputs("Base URL").length === 0) await click("Advanced");
+    await typeInto(inputs("API key")[0], "rank-key");
+    await typeInto(inputs("Base URL")[0], "https://rank.example.co");
+    await act(async () => new Promise((r) => setTimeout(r, 700)));
+    await settle();
+    expect(nodeApi.discoverRerankModels).not.toHaveBeenCalled();
+    expect(inputs("Model")).toHaveLength(1);
+
+    await typeInto(inputs("Base URL")[0], "https://rank.example.com/v1");
+    await pressEnter(inputs("Base URL")[0]);
+    await act(async () => new Promise((r) => setTimeout(r, 700)));
+    await settle();
+    expect(nodeApi.discoverRerankModels).toHaveBeenCalledTimes(1);
+    expect(nodeApi.discoverRerankModels).toHaveBeenCalledWith("https://rank.example.com/v1", "rank-key");
+  });
+
+  it("lets a ranker's model be typed where the service lists none", async () => {
+    nodeApi.discoverRerankModels.mockResolvedValue({ models: [] });
+    await renderWith(AI);
+    savedAs(AI);
+    await clickNth("Set up", 1);
+    await settle();
+    expect(host.textContent).toContain("The service lists no models. Enter one.");
+    await typeInto(inputs("Model")[0], "my-ranker");
+    await click("Save");
+    await settle();
+    expect(nodeApi.saveAi).toHaveBeenCalledWith({ rerank: { base_url: "https://api.typesafe.ai/v1", model: "my-ranker" } });
+  });
+
+  it("lets a ranker's model be typed where listing fails for another reason than a key, and asks again on focus", async () => {
+    nodeApi.discoverRerankModels.mockResolvedValue({ models: [], message: "models 404: Not Found" });
+    await renderWith(AI);
+    savedAs(AI);
+    await clickNth("Set up", 1);
+    await settle();
+    expect(host.textContent).not.toContain("Enter the key to list models");
+    expect(inputs("Model")).toHaveLength(1);
+
+    // Back in front, it is asked again, and the typed field stays until the answer comes.
+    let answer!: (r: { models: string[] }) => void;
+    nodeApi.discoverRerankModels.mockReturnValue(new Promise((r) => (answer = r)));
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    await settle();
+    expect(nodeApi.discoverRerankModels).toHaveBeenCalledTimes(2);
+    expect(inputs("Model")).toHaveLength(1);
+    await act(async () => answer({ models: ["jev-latest"] }));
+    await settle();
+    expect(inputs("Model")).toHaveLength(0);
   });
 
   it("removes reranking only after asking, forgetting its key", async () => {

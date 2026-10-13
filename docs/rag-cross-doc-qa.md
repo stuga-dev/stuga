@@ -96,8 +96,8 @@ document the asker cannot open never reaches the model.
 
 `retrieveAndRerank` (`services/node/src/retrieval/retrieve.ts`) is the pipeline every surface uses:
 embed the question, fetch 24 candidates with `askDocs`, have a judge score every candidate in one
-request, and keep the best. The judge is the **Reranking** model when one is set up (TypeSafe's Jev,
-answering one yes/no question per candidate), otherwise the chat model while chat is on (a 0–10 score
+request, and keep the best. The judge is the **Reranking** model when one is set up (a System One decision
+model such as TypeSafe's Jev, answering one yes/no question per candidate), otherwise the chat model while chat is on (a 0–10 score
 per candidate, asked with reasoning off, or at the model's lowest level where it cannot be switched
 off); with neither, passages keep their fusion order. A judge reads each candidate's title, heading
 path and text, and of a passage longer than 1,200 characters the 1,200 that hold the most of the

@@ -56,8 +56,8 @@ function embedHint(preset: Preset, width: number): string {
   return t("nodeAccess.connect.pullEmbedModel", { model: pull });
 }
 
-/** Where to get what a service needs: its key page, or Ollama itself. */
-export function KeyLink({ url, label }: { url: string; label: string }) {
+/** Ollama's own page, for a node that has none running. */
+function KeyLink({ url, label }: { url: string; label: string }) {
   return (
     <Link href={url} isExternalLink type="supporting">
       {label}
@@ -69,7 +69,7 @@ export function KeyLink({ url, label }: { url: string; label: string }) {
 const OLLAMA_DOWNLOAD = "https://ollama.com/download";
 
 /** How long typing in the key pauses before the key is tried: a pasted key is checked at once, without leaving the field. */
-const KEY_CHECK_DELAY_MS = 600;
+export const KEY_CHECK_DELAY_MS = 600;
 
 /** An address's host, for naming a service that has no name of its own; "" when it does not parse. */
 function hostOf(url: string): string {
@@ -245,20 +245,17 @@ export function ConnectForm({
       {problem && problem.field === null && <Banner status="error" title={t("nodeAccess.connect.notConnected")} description={problem.message} />}
       <Selector label={t("nodeAccess.connect.service")} options={presets.map((o) => ({ value: o.value, label: o.label }))} value={service} onChange={pick} />
       {!isLocal && (
-        <VStack gap={1}>
-          <TextInput
-            label={t("nodeAccess.connect.apiKey")}
-            type="password"
-            value={key}
-            isOptional={!needsKey}
-            description={inheritsKey ? t("nodeAccess.connect.inheritsKey") : undefined}
-            status={fieldStatus("key")}
-            onChange={setKey}
-            onBlur={() => void load()}
-            onEnter={onEnter}
-          />
-          {preset.keyUrl && <KeyLink url={preset.keyUrl} label={t("nodeAccess.connect.getKey", { service: preset.label })} />}
-        </VStack>
+        <TextInput
+          label={t("nodeAccess.connect.apiKey")}
+          type="password"
+          value={key}
+          isOptional={!needsKey}
+          description={inheritsKey ? t("nodeAccess.connect.inheritsKey") : undefined}
+          status={fieldStatus("key")}
+          onChange={setKey}
+          onBlur={() => void load()}
+          onEnter={onEnter}
+        />
       )}
       {asksAddress && (
         <VStack gap={1}>

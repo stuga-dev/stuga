@@ -8,6 +8,7 @@ import {
   calibrationKey,
   embed,
   listModels,
+  listSystemOneModels,
   probeChat,
   probeSystemOne,
 } from "@stuga/ai";
@@ -626,6 +627,7 @@ export async function testAiSettings({ ctx, req }: WorkspaceCall): Promise<Respo
 export async function listProviderModels({ ctx, req }: WorkspaceCall): Promise<Response> {
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) return error(400, "expected a JSON object");
+  if (body.which === "rerank") return listRankerModels(ctx, body);
   const provider = typeof body.provider === "string" ? body.provider : "";
   if (!PROVIDERS.has(provider as AiProvider)) return error(400, `unknown provider "${provider}"`);
   const baseUrl = cleanBaseUrl(body.base_url);
@@ -651,6 +653,21 @@ export async function listProviderModels({ ctx, req }: WorkspaceCall): Promise<R
     return json({ models });
   } catch (e) {
     // Not every OpenAI-compatible server lists models; the id can still be typed.
+    return json({ models: [], message: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+/** The System One models a ranking service offers. The saved key goes only to the saved ranker's own address. */
+async function listRankerModels(ctx: Ctx, body: Record<string, unknown>): Promise<Response> {
+  const live = ctx.env.aiSettings.current();
+  const baseUrl = cleanBaseUrl(body.base_url);
+  if (!baseUrl) return error(400, "base_url must be an absolute http(s) URL");
+  const typed = typeof body.api_key === "string" ? body.api_key.trim() : "";
+  const key = typed || (baseUrl === live.rerank.baseUrl ? live.rerank.apiKey : undefined);
+  try {
+    return json({ models: await listSystemOneModels({ baseUrl, apiKey: key }) });
+  } catch (e) {
+    // A ranker served from elsewhere may list nothing; the id can still be typed.
     return json({ models: [], message: e instanceof Error ? e.message : String(e) });
   }
 }

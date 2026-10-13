@@ -2115,7 +2115,6 @@
   "nodeAccess.connect.enterAddress": "b97c01e3a0cd",
   "nodeAccess.connect.enterKey": "c1a1f3ae8360",
   "nodeAccess.connect.failed": "b73a53653fd5",
-  "nodeAccess.connect.getKey": "ada0ebdf29bf",
   "nodeAccess.connect.getOllama": "e51513095152",
   "nodeAccess.connect.inheritsKey": "3fd2196a111e",
   "nodeAccess.connect.keyRefused": "bdcd69ead8d2",

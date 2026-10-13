@@ -12,6 +12,8 @@ Releases before 0.1.7 were previews. Their notes are on their
 ### Changed
 
 - A release carries the Mac package as `Stuga-<version>.pkg` only, and [stuga.dev/download/mac](https://stuga.dev/download/mac) always downloads the newest. Links to `releases/latest/download/Stuga.pkg` stop working once this release is out.
+- **Reranking** lists the models the service offers to choose from: Jev's versions on TypeSafe, and every decision model on OpenRouter, such as Microsoft-Decision-1, Perplexity's decider and Liquid's d1.
+- AI setup forms no longer link to each service's key page.
 
 ## [0.1.15] - 2026-10-12
 

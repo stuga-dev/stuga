@@ -100,7 +100,6 @@
   "connect.notConnected": "未连接",
   "connect.service": "服务",
   "connect.apiKey": "API 密钥",
-  "connect.getKey": "从 {service} 获取密钥",
   "connect.inheritsKey": "留空时使用聊天服务商的密钥。",
   "connect.ollamaAddress": "Ollama 地址",
   "connect.ollamaNotRunning": "Ollama 在此地址没有响应。启动它，然后回到这里。",

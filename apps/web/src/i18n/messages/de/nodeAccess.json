@@ -100,7 +100,6 @@
   "connect.notConnected": "Nicht verbunden",
   "connect.service": "Dienst",
   "connect.apiKey": "API-Schlüssel",
-  "connect.getKey": "Schlüssel von {service} holen",
   "connect.inheritsKey": "Verwendet den Schlüssel des Chat-Anbieters, wenn leer.",
   "connect.ollamaAddress": "Ollama-Adresse",
   "connect.ollamaNotRunning": "Ollama antwortet unter dieser Adresse nicht. Starte es und komm dann hierher zurück.",

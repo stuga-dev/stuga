@@ -1,7 +1,8 @@
 /**
  * TypeSafe's System One protocol: a model answers typed questions about a
- * state, here Jev judging passages. TypeSafe serves it, and so does OpenRouter
- * at its own base URL. The published Pi has no classifier client yet.
+ * state, here a decision model judging passages. TypeSafe serves Jev; OpenRouter
+ * serves Jev and other vendors' decision models at its own base URL. The
+ * published Pi has no classifier client yet.
  */
 import type { AiConfig } from "../config.js";
 import { fetchWithRetry, joinUrl, jsonHeaders } from "../transport.js";

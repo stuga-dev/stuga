@@ -33,8 +33,6 @@ export interface Preset {
   provider: string;
   baseUrl: string;
   embeddings: boolean;
-  /** The vendor's page that issues API keys. */
-  keyUrl?: string;
   /**
    * The model to mark Recommended in each half, the first listed one that matches: a list comes
    * newest first, so the pattern names a family and the newest of it wins.
@@ -45,21 +43,21 @@ export interface Preset {
 /** The protocol entries take the node's own defaults, so a packaged node's Ollama address shows as the preset. */
 export function presetsFor(base: BaseUrls): Preset[] {
   return [
-    { value: "openai", label: "OpenAI", provider: "openai", baseUrl: base.openai ?? "", embeddings: true, keyUrl: "https://platform.openai.com/api-keys", recommends: { chat: /^gpt-[\d.]+-mini$/, embed: /^text-embedding-3-small$/ } }, // i18n-exempt: a vendor's name
-    { value: "anthropic", label: "Anthropic (Claude)", provider: "anthropic", baseUrl: base.anthropic ?? "", embeddings: false, keyUrl: "https://console.anthropic.com/settings/keys", recommends: { chat: /^claude-sonnet-\d/ } }, // i18n-exempt: a vendor's name
-    { value: "gemini", label: "Google Gemini", provider: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", embeddings: true, keyUrl: "https://aistudio.google.com/apikey", recommends: { chat: /^(models\/)?gemini-[\d.]+-flash$/ } }, // i18n-exempt: a vendor's name
-    { value: "cerebras", label: "Cerebras", provider: "openai", baseUrl: "https://api.cerebras.ai/v1", embeddings: false, keyUrl: "https://cloud.cerebras.ai" }, // i18n-exempt: a vendor's name
-    { value: "deepseek", label: "DeepSeek", provider: "openai", baseUrl: "https://api.deepseek.com/v1", embeddings: false, keyUrl: "https://platform.deepseek.com/api_keys", recommends: { chat: /^deepseek-chat$/ } }, // i18n-exempt: a vendor's name
-    { value: "fireworks", label: "Fireworks", provider: "openai", baseUrl: "https://api.fireworks.ai/inference/v1", embeddings: true, keyUrl: "https://fireworks.ai/account/api-keys" }, // i18n-exempt: a vendor's name
-    { value: "groq", label: "Groq", provider: "openai", baseUrl: "https://api.groq.com/openai/v1", embeddings: false, keyUrl: "https://console.groq.com/keys" }, // i18n-exempt: a vendor's name
-    { value: "minimax", label: "MiniMax", provider: "anthropic", baseUrl: "https://api.minimax.io/anthropic", embeddings: false, keyUrl: "https://platform.minimax.io" }, // i18n-exempt: a vendor's name
-    { value: "mistral", label: "Mistral", provider: "openai", baseUrl: "https://api.mistral.ai/v1", embeddings: true, keyUrl: "https://console.mistral.ai/api-keys", recommends: { chat: /^mistral-medium-latest$/, embed: /^mistral-embed$/ } }, // i18n-exempt: a vendor's name
-    { value: "moonshot", label: "Moonshot (Kimi)", provider: "openai", baseUrl: "https://api.moonshot.ai/v1", embeddings: false, keyUrl: "https://platform.moonshot.ai/console/api-keys" }, // i18n-exempt: a vendor's name
-    { value: "openrouter", label: "OpenRouter", provider: "openai", baseUrl: "https://openrouter.ai/api/v1", embeddings: false, keyUrl: "https://openrouter.ai/keys" }, // i18n-exempt: a vendor's name
-    { value: "qwen", label: "Qwen (Alibaba Cloud)", provider: "openai", baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", embeddings: true, keyUrl: "https://modelstudio.console.alibabacloud.com" }, // i18n-exempt: a vendor's name
-    { value: "together", label: "Together", provider: "openai", baseUrl: "https://api.together.ai/v1", embeddings: true, keyUrl: "https://api.together.ai/settings/api-keys" }, // i18n-exempt: a vendor's name
-    { value: "xai", label: "xAI (Grok)", provider: "openai", baseUrl: "https://api.x.ai/v1", embeddings: false, keyUrl: "https://console.x.ai" }, // i18n-exempt: a vendor's name
-    { value: "zai", label: "Z.ai (GLM)", provider: "openai", baseUrl: "https://api.z.ai/api/paas/v4", embeddings: false, keyUrl: "https://z.ai/manage-apikey/apikey-list" }, // i18n-exempt: a vendor's name
+    { value: "openai", label: "OpenAI", provider: "openai", baseUrl: base.openai ?? "", embeddings: true, recommends: { chat: /^gpt-[\d.]+-mini$/, embed: /^text-embedding-3-small$/ } }, // i18n-exempt: a vendor's name
+    { value: "anthropic", label: "Anthropic (Claude)", provider: "anthropic", baseUrl: base.anthropic ?? "", embeddings: false, recommends: { chat: /^claude-sonnet-\d/ } }, // i18n-exempt: a vendor's name
+    { value: "gemini", label: "Google Gemini", provider: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", embeddings: true, recommends: { chat: /^(models\/)?gemini-[\d.]+-flash$/ } }, // i18n-exempt: a vendor's name
+    { value: "cerebras", label: "Cerebras", provider: "openai", baseUrl: "https://api.cerebras.ai/v1", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "deepseek", label: "DeepSeek", provider: "openai", baseUrl: "https://api.deepseek.com/v1", embeddings: false, recommends: { chat: /^deepseek-chat$/ } }, // i18n-exempt: a vendor's name
+    { value: "fireworks", label: "Fireworks", provider: "openai", baseUrl: "https://api.fireworks.ai/inference/v1", embeddings: true }, // i18n-exempt: a vendor's name
+    { value: "groq", label: "Groq", provider: "openai", baseUrl: "https://api.groq.com/openai/v1", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "minimax", label: "MiniMax", provider: "anthropic", baseUrl: "https://api.minimax.io/anthropic", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "mistral", label: "Mistral", provider: "openai", baseUrl: "https://api.mistral.ai/v1", embeddings: true, recommends: { chat: /^mistral-medium-latest$/, embed: /^mistral-embed$/ } }, // i18n-exempt: a vendor's name
+    { value: "moonshot", label: "Moonshot (Kimi)", provider: "openai", baseUrl: "https://api.moonshot.ai/v1", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "openrouter", label: "OpenRouter", provider: "openai", baseUrl: "https://openrouter.ai/api/v1", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "qwen", label: "Qwen (Alibaba Cloud)", provider: "openai", baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", embeddings: true }, // i18n-exempt: a vendor's name
+    { value: "together", label: "Together", provider: "openai", baseUrl: "https://api.together.ai/v1", embeddings: true }, // i18n-exempt: a vendor's name
+    { value: "xai", label: "xAI (Grok)", provider: "openai", baseUrl: "https://api.x.ai/v1", embeddings: false }, // i18n-exempt: a vendor's name
+    { value: "zai", label: "Z.ai (GLM)", provider: "openai", baseUrl: "https://api.z.ai/api/paas/v4", embeddings: false }, // i18n-exempt: a vendor's name
     { value: "ollama", label: t("node.ai.preset.ollamaLocal"), provider: "ollama", baseUrl: base.ollama ?? "", embeddings: true, recommends: { embed: /^embeddinggemma(:|$)/ } },
     { value: "custom", label: t("node.ai.preset.custom"), provider: "openai", baseUrl: "", embeddings: true },
   ];
@@ -337,9 +335,9 @@ export function chatInputWith(
 }
 
 /** Where a System One ranker is served, and the model to ask for there. */
-export const RERANK_PRESETS: ReadonlyArray<{ value: string; label: string; baseUrl: string; model: string; keyUrl?: string }> = [
-  { value: "typesafe", label: "TypeSafe", baseUrl: "https://api.typesafe.ai/v1", model: "jev-latest", keyUrl: "https://typesafe.ai" }, // i18n-exempt: a vendor's name
-  { value: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "~typesafe/jev-latest", keyUrl: "https://openrouter.ai/keys" }, // i18n-exempt: a vendor's name
+export const RERANK_PRESETS: ReadonlyArray<{ value: string; label: string; baseUrl: string; model: string }> = [
+  { value: "typesafe", label: "TypeSafe", baseUrl: "https://api.typesafe.ai/v1", model: "jev-latest" }, // i18n-exempt: a vendor's name
+  { value: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "~typesafe/jev-latest" }, // i18n-exempt: a vendor's name
   { value: "custom", label: t("node.ai.preset.custom"), baseUrl: "", model: "" },
 ];
 

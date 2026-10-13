@@ -18,6 +18,30 @@ export async function listModels(ep: AiEndpoint, which: "chat" | "embed"): Promi
   return [...ids].filter((id) => (which === "embed" ? isEmbeddingModelId(id) : !isEmbeddingModelId(id) && !isNonChatModelId(id)));
 }
 
+/**
+ * The System One models a ranking service offers, newest first. TypeSafe lists
+ * `{models: [{name, release_date}]}`; OpenRouter lists every model in OpenAI's
+ * shape and narrows to decision models when asked, a filter a service without
+ * it ignores. An entry that says it answers something other than decisions is
+ * dropped all the same.
+ */
+export async function listSystemOneModels(ep: { baseUrl: string; apiKey?: string | undefined }): Promise<string[]> {
+  type Listing = {
+    models?: Array<{ name?: string; release_date?: string }>;
+    data?: Array<{ id?: string; created?: number; architecture?: { output_modalities?: unknown } }>;
+  };
+  const models = await fetchListed(joinUrl(ep.baseUrl, "/models?output_modalities=decisions"), jsonHeaders(ep.apiKey), (j: Listing) => [
+    ...(j.models ?? []).map((m) => ({ id: m.name, at: dateMs(m.release_date) })),
+    ...(j.data ?? [])
+      .filter((m) => {
+        const out = m.architecture?.output_modalities;
+        return !Array.isArray(out) || out.includes("decisions");
+      })
+      .map((m) => ({ id: m.id, at: typeof m.created === "number" && m.created > 0 ? m.created * 1000 : null })),
+  ]);
+  return [...new Set(newestFirst(models).map((m) => m.id))];
+}
+
 /** A listed model and when the service dated it, if it did. */
 interface ListedModel {
   id: string;

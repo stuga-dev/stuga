@@ -100,7 +100,6 @@
   "connect.notConnected": "연결되지 않음",
   "connect.service": "서비스",
   "connect.apiKey": "API 키",
-  "connect.getKey": "{service}에서 키 받기",
   "connect.inheritsKey": "비워 두면 채팅 제공업체의 키를 사용해요.",
   "connect.ollamaAddress": "Ollama 주소",
   "connect.ollamaNotRunning": "이 주소에서 Ollama가 응답하지 않아요. Ollama를 시작한 다음 여기로 돌아오세요.",

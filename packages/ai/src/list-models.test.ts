@@ -7,7 +7,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AiEndpoint } from "./config.js";
-import { listModels } from "./list-models.js";
+import { listModels, listSystemOneModels } from "./list-models.js";
 
 const EP: AiEndpoint = { provider: "openai", baseUrl: "https://api.example.test/v1", apiKey: "test-key" };
 
@@ -95,5 +95,49 @@ describe("listModels", () => {
     mockModelList(pulled);
     expect(await listModels(EP, "embed")).toEqual(pulled.slice(0, 5));
     expect(await listModels(EP, "chat")).toEqual(["qwen3:8b", "llama3.1:8b", "gpt-4.5-preview"]);
+  });
+});
+
+describe("listSystemOneModels", () => {
+  it("reads TypeSafe's listing, newest first, asking with the key", async () => {
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ models: [{ name: "jev-latest", release_date: "2026-09-10T18:38:01Z" }, { name: "jev-preview", release_date: "2026-09-10T18:39:06Z" }] }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchFn);
+    expect(await listSystemOneModels({ baseUrl: "https://api.typesafe.example/v1", apiKey: "k" })).toEqual(["jev-preview", "jev-latest"]);
+    const [url, init] = fetchFn.mock.calls[0]! as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.typesafe.example/v1/models?output_modalities=decisions");
+    expect((init.headers as Record<string, string>).authorization).toBe("Bearer k");
+  });
+
+  it("keeps only decision models from a listing in OpenAI's shape", async () => {
+    const decisions = { output_modalities: ["decisions"] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: "~typesafe/jev-latest", created: 1_789_689_685, architecture: decisions },
+                { id: "some/chat-model", created: 1_791_000_000, architecture: { output_modalities: ["text"] } },
+                { id: "microsoft/microsoft-decision-1", created: 1_791_584_978, architecture: decisions },
+                { id: "local-ranker" },
+              ],
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    expect(await listSystemOneModels({ baseUrl: "https://router.example/api/v1" })).toEqual(["microsoft/microsoft-decision-1", "~typesafe/jev-latest", "local-ranker"]);
+  });
+
+  it("throws the service's refusal", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("bad key", { status: 401 })));
+    await expect(listSystemOneModels({ baseUrl: "https://api.typesafe.example/v1" })).rejects.toThrow(/401/);
   });
 });

@@ -53,8 +53,8 @@ export interface AiConfig {
     searchCutoff: SearchCutoff | null;
   };
   /**
-   * A System One model that reranks retrieval: TypeSafe's Jev, direct or
-   * through OpenRouter. Without it the chat model judges, while chat is on.
+   * A System One model that reranks retrieval: TypeSafe's Jev, or any decision
+   * model OpenRouter serves. Without it the chat model judges, while chat is on.
    */
   rerank: {
     /** Set up and switched on. */
