@@ -348,6 +348,13 @@ describe("the user directory", () => {
     expect(authorLabel("imported:Ops team")).toBe("Ops team · imported");
   });
 
+  it("names a person's co-author with its person, as the audit log does", async () => {
+    const { resolveNames, authorLabel } = await directory();
+    resolveNames([`user:${BOB}`]);
+    await settle();
+    expect(authorLabel(`panel:${BOB}`)).toBe("AI co-author · Bob");
+  });
+
   it("takes the handle from rows already in hand", async () => {
     const { rememberUsers, actorHandle } = await directory();
     rememberUsers([{ alias: "u_ann", username: null, display_name: "Ann", email: "ann@example.com" }]);

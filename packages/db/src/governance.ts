@@ -1,8 +1,10 @@
 /** Agent governance: the run inbox mirror, the workspace event feed, and outbound webhooks. */
+import type { Fragment } from "postgres";
 import { RUN_IDLE_MS } from "@stuga/protocol/domain/limits";
+import { agentActorOf } from "@stuga/protocol/domain/runs";
 import type { RunIndexEntry } from "@stuga/protocol/internal/jobs";
 import type { AgentRunRow, AgentStatsRow, WebhookRow, WorkspaceEventRow } from "./types.js";
-import { daysAgo, jsonb } from "./sql.js";
+import { daysAgo, isoOrNull, jsonb } from "./sql.js";
 import type { Sql } from "./client.js";
 
 // ---- The run inbox --------------------------------------------------------------
@@ -153,13 +155,16 @@ export interface WorkspaceEventInsert {
   actor: string;
   actorKind: "human" | "agent" | "internal";
   payload?: Record<string, unknown>;
+  /** When it happened, as its sender stamped it; absent, now. */
+  at?: Date | string;
 }
 
 /** Null when the workspace is gone. */
 export async function insertWorkspaceEvent(sql: Sql, e: WorkspaceEventInsert): Promise<WorkspaceEventRow | null> {
   const rows = await sql<WorkspaceEventRow[]>`
-    INSERT INTO workspace_events (workspace_id, type, doc_id, actor, actor_kind, payload)
-    SELECT ${e.workspaceId}, ${e.type}, ${e.docId ?? null}, ${e.actor}, ${e.actorKind}, ${jsonb(sql, e.payload ?? {})}
+    INSERT INTO workspace_events (workspace_id, type, doc_id, actor, actor_kind, payload, at)
+    SELECT ${e.workspaceId}, ${e.type}, ${e.docId ?? null}, ${e.actor}, ${e.actorKind}, ${jsonb(sql, e.payload ?? {})},
+           COALESCE(${isoOrNull(e.at)}::timestamptz, now())
     WHERE EXISTS (SELECT 1 FROM workspaces WHERE workspace_id = ${e.workspaceId})
     RETURNING *`;
   return rows[0] ?? null;
@@ -173,11 +178,33 @@ export interface ListWorkspaceEventsInput {
   types?: string[];
   /** A scoped credential's folders, subtrees expanded; null = unscoped. */
   scopeFolderIds?: string[] | null;
-  /** Only events about this agent's own runs. */
+  /** Only events about this agent's own runs, and replies by others in comment threads it started. */
   agentAlias?: string;
+  /** With `agentAlias`, the caller as its events name it (`user:<alias>` for a person); absent, the agent's own actor. */
+  selfActor?: string;
   /** Only events at or after this time. */
   since?: Date;
   limit?: number;
+}
+
+/**
+ * An agent's own events: those about its runs, and replies someone else wrote in a comment thread
+ * it started. A root created after the reply was written is a later thread that reused the number;
+ * the reply's time is its event's, in milliseconds as the sender stamped it.
+ */
+function agentsOwnEvents(sql: Sql, agentAlias: string, selfActor: string): Fragment {
+  return sql`(
+    e.payload->>'agent_alias' = ${agentAlias}
+    OR (e.type = 'comment.added'
+        AND e.actor <> ${selfActor}
+        AND EXISTS (
+          SELECT 1 FROM comments c
+          WHERE c.doc_id = e.doc_id
+            AND c.num = (e.payload->>'parent_num')::bigint
+            AND c.parent_num IS NULL
+            AND c.author = ${agentAlias}
+            AND date_trunc('milliseconds', c.created_at) <= e.at))
+  )`;
 }
 
 /**
@@ -201,7 +228,7 @@ export async function listWorkspaceEvents(sql: Sql, input: ListWorkspaceEventsIn
             ${scoped ? sql`AND d.parent_id = ANY(${scoped})` : sql``})
       )
       ${input.types && input.types.length > 0 ? sql`AND e.type = ANY(${input.types})` : sql``}
-      ${input.agentAlias ? sql`AND e.payload->>'agent_alias' = ${input.agentAlias}` : sql``}
+      ${input.agentAlias ? sql`AND ${agentsOwnEvents(sql, input.agentAlias, input.selfActor ?? agentActorOf(input.agentAlias))}` : sql``}
       ${input.since ? sql`AND e.at >= ${input.since}` : sql``}
     ORDER BY e.id
     LIMIT ${limit}`;

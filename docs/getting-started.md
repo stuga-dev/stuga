@@ -98,7 +98,7 @@ the other two are in **Settings → This node → AI providers**, each set up th
 That turns it on; there is no switch to turn on afterwards. Your own agent, such as Claude
 Desktop, needs no **Built-in AI**, since it brings the model; **Semantic search** still helps
 it find text. A chat-only service such as
-Anthropic leaves search matching words until **Semantic search** is set up on another service.
+Anthropic or Amazon Bedrock leaves search matching words until **Semantic search** is set up on another service.
 
 Once either is set up, its switch turns it off and keeps it, and **Remove** forgets it. Offer more
 of a provider's models from its **Edit**.

@@ -18,6 +18,8 @@ export async function handleEvent(env: JobsEnv, deps: JobDeps, msg: Extract<Inde
     actor: msg.actor,
     actorKind: msg.actorKind,
     payload: msg.payload ?? {},
+    // The sender's clock where it stamped one: the worker reaches the message later.
+    ...(msg.at === undefined ? {} : { at: msg.at }),
   });
   if (!row) return;
   const ancestry = msg.docId ? await deps.db.docFolderAncestry(msg.docId) : [];

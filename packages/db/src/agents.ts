@@ -82,6 +82,20 @@ export async function agentNames(sql: Sql, agentIds: string[]): Promise<Map<stri
   return new Map(rows.map((r) => [r.agent_id, r.name]));
 }
 
+/**
+ * The person each agent id acts for, from its key or OAuth grant, revoked ones included while their
+ * rows last: what names an agent to other people, never the name its client chose. An id with no
+ * row is absent.
+ */
+export async function agentOwners(sql: Sql, agentIds: string[]): Promise<Map<string, string>> {
+  if (agentIds.length === 0) return new Map();
+  const rows = await sql<{ agent_id: string; owner: string }[]>`
+    SELECT agent_id, owner FROM api_keys WHERE agent_id = ANY(${agentIds})
+    UNION ALL
+    SELECT agent_id, owner FROM oauth_grants WHERE agent_id = ANY(${agentIds})`;
+  return new Map(rows.map((r) => [r.agent_id, r.owner]));
+}
+
 /** A live key by id, for bearer verification. */
 export async function getApiKey(sql: Sql, keyId: string): Promise<ApiKeyRow | null> {
   const rows = await sql<ApiKeyRow[]>`

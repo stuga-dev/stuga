@@ -11,6 +11,17 @@ export { docToMarkdown, EDITOR_ONLY_ATTRS } from "./markdown/serialize.js";
 export { leavesFenceOpen, fencedLines } from "./markdown/fences.js";
 export { yXmlFragmentToMarkdown, applyMarkdownToYXmlFragment } from "./bridge.js";
 export {
+  docText,
+  markdownPlainText,
+  textRange,
+  encodeRelPos,
+  decodeRelPos,
+  quoteAnchor,
+  type DocText,
+  type TextRun,
+  type QuoteAnchor,
+} from "./quote.js";
+export {
   previewBlockSegments,
   blockDiffMarkdown,
   resolveSegment,

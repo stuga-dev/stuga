@@ -63,7 +63,13 @@ export function DocDock({
               </VStack>
             ),
         },
-        { id: "comments", label: t("document.dock.comments"), icon: <MessageSquare size={15} />, render: () => <CommentsPanel docId={docId} /> },
+        {
+          id: "comments",
+          label: t("document.dock.comments"),
+          icon: <MessageSquare size={15} />,
+          // The AI tab's own gate: a reader's co-author takes no turn.
+          render: () => <CommentsPanel docId={docId} canAskAi={dock.available.includes("ai")} />,
+        },
         { id: "versions", label: t("document.dock.versions"), icon: <History size={15} />, render: () => <VersionsPanel docId={docId} ydoc={ydoc} /> },
         { id: "sources", label: t("document.dock.sources"), icon: <Quote size={15} />, badge: sourceCount, render: () => <SourcesPanel /> },
       ]}

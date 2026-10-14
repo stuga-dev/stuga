@@ -336,6 +336,29 @@ describe("notify", () => {
     expect(new Set(rows.map((r) => r.id)).size).toBe(1);
   });
 
+  it("keeps replies within the hour as one notification per thread, linking to the first reply", async () => {
+    const db = fakeDb();
+    const reply = (num: number, thread: string): IndexMessage => ({
+      kind: "notify",
+      docId: "d1",
+      recipient: "u_r",
+      workspaceId: "w1",
+      eventType: "COMMENT_REPLY",
+      params: { actor: { agent_of: "Ada" }, doc: "Q3 plan", excerpt: "Done.", relation: "comment" },
+      actor: "agent-a",
+      commentNum: num,
+      thread,
+    });
+    // Two replies in thread 2, one in thread 5, and one in a later thread that reuses number 2.
+    const replies = [reply(3, "2@1000"), reply(4, "2@1000"), reply(6, "5@2000"), reply(8, "2@9000")];
+    await handleJobBatch(fakeEnv(), batchOf(replies.map((r) => message(r))), { db, log: silentLog, deliver: vi.fn(async () => null) });
+    const rows = vi.mocked(db.insertNotification).mock.calls.map(([row]) => row);
+    expect(rows[0]!.resource_url).toBe("http://localhost:8787/doc/d1?comment=3");
+    expect(rows[0]!.payload).toEqual({ actor: { agent_of: "Ada" }, doc: "Q3 plan", excerpt: "Done.", relation: "comment" });
+    expect(rows[0]!.id).toBe(rows[1]!.id);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(3);
+  });
+
   it("queues no delivery when no sink is configured", async () => {
     const db = fakeDb();
     await handleJobBatch(fakeEnv(), batchOf([message(notifyMsg)]), { db, log: silentLog, deliver: vi.fn(async () => null) });

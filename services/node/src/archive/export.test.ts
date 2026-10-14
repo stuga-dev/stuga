@@ -521,6 +521,21 @@ describe("workspace export", () => {
     expect(vi.mocked(db.getUsers).mock.calls.map((call) => call.slice(1))).toEqual([[["u_liv", "u_gone"], "ws1"]]);
   });
 
+  it("names a co-author's comments for its person, asking for each person once", async () => {
+    vi.mocked(db.listComments).mockImplementation(async (_sql, id) =>
+      id === "d1-plan"
+        ? [comment(1, null, "panel:u_liv", "Built-in or freestanding?"), comment(2, 1, "u_liv", "Freestanding."), comment(3, 1, "panel:u_gone", "Noted.")]
+        : [],
+    );
+    const { manifest } = await exportArchive();
+    expect(item<ArchiveDoc>(manifest, "Plans/Plan.md").comments!.map((c) => c.author_name)).toEqual([
+      "AI co-author · Liv",
+      "Liv",
+      "AI co-author · u_gone",
+    ]);
+    expect(vi.mocked(db.getUsers).mock.calls.map((call) => call.slice(1))).toEqual([[["u_liv", "u_gone"], "ws1"]]);
+  });
+
   it("passes the archive check, bodies, titles, links and images included", async () => {
     const { archive } = await exportArchive();
     const files = {

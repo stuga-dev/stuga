@@ -11,6 +11,7 @@ import { FileText, ImagePlus, SquarePen, X } from "lucide-react";
 import { ALL_DOCUMENTS_SCOPE } from "@stuga/protocol/wire/doc-socket";
 import { useAiCoauthor } from "./ai-coauthor-context";
 import { useAgentRuns } from "../review/agent-runs-context";
+import { useComments } from "../comments/comments-context";
 import { useSharedEditor } from "../editor/editor-context";
 import { useEditorTick } from "../editor/use-editor-tick";
 import { AiScopePicker } from "./AiScopePicker";
@@ -62,6 +63,7 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
     cancelRevisions,
   } = useAiCoauthor();
   const { runs } = useAgentRuns();
+  const { clickComment } = useComments();
   const [input, setInput] = useState("");
   const aiChat = useAiChat();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -99,6 +101,7 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
         streaming={streaming}
         reviewIn="document"
         runs={runs}
+        onOpenComment={clickComment}
         empty={
           <span className="ai-empty">
             <span className="ai-empty__lead">{t("ai.panel.emptyLead")}</span>

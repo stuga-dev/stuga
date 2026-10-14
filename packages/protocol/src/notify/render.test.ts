@@ -2,11 +2,12 @@ import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import IntlMessageFormat from "intl-messageformat";
 import { UI_LANGUAGES } from "../domain/ui-languages";
-import { parseDeliveryError, type NotificationEvent, type NotificationParams } from "./events";
+import { parseDeliveryError, type ActorParam, type CommentReplyRelation, type NotificationEvent, type NotificationParams } from "./events";
 import {
   NOTIFY_CATALOGS,
   formatInstant,
   recipientLanguage,
+  renderActor,
   renderChannel,
   renderDatabaseChange,
   renderGatePage,
@@ -20,6 +21,7 @@ const AT = "2026-09-30T14:02:00.000Z";
 const SAMPLES: { [E in NotificationEvent]: NotificationParams[E] } = {
   MENTIONED_IN_COMMENT: { actor: "Ada", doc: "Q3 plan", excerpt: "@bo can you look?" },
   COMMENT_ON_OWNED_DOC: { actor: "Ada", doc: "Q3 plan", kind: "reply", excerpt: "Done." },
+  COMMENT_REPLY: { actor: "Ada", doc: "Q3 plan", excerpt: "Freestanding.", relation: "coauthor_question" },
   DIRECT_DOC_PERMISSIONS: { actor: "Ada", doc: "Q3 plan" },
   REQUEST_ACCESS: { actor: "Ada", doc: "" },
   MENTIONED_IN_DOC: { actor: null, doc: "Q3 plan", excerpt: "Owner: @bo" },
@@ -63,6 +65,7 @@ const SAMPLES: { [E in NotificationEvent]: NotificationParams[E] } = {
 const ENGLISH: { [E in NotificationEvent]: [title: string, body: string] } = {
   MENTIONED_IN_COMMENT: ["Ada mentioned you in a comment on “Q3 plan”", "@bo can you look?"],
   COMMENT_ON_OWNED_DOC: ["Ada replied on “Q3 plan”", "Done."],
+  COMMENT_REPLY: ["Ada replied to your AI co-author’s question on “Q3 plan”", "Freestanding."],
   DIRECT_DOC_PERMISSIONS: ["Ada shared “Q3 plan” with you", "You now have access to this document."],
   REQUEST_ACCESS: ["Ada requested access to “Untitled”", "Open the share dialog to grant them access."],
   MENTIONED_IN_DOC: ["You were mentioned in “Q3 plan”", "Owner: @bo"],
@@ -164,6 +167,36 @@ describe("renderNotification", () => {
     const signIn = renderNotification("ACCOUNT_NEW_SIGN_IN", SAMPLES.ACCOUNT_NEW_SIGN_IN, "de")!.body;
     expect(signIn).toContain(formatInstant(AT, "de"));
     expect(signIn).not.toContain("2026-09-30 14:02 UTC");
+  });
+
+  it("says why a reply reached its reader", () => {
+    const title = (relation: CommentReplyRelation) => renderNotification("COMMENT_REPLY", { ...SAMPLES.COMMENT_REPLY, relation }, "en")!.title;
+    expect(title("comment")).toBe("Ada replied to your comment on “Q3 plan”");
+    expect(title("coauthor_question")).toBe("Ada replied to your AI co-author’s question on “Q3 plan”");
+    expect(title("thread")).toBe("Ada replied in a thread on “Q3 plan”");
+    expect(title("agent_comment")).toBe("Ada replied to your agent’s comment on “Q3 plan”");
+  });
+
+  it.each(UI_LANGUAGES)("%s words each reason a reply reached its reader apart", (lang) => {
+    const title = (relation: CommentReplyRelation) => renderNotification("COMMENT_REPLY", { ...SAMPLES.COMMENT_REPLY, relation }, lang)!.title;
+    expect(new Set((["comment", "coauthor_question", "agent_comment", "thread"] as const).map(title)).size).toBe(4);
+  });
+
+  it("names an agent or an AI co-author by the person it acts for, in the reader's language", () => {
+    const reply = (actor: ActorParam, lang: string) => renderNotification("COMMENT_REPLY", { ...SAMPLES.COMMENT_REPLY, actor, relation: "comment" }, lang)!.title;
+    expect(reply({ agent_of: "Liv" }, "en")).toBe("Liv’s agent replied to your comment on “Q3 plan”");
+    expect(reply({ coauthor_of: "Liv" }, "en")).toBe("Liv’s AI co-author replied to your comment on “Q3 plan”");
+    expect(renderNotification("MENTIONED_IN_COMMENT", { ...SAMPLES.MENTIONED_IN_COMMENT, actor: { agent_of: "Liv" } }, "en")!.title).toBe(
+      "Liv’s agent mentioned you in a comment on “Q3 plan”",
+    );
+    expect(renderActor("Ada", "de")).toBe("Ada");
+    for (const lang of UI_LANGUAGES) {
+      for (const actor of [{ agent_of: "Liv" }, { coauthor_of: "Liv" }]) {
+        const named = renderActor(actor, lang);
+        expect(named, `${lang} ${JSON.stringify(actor)}`).toContain("Liv");
+        expect(named, `${lang} ${JSON.stringify(actor)}`).not.toMatch(/[{}]/);
+      }
+    }
   });
 
   it("reads a regional tag as its language, and anything unknown as English", () => {

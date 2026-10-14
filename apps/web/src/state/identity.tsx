@@ -119,12 +119,17 @@ export function nameLoading(principal: string): boolean {
   return alias !== null && isAccountAlias(alias) && !names.has(alias) && !failed.has(alias) && !unknown.has(alias);
 }
 
-/** A version or comment author: a bare alias, a `restore:<version>` marker, or an `imported:<name>` author. */
+/**
+ * A version or comment author: a bare alias, a `restore:<version>` marker, an `imported:<name>`
+ * author, or `panel:<alias>`, a person's co-author, named with its person as the audit log does.
+ */
 export function authorLabel(author: string): string {
   if (author.startsWith("restore:")) return t("ui.author.restored", { version: author.slice("restore:".length) });
   if (author === SAMPLE_AGENT_ALIAS) return t("ui.author.sampleAgent");
   const imported = importedAuthor(author);
   if (imported !== null) return t("ui.author.imported", { name: imported });
+  const human = principalHuman(author);
+  if (human !== null) return `${aiCoauthorLabel()} · ${principalLabel(`user:${human}`)}`;
   return principalLabel(`user:${author}`);
 }
 

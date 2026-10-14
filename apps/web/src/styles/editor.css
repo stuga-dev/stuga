@@ -714,8 +714,8 @@ a.sources-title:hover { color: var(--color-accent); text-decoration: underline; 
 /* --- comment thread replies --- */
 .comment-replies { list-style: none; margin: 0.4rem 0 0; padding: 0 0 0 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; border-left: 2px solid var(--color-border); }
 .comment-reply p { margin: 0.15rem 0 0; }
-.comment-reply-box { display: flex; gap: 0.35rem; margin-top: 0.4rem; align-items: end; }
-.comment-reply-box > :first-child { flex: 1; min-width: 0; }
+/* The box, with Send to AI and Reply under it while it is in use. */
+.comment-reply-box { display: flex; flex-direction: column; gap: var(--spacing-1); margin-top: 0.4rem; }
 
 /* --- @mentions: the chip in documents and comments, and the people list --- */
 .mention {

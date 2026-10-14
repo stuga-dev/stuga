@@ -6,6 +6,8 @@
   "MENTIONED_IN_COMMENT.body": "{excerpt}",
   "COMMENT_ON_OWNED_DOC.title": "{kind, select, reply {{actor} 在「{doc}」中回覆了留言} other {{actor} 在「{doc}」中留言}}",
   "COMMENT_ON_OWNED_DOC.body": "{excerpt}",
+  "COMMENT_REPLY.title": "{relation, select, coauthor_question {{actor} 在「{doc}」中回覆了你的 AI 共同作者提出的問題} agent_comment {{actor} 在「{doc}」中回覆了你的代理發表的留言} thread {{actor} 在「{doc}」中回覆了一個討論串} other {{actor} 在「{doc}」中回覆了你的留言}}",
+  "COMMENT_REPLY.body": "{excerpt}",
   "DIRECT_DOC_PERMISSIONS.title": "{actor} 與你共用了「{doc}」",
   "DIRECT_DOC_PERMISSIONS.body": "你現在可以存取這份文件。",
   "REQUEST_ACCESS.title": "{actor} 要求存取「{doc}」",
@@ -70,6 +72,9 @@
   "REMOTE_ADDRESS_MOVED.body": "{address} 現在連到另一台電腦。這台電腦上的遠端存取已關閉。",
   "REMOTE_UPDATE_REQUIRED.title": "遠端存取已暫停，更新 Stuga 後恢復",
   "REMOTE_UPDATE_REQUIRED.body": "此版本有一個已知的安全性問題，因此 {address} 已關閉。更新到 Stuga {version} 或更新的版本後，它會自動重新開啟。",
+
+  "actor.agentOf": "{person} 的代理",
+  "actor.coauthorOf": "{person} 的 AI 共同作者",
 
   "channel.none": "僅 Stuga",
   "channel.email": "電子郵件",

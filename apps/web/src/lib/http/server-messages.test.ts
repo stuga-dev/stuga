@@ -53,6 +53,12 @@ const SENT_OTHERWISE = new Set<string>([
   "an SMTP URL is required to deliver by email",
   "a From address is required to deliver by email",
   "^a webhook URL is required to deliver to (.+)$",
+  // comments/post.ts: commentInput(), whose refusals the REST, MCP and internal comment routes all send
+  "comment body required",
+  "comment too long",
+  "anchor quote too long",
+  "anchor too long",
+  "invalid parent_num",
   // databases/imports/staging.ts: the 422 report's message, passed to failure()
   "the file's headers do not match the table; nothing was loaded",
   "^(\\d+) of (\\d+) rows failed validation; nothing was loaded$",

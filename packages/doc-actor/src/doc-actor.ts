@@ -12,6 +12,8 @@ import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
 import { applyCitedStrEdits, yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import { SocketPair, upgradeResponse, type Actor, type ActorState } from "@stuga/runtime";
 import { Refusals } from "./audit.js";
+import { CleanHunks } from "./coauthor/clean-hunks.js";
+import { ThreadOutcomes } from "./coauthor/thread.js";
 import { CoAuthor } from "./coauthor/turn.js";
 import type { DocActorEnv } from "./env.js";
 import { RunLedger } from "./ledger/run-store.js";
@@ -52,7 +54,18 @@ export class DocActor implements Actor<SessionMeta> {
     this.store = new DocStore(state.storage, env, this.peers);
     this.refusals = new Refusals(env.jobs, () => this.store.docId);
     this.ledger = new RunLedger(state.storage, env, this.store, this.peers);
-    this.coauthor = new CoAuthor(env, this.ledger, this.refusals, this.rate);
+    this.coauthor = new CoAuthor(
+      env,
+      this.ledger,
+      this.refusals,
+      this.rate,
+      {
+        broadcastComments: () => this.broadcastComments(),
+        personPresent: (alias) => this.peers.all().some((ws) => !ws.meta.agentAuth && ws.meta.alias === alias),
+      },
+      new ThreadOutcomes(state.storage),
+      new CleanHunks(state.storage),
+    );
     this.routes = {
       "/connect": { handle: (req, url) => this.connect(req, url) },
       "/revoke": { handle: async (_req, url) => this.revoke(url) },
@@ -71,6 +84,7 @@ export class DocActor implements Actor<SessionMeta> {
       "/set-locked": { handle: async (_req, url) => this.setLocked(url) },
       "/set-trashed": { handle: async (_req, url) => this.setTrashed(url) },
       "/comments-changed": { handle: async () => this.commentsChanged() },
+      "/quote-anchor": { method: "POST", handle: (req) => this.quoteAnchor(req) },
       "/title-changed": { handle: async (_req, url) => this.titleChanged(url) },
     };
   }
@@ -231,8 +245,24 @@ export class DocActor implements Actor<SessionMeta> {
    * with no one connected has no one to tell.
    */
   private commentsChanged(): Response {
-    this.peers.broadcast(encodeEmpty(Opcode.COMMENTS_CHANGED));
+    this.broadcastComments();
     return new Response(null, { status: 204 });
+  }
+
+  /**
+   * Where a passage an agent quotes sits in the live document, for the node to anchor its comment:
+   * null unless the text is there exactly once. Only read: nothing here changes the document.
+   */
+  private async quoteAnchor(req: Request): Promise<Response> {
+    const body = (await req.json().catch(() => null)) as { quote?: unknown } | null;
+    if (typeof body?.quote !== "string" || !body.quote) return Response.json({ error: "quote required" }, { status: 400 });
+    await this.store.ensureLoaded();
+    return Response.json({ anchor: this.store.quoteAnchor(body.quote) });
+  }
+
+  /** Also the co-author's own word after it comments: the node cannot call this actor while a turn holds its lock. */
+  private broadcastComments(): void {
+    this.peers.broadcast(encodeEmpty(Opcode.COMMENTS_CHANGED));
   }
 
   /** Someone renamed the document: every open page shows the new title, and who chose it. */

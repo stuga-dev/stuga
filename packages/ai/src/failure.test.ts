@@ -19,6 +19,10 @@ describe("classifyFailure", () => {
     ["Connection error.", "unavailable"],
     ["Request timed out.", "unavailable"],
     ["systemone network error: fetch failed", "unavailable"],
+    ["AccessDeniedException: You don't have access to the model with the specified model ID.", "auth"],
+    ["UnrecognizedClientException: The security token included in the request is invalid.", "auth"],
+    ["ExpiredTokenException: The security token included in the request is expired", "auth"],
+    ["Throttling error: Too many tokens, please wait before trying again.", "rate_limit"],
     ['404: {"message":"The model `m` does not exist","code":"model_not_found"}', "rejected"],
     ["no chat endpoint is configured", "error"],
   ])("%s → %s", (message, kind) => {

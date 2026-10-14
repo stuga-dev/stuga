@@ -6,6 +6,8 @@
   "MENTIONED_IN_COMMENT.body": "{excerpt}",
   "COMMENT_ON_OWNED_DOC.title": "{kind, select, reply {{actor} 在“{doc}”中回复了评论} other {{actor} 评论了“{doc}”}}",
   "COMMENT_ON_OWNED_DOC.body": "{excerpt}",
+  "COMMENT_REPLY.title": "{relation, select, coauthor_question {{actor} 在“{doc}”中回复了你的 AI 共同作者提出的问题} agent_comment {{actor} 在“{doc}”中回复了你的智能体发表的评论} thread {{actor} 在“{doc}”中回复了一个讨论} other {{actor} 在“{doc}”中回复了你的评论}}",
+  "COMMENT_REPLY.body": "{excerpt}",
   "DIRECT_DOC_PERMISSIONS.title": "{actor} 与你共享了“{doc}”",
   "DIRECT_DOC_PERMISSIONS.body": "你现在可以访问此文档。",
   "REQUEST_ACCESS.title": "{actor} 请求访问“{doc}”",
@@ -70,6 +72,9 @@
   "REMOTE_ADDRESS_MOVED.body": "{address} 现在指向另一台电脑。此电脑上的远程访问已关闭。",
   "REMOTE_UPDATE_REQUIRED.title": "远程访问已暂停，更新 Stuga 后恢复",
   "REMOTE_UPDATE_REQUIRED.body": "此版本有一个已知的安全问题，所以 {address} 已关闭。更新到 Stuga {version} 或更高版本后，它会自动重新开启。",
+
+  "actor.agentOf": "{person} 的智能体",
+  "actor.coauthorOf": "{person} 的 AI 共同作者",
 
   "channel.none": "仅 Stuga",
   "channel.email": "邮件",

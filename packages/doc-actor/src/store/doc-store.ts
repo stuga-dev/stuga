@@ -14,7 +14,7 @@ import { DOC_FLUSH_INTERVAL_MS, snapshotKey } from "@stuga/protocol/domain/limit
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { encodeBinary, encodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode, type PersistDegradedPayload } from "@stuga/protocol/wire/opcodes";
-import { applyMarkdownToYXmlFragment, yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
+import { applyMarkdownToYXmlFragment, quoteAnchor, yXmlFragmentToMarkdown, type QuoteAnchor } from "@stuga/crdt-ops";
 import type { ActorStorage, BlobStore, JobQueue, StoreUpgrade } from "@stuga/runtime";
 import type { Peers } from "../session.js";
 import { deriveTitle, extractText } from "../text-extract.js";
@@ -38,7 +38,7 @@ interface Hashed {
  * higher. A change to a stored shape raises it, together with the step in the host that brings an
  * older store forward.
  */
-export const DOC_STORE_VERSION = 3;
+export const DOC_STORE_VERSION = 4;
 
 /** The steps that bring an older store forward, keyed by the version each reaches. */
 export const DOC_STORE_UPGRADES: Record<number, StoreUpgrade> = {
@@ -49,6 +49,10 @@ export const DOC_STORE_UPGRADES: Record<number, StoreUpgrade> = {
   // node, and its editor drops one it cannot read, so it must not open the store. A version 2 store
   // holds none, so it is read as it is.
   3: () => {},
+  // 4: the co-author's `coauthor-threads:<alias>` key, the outcome of each comment reply it answered, so
+  // a retried reply is not answered twice, and its `coauthor-clean:<alias>` key, the waiting hunks staged
+  // by a turn that saw only this document. Both are new and optional, so a version 3 store is read as it is.
+  4: () => {},
 };
 
 const FLUSH_THRESHOLD = 100; // updates
@@ -143,6 +147,11 @@ export class DocStore {
   /** The live document as Markdown. */
   markdown(): string {
     return yXmlFragmentToMarkdown(this.doc.getXmlFragment("default"));
+  }
+
+  /** Where `quote` sits in the live document, as a comment anchors it; null unless it is there exactly once. */
+  quoteAnchor(quote: string): QuoteAnchor | null {
+    return quoteAnchor(this.doc, quote);
   }
 
   async ensureLoaded(): Promise<void> {

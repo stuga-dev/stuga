@@ -316,6 +316,15 @@ export interface ImportOptions {
 /** The commit's answer, or the data could not reach the node and the person must finish the import. */
 export type ImportOutcome = { status: number; body: Record<string, unknown> } | { hand_off: { page_url: string; why: string } };
 
+/** A comment an agent adds: a new thread, on a passage when `quote` names one, or a reply in a thread. */
+export interface CommentAddInput {
+  body: string;
+  /** Any comment in the thread to reply in; a reply lands under the thread's first comment. */
+  parent_num?: number;
+  /** Text of the document, exactly as written and there once, to anchor a new thread to. */
+  quote?: string;
+}
+
 export interface AgentBackend {
   /** Base URL for document links in results; "" when there is none to give. */
   origin: string;
@@ -333,7 +342,7 @@ export interface AgentBackend {
   uploadMedia(docId: string, source: UploadSource): Answer<StoredMedia>;
   startUpload(docId: string, name: string): Answer<MediaUpload>;
   listComments(docId: string): Answer<Record<string, unknown>>;
-  addComment(docId: string, body: string): Answer<Record<string, unknown>>;
+  addComment(docId: string, input: CommentAddInput): Answer<Record<string, unknown>>;
   listFolders(): Answer<Record<string, unknown>>;
   pollEvents(query: EventsQuery): Answer<Record<string, unknown>>;
   listCollections(): Answer<CollectionListing[]>;

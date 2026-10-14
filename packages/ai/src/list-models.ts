@@ -1,4 +1,5 @@
 /** A provider's own model listing, for the settings picker. */
+import { bedrockControlUrl } from "./bedrock.js";
 import type { AiEndpoint } from "./config.js";
 import { AiError, joinUrl, jsonHeaders } from "./transport.js";
 
@@ -12,6 +13,8 @@ const ANTHROPIC_VERSION = "2023-06-01";
  * still be typed by hand.
  */
 export async function listModels(ep: AiEndpoint, which: "chat" | "embed"): Promise<string[]> {
+  // Stuga embeds through no Bedrock model.
+  if (ep.provider === "bedrock" && which === "embed") return [];
   const models = await fetchModels(ep);
   // Each id once, where it first sorts: Ollama 0.40 can list one name twice, under two digests.
   const ids = new Set(newestFirst(models).map((m) => m.id));
@@ -96,7 +99,49 @@ async function fetchModels(ep: AiEndpoint): Promise<ListedModel[]> {
       return fetchListed(joinUrl(ep.baseUrl, "/models"), jsonHeaders(ep.apiKey), (j: { data?: Array<{ id?: string; created?: number }> }) =>
         (j.data ?? []).map((m) => ({ id: m.id, at: typeof m.created === "number" && m.created > 0 ? m.created * 1000 : null })),
       );
+    case "bedrock":
+      return bedrockModels(ep);
   }
+}
+
+/**
+ * Bedrock's control plane, asked with the same key: the inference profiles in
+ * service, which alone serve Claude 4.5 and later, then the text models callable
+ * on demand; the service filters by both, and an entry that says otherwise is
+ * dropped all the same. Only profiles are dated. A listing the key may not
+ * read is skipped while the other answers.
+ */
+async function bedrockModels(ep: AiEndpoint): Promise<ListedModel[]> {
+  type Profiles = {
+    inferenceProfileSummaries?: Array<{ inferenceProfileId?: string; inferenceProfileArn?: string; type?: string; status?: string; createdAt?: string; updatedAt?: string }>;
+  };
+  type Foundation = {
+    modelSummaries?: Array<{ modelId?: string; inferenceTypesSupported?: string[]; outputModalities?: string[]; modelLifecycle?: { status?: string } }>;
+  };
+  const control = bedrockControlUrl(ep.baseUrl);
+  const headers = jsonHeaders(ep.apiKey);
+  const listings = await Promise.allSettled([
+    fetchListed(`${control}/inference-profiles?maxResults=1000`, headers, (j: Profiles) =>
+      (j.inferenceProfileSummaries ?? [])
+        .filter((p) => p.status === "ACTIVE")
+        // A profile an account made is called by its ARN.
+        .map((p) => ({ id: p.type === "APPLICATION" ? p.inferenceProfileArn : p.inferenceProfileId, at: dateMs(p.createdAt ?? p.updatedAt) })),
+    ),
+    fetchListed(`${control}/foundation-models?byOutputModality=TEXT&byInferenceType=ON_DEMAND`, headers, (j: Foundation) =>
+      (j.modelSummaries ?? [])
+        .filter(
+          (m) =>
+            (m.inferenceTypesSupported ?? ["ON_DEMAND"]).includes("ON_DEMAND") &&
+            (m.outputModalities ?? ["TEXT"]).includes("TEXT") &&
+            (m.modelLifecycle?.status ?? "ACTIVE") === "ACTIVE",
+        )
+        .map((m) => ({ id: m.modelId, at: null })),
+    ),
+  ]);
+  const listed = listings.flatMap((l) => (l.status === "fulfilled" ? l.value : []));
+  const failed = listings.find((l): l is PromiseRejectedResult => l.status === "rejected");
+  if (failed && listed.length === 0) throw failed.reason;
+  return listed;
 }
 
 function dateMs(v: string | undefined): number | null {

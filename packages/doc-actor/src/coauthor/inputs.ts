@@ -3,7 +3,7 @@
  * JSON, so nothing in it is trusted to match `AiRequest`.
  */
 import { MEDIA_GET_PATH } from "@stuga/protocol/api/media";
-import type { AiAttachment, AiHistoryItem, AiRequest, RevisionScope } from "@stuga/protocol/wire/doc-socket";
+import type { AiAttachment, AiHistoryItem, AiRequest, RevisionScope, ThreadScope } from "@stuga/protocol/wire/doc-socket";
 import type { InternalApi } from "@stuga/runtime";
 
 const MAX_ATTACHMENTS = 8;
@@ -67,13 +67,24 @@ export function revisionScopes(raw: unknown): RevisionScope[] {
     .map((s) => ({ run_id: s.run_id, feedback_id: s.feedback_id }));
 }
 
+function isCommentNum(n: unknown): n is number {
+  return typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+}
+
+/** The comment a thread turn answers, when both numbers are well formed. */
+function threadScope(raw: unknown): ThreadScope | null {
+  const t = raw as Partial<ThreadScope> | null;
+  if (!t || typeof t !== "object" || !isCommentNum(t.num) || !isCommentNum(t.reply_num)) return null;
+  return { num: t.num, reply_num: t.reply_num };
+}
+
 export function clampAiRequest(raw: AiRequest): AiRequest {
   const prompt = typeof raw.prompt === "string" ? raw.prompt.slice(0, MAX_AI_PROMPT_CHARS) : "";
   const history = (Array.isArray(raw.history) ? (raw.history as unknown[]) : [])
     .filter(isHistoryItem)
     .slice(-MAX_AI_HISTORY_TURNS)
     .map((h) => ({ role: h.role, content: h.content.slice(0, MAX_AI_HISTORY_CHARS) }));
-  return {
+  const req: AiRequest = {
     ...raw,
     prompt,
     history,
@@ -81,7 +92,13 @@ export function clampAiRequest(raw: AiRequest): AiRequest {
     model: typeof raw.model === "string" && raw.model ? raw.model : "auto",
     collection_id: typeof raw.collection_id === "string" && raw.collection_id ? raw.collection_id : null,
     revise: revisionScopes(raw.revise),
+    thread: threadScope(raw.thread),
+    history_scoped: raw.history_scoped === true,
   };
+  // A thread turn reaches only this document and the thread, whatever the page sent: its request
+  // is the person's reply, read from the node.
+  if (req.thread) return { ...req, history: [], selected_text: null, collection_id: null, revise: [], attachments: [] };
+  return req;
 }
 
 /**

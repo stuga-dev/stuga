@@ -77,7 +77,12 @@ const AI: NodeAiSettings = {
   rerank: { enabled: true, running: false, base_url: "", model: "", api_key_set: false, api_key_fingerprint: null, api_key_stale: false },
   embedding_column_dims: 1024,
   strictness_default: "balanced",
-  provider_base_urls: { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com", ollama: "http://127.0.0.1:11434" },
+  provider_base_urls: {
+    openai: "https://api.openai.com/v1",
+    anthropic: "https://api.anthropic.com",
+    ollama: "http://127.0.0.1:11434",
+    bedrock: "https://bedrock-runtime.us-east-1.amazonaws.com",
+  },
   updated_by: null,
   updated_at: null,
 };
@@ -116,6 +121,27 @@ const BACKUPS: NodeBackups = {
 
 /** A node nobody has set AI up on. */
 const FRESH: NodeAiSettings = { ...AI, chat: { enabled: true, running: false, default_model: "", endpoints: [] } };
+
+/** Chat on Amazon Bedrock in Ireland. */
+const BEDROCK_EU: NodeAiSettings = {
+  ...AI,
+  chat: {
+    enabled: true,
+    running: true,
+    default_model: "global.anthropic.claude-sonnet-5-5",
+    endpoints: [
+      {
+        id: "bedrock-1",
+        provider: "bedrock",
+        base_url: "https://bedrock-runtime.eu-west-1.amazonaws.com",
+        models: [{ id: "global.anthropic.claude-sonnet-5-5", name: "global.anthropic.claude-sonnet-5-5" }],
+        api_key_set: true,
+        api_key_fingerprint: "abcd1234",
+        api_key_stale: false,
+      },
+    ],
+  },
+};
 
 /** Semantic search on a local Ollama beside the OpenAI chat provider. */
 const WITH_SEARCH: NodeAiSettings = { ...AI, embed: { ...AI.embed, model: "bge-m3", running: true } };
@@ -466,6 +492,81 @@ describe("NodeSettingsPage", () => {
     expect(host.textContent).toContain("Enter the address that starts with https://");
     expect(inputs("Base URL")[0]!.getAttribute("aria-invalid")).toBe("true");
     expect(nodeApi.discoverModels).not.toHaveBeenCalled();
+  });
+
+  it("sets Amazon Bedrock up by its Region, listing and saving at that Region's runtime address", async () => {
+    await renderWith(FRESH);
+    await clickNth("Set up", 0);
+    await choose("Service", "Amazon Bedrock");
+    // The Region stands in for an address.
+    expect(inputs("Base URL")).toHaveLength(0);
+    expect(inputs("Region")[0]!.value).toBe("us-east-1");
+    expect(host.textContent).toContain("The AWS Region your Bedrock models run in.");
+
+    nodeApi.discoverModels.mockResolvedValue({ models: ["eu.anthropic.claude-haiku-5-5", "global.anthropic.claude-sonnet-5-5", "global.anthropic.claude-sonnet-4-5"] });
+    savedAs(BEDROCK_EU);
+    await typeInto(inputs("Region")[0], "eu-west-1");
+    await typeInto(inputs("API key")[0], "bedrock-key");
+    await pressEnter(inputs("API key")[0]);
+    await settle();
+    expect(nodeApi.discoverModels).toHaveBeenCalledWith("chat", "bedrock", "https://bedrock-runtime.eu-west-1.amazonaws.com", "bedrock-key");
+
+    await choose("Model", "global.anthropic.claude-sonnet-5-5 · Recommended");
+    await click("Connect");
+    await settle();
+    const sent = nodeApi.saveAi.mock.calls[0]![0] as { chat: { endpoints: unknown[] } };
+    expect(sent.chat.endpoints).toEqual([
+      {
+        id: expect.stringMatching(/^bedrock-/),
+        provider: "bedrock",
+        base_url: "https://bedrock-runtime.eu-west-1.amazonaws.com",
+        models: [{ id: "global.anthropic.claude-sonnet-5-5", name: "global.anthropic.claude-sonnet-5-5" }],
+        api_key: "bedrock-key",
+      },
+    ]);
+    expect(host.textContent).toContain("Amazon Bedrock · eu-west-1");
+  });
+
+  it("says a Region that is not one beside it, and asks nothing", async () => {
+    await renderWith(FRESH);
+    await clickNth("Set up", 0);
+    await choose("Service", "Amazon Bedrock");
+    await typeInto(inputs("Region")[0], "Europe");
+    await typeInto(inputs("API key")[0], "bedrock-key");
+    await act(async () => new Promise((r) => setTimeout(r, 700)));
+    await pressEnter(inputs("Region")[0]);
+    await settle();
+
+    expect(host.textContent).toContain("Enter an AWS Region, such as us-east-1.");
+    expect(inputs("Region")[0]!.getAttribute("aria-invalid")).toBe("true");
+    expect(nodeApi.discoverModels).not.toHaveBeenCalled();
+    expect(nodeApi.saveAi).not.toHaveBeenCalled();
+  });
+
+  it("edits a Bedrock provider's Region in place of its address, and saves nothing while it is not one", async () => {
+    nodeApi.discoverModels.mockResolvedValue({ models: ["global.anthropic.claude-sonnet-5-5"] });
+    await renderWith(BEDROCK_EU);
+    expect(host.textContent).toContain("Amazon Bedrock · eu-west-1");
+    await clickNth("Edit", 0);
+    await settle();
+    expect(nodeApi.discoverModels).toHaveBeenCalledWith("chat", "bedrock", "https://bedrock-runtime.eu-west-1.amazonaws.com", undefined);
+    expect(inputs("Region")[0]!.value).toBe("eu-west-1");
+    expect(inputs("Base URL")).toHaveLength(0);
+
+    await typeInto(inputs("Region")[0], "eu central");
+    await click("Save");
+    await settle();
+    expect(host.textContent).toContain("Enter an AWS Region, such as us-east-1.");
+    expect(nodeApi.saveAi).not.toHaveBeenCalled();
+
+    savedAs(BEDROCK_EU);
+    await typeInto(inputs("Region")[0], "eu-central-1");
+    expect(host.textContent).not.toContain("Enter an AWS Region");
+    await click("Save");
+    await settle();
+    const sent = nodeApi.saveAi.mock.calls[0]![0] as { chat: { endpoints: Array<{ base_url: string }> } };
+    expect(sent.chat.endpoints[0]).toMatchObject({ id: "bedrock-1", provider: "bedrock", base_url: "https://bedrock-runtime.eu-central-1.amazonaws.com" });
+    expect(sent.chat.endpoints[0]).not.toHaveProperty("api_key");
   });
 
   it("says Ollama is not answering as a hint, not an error, when it was only picked", async () => {

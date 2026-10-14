@@ -6,7 +6,8 @@
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { StugaProvider } from "../sync/stuga-provider";
-import type { AiAttachment, RevisionScope } from "@stuga/protocol/wire/doc-socket";
+import type { AiAttachment, AiEditsPayload, AiRequest, RevisionScope } from "@stuga/protocol/wire/doc-socket";
+import type { CoauthorError } from "@stuga/protocol/api/ai-turn";
 import { useSharedEditor } from "../editor/editor-context";
 import { useAiChat } from "../state/model-options";
 import { Media } from "../api";
@@ -78,10 +79,87 @@ function revisionShown(list: QueuedRevision[]): string {
   return t("ai.coauthor.revisionShown", { count: list.length, notes });
 }
 
+/** A reply in a comment thread that the person sent to the AI, to be answered in that thread. */
+interface ThreadRequest {
+  /** The thread's first comment. */
+  num: number;
+  replyNum: number;
+  /** The reply as the person wrote it. */
+  shown: string;
+  /** The passage the thread is on, for the transcript to show. */
+  quote: string | null;
+}
+
+/** Where a thread's turn stands, for the line under that thread. */
+export interface ThreadTurn {
+  state: "queued" | "working" | "failed" | "dropped";
+  /** The reply the turn answers. */
+  replyNum: number;
+  /** The answer it posted in the thread: the thread reads as working until the comment list holds it. */
+  replied?: number;
+  /** Why a turn that ran posted no answer, worded; shown instead of the state's own words. */
+  message?: string;
+  /** Retry runs the turn again: it never reached the node, or ended in a way the node doesn't keep. */
+  retry?: boolean;
+}
+
+/**
+ * What the chat's history keeps for a thread turn: the person's reply, said to be one. The passage
+ * stays display-only: any commenter writes a thread's quote, and later turns would read it as the person's.
+ */
+function threadPrompt(req: ThreadRequest): string {
+  // i18n-exempt: a prompt sent to the model
+  return `My reply in a comment thread: ${req.shown}`;
+}
+
+/** A copy of `turns` with `num`'s entry replaced, or removed for null. */
+function withThread(turns: ReadonlyMap<number, ThreadTurn>, num: number, next: ThreadTurn | null): ReadonlyMap<number, ThreadTurn> {
+  const copy = new Map(turns);
+  if (next) copy.set(num, next);
+  else copy.delete(num);
+  return copy;
+}
+
+/**
+ * Whether Retry helps a thread turn that ended in this error. The node keeps no outcome for a turn
+ * that made nothing, so sending the reply again runs it again; a closed thread, a locked or trashed
+ * document, lost access, an empty reply or a full review queue would end the same way.
+ */
+const RETRY_HELPS: Record<CoauthorError["code"], boolean> = {
+  failed: true,
+  rate_limited: true,
+  ai_disabled: true,
+  unreadable: true,
+  stale: true,
+  ledger_unavailable: true,
+  propose_failed: true,
+  dropped: true,
+  locked: false,
+  trashed: false,
+  view_only: false,
+  empty_prompt: false,
+  thread_closed: false,
+  agent: false,
+  propose_locked: false,
+  too_large: false,
+  review_backlog: false,
+};
+
+/** A thread turn's receipt as its thread shows it: its answer, or why there is none. A notice is final. */
+function threadOutcome(replyNum: number, payload: AiEditsPayload): ThreadTurn | null {
+  if (payload.error?.code === "dropped") return { state: "dropped", replyNum, retry: true };
+  if (typeof payload.replied === "number") return { state: "working", replyNum, replied: payload.replied };
+  if (payload.error) return { state: "failed", replyNum, message: coauthorErrorText(payload.error), retry: RETRY_HELPS[payload.error.code] };
+  const message = coauthorNoticesText(payload.notices);
+  return message ? { state: "failed", replyNum, message, retry: false } : null;
+}
+
 /** A turn's options. `shown` is what the transcript shows for an English prompt the person never typed. */
 interface TurnOptions {
   shown?: string;
   revise?: RevisionScope[];
+  /** A reply to answer in its comment thread: the turn takes no history, images, selection or scope. */
+  thread?: ThreadRequest;
 }
 
 /** A selection-scoped edit being composed: the quoted text and where to float the composer. */
@@ -121,6 +199,22 @@ interface AiCoauthorCtx {
   reviseNow: () => void;
   /** Drop the queued revisions; the rejections and their notes stand. */
   cancelRevisions: () => void;
+  /**
+   * Answer a reply sent to the AI from a comment thread, in that thread. The dock stays where it
+   * is. While a turn is running it waits, after any revisions; `shown` is the reply as written.
+   */
+  answerInThread: (num: number, replyNum: number, shown: string, quote: string | null) => void;
+  /** Thread turns by their thread's first comment. */
+  threadTurns: ReadonlyMap<number, ThreadTurn>;
+  /** Send a thread's reply again; the node answers a reply once, so a lost connection is safe to retry. */
+  retryThread: (num: number) => void;
+  /**
+   * Forget a thread's turn once its answer shows in the thread. A turn whose connection dropped is
+   * forgotten only with the reply it answers, `replyNum`.
+   */
+  clearThread: (num: number, replyNum?: number) => void;
+  /** Reveal the AI panel, where a running turn's transcript and Stop are. */
+  showPanel: () => void;
   attachments: PendingAttachment[];
   attachImages: (files: File[]) => void;
   /** Drop one staged image, aborting it if still uploading. */
@@ -146,7 +240,7 @@ export function AiCoauthorProvider({
   provider: StugaProvider | null;
   /** The document attachments are uploaded to. */
   docId: string;
-  /** Reveals the AI panel when a selection edit is submitted. */
+  /** Reveals the AI panel when a selection edit or a revision is submitted, or the person asks to see it. */
   onRequestOpen: () => void;
   children: ReactNode;
 }) {
@@ -188,6 +282,12 @@ export function AiCoauthorProvider({
     setQueued(next);
     setRevisionPaused(paused);
   };
+
+  const [threadTurns, setThreadTurns] = useState<ReadonlyMap<number, ThreadTurn>>(() => new Map());
+  /** Thread replies waiting for the turn in flight to end, in the order they were sent. */
+  const threadQueue = useRef<ThreadRequest[]>([]);
+  /** The latest reply sent from each thread, which Retry sends again. */
+  const threadRequests = useRef(new Map<number, ThreadRequest>());
 
   const removeAttachment = useCallback((id: string) => {
     setAttachments((xs) => {
@@ -246,99 +346,122 @@ export function AiCoauthorProvider({
     [docId],
   );
 
+  /** Starts a turn; false when it could not be sent, as while the socket reconnects. */
   const runTurn = useCallback(
-    async (prompt: string, selectedText: string | null, opts: TurnOptions = {}) => {
-      if (!provider || !editor) return;
-      const history = turns.map((turn) => ({ role: turn.role, content: turn.text }));
+    (prompt: string, selectedText: string | null, opts: TurnOptions = {}): boolean => {
+      if (!provider || !editor) return false;
+      const thread = opts.thread;
       // Only uploaded attachments have a media path the model can reference. A revision is the
-      // reviewer's note, not their next message, so images staged for that message stay staged.
-      const ready = opts.revise ? [] : attachments.filter((a) => a.path && !a.error);
-      const quote = selectedText?.trim() || undefined;
-      setTurns((ts) => [
-        ...ts,
-        {
-          role: "user",
-          text: prompt,
-          shown: opts.shown,
-          quote,
-          images: ready.length ? ready.map((a) => ({ url: a.previewUrl, name: a.name })) : undefined,
-          ...(opts.revise ? { revises: opts.revise.map((r) => r.feedback_id) } : {}),
+      // reviewer's note and a thread turn answers a comment, neither their next message, so
+      // images staged for that message stay staged.
+      const ready = opts.revise || thread ? [] : attachments.filter((a) => a.path && !a.error);
+      const quote = (thread ? thread.quote : selectedText)?.trim() || undefined;
+      // A thread turn reaches only this document and the thread: the server drops the rest anyway.
+      const request: AiRequest = thread
+        ? {
+            prompt,
+            selected_text: null,
+            model,
+            history: [],
+            collection_id: null,
+            attachments: [],
+            thread: { num: thread.num, reply_num: thread.replyNum },
+          }
+        : {
+            prompt,
+            selected_text: selectedText,
+            model,
+            history: turns.map((turn) => ({ role: turn.role, content: turn.text })),
+            collection_id: collectionId,
+            attachments: ready.map((a): AiAttachment => ({ url: a.path!, name: a.name, mime: a.mime })),
+            // An earlier turn's context could hold another document's text, which a comment must not carry.
+            history_scoped: turns.some((turn) => turn.role === "user" && turn.scoped),
+            ...(opts.revise ? { revise: opts.revise } : {}),
+          };
+      const userTurn: ChatTurn = {
+        role: "user",
+        text: prompt,
+        shown: opts.shown,
+        quote,
+        images: ready.length ? ready.map((a) => ({ url: a.previewUrl, name: a.name })) : undefined,
+        ...(opts.revise ? { revises: opts.revise.map((r) => r.feedback_id) } : {}),
+        ...(request.collection_id ? { scoped: true } : {}),
+      };
+      const sent = provider.sendAiRequest(request, {
+        onChunk: (chunk) =>
+          setTurns((ts) => {
+            const copy = [...ts];
+            const last = copy[copy.length - 1];
+            if (last && last.role === "assistant") copy[copy.length - 1] = { ...last, text: last.text + chunk, status: undefined };
+            return copy;
+          }),
+        onStatus: (activity) =>
+          setTurns((ts) => {
+            const copy = [...ts];
+            const last = copy[copy.length - 1];
+            if (last && last.role === "assistant" && !last.text) copy[copy.length - 1] = { ...last, status: coauthorActivityText(activity) };
+            return copy;
+          }),
+        onDone: () => {
+          setStreaming(false);
+          setTurns((ts) => {
+            const last = ts[ts.length - 1];
+            if (!last || last.role !== "assistant" || !last.status) return ts;
+            const copy = [...ts];
+            copy[copy.length - 1] = { ...last, status: undefined };
+            return copy;
+          });
         },
-        { role: "assistant", text: "", status: t("ai.status.thinking") },
-      ]);
+        onEdits: (payload) => {
+          // The receipt: the edits already reached the run ledger over the socket.
+          setTurns((ts) => {
+            const copy = [...ts];
+            const last = copy[copy.length - 1];
+            if (!last || last.role !== "assistant") return ts;
+            const next: ChatTurn = { ...last };
+            if (payload.citations?.length) {
+              next.sources = citedSources(payload.citations);
+              next.citations = payload.citations;
+            }
+            if (payload.staged > 0) next.staged = payload.staged;
+            if (payload.applied > 0) next.applied = payload.applied;
+            if (payload.run_id && payload.hunk_ids?.length) {
+              next.runId = payload.run_id;
+              next.hunkIds = payload.hunk_ids;
+            }
+            if (payload.cross_docs?.length) next.crossDocs = payload.cross_docs;
+            if (payload.asked?.length) next.asked = payload.asked;
+            if (payload.error) next.proposeError = coauthorErrorText(payload.error);
+            const notice = coauthorNoticesText(payload.notices);
+            if (notice) next.notice = notice;
+            copy[copy.length - 1] = next;
+            return copy;
+          });
+          if (thread) {
+            // A later reply from the same thread waiting its turn is what that thread shows next.
+            const waiting = threadQueue.current.filter((r) => r.num === thread.num).at(-1);
+            const shown = waiting ? { state: "queued" as const, replyNum: waiting.replyNum } : threadOutcome(thread.replyNum, payload);
+            setThreadTurns((m) => withThread(m, thread.num, shown));
+          }
+          turnOpen.current = false;
+          // A closed thread is that thread's own end, not a failure that should stop what waits.
+          halted.current = stopped.current || (payload.error !== null && payload.error.code !== "thread_closed");
+          // Settled after the render that shows this turn, so a revision's history includes it.
+          setReceipts((n) => n + 1);
+        },
+      });
+      if (!sent) {
+        // A thread says so under itself; a chat message stays in the transcript with why, so it can be sent again.
+        if (!thread) setTurns((ts) => [...ts, userTurn, { role: "assistant", text: "", proposeError: t("errors.client.offline") }]);
+        return false;
+      }
+      setTurns((ts) => [...ts, userTurn, { role: "assistant", text: "", status: t("ai.status.thinking") }]);
       setStreaming(true);
       turnOpen.current = true;
       stopped.current = false;
       // Cleared at send, not on the reply, so a second message can't re-send them.
-      if (!opts.revise) setAttachments([]);
-      provider.sendAiRequest(
-        {
-          prompt,
-          selected_text: selectedText,
-          model,
-          history,
-          collection_id: collectionId,
-          attachments: ready.map(
-            (a): AiAttachment => ({ url: a.path!, name: a.name, mime: a.mime }),
-          ),
-          ...(opts.revise ? { revise: opts.revise } : {}),
-        },
-        {
-          onChunk: (chunk) =>
-            setTurns((ts) => {
-              const copy = [...ts];
-              const last = copy[copy.length - 1];
-              if (last && last.role === "assistant") copy[copy.length - 1] = { ...last, text: last.text + chunk, status: undefined };
-              return copy;
-            }),
-          onStatus: (activity) =>
-            setTurns((ts) => {
-              const copy = [...ts];
-              const last = copy[copy.length - 1];
-              if (last && last.role === "assistant" && !last.text) copy[copy.length - 1] = { ...last, status: coauthorActivityText(activity) };
-              return copy;
-            }),
-          onDone: () => {
-            setStreaming(false);
-            setTurns((ts) => {
-              const last = ts[ts.length - 1];
-              if (!last || last.role !== "assistant" || !last.status) return ts;
-              const copy = [...ts];
-              copy[copy.length - 1] = { ...last, status: undefined };
-              return copy;
-            });
-          },
-          onEdits: (payload) => {
-            // The receipt: the edits already reached the run ledger over the socket.
-            setTurns((ts) => {
-              const copy = [...ts];
-              const last = copy[copy.length - 1];
-              if (!last || last.role !== "assistant") return ts;
-              const next: ChatTurn = { ...last };
-              if (payload.citations?.length) {
-                next.sources = citedSources(payload.citations);
-                next.citations = payload.citations;
-              }
-              if (payload.staged > 0) next.staged = payload.staged;
-              if (payload.applied > 0) next.applied = payload.applied;
-              if (payload.run_id && payload.hunk_ids?.length) {
-                next.runId = payload.run_id;
-                next.hunkIds = payload.hunk_ids;
-              }
-              if (payload.cross_docs?.length) next.crossDocs = payload.cross_docs;
-              if (payload.error) next.proposeError = coauthorErrorText(payload.error);
-              const notice = coauthorNoticesText(payload.notices);
-              if (notice) next.notice = notice;
-              copy[copy.length - 1] = next;
-              return copy;
-            });
-            turnOpen.current = false;
-            halted.current = stopped.current || payload.error !== null;
-            // Settled after the render that shows this turn, so a revision's history includes it.
-            setReceipts((n) => n + 1);
-          },
-        },
-      );
+      if (!opts.revise && !thread) setAttachments([]);
+      return true;
     },
     [provider, editor, turns, model, collectionId, attachments],
   );
@@ -354,21 +477,51 @@ export function AiCoauthorProvider({
     [streaming, editor, runTurn],
   );
 
-  const startRevisions = (list: QueuedRevision[]) => {
+  /** False when the turn could not be sent: the revisions then wait for Revise now. */
+  const startRevisions = (list: QueuedRevision[]): boolean => {
     setQueue([]);
     const scopes: RevisionScope[] = list.map((r) => ({ run_id: r.runId, feedback_id: r.feedbackId }));
-    void runTurn(revisionPrompt(list), null, { shown: revisionShown(list), revise: scopes });
+    const sent = runTurn(revisionPrompt(list), null, { shown: revisionShown(list), revise: scopes });
+    if (!sent) setQueue(list, true);
+    return sent;
   };
+
+  /** False when the turn could not be sent, which its thread then says. */
+  const startThread = (req: ThreadRequest): boolean => {
+    const sent = runTurn(threadPrompt(req), null, { shown: req.shown, thread: req });
+    const turn: ThreadTurn = sent ? { state: "working", replyNum: req.replyNum } : { state: "failed", replyNum: req.replyNum, retry: true };
+    setThreadTurns((m) => withThread(m, req.num, turn));
+    return sent;
+  };
+
+  const failQueuedThreads = () => {
+    const list = threadQueue.current;
+    threadQueue.current = [];
+    if (list.length === 0) return;
+    setThreadTurns((m) => list.reduce((acc, r) => withThread(acc, r.num, { state: "failed", replyNum: r.replyNum, retry: true }), m));
+  };
+
   /**
-   * A turn's receipt arrived. Its queued revisions run now, in one turn, unless the user stopped it
-   * or it failed: then they wait for Revise now, since starting more work after a Stop is not asked for.
+   * A turn ended. Queued revisions run next, in one turn, then the queued thread replies one at a
+   * time. After a Stop or a failure nothing more starts, since that was not asked for: revisions wait
+   * for Revise now and threads offer Retry. Paused revisions don't hold the threads up.
    */
   const afterTurn = useRef((_halted: boolean) => {});
   afterTurn.current = (wasHalted: boolean) => {
+    if (turnOpen.current) return;
     const list = queuedRef.current;
-    if (list.length === 0 || pausedRef.current || turnOpen.current) return;
-    if (wasHalted) setQueue(list, true);
-    else startRevisions(list);
+    const revisionsWaiting = list.length > 0 && !pausedRef.current;
+    if (wasHalted) {
+      if (revisionsWaiting) setQueue(list, true);
+      failQueuedThreads();
+      return;
+    }
+    if (revisionsWaiting) {
+      if (!startRevisions(list)) afterTurn.current(true);
+      return;
+    }
+    const next = threadQueue.current.shift();
+    if (next && !startThread(next)) afterTurn.current(true);
   };
 
   useEffect(() => {
@@ -396,6 +549,41 @@ export function AiCoauthorProvider({
   }, [runTurn]);
 
   const cancelRevisions = useCallback(() => setQueue([]), []);
+
+  // Stable for the reply box, which calls it after its reply is saved; the latest render's closure does the work.
+  const answerLatest = useRef((_req: ThreadRequest) => {});
+  answerLatest.current = (req: ThreadRequest) => {
+    threadRequests.current.set(req.num, req);
+    if (!turnOpen.current) {
+      startThread(req);
+      return;
+    }
+    threadQueue.current.push(req);
+    // Another reply from the thread being answered keeps it reading as working.
+    setThreadTurns((m) => {
+      const current = m.get(req.num);
+      const answering = current?.state === "working" && current.replied === undefined;
+      return answering ? m : withThread(m, req.num, { state: "queued", replyNum: req.replyNum });
+    });
+  };
+
+  const answerInThread = useCallback((num: number, replyNum: number, shown: string, quote: string | null) => {
+    answerLatest.current({ num, replyNum, shown, quote });
+  }, []);
+
+  const retryThread = useCallback((num: number) => {
+    const req = threadRequests.current.get(num);
+    if (req) answerLatest.current(req);
+  }, []);
+
+  // Only an answered turn, or the dropped one for `replyNum`: a later reply from the thread may already be waiting in its place.
+  const clearThread = useCallback((num: number, replyNum?: number) => {
+    setThreadTurns((m) => {
+      const turn = m.get(num);
+      const done = turn !== undefined && (turn.replied !== undefined || (turn.state === "dropped" && turn.replyNum === replyNum));
+      return done ? withThread(m, num, null) : m;
+    });
+  }, []);
 
   // Clearing `streaming` here would race the receipt that reports what the stopped turn proposed.
   const stop = useCallback(() => {
@@ -458,6 +646,11 @@ export function AiCoauthorProvider({
     revisionPaused,
     reviseNow,
     cancelRevisions,
+    answerInThread,
+    threadTurns,
+    retryThread,
+    clearThread,
+    showPanel: onRequestOpen,
     attachments,
     attachImages,
     removeAttachment,

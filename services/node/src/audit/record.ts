@@ -3,7 +3,8 @@
  * Everything here is best-effort and never awaited on the request path: the
  * ledger records what happened, it is not a gate on it.
  */
-import { agentPrincipal, userPrincipal } from "@stuga/auth";
+import { userPrincipal } from "@stuga/auth";
+import { agentActorOf } from "@stuga/protocol/domain/runs";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import type { AuditStatus } from "@stuga/protocol/domain/audit";
 import type { WorkspaceEventType } from "@stuga/protocol/domain/events";
@@ -229,16 +230,25 @@ export function noteDenial(
   }
 }
 
-/** Append one row to the workspace event feed that agents poll and webhooks fan out from; best-effort. */
-export function recordEvent(ctx: Ctx, type: WorkspaceEventType, docId: string | null, payload: Record<string, unknown> = {}): void {
+/** The caller as its events name it: as run events do, `agent:<key id>`, the co-author's own `panel:<person>`, or `user:<alias>`. */
+export function eventActorOf(ctx: AccountCtx): string {
+  return ctx.isAgent ? agentActorOf(ctx.alias) : userPrincipal(ctx.alias);
+}
+
+/**
+ * Append one row to the workspace event feed that agents poll and webhooks fan out from; best-effort.
+ * `at` is when it happened, where the feed compares it with other rows' times; absent, the row's insert.
+ */
+export function recordEvent(ctx: Ctx, type: WorkspaceEventType, docId: string | null, payload: Record<string, unknown> = {}, at?: Date | string): void {
   const message: IndexMessage = {
     kind: "event",
     workspaceId: ctx.workspaceId,
     type,
     docId,
-    actor: ctx.isAgent ? agentPrincipal(ctx.alias) : userPrincipal(ctx.alias),
+    actor: eventActorOf(ctx),
     actorKind: ctx.isAgent ? "agent" : "human",
     payload,
+    ...(at === undefined ? {} : { at: new Date(at).toISOString() }),
   };
   try {
     void ctx.env.jobs.send(message).catch(() => {});

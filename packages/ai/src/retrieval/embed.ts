@@ -82,6 +82,9 @@ async function openaiEmbed(ep: AiEndpoint, model: string, input: string[], dims:
   if (ep.provider === "anthropic") {
     throw new AiError("embed: the anthropic provider serves no embeddings endpoint; point embed at an OpenAI-compatible or Ollama endpoint", 0, false);
   }
+  if (ep.provider === "bedrock") {
+    throw new AiError("embed: Amazon Bedrock serves no embeddings here; point embed at an OpenAI-compatible or Ollama endpoint", 0, false);
+  }
   const res = await fetchWithRetry("embeddings", (signal) =>
     fetch(joinUrl(ep.baseUrl, "/embeddings"), {
       method: "POST",

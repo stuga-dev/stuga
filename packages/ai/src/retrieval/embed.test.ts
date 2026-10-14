@@ -1,8 +1,8 @@
 /**
  * Embedding dispatcher tests: the OpenAI-compatible and Ollama request shapes,
  * result ordering, the model's prompts, vectors padded to the column and
- * refused when wider, and the anthropic provider refused up front (it serves
- * no embeddings endpoint).
+ * refused when wider, and the chat-only providers, Anthropic and Bedrock,
+ * refused up front.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
@@ -122,9 +122,9 @@ describe("embed (OpenAI-compatible)", () => {
     expect((body(fn).input as string[])[0]!.length).toBe(50_000);
   });
 
-  it("refuses the anthropic provider with a non-retryable error", async () => {
+  it.each(["anthropic", "bedrock"] as const)("refuses the %s provider with a non-retryable error", async (provider) => {
     const fn = mockJson({});
-    const cfg = { ...CFG, embed: { ...CFG.embed, provider: "anthropic" as const } };
+    const cfg = { ...CFG, embed: { ...CFG.embed, provider } };
     const err = await embed(cfg, ["x"], "document").catch((e) => e);
     expect(err).toBeInstanceOf(AiError);
     expect((err as AiError).retryable).toBe(false);

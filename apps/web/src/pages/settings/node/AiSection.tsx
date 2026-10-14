@@ -30,12 +30,16 @@ import { tRich } from "../../../i18n/rich";
 import { presentServerMessage } from "../../../lib/http/server-messages";
 import { invalidateModelOptions } from "../../../state/model-options";
 import {
+  EMBED_PROVIDERS,
   HALF_COPY,
   NO_CLEARED_KEYS,
   PROVIDERS,
   RERANK_PRESETS,
   STRICTNESS_COPY,
   allChatModelIds,
+  bedrockAddress,
+  bedrockRegionOf,
+  bedrockRegionProblem,
   calibrationBanner,
   chatInputWith,
   endpointLabel,
@@ -191,6 +195,9 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
   /** The provider open for editing, as edited so far. */
   const [draft, setDraft] = useState<ChatEndpointForm | null>(null);
   const [draftKeyCleared, setDraftKeyCleared] = useState(false);
+  /** The Region typed for a Bedrock provider being edited, null for the one it is in, and why it is not one. */
+  const [draftRegion, setDraftRegion] = useState<string | null>(null);
+  const [draftRegionProblem, setDraftRegionProblem] = useState<string | null>(null);
   /** Model ids a provider reported, per provider. Empty until asked. */
   const [found, setFound] = useState<Record<string, string[]>>({});
   const [fetching, setFetching] = useState("");
@@ -334,6 +341,19 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
       applied((await NodeApi.saveAi(chatInputWith(settings, { enabled: on }, baseUrls))).settings);
     });
 
+  const draftRegionValue = draftRegion ?? bedrockRegionOf(draft?.baseUrl ?? "");
+
+  /**
+   * The draft as a request sends it: a Bedrock provider at the address of the Region in its field.
+   * Null, with the field saying why, while that Region is not one, so nothing is asked.
+   */
+  function sendable(d: ChatEndpointForm): ChatEndpointForm | null {
+    if (d.provider !== "bedrock") return d;
+    const problem = bedrockRegionProblem(draftRegionValue);
+    setDraftRegionProblem(problem);
+    return problem ? null : { ...d, baseUrl: bedrockAddress(draftRegionValue, d.baseUrl) };
+  }
+
   async function discover(ep: ChatEndpointForm) {
     setFetching(ep.id);
     setStatusHalf("chat");
@@ -355,25 +375,31 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
     clearOutcome();
     setDraft(ep);
     setDraftKeyCleared(false);
+    setDraftRegion(null);
+    setDraftRegionProblem(null);
     setAdding(false);
     if (!found[id]) void discover(ep);
   }
 
-  const saveProvider = () =>
-    act("save-provider", "chat", async () => {
-      if (!draft) return;
-      const res = await NodeApi.saveAi(chatInputWith(settings, { edit: draft, clearKeyOf: draftKeyCleared ? draft.id : undefined }, baseUrls));
+  const saveProvider = () => {
+    const edit = draft && sendable(draft);
+    if (!edit) return;
+    return act("save-provider", "chat", async () => {
+      const res = await NodeApi.saveAi(chatInputWith(settings, { edit, clearKeyOf: draftKeyCleared ? edit.id : undefined }, baseUrls));
       applied(res.settings);
       setProbe({ half: "chat", result: res.probe });
       setDraft(null);
     });
+  };
 
   // Switched on for the test, so a switched-off half is asked too.
-  const testProvider = () =>
-    act("test-provider", "chat", async () => {
-      if (!draft) return;
-      setProbe({ half: "chat", result: await NodeApi.testAi(chatInputWith(settings, { edit: draft, clearKeyOf: draftKeyCleared ? draft.id : undefined, enabled: true }, baseUrls)) });
+  const testProvider = () => {
+    const edit = draft && sendable(draft);
+    if (!edit) return;
+    return act("test-provider", "chat", async () => {
+      setProbe({ half: "chat", result: await NodeApi.testAi(chatInputWith(settings, { edit, clearKeyOf: draftKeyCleared ? edit.id : undefined, enabled: true }, baseUrls)) });
     });
+  };
 
   const removeProvider = (id: string) =>
     act("remove-provider", "chat", async () => {
@@ -556,9 +582,24 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                     if (!preset) return;
                     // Discovered models belong to the old host.
                     setFound(({ [ep.id]: _drop, ...rest }) => rest);
+                    setDraftRegion(null);
+                    setDraftRegionProblem(null);
                     setProviderDraft({ ...draft, provider: preset.provider, baseUrl: preset.baseUrl }, ep.api_key_set);
                   }}
                 />
+                {draft.provider === "bedrock" && (
+                  <TextInput
+                    label={t("nodeAccess.connect.region")}
+                    value={draftRegionValue}
+                    description={t("nodeAccess.connect.regionHint")}
+                    status={draftRegionProblem ? { type: "error", message: draftRegionProblem } : undefined}
+                    onChange={(v: string) => {
+                      setDraftRegion(v);
+                      setDraftRegionProblem(null);
+                    }}
+                    onBlur={() => setDraftRegionProblem(bedrockRegionProblem(draftRegionValue))}
+                  />
+                )}
                 {asksKey(draft.provider, draft.baseUrl, ep.api_key_set) && (
                   <VStack gap={1}>
                     <TextInput
@@ -598,12 +639,24 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                       />
                     )}
                   </StackItem>
-                  <Button label={t("node.ai.fetchModels")} variant="secondary" size="sm" isLoading={fetching === ep.id} onClick={() => void discover(draft)} />
+                  <Button
+                    label={t("node.ai.fetchModels")}
+                    variant="secondary"
+                    size="sm"
+                    isLoading={fetching === ep.id}
+                    onClick={() => {
+                      const asked = sendable(draft);
+                      if (asked) void discover(asked);
+                    }}
+                  />
                 </HStack>
                 <Collapsible trigger={t("node.ai.advanced")} defaultIsOpen={presetFor(presets, draft.provider, draft.baseUrl) === "custom"}>
                   <VStack gap={3}>
                     <Selector label={t("node.ai.apiProtocol")} options={PROVIDERS} value={draft.provider} onChange={(v: string) => setProviderDraft({ ...draft, provider: v }, ep.api_key_set)} />
-                    <TextInput label={t("node.ai.baseUrl")} value={draft.baseUrl} placeholder={baseUrls[draft.provider]} onChange={(v: string) => setProviderDraft({ ...draft, baseUrl: v }, ep.api_key_set)} />
+                    {/* A Bedrock provider's Region stands in for its address. */}
+                    {draft.provider !== "bedrock" && (
+                      <TextInput label={t("node.ai.baseUrl")} value={draft.baseUrl} placeholder={baseUrls[draft.provider]} onChange={(v: string) => setProviderDraft({ ...draft, baseUrl: v }, ep.api_key_set)} />
+                    )}
                   </VStack>
                 </Collapsible>
                 <HStack gap={2}>
@@ -816,7 +869,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
                   </VStack>
                   <Selector
                     label={t("node.ai.apiProtocol")}
-                    options={PROVIDERS.filter((o) => o.value !== "anthropic")}
+                    options={EMBED_PROVIDERS}
                     value={form.embedProvider}
                     onChange={(v: string) => setSearchForm({ ...form, embedProvider: v })}
                   />

@@ -11,7 +11,6 @@ import type {
 import { MAX_INLINE_IMAGE_BYTES } from "@stuga/agent-surface/catalog";
 import {
   type DocRow,
-  addComment,
   getDoc,
   getWorkspace,
   latestWorkspaceEventId,
@@ -43,10 +42,12 @@ import {
 } from "../api/collections.js";
 import { retrievePassages, searchDocuments } from "../api/search.js";
 import { folderSummary } from "../api/summaries.js";
-import { recordEvent } from "../audit/record.js";
+import { eventActorOf } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
 import { canCommentDoc, canReadDoc, canWriteDoc, scopeFolderIds } from "../authz/authz.js";
 import { resolveReviewMode } from "../authz/review-mode.js";
+import { commentInput, isCommentRefusal, postComment } from "../comments/post.js";
+import { markYours } from "../comments/read.js";
 import { authorizedDatabase, callDatabaseActor } from "../databases/gate.js";
 import {
   commitDatabaseImport,
@@ -63,7 +64,6 @@ import {
   type DatabaseProposeOutcome,
 } from "../databases/propose.js";
 import { findRowPage, openRowPage } from "../databases/row-pages.js";
-import { pushCommentsChanged } from "../documents/access.js";
 import { createDocument } from "../documents/create.js";
 import { docAgentInstructions, docAgentInstructionsOrNone, docInstructionLabelsOrNone } from "../documents/instructions.js";
 import {
@@ -250,17 +250,18 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
     async listComments(docId) {
       const doc = await getDoc(ctx.sql, docId);
       if (!doc || !canReadDoc(ctx, doc)) return { error: "not found" };
-      return { comments: await listComments(ctx.sql, docId) };
+      return { comments: markYours(ctx, await listComments(ctx.sql, docId)) };
     },
 
-    async addComment(docId, body) {
+    async addComment(docId, { body, parent_num, quote }) {
       const doc = await getDoc(ctx.sql, docId);
       if (!doc || !canReadDoc(ctx, doc)) return { error: "not found" };
       if (!canCommentDoc(ctx, doc)) return { error: "no comment access" };
-      const c = await addComment(ctx.sql, { docId, author: ctx.alias, body, parentNum: null });
-      recordEvent(ctx, "comment.added", docId, { num: c.num, parent_num: null, excerpt: body.slice(0, 140) });
-      await pushCommentsChanged(ctx.env, docId, doc.doc_type);
-      return { ...c };
+      const input = commentInput({ body, parent_num, quote });
+      if (typeof input === "string") return { error: input };
+      const out = await postComment(ctx, doc, input);
+      if (isCommentRefusal(out)) return { error: out.error };
+      return { ...out.comment, ...(out.suppressed > 0 ? { notifications_held: out.suppressed } : {}) };
     },
 
     async listFolders() {
@@ -279,9 +280,11 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
         workspaceId: ctx.workspaceId,
         principals: ctx.principals,
         after: start,
-        types: mine && !types?.length ? ["run.decided", "run.reverted", "run.reopened"] : types,
+        // An agent's own: decisions on its runs, and replies in comment threads it started.
+        types: mine && !types?.length ? ["run.decided", "run.reverted", "run.reopened", "comment.added"] : types,
         scopeFolderIds: scopeFolderIds(ctx),
-        ...(mine ? { agentAlias: ctx.alias } : {}),
+        // Its own replies are left out by the actor its events carry, which for a person is `user:<alias>`.
+        ...(mine ? { agentAlias: ctx.alias, selfActor: eventActorOf(ctx) } : {}),
         ...(lookback ? { since: new Date(Date.now() - RUN_FEEDBACK_LOOKBACK_DAYS * 86_400_000) } : {}),
         limit: limit ?? 50,
       });

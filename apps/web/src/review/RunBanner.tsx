@@ -181,7 +181,7 @@ export function RunBanner({
           <span className="agent-run-title__hint">{hint}</span>
         </span>
         <div className="agent-run-bar__actions">
-          <HStack gap={2} vAlign="center">
+          <HStack gap={2} vAlign="center" wrap="wrap" hAlign="end">
             {controls}
             {list && (
               <Button
@@ -253,7 +253,7 @@ export function CatchUpBanner({
         <span className="agent-catchup__description">{description}</span>
       </span>
       <div className="agent-run-bar__actions">
-        <HStack gap={2} vAlign="center">
+        <HStack gap={2} vAlign="center" wrap="wrap" hAlign="end">
           {view}
           {revert}
           <Button label={t("common.dismiss")} variant="ghost" size="sm" onClick={onDismiss} />

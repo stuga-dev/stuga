@@ -17,8 +17,9 @@ import { hostExternalImages, MAX_INGEST_PER_EDIT, type HostedImage } from "../me
 import { isKeySafeWorkspaceId } from "../media/media.js";
 import { MEDIA_GET_PATH } from "@stuga/protocol/api/media";
 import { serveMedia } from "../media/serve.js";
-import type { Ctx } from "../auth/context.js";
 import type { NodeEnv } from "../env.js";
+import { handleInternalComment, handleInternalCommentThread, handleInternalCoauthorAsked } from "./comments.js";
+import { panelCtx, principalsOf } from "./panel.js";
 
 interface InternalRoute extends Route {
   handler: (req: Request, env: NodeEnv, match: PathMatch) => Promise<Response>;
@@ -34,6 +35,9 @@ const INTERNAL_ROUTES: readonly InternalRoute[] = [
   { method: "POST", path: "/internal/media-ingest", handler: handleInternalMediaIngest },
   { method: "POST", path: "/internal/agent-instructions", handler: handleInternalAgentInstructions },
   { method: "POST", path: "/internal/review-mode", handler: handleInternalReviewMode },
+  { method: "POST", path: "/internal/comment-thread", handler: handleInternalCommentThread },
+  { method: "POST", path: "/internal/comment", handler: handleInternalComment },
+  { method: "POST", path: "/internal/coauthor-asked", handler: handleInternalCoauthorAsked },
 ];
 
 /** Answer one in-process request from an actor. */
@@ -119,11 +123,6 @@ async function handleInternalRetrieve(req: Request, env: NodeEnv): Promise<Respo
       heading_path: c.heading_path ?? null,
     })),
   });
-}
-
-/** The principals an actor forwarded, strings only; anything else is none. */
-function principalsOf(body: { principals?: unknown }): string[] {
-  return Array.isArray(body.principals) ? body.principals.filter((p): p is string => typeof p === "string") : [];
 }
 
 /**
@@ -275,41 +274,19 @@ async function handleInternalProposeDocEdit(req: Request, env: NodeEnv): Promise
     principals?: string[];
     workspaceId?: string;
     alias?: string;
-    panel_alias?: string;
     agent?: string;
     edits?: AiStrEdit[];
     citations?: AiCitation[];
     collection_id?: string | null;
   };
   const docId = typeof body.doc_id === "string" ? body.doc_id : "";
-  const principals = Array.isArray(body.principals) ? body.principals : [];
-  const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";
-  const alias = typeof body.alias === "string" ? body.alias : "";
   const edits = Array.isArray(body.edits) ? body.edits : [];
-  if (!docId || !alias || !workspaceId || principals.length === 0 || edits.length === 0) {
-    return json({ error: "bad request" }, { status: 400 });
-  }
-  const scope = await turnScope(env, body, principals, workspaceId);
+  const ctx = panelCtx(env, body);
+  if (!ctx || !docId || edits.length === 0) return json({ error: "bad request" }, { status: 400 });
+  const scope = await turnScope(env, body, ctx.principals, ctx.workspaceId);
   if (scope === "not-found") return json({ kind: "error", message: COLLECTION_UNAVAILABLE }, { status: 404 });
   if (scope === "open-document") return json({ kind: "error", message: OPEN_DOCUMENT_ONLY }, { status: 403 });
   if (scope && !scope.includes(docId)) return json({ kind: "error", message: OUTSIDE_COLLECTION }, { status: 403 });
-  const ctx: Ctx = {
-    sql: env.sql,
-    // The turn came from a person's editor session.
-    surface: "ws",
-    env,
-    principals,
-    workspaceId,
-    // Isolation comes from the principal set; agent gates key off isAgent, not role.
-    role: "member",
-    alias: typeof body.panel_alias === "string" && body.panel_alias ? body.panel_alias : `panel:${alias}`,
-    displayName: typeof body.agent === "string" && body.agent ? body.agent : "AI co-author",
-    isAgent: true,
-    onBehalfOf: alias,
-    // Nobody is handed a link from here.
-    servedOrigin: env.publicOrigin,
-    arrival: "local",
-  };
   const out = await proposeDocEdit(ctx, {
     docId,
     action: "cited_edits",

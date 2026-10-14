@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createClient, closeClients } from "./client.js";
 import { initSchema } from "./schema/migrate.js";
-import { agentNames } from "./agents.js";
+import { agentNames, agentOwners } from "./agents.js";
 import {
   dropWorkspaceFromOwnerGrants,
   grantForAccessToken,
@@ -206,5 +206,12 @@ describe.skipIf(!URL)("OAuth grants and tokens", () => {
     expect((await updateOauthGrant(sql, "grt_1", "alice", { name: "Work Claude" }))?.name).toBe("Work Claude");
     expect(await updateOauthGrant(sql, "grt_1", "bob", { name: "x" })).toBeNull();
     expect((await agentNames(sql, ["agent-conn-1"])).get("agent-conn-1")).toBe("Work Claude");
+  });
+
+  it("names the person a grant's agent acts for, after the grant is revoked too", async () => {
+    await grant();
+    expect((await agentOwners(sql, ["agent-conn-1"])).get("agent-conn-1")).toBe("alice");
+    await revokeOauthGrant(sql, "grt_1", "alice");
+    expect((await agentOwners(sql, ["agent-conn-1"])).get("agent-conn-1")).toBe("alice");
   });
 });

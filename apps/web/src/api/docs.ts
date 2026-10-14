@@ -62,6 +62,12 @@ export interface Comment {
   created_at: string;
 }
 
+/**
+ * Each agent among a document's comment authors → the alias of the person it acts for, null when
+ * the node cannot say. The co-author, imported authors and Sample agent are not in it.
+ */
+export type CommentAgents = Record<string, string | null>;
+
 /** A collaboration-safe text anchor: base64 Yjs RelativePositions plus the quoted text. */
 export interface CommentAnchor {
   start: string;
@@ -251,7 +257,8 @@ export const Docs = {
       signal: opts.signal,
     }),
   versions: (id: string) => api<VersionListing>(`/api/docs/${id}/versions`),
-  comments: (id: string) => api<{ comments: Comment[] }>(`/api/docs/${id}/comments`),
+  /** `can_manage`: the caller manages the document, so may resolve or delete anyone's comment. */
+  comments: (id: string) => api<{ comments: Comment[]; agents: CommentAgents; can_manage: boolean }>(`/api/docs/${id}/comments`),
   addComment: (id: string, body: string, anchor?: CommentAnchor | null) =>
     api<Comment>(`/api/docs/${id}/comments`, {
       method: "POST",

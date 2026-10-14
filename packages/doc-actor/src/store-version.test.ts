@@ -5,20 +5,33 @@
  * the step in the host that brings an older store forward. So does a new node or mark type in the
  * text, which an older build's schema cannot read: those are pinned from version 3 on.
  */
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+
+// A co-author thread turn writes a key of its own; the model is not what is under test.
+vi.mock("@stuga/ai", async (orig) => ({
+  ...(await orig<typeof import("@stuga/ai")>()),
+  runAgentTurn: vi.fn(),
+}));
+
+const { runAgentTurn } = await import("@stuga/ai");
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
-import { Heartbeat, TEXT_SCHEMA_VERSION } from "@stuga/protocol/wire/opcodes";
+import type { AiEditsPayload, AiRequest } from "@stuga/protocol/wire/doc-socket";
+import { encodeJson } from "@stuga/protocol/wire/frame";
+import { Heartbeat, Opcode, TEXT_SCHEMA_VERSION } from "@stuga/protocol/wire/opcodes";
 import { createActorNamespace, type ActorHandle } from "@stuga/runtime";
 import { storeSchema } from "@stuga/runtime/testing";
 import { getStugaSchema } from "@stuga/crdt-ops";
+import type { StoredThreadOutcome } from "./coauthor/thread.js";
 import { DocActor } from "./doc-actor.js";
 import type { StoredRun } from "./ledger/run-store.js";
 import type { RingState } from "./store/retention.js";
 import { DOC_STORE_UPGRADES, DOC_STORE_VERSION, type StoredMeta } from "./store/doc-store.js";
-import { harness } from "../test/harness.js";
+import { connect, frameBuffer, harness, makeActor } from "../test/harness.js";
+import { threadNode } from "../test/thread-node.js";
 
 /**
  * Per version: the keys a store holds (`*` stands for a name or an id), and the fingerprint of its SQL
@@ -28,11 +41,23 @@ const PINNED: Record<number, { keys: string[]; schema: string }> = {
   1: { keys: ["locked", "meta", "pending", "run-active:*", "run-order", "run:*"], schema: "f5c5bd82901d11de" },
   2: { keys: ["feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"], schema: "d0ecfe622f413eda" },
   3: { keys: ["feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"], schema: "ac9d0a3f63b2affa" },
+  4: {
+    keys: ["coauthor-clean:*", "coauthor-threads:*", "feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"],
+    schema: "d5faf519fff506b3",
+  },
 };
 
 /** Per version from 3 on: the node and mark types the text may hold. A released version's entry never changes. */
 const TEXT_TYPES: Record<number, { nodes: string[]; marks: string[] }> = {
   3: {
+    nodes: [
+      "blockquote", "bulletList", "codeBlock", "doc", "footnoteDefinition", "footnoteReference", "hardBreak", "heading",
+      "horizontalRule", "image", "listItem", "mention", "orderedList", "paragraph", "table", "tableCell", "tableHeader",
+      "tableRow", "taskItem", "taskList", "text",
+    ],
+    marks: ["bold", "code", "italic", "link", "strike", "underline"],
+  },
+  4: {
     nodes: [
       "blockquote", "bulletList", "codeBlock", "doc", "footnoteDefinition", "footnoteReference", "hardBreak", "heading",
       "horizontalRule", "image", "listItem", "mention", "orderedList", "paragraph", "table", "tableCell", "tableHeader",
@@ -73,6 +98,8 @@ describe("a document's store", () => {
       blob_key: string;
       hunk_meta: { id: string; status: "pending" | "accepted" | "rejected" | "conflict" | "auto_applied"; bytes: number }[];
     }>();
+    // The receipt is the wire's own, which only ever gains optional fields: an older record reads as it is.
+    expectTypeOf<StoredThreadOutcome>().toEqualTypeOf<{ key: string; edits: AiEditsPayload }>();
   });
 
   let dir = "";
@@ -196,5 +223,65 @@ describe("a document's store", () => {
       await upgraded.close();
     }
     expect(stamp()).toBe(DOC_STORE_VERSION);
+  });
+  it("keeps the outcome of a comment reply the co-author answered, and where its edits came from, under keys DOC_STORE_VERSION pins", async () => {
+    const h = harness();
+    threadNode(h, [
+      { parent_num: null, author: "panel:liv", body: "Built-in or freestanding?" },
+      { parent_num: 1, author: "liv", body: "Freestanding." },
+    ]);
+    vi.mocked(runAgentTurn).mockResolvedValue({
+      prose: "Noted.",
+      answer: "Noted.",
+      strEdits: [{ old_string: "", new_string: "Freestanding." }],
+      docEdits: [],
+      citations: [],
+      usage: { inputTokens: 1, outputTokens: 1, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
+      modelId: "test-model",
+      rounds: 1,
+      stopReason: "complete",
+    });
+    const doc = makeActor(h);
+    const ws = await connect(doc, h, { docId: "doc1", alias: "liv" });
+    const req: AiRequest = { prompt: "", selected_text: null, model: "auto", history: [], thread: { num: 1, reply_num: 2 } };
+    await doc.webSocketMessage(ws, frameBuffer(encodeJson(Opcode.AI_REQUEST, req)));
+
+    const keys = [...h.state.storage.map.keys()].map((k) => k.replace(/:.*$/, ":*"));
+    expect(keys).toContain("coauthor-threads:*");
+    expect(keys).toContain("coauthor-clean:*");
+    const unknown = [...new Set(keys)].filter((k) => !PINNED[DOC_STORE_VERSION]!.keys.includes(k));
+    expect(unknown, `a document's store holds keys it did not: ${unknown.join(", ")}. ${RAISE}`).toEqual([]);
+  });
+
+  it("brings a version 3 store forward as it is", async () => {
+    dir = mkdtempSync(join(tmpdir(), "stuga-doc-store-"));
+    const env = harness().env;
+    const v3 = namespace(3, undefined, env);
+    let runId = "";
+    try {
+      const doc = v3.get("doc1");
+      await call(doc, "/apply-edits", { str_edits: [{ old_string: "", new_string: "# Notes\n\nAlpha.\n" }], agent: "seed" });
+      runId = ((await call(doc, "/runs/propose", PROPOSAL)).run as { id: string }).id;
+      await call(doc, "/runs/decide", { run_id: runId, decision: "reject", decided_by: "alice", note: "Keep Alpha." });
+    } finally {
+      await v3.close();
+    }
+
+    const upgraded = namespace(DOC_STORE_VERSION, DOC_STORE_UPGRADES, env);
+    try {
+      const doc = upgraded.get("doc1");
+      const listed = (await doc.fetch("http://actor/runs?docId=doc1").then((r) => r.json())) as { runs: Array<{ id: string; status: string }> };
+      expect(listed.runs.map((r) => [r.id, r.status])).toEqual([[runId, "rejected"]]);
+      const read = (await doc.fetch("http://actor/markdown?docId=doc1&agent=agent1").then((r) => r.json())) as { feedback?: Array<{ note: string }> };
+      expect(read.feedback).toEqual([expect.objectContaining({ note: "Keep Alpha." })]);
+    } finally {
+      await upgraded.close();
+    }
+    const db = new DatabaseSync(join(dir, "doc1.sqlite"), { readOnly: true });
+    try {
+      expect((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(DOC_STORE_VERSION);
+    } finally {
+      db.close();
+    }
   });
 });

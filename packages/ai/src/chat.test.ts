@@ -1,8 +1,24 @@
 /** One-shot chat requests through Pi: endpoint routing, the text they return, and the probe. */
+import type { Api, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { completeText, probeChat } from "./chat.js";
 import type { AiConfig } from "./config.js";
 import { CFG, mockStreamFromText, openaiTextRound, sentBody, streamOf, textRound } from "./test-helpers.js";
+
+/** Bedrock's client talks to AWS through its SDK, not fetch, so its stand-in records what it was asked. */
+const bedrockCalls = vi.hoisted(() => [] as Array<{ model: Model<Api>; options: SimpleStreamOptions }>);
+vi.mock("@earendil-works/pi-ai/api/bedrock-converse-stream.lazy", () => ({
+  bedrockConverseStreamApi: () => ({
+    stream: () => {
+      throw new Error("unused");
+    },
+    streamSimple: (model: Model<Api>, _context: unknown, options: SimpleStreamOptions) => {
+      bedrockCalls.push({ model, options });
+      const usage = { input: 3, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 4, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+      return { result: async () => ({ role: "assistant", content: [{ type: "text", text: "pong" }], api: model.api, provider: model.provider, model: model.id, usage, stopReason: "stop", timestamp: 0 }) };
+    },
+  }),
+}));
 
 const TWO_ENDPOINTS: AiConfig = {
   ...CFG,
@@ -123,6 +139,41 @@ describe("completeText's reasoning", () => {
     refuseAll();
     await completeText(VENDORS, { model: "kimi-k3", prompt: "rank", maxTokens: 64 });
     expect(sentBody()).not.toHaveProperty("reasoning_effort");
+  });
+});
+
+describe("completeText on Amazon Bedrock", () => {
+  const bedrock = (baseUrl: string): AiConfig => ({
+    ...CFG,
+    chat: {
+      enabled: true,
+      defaultModel: "global.anthropic.claude-sonnet-5-5",
+      endpoints: [{ id: "aws", provider: "bedrock", baseUrl, apiKey: "bedrock-key", models: [{ id: "global.anthropic.claude-sonnet-5-5", name: "Claude Sonnet 5.5" }] }],
+    },
+  });
+  afterEach(() => {
+    bedrockCalls.length = 0;
+    vi.unstubAllEnvs();
+  });
+
+  it("names the endpoint's Region to the AWS client, over the node's own AWS_REGION, with the key as its bearer token", async () => {
+    vi.stubEnv("AWS_REGION", "eu-west-1");
+    const out = await completeText(bedrock("https://bedrock-runtime.us-west-2.amazonaws.com"), { prompt: "ping", maxTokens: 16 });
+    expect(out).toMatchObject({ text: "pong", protocol: "bedrock-converse-stream", modelId: "global.anthropic.claude-sonnet-5-5" });
+    const [call] = bedrockCalls;
+    expect(call!.model).toMatchObject({ id: "global.anthropic.claude-sonnet-5-5", baseUrl: "https://bedrock-runtime.us-west-2.amazonaws.com" });
+    expect(call!.options).toMatchObject({ apiKey: "bedrock-key", env: { AWS_REGION: "us-west-2" } });
+  });
+
+  it("keeps a FIPS address on the FIPS endpoint", async () => {
+    await completeText(bedrock("https://bedrock-runtime-fips.us-gov-west-1.amazonaws.com"), { prompt: "ping", maxTokens: 16 });
+    expect(bedrockCalls[0]!.options.env).toEqual({ AWS_REGION: "us-gov-west-1-fips" });
+  });
+
+  it("sends nothing for an address that is not Bedrock's", async () => {
+    const out = await completeText(bedrock("https://proxy.example.test"), { prompt: "ping", maxTokens: 16 });
+    expect(out.failure?.message).toMatch(/not an Amazon Bedrock runtime address/);
+    expect(bedrockCalls).toEqual([]);
   });
 });
 

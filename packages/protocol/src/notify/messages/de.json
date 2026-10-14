@@ -6,6 +6,8 @@
   "MENTIONED_IN_COMMENT.body": "{excerpt}",
   "COMMENT_ON_OWNED_DOC.title": "{kind, select, reply {{actor} hat auf „{doc}“ geantwortet} other {{actor} hat „{doc}“ kommentiert}}",
   "COMMENT_ON_OWNED_DOC.body": "{excerpt}",
+  "COMMENT_REPLY.title": "{relation, select, coauthor_question {{actor} hat auf die Frage deines KI-Koautors zu „{doc}“ geantwortet} agent_comment {{actor} hat auf den Kommentar deines Agenten zu „{doc}“ geantwortet} thread {{actor} hat in einem Thread zu „{doc}“ geantwortet} other {{actor} hat auf deinen Kommentar zu „{doc}“ geantwortet}}",
+  "COMMENT_REPLY.body": "{excerpt}",
   "DIRECT_DOC_PERMISSIONS.title": "{actor} hat „{doc}“ mit dir geteilt",
   "DIRECT_DOC_PERMISSIONS.body": "Du hast jetzt Zugriff auf dieses Dokument.",
   "REQUEST_ACCESS.title": "{actor} bittet um Zugriff auf „{doc}“",
@@ -70,6 +72,9 @@
   "REMOTE_ADDRESS_MOVED.body": "{address} führt jetzt zu einem anderen Computer. Auf diesem ist der Fernzugriff aus.",
   "REMOTE_UPDATE_REQUIRED.title": "Der Fernzugriff ist pausiert, bis Stuga aktualisiert ist",
   "REMOTE_UPDATE_REQUIRED.body": "Diese Version hat ein bekanntes Sicherheitsproblem, daher ist {address} geschlossen. Aktualisiere auf Stuga {version} oder neuer, dann öffnet sie sich von selbst wieder.",
+
+  "actor.agentOf": "Der Agent von {person}",
+  "actor.coauthorOf": "Der KI-Koautor von {person}",
 
   "channel.none": "nur Stuga",
   "channel.email": "E-Mail",

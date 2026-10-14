@@ -38,11 +38,24 @@ export type DatabaseChange =
   | { kind: "rows_inserted" | "rows_updated" | "rows_deleted" | "row_pages_created" | "changes_made"; count: number }
   | { kind: "rows_imported"; count: number; table: string };
 
+/**
+ * Who wrote a comment, as a notice names them: a person by their display name, an agent or an AI
+ * co-author by the display name of the person it acts for, never by a name the agent's client chose.
+ */
+export type ActorParam = string | { agent_of: string } | { coauthor_of: string };
+
+/**
+ * Why a reply's notice reaches its reader: it answers their comment, their AI co-author's question
+ * or their agent's comment, or it is in a thread they (or their co-author or agent) wrote in.
+ */
+export type CommentReplyRelation = "comment" | "coauthor_question" | "agent_comment" | "thread";
+
 /** Every notification event and the params its text is written from. */
 export interface NotificationParams {
   /** `excerpt` is the comment's own text. */
-  MENTIONED_IN_COMMENT: { actor: string; doc: string; excerpt: string };
-  COMMENT_ON_OWNED_DOC: { actor: string; doc: string; kind: "comment" | "reply"; excerpt: string };
+  MENTIONED_IN_COMMENT: { actor: ActorParam; doc: string; excerpt: string };
+  COMMENT_ON_OWNED_DOC: { actor: ActorParam; doc: string; kind: "comment" | "reply"; excerpt: string };
+  COMMENT_REPLY: { actor: ActorParam; doc: string; excerpt: string; relation: CommentReplyRelation };
   DIRECT_DOC_PERMISSIONS: { actor: string; doc: string };
   REQUEST_ACCESS: { actor: string; doc: string };
   /** `actor` is null when an agent's edit made the mention. */
@@ -94,6 +107,7 @@ export type NotificationEvent = keyof NotificationParams;
 export type DocNotificationEvent =
   | "MENTIONED_IN_COMMENT"
   | "COMMENT_ON_OWNED_DOC"
+  | "COMMENT_REPLY"
   | "DIRECT_DOC_PERMISSIONS"
   | "REQUEST_ACCESS"
   | "MENTIONED_IN_DOC"

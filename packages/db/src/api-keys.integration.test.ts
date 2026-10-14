@@ -3,6 +3,7 @@ import { createClient, closeClients } from "./client.js";
 import { seedWorkspaces } from "./testing/fixtures.js";
 import { initSchema } from "./schema/migrate.js";
 import {
+  agentOwners,
   getApiKey,
   insertApiKey,
   listApiKeys,
@@ -82,6 +83,16 @@ describe.skipIf(!URL)("api key revocation scopes", () => {
     const remaining = (await listApiKeys(sql, "alice")).filter((k) => k.workspace_id === "ws-a");
     expect(remaining.map((k) => k.key_id)).toEqual(["k-a-alice"]);
     expect(await purgeRevokedApiKeys(sql, 30)).toBe(0);
+  });
+
+  it("names the person each key's agent acts for, revoked keys included until purged", async () => {
+    await revokeApiKey(sql, "k-a-bob", "bob");
+    const owners = await agentOwners(sql, ["agent-a-alice", "agent-a-bob", "agent-unknown"]);
+    expect(Object.fromEntries(owners)).toEqual({ "agent-a-alice": "alice", "agent-a-bob": "bob" });
+    expect(await agentOwners(sql, [])).toEqual(new Map());
+    await sql`UPDATE api_keys SET revoked_at = now() - interval '31 days' WHERE key_id = 'k-a-bob'`;
+    await purgeRevokedApiKeys(sql, 30);
+    expect((await agentOwners(sql, ["agent-a-bob"])).has("agent-a-bob")).toBe(false);
   });
 
   it("never purges a live key, however old", async () => {

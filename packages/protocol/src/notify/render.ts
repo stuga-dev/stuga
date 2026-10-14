@@ -7,7 +7,7 @@
  */
 import IntlMessageFormat from "intl-messageformat";
 import { isUiLanguage, matchUiLanguage, type UiLanguage } from "../domain/ui-languages";
-import { TIME_PARAMS, type ChannelParams, type DatabaseChange } from "./events";
+import { TIME_PARAMS, type ActorParam, type ChannelParams, type DatabaseChange } from "./events";
 import de from "./messages/de.json" with { type: "json" };
 import en from "./messages/en.json" with { type: "json" };
 import es from "./messages/es.json" with { type: "json" };
@@ -117,6 +117,20 @@ export function renderDatabaseChange(change: DatabaseChange, language: string): 
   return format(lang, `databaseChange.${change.kind}`, values);
 }
 
+/** Who caused a notification, in the reader's language: a person by name, an agent or an AI co-author by the person it acts for. */
+export function renderActor(actor: ActorParam, language: string): string {
+  if (typeof actor === "string") return actor;
+  const lang = notifyLanguage(language);
+  if ("agent_of" in actor) return format(lang, "actor.agentOf", { person: actor.agent_of });
+  return format(lang, "actor.coauthorOf", { person: actor.coauthor_of });
+}
+
+export function isActor(v: unknown): v is Exclude<ActorParam, string> {
+  if (typeof v !== "object" || v === null) return false;
+  const a = v as { agent_of?: unknown; coauthor_of?: unknown };
+  return typeof a.agent_of === "string" || typeof a.coauthor_of === "string";
+}
+
 function isChannel(v: unknown): v is ChannelParams {
   return typeof v === "object" && v !== null && typeof (v as ChannelParams).sink === "string";
 }
@@ -127,8 +141,8 @@ function isDatabaseChange(v: unknown): v is DatabaseChange {
 
 /**
  * The ICU arguments for a notification's params: instants formatted, an empty document title read
- * as Untitled, a channel or a change put in words, and beside every param `<name>Known`, `yes` or
- * `no`, which a message selects on where a param may be absent.
+ * as Untitled, an agent named by its person, a channel or a change put in words, and beside every
+ * param `<name>Known`, `yes` or `no`, which a message selects on where a param may be absent.
  */
 function argumentsOf(params: Record<string, unknown>, lang: UiLanguage): Values {
   const out: Values = {};
@@ -138,6 +152,7 @@ function argumentsOf(params: Record<string, unknown>, lang: UiLanguage): Values 
     else if (typeof value === "string") out[name] = TIME_PARAMS.includes(name) ? formatInstant(value, lang) : value;
     else if (typeof value === "number") out[name] = value;
     else if (typeof value === "boolean") out[name] = value ? "yes" : "no";
+    else if (isActor(value)) out[name] = renderActor(value, lang);
     else if (isChannel(value)) out[name] = renderChannel(value, lang);
     else if (isDatabaseChange(value)) out[name] = renderDatabaseChange(value, lang);
   }

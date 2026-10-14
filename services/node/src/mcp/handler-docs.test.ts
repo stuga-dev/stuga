@@ -4,12 +4,16 @@
  * for ranking, collection scope and the embeddings gate, once per workspace a
  * call names.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@stuga/db", async (orig) => ({
   ...(await orig<typeof import("@stuga/db")>()),
   createDoc: vi.fn(),
   addComment: vi.fn(),
+  getComment: vi.fn(async () => null),
+  listComments: vi.fn(async () => []),
+  getMembersByUsername: vi.fn(async () => []),
+  getUserDisplayName: vi.fn(async () => "Ada"),
   getDoc: vi.fn(async () => null),
   getFolder: vi.fn(async () => null),
   listFolders: vi.fn(async () => []),
@@ -39,8 +43,23 @@ vi.mock("@stuga/ai", async (orig) => ({
   embed: vi.fn(async () => ({ embeddings: [[0.1, 0.2]], inputTokens: 1 })),
 }));
 
-const { addComment, createDoc, getDoc, getFolder, getCollection, expandCollectionScope, listFolders, listWorkspacesForUser, resolveDocInstructions, searchDocs } =
-  await import("@stuga/db");
+const {
+  addComment,
+  createDoc,
+  getComment,
+  getDoc,
+  getFolder,
+  getCollection,
+  expandCollectionScope,
+  getMembersByUsername,
+  listComments,
+  listFolders,
+  listWorkspacesForUser,
+  resolveDocInstructions,
+  searchDocs,
+} = await import("@stuga/db");
+const { agentBudgetKey, agentNoticeBudget } = await import("../comments/budget.js");
+const { DOCUMENT_BUSY, QUOTE_ANCHOR_WAIT_MS, QUOTE_NOT_ONCE } = await import("../comments/post.js");
 const { retrieveAndRerank } = await import("../retrieval/retrieve.js");
 const { proposeDocEdit } = await import("../agents/edits.js");
 const { workspaceContextFor } = await import("../auth/context.js");
@@ -72,7 +91,7 @@ const FOLDER = {
 let ai = { chat: { enabled: true }, embed: { enabled: true, model: "embed-1" } };
 
 /** What the node asked a document's actor, by path. */
-const actorFetch = vi.fn(async (_url: string) => new Response(null, { status: 204 }));
+const actorFetch = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, { status: 204 }));
 
 const env = () => ({
   jobs,
@@ -369,20 +388,118 @@ describe("folders", () => {
 });
 
 describe("comments_add", () => {
+  const DOC = {
+    doc_id: "d1",
+    workspace_id: "ws1",
+    owner: "user:human-1",
+    title: "Renovation",
+    doc_type: "prose",
+    trashed: false,
+    acl_principals: ["user:human-1", "agent:agent-1", "org:ws1"],
+    acl_writers: ["user:human-1", "agent:agent-1"],
+    acl_commenters: [],
+  };
+  const ROOT = { doc_id: "d1", num: 3, parent_num: null, author: "u_bob", resolved: false, created_at: "2026-10-03T10:00:00Z" };
+  /** What the node asked the document's actor to anchor, by quote. */
+  const quotesAsked = () =>
+    actorFetch.mock.calls.filter(([url]) => new URL(url).pathname === "/quote-anchor").map(([, init]) => JSON.parse(String(init!.body)).quote);
+
+  beforeEach(() => {
+    mockGetDoc.mockResolvedValue(DOC as never);
+    vi.mocked(addComment).mockImplementation(async (_sql, input) => ({ num: 4, parent_num: input.parentNum ?? null, author: input.author, body: input.body }) as never);
+    vi.mocked(getComment).mockImplementation(async (_sql, _doc, num) => (num === 3 ? (ROOT as never) : null));
+    vi.mocked(listComments).mockResolvedValue([ROOT] as never);
+  });
+
+  afterEach(() => {
+    actorFetch.mockReset().mockImplementation(async () => new Response(null, { status: 204 }));
+  });
+
   it("tells the document's open pages, as a person's comment does", async () => {
-    mockGetDoc.mockResolvedValue({
-      doc_id: "d1",
-      workspace_id: "ws1",
-      owner: "user:human-1",
-      doc_type: "prose",
-      trashed: false,
-      acl_principals: ["user:human-1", "agent:agent-1"],
-      acl_writers: ["user:human-1", "agent:agent-1"],
-      acl_commenters: [],
-    } as never);
-    vi.mocked(addComment).mockResolvedValue({ num: 4, body: "Looks good" } as never);
     const r = await callTool(ctxOf(), "comments_add", { doc_id: "d1", body: "Looks good" });
     expect(r.isError).toBe(false);
     expect(actorFetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(["/comments-changed"]);
+  });
+
+  it("replies in a thread, telling the thread's first commenter, and the owner it works for, as the person's agent", async () => {
+    const r = await callTool(ctxOf(), "comments_add", { doc_id: "d1", body: "Done.", parent_num: 3 });
+    expect(JSON.parse(r.text)).toEqual({ num: 4, parent_num: 3, author: "agent-1", body: "Done." });
+    expect(jobs.sent().filter((m) => m.kind === "notify")).toEqual([
+      expect.objectContaining({ recipient: "u_bob", eventType: "COMMENT_REPLY", params: expect.objectContaining({ actor: { agent_of: "Ada" }, relation: "comment" }) }),
+      expect.objectContaining({ recipient: "human-1", eventType: "COMMENT_ON_OWNED_DOC", params: expect.objectContaining({ actor: { agent_of: "Ada" }, kind: "reply" }) }),
+    ]);
+  });
+
+  it("starts a thread on a passage the document has exactly once, as written", async () => {
+    actorFetch.mockImplementation(async (url: string) =>
+      new URL(url).pathname === "/quote-anchor" ? Response.json({ anchor: { start: "s1", end: "e1", quote: "bathtub" } }) : new Response(null, { status: 204 }),
+    );
+    const r = await callTool(ctxOf(), "comments_add", { doc_id: "d1", body: "Built-in or freestanding?", quote: "bathtub" });
+    expect(r.isError).toBe(false);
+    expect(quotesAsked()).toEqual(["bathtub"]);
+    expect(vi.mocked(addComment).mock.calls[0]![1]).toMatchObject({ parentNum: null, anchorStart: "s1", anchorEnd: "e1", anchorQuote: "bathtub" });
+  });
+
+  it("refuses a quote the document has not exactly as written, and saves nothing", async () => {
+    actorFetch.mockImplementation(async () => Response.json({ anchor: { start: "s1", end: "e1", quote: "it’s built in" } }));
+    const r = await callTool(ctxOf(), "comments_add", { doc_id: "d1", body: "Sure?", quote: "it's built in" });
+    expect(r).toEqual({ isError: true, text: `error: ${QUOTE_NOT_ONCE}` });
+    expect(addComment).not.toHaveBeenCalled();
+  });
+
+  it("refuses a quote on a reply before asking the document", async () => {
+    const r = await callTool(ctxOf(), "comments_add", { doc_id: "d1", body: "Yes.", parent_num: 3, quote: "bathtub" });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("not both");
+    expect(quotesAsked()).toEqual([]);
+    expect(addComment).not.toHaveBeenCalled();
+  });
+
+  it("says the document is busy when its actor does not answer in time", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      actorFetch.mockImplementation(() => new Promise<Response>(() => {}));
+      const pending = callTool(ctxOf(), "comments_add", { doc_id: "d1", body: "Sure?", quote: "bathtub" });
+      await vi.advanceTimersByTimeAsync(QUOTE_ANCHOR_WAIT_MS);
+      expect(await pending).toEqual({ isError: true, text: `error: ${DOCUMENT_BUSY}` });
+      expect(addComment).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refuses a sixth mention", async () => {
+    vi.mocked(getMembersByUsername).mockImplementationOnce(async (_sql, usernames) => usernames.map((u) => ({ alias: `u_${u}`, username: u })));
+    const r = await callTool(ctxOf(), "comments_add", { doc_id: "d1", body: "@ann @ben @cat @dan @eli @fox" });
+    expect(r).toEqual({ isError: true, text: "error: an agent's comment may mention at most 5 people" });
+    expect(addComment).not.toHaveBeenCalled();
+  });
+
+  it("says how many notices it held once its person's agents used the hour's allowance", async () => {
+    agentNoticeBudget.reserve(agentBudgetKey("ws1", "human-9"), 60);
+    const r = await callTool(ctxOf({ onBehalfOf: "human-9", principals: ["agent:agent-1", "user:human-9", "org:ws1"] }), "comments_add", {
+      doc_id: "d1",
+      body: "Done.",
+      parent_num: 3,
+    });
+    expect(JSON.parse(r.text)).toMatchObject({ num: 4, notifications_held: 2 });
+    expect(jobs.sent().filter((m) => m.kind === "notify")).toEqual([]);
+  });
+});
+
+describe("comments", () => {
+  it("marks the comments the agent wrote", async () => {
+    mockGetDoc.mockResolvedValue({ doc_id: "d1", workspace_id: "ws1", doc_type: "prose", acl_principals: ["agent:agent-1"] } as never);
+    vi.mocked(listComments).mockResolvedValue([
+      { num: 1, parent_num: null, author: "u_bob", body: "Tiles?" },
+      { num: 2, parent_num: 1, author: "agent-1", body: "White." },
+    ] as never);
+    const r = await callTool(ctxOf(), "comments", { doc_id: "d1" });
+    expect(JSON.parse(r.text)).toEqual({
+      comments: [
+        { num: 1, parent_num: null, author: "u_bob", body: "Tiles?" },
+        { num: 2, parent_num: 1, author: "agent-1", body: "White.", you: true },
+      ],
+    });
   });
 });

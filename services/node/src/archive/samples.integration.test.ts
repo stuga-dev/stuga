@@ -176,7 +176,9 @@ describe.skipIf(!URL || !BUILD || !existsSync(BUILD))("creating a workspace from
         const docId = docIdOf(titleOf(step.doc));
         const comments = (await listComments(sql, docId)).filter((c) => c.author === "agent-sample");
         expect(comments.map((c) => [c.body, c.anchor_quote]), `${listed.id}: ${step.doc}`).toEqual([[step.body.replaceAll("{{me}}", "@liv"), step.quote ?? null]]);
-        expect(jobs.sent.slice(sent)).toContainEqual(expect.objectContaining({ kind: "notify", recipient: "u_liv", eventType: "MENTIONED_IN_COMMENT", docId }));
+        expect(jobs.sent.slice(sent)).toContainEqual(
+          expect.objectContaining({ kind: "notify", recipient: "u_liv", eventType: "MENTIONED_IN_COMMENT", docId, params: expect.objectContaining({ actor: "Sample agent" }) }),
+        );
       }
       expect(steps.some((s) => s.kind === "comment"), listed.id).toBe(true);
 

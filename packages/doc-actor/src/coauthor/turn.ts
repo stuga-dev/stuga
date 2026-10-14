@@ -3,25 +3,82 @@
  * everything the model wrote goes to this document's run ledger as a `panel`
  * run under `panel:<human>`, where the document's own setting decides, as for
  * any agent, whether it waits for the human who asked or applies at once.
+ *
+ * A thread turn answers the person's reply in a comment thread. Its request is
+ * that reply, read from the node; it reaches only this document and the thread,
+ * and its answer is posted there.
  */
 import type { CoauthorActivity, CoauthorError, CoauthorNotice } from "@stuga/protocol/api/ai-turn";
-import type { AiEditsPayload, AiRequest, AiResponseChunk, AiCitation } from "@stuga/protocol/wire/doc-socket";
+import type { AiEditsPayload, AiRequest, AiResponseChunk, AiCitation, ThreadScope } from "@stuga/protocol/wire/doc-socket";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { decodeJson, encodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
 import { runAgentTurn, type AiConfig, type ToolRunner } from "@stuga/ai";
-import { applyStrEditsStrict } from "@stuga/crdt-ops";
+import { applyStrEditsStrict, markdownPlainText } from "@stuga/crdt-ops";
+import { findFuzzyMatch } from "@stuga/protocol/text/fuzzy-match";
 import type { InternalApi, JobQueue } from "@stuga/runtime";
 import { recordPanelPropose, type Refusals } from "../audit.js";
 import { proposeRunEdit } from "../ledger/propose.js";
 import type { RunLedger } from "../ledger/run-store.js";
-import { safeSend, type DocSocket } from "../session.js";
+import { safeSend, type DocSocket, type SessionMeta } from "../session.js";
 import type { RateLimiter } from "../sync/gates.js";
-import { crossDocTools, fetchInstructionStack, fetchReviewMode, hostAgentImages, proposeCrossDoc } from "./cross-doc.js";
+import { cleanHunkId, type CleanHunks } from "./clean-hunks.js";
+import {
+  crossDocTools,
+  fetchCommentThread,
+  fetchInstructionStack,
+  fetchReviewMode,
+  hostAgentImages,
+  notifyAsked,
+  postPanelComment,
+  proposeCrossDoc,
+} from "./cross-doc.js";
 import { clampAiRequest, loadAttachmentPixels, revisionScopes, sanitizeAttachments } from "./inputs.js";
+import { threadReplyText, threadTurn, type ThreadOutcomes, type ThreadTurn } from "./thread.js";
 
 /** Display name of the co-author on its run bar (matches the tables' panel). */
 const PANEL_AGENT = "AI co-author";
+
+// i18n-exempt: tool results the model reads, never shown to a person.
+const ASK_STOPPED = "the user stopped this turn; ask nothing more.";
+const ASK_NOT_FOUND = "that text is not in the document exactly once as it reads now; quote a short exact phrase of existing text.";
+const QUOTE_IN_EDIT =
+  "that quote is in text an edit of yours changes (one from this turn, or one still waiting for the user's review), " +
+  "so the comment would lose its place. Quote a phrase you are leaving as it is.";
+const ASKED =
+  "Posted in a comment on that passage. The user has not answered: their answer comes in a later turn, as a new request. " +
+  "Do not assume an answer; go on only with what does not depend on it.";
+
+/** What the co-author needs of this document's open sockets. */
+export interface CoAuthorPeers {
+  /** Tell every open page to re-read the comments: the node cannot reach this actor while a turn holds its lock. */
+  broadcastComments(): void;
+  /** Whether `alias` has a page open on this document; an agent's socket is not one. */
+  personPresent(alias: string): boolean;
+}
+
+/** What the ask_in_comment tool hands the actor. */
+type AskInput = Parameters<NonNullable<ToolRunner["askInComment"]>>[0];
+
+/** What a turn's receipt says besides its edits: the questions it asked, and a thread turn's reply. */
+type TurnOutcome = Pick<AiEditsPayload, "asked" | "replied">;
+
+/** Whether a thread turn may run, or the receipt it ends on: a refusal, or the first answer to the same reply. */
+type ThreadCheck = { turn: ThreadTurn } | { replay: AiEditsPayload } | { error: CoauthorError };
+
+/** A thread turn that ended before its answer: no reply in the thread. */
+const NO_REPLY: TurnOutcome = { asked: [], replied: null };
+
+/** Whether a turn's answer stands well enough to post in public: what it made was not refused, and it was not stopped. */
+function answerStands(stopReason: string, made: number, proposeError: CoauthorError | null, signal: AbortSignal): boolean {
+  if (signal.aborted || proposeError !== null) return false;
+  return stopReason === "complete" || (stopReason === "max_rounds" && made > 0);
+}
+
+/** The receipt of a turn that failed: nothing staged, the questions it had asked kept. */
+function failedEdits(error: CoauthorError, outcome: TurnOutcome): AiEditsPayload {
+  return { staged: 0, applied: 0, run_id: null, cross_docs: [], error, notices: [], ...outcome };
+}
 
 export interface CoAuthorEnv {
   jobs: JobQueue<IndexMessage>;
@@ -59,6 +116,9 @@ export class CoAuthor {
     private readonly ledger: RunLedger,
     private readonly refusals: Refusals,
     private readonly rate: RateLimiter,
+    private readonly peers: CoAuthorPeers,
+    private readonly threads: ThreadOutcomes,
+    private readonly clean: CleanHunks,
   ) {}
 
   /** Signal only: runs outside the lock. */
@@ -80,7 +140,8 @@ export class CoAuthor {
     } catch {
       return this.fail(ws, { code: "unreadable" });
     }
-    if (!req.prompt.trim()) return this.fail(ws, { code: "empty_prompt" });
+    // A thread turn's request is the person's reply, which the turn reads from the node.
+    if (!req.thread && !req.prompt.trim()) return this.fail(ws, { code: "empty_prompt" });
     await this.runTurn(ws, req);
   }
 
@@ -93,9 +154,23 @@ export class CoAuthor {
     const ai = this.env.ai();
     if (!ai.chat.enabled) return this.fail(ws, { code: "ai_disabled" });
 
+    let thread: ThreadTurn | null = null;
+    if (req.thread) {
+      thread = await this.openThread(ws, req.thread);
+      if (!thread) return;
+    }
+
     const panelAlias = `panel:${meta.alias}`;
     const controller = new AbortController();
     this.turns.set(ws, controller);
+    const asked: number[] = [];
+    let replied: number | null = null;
+    let staged = 0;
+    let applied = 0;
+    let proposedElsewhere = false;
+    const outcome = (): TurnOutcome => (thread ? { asked: [...asked], replied } : { asked: [...asked] });
+    // Only a thread turn that made something keeps its outcome: a failed or empty one runs again on Retry.
+    const madeSomething = (): boolean => asked.length > 0 || replied !== null || staged + applied > 0 || proposedElsewhere;
     const recordUsage = (usage: {
       model: string;
       status?: "error";
@@ -114,7 +189,8 @@ export class CoAuthor {
       // panel turn proposes only at its end, so no hunk of its own appears mid-turn.
       const projection = await this.ledger.projectionFor(panelAlias);
       // Handed over below, once the model has seen it: a turn that fails first leaves it for the next.
-      const feedback = await this.ledger.feedbackFor(panelAlias);
+      // A thread turn hears none, so it is still there for the next panel turn.
+      const feedback = thread ? [] : await this.ledger.feedbackFor(panelAlias);
       // Reject and revise: the turn may change only the passages those rejections covered, in their full text.
       const scopes = revisionScopes(req.revise);
       const revise =
@@ -122,6 +198,17 @@ export class CoAuthor {
           ? { regions: (await Promise.all(scopes.map((s) => this.ledger.rejectedHunks(panelAlias, s.run_id, s.feedback_id)))).flat() }
           : undefined;
       const ownPending = projection.pending;
+      // A comment is a public write review never sees, so only a turn whose context held nothing from
+      // another document may post one: not by this turn's scope or this chat's, nor in a waiting edit.
+      // A thread turn's context is this document, the thread and the waiting edits; it answers in the thread.
+      // Rejected edits leave the clean set yet reach the model as feedback or a revision, so either blocks.
+      const clean = await this.clean.read(meta.alias);
+      const openRun = projection.runId;
+      const pendingIds = openRun ? ownPending.map((h) => cleanHunkId(openRun, h.id)) : [];
+      const pendingClean = clean !== null && pendingIds.every((id) => clean.has(id));
+      const rejectedHeard = feedback.length > 0 || revise !== undefined;
+      const cleanTurn = pendingClean && (thread !== null || (!req.collection_id && !req.history_scoped && !rejectedHeard));
+      const mayAsk = !thread && cleanTurn;
       // Per turn, so switching the setting applies to the next message. The run's
       // own undecided hunks hold this turn's edits back even on `auto`.
       const review = await fetchReviewMode(this.env.internal, docId, meta);
@@ -135,12 +222,13 @@ export class CoAuthor {
           return view.slice(offset, offset + length);
         },
         ...crossDocTools(this.env.internal, docId, meta, req.collection_id ?? null, citations),
+        ...(mayAsk ? { askInComment: (q: AskInput) => this.askInComment(ws, controller.signal, asked, q) } : {}),
       };
 
       const result = await runAgentTurn(
         ai,
         {
-          prompt: req.prompt,
+          prompt: thread ? thread.prompt : req.prompt,
           docText: projection.markdown,
           selectedText: req.selected_text,
           model: req.model,
@@ -156,6 +244,7 @@ export class CoAuthor {
           ownPending: ownPending.map((h) => ({ old_string: h.old_string, new_string: h.new_string })),
           attachments: await loadAttachmentPixels(this.env.internal, sanitizeAttachments(req.attachments), meta.workspaceId),
           signal: controller.signal,
+          thread: thread?.context,
         },
         runner,
         (chunk) => safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { chunk, done: false } satisfies AiResponseChunk)),
@@ -181,18 +270,22 @@ export class CoAuthor {
         cacheWriteTokens: result.usage.cacheWriteInputTokens,
       };
 
-      if (result.stopReason === "error" && result.strEdits.length === 0 && result.docEdits.length === 0 && !result.prose.trim()) {
+      // A question already posted is output: the turn ended early, not failed.
+      const madeNothing = result.strEdits.length === 0 && result.docEdits.length === 0 && !result.prose.trim() && asked.length === 0;
+      if (result.stopReason === "error" && madeNothing) {
         recordUsage({ ...tokens, status: "error" });
-        return this.fail(ws, { code: "failed", failure });
+        const error: CoauthorError = { code: "failed", failure };
+        // Not kept for a thread turn: it made nothing, so Retry runs it again.
+        return this.end(ws, failedEdits(error, outcome()), error);
       }
 
-      // Before staging, so the image destination in the diff is the one that lands.
-      const imageNotices = await hostAgentImages(this.env.internal, docId, result.strEdits, meta);
+      // Before staging, so the image destination in the diff is the one that lands. A thread turn
+      // downloads nothing: a comment anyone could write must not steer an outbound fetch.
+      const imageNotices = thread ? [] : await hostAgentImages(this.env.internal, docId, result.strEdits, meta);
 
-      let staged = 0;
-      let applied = 0;
       let runId: string | null = null;
       let hunkIds: string[] = [];
+      let waiting: string[] = [];
       let proposeError: CoauthorError | null = null;
       if (result.strEdits.length > 0) {
         const status: CoauthorActivity = { kind: applyAtOnce ? "applying" : "proposing" };
@@ -215,6 +308,7 @@ export class CoAuthor {
           staged = out.pending;
           runId = out.run.id;
           hunkIds = out.hunkIds;
+          waiting = out.hunkIds.map((id) => cleanHunkId(out.run.id, id));
           recordPanelPropose(this.env.jobs, docId, meta, panelAlias, out.run.id, { mode: "proposed", pending: out.pending });
         } else if (out.mode === "auto_applied") {
           applied = out.applied;
@@ -225,7 +319,9 @@ export class CoAuthor {
           proposeError = proposeFailure(out);
         }
       }
-      const crossDocs = await proposeCrossDoc(this.env.internal, result.docEdits, meta, req.collection_id ?? null, panelAlias, PANEL_AGENT);
+      if (clean !== null) await this.keepClean(meta.alias, clean, pendingIds, cleanTurn ? waiting : []);
+      const crossDocs = await proposeCrossDoc(this.env.internal, result.docEdits, meta, req.collection_id ?? null, PANEL_AGENT);
+      proposedElsewhere = crossDocs.some((d) => d.mode !== "error");
 
       const stopped: CoauthorNotice | null =
         result.stopReason !== "aborted"
@@ -240,43 +336,149 @@ export class CoAuthor {
                     : null,
             };
 
-      safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { done: true } satisfies AiResponseChunk));
+      const notices = [incomplete, stopped, ...imageNotices].filter((n): n is CoauthorNotice => n !== null);
+      // The full prose stays in the panel; the thread gets the final answer, without the narration of
+      // earlier rounds, and only when the turn stands and has words.
+      const stands = thread !== null && answerStands(result.stopReason, staged + applied, proposeError, controller.signal);
+      const answer = stands ? threadReplyText(result.answer.trim() ? result.answer : result.prose) : "";
+      if (thread && answer) {
+        // A waiting edit in front of the model may hold text from another document: the answer stays in the panel.
+        if (!cleanTurn) notices.push({ code: "reply_withheld" });
+        else {
+          replied = await this.replyInThread(ws, thread, answer);
+          if (replied === null) notices.push({ code: "reply_failed" });
+        }
+      }
+
       recordUsage(tokens);
-      // Always the turn's last frame: the client ends the turn on it.
-      safeSend(
-        ws,
-        encodeJson(Opcode.AI_EDITS, {
-          staged,
-          applied,
-          run_id: runId,
-          ...(hunkIds.length > 0 ? { hunk_ids: hunkIds } : {}),
-          cross_docs: crossDocs,
-          citations: result.citations,
-          error: proposeError,
-          notices: [incomplete, stopped, ...imageNotices].filter((n): n is CoauthorNotice => n !== null),
-        } satisfies AiEditsPayload),
-      );
+      const edits: AiEditsPayload = {
+        staged,
+        applied,
+        run_id: runId,
+        ...(hunkIds.length > 0 ? { hunk_ids: hunkIds } : {}),
+        cross_docs: crossDocs,
+        citations: result.citations,
+        error: proposeError,
+        notices,
+        ...outcome(),
+      };
+      // Before the receipt, so a retry queued behind this turn finds it.
+      if (thread && madeSomething()) await this.threads.record(meta.alias, thread.key, edits);
+      this.end(ws, edits);
     } catch (err) {
       // The resolved model id is unknown when the stream fails before its metadata.
       recordUsage({ model: req.model, status: "error" });
-      this.fail(ws, { code: "failed", failure: null, detail: (err as Error).message });
+      const error: CoauthorError = { code: "failed", failure: null, detail: (err as Error).message };
+      const edits = failedEdits(error, outcome());
+      if (thread && madeSomething()) await this.threads.record(meta.alias, thread.key, edits);
+      this.end(ws, edits, error);
     } finally {
       this.turns.delete(ws);
+      // A question the person was not here to see reaches them as a notification.
+      if (asked.length > 0 && !this.peers.personPresent(meta.alias)) await notifyAsked(this.env.internal, docId, meta, [...asked]);
     }
   }
 
+  /**
+   * Read the thread a thread turn answers, through the node, and check the turn may run: the thread
+   * is open, the reply is the person's own in it, and they may write now (a socket's tier can be
+   * stale). A reply already answered gets its first receipt again. Null when the turn ended here.
+   */
+  private async openThread(ws: DocSocket, scope: ThreadScope): Promise<ThreadTurn | null> {
+    let check: ThreadCheck;
+    try {
+      check = await this.checkThread(ws.meta, scope);
+    } catch (err) {
+      check = { error: { code: "failed", failure: null, detail: (err as Error).message } };
+    }
+    if ("turn" in check) return check.turn;
+    if ("replay" in check) this.end(ws, check.replay);
+    else if (check.error.code === "view_only") this.refuse(ws, "acl", "You have view-only access to this document.", check.error, NO_REPLY);
+    else this.fail(ws, check.error, NO_REPLY);
+    return null;
+  }
+
+  private async checkThread(meta: SessionMeta, scope: ThreadScope): Promise<ThreadCheck> {
+    const thread = await fetchCommentThread(this.env.internal, this.ledger.store.docId, meta, scope.num);
+    if (!thread || thread.resolved) return { error: { code: "thread_closed" } };
+    if (!thread.can_write) return { error: { code: "view_only" } };
+    const turn = threadTurn(thread, scope, meta.alias);
+    if (!turn) return { error: { code: "thread_closed" } };
+    // A retry after a dropped socket queues behind the first turn, and is told what that one did.
+    const replay = await this.threads.get(meta.alias, turn.key);
+    if (replay) return { replay };
+    if (!turn.prompt.trim()) return { error: { code: "empty_prompt" } };
+    return { turn };
+  }
+
+  /**
+   * Keep the person's clean hunks to those still waiting, plus the ones this turn staged when its
+   * context was clean; a decided hunk leaves the set.
+   */
+  private async keepClean(alias: string, clean: Set<string>, pendingIds: string[], staged: string[]): Promise<void> {
+    const kept = pendingIds.filter((id) => clean.has(id));
+    if (staged.length > 0 || kept.length !== clean.size) await this.clean.write(alias, [...kept, ...staged]);
+  }
+
+  /** Post a thread turn's answer as a reply in its thread; null when the node refused it. */
+  private async replyInThread(ws: DocSocket, thread: ThreadTurn, body: string): Promise<number | null> {
+    const docId = this.ledger.store.docId;
+    const posted = await postPanelComment(this.env.internal, docId, ws.meta, {
+      body,
+      parent_num: thread.scope.num,
+      parent_created_at: thread.rootCreatedAt,
+    });
+    if ("error" in posted) {
+      console.warn("co-author reply not posted", { docId, num: thread.scope.num, reason: posted.error });
+      return null;
+    }
+    this.peers.broadcastComments();
+    return posted.num;
+  }
+
+  /**
+   * The ask_in_comment tool: a question anchored where the quote sits in the live document, posted at
+   * once so the person sees it while the turn runs. Each refusal is worded for the model.
+   */
+  private async askInComment(ws: DocSocket, signal: AbortSignal, asked: number[], q: AskInput): Promise<string> {
+    if (signal.aborted) throw new Error(ASK_STOPPED);
+    const anchor = this.ledger.store.quoteAnchor(q.quote);
+    if (!anchor) throw new Error(ASK_NOT_FOUND);
+    // The words must still be there once this turn's edits and the waiting ones land, or the comment
+    // loses its place. Both are read as plain text, so formatting and block breaks cannot hide a change.
+    if (!findFuzzyMatch(markdownPlainText(q.working), anchor.quote, { wantUnique: true })) throw new Error(QUOTE_IN_EDIT);
+    const posted = await postPanelComment(this.env.internal, this.ledger.store.docId, ws.meta, {
+      body: q.question,
+      anchor_start: anchor.start,
+      anchor_end: anchor.end,
+      anchor_quote: anchor.quote,
+    });
+    if ("error" in posted) throw new Error(`the question could not be posted: ${posted.error}. Put it in your reply instead.`);
+    this.peers.broadcastComments();
+    asked.push(posted.num);
+    return ASKED;
+  }
+
   /** Refuse at the gate: WRITE_REJECTED carries the reason for the page, AI_EDITS ends the turn. */
-  private refuse(ws: DocSocket, kind: "locked" | "trashed" | "acl" | "rate-limit", message: string, error: CoauthorError): void {
+  private refuse(
+    ws: DocSocket,
+    kind: "locked" | "trashed" | "acl" | "rate-limit",
+    message: string,
+    error: CoauthorError,
+    outcome: TurnOutcome = { asked: [] },
+  ): void {
     this.refusals.reject(ws, kind, message);
-    this.fail(ws, error);
+    this.fail(ws, error, outcome);
   }
 
   /** End a turn with an error: the client shows it from AI_EDITS, which also clears the turn. */
-  private fail(ws: DocSocket, error: CoauthorError): void {
-    safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { done: true, error } satisfies AiResponseChunk));
-    safeSend(
-      ws,
-      encodeJson(Opcode.AI_EDITS, { staged: 0, applied: 0, run_id: null, cross_docs: [], error, notices: [] } satisfies AiEditsPayload),
-    );
+  private fail(ws: DocSocket, error: CoauthorError, outcome: TurnOutcome = { asked: [] }): void {
+    this.end(ws, failedEdits(error, outcome), error);
+  }
+
+  /** A turn's last two frames: AI_RESPONSE `done`, then the AI_EDITS receipt the client ends the turn on. */
+  private end(ws: DocSocket, edits: AiEditsPayload, error?: CoauthorError): void {
+    safeSend(ws, encodeJson(Opcode.AI_RESPONSE, { done: true, ...(error ? { error } : {}) } satisfies AiResponseChunk));
+    safeSend(ws, encodeJson(Opcode.AI_EDITS, edits satisfies AiEditsPayload));
   }
 }

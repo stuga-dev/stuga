@@ -74,7 +74,9 @@ export type CoauthorActivity =
   | { kind: "editing" }
   /** Staging the turn's edits for review, or with `applying` applying them at once. */
   | { kind: "proposing" }
-  | { kind: "applying" };
+  | { kind: "applying" }
+  /** Asking the person something in a comment on the document. */
+  | { kind: "asking" };
 
 /** What the person should know about a turn that otherwise stands; a turn can carry several, in order. */
 export type CoauthorNotice =
@@ -85,7 +87,11 @@ export type CoauthorNotice =
   /** An image the turn linked could not be downloaded into the workspace; the link stayed as written. */
   | { code: "image_not_downloaded"; url: string; reason: string }
   /** Only the first `count` images were downloaded; the rest kept their links. */
-  | { code: "images_truncated"; count: number };
+  | { code: "images_truncated"; count: number }
+  /** A thread turn's answer could not be posted in the thread; what it proposed stands. */
+  | { code: "reply_failed" }
+  /** A thread turn's answer was not posted: the context held text from other documents. */
+  | { code: "reply_withheld" };
 
 /** Why a co-author turn failed, or why its edits could not be staged. */
 export type CoauthorError =
@@ -109,6 +115,8 @@ export type CoauthorError =
   /** `count` proposals already wait for review on this document; a new run waits until some are decided. */
   | { code: "review_backlog"; count: number }
   | { code: "propose_failed"; detail?: string }
+  /** A thread turn's thread was resolved or deleted, or the reply it answers is not the person's own there. */
+  | { code: "thread_closed" }
   /** The app's own: the socket closed while the turn ran. */
   | { code: "dropped" };
 

@@ -1,7 +1,7 @@
 /** AI configuration: chat and embeddings go to operator-configured endpoints. */
 import type { SearchCutoff } from "./retrieval/cutoff.js";
 
-export type AiProvider = "anthropic" | "openai" | "ollama";
+export type AiProvider = "anthropic" | "openai" | "ollama" | "bedrock";
 
 /** A model the UI offers. `id` is the provider's own model name. */
 export interface AiModelChoice {
@@ -11,9 +11,9 @@ export interface AiModelChoice {
 
 export interface AiEndpoint {
   provider: AiProvider;
-  /** e.g. https://api.anthropic.com, https://api.openai.com/v1, http://127.0.0.1:11434 */
+  /** e.g. https://api.anthropic.com, https://api.openai.com/v1, http://127.0.0.1:11434, https://bedrock-runtime.us-east-1.amazonaws.com */
   baseUrl: string;
-  /** Not needed for a local Ollama. */
+  /** Not needed for a local Ollama. Bedrock's is a Bedrock API key, sent as a bearer token. */
   apiKey?: string;
 }
 

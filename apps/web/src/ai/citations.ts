@@ -6,6 +6,7 @@
  * matching the rendered DOM.
  */
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
+import { stripCitationMarkers } from "@stuga/protocol/text/citation-markers";
 
 /** A citation as the popover shows it. */
 export interface CitationDetail {
@@ -102,10 +103,7 @@ export function citationHref(c: Pick<CitationDetail, "doc_id" | "heading_path" |
 
 /** An answer as text to paste elsewhere: its markers point at source cards that do not travel with it. */
 export function answerText(answer: string): string {
-  return answer
-    .replace(/[ \t]*\[\^\d+\]/g, "")
-    .replace(/[ \t]+$/gm, "")
-    .trim();
+  return stripCitationMarkers(answer);
 }
 
 /** One entry per cited document, in first-cited order (a search returns several passages per document). */

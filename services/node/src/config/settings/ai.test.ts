@@ -12,6 +12,7 @@ const BASE_URLS = {
   anthropic: "https://api.anthropic.com",
   openai: "https://api.openai.com/v1",
   ollama: "http://127.0.0.1:11434",
+  bedrock: "https://bedrock-runtime.us-east-1.amazonaws.com",
 } as const;
 
 const resolve = (stored: AiStoredSettings | null) => resolveAi(stored, 1024, BASE_URLS);
@@ -90,6 +91,14 @@ describe("resolveAi", () => {
     // Embeddings fall back to a local Ollama and never inherit the chat key.
     expect(ai.embed.provider).toBe("ollama");
     expect(ai.embed.baseUrl).toBe("http://127.0.0.1:11434");
+    expect(ai.embed.apiKey).toBeUndefined();
+  });
+
+  it("never embeds through Bedrock, nor hands its key to the Ollama it falls back to", () => {
+    const bedrock = endpoint({ provider: "bedrock", baseUrl: "https://bedrock-runtime.us-west-2.amazonaws.com", apiKey: "bedrock-key", models: [{ id: "claude", name: "Claude" }] });
+    const ai = resolve({ chatEndpoints: [bedrock], embedModel: "bge-m3" });
+    expect(ai.chat.enabled).toBe(true);
+    expect(ai.embed).toMatchObject({ provider: "ollama", baseUrl: "http://127.0.0.1:11434", enabled: true });
     expect(ai.embed.apiKey).toBeUndefined();
   });
 

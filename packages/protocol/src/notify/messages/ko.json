@@ -6,6 +6,8 @@
   "MENTIONED_IN_COMMENT.body": "{excerpt}",
   "COMMENT_ON_OWNED_DOC.title": "{kind, select, reply {{actor} 님이 “{doc}”에 답글을 남겼어요} other {{actor} 님이 “{doc}”에 댓글을 남겼어요}}",
   "COMMENT_ON_OWNED_DOC.body": "{excerpt}",
+  "COMMENT_REPLY.title": "{relation, select, coauthor_question {{actor} 님이 “{doc}”에서 내 AI 공동 작성자의 질문에 답글을 남겼어요} agent_comment {{actor} 님이 “{doc}”에서 내 에이전트의 댓글에 답글을 남겼어요} thread {{actor} 님이 “{doc}”의 스레드에 답글을 남겼어요} other {{actor} 님이 “{doc}”에서 내 댓글에 답글을 남겼어요}}",
+  "COMMENT_REPLY.body": "{excerpt}",
   "DIRECT_DOC_PERMISSIONS.title": "{actor} 님이 “{doc}” 문서를 나와 공유했어요",
   "DIRECT_DOC_PERMISSIONS.body": "이제 이 문서에 액세스할 수 있어요.",
   "REQUEST_ACCESS.title": "{actor} 님이 “{doc}” 문서에 대한 액세스를 요청했어요",
@@ -70,6 +72,9 @@
   "REMOTE_ADDRESS_MOVED.body": "이제 {address} 주소는 다른 컴퓨터로 연결돼요. 이 컴퓨터에서는 원격 액세스가 꺼져 있어요.",
   "REMOTE_UPDATE_REQUIRED.title": "Stuga를 업데이트할 때까지 원격 액세스가 일시 중지돼요",
   "REMOTE_UPDATE_REQUIRED.body": "이 버전에는 알려진 보안 문제가 있어서 {address} 주소가 닫혀 있어요. Stuga {version} 이상으로 업데이트하면 자동으로 다시 열려요.",
+
+  "actor.agentOf": "{person}의 에이전트",
+  "actor.coauthorOf": "{person}의 AI 공동 작성자",
 
   "channel.none": "Stuga만",
   "channel.email": "이메일",

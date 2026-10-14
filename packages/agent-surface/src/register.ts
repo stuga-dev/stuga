@@ -17,6 +17,7 @@ import {
   isRefusal,
   type AgentBackend,
   type ColumnSpecInput,
+  type CommentAddInput,
   type DatabaseProposal,
   type ImportSource,
   type ProposeInput,
@@ -239,6 +240,10 @@ interface MediaArgs {
   caption?: string;
 }
 
+interface CommentsAddArgs extends CommentAddInput {
+  doc_id: string;
+}
+
 interface DatabasesArgs {
   action: string;
   database_id?: string;
@@ -353,10 +358,13 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
 
   comments: (async ({ doc_id }: { doc_id: string }, b: AgentBackend) => answer(b.listComments(doc_id), json)),
 
-  comments_add: (async ({ doc_id, body }: { doc_id: string; body: string }, b: AgentBackend) => {
+  comments_add: (async ({ doc_id, body, parent_num, quote }: CommentsAddArgs, b: AgentBackend) => {
     const text = body.trim();
     if (!text) return err("comments_add requires `body`");
-    return answer(b.addComment(doc_id, text), json);
+    return answer(
+      b.addComment(doc_id, { body: text, ...(parent_num !== undefined ? { parent_num } : {}), ...(quote !== undefined ? { quote } : {}) }),
+      json,
+    );
   }),
 
   folders: (async (_args: unknown, b: AgentBackend) => answer(b.listFolders(), json)),

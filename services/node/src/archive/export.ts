@@ -1039,22 +1039,36 @@ async function archiveComments(state: WriteState, doc: DocRow): Promise<ArchiveC
   return out;
 }
 
+/** A co-author comment's author id, `panel:<person>`. */
+const COAUTHOR_PREFIX = "panel:";
+
 /**
  * Comment authors' names as the app shows them to the workspace: the one an archive gave, Sample
- * agent's, a member's directory name, else the alias, as for a former member.
+ * agent's, a member's directory name, else the alias, as for a former member. A person's
+ * co-author is "AI co-author · " and that person's name.
  */
 async function nameAuthors(state: WriteState, authors: string[]): Promise<void> {
-  const people: string[] = [];
+  const people = new Set<string>();
+  const coauthors: string[] = [];
   for (const author of new Set(authors)) {
     if (state.authors.has(author)) continue;
     if (author.startsWith("imported:")) state.authors.set(author, authorLine(author.slice("imported:".length)));
     else if (author === SAMPLE_AGENT_ALIAS) state.authors.set(author, SAMPLE_AGENT_NAME);
-    else people.push(author);
+    else if (author.startsWith(COAUTHOR_PREFIX)) coauthors.push(author);
+    else people.add(author);
   }
-  if (people.length === 0) return;
-  const members = new Map((await getUsers(state.ctx.sql, people, state.ctx.workspaceId)).map((user) => [user.alias, user]));
-  for (const alias of people) {
-    const member = members.get(alias);
-    state.authors.set(alias, authorLine(member?.display_name || member?.username || alias));
+  for (const author of coauthors) {
+    const person = author.slice(COAUTHOR_PREFIX.length);
+    if (!state.authors.has(person)) people.add(person);
+  }
+  if (people.size > 0) {
+    const members = new Map((await getUsers(state.ctx.sql, [...people], state.ctx.workspaceId)).map((user) => [user.alias, user]));
+    for (const alias of people) {
+      const member = members.get(alias);
+      state.authors.set(alias, authorLine(member?.display_name || member?.username || alias));
+    }
+  }
+  for (const author of coauthors) {
+    state.authors.set(author, authorLine(`AI co-author · ${state.authors.get(author.slice(COAUTHOR_PREFIX.length))!}`));
   }
 }

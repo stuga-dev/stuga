@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { NodeAiSettings } from "../../../api";
 import {
+  EMBED_PROVIDERS,
+  bedrockAddress,
+  bedrockRegionProblem,
   calibrationBanner,
   chatInputWith,
   connectFailure,
+  endpointLabel,
+  presetFor,
+  presetsFor,
+  recommendedModel,
   strictnessNote,
   strictnessWarning,
   suggestedOllamaEmbedModel,
@@ -11,7 +18,12 @@ import {
   withConnectedProvider,
 } from "./ai-form";
 
-const BASE = { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com", ollama: "http://127.0.0.1:11434" };
+const BASE = {
+  openai: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com",
+  ollama: "http://127.0.0.1:11434",
+  bedrock: "https://bedrock-runtime.us-east-1.amazonaws.com",
+};
 
 const provider = (id: string, models: string[]) => ({
   id,
@@ -105,6 +117,40 @@ describe("chatInputWith", () => {
     expect(cleared.chat!.endpoints[0]).toMatchObject({ id: "a", api_key: "" });
     expect(cleared.chat!.endpoints[1]).not.toHaveProperty("api_key");
     expect(cleared).not.toHaveProperty("embed");
+  });
+});
+
+describe("Amazon Bedrock", () => {
+  const presets = presetsFor(BASE);
+  const EU_WEST = "https://bedrock-runtime.eu-west-1.amazonaws.com";
+
+  it("is a chat-only service at the node's Bedrock address, recommending the newest global Claude Sonnet profile", () => {
+    const bedrock = presets.find((p) => p.value === "bedrock");
+    expect(bedrock).toMatchObject({ label: "Amazon Bedrock", provider: "bedrock", baseUrl: BASE.bedrock, embeddings: false });
+    expect(presetsFor({}).find((p) => p.value === "bedrock")?.baseUrl).toBe(BASE.bedrock);
+    const listed = ["us.anthropic.claude-haiku-5-5", "anthropic.claude-sonnet-5-5", "global.anthropic.claude-sonnet-5-5", "global.anthropic.claude-sonnet-4-5"];
+    expect(recommendedModel(bedrock, "chat", listed)).toBe("global.anthropic.claude-sonnet-5-5");
+    expect(EMBED_PROVIDERS.map((p) => p.value)).toEqual(["openai", "ollama"]);
+  });
+
+  it("names a saved provider by its Region, in any Region", () => {
+    expect(presetFor(presets, "bedrock", EU_WEST)).toBe("bedrock");
+    expect(endpointLabel(presets, "bedrock", EU_WEST)).toBe("Amazon Bedrock · eu-west-1");
+    expect(endpointLabel(presets, "openai", BASE.openai)).toBe("OpenAI");
+  });
+
+  it("builds a Region's runtime address, keeping a FIPS address while its Region stays", () => {
+    const fips = "https://bedrock-runtime-fips.us-east-1.amazonaws.com";
+    expect(bedrockAddress("eu-west-1", BASE.bedrock)).toBe(EU_WEST);
+    expect(bedrockAddress(" us-east-1 ", fips)).toBe(fips);
+    expect(bedrockAddress("us-west-2", fips)).toBe("https://bedrock-runtime.us-west-2.amazonaws.com");
+  });
+
+  it("refuses a Region that is not one, in plain words", () => {
+    expect(bedrockRegionProblem("eu-central-2")).toBeNull();
+    expect(bedrockRegionProblem("us-gov-west-1")).toBeNull();
+    expect(bedrockRegionProblem("Europe")).toBe("Enter an AWS Region, such as us-east-1.");
+    expect(bedrockRegionProblem("")).toBe("Enter an AWS Region, such as us-east-1.");
   });
 });
 

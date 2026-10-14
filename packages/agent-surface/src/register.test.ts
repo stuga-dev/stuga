@@ -194,6 +194,20 @@ describe("registerAgentTools", () => {
     expect(propose).toHaveBeenLastCalledWith("d1", expect.objectContaining({ action: "str_replace", find: "a", replace: "b" }));
   });
 
+  it("hands a comment's thread and quote to the backend only when the agent gave them", async () => {
+    const addComment = vi.fn(async () => ({ num: 4 }));
+    const { call } = await single({ addComment });
+    await call("comments_add", { ...W, doc_id: "d1", body: " Freestanding. " });
+    expect(addComment).toHaveBeenLastCalledWith("d1", { body: "Freestanding." });
+    await call("comments_add", { ...W, doc_id: "d1", body: "Yes.", parent_num: 3 });
+    expect(addComment).toHaveBeenLastCalledWith("d1", { body: "Yes.", parent_num: 3 });
+    await call("comments_add", { ...W, doc_id: "d1", body: "Built-in?", quote: "bathtub" });
+    expect(addComment).toHaveBeenLastCalledWith("d1", { body: "Built-in?", quote: "bathtub" });
+    expect((await call("comments_add", { ...W, doc_id: "d1", body: "x", parent_num: -1 })).isError).toBe(true);
+    expect((await call("comments_add", { ...W, doc_id: "d1", body: "x", quote: "" })).isError).toBe(true);
+    expect(addComment).toHaveBeenCalledTimes(3);
+  });
+
   it("asks for the stack only where the answer hands it to the model", async () => {
     const databaseSchema = vi.fn(async () => SCHEMA);
     const { call } = await single({

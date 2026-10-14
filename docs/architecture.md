@@ -69,6 +69,7 @@ build step. A checkout runs the node's source through tsx; a release bundles it
 | `agents/` | Agent keys, the document propose path, agent setup, the installers, the `.mcpb` extension. |
 | `archive/` | The [workspace archive](workspace-archive.md): its format, export and import, the samples list and Sample agent, and `stuga-node archive check`. |
 | `mentions/` | Who an @mention may notify. |
+| `comments/` | Posting a comment from the app, REST, MCP and the co-author: what each writer may mention, who hears of it, the hourly allowance on an agent's notices, and how a caller reads comments. |
 | `governance/` | The event feed, the review inbox, webhooks. |
 | `retrieval/` | Collection scope, the retrieval pipeline, the Ask tool runner. |
 | `search/` | The search languages, and the rebuild of the keyword indexes, while the node serves, when they change. |

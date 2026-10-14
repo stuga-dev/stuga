@@ -4,8 +4,10 @@
  */
 import { clampThinkingLevel, normalizeContext, type Api, type AssistantMessage, type Model, type ModelThinkingLevel, type ProviderStreams, type SimpleStreamOptions, type TranscriptContext } from "@earendil-works/pi-ai";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
+import { bedrockConverseStreamApi } from "@earendil-works/pi-ai/api/bedrock-converse-stream.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
+import { bedrockClientRegion } from "./bedrock.js";
 import type { AiConfig } from "./config.js";
 import { requestFailure, type ModelFailure } from "./failure.js";
 import { chatTarget, resolveModel, type ChatTarget } from "./models.js";
@@ -16,6 +18,7 @@ const APIS: Record<string, ProviderStreams> = {
   "anthropic-messages": anthropicMessagesApi(),
   "openai-completions": openAICompletionsApi(),
   "openai-responses": openAIResponsesApi(),
+  "bedrock-converse-stream": bedrockConverseStreamApi(),
 };
 
 /** Retries after the first attempt, for 408/409/429/5xx and network faults. */
@@ -27,7 +30,17 @@ const RESPONSE_START_TIMEOUT_MS = 60_000;
 export function streamChat(model: Model<Api>, context: TranscriptContext, options: SimpleStreamOptions) {
   const api = APIS[model.api];
   if (!api) throw new Error(`no client for protocol ${model.api}`);
-  return api.streamSimple(model, context, { maxRetries: MAX_RETRIES, timeoutMs: RESPONSE_START_TIMEOUT_MS, ...options });
+  return api.streamSimple(model, context, { maxRetries: MAX_RETRIES, timeoutMs: RESPONSE_START_TIMEOUT_MS, ...options, ...bedrockOptions(model, options) });
+}
+
+/**
+ * The endpoint's Region, for the AWS client, which would otherwise take AWS_REGION
+ * from the node's environment. Pi's simple options carry no `region`; its scoped
+ * environment is read before the process's.
+ */
+function bedrockOptions(model: Model<Api>, options: SimpleStreamOptions): Pick<SimpleStreamOptions, "env"> {
+  if (model.api !== "bedrock-converse-stream") return {};
+  return { env: { ...options.env, AWS_REGION: bedrockClientRegion(model.baseUrl) } };
 }
 
 /** A request's output cap, within what the model can write when the catalog says. */

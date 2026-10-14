@@ -6,6 +6,8 @@
   "MENTIONED_IN_COMMENT.body": "{excerpt}",
   "COMMENT_ON_OWNED_DOC.title": "{kind, select, reply {{actor} a répondu sur « {doc} »} other {{actor} a commenté « {doc} »}}",
   "COMMENT_ON_OWNED_DOC.body": "{excerpt}",
+  "COMMENT_REPLY.title": "{relation, select, coauthor_question {{actor} a répondu à la question de votre coauteur IA sur « {doc} »} agent_comment {{actor} a répondu au commentaire de votre agent sur « {doc} »} thread {{actor} a répondu dans un fil sur « {doc} »} other {{actor} a répondu à votre commentaire sur « {doc} »}}",
+  "COMMENT_REPLY.body": "{excerpt}",
   "DIRECT_DOC_PERMISSIONS.title": "{actor} a partagé « {doc} » avec vous",
   "DIRECT_DOC_PERMISSIONS.body": "Vous avez maintenant accès à ce document.",
   "REQUEST_ACCESS.title": "{actor} demande l’accès à « {doc} »",
@@ -70,6 +72,9 @@
   "REMOTE_ADDRESS_MOVED.body": "{address} mène désormais à un autre ordinateur. L’accès à distance est désactivé sur celui-ci.",
   "REMOTE_UPDATE_REQUIRED.title": "L’accès à distance est en pause jusqu’à la mise à jour de Stuga",
   "REMOTE_UPDATE_REQUIRED.body": "Cette version présente un problème de sécurité connu : {address} est donc fermée. Passez à Stuga {version} ou à une version ultérieure et elle se rouvrira d’elle-même.",
+
+  "actor.agentOf": "L’agent de {person}",
+  "actor.coauthorOf": "Le coauteur IA de {person}",
 
   "channel.none": "Stuga uniquement",
   "channel.email": "e-mail",

@@ -15,6 +15,7 @@ function providerLabel(provider: string): string {
   if (provider === "anthropic") return "Anthropic"; // i18n-exempt: a vendor's name
   if (provider === "openai") return t("ui.models.openaiCompatible");
   if (provider === "ollama") return "Ollama"; // i18n-exempt: a vendor's name
+  if (provider === "bedrock") return "Amazon Bedrock"; // i18n-exempt: a vendor's name
   return provider;
 }
 

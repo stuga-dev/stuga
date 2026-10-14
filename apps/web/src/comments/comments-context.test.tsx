@@ -13,9 +13,15 @@ import { ySyncPlugin } from "@tiptap/y-tiptap";
 import { getStugaSchema, applyMarkdownToYXmlFragment } from "@stuga/crdt-ops";
 import type { Comment } from "../api";
 
-const shared = vi.hoisted(() => ({ editor: null as unknown, comments: [] as Comment[] }));
+const shared = vi.hoisted(() => ({ editor: null as unknown, comments: [] as Comment[], canManage: false }));
 
-vi.mock("../api", () => ({ Docs: { comments: vi.fn(async () => ({ comments: shared.comments })) } }));
+vi.mock("../api", () => ({
+  Docs: {
+    comments: vi.fn(async () => ({ comments: shared.comments, agents: {}, can_manage: shared.canManage })),
+    resolveComment: vi.fn(async () => ({})),
+    deleteComment: vi.fn(async () => ({ deleted: true })),
+  },
+}));
 vi.mock("../editor/editor-context", () => ({ useSharedEditor: () => ({ editor: shared.editor }) }));
 vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 
@@ -93,6 +99,7 @@ beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = scrolled;
   caret.length = 0;
   highlight.flashNum = null;
+  shared.canManage = false;
   host = document.createElement("div");
   document.body.appendChild(host);
 });
@@ -222,5 +229,46 @@ describe("a link to one comment", () => {
     await act(async () => navigate("/doc/d1?comment=3"));
     expect(toasts.shown).toEqual([{ body: "That comment was deleted.", type: "info" }]);
     expect(path).toBe("/doc/d1");
+  });
+});
+
+describe("resolving and deleting", () => {
+  beforeEach(() => {
+    toasts.shown = [];
+  });
+
+  it("keeps whether the reader manages the document, from the same read", async () => {
+    shared.canManage = true;
+    await mount([imported(3, "brown fox")]);
+    expect(ctx.canManage).toBe(true);
+    shared.canManage = false;
+    await act(async () => socket.commentsListener!());
+    expect(ctx.canManage).toBe(false);
+  });
+
+  it("says why a resolve was refused, in the node's words, and shows the thread as the node holds it", async () => {
+    await mount([imported(3, "brown fox")]);
+    vi.mocked(Docs.resolveComment).mockRejectedValueOnce(new Error("Only the comment author or doc owner can resolve this comment."));
+    vi.mocked(Docs.comments).mockClear();
+    await act(async () => ctx.resolve(3, true));
+    expect(toasts.shown).toEqual([{ body: "Only the comment author or doc owner can resolve this comment.", type: "error" }]);
+    expect(Docs.comments).toHaveBeenCalledTimes(1);
+    expect(ctx.comments.map((c) => [c.num, c.resolved])).toEqual([[3, false]]);
+  });
+
+  it("brings back a comment whose delete was refused, saying why", async () => {
+    await mount([imported(3, "brown fox"), imported(4, "", { parent_num: 3, anchor_quote: null })]);
+    vi.mocked(Docs.deleteComment).mockRejectedValueOnce(new Error("Only the comment author or doc owner can delete this comment."));
+    await act(async () => ctx.del(3));
+    expect(toasts.shown).toEqual([{ body: "Only the comment author or doc owner can delete this comment.", type: "error" }]);
+    expect(ctx.comments.map((c) => c.num)).toEqual([3, 4]);
+  });
+
+  it("says nothing when the node takes the change", async () => {
+    await mount([imported(3, "brown fox")]);
+    await act(async () => ctx.resolve(3, true));
+    await act(async () => ctx.del(3));
+    expect(toasts.shown).toEqual([]);
+    expect(ctx.comments).toEqual([]);
   });
 });

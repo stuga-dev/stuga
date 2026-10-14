@@ -652,9 +652,12 @@ export class StugaProvider {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(frame as Uint8Array<ArrayBuffer>);
   }
 
-  sendAiRequest(req: AiRequest, handlers: AiTurnHandlers): void {
+  /** False when the socket isn't open: the frame would be dropped and the turn never end, so nothing is armed. */
+  sendAiRequest(req: AiRequest, handlers: AiTurnHandlers): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
     this.aiTurn = handlers;
     this.send(encodeJson(Opcode.AI_REQUEST, req));
+    return true;
   }
 
   /** The turn still ends with `done` and AI_EDITS for what it staged, so the handlers stay armed. */

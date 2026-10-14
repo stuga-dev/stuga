@@ -33,7 +33,12 @@ import type { AiSettingsStore } from "../../config/settings/ai.js";
 const upsert = upsertNodeAiSettings as unknown as ReturnType<typeof vi.fn>;
 const getRow = getNodeAiSettings as unknown as ReturnType<typeof vi.fn>;
 
-const BASE_URLS = { anthropic: "https://api.anthropic.com", openai: "https://api.openai.com/v1", ollama: "http://ollama.lan:11434" };
+const BASE_URLS = {
+  anthropic: "https://api.anthropic.com",
+  openai: "https://api.openai.com/v1",
+  ollama: "http://ollama.lan:11434",
+  bedrock: "https://bedrock-runtime.us-east-1.amazonaws.com",
+};
 
 const EMPTY_AI: AiConfig = {
   enabled: false,
@@ -77,6 +82,7 @@ function put(c: Ctx, body: unknown): Promise<Response | null> {
 }
 
 const OPENAI = { provider: "openai", base_url: "https://api.openai.test/v1" };
+const BEDROCK = { provider: "bedrock", base_url: "https://bedrock-runtime.us-west-2.amazonaws.com", models: [{ id: "global.anthropic.claude-sonnet-5-5", name: "Claude Sonnet 5.5" }] };
 
 describe("PUT /api/node/ai-settings: chat.endpoints validation", () => {
   beforeEach(() => upsert.mockClear());
@@ -150,6 +156,35 @@ describe("PUT /api/node/ai-settings: chat.endpoints validation", () => {
     const res = await put(ctx(), {});
     expect(res?.status).toBe(400);
     expect(upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("PUT /api/node/ai-settings: Amazon Bedrock", () => {
+  beforeEach(() => upsert.mockClear());
+
+  const refusal = async (body: unknown) => {
+    const res = await put(ctx(), body);
+    expect(res?.status).toBe(400);
+    expect(upsert).not.toHaveBeenCalled();
+    return ((await res!.json()) as { error: string }).error;
+  };
+
+  it("refuses a Bedrock endpoint without a key", async () => {
+    expect(await refusal({ chat: { enabled: false, endpoints: [{ id: "aws", ...BEDROCK }] } })).toBe("chat.endpoints[0]: Amazon Bedrock needs an API key");
+  });
+
+  it("refuses a Bedrock endpoint at any address but a Bedrock runtime's", async () => {
+    for (const base_url of ["https://bedrock-proxy.example.test", "https://bedrock-runtime.us-west-2.amazonaws.com/v1", "http://bedrock-runtime.us-west-2.amazonaws.com"]) {
+      expect(await refusal({ chat: { enabled: false, endpoints: [{ id: "aws", ...BEDROCK, base_url, api_key: "bedrock-key" }] } })).toBe(
+        "chat.endpoints[0].base_url must be an Amazon Bedrock runtime address, such as https://bedrock-runtime.us-east-1.amazonaws.com",
+      );
+    }
+  });
+
+  it("refuses Bedrock for embeddings", async () => {
+    expect(await refusal({ embed: { provider: "bedrock", base_url: BEDROCK.base_url, model: "amazon.titan-embed-text-v2:0" } })).toBe(
+      "Amazon Bedrock serves no embeddings here; point embed at an OpenAI-compatible or Ollama endpoint",
+    );
   });
 });
 
@@ -399,6 +434,57 @@ describe("each half's switch", () => {
     // A save that leaves chat out leaves its keys alone. (Embeddings follow the first chat provider.)
     expect((await put(admin(), { embed: { enabled: false, provider: "openai", base_url: "", model: "" } }))?.status).toBe(200);
     expect(existsSync(keyFile("ep2"))).toBe(true);
+  });
+
+  it("saves a Bedrock endpoint with its key, and keeps the key through a save that leaves it out", async () => {
+    const save = (endpoint: Record<string, unknown>) => put(admin(), { chat: { enabled: false, default_model: BEDROCK.models[0]!.id, endpoints: [endpoint] } });
+    expect((await save({ id: "aws", ...BEDROCK, api_key: "bedrock-key" }))?.status).toBe(200);
+    expect(row?.chat_endpoints).toEqual([expect.objectContaining({ id: "aws", provider: "bedrock", baseUrl: BEDROCK.base_url })]);
+    expect(readFileSync(join(dataDir, "secrets", "ai-chat-aws"), "utf8").trim()).toBe("bedrock-key");
+    expect(store.current().chat.endpoints[0]).toMatchObject({ provider: "bedrock", apiKey: "bedrock-key" });
+    // Embeddings never follow a Bedrock chat endpoint.
+    expect(store.current().embed).toMatchObject({ provider: "ollama", baseUrl: BASE_URLS.ollama });
+
+    expect((await save({ id: "aws", ...BEDROCK }))?.status).toBe(200);
+    expect(store.current().chat.endpoints[0]?.apiKey).toBe("bedrock-key");
+    expect((await save({ id: "aws", ...BEDROCK, api_key: null }))?.status).toBe(400);
+  });
+
+  it("lists Bedrock models at the control plane of the endpoint's Region, with the saved key only there", async () => {
+    await put(admin(), { chat: { enabled: false, endpoints: [{ id: "aws", ...BEDROCK, api_key: "bedrock-key" }] } });
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        seen.push({ url: String(url), auth: new Headers(init?.headers).get("authorization") });
+        const profiles = { inferenceProfileSummaries: [{ inferenceProfileId: "global.anthropic.claude-sonnet-5-5", status: "ACTIVE" }] };
+        return new Response(JSON.stringify(new URL(url).pathname === "/inference-profiles" ? profiles : { modelSummaries: [] }), { status: 200 });
+      }),
+    );
+    const list = async (body: unknown) =>
+      (await routeWorkspaceRequest(
+        admin(),
+        new Request("http://node.test/api/node/ai-settings/models", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+      ))!;
+    try {
+      expect(await (await list({ provider: "bedrock", base_url: BEDROCK.base_url })).json()).toEqual({ models: ["global.anthropic.claude-sonnet-5-5"] });
+      expect(seen.every((s) => s.url.startsWith("https://bedrock.us-west-2.amazonaws.com/") && s.auth === "Bearer bedrock-key")).toBe(true);
+
+      // Another Region is another endpoint: the saved key stays home.
+      seen.length = 0;
+      await list({ provider: "bedrock", base_url: "https://bedrock-runtime.eu-west-1.amazonaws.com" });
+      expect(seen.map((s) => [new URL(s.url).host, s.auth])).toEqual([
+        ["bedrock.eu-west-1.amazonaws.com", null],
+        ["bedrock.eu-west-1.amazonaws.com", null],
+      ]);
+
+      seen.length = 0;
+      const elsewhere = await list({ provider: "bedrock", base_url: "https://proxy.example.test", api_key: "typed" });
+      expect(elsewhere.status).toBe(400);
+      expect(seen).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   describe("the reranker", () => {

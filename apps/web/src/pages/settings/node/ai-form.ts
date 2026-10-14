@@ -1,6 +1,7 @@
 /** The AI provider form: presets, the write-only key contract, and what a save sends. */
 import type { NodeAiSettings, NodeAiSettingsInput } from "../../../api";
 import type { SearchStrictness } from "@stuga/protocol/domain/search-strictness";
+import { BEDROCK_REGION_PATTERN, bedrockRegion, bedrockRuntimeUrl } from "@stuga/protocol/domain/bedrock";
 import { t } from "../../../i18n/i18n";
 import { timeOfDay } from "../../../lib/format";
 
@@ -18,13 +19,20 @@ export const PROVIDERS = [
   { value: "openai", label: t("node.ai.protocol.openaiCompatible") },
   { value: "anthropic", label: "Anthropic" }, // i18n-exempt: a vendor's name
   { value: "ollama", label: t("node.ai.preset.ollamaLocal") },
+  { value: "bedrock", label: "Amazon Bedrock" }, // i18n-exempt: a vendor's name
 ];
+
+/** The protocols semantic search can use: Anthropic and Bedrock serve no embeddings here. */
+export const EMBED_PROVIDERS = PROVIDERS.filter((p) => p.value !== "anthropic" && p.value !== "bedrock");
 
 /** Where each protocol listens when a base URL is left empty, as the node reports it. */
 export type BaseUrls = Record<string, string>;
 
+/** Where a Bedrock service runs until another Region is entered. */
+export const DEFAULT_BEDROCK_REGION = "us-east-1";
+
 /**
- * A vendor shortcut: it fills in one of the three wire protocols and a base URL.
+ * A vendor shortcut: it fills in one of the wire protocols and a base URL.
  * Vendors stay out of the protocol enum. `embeddings: false` marks a chat-only vendor.
  */
 export interface Preset {
@@ -46,6 +54,7 @@ export function presetsFor(base: BaseUrls): Preset[] {
     { value: "openai", label: "OpenAI", provider: "openai", baseUrl: base.openai ?? "", embeddings: true, recommends: { chat: /^gpt-[\d.]+-mini$/, embed: /^text-embedding-3-small$/ } }, // i18n-exempt: a vendor's name
     { value: "anthropic", label: "Anthropic (Claude)", provider: "anthropic", baseUrl: base.anthropic ?? "", embeddings: false, recommends: { chat: /^claude-sonnet-\d/ } }, // i18n-exempt: a vendor's name
     { value: "gemini", label: "Google Gemini", provider: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", embeddings: true, recommends: { chat: /^(models\/)?gemini-[\d.]+-flash$/ } }, // i18n-exempt: a vendor's name
+    { value: "bedrock", label: "Amazon Bedrock", provider: "bedrock", baseUrl: base.bedrock ?? bedrockRuntimeUrl(DEFAULT_BEDROCK_REGION), embeddings: false, recommends: { chat: /^global\.anthropic\.claude-sonnet-\d/ } }, // i18n-exempt: a vendor's name
     { value: "cerebras", label: "Cerebras", provider: "openai", baseUrl: "https://api.cerebras.ai/v1", embeddings: false }, // i18n-exempt: a vendor's name
     { value: "deepseek", label: "DeepSeek", provider: "openai", baseUrl: "https://api.deepseek.com/v1", embeddings: false, recommends: { chat: /^deepseek-chat$/ } }, // i18n-exempt: a vendor's name
     { value: "fireworks", label: "Fireworks", provider: "openai", baseUrl: "https://api.fireworks.ai/inference/v1", embeddings: true }, // i18n-exempt: a vendor's name
@@ -63,8 +72,31 @@ export function presetsFor(base: BaseUrls): Preset[] {
   ];
 }
 
+/** The preset an endpoint is set up with: the same protocol and address, or Bedrock in any Region. */
+function presetOf(presets: Preset[], provider: string, baseUrl: string): Preset | undefined {
+  return presets.find((p) => p.provider === provider && (p.baseUrl === baseUrl || (provider === "bedrock" && bedrockRegion(baseUrl) !== null)));
+}
+
 export function presetFor(presets: Preset[], provider: string, baseUrl: string): string {
-  return presets.find((p) => p.provider === provider && p.baseUrl === baseUrl)?.value ?? "custom";
+  return presetOf(presets, provider, baseUrl)?.value ?? "custom";
+}
+
+/** The Region a Bedrock service's field starts with: its address's, else the default. */
+export function bedrockRegionOf(baseUrl: string): string {
+  return bedrockRegion(baseUrl) ?? DEFAULT_BEDROCK_REGION;
+}
+
+/** Why a Region typed for Bedrock is not one, before anything is asked of it; null when it is one. */
+export function bedrockRegionProblem(region: string): string | null {
+  return BEDROCK_REGION_PATTERN.test(region.trim()) ? null : t("nodeAccess.connect.regionInvalid");
+}
+
+/**
+ * A Bedrock service's address for the Region in its field: the address it has while that is its
+ * Region, so a FIPS address stays one, else the Region's runtime address.
+ */
+export function bedrockAddress(region: string, current: string): string {
+  return bedrockRegion(current) === region.trim() ? current : bedrockRuntimeUrl(region);
 }
 
 /** The endpoint a choice resolves to, in one line under the picker. */
@@ -258,9 +290,12 @@ export function keptDefault(endpoints: ChatEndpointForm[], current: string): str
   return allChatModelIds(endpoints).includes(current) ? current : "";
 }
 
-/** The matching preset's name, else the base URL, for probe rows. */
+/** The matching preset's name, else the base URL, for probe rows. A Bedrock service is named with its Region. */
 export function endpointLabel(presets: Preset[], provider: string, baseUrl: string): string {
-  return presets.find((p) => p.provider === provider && p.baseUrl === baseUrl)?.label ?? baseUrl;
+  const preset = presetOf(presets, provider, baseUrl);
+  if (!preset) return baseUrl;
+  const region = provider === "bedrock" ? bedrockRegion(baseUrl) : null;
+  return region ? `${preset.label} · ${region}` : preset.label;
 }
 
 /** Nothing to delete: what a save that clears no key passes to toInput. */

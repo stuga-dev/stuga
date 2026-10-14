@@ -36,6 +36,20 @@ export interface AiRequest {
    * when Request changes was used more than once during a turn; one, unwrapped, from older clients.
    */
   revise?: RevisionScope | RevisionScope[] | null;
+  /**
+   * Answer a reply in a comment thread: the server reads the thread, takes the request from that
+   * reply, and posts its answer there. Such a turn reaches only this document and the thread, so
+   * the fields above that carry other context are ignored with it.
+   */
+  thread?: ThreadScope | null;
+  /** An earlier turn of this conversation could read other documents, so this one may not ask in a comment. */
+  history_scoped?: boolean;
+}
+
+/** The comment a thread turn answers: the thread's first comment, and the person's reply in it. */
+export interface ThreadScope {
+  num: number;
+  reply_num: number;
 }
 
 /** One rejection a revise turn answers. */
@@ -85,6 +99,10 @@ export interface AiEditsPayload {
   error: CoauthorError | null;
   /** What the person should know about a turn that stands: it ended incomplete, was stopped, or an image stayed external. */
   notices: CoauthorNotice[];
+  /** The comment threads this turn opened to ask the person something, in order. */
+  asked?: number[];
+  /** A thread turn: the reply it posted in the thread, or null when it posted none. */
+  replied?: number | null;
 }
 
 /** A pointer to proposals in another document's ledger. */

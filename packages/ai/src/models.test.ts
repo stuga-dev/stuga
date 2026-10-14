@@ -57,6 +57,41 @@ describe("chatTarget", () => {
   });
 });
 
+describe("chatTarget on Amazon Bedrock", () => {
+  const OREGON = "https://bedrock-runtime.us-west-2.amazonaws.com";
+  const bedrock = (id: string) => cfgWith({ provider: "bedrock", baseUrl: OREGON, apiKey: "bedrock-key", models: [{ id, name: id }] });
+
+  it("finds a catalogued model by id in any Region, keeping the id asked for and the endpoint's address", () => {
+    // Pi catalogues it in us-east-1 only.
+    const { model, apiKey } = chatTarget(bedrock("global.anthropic.claude-sonnet-5-5"), "global.anthropic.claude-sonnet-5-5");
+    expect(model).toMatchObject({ id: "global.anthropic.claude-sonnet-5-5", api: "bedrock-converse-stream", reasoning: true, baseUrl: OREGON });
+    expect(model.contextWindow).toBeGreaterThan(0);
+    expect(apiKey).toBe("bedrock-key");
+  });
+
+  it("reads a routing prefix the catalog lacks as the bare model", () => {
+    const { model } = chatTarget(bedrock("apac.anthropic.claude-sonnet-5-5"), "apac.anthropic.claude-sonnet-5-5");
+    expect(model).toMatchObject({ id: "apac.anthropic.claude-sonnet-5-5", api: "bedrock-converse-stream", reasoning: true, baseUrl: OREGON });
+  });
+
+  it("gives an uncatalogued id defaults on the Converse protocol", () => {
+    const { model } = chatTarget(bedrock("acme.private-model-v1:0"), "acme.private-model-v1:0");
+    expect(model).toMatchObject({
+      id: "acme.private-model-v1:0",
+      provider: "amazon-bedrock",
+      api: "bedrock-converse-stream",
+      reasoning: false,
+      contextWindow: 0,
+      baseUrl: OREGON,
+    });
+  });
+
+  it("never takes a Bedrock entry for another provider's id", () => {
+    const cfg = cfgWith({ provider: "openai", baseUrl: "https://gateway.example.test/v1", apiKey: "k", models: [{ id: "anthropic.claude-sonnet-5-5", name: "Sonnet" }] });
+    expect(chatTarget(cfg, "anthropic.claude-sonnet-5-5").model).toMatchObject({ api: "openai-completions", reasoning: false });
+  });
+});
+
 describe("acceptsImages", () => {
   it("assumes an uncatalogued model can see, so images still reach it", () => {
     expect(acceptsImages(CFG, "sonnet")).toBe(true);

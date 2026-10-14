@@ -1,4 +1,5 @@
 import { api } from "../lib/http/client";
+import type { AiProtocol } from "./node";
 
 /** One of your passkeys; never its key. */
 export interface PasskeySummary {
@@ -37,7 +38,7 @@ export interface RevokeEverythingCounts {
 export interface AiModel {
   id: string;
   name: string;
-  provider: "anthropic" | "openai" | "ollama";
+  provider: AiProtocol;
 }
 
 export const Me = {

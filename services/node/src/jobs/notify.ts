@@ -58,13 +58,22 @@ export async function payloadFor(
   return { recipient: m.recipient, eventType: m.eventType, params: m.params, language, url: m.url };
 }
 
+/**
+ * What a notification is about, which its hour's bucket is keyed on: a flurry of shares or comments
+ * on a document within the hour is one notification and one ping, whose link opens the first
+ * comment. Each mention is its own, and replies are one per thread.
+ */
+function aboutOf(msg: NotifyMessage): string {
+  if (msg.eventType === "MENTIONED_IN_COMMENT" && msg.commentNum !== undefined) return `${msg.docId}#${msg.commentNum}`;
+  if (msg.eventType === "COMMENT_REPLY" && msg.thread !== undefined) return `${msg.docId}#t${msg.thread}`;
+  return msg.docId;
+}
+
 /** Store an in-app notification; a new one also queues its delivery to the configured sink. */
 export async function handleNotify(env: JobsEnv, deps: JobDeps, msg: NotifyMessage): Promise<void> {
   const { recipient, eventType, docId, params, commentNum } = msg;
-  // Bucketed by hour: a flurry of shares or comments within the hour is one notification and one
-  // ping, whose link opens the first comment. Each mention is its own, and access requests are per
-  // requester, since each is answered on its own.
-  const about = commentNum === undefined || eventType !== "MENTIONED_IN_COMMENT" ? docId : `${docId}#${commentNum}`;
+  const about = aboutOf(msg);
+  // Access requests are per requester, since each is answered on its own.
   const from = eventType === "REQUEST_ACCESS" ? `${msg.actor}:` : "";
   const id = `${eventType}:${about}:${recipient}:${from}${Math.floor(Date.now() / HOUR_MS)}`;
   const url = commentNum === undefined ? `${env.publicOrigin}/doc/${docId}` : `${env.publicOrigin}/doc/${docId}?comment=${commentNum}`;

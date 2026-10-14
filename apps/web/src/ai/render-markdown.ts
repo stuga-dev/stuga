@@ -38,7 +38,8 @@ const CITE_MARKER = /\[\^?(\d+)\]/g;
 /**
  * Escape a text token, turning `[n]`/`[^n]` markers that match a citation into
  * chips. Under `pending` only the `[^n]` form becomes an inert chip, so a plain
- * `array[0]` is never dressed up as a source.
+ * `array[0]` is never dressed up as a source. Once the answer is finished, a
+ * `[^n]` that matches no citation is dropped: it points at nothing the reader can open.
  */
 function renderTextWithCitations(
   content: string,
@@ -53,8 +54,15 @@ function renderTextWithCitations(
   while ((m = CITE_MARKER.exec(content)) !== null) {
     const raw = Number(m[1]);
     const cite = cites.find((c) => c.n === raw);
-    const pendingHere = !cite && pending && m[0].startsWith("[^");
-    if (!cite && !pendingHere) continue;
+    const footnote = m[0].startsWith("[^");
+    const pendingHere = !cite && pending && footnote;
+    if (!cite && !pendingHere) {
+      if (footnote) {
+        out += md.utils.escapeHtml(content.slice(last, m.index).replace(/[ \t]+$/, ""));
+        last = m.index + m[0].length;
+      }
+      continue;
+    }
     out += md.utils.escapeHtml(content.slice(last, m.index));
     const display = renumber?.get(raw) ?? raw;
     if (cite) {
@@ -74,7 +82,7 @@ function renderTextWithCitations(
 md.renderer.rules.text = (tokens, idx, _options, env) => {
   const content = tokens[idx]!.content;
   const { cites, renumber, pending } = (env ?? {}) as CiteEnv;
-  if ((!cites || cites.length === 0) && !pending) return md.utils.escapeHtml(content);
+  if ((!cites || cites.length === 0) && !pending && !content.includes("[^")) return md.utils.escapeHtml(content);
   return renderTextWithCitations(content, cites ?? [], renumber, pending);
 };
 

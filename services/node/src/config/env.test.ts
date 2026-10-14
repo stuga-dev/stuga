@@ -151,6 +151,7 @@ describe("the platform hints packaging may set", () => {
       anthropic: "https://api.anthropic.com",
       openai: "https://api.openai.com/v1",
       ollama: "http://127.0.0.1:11434",
+      bedrock: "https://bedrock-runtime.us-east-1.amazonaws.com",
     });
     expect(cfg({ AI_OLLAMA_DEFAULT_URL: "http://ollama.lan:11434/" }).aiProviderBaseUrls.ollama).toBe(
       "http://ollama.lan:11434",

@@ -223,6 +223,7 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
 | comment | 评论 | 留言 | コメント | 댓글 | Kommentar | commentaire | comentario | comentário | Verb: 评论, 留言, コメントする, 댓글 달기, kommentieren, commenter, comentar, comentar. |
 | reply | 回复 | 回覆 | 返信 | 답글 | Antworten | Répondre | Responder | Responder | Noun: Antwort, réponse, respuesta, resposta. |
 | Resolve / resolved | 解决 / 已解决 | 解決 / 已解決 | 解決 / 解決済み | 해결 / 해결됨 | Erledigen / erledigt | Résoudre / résolu | Resolver / resuelto | Resolver / resolvido | Comment threads. Reopen = 重新打开, 重新開啟, 再開, 다시 열기, Wieder öffnen, Rouvrir, Reabrir, Reabrir. |
+| thread | 讨论 | 討論串 | スレッド | 스레드 | Thread | fil | hilo | conversa | A comment and its replies. de: der Thread. |
 | mention | 提及 | 提及 | メンション | 멘션 | erwähnen | mentionner | mencionar | mencionar | Noun: Erwähnung, mention, mención, menção. |
 | notification | 通知 | 通知 | 通知 | 알림 | Benachrichtigung | notification | notificación | notificação | |
 | alert | 警报 | 警示 | アラート | 경고 | Warnung | alerte | alerta | alerta | A warning to act on. Not a notification. |
@@ -267,8 +268,10 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
 | conversation | 对话 | 對話 | 会話 | 대화 | Unterhaltung | conversation | conversación | conversa | |
 | AI co-author | AI 共同作者 | AI 共同作者 | AI共著者 | AI 공동 작성자 | KI-Koautor | coauteur IA | coautor de IA | coautor de IA | The AI panel in a document. Not collaborator. |
 | Edit with AI | 用 AI 编辑 | 使用 AI 編輯 | AIで編集 | AI로 편집 | Mit KI bearbeiten | Modifier avec l’IA | Editar con IA | Editar com IA | |
+| Send to AI | 发送给 AI | 傳送給 AI | AIに送信 | AI에게 보내기 | An die KI senden | Envoyer à l’IA | Enviar a la IA | Enviar para a IA | The checkbox under a comment reply that sends the reply to the replier’s co-author. Its status lines: Waiting for the AI… = 正在等待 AI…, 正在等待 AI…, AIを待っています…, AI를 기다리는 중…, Wartet auf die KI…, En attente de l’IA…, Esperando a la IA…, Aguardando a IA…. |
 | Ask | 提问 | 提問 | 質問 | 질문하기 | Fragen | Demander | Preguntar | Perguntar | The feature’s name and its send button. Translated. |
 | Ask your documents | 向文档提问 | 向文件提問 | ドキュメントに質問 | 문서에 질문하기 | Frag deine Dokumente | Interroger vos documents | Pregunta a tus documentos | Pergunte aos seus documentos | Sidebar item and page title. |
+| question | 问题 | 問題 | 質問 | 질문 | Frage | question | pregunta | pergunta | What you ask in Ask, and what the co-author asks in a comment. |
 | knowledge base | 知识库 | 知識庫 | ナレッジベース | 지식 베이스 | Wissensdatenbank | base de connaissances | base de conocimiento | base de conhecimento | The documents the co-author may search. |
 | Sources | 来源 | 來源 | 出典 | 출처 | Quellen | Sources | Fuentes | Fontes | Documents an answer cites. |
 | citation | 引用 | 引用 | 引用元 | 인용 | Quellenverweis | référence | referencia | referência | A marker linking to a source. Not the Quote block. |
@@ -277,6 +280,7 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
 | Service | 服务 | 服務 | サービス | 서비스 | Dienst | Service | Servicio | Serviço | The provider picker’s label. |
 | model | 模型 | 模型 | モデル | 모델 | Modell | modèle | modelo | modelo | “Default model” = 默认模型, 預設模型, デフォルトモデル, 기본 모델, Standardmodell, modèle par défaut, modelo predeterminado, modelo padrão. |
 | API key | API 密钥 | API 金鑰 | APIキー | API 키 | API-Schlüssel | clé d’API | clave de API | chave de API | |
+| Region | 区域 | 區域 | リージョン | 리전 | Region | Région | Región | Região | Where an Amazon Bedrock service runs, as AWS names it. “AWS Region” = AWS 区域, AWS 區域, AWSリージョン, AWS 리전, AWS-Region, région AWS, región de AWS, região da AWS (lowercase inside a sentence in fr, es and pt-BR). |
 | key | 密钥 | 金鑰 | キー | 키 | Schlüssel | clé | clave | chave | An agent’s key. |
 | embedding model | 嵌入模型 | 嵌入模型 | 埋め込みモデル | 임베딩 모델 | Embedding-Modell | modèle d’embedding | modelo de embeddings | modelo de embeddings | |
 | re-index | 重建索引 | 重建索引 | 再インデックス | 재색인 | neu indexieren | réindexer | reindexar | reindexar | Noun “index” = 索引, 索引, インデックス, 색인, Index, index, índice, índice. |
@@ -306,6 +310,7 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
 | change | 更改 | 變更 | 変更 | 변경 | Änderung | modification | cambio | alteração | |
 | pending | 待定 | 待定 | 保留中 | 대기 중 | ausstehend | en attente | pendiente | pendente | A proposal not yet decided. |
 | agent | 智能体 | 代理 | エージェント | 에이전트 | Agent | agent | agente | agente | An outside AI app connected over MCP. |
+| Liv’s agent | Liv 的智能体 | Liv 的代理 | Livのエージェント | Liv 님의 에이전트 | Agent von Liv | Agent de Liv | Agente de Liv | Agente de Liv | An agent named by the person it acts for, never by a name it chose. “Liv’s AI co-author” follows it. As a notification’s subject it takes the article (Der Agent von Liv, L’agent de Liv, El agente de Liv, O agente de Liv), and ko writes Liv의 에이전트, since the message adds 님. |
 | Your AI agents | 你的 AI 智能体 | 你的 AI 代理 | あなたのAIエージェント | 내 AI 에이전트 | Deine KI-Agenten | Vos agents IA | Tus agentes de IA | Seus agentes de IA | Settings page and command. |
 | Connected agents | 已连接的智能体 | 已連線的代理 | 接続済みのエージェント | 연결된 에이전트 | Verbundene Agenten | Agents connectés | Agentes conectados | Agentes conectados | |
 | connect | 连接 | 連線 | 接続 | 연결 | verbinden | connecter | conectar | conectar | “Connect an agent” = 连接智能体, 連線代理, エージェントを接続, 에이전트 연결, Agent verbinden, Connecter un agent, Conectar un agente, Conectar um agente. |
@@ -392,7 +397,7 @@ Leave these exactly as written in every language. Grammar may go around them (`S
   Anthropic, Gemini, DeepSeek, and every other provider name in the AI provider list. Skill, as in
   “the Stuga Skill”.
 - **Acronyms and formats:** API, URL, HTTP, HTTPS, JSON, JSONL, CSV, SMTP, HMAC-SHA256, UTC, ID
-  (`Node ID` → `节点 ID`), MB, AGPL-3.0-only.
+  (`Node ID` → `节点 ID`), MB, AGPL-3.0-only, AWS and its Region codes (`us-east-1`).
 - **Code and config:** every argument and tag name in braces and angle brackets, and plural and
   select keywords; header and environment names such as `X-Stuga-Signature`, `PUBLIC_ORIGIN`,
   `EXTRA_ORIGINS`, `STUGA_URL`, `$DSH_HOME/.env`; commands and slash commands such as `/mcp`,

@@ -1,19 +1,25 @@
 /** A document's comment threads. */
-import { principalId, userPrincipal } from "@stuga/auth";
-import { addComment, deleteComment, getComment, getMembersByUsername, listComments, setCommentResolved } from "@stuga/db";
-import { MAX_MENTIONS, commentMentionCandidates } from "@stuga/protocol/domain/mentions";
-import { recordEvent } from "../audit/record.js";
+import { deleteComment, getComment, listComments, setCommentResolved } from "@stuga/db";
+import type { Ctx } from "../auth/context.js";
 import { canCommentDoc, manages } from "../authz/authz.js";
+import { commentInput, isCommentRefusal, postComment } from "../comments/post.js";
+import { commentAgents, markYours } from "../comments/read.js";
 import { authorizedDoc, pushCommentsChanged } from "../documents/access.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
-import { mentionReaders } from "../mentions/recipients.js";
 
 export async function listDocComments({ ctx, match }: WorkspaceCall): Promise<Response> {
   const docId = match[1]!;
   const cdoc = await authorizedDoc(ctx, docId);
   if (!cdoc) return error(404, "not found");
-  return json({ comments: await listComments(ctx.sql, docId) });
+  const rows = await listComments(ctx.sql, docId);
+  // Whether the caller may resolve or delete anyone's comment, so a page offers only what it may do.
+  return json({ comments: markYours(ctx, rows), agents: await commentAgents(ctx.sql, rows), can_manage: manages(ctx, cdoc) });
+}
+
+/** A comment its caller wrote, or that their own co-author wrote for them. */
+function ownComment(ctx: Ctx, author: string): boolean {
+  return author === ctx.alias || author === `panel:${ctx.alias}`;
 }
 
 export async function addDocComment({ ctx, req, match }: WorkspaceCall): Promise<Response> {
@@ -24,85 +30,12 @@ export async function addDocComment({ ctx, req, match }: WorkspaceCall): Promise
   if (!canCommentDoc(ctx, cdoc)) {
     return error(403, "view-only access (ask for comment permission)");
   }
-  const body = (await req.json().catch(() => ({}))) as {
-    body?: string;
-    parent_num?: number | null;
-    anchor_start?: string | null;
-    anchor_end?: string | null;
-    anchor_quote?: string | null;
-  };
-  if (typeof body.body !== "string" || !body.body.trim()) {
-    return error(400, "comment body required");
-  }
-  const commentBody = body.body.trim();
-  const anchorStart = typeof body.anchor_start === "string" ? body.anchor_start : null;
-  const anchorEnd = typeof body.anchor_end === "string" ? body.anchor_end : null;
-  const anchorQuote = typeof body.anchor_quote === "string" ? body.anchor_quote : null;
-  if (commentBody.length > 20_000) return error(400, "comment too long");
-  if ((anchorQuote ?? "").length > 2_000) return error(400, "anchor quote too long");
-  if ((anchorStart ?? "").length > 1_000 || (anchorEnd ?? "").length > 1_000) {
-    return error(400, "anchor too long");
-  }
-  // Threads are one level deep: a reply to a reply attaches to the thread head.
-  let parentNum: number | null = null;
-  if (body.parent_num !== undefined && body.parent_num !== null) {
-    if (!Number.isSafeInteger(body.parent_num) || body.parent_num < 0) {
-      return error(400, "invalid parent_num");
-    }
-    const parent = await getComment(ctx.sql, docId, body.parent_num);
-    if (!parent) return error(400, "parent comment not found");
-    parentNum = parent.parent_num ?? parent.num;
-  }
-  // @usernames that name a member of this workspace, in the order written.
-  const candidates = commentMentionCandidates(commentBody);
-  const members = new Map((await getMembersByUsername(ctx.sql, candidates, ctx.workspaceId)).map((m) => [m.username, m]));
-  const mentions = candidates.flatMap((u) => members.get(u) ?? []).slice(0, MAX_MENTIONS);
-  const c = await addComment(ctx.sql, {
-    docId,
-    author: ctx.alias,
-    body: commentBody,
-    parentNum,
-    // addComment drops the anchor of a reply, which inherits its thread's.
-    anchorStart,
-    anchorEnd,
-    anchorQuote,
-    mentions,
-  });
-  recordEvent(ctx, "comment.added", docId, { num: c.num, parent_num: parentNum, excerpt: commentBody.slice(0, 140) });
-  await pushCommentsChanged(ctx.env, docId, cdoc.doc_type);
-  const actorName = ctx.displayName || ctx.alias;
-  // The notify worker keeps each mention apart, and collapses the owner's comment notices into one per hour.
-  const mentioned = await mentionReaders(ctx.sql, cdoc, mentions.map((m) => m.alias), ctx.alias);
-  for (const recipient of mentioned) {
-    await ctx.env.jobs.send({
-      kind: "notify",
-      recipient,
-      workspaceId: ctx.workspaceId,
-      eventType: "MENTIONED_IN_COMMENT",
-      docId,
-      commentNum: c.num,
-      params: { actor: actorName, doc: cdoc.title, excerpt: commentBody.slice(0, 140) },
-      actor: ctx.alias,
-    });
-  }
-  // An owner who was mentioned already has the more specific notification.
-  if (
-    cdoc.owner.startsWith("user:") &&
-    cdoc.owner !== userPrincipal(ctx.alias) &&
-    !mentioned.includes(principalId(cdoc.owner))
-  ) {
-    await ctx.env.jobs.send({
-      kind: "notify",
-      recipient: principalId(cdoc.owner),
-      workspaceId: ctx.workspaceId,
-      eventType: "COMMENT_ON_OWNED_DOC",
-      docId,
-      commentNum: c.num,
-      params: { actor: actorName, doc: cdoc.title, kind: parentNum === null ? "comment" : "reply", excerpt: commentBody.slice(0, 140) },
-      actor: ctx.alias,
-    });
-  }
-  return json(c, { status: 201 });
+  const input = commentInput(((await req.json().catch(() => null)) ?? {}) as Record<string, unknown>);
+  if (typeof input === "string") return error(400, input);
+  const out = await postComment(ctx, cdoc, input);
+  if (isCommentRefusal(out)) return error(out.status, out.error);
+  // Only an agent's notices can be held, so a person's answer is the comment as stored.
+  return json({ ...out.comment, ...(out.suppressed > 0 ? { notifications_held: out.suppressed } : {}) }, { status: 201 });
 }
 
 export async function resolveDocComment({ ctx, req, match }: WorkspaceCall): Promise<Response> {
@@ -114,12 +47,12 @@ export async function resolveDocComment({ ctx, req, match }: WorkspaceCall): Pro
   if (typeof body.resolved !== "boolean") return error(400, "resolved must be a boolean");
   const existing = await getComment(ctx.sql, docId, num);
   if (!existing) return error(404, "comment not found");
-  if (existing.author !== ctx.alias && !manages(ctx, doc)) {
+  if (!ownComment(ctx, existing.author) && !manages(ctx, doc)) {
     return error(403, "only the comment author or doc owner can resolve this comment");
   }
   const updated = await setCommentResolved(ctx.sql, docId, num, body.resolved);
   if (!updated) return error(404, "comment not found");
-  await pushCommentsChanged(ctx.env, docId, doc.doc_type);
+  void pushCommentsChanged(ctx.env, docId, doc.doc_type);
   return json(updated);
 }
 
@@ -130,11 +63,11 @@ export async function deleteDocComment({ ctx, match }: WorkspaceCall): Promise<R
   if (!doc) return error(404, "not found");
   const existing = await getComment(ctx.sql, docId, num);
   if (!existing) return error(404, "comment not found");
-  if (existing.author !== ctx.alias && !manages(ctx, doc)) {
+  if (!ownComment(ctx, existing.author) && !manages(ctx, doc)) {
     return error(403, "only the comment author or doc owner can delete this comment");
   }
   const deleted = await deleteComment(ctx.sql, docId, num);
   if (!deleted) return error(404, "comment not found");
-  await pushCommentsChanged(ctx.env, docId, doc.doc_type);
+  void pushCommentsChanged(ctx.env, docId, doc.doc_type);
   return json({ deleted: true });
 }

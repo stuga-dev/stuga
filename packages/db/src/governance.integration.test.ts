@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createClient, closeClients, type Sql } from "./client.js";
 import { initSchema } from "./schema/migrate.js";
+import { addComment } from "./comments.js";
 import { createDoc } from "./docs.js";
 import { createFolder } from "./folders.js";
 import { provisionWorkspace } from "./workspaces.js";
@@ -181,6 +182,55 @@ describe.skipIf(!URL)("agent governance queries", () => {
       const own = await listWorkspaceEvents(sql, { workspaceId: WS, principals: ALICE, after: 0, agentAlias: "agent-1" });
       expect(own.map((e) => e.id)).toEqual([mine!.id]);
       expect(await listWorkspaceEvents(sql, { workspaceId: WS, principals: ALICE, after: 0, since: new Date(Date.now() + 60_000) })).toEqual([]);
+    });
+    it("gives an agent the replies others wrote in threads it started, and none of its own", async () => {
+      const added = (num: number, parentNum: number | null, actor: string, at?: Date | string) =>
+        insertWorkspaceEvent(sql, {
+          workspaceId: WS,
+          type: "comment.added",
+          docId: "d-shared",
+          actor,
+          actorKind: actor.startsWith("user:") ? "human" : "agent",
+          payload: { num, parent_num: parentNum, excerpt: "…" },
+          ...(at === undefined ? {} : { at }),
+        });
+      const root = await addComment(sql, { docId: "d-shared", author: "agent-1", body: "Built-in or freestanding?" });
+      const othersRoot = await addComment(sql, { docId: "d-shared", author: "alice", body: "Check the totals." });
+      await added(root.num, null, "agent:agent-1");
+      const fromAlice = await added(root.num, root.num, "user:alice");
+      await added(root.num, root.num, "agent:agent-1");
+      const fromCoauthor = await added(root.num, root.num, "panel:alice");
+      // Stamped with the reply's own time, as the node sends it.
+      const reply = await addComment(sql, { docId: "d-shared", author: "bob", body: "Freestanding.", parentNum: root.num });
+      const fromBob = await added(reply.num, root.num, "user:bob", reply.created_at);
+      await added(othersRoot.num, othersRoot.num, "user:bob");
+      const decided = await insertWorkspaceEvent(sql, {
+        workspaceId: WS,
+        type: "run.decided",
+        docId: "d-shared",
+        actor: "user:alice",
+        actorKind: "human",
+        payload: { agent_alias: "agent-1" },
+      });
+      // A reply written in a thread since deleted, whose number the agent's later question took; a
+      // late worker writes its event after that question, stamped with when the reply was written.
+      const later = await addComment(sql, { docId: "d-shared", author: "agent-1", body: "A later question." });
+      await added(later.num + 1, later.num, "user:alice", new Date(new Date(later.created_at).getTime() - 60_000));
+
+      const own = await listWorkspaceEvents(sql, { workspaceId: WS, principals: ALICE, after: 0, agentAlias: "agent-1" });
+      expect(own.map((e) => e.id)).toEqual([fromAlice!.id, fromCoauthor!.id, fromBob!.id, decided!.id]);
+      const replies = await listWorkspaceEvents(sql, { workspaceId: WS, principals: ALICE, after: 0, agentAlias: "agent-1", types: ["comment.added"] });
+      expect(replies.map((e) => e.id)).toEqual([fromAlice!.id, fromCoauthor!.id, fromBob!.id]);
+      expect(await listWorkspaceEvents(sql, { workspaceId: WS, principals: ALICE, after: 0, agentAlias: "agent-2" })).toEqual([]);
+    });
+    it("leaves a person's own replies out by the actor their events carry", async () => {
+      const root = await addComment(sql, { docId: "d-shared", author: "alice", body: "Check the totals." });
+      const reply = (actor: string) =>
+        insertWorkspaceEvent(sql, { workspaceId: WS, type: "comment.added", docId: "d-shared", actor, actorKind: "human", payload: { num: root.num + 1, parent_num: root.num } });
+      await reply("user:alice");
+      const fromBob = await reply("user:bob");
+      const own = await listWorkspaceEvents(sql, { workspaceId: WS, principals: ALICE, after: 0, agentAlias: "alice", selfActor: "user:alice" });
+      expect(own.map((e) => e.id)).toEqual([fromBob!.id]);
     });
     it("a scoped key sees only document events inside its folders, and no workspace-level ones", async () => {
       await insertWorkspaceEvent(sql, { workspaceId: WS, type: "doc.updated", docId: "d-shared", actor: "agent:x", actorKind: "agent" });

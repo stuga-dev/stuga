@@ -18,8 +18,9 @@ export interface ModelFailure {
 /** Checked before the status: running out of credit comes back as a 400, 402, 403 or 429. */
 const QUOTA =
   /insufficient[_ ]quota|exceeded[_ ]current[_ ]quota|exceeded your current quota|credit balance|no credits|insufficient (?:balance|credits?|funds)|billing|payment required/i;
-const AUTH = /invalid[_ ]api[_ ]key|incorrect api key|authentication|unauthori[sz]ed/i;
-const RATE_LIMIT = /rate[_ ]?limit|too many requests/i;
+/** Bedrock names its exception instead of a status: AccessDenied, UnrecognizedClient, ExpiredToken, Throttling. */
+const AUTH = /invalid[_ ]api[_ ]key|incorrect api key|authentication|unauthori[sz]ed|access ?denied|unrecognized ?client|expired ?token/i;
+const RATE_LIMIT = /rate[_ ]?limit|too many requests|throttl/i;
 /** Only for a failure with no status: the request never got an answer. */
 const NO_ANSWER = /connection|network|timed? ?out|fetch failed|socket|terminated|ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i;
 

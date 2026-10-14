@@ -84,6 +84,8 @@ export type IndexMessage =
       actor: string;
       actorKind: "human" | "agent" | "internal";
       payload?: Record<string, unknown>;
+      /** ISO instant it happened, stamped by the sender when the feed compares it with other rows; absent, the insert time. */
+      at?: string;
     }
   | {
       /** Deliver one event to one webhook. Retried by the queue on failure. */
@@ -107,6 +109,11 @@ export type NotifyMessage = {
   actor: string;
   /** The comment it is about: its link opens that comment, and two mentions are two notifications. */
   commentNum?: number;
+  /**
+   * The thread a COMMENT_REPLY is in, `${rootNum}@${rootCreatedAtMs}`: replies in one thread within
+   * the hour are one notification. The root's creation time keeps a reused number a new thread.
+   */
+  thread?: string;
 } & DocNotification;
 
 /**

@@ -102,6 +102,12 @@ describe("event", () => {
       { kind: "webhook_deliver", webhookId: "whk_b", eventId: 42 },
     ]);
   });
+  it("stores the time its sender stamped, since the worker reaches it later", async () => {
+    const d = deps();
+    const at = "2026-10-09T10:00:00.000Z";
+    await handleEvent(env(), d, { kind: "event", workspaceId: "ws1", type: "comment.added", docId: "d1", actor: "user:alice", actorKind: "human", at });
+    expect(d.db.insertWorkspaceEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "comment.added", at }));
+  });
   it("an event with no document matches only workspace-wide hooks", async () => {
     const d = deps();
     await handleEvent(env(), d, { kind: "event", workspaceId: "ws1", type: "doc.created", actor: "user:alice", actorKind: "human" });

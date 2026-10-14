@@ -16,6 +16,9 @@ import { Text } from "@astryxdesign/core/Text";
 import { NodeSettings as NodeApi, type NodeAiSettings } from "../../../api";
 import { errorMessage } from "../../../lib/http/client";
 import {
+  bedrockAddress,
+  bedrockRegionOf,
+  bedrockRegionProblem,
   connectFailure,
   connectFailureKind,
   isServiceAddress,
@@ -37,7 +40,7 @@ export interface Connected {
 }
 
 /** A failure in words, and the field it belongs beside; null for the form as a whole. */
-type Problem = { message: string; field: "key" | "address" | null };
+type Problem = { message: string; field: "key" | "address" | "region" | null };
 
 /** A save the probe refused, in words, and the field it is about: a model that cannot chat reads differently from anything else. */
 function saveFailure(label: string, model: string, e: unknown): Problem {
@@ -102,6 +105,8 @@ export function ConnectForm({
   const preset = presets.find((p) => p.value === service) ?? presets[0]!;
   const [key, setKey] = useState("");
   const [address, setAddress] = useState("");
+  /** The Region typed for Bedrock; null shows the one its address is in. */
+  const [region, setRegion] = useState<string | null>(null);
   /** What the service listed, and for which service, address and key. */
   const [listed, setListed] = useState<{ for: string; models: string[] } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -116,7 +121,13 @@ export function ConnectForm({
   const width = settings.embedding_column_dims;
   const isLocal = preset.provider === "ollama";
   const asksAddress = isLocal || preset.value === "custom";
-  const url = (asksAddress ? address.trim() : "") || preset.baseUrl;
+  // Bedrock asks for a Region instead of an address: the runtime address follows from it.
+  const isBedrock = preset.provider === "bedrock";
+  const regionValue = region ?? bedrockRegionOf(preset.baseUrl);
+  const regionProblem = isBedrock ? bedrockRegionProblem(regionValue) : null;
+  const url = isBedrock ? bedrockAddress(regionValue, preset.baseUrl) : (asksAddress ? address.trim() : "") || preset.baseUrl;
+  /** The field that says where the service is, for a failure to reach it. */
+  const placeField = isBedrock ? "region" : asksAddress ? "address" : null;
   const inheritsKey =
     half === "search" && !!first?.api_key_set && first.provider === preset.provider && presetFor(all, first.provider, first.base_url) === service;
   const needsKey = !isLocal && preset.value !== "custom" && !inheritsKey;
@@ -135,6 +146,11 @@ export function ConnectForm({
    * `quietly`: asked unprompted, so a service that does not answer is a hint, not an error.
    */
   async function load(again = false, quietly = false) {
+    // A Region that is not one is said beside it, and nothing is asked.
+    if (regionProblem) {
+      if (!quietly) setProblem({ message: regionProblem, field: "region" });
+      return;
+    }
     if (!url || (needsKey && !key.trim()) || (models && !(again && listedNone)) || loading) return;
     if (asksAddress && address.trim() && !isServiceAddress(address)) {
       setProblem({ message: t("nodeAccess.connect.addressInvalid"), field: "address" });
@@ -160,7 +176,7 @@ export function ConnectForm({
     } catch (e) {
       if (current.current !== sig) return;
       if (quietly) return setQuietMiss(true);
-      setProblem({ message: errorMessage(e, t("nodeAccess.connect.unreachable", { service: serviceName })), field: asksAddress ? "address" : null });
+      setProblem({ message: errorMessage(e, t("nodeAccess.connect.unreachable", { service: serviceName })), field: placeField });
     } finally {
       setLoading(false);
     }
@@ -169,7 +185,7 @@ export function ConnectForm({
   /** A listing's refusal, beside the field it is about. */
   function failure(message: string): Problem {
     const kind = connectFailureKind(message);
-    const field = kind === "key" ? "key" : kind === "unreachable" && asksAddress ? "address" : null;
+    const field = kind === "key" ? "key" : kind === "unreachable" ? placeField : null;
     return { message: connectFailure(serviceName, message), field };
   }
 
@@ -181,9 +197,10 @@ export function ConnectForm({
   }, [service]);
 
   // A key is tried once typing pauses, so a pasted key is checked where it was pasted. A key typed
-  // while an older one was being tried is tried once that answer is in.
+  // while an older one was being tried is tried once that answer is in. A Region being typed waits
+  // until it is one.
   useEffect(() => {
-    if (!needsKey || !key.trim() || models || loading || asked.current === signature) return;
+    if (!needsKey || !key.trim() || models || loading || regionProblem || asked.current === signature) return;
     const timer = window.setTimeout(() => void load(), KEY_CHECK_DELAY_MS);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load reads this render's service, address and key
@@ -202,6 +219,7 @@ export function ConnectForm({
   function pick(value: string) {
     setService(value);
     setAddress("");
+    setRegion(null);
     setListed(null);
     setModel("");
     setProblem(null);
@@ -210,6 +228,7 @@ export function ConnectForm({
   async function connect() {
     const chosen = model.trim();
     if (!chosen || saving) return;
+    if (regionProblem) return setProblem({ message: regionProblem, field: "region" });
     setSaving(true);
     setProblem(null);
     try {
@@ -238,12 +257,26 @@ export function ConnectForm({
 
   // Enter lists the models first, then connects.
   const onEnter = () => void (models && model.trim() ? connect() : load(true));
-  const fieldStatus = (field: "key" | "address") => (problem?.field === field ? { type: "error" as const, message: problem.message } : undefined);
+  const fieldStatus = (field: "key" | "address" | "region") => (problem?.field === field ? { type: "error" as const, message: problem.message } : undefined);
 
   return (
     <VStack gap={3}>
       {problem && problem.field === null && <Banner status="error" title={t("nodeAccess.connect.notConnected")} description={problem.message} />}
       <Selector label={t("nodeAccess.connect.service")} options={presets.map((o) => ({ value: o.value, label: o.label }))} value={service} onChange={pick} />
+      {isBedrock && (
+        <TextInput
+          label={t("nodeAccess.connect.region")}
+          value={regionValue}
+          description={t("nodeAccess.connect.regionHint")}
+          status={fieldStatus("region")}
+          onChange={(v: string) => {
+            setRegion(v);
+            if (problem?.field === "region") setProblem(null);
+          }}
+          onBlur={() => void load()}
+          onEnter={onEnter}
+        />
+      )}
       {!isLocal && (
         <TextInput
           label={t("nodeAccess.connect.apiKey")}

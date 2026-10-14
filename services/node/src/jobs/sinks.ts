@@ -3,7 +3,7 @@
  * channel, and written in the recipient's language.
  */
 import type { DeliveryErrorCode } from "@stuga/protocol/notify/events";
-import { renderNotification, renderOpenAction } from "@stuga/protocol/notify/render";
+import { isActor, renderActor, renderNotification, renderOpenAction } from "@stuga/protocol/notify/render";
 import type { NotifyConfig } from "../env.js";
 import { sendMail as smtpSendMail, type MailMessage } from "./smtp.js";
 
@@ -82,7 +82,7 @@ export async function deliver(cfg: NotifyConfig, payload: NotificationPayload, i
       return await postJson(io, cfg.webhookUrl, {
         recipient: n.recipient,
         event_type: n.eventType,
-        params: n.params,
+        params: webhookParams(n.params, n.language),
         language: n.language,
         title: n.title,
         body: n.body,
@@ -133,4 +133,9 @@ export function forDiscord(text: string): string {
 /** Teams' markdown: a link needs `](` together, so they are kept apart. */
 export function forTeams(text: string): string {
   return text.replace(/\]\(/g, "] (");
+}
+
+/** The params a webhook receives: an agent or co-author named as the reader reads it, so `actor` stays a string. */
+function webhookParams(params: Record<string, unknown>, language: string): Record<string, unknown> {
+  return isActor(params.actor) ? { ...params, actor: renderActor(params.actor, language) } : params;
 }

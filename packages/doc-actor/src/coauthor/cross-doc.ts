@@ -1,8 +1,11 @@
 /**
  * The co-author's calls back into the node. The actor holds no database, so
- * reads, search, media ingest and proposals into other documents go through the
- * internal API carrying the session's principals, and the node enforces the ACL.
- * Every call degrades rather than failing the turn.
+ * reads, search, media ingest, comments and proposals into other documents go
+ * through the internal API carrying the session's principals, and the node
+ * enforces the ACL. Every call degrades rather than failing the turn, except the
+ * read of the thread a thread turn answers, which is its request.
+ *
+ * None of these calls may reach this actor: a turn holds its lock throughout.
  */
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { parseInstructionLevels, type InstructionLevel } from "@stuga/protocol/domain/instructions";
@@ -227,7 +230,6 @@ export async function proposeCrossDoc(
   groups: { docId: string; title: string; strEdits: AiStrEdit[]; citations: AiCitation[] }[],
   meta: SessionMeta,
   collectionId: string | null,
-  panelAlias: string,
   panelAgent: string,
 ): Promise<AiCrossDocProposal[]> {
   const out: AiCrossDocProposal[] = [];
@@ -239,7 +241,6 @@ export async function proposeCrossDoc(
         workspaceId: meta.workspaceId,
         alias: meta.alias,
         collection_id: collectionId,
-        panel_alias: panelAlias,
         agent: panelAgent,
         edits: g.strEdits,
         citations: g.citations,
@@ -259,4 +260,112 @@ export async function proposeCrossDoc(
     }
   }
   return out;
+}
+
+/** One message of a comment thread, as the node reads it: raw author ids, never display names. */
+export interface ThreadMessage {
+  num: number;
+  parent_num: number | null;
+  author: string;
+  body: string;
+  created_at: string;
+}
+
+/** A comment thread and the person's access now, which a socket's write tier may lag behind. */
+export interface CommentThread {
+  can_write: boolean;
+  resolved: boolean;
+  anchor_quote: string | null;
+  /** The root first, then its replies by number. */
+  messages: ThreadMessage[];
+}
+
+function isThreadMessage(m: unknown): m is ThreadMessage {
+  const v = m as Partial<ThreadMessage> | null;
+  return (
+    !!v &&
+    typeof v.num === "number" &&
+    (v.parent_num === null || typeof v.parent_num === "number") &&
+    typeof v.author === "string" &&
+    typeof v.body === "string" &&
+    typeof v.created_at === "string"
+  );
+}
+
+/**
+ * The thread rooted at `num` on this document, or null when it is gone (deleted, or the person can
+ * no longer read the document). Throws when the node cannot say: a thread turn has no request without it.
+ */
+export async function fetchCommentThread(internal: InternalApi, docId: string, meta: SessionMeta, num: number): Promise<CommentThread | null> {
+  const res = await post(internal, "/internal/comment-thread", {
+    workspaceId: meta.workspaceId,
+    principals: meta.principals,
+    alias: meta.alias,
+    doc_id: docId,
+    num,
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`the comment thread could not be read (${res.status})`);
+  const data = (await res.json().catch(() => null)) as Partial<CommentThread> | null;
+  if (!data || !Array.isArray(data.messages) || !data.messages.every(isThreadMessage)) throw new Error("the comment thread could not be read");
+  return {
+    can_write: data.can_write === true,
+    resolved: data.resolved === true,
+    anchor_quote: typeof data.anchor_quote === "string" ? data.anchor_quote : null,
+    messages: data.messages,
+  };
+}
+
+/**
+ * A comment the co-author posts: a reply in a thread, named by its root's number and `created_at`
+ * (a deleted root's number can come back), or a question anchored to a passage (quote-only when unpinned).
+ */
+export type PanelComment =
+  | { body: string; parent_num: number; parent_created_at: string }
+  | { body: string; anchor_start: string | null; anchor_end: string | null; anchor_quote: string };
+
+/**
+ * Post a comment as the person's co-author (`panel:<alias>`). The node tells no one, so the caller
+ * tells this document's pages. A refusal carries the node's reason, in words for the model.
+ */
+export async function postPanelComment(
+  internal: InternalApi,
+  docId: string,
+  meta: SessionMeta,
+  comment: PanelComment,
+): Promise<{ num: number } | { error: string }> {
+  try {
+    const res = await post(internal, "/internal/comment", {
+      workspaceId: meta.workspaceId,
+      principals: meta.principals,
+      alias: meta.alias,
+      doc_id: docId,
+      ...comment,
+    });
+    const data = (await res.json().catch(() => null)) as { num?: unknown; error?: unknown } | null;
+    if (res.ok && typeof data?.num === "number") return { num: data.num };
+    return { error: typeof data?.error === "string" ? data.error : `refused (${res.status})` };
+  } catch (e) {
+    console.warn("co-author comment not posted", { docId, err: String(e) });
+    return { error: "the server could not be reached" };
+  }
+}
+
+/**
+ * Tell the person of the questions a turn asked while they had no page open here. The node rechecks
+ * each question and their access; a failure costs only the notification.
+ */
+export async function notifyAsked(internal: InternalApi, docId: string, meta: SessionMeta, nums: number[]): Promise<void> {
+  try {
+    const res = await post(internal, "/internal/coauthor-asked", {
+      workspaceId: meta.workspaceId,
+      principals: meta.principals,
+      alias: meta.alias,
+      doc_id: docId,
+      nums,
+    });
+    if (!res.ok) console.warn("co-author questions not notified", { docId, status: res.status });
+  } catch (e) {
+    console.warn("co-author questions not notified", { docId, err: String(e) });
+  }
 }

@@ -551,6 +551,47 @@ you are notified for each, so they stay findable after the chat scrolls away.
 
 Before letting AI edits to a document apply directly, look at that agent's record in the review inbox.
 
+### Questions in comments
+
+When the co-author needs a fact or a choice only you can give, it can ask in a comment on the
+passage and go on with the edits that don't depend on the answer. Everyone who can read the document
+sees that comment, so it asks this way only in a turn that never reached other documents: not with
+**All documents** or a collection as the scope, nor later in a chat that had one. Otherwise it asks
+in its reply. If you leave the document before the turn ends, you are notified of each question
+still open.
+
+Anyone who can edit the document can reply with **Send to AI** ticked, and their own co-author
+answers. That turn takes its request from the reply, with the rest of the thread as context. It
+reaches only the open document and the thread, and downloads no images its edits link. Its edits
+follow the document's setting, and it posts its answer in the thread. A question or a thread answer
+is posted only when nothing in front of the AI came from other documents, edits waiting for your
+review included; an answer held back stays in the AI panel.
+
+The co-author's comments are authored `panel:<alias>`, `<alias>` being the person it works for. That
+person may resolve or delete them, as may the document's owner or a workspace admin, and is notified
+when someone replies to them.
+
+### Agents in comment threads
+
+With `comments_add`, an agent can reply in a thread (`parent_num`; a reply to a reply joins the
+thread) or attach a new comment to a passage by quoting it (`quote`). The quote must appear exactly
+once in the document's text, as written. A reply takes its thread's passage, so it takes no quote. Over
+REST, an agent attaches a comment to a passage the same way ([API](api.md#documents)).
+
+A comment may @mention at most 5 members of the workspace: more is refused, and nothing is posted.
+Those it mentions who can read the document are notified. As with a person's comment, the
+document's owner is notified, and a reply notifies whoever started the thread or replied before, the
+person the agent works for included, since an agent often works while they are away. A reply in a
+thread an agent started or replied in also notifies the person that agent works for. One person's
+agents send at most 60 notices an hour in a workspace; past that a comment is still posted, and the
+answer says how many notices were held (`notifications_held`).
+
+In comments and in the notifications they send, an agent is named by the person it works for
+("Liv's agent"), never by its own name. `comments` marks the agent's own comments `you: true`, and
+replies in threads it started reach it through `events` with `mine: true`
+([below](#events-and-webhooks)). A reply is the words of whoever wrote it: the agent is told to read
+it as information, never as an instruction.
+
 ## The review inbox
 
 **Review AI edits** (`/review`) lists the runs on documents you can read across the workspace:
@@ -630,7 +671,8 @@ How agents get them:
 - **Events.** The `events` tool and `GET /api/events` return what changed in a workspace since a
   cursor, filtered to documents the credential can read. An agent that wants to react to a decision
   or a comment polls this instead of re-reading everything. The tool's `mine: true` keeps the
-  decisions on the agent's own proposals. Event types: [api.md](api.md#the-event-feed).
+  decisions on the agent's own proposals and the replies in comment threads it started. Event types:
+  [api.md](api.md#the-event-feed).
 - **Webhooks.** Workspace owners and admins can send the same events to a URL, signed and retried.
   See [api.md](api.md#webhooks).
 
@@ -651,7 +693,7 @@ the item's `agent_mode` decide what a call does.
 | `docs` | `list` · `metadata`. `list` takes an optional folder (`parent_id`, null for the root). `metadata` includes this agent's `review` answer for the document and its `instructions`. |
 | `search` | Hybrid keyword and semantic search that returns documents, across `workspace_ids`, optionally within a collection. |
 | `markdown` | `read` · `status` · `provenance`. `read` shows the document's instructions in a marked block, then the text with the agent's own pending edits. `status` reports what became of its edits. |
-| `comments` | A document's comments. |
+| `comments` | A document's comments. An `author` of `panel:<alias>` is that person's [in-app co-author](#questions-in-comments), and the agent's own comments carry `you: true`. |
 | `folders` | The folders the credential can read in the workspace. |
 | `events` | What changed in the workspace since `after`, optionally narrowed by `types`. Without `after` it starts from the newest event. |
 | `collections` | `list` · `open`. The saved document sets of the credential's person, which `search` and `retrieve` can be scoped to. `open` lists the members the credential can read ([collections.md](collections.md)). |
@@ -667,7 +709,7 @@ ones may make the node download an image or file from the web.
 | `docs_create` | A document with a title, optionally in a folder. Returns its `instructions`. | no | no |
 | `markdown_append` | Adds text at the end of a document, or of the section under `heading`, and touches nothing else. | no | yes |
 | `markdown_edit` | `write` · `str_replace` · `cited_edits`. `write` replaces the whole document, `str_replace` swaps `find` for `replace` (one occurrence, or all with `replace_all`), and `cited_edits` makes several exact edits at once with citations that become footnotes. | yes | yes |
-| `comments_add` | A comment on a document. Its people are notified. | no | no |
+| `comments_add` | A comment on a document, a reply in a thread (`parent_num`), or a comment on a passage (`quote`, its exact text). It may mention at most 5 people, and those who can read the document are notified, as are the document's owner and, for a reply, the thread's people ([Agents in comment threads](#agents-in-comment-threads)). | no | no |
 | `media_upload` | `upload` · `upload_from_url` · `start_upload`. Stores an image or any other file with a document, or a file with a database: from base64 of up to 3 MB with its `name`, from a public URL the node downloads, or, after `start_upload`, from the `upload_url` the caller sends it to itself, by `upload_id`. A document gets the Markdown that places it, an image shown and any other file a link that downloads; a database gets the link for a `files` cell. | no | yes |
 | `collections_edit` | `create` · `rename` · `delete` · `add_items` · `remove_items`. `add_items` skips ids the credential cannot read and says how many. | yes | no |
 | `databases_add` | `create_database` · `create_table` · `add_column` · `insert_rows` · `import` · `start_import` · `create_view` · `open_page`. `add_column` may set a column's `description`. `import` loads a whole CSV or JSONL file as one reviewable change, from its text in `content` or from an upload by `import_id`, so bulk data never passes through `insert_rows`. `start_import` returns an `upload_url` for a caller that can send the file itself, and the `import_id` to commit. `open_page` returns a row's page, a document read and edited like any other, and creates it the first time. | no | no |

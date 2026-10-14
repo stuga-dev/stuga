@@ -86,6 +86,15 @@ describe("the document co-author", () => {
     );
   });
 
+  it("words a question asked in a comment, and a thread turn that could not answer there", () => {
+    expect(coauthorActivityText({ kind: "asking" })).toBe("Asking in a comment…");
+    expect(coauthorErrorText({ code: "thread_closed" })).toBe("This comment thread was resolved or deleted.");
+    expect(coauthorNoticesText([{ code: "reply_failed" }])).toBe("The answer couldn’t be posted in the comment.");
+    expect(coauthorNoticesText([{ code: "reply_withheld" }])).toBe(
+      "The answer stayed here: your waiting edits include text from other documents.",
+    );
+  });
+
   it("words why another document's changes were not proposed", () => {
     expect(crossDocErrorText({ code: "no_access" }, "Plan")).toBe("Couldn’t propose changes in “Plan”: this conversation can’t edit it.");
     expect(crossDocErrorText({ code: "unreachable" }, "Plan")).toBe("Couldn’t reach “Plan”, so no changes were proposed there.");

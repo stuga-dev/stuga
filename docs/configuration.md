@@ -121,6 +121,19 @@ and node administrators also see **This node**.
 Provider API keys, the identity provider's client secret, the notification webhook URL and the SMTP
 URL entered in Settings are kept under `DATA_DIR/secrets`, not in the database.
 
+### Amazon Bedrock
+
+**Built-in AI** can run on Amazon Bedrock, with a Bedrock API key and the AWS Region your models run in.
+The models offered are the account's inference profiles in service, which is how Bedrock serves
+Claude, and the text models it serves on demand. Stuga uses Bedrock for chat; set up **Semantic
+search** on another service.
+
+The node keeps the Region as its runtime address, `https://bedrock-runtime.<region>.amazonaws.com`
+(`bedrock-runtime-fips.` for the FIPS endpoint, `.amazonaws.com.cn` in China), and sends the key, as
+a bearer token, only to AWS in that Region. In `/api/node/ai-settings`, a chat endpoint with
+`provider: "bedrock"` needs an `api_key` and such an address as its `base_url`; anything else is
+`400`, as is `bedrock` for `embed.provider`.
+
 ### Search strictness
 
 The search box drops a passage found only by meaning when it sits too far from the query. How far

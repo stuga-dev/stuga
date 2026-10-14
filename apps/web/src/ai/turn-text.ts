@@ -102,6 +102,8 @@ export function coauthorActivityText(a: CoauthorActivity): string {
       return t("ai.activity.proposing");
     case "applying":
       return t("ai.activity.applying");
+    case "asking":
+      return t("ai.status.asking");
     default:
       return t("ai.status.thinking");
   }
@@ -120,6 +122,10 @@ function coauthorNoticeText(n: CoauthorNotice): string | null {
       return t("ai.notice.imageLeftLinked", { url: n.url, reason: presentServerMessage(n.reason).replace(/[.。．]\s*$/u, "") });
     case "images_truncated":
       return t("ai.notice.imagesTruncated", { count: n.count });
+    case "reply_failed":
+      return t("ai.notice.replyFailed");
+    case "reply_withheld":
+      return t("ai.notice.replyWithheld");
     default:
       return null;
   }
@@ -143,6 +149,7 @@ const COAUTHOR_ERROR: Record<Exclude<CoauthorError["code"], "failed" | "propose_
   too_large: "ai.error.tooLarge",
   ledger_unavailable: "ai.error.ledgerUnavailable",
   stale: "ai.error.stale",
+  thread_closed: "ai.error.threadClosed",
   dropped: "ui.sync.turnDropped",
 };
 

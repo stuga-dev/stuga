@@ -6,13 +6,16 @@ import type { MemberCandidate } from "./workspaces";
 import type { RevokeEverythingCounts } from "./users";
 import type { SearchStrictness } from "@stuga/protocol/domain/search-strictness";
 
+/** The wire protocols the node speaks to an AI service. */
+export type AiProtocol = "anthropic" | "openai" | "ollama" | "bedrock";
+
 /** Keys are write-only: no response carries one. */
 interface AiEndpointSettings {
   /** Semantic search's switch: false keeps its model but stops it. */
   enabled: boolean;
   /** Semantic search is in force: its switch is on and a model is set. */
   running: boolean;
-  provider: "anthropic" | "openai" | "ollama";
+  provider: AiProtocol;
   base_url: string;
   model?: string;
   api_key_set: boolean;
@@ -24,7 +27,7 @@ interface AiEndpointSettings {
 
 interface AiChatEndpointSettings {
   id: string;
-  provider: "anthropic" | "openai" | "ollama";
+  provider: AiProtocol;
   base_url: string;
   models: Array<{ id: string; name: string }>;
   api_key_set: boolean;
@@ -89,7 +92,7 @@ export interface NodeAiSettings {
   /** The level when none is stored. */
   strictness_default: SearchStrictness;
   /** Where each provider listens when a base URL is left empty. */
-  provider_base_urls: Record<"anthropic" | "openai" | "ollama", string>;
+  provider_base_urls: Record<AiProtocol, string>;
   updated_by: string | null;
   updated_at: string | null;
 }

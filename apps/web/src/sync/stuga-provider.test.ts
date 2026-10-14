@@ -13,6 +13,7 @@ import {
   encodeJson,
 } from "@stuga/protocol/wire/frame";
 import { CloseCode, Opcode, type DocStatePayload, type TitleChangedPayload } from "@stuga/protocol/wire/opcodes";
+import type { AiRequest } from "@stuga/protocol/wire/doc-socket";
 import { PROBE_DEADLINE_MS, PROBE_EVERY_MS } from "./socket-liveness";
 
 const forgotten: string[] = [];
@@ -506,6 +507,30 @@ describe("what changes beside the text", () => {
     expect(reload).toHaveBeenCalledTimes(1);
     expect(JSON.parse(sessionStorage.getItem("stuga_restored:doc1")!)).toEqual({ by: "Liv", at: "2026-10-09T11:52:00.000Z", seq: 4 });
     vi.unstubAllGlobals();
+  });
+});
+
+describe("a co-author request", () => {
+  const req: AiRequest = { prompt: "Tighten the intro.", selected_text: null, model: "auto", history: [] };
+  const handlers = () => ({ onChunk: vi.fn(), onDone: vi.fn(), onEdits: vi.fn() });
+
+  it("says it was not sent while the socket is down, and arms nothing a later close would end", () => {
+    const p = new StugaProvider("doc1", "alice");
+    const unsent = handlers();
+    expect(p.sendAiRequest(req, unsent)).toBe(false);
+    sockets[0]!.open();
+    sockets[0]!.dropped();
+    expect(unsent.onDone).not.toHaveBeenCalled();
+    expect(unsent.onEdits).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1_000);
+    sockets[1]!.open();
+    const sent = handlers();
+    expect(p.sendAiRequest(req, sent)).toBe(true);
+    expect(sockets[1]!.opcodes()).toContain(Opcode.AI_REQUEST);
+    // A sent turn still ends when its socket closes.
+    sockets[1]!.dropped();
+    expect(sent.onEdits).toHaveBeenCalledWith(expect.objectContaining({ error: { code: "dropped" } }));
   });
 });
 

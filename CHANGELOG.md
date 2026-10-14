@@ -9,14 +9,29 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Added
+
+- When the AI co-author needs a fact or a choice only you can give, it asks in a comment on the passage and goes on with the rest. Reply with **Send to AI** ticked, and it edits the document as usual and answers in the thread ([Questions in comments](docs/agents.md#questions-in-comments)).
+- A reply in a comment thread notifies the people in it, so you hear when someone answers your AI co-author's or your agent's question.
+- Agents can reply in comment threads and attach a comment to a passage by quoting it, and hear of replies in threads they started ([Agents in comment threads](docs/agents.md#agents-in-comment-threads)).
+- Amazon Bedrock as an AI chat provider: a Bedrock API key and a region; models such as Claude through the account's inference profiles ([Amazon Bedrock](docs/configuration.md#amazon-bedrock)).
+
 ### Changed
 
 - A release carries the Mac package as `Stuga-<version>.pkg` only, and [stuga.dev/download/mac](https://stuga.dev/download/mac) always downloads the newest. Links to `releases/latest/download/Stuga.pkg` stop working once this release is out.
 - **Reranking** lists the models the service offers to choose from: Jev's versions on TypeSafe, and every decision model on OpenRouter, such as Microsoft-Decision-1, Perplexity's decider and Liquid's d1.
 - AI setup forms no longer link to each service's key page.
+- Comments and their notifications name an agent by the person it works for, such as "Liv's agent", never by its own name.
+- An agent's comment may mention at most 5 people: more is refused with `400` and nothing is saved, where REST used to keep the first 20. One person's agents send at most 60 comment notices an hour in a workspace; past that the comment is still saved, and the answer carries `notifications_held` ([Agents in comment threads](docs/agents.md#agents-in-comment-threads)).
 
 ### Fixed
 
+- A comment posted, resolved or deleted while the AI co-author is working on the document no longer waits for it to finish.
+- An agent's comment notifies the people it mentions, as documented.
+- An agent's comment over REST is attached to a passage only by `quote`, held to the same rule as over MCP: its `anchor_quote` must appear once in the text as written, and positions are refused with `400`.
+- The Comments panel offers **Resolve** and **Delete** only on comments you may change, and says why when one is refused.
+- On a phone, the review bar's buttons stay inside the bar.
+- An AI answer no longer shows source markers that point at nothing.
 - Going back to an earlier version on a Mac or with Docker no longer notes that the node will migrate the backup's schema: the earlier version serves it at its own.
 - `GET /api/node/version` names a `previous_version` only when another version served the data before, so a restart or going back to the backup's own version answers null.
 - `stuga list` on a Mac, and `stuga-node`'s `list`, `verify`, `restore` and `backup`, write their answer to stdout, so it can be piped or saved; progress and notes stay on stderr.

@@ -11,9 +11,12 @@
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type * as Y from "yjs";
-import { Docs, type Comment, type CommentAnchor } from "../api";
+import { Docs, type Comment, type CommentAgents, type CommentAnchor } from "../api";
+import { t } from "../i18n/i18n";
+import { errorMessage } from "../lib/http/client";
 import type { StugaProvider } from "../sync/stuga-provider";
 import { useSharedEditor } from "../editor/editor-context";
+import { useToast } from "../ui/use-toast";
 import { anchorFromSelection, resolveAnchorRange } from "./anchor";
 import { commentRange } from "./comment-highlight";
 
@@ -33,6 +36,10 @@ export interface PendingComment {
 
 interface CommentsCtx {
   comments: Comment[];
+  /** Who the agents among the authors act for, from the same read as the comments. */
+  agents: CommentAgents;
+  /** The reader manages the document, so may resolve or delete anyone's comment; from the same read. */
+  canManage: boolean;
   activeNum: number | null;
   pending: PendingComment | null;
   /** Capture the current selection as a comment anchor and open the composer over it. */
@@ -44,8 +51,8 @@ interface CommentsCtx {
   clickComment: (num: number) => void;
   resolve: (num: number, resolved: boolean) => void;
   del: (num: number) => void;
-  /** Post a reply to a thread (parentNum = the root comment's num). Resolves true on success. */
-  reply: (parentNum: number, body: string) => Promise<boolean>;
+  /** Post a reply to a thread (parentNum = the root comment's num). Resolves to the saved reply, null when it was not saved. */
+  reply: (parentNum: number, body: string) => Promise<Comment | null>;
   /** Re-read the list; resolves once it is in, false when the read failed. Overlapping calls share reads. */
   reload: () => Promise<boolean>;
 }
@@ -68,7 +75,10 @@ export function CommentsProvider({
   children: ReactNode;
 }) {
   const { editor } = useSharedEditor();
+  const toast = useToast();
   const [comments, setComments] = useState<Comment[]>([]);
+  const [agents, setAgents] = useState<CommentAgents>({});
+  const [canManage, setCanManage] = useState(false);
   const [activeNum, setActiveNum] = useState<number | null>(null);
   const [pending, setPending] = useState<PendingComment | null>(null);
   // A resolved thread the user just clicked, painted briefly so they can see
@@ -86,6 +96,8 @@ export function CommentsProvider({
         .then(
           (r) => {
             setComments(r.comments);
+            setAgents(r.agents);
+            setCanManage(r.can_manage);
             return true;
           },
           () => false,
@@ -288,41 +300,49 @@ export function CommentsProvider({
     [editor, ydoc, comments, flashNum, onReveal],
   );
 
+  // A resolve or delete the node refused says why, and the list goes back to what the node holds.
+  const refused = useCallback(
+    (e: unknown) => {
+      toast({ body: errorMessage(e, t("errors.client.failed")), type: "error" });
+      void reload();
+    },
+    [toast, reload],
+  );
+
   const resolve = useCallback(
     (num: number, resolved: boolean) => {
       setComments((cs) => cs.map((c) => (c.num === num ? { ...c, resolved } : c)));
       if (activeNum === num && resolved) setActiveNum(null);
-      Docs.resolveComment(docId, num, resolved).catch(() => void reload());
+      Docs.resolveComment(docId, num, resolved).catch(refused);
     },
-    [docId, activeNum, reload],
+    [docId, activeNum, refused],
   );
 
   const del = useCallback(
     (num: number) => {
-      // Optimistic remove; resync from the server if the delete is rejected
-      // (e.g. not the author/owner) so the comment reappears. Deleting a root
-      // also removes its replies (the DB FK cascades; mirror that locally so the
-      // thread vanishes immediately).
+      // Optimistic remove; a refused delete brings the comment back. Deleting a
+      // root also removes its replies (the DB FK cascades; mirror that locally so
+      // the thread vanishes immediately).
       setComments((cs) => cs.filter((c) => c.num !== num && c.parent_num !== num));
       if (activeNum === num) setActiveNum(null);
-      Docs.deleteComment(docId, num).catch(() => void reload());
+      Docs.deleteComment(docId, num).catch(refused);
     },
-    [docId, activeNum, reload],
+    [docId, activeNum, refused],
   );
 
   const reply = useCallback(
-    async (parentNum: number, body: string): Promise<boolean> => {
+    async (parentNum: number, body: string): Promise<Comment | null> => {
       const text = body.trim();
-      if (!text) return false;
+      if (!text) return null;
       try {
         const c = await Docs.replyComment(docId, parentNum, text);
         // The socket's word may have brought it in already.
         setComments((cs) => (cs.some((x) => x.num === c.num) ? cs : [...cs, c]));
-        return true;
+        return c;
       } catch {
         // Keep the draft (the reply box won't clear) and resync.
         void reload();
-        return false;
+        return null;
       }
     },
     [docId, reload],
@@ -330,6 +350,8 @@ export function CommentsProvider({
 
   const value: CommentsCtx = {
     comments,
+    agents,
+    canManage,
     activeNum,
     pending,
     startForSelection,

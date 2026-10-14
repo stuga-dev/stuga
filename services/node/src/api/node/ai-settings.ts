@@ -5,6 +5,7 @@ import {
   type AiProvider,
   type CalibrationResult,
   type ChatEndpoint,
+  bedrockRegion,
   calibrationKey,
   embed,
   listModels,
@@ -53,7 +54,7 @@ interface CandidateBody {
   row: NodeAiSettingsRow | null;
 }
 
-const PROVIDERS = new Set<AiProvider>(["anthropic", "openai", "ollama"]);
+const PROVIDERS = new Set<AiProvider>(["anthropic", "openai", "ollama", "bedrock"]);
 
 /** An absolute http(s) base URL without trailing slashes; the path (`/v1`) is kept. Undefined when invalid. */
 function cleanBaseUrl(v: unknown): string | null | undefined {
@@ -118,6 +119,9 @@ async function parseCandidate(ctx: Ctx, req: Request): Promise<CandidateBody | {
       status: 400,
     };
   }
+  if (embedProvider === "bedrock") {
+    return { error: "Amazon Bedrock serves no embeddings here; point embed at an OpenAI-compatible or Ollama endpoint", status: 400 };
+  }
   const embedBaseUrl = cleanBaseUrl(embed_.base_url);
   if (embedBaseUrl === undefined && embed_.base_url !== undefined) return { error: "embed.base_url must be an absolute http(s) URL", status: 400 };
   // A level left out keeps the stored one, and null restores the default.
@@ -140,6 +144,10 @@ async function parseCandidate(ctx: Ctx, req: Request): Promise<CandidateBody | {
     const baseUrl = cleanBaseUrl(o.base_url);
     if (baseUrl === undefined && o.base_url !== undefined) return { error: `chat.endpoints[${i}].base_url must be an absolute http(s) URL`, status: 400 };
     if (!baseUrl) return { error: `chat.endpoints[${i}].base_url is required`, status: 400 };
+    // A Bedrock key goes only to AWS: the AWS client is given the address's Region, never the address.
+    if (provider === "bedrock" && !bedrockRegion(baseUrl)) {
+      return { error: `chat.endpoints[${i}].base_url must be an Amazon Bedrock runtime address, such as https://bedrock-runtime.us-east-1.amazonaws.com`, status: 400 };
+    }
     const models = cleanModels(o.models) ?? [];
     parsedEndpoints.push({ id, provider: provider as AiProvider, baseUrl, models, apiKey: o.api_key === undefined ? undefined : str(o.api_key) });
   }
@@ -190,6 +198,9 @@ async function parseCandidate(ctx: Ctx, req: Request): Promise<CandidateBody | {
     if (keptKey) ep.apiKey = keptKey;
     return ep;
   });
+  // Bedrock takes no request without one, and a switched-off endpoint would only fail once switched on.
+  const keyless = finalEndpoints.findIndex((e) => e.provider === "bedrock" && !e.apiKey);
+  if (keyless >= 0) return { error: `chat.endpoints[${keyless}]: Amazon Bedrock needs an API key`, status: 400 };
   // Null when nothing is stored, so an embed-only save never writes the bootstrap endpoint.
   const untouchedChatEndpoints: ChatEndpoint[] | null = row?.chat_endpoints && row.chat_endpoints.length > 0 ? liveChat : null;
 
@@ -637,6 +648,9 @@ export async function listProviderModels({ ctx, req }: WorkspaceCall): Promise<R
   const live = ctx.env.aiSettings.current();
   const kind: "chat" | "embed" = body.which === "embed" ? "embed" : "chat";
   const resolvedBaseUrl = baseUrl ?? ctx.env.aiProviderBaseUrls[provider as AiProvider];
+  if (provider === "bedrock" && !bedrockRegion(resolvedBaseUrl)) {
+    return error(400, "base_url must be an Amazon Bedrock runtime address, such as https://bedrock-runtime.us-east-1.amazonaws.com");
+  }
   // No endpoint id is sent: a chat lookup reuses the key of the saved endpoint with this provider and base URL.
   const fallbackKey =
     kind === "embed" ? live.embed.apiKey : live.chat.endpoints.find((e) => e.provider === provider && e.baseUrl === resolvedBaseUrl)?.apiKey;

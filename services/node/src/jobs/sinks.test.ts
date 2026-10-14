@@ -94,6 +94,13 @@ describe("deliver", () => {
     });
   });
 
+  it("the generic webhook gets an agent's actor as text in the reader's language, as a person's is", async () => {
+    const i = io();
+    const reply = { ...n, eventType: "COMMENT_REPLY", params: { actor: { agent_of: "Ada" }, doc: "Q3 plan", excerpt: "Done.", relation: "comment" } };
+    await deliver({ sink: "webhook", webhookUrl: "https://sink.example" }, reply, i);
+    expect((i.calls[0]!.body as { params: unknown }).params).toEqual({ actor: "Ada’s agent", doc: "Q3 plan", excerpt: "Done.", relation: "comment" });
+  });
+
   it("a sink answering non-2xx throws so the job retries", async () => {
     await expect(deliver({ sink: "discord", webhookUrl: "https://d.example" }, n, io(500))).rejects.toMatchObject({ status: 500 });
   });

@@ -113,9 +113,10 @@ export function resolveAi(
   const chat: AiConfig["chat"] = { enabled: chatSwitch && defaultModel !== "", defaultModel, endpoints };
 
   // Embeddings follow the first chat endpoint when its protocol can serve them;
-  // Anthropic cannot, so they fall back to a local Ollama.
+  // Anthropic and Bedrock cannot, so they fall back to a local Ollama.
   const primaryChat = endpoints[0];
-  const embedFallback: AiProvider = primaryChat?.provider === "anthropic" ? "ollama" : (primaryChat?.provider ?? "ollama");
+  const chatOnly = primaryChat?.provider === "anthropic" || primaryChat?.provider === "bedrock";
+  const embedFallback: AiProvider = chatOnly ? "ollama" : (primaryChat?.provider ?? "ollama");
   const embedProvider = st.embedProvider ?? embedFallback;
   const sameAsChat = !!primaryChat && embedProvider === primaryChat.provider;
   const embedBaseUrl = trimSlash(st.embedBaseUrl ?? (sameAsChat ? primaryChat!.baseUrl : baseUrls[embedProvider]));

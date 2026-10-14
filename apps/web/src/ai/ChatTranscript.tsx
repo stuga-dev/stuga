@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Text } from "@astryxdesign/core/Text";
-import { FileText, Files, Zap } from "lucide-react";
+import { FileText, Files, MessageSquare, Zap } from "lucide-react";
 import type { AgentRunSummary, AiCitation, AiCrossDocProposal } from "@stuga/protocol/wire/doc-socket";
 import { renderAssistantHtml } from "./render-markdown";
 import { turnOutcome, type TurnOutcome } from "./turn-outcome";
@@ -21,6 +21,8 @@ export interface ChatTurn {
   images?: { url: string; name: string }[];
   /** User turns: the rejections this turn asked to revise, by feedback id. */
   revises?: string[];
+  /** User turns: the turn could search other documents, so it and every later turn of the chat may not ask in a comment. */
+  scoped?: boolean;
   /** Assistant turns: what the agent is doing while it has no prose yet, worded. */
   status?: string;
   /** Assistant turns: cited documents, one per document. */
@@ -36,6 +38,8 @@ export interface ChatTurn {
   hunkIds?: string[];
   /** Assistant turns: proposals raised in other documents. */
   crossDocs?: AiCrossDocProposal[];
+  /** Assistant turns: the comment threads the turn opened to ask the person something, in order. */
+  asked?: number[];
   /** Assistant turns: the reply finished but its edits could not be proposed, worded. */
   proposeError?: string;
   /** Assistant turns: the turn ended early; anything it made is kept. Worded. */
@@ -76,6 +80,7 @@ export function ChatTranscript({
   empty,
   reviewIn = "document",
   runs,
+  onOpenComment,
 }: {
   turns: ChatTurn[];
   streaming: boolean;
@@ -85,6 +90,8 @@ export function ChatTranscript({
   reviewIn?: ReviewPlace;
   /** The runs as the ledger holds them now, so each turn says what became of its changes. */
   runs?: readonly AgentRunSummary[];
+  /** Opens a comment thread; where there are comments, a turn that asked in them links to the first. */
+  onOpenComment?: (num: number) => void;
 }) {
   const nav = useNavigate();
   const { onChipClick, popover } = useCitationPopover();
@@ -93,8 +100,13 @@ export function ChatTranscript({
 
   // The panel re-renders on every editor tick; markdown is parsed only when the turns change.
   const rendered = useMemo(
-    () => turns.map((turn) => (turn.role === "assistant" && turn.text ? renderAssistantHtml(turn.text, turn.citations) : null)),
-    [turns],
+    () =>
+      turns.map((turn, i) =>
+        turn.role === "assistant" && turn.text
+          ? renderAssistantHtml(turn.text, turn.citations, { pending: streaming && i === turns.length - 1 })
+          : null,
+      ),
+    [turns, streaming],
   );
 
   const outcomes = useMemo(() => {
@@ -214,6 +226,14 @@ export function ChatTranscript({
                 </Text>
               </button>
             ),
+          )}
+          {onOpenComment && turn.asked && turn.asked.length > 0 && (
+            <button className="ai-staged ai-staged--crossdoc" onClick={() => onOpenComment(turn.asked![0]!)}>
+              <MessageSquare size={13} aria-hidden />
+              <Text type="supporting" color="secondary">
+                {t("ai.transcript.asked", { count: turn.asked.length })}
+              </Text>
+            </button>
           )}
           {turn.proposeError && (
             <div className="ai-staged ai-staged--error">

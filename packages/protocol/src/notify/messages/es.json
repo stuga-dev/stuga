@@ -6,6 +6,8 @@
   "MENTIONED_IN_COMMENT.body": "{excerpt}",
   "COMMENT_ON_OWNED_DOC.title": "{kind, select, reply {{actor} respondió en “{doc}”} other {{actor} comentó en “{doc}”}}",
   "COMMENT_ON_OWNED_DOC.body": "{excerpt}",
+  "COMMENT_REPLY.title": "{relation, select, coauthor_question {{actor} respondió a la pregunta de tu coautor de IA en “{doc}”} agent_comment {{actor} respondió al comentario de tu agente en “{doc}”} thread {{actor} respondió en un hilo de “{doc}”} other {{actor} respondió a tu comentario en “{doc}”}}",
+  "COMMENT_REPLY.body": "{excerpt}",
   "DIRECT_DOC_PERMISSIONS.title": "{actor} compartió “{doc}” contigo",
   "DIRECT_DOC_PERMISSIONS.body": "Ahora tienes acceso a este documento.",
   "REQUEST_ACCESS.title": "{actor} solicitó acceso a “{doc}”",
@@ -70,6 +72,9 @@
   "REMOTE_ADDRESS_MOVED.body": "{address} ahora lleva a otro equipo. El acceso remoto está desactivado en este.",
   "REMOTE_UPDATE_REQUIRED.title": "El acceso remoto está en pausa hasta que actualices Stuga",
   "REMOTE_UPDATE_REQUIRED.body": "Esta versión tiene un problema de seguridad conocido, así que {address} está cerrada. Actualiza a Stuga {version} o posterior y volverá a abrirse sola.",
+
+  "actor.agentOf": "El agente de {person}",
+  "actor.coauthorOf": "El coautor de IA de {person}",
 
   "channel.none": "solo Stuga",
   "channel.email": "correo",

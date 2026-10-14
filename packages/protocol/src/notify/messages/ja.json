@@ -6,6 +6,8 @@
   "MENTIONED_IN_COMMENT.body": "{excerpt}",
   "COMMENT_ON_OWNED_DOC.title": "{kind, select, reply {{actor}が「{doc}」で返信しました} other {{actor}が「{doc}」にコメントしました}}",
   "COMMENT_ON_OWNED_DOC.body": "{excerpt}",
+  "COMMENT_REPLY.title": "{relation, select, coauthor_question {{actor}が「{doc}」であなたのAI共著者の質問に返信しました} agent_comment {{actor}が「{doc}」であなたのエージェントのコメントに返信しました} thread {{actor}が「{doc}」のスレッドに返信しました} other {{actor}が「{doc}」であなたのコメントに返信しました}}",
+  "COMMENT_REPLY.body": "{excerpt}",
   "DIRECT_DOC_PERMISSIONS.title": "{actor}が「{doc}」をあなたと共有しました",
   "DIRECT_DOC_PERMISSIONS.body": "このドキュメントにアクセスできるようになりました。",
   "REQUEST_ACCESS.title": "{actor}が「{doc}」へのアクセスをリクエストしました",
@@ -70,6 +72,9 @@
   "REMOTE_ADDRESS_MOVED.body": "{address}は別のコンピューターにつながるようになりました。このコンピューターではリモートアクセスはオフです。",
   "REMOTE_UPDATE_REQUIRED.title": "Stugaをアップデートするまでリモートアクセスは一時停止しています",
   "REMOTE_UPDATE_REQUIRED.body": "このバージョンには既知のセキュリティの問題があるため、{address}は閉じています。Stuga {version}以降にアップデートすると、自動的に再び開きます。",
+
+  "actor.agentOf": "{person}のエージェント",
+  "actor.coauthorOf": "{person}のAI共著者",
 
   "channel.none": "Stugaのみ",
   "channel.email": "メール",

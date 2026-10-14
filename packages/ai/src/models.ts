@@ -3,11 +3,12 @@
  * configured default, the id to the endpoint that lists it, and the endpoint to
  * a Pi model. A model Pi's catalog lists at the same base URL brings what the
  * catalog knows about it: vision, reasoning, and the wire quirks of its vendor
- * (token field names, reasoning replay). Any other id gets plain defaults on the
- * endpoint's protocol.
+ * (token field names, reasoning replay). Bedrock's are found by id alone, in any
+ * Region. Any other id gets plain defaults on the endpoint's protocol.
  */
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
+import { bedrockBaseModelId } from "./bedrock.js";
 import type { AiConfig, AiProvider, ChatEndpoint } from "./config.js";
 import { joinUrl } from "./transport.js";
 
@@ -43,7 +44,7 @@ export function chatTarget(cfg: AiConfig, modelId: string): ChatTarget {
   const ep = resolveEndpoint(cfg, modelId);
   const name = ep.models.find((m) => m.id === modelId)?.name ?? modelId;
   const known = catalogEntry(ep, modelId);
-  const model: Model<Api> = known ? { ...known, name, baseUrl: ep.baseUrl } : defaultModel(ep, modelId, name);
+  const model: Model<Api> = known ? { ...known, id: modelId, name, baseUrl: ep.baseUrl } : defaultModel(ep, modelId, name);
   return { model, apiKey: ep.apiKey || KEYLESS };
 }
 
@@ -57,9 +58,11 @@ const PROTOCOLS: Record<AiProvider, Api[]> = {
   anthropic: ["anthropic-messages"],
   openai: ["openai-completions", "openai-responses"],
   ollama: ["openai-completions"],
+  bedrock: ["bedrock-converse-stream"],
 };
 
-let catalog: Map<string, Model<Api>> | undefined;
+/** Pi's catalog by base URL and id, and its Bedrock models by id alone. */
+let catalog: { byUrl: Map<string, Model<Api>>; bedrock: Map<string, Model<Api>> } | undefined;
 
 /** A trailing /v1 is ignored: a vendor serves its OpenAI-compatible routes under either, and requests keep the configured URL. */
 function catalogKey(baseUrl: string, id: string): string {
@@ -67,11 +70,20 @@ function catalogKey(baseUrl: string, id: string): string {
 }
 
 function catalogEntry(ep: ChatEndpoint, id: string): Model<Api> | undefined {
-  catalog ??= new Map(
-    getBuiltinProviders().flatMap((p) => getBuiltinModels(p).map((m): [string, Model<Api>] => [catalogKey(m.baseUrl, m.id), m])),
-  );
-  const entry = catalog.get(catalogKey(ep.baseUrl, id));
+  catalog ??= loadCatalog();
+  // A Bedrock id names the same model in every Region; a routing prefix Pi does not list falls back to the bare id.
+  const entry =
+    ep.provider === "bedrock"
+      ? (catalog.bedrock.get(id) ?? catalog.bedrock.get(bedrockBaseModelId(id)))
+      : catalog.byUrl.get(catalogKey(ep.baseUrl, id));
   return entry && PROTOCOLS[ep.provider].includes(entry.api) ? entry : undefined;
+}
+
+function loadCatalog(): NonNullable<typeof catalog> {
+  const all = getBuiltinProviders().flatMap((p) => getBuiltinModels(p));
+  const bedrock = new Map<string, Model<Api>>();
+  for (const m of all) if (m.api === "bedrock-converse-stream" && !bedrock.has(m.id)) bedrock.set(m.id, m);
+  return { byUrl: new Map(all.map((m): [string, Model<Api>] => [catalogKey(m.baseUrl, m.id), m])), bedrock };
 }
 
 /**
@@ -94,6 +106,8 @@ function defaultModel(ep: ChatEndpoint, id: string, name: string): Model<Api> {
       return { ...base, api: "anthropic-messages", baseUrl: ep.baseUrl };
     case "openai":
       return { ...base, api: "openai-completions", baseUrl: ep.baseUrl };
+    case "bedrock":
+      return { ...base, provider: "amazon-bedrock", api: "bedrock-converse-stream", baseUrl: ep.baseUrl };
     case "ollama":
       // Ollama's OpenAI-compatible surface takes neither the developer role nor reasoning_effort.
       return {

@@ -98,6 +98,87 @@ describe("listModels", () => {
   });
 });
 
+describe("listModels on Amazon Bedrock", () => {
+  const BEDROCK: AiEndpoint = { provider: "bedrock", baseUrl: "https://bedrock-runtime.eu-west-3.amazonaws.com", apiKey: "bedrock-key" };
+  const PROFILES = {
+    inferenceProfileSummaries: [
+      { inferenceProfileId: "eu.anthropic.claude-haiku-5-5", type: "SYSTEM_DEFINED", status: "ACTIVE", createdAt: "2026-03-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z" },
+      { inferenceProfileId: "global.anthropic.claude-sonnet-5-5", type: "SYSTEM_DEFINED", status: "ACTIVE", createdAt: "2026-08-01T00:00:00Z" },
+      { inferenceProfileId: "eu.anthropic.claude-old", type: "SYSTEM_DEFINED", status: "INACTIVE", createdAt: "2026-09-30T00:00:00Z" },
+      {
+        inferenceProfileId: "a1b2c3",
+        inferenceProfileArn: "arn:aws:bedrock:eu-west-3:123456789012:application-inference-profile/a1b2c3",
+        type: "APPLICATION",
+        status: "ACTIVE",
+        createdAt: "2026-05-01T00:00:00Z",
+      },
+    ],
+  };
+  const FOUNDATION = {
+    modelSummaries: [
+      { modelId: "mistral.pixtral-large-2502-v1:0", inferenceTypesSupported: ["ON_DEMAND"], outputModalities: ["TEXT"], modelLifecycle: { status: "ACTIVE" } },
+      // Served only through an inference profile, which the profile listing names.
+      { modelId: "anthropic.claude-sonnet-5-5", inferenceTypesSupported: ["INFERENCE_PROFILE"], outputModalities: ["TEXT"], modelLifecycle: { status: "ACTIVE" } },
+      { modelId: "amazon.titan-text-old", inferenceTypesSupported: ["ON_DEMAND"], outputModalities: ["TEXT"], modelLifecycle: { status: "LEGACY" } },
+      { modelId: "amazon.nova-canvas-v1:0", inferenceTypesSupported: ["ON_DEMAND"], outputModalities: ["IMAGE"], modelLifecycle: { status: "ACTIVE" } },
+      { modelId: "amazon.nova-pro-v1:0", inferenceTypesSupported: ["ON_DEMAND", "INFERENCE_PROFILE"], outputModalities: ["TEXT"], modelLifecycle: { status: "ACTIVE" } },
+    ],
+  };
+
+  /** The control plane, answering each listing with its body, or refusing it with `refuse`'s status. */
+  function controlPlane(refuse: { profiles?: number; foundation?: number } = {}) {
+    const fn = vi.fn(async (url: string) => {
+      const profiles = new URL(url).pathname === "/inference-profiles";
+      const status = (profiles ? refuse.profiles : refuse.foundation) ?? 200;
+      if (status !== 200) return new Response("AccessDeniedException", { status });
+      return new Response(JSON.stringify(profiles ? PROFILES : FOUNDATION), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fn);
+    return fn;
+  }
+
+  it("asks the Region's control plane with the key as a bearer token", async () => {
+    const fn = controlPlane();
+    await listModels(BEDROCK, "chat");
+    const calls = fn.mock.calls as unknown as Array<[string, RequestInit]>;
+    expect(calls.map(([url]) => url).sort()).toEqual([
+      "https://bedrock.eu-west-3.amazonaws.com/foundation-models?byOutputModality=TEXT&byInferenceType=ON_DEMAND",
+      "https://bedrock.eu-west-3.amazonaws.com/inference-profiles?maxResults=1000",
+    ]);
+    for (const [, init] of calls) expect((init.headers as Record<string, string>).authorization).toBe("Bearer bedrock-key");
+  });
+
+  it("lists the profiles in service newest first, an account's own by ARN, then the text models callable on demand", async () => {
+    controlPlane();
+    expect(await listModels(BEDROCK, "chat")).toEqual([
+      "global.anthropic.claude-sonnet-5-5",
+      "arn:aws:bedrock:eu-west-3:123456789012:application-inference-profile/a1b2c3",
+      "eu.anthropic.claude-haiku-5-5",
+      "mistral.pixtral-large-2502-v1:0",
+      "amazon.nova-pro-v1:0",
+    ]);
+  });
+
+  it("keeps the listing the key may read when the other is refused, and fails when both are", async () => {
+    controlPlane({ foundation: 403 });
+    expect(await listModels(BEDROCK, "chat")).toHaveLength(3);
+    controlPlane({ profiles: 403, foundation: 403 });
+    await expect(listModels(BEDROCK, "chat")).rejects.toThrow(/models 403/);
+  });
+
+  it("lists no embedding models, and asks nothing for them", async () => {
+    const fn = controlPlane();
+    expect(await listModels(BEDROCK, "embed")).toEqual([]);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("asks nowhere for an address that is not Bedrock's", async () => {
+    const fn = controlPlane();
+    await expect(listModels({ ...BEDROCK, baseUrl: "https://proxy.example.test" }, "chat")).rejects.toThrow(/not an Amazon Bedrock runtime address/);
+    expect(fn).not.toHaveBeenCalled();
+  });
+});
+
 describe("listSystemOneModels", () => {
   it("reads TypeSafe's listing, newest first, asking with the key", async () => {
     const fetchFn = vi.fn(

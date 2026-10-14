@@ -6,6 +6,7 @@
 import { isAbsolute, join, normalize, resolve } from "node:path";
 import type { AiProvider } from "@stuga/ai";
 import { REMOTE_SESSION_DEFAULTS, type AuthConfig } from "@stuga/auth";
+import { bedrockRuntimeUrl } from "@stuga/protocol/domain/bedrock";
 import { EMBEDDING_DIMS, MAX_EMBEDDING_DIMS } from "@stuga/protocol/domain/limits";
 import { APP_ROOT } from "../app-root.js";
 import { parseCidr, type Cidr } from "../net/cidr.js";
@@ -369,5 +370,6 @@ function providerBaseUrls(ollama: string): Readonly<Record<AiProvider, string>> 
     anthropic: "https://api.anthropic.com",
     openai: "https://api.openai.com/v1",
     ollama,
+    bedrock: bedrockRuntimeUrl("us-east-1"),
   });
 }
