@@ -567,24 +567,27 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     if (searchLanguages === null) {
       return fail(400, "bad_request", `search_languages must be a list of: ${SEARCH_LANGUAGES.join(", ")}`);
     }
-    const refused = await usernameRefusal(username);
-    if (refused) return refused;
-    const weak = passwordPolicy(password);
-    if (weak) return weak;
-
     // The first account claims the node and administers it, and only whoever holds
     // the node's setup code may make it; everyone after needs an invite link. There
     // is no open signup: on a LAN that is anyone on the Wi-Fi, and on a public
     // hostname anyone who finds the certificate's name. Checked here only to refuse
     // early, before scrypt: the account's own transaction decides whether it is the
-    // first, and spends the invite.
+    // first, and spends the invite. The invite comes before the username, whose
+    // refusal suggests a free one and so reads who holds which names.
     const inviteHash = invite ? sha256Hex(invite) : null;
-    let mayClaim = false;
-    if ((await db.countAccounts()) > 0) {
+    const claimed = (await db.countAccounts()) > 0;
+    if (claimed) {
       if (!inviteHash) return inviteRequired();
       const refusedInvite = await inviteRefusal(req, inviteHash);
       if (refusedInvite) return refusedInvite;
-    } else {
+    }
+    const refused = await usernameRefusal(username);
+    if (refused) return refused;
+    const weak = passwordPolicy(password);
+    if (weak) return weak;
+
+    let mayClaim = false;
+    if (!claimed) {
       // The setup code is printed on the node's own machine; its remote address never takes one.
       if (arrivalOf(req) === "remote") {
         return fail(403, "setup_not_remote", "set up this node from its own network, not its remote address");

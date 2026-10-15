@@ -236,6 +236,12 @@ or a rebuild the node stopped in the middle left them invalid. The node reads th
 **Tenancy.** `workspace_id` is the hard tenant filter on every tenant-owned row, and foreign keys to
 `workspaces` cascade on delete.
 
+**Who sees whom.** The directory a person reads, mentions from and shares with is the workspace's
+members. Adding a member finds only people who share a workspace with whoever adds them, or anyone
+for a node administrator, and answers anyone else exactly as no account at all, so adding people
+never reveals who else the node serves. Usernames are unique across the node, so someone creating an
+account with an invite can tell a taken name from a free one.
+
 **Permissions are a flattened principal array.** Every document row carries `acl_principals` (who
 may read), `acl_writers` and `acl_commenters`: the effective sets, such as `user:x`, `group:y` and
 `org:<workspace>`, recomputed when the resource's own ACL or its folder changes. A group grant stays

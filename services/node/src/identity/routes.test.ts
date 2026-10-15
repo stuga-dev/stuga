@@ -213,6 +213,23 @@ describe("register", () => {
     expect(await mem.db.findAccountByUsername("bob")).toBeNull();
   });
 
+  it("checks the invite before the username, so no free name is suggested without one", async () => {
+    await register();
+    mem.invites.set(sha256Hex("invite-token-2"), { tokenHash: "", usesLeft: 2 });
+    expect((await register("admin-2", { invite: "invite-token-2" })).status).toBe(201);
+    // With one, the suggestion reads who holds which names.
+    const invited = await register("admin", { invite: "invite-token-2" });
+    expect(invited.status).toBe(409);
+    expect(await invited.json()).toMatchObject({ error: "username_reserved", suggestion: "admin-3" });
+    for (const extra of [{}, { invite: "never-minted" }]) {
+      const res = await register("admin", extra);
+      expect(res.status).toBe(403);
+      const body = await res.json();
+      expect(body.error).toMatch(/^invite_(required|invalid)$/);
+      expect(body).not.toHaveProperty("suggestion");
+    }
+  });
+
   it("admits a valid invite, consumes it, reports the join, and grants no node admin", async () => {
     await register();
     const token = "invite-token-1";

@@ -41,7 +41,7 @@ export async function listNodeAdminsRoute({ ctx }: WorkspaceCall): Promise<Respo
 
 /** The picker behind appointing and account recovery: every account on the node, names only, never emails. */
 export async function searchNodeUsersRoute({ ctx, url }: WorkspaceCall): Promise<Response> {
-  const users = await searchAccounts(ctx.sql, url.searchParams.get("q") ?? "");
+  const users = await searchAccounts(ctx.sql, url.searchParams.get("q") ?? "", { knownTo: null });
   return json({ users });
 }
 

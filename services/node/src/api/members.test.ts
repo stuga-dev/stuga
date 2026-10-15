@@ -1,6 +1,7 @@
 /**
  * Membership changes leave audit rows that name the person and, for a role change, both roles, and
- * reach the person's open pages in that workspace at once.
+ * reach the person's open pages in that workspace at once. Adding looks only among people the
+ * adder may find, and answers anyone else as no account at all.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,26 +9,31 @@ vi.mock("@stuga/db", () => ({
   addOrPromoteWorkspaceMember: vi.fn(),
   countWorkspaceOwners: vi.fn(async () => 2),
   dropWorkspaceFromOwnerGrants: vi.fn(async () => 0),
-  getAnyUserAliasByHandle: vi.fn(),
+  getKnownUserAliasByHandle: vi.fn(async () => null),
   getMemberRole: vi.fn(),
   getUserDisplayName: vi.fn(async (_sql: unknown, alias: string) => (alias === "u_sofia" ? "Sofia Alvarez" : "")),
   getWorkspace: vi.fn(async () => ({ workspace_id: "ws1", name: "Bakery" })),
+  isKnownAccount: vi.fn(async () => true),
+  isNodeAdminAlias: vi.fn(async () => false),
   isWorkspaceMember: vi.fn(async () => true),
   listWorkspaceMembers: vi.fn(async () => []),
   removeWorkspaceMember: vi.fn(async () => true),
   revokeWorkspaceApiKeysForOwner: vi.fn(async () => []),
   searchAccounts: vi.fn(async () => []),
   updateMemberRole: vi.fn(async () => "updated"),
-  userExists: vi.fn(async () => true),
 }));
 
 const db = await import("@stuga/db");
-const { changeMemberRole, inviteMember, removeMember } = await import("./members.js");
+const { changeMemberRole, inviteMember, listMemberCandidates, removeMember } = await import("./members.js");
 import type { WorkspaceCall } from "../http/router.js";
 import { personCtx, recordingJobs } from "../testing/ctx.js";
 
 const roles = new Map<string, string>();
 const mockAdd = db.addOrPromoteWorkspaceMember as unknown as ReturnType<typeof vi.fn>;
+const mockKnown = db.isKnownAccount as unknown as ReturnType<typeof vi.fn>;
+const mockByHandle = db.getKnownUserAliasByHandle as unknown as ReturnType<typeof vi.fn>;
+const mockSearch = db.searchAccounts as unknown as ReturnType<typeof vi.fn>;
+const mockNodeAdmin = db.isNodeAdminAlias as unknown as ReturnType<typeof vi.fn>;
 let jobs = recordingJobs();
 const closeMembership = vi.fn(() => 1);
 const reopenMembership = vi.fn(() => 1);
@@ -140,5 +146,46 @@ describe("open pages", () => {
   it("the same role leaves their pages alone", async () => {
     await changeMemberRole(call("PATCH", path, [path, "ws1", "u_sofia"], { role: "member" }));
     expect(reopenMembership).not.toHaveBeenCalled();
+  });
+});
+
+describe("whom adding can find", () => {
+  const members = "/api/workspaces/ws1/members";
+  const candidates = "/api/workspaces/ws1/member-candidates?q=gus";
+
+  it("looks only among people the adder shares a workspace with, picked or typed", async () => {
+    await listMemberCandidates(call("GET", candidates, [candidates, "ws1"]));
+    expect(mockSearch).toHaveBeenCalledWith(expect.anything(), "gus", { outsideWorkspace: "ws1", knownTo: "u_liv" });
+    await inviteMember(call("POST", members, [members, "ws1"], { alias: "u_gus" }));
+    expect(mockKnown).toHaveBeenCalledWith(expect.anything(), "u_gus", "u_liv");
+    mockByHandle.mockResolvedValueOnce("u_gus");
+    await inviteMember(call("POST", members, [members, "ws1"], { username: "gus" }));
+    expect(mockByHandle).toHaveBeenCalledWith(expect.anything(), "gus", "u_liv");
+  });
+
+  it("a node administrator looks across the node", async () => {
+    mockNodeAdmin.mockResolvedValue(true);
+    try {
+      await listMemberCandidates(call("GET", candidates, [candidates, "ws1"]));
+      expect(mockSearch).toHaveBeenCalledWith(expect.anything(), "gus", { outsideWorkspace: "ws1", knownTo: null });
+      await inviteMember(call("POST", members, [members, "ws1"], { alias: "u_gus" }));
+      expect(mockKnown).toHaveBeenCalledWith(expect.anything(), "u_gus", null);
+      await inviteMember(call("POST", members, [members, "ws1"], { username: "gus" }));
+      expect(mockByHandle).toHaveBeenCalledWith(expect.anything(), "gus", null);
+    } finally {
+      mockNodeAdmin.mockResolvedValue(false);
+    }
+  });
+
+  it("answers someone the adder cannot find as no account at all, and adds no one", async () => {
+    mockKnown.mockResolvedValueOnce(false);
+    const picked = await inviteMember(call("POST", members, [members, "ws1"], { alias: "u_far" }));
+    expect(picked.status).toBe(400);
+    expect((await picked.json()).error).toBe("No account matches that person. Send them an invite link instead.");
+    const typed = await inviteMember(call("POST", members, [members, "ws1"], { username: "far" }));
+    expect(typed.status).toBe(400);
+    expect((await typed.json()).error).toBe("No account matches far. Send them an invite link instead.");
+    expect(mockAdd).not.toHaveBeenCalled();
+    expect(await audits()).toEqual([]);
   });
 });

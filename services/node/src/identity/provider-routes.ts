@@ -293,14 +293,15 @@ export function createProviderRoutes(core: IdentityCore): Record<"start" | "call
     // Refused early here; the account's own transaction decides, under the lock every account is made under.
     const setupRequired = () => fail(403, "setup_required", "this node is not set up yet; its owner creates the first account");
     if ((await db.countAccounts()) === 0) return setupRequired();
-    const username = normalizeUsername(field(body, "username"));
-    const refused = await core.usernameRefusal(username);
-    if (refused) return refused;
+    // The invite first, as registration checks it: a refused username suggests a free one.
     const invite = field(body, "invite").trim();
     if (!invite) return core.inviteRequired();
     const inviteHash = sha256Hex(invite);
     const refusedInvite = await core.inviteRefusal(req, inviteHash);
     if (refusedInvite) return refusedInvite;
+    const username = normalizeUsername(field(body, "username"));
+    const refused = await core.usernameRefusal(username);
+    if (refused) return refused;
 
     const displayName = field(body, "name").trim().slice(0, MAX_NAME) || row.name?.slice(0, MAX_NAME) || username;
     const made = await db.createProviderAccount({

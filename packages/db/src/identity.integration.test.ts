@@ -15,7 +15,8 @@ import {
   findAccountBySub,
   findAccountByUsername,
   findRefreshSession,
-  getAnyUserAliasByHandle,
+  getKnownUserAliasByHandle,
+  isKnownAccount,
   isSessionLive,
   rehashLocalPassword,
   sessionConfirmedAt,
@@ -45,7 +46,7 @@ import {
 } from "./identity.js";
 import { getNodeSettings, getSearchLanguages } from "./node.js";
 import { createOidcFlow } from "./oidc.js";
-import { provisionWorkspace, addWorkspaceMember, insertWorkspaceInvite } from "./workspaces.js";
+import { provisionWorkspace, addWorkspaceMember, insertWorkspaceInvite, removeWorkspaceMember } from "./workspaces.js";
 import { seedUser } from "./testing/fixtures.js";
 import type { Sql } from "./client.js";
 
@@ -102,10 +103,49 @@ describe.skipIf(!URL)("user directory resolution", () => {
     expect(await getUserAliasByHandle(sql, "shared@corp.com", WS)).toBeNull();
   });
 
-  it("reaches beyond the workspace only for adding members", async () => {
-    await seedUser(sql, "sub-outsider", "Outsider", null, "outsider");
-    expect(await getUserAliasByHandle(sql, "outsider", WS)).toBeNull();
-    expect(await getAnyUserAliasByHandle(sql, "outsider")).toBe("sub-outsider");
+  it("reaches beyond the workspace only for adding members, to people the adder shares a workspace with", async () => {
+    await member("sub-me", "Me", null, "me");
+    await seedUser(sql, "sub-mate", "Mate", "mate@corp.com", "mate");
+    await provisionWorkspace(sql, { workspaceId: "ws-shared", name: "Shared", owner: "sub-mate" });
+    // A guest's seat counts: they see each other in its member list already.
+    await addWorkspaceMember(sql, "ws-shared", "sub-me", "guest");
+    await seedUser(sql, "sub-stranger", "Stranger", "stranger@corp.com", "stranger");
+    await provisionWorkspace(sql, { workspaceId: "ws-far", name: "Far", owner: "sub-stranger" });
+
+    expect(await getUserAliasByHandle(sql, "mate", WS)).toBeNull();
+    expect(await getKnownUserAliasByHandle(sql, "mate", "sub-me")).toBe("sub-mate");
+    expect(await getKnownUserAliasByHandle(sql, "stranger", "sub-me")).toBeNull();
+    expect(await getKnownUserAliasByHandle(sql, "stranger@corp.com", "sub-me")).toBeNull();
+    expect(await getKnownUserAliasByHandle(sql, "Stranger", "sub-me")).toBeNull();
+    // A node administrator finds anyone.
+    expect(await getKnownUserAliasByHandle(sql, "stranger", null)).toBe("sub-stranger");
+
+    expect(await isKnownAccount(sql, "sub-mate", "sub-me")).toBe(true);
+    expect(await isKnownAccount(sql, "sub-stranger", "sub-me")).toBe(false);
+    expect(await isKnownAccount(sql, "sub-stranger", null)).toBe(true);
+    expect(await isKnownAccount(sql, "sub-nobody", "sub-me")).toBe(false);
+    expect(await isKnownAccount(sql, "sub-nobody", null)).toBe(false);
+
+    // Leaving the one shared workspace ends it.
+    await removeWorkspaceMember(sql, "ws-shared", "sub-me");
+    expect(await getKnownUserAliasByHandle(sql, "mate", "sub-me")).toBeNull();
+    expect(await isKnownAccount(sql, "sub-mate", "sub-me")).toBe(false);
+  });
+
+  it("someone the adder cannot find neither resolves, outranks nor ties with someone they can", async () => {
+    await member("sub-me", "Me", null, "me");
+    await member("sub-dana", "Dana Smith", "dana@corp.com", "dana");
+    await seedUser(sql, "sub-dana-far", "Dana Smith", "dana@corp.com", "dana.far");
+    expect(await getKnownUserAliasByHandle(sql, "Dana Smith", "sub-me")).toBe("sub-dana");
+    expect(await getKnownUserAliasByHandle(sql, "dana@corp.com", "sub-me")).toBe("sub-dana");
+    // Across the node the two tie, and neither is guessed.
+    expect(await getKnownUserAliasByHandle(sql, "Dana Smith", null)).toBeNull();
+
+    // A username outranks a display name, but only among people the adder can find.
+    await member("sub-kim", "Kim", null, "kim.lee");
+    await seedUser(sql, "sub-kim-far", "Someone", null, "kim");
+    expect(await getKnownUserAliasByHandle(sql, "kim", "sub-me")).toBe("sub-kim");
+    expect(await getKnownUserAliasByHandle(sql, "kim", null)).toBe("sub-kim-far");
   });
 
   it("searchUsers matches by username, email or display name, case-insensitively", async () => {
@@ -132,7 +172,7 @@ describe.skipIf(!URL)("user directory resolution", () => {
     await seedUser(sql, "sub-out", "Hannah Outside", "hannah@corp.com", "hannah");
     await seedUser(sql, "sub-ann", "Zoe", null, "ann.z");
     await seedUser(sql, "sub-name", "Annika By-Name", null);
-    const outside = { outsideWorkspace: WS };
+    const outside = { outsideWorkspace: WS, knownTo: null };
     const found = await searchAccounts(sql, "an", outside);
     expect(found.map((u) => u.alias)).toEqual(["sub-ann", "sub-name", "sub-out"]);
     expect(Object.keys(found[0]!).sort()).toEqual(["alias", "display_name", "username"]);
@@ -142,7 +182,22 @@ describe.skipIf(!URL)("user directory resolution", () => {
     expect((await searchAccounts(sql, "HANNAH@corp.com", outside)).map((u) => u.alias)).toEqual(["sub-out"]);
     expect(await searchAccounts(sql, " ", outside)).toEqual([]);
     // Without a workspace it is the whole node, members included.
-    expect((await searchAccounts(sql, "an")).map((u) => u.alias)).toEqual(["sub-in", "sub-ann", "sub-name", "sub-out"]);
+    expect((await searchAccounts(sql, "an", { knownTo: null })).map((u) => u.alias)).toEqual(["sub-in", "sub-ann", "sub-name", "sub-out"]);
+  });
+
+  it("searchAccounts with knownTo finds only people who share a workspace with them", async () => {
+    await member("sub-me", "Me", null, "me");
+    await provisionWorkspace(sql, { workspaceId: "ws-shared", name: "Shared", owner: "sub-me" });
+    await seedUser(sql, "sub-mate", "Anna Mate", null, "anna.m");
+    await addWorkspaceMember(sql, "ws-shared", "sub-mate", "guest");
+    await seedUser(sql, "sub-far", "Anna Far", "anna@far.com", "anna.f");
+    const outside = { outsideWorkspace: WS };
+    expect((await searchAccounts(sql, "anna", { ...outside, knownTo: "sub-me" })).map((u) => u.alias)).toEqual(["sub-mate"]);
+    // Filtered before the limit: sub-far would sort first, and takes no place.
+    expect((await searchAccounts(sql, "anna", { ...outside, knownTo: "sub-me", limit: 1 })).map((u) => u.alias)).toEqual(["sub-mate"]);
+    expect(await searchAccounts(sql, "anna@far.com", { ...outside, knownTo: "sub-me" })).toEqual([]);
+    // Null is a node administrator's search: everyone outside the workspace.
+    expect((await searchAccounts(sql, "anna", { ...outside, knownTo: null })).map((u) => u.alias)).toEqual(["sub-far", "sub-mate"]);
   });
 
   it("resolves an email stored in display_name (identity with no email claim, exact match only)", async () => {

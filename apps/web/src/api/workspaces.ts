@@ -254,14 +254,13 @@ export const Workspaces = {
   },
   members: (workspaceId: string) =>
     api<{ members: MemberInfo[] }>(`/api/workspaces/${workspaceId}/members`),
-  /** Adds an existing account by username at once; nothing is sent. */
   /** Adds an existing account: one picked from memberCandidates by alias, or a typed username. */
   invite: (workspaceId: string, who: { alias: string } | { username: string }, role: WorkspaceRole = "member") =>
     api<{ invited: string; role: WorkspaceRole }>(`/api/workspaces/${workspaceId}/members`, {
       method: "POST",
       body: JSON.stringify({ ...who, role }),
     }),
-  /** Accounts on this node that are not members yet, by username or name; owners and admins only. */
+  /** Non-members the caller may add, by username or name: people they share a workspace with, anyone for a node administrator. Owners and admins only. */
   memberCandidates: (workspaceId: string, q: string, init?: { signal?: AbortSignal }) =>
     api<{ users: MemberCandidate[] }>(
       `/api/workspaces/${workspaceId}/member-candidates?q=${encodeURIComponent(q)}`,

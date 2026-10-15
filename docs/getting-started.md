@@ -134,13 +134,14 @@ beside **Share**. Those changes are still recorded, attributed and revertible.
 Other devices can reach the node only once it listens on the network and its address is right.
 [Network access](network-access.md) covers that, and what plain http on a network exposes.
 
-Then open **Settings → This workspace → Members**. **Add people** adds someone who already has
-an account on this node: type part of their username or name and pick them from the list. For
-anyone else, **Create link** makes an invite link: it is the only way to get a new account on the
-node. Choose the role they join as, how many times the link can be used (once, 5, 10 or 25 times, or
-no limit), and whether it expires after 1, 7 or 30 days or never. An admin link can be used once. **Invite links** lists every link that still works, with how often it was used, and
-revokes one when it should stop. Invite links carry the node's address, so create them after any
-change to it.
+Then open **Settings → This workspace → Members**. **Add people** adds someone you already share a
+workspace with: type part of their username or name and pick them from the list. A node
+administrator can add anyone with an account on the node. For anyone else, **Create link** makes an
+invite link: it is the only way to get a new account on the node. Choose the role they join as, how
+many times the link can be used (once, 5, 10 or 25 times, or no limit), and whether it expires after
+1, 7 or 30 days or never. An admin link can be used once. **Invite links** lists every link that
+still works, with how often it was used, and revokes one when it should stop. Invite links carry the
+node's address, so create them after any change to it.
 
 If people should sign in with an organization's accounts, add its identity provider in
 **Settings → This node → Access** before you invite them. Whoever opens an invite link can then

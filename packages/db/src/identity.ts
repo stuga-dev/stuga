@@ -54,13 +54,32 @@ export async function getUsers(sql: Sql, aliases: string[], workspaceId: string)
 }
 
 /**
+ * Narrows a query on `users u` to the accounts `knownTo` may find to add to a
+ * workspace: those sharing a workspace with them, a guest's seat included, or
+ * every account when it is null, as for a node administrator. So an owner of a
+ * workspace never learns who else the node serves.
+ */
+function knownToClause(sql: Sql, knownTo: string | null) {
+  if (knownTo === null) return sql``;
+  return sql`AND EXISTS (
+    SELECT 1 FROM workspace_members mine
+    JOIN workspace_members theirs ON theirs.workspace_id = mine.workspace_id
+    WHERE mine.alias = ${knownTo} AND theirs.alias = u.alias)`;
+}
+
+/**
  * Resolve what someone typed to one alias: a username (with or without a
  * leading @), else an email, else an exact display name. The username is
  * unique and wins outright. Emails are unverified and display names are not
  * unique, so either resolves only when exactly one person matches: guessing
- * would grant access to the wrong person.
+ * would grant access to the wrong person. Only people in `scope` are matched or
+ * counted, so someone outside it can neither resolve nor make a name ambiguous.
  */
-async function aliasByHandle(sql: Sql, typed: string, workspaceId: string | null): Promise<string | null> {
+async function aliasByHandle(
+  sql: Sql,
+  typed: string,
+  scope: { workspaceId: string } | { knownTo: string | null },
+): Promise<string | null> {
   const handle = typed.trim().replace(/^@/, "").toLowerCase();
   if (!handle) return null;
   const rows = await sql<{ alias: string; rank: number }[]>`
@@ -69,8 +88,9 @@ async function aliasByHandle(sql: Sql, typed: string, workspaceId: string | null
                 WHEN lower(u.email) = ${handle} THEN 1
                 ELSE 2 END AS rank
     FROM users u
-    ${workspaceId === null ? sql`` : sql`JOIN workspace_members m ON m.alias = u.alias AND m.workspace_id = ${workspaceId}`}
-    WHERE u.username = ${handle} OR lower(u.email) = ${handle} OR lower(u.display_name) = lower(${typed.trim()})
+    ${"workspaceId" in scope ? sql`JOIN workspace_members m ON m.alias = u.alias AND m.workspace_id = ${scope.workspaceId}` : sql``}
+    WHERE (u.username = ${handle} OR lower(u.email) = ${handle} OR lower(u.display_name) = lower(${typed.trim()}))
+      ${"knownTo" in scope ? knownToClause(sql, scope.knownTo) : sql``}
     ORDER BY rank
     LIMIT 4`;
   const best = rows[0];
@@ -81,12 +101,12 @@ async function aliasByHandle(sql: Sql, typed: string, workspaceId: string | null
 
 /** For sharing: only members of the workspace resolve. */
 export async function getUserAliasByHandle(sql: Sql, typed: string, workspaceId: string): Promise<string | null> {
-  return aliasByHandle(sql, typed, workspaceId);
+  return aliasByHandle(sql, typed, { workspaceId });
 }
 
-/** For adding workspace members only, which may reach anyone in the directory. */
-export async function getAnyUserAliasByHandle(sql: Sql, typed: string): Promise<string | null> {
-  return aliasByHandle(sql, typed, null);
+/** For adding workspace members: only someone `knownTo` may find resolves (see `knownToClause`). */
+export async function getKnownUserAliasByHandle(sql: Sql, typed: string, knownTo: string | null): Promise<string | null> {
+  return aliasByHandle(sql, typed, { knownTo });
 }
 
 /** Workspace members holding these usernames; a username no member holds is left out. */
@@ -104,14 +124,15 @@ export async function getMembersByUsername(
 
 /**
  * A people picker's search: accounts on the node matched by username or name,
- * usernames that start with the query first, and only those outside
- * `outsideWorkspace` when it is given. An email matches only in full, so the
- * picker cannot be used to read addresses letter by letter.
+ * usernames that start with the query first, only those `knownTo` may find (see
+ * `knownToClause`), and only those outside `outsideWorkspace` when it is given.
+ * An email matches only in full, so the picker cannot be used to read addresses
+ * letter by letter.
  */
 export async function searchAccounts(
   sql: Sql,
   query: string,
-  { outsideWorkspace, limit = 8 }: { outsideWorkspace?: string; limit?: number } = {},
+  { outsideWorkspace, knownTo, limit = 8 }: { outsideWorkspace?: string; knownTo: string | null; limit?: number },
 ): Promise<Array<Pick<UserRow, "alias" | "username" | "display_name">>> {
   const q = query.trim().replace(/^@/, "");
   if (!q) return [];
@@ -126,15 +147,16 @@ export async function searchAccounts(
               SELECT 1 FROM workspace_members m WHERE m.alias = u.alias AND m.workspace_id = ${outsideWorkspace})`
           : sql``
       }
+      ${knownToClause(sql, knownTo)}
     ORDER BY coalesce(u.username ILIKE ${`${escaped}%`} ESCAPE '\\', false) DESC,
              (u.display_name ILIKE ${`${escaped}%`} ESCAPE '\\') DESC,
              u.display_name ASC
     LIMIT ${limit}`;
 }
 
-/** Whether a directory row exists for this alias. */
-export async function userExists(sql: Sql, alias: string): Promise<boolean> {
-  const rows = await sql`SELECT 1 FROM users WHERE alias = ${alias}`;
+/** Whether this alias is an account `knownTo` may find (see `knownToClause`); null asks only whether it exists. */
+export async function isKnownAccount(sql: Sql, alias: string, knownTo: string | null): Promise<boolean> {
+  const rows = await sql`SELECT 1 FROM users u WHERE u.alias = ${alias} ${knownToClause(sql, knownTo)}`;
   return rows.length > 0;
 }
 

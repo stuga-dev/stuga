@@ -2,10 +2,11 @@
 import {
   addOrPromoteWorkspaceMember,
   countWorkspaceOwners,
-  getAnyUserAliasByHandle,
+  getKnownUserAliasByHandle,
   getMemberRole,
   getUserDisplayName,
   getWorkspace,
+  isKnownAccount,
   isWorkspaceMember,
   listWorkspaceMembers,
   removeWorkspaceMember,
@@ -13,10 +14,11 @@ import {
   dropWorkspaceFromOwnerGrants,
   searchAccounts,
   updateMemberRole,
-  userExists,
 } from "@stuga/db";
 import { type WorkspaceRole, canGrantRole, isWorkspaceRole } from "@stuga/protocol/domain/roles";
 import { recordAudit } from "../audit/record.js";
+import type { Ctx } from "../auth/context.js";
+import { isNodeAdmin } from "../authz/authz.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
 
@@ -42,7 +44,12 @@ export async function listMembers({ ctx, match }: WorkspaceCall): Promise<Respon
   return json({ members });
 }
 
-// The add-people picker: accounts on this node outside the workspace. Only those who
+// The `knownTo` for adding people (see knownToClause): none for a node administrator, who may find anyone.
+async function knownToCaller(ctx: Ctx): Promise<string | null> {
+  return (await isNodeAdmin(ctx)) ? null : ctx.alias;
+}
+
+// The add-people picker: accounts the caller may find, outside the workspace. Only those who
 // may add people can search, and a reply carries names, never emails.
 export async function listMemberCandidates({ ctx, url, match }: WorkspaceCall): Promise<Response> {
   const wsId = match[1]!;
@@ -50,12 +57,16 @@ export async function listMemberCandidates({ ctx, url, match }: WorkspaceCall): 
   if (callerRole !== "owner" && callerRole !== "admin") {
     return error(403, "only a workspace owner or admin can search for people to add");
   }
-  const users = await searchAccounts(ctx.sql, url.searchParams.get("q") ?? "", { outsideWorkspace: wsId });
+  const users = await searchAccounts(ctx.sql, url.searchParams.get("q") ?? "", {
+    outsideWorkspace: wsId,
+    knownTo: await knownToCaller(ctx),
+  });
   return json({ users });
 }
 
-// Add someone who already has an account on this node: picked by alias, or found by
-// username (or an unambiguous email or name) across every workspace; invite links cover people who do not.
+// Add someone who already has an account the caller may find: picked by alias, or found by
+// username (or an unambiguous email or name). Anyone else gets the same answer as no account at
+// all, so adding cannot tell whether a person exists; invite links cover them.
 export async function inviteMember({ ctx, req, match }: WorkspaceCall): Promise<Response> {
   const wsId = match[1]!;
   const callerRole = await getMemberRole(ctx.sql, wsId, ctx.alias);
@@ -73,7 +84,10 @@ export async function inviteMember({ ctx, req, match }: WorkspaceCall): Promise<
   }
   const ws = await getWorkspace(ctx.sql, wsId);
   if (!ws) return error(404, "workspace not found");
-  const alias = picked ? ((await userExists(ctx.sql, picked)) ? picked : null) : await getAnyUserAliasByHandle(ctx.sql, handle);
+  const knownTo = await knownToCaller(ctx);
+  const alias = picked
+    ? ((await isKnownAccount(ctx.sql, picked, knownTo)) ? picked : null)
+    : await getKnownUserAliasByHandle(ctx.sql, handle, knownTo);
   if (!alias) {
     return error(400, `No account matches ${handle || "that person"}. Send them an invite link instead.`);
   }

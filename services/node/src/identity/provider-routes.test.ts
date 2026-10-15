@@ -396,6 +396,12 @@ describe("a first visit", () => {
     expect((await none.json()).error).toBe("invite_required");
     const bad = await browser.post("/auth/oidc/complete", { ticket, username: "ada", invite: "never-minted" });
     expect((await bad.json()).error).toBe("invite_invalid");
+    // The invite comes before the username, so a reserved one is not answered with a free name.
+    for (const extra of [{}, { invite: "never-minted" }]) {
+      const reserved = await browser.post("/auth/oidc/complete", { ticket, username: "admin", ...extra });
+      expect(reserved.status).toBe(403);
+      expect(await reserved.json()).not.toHaveProperty("suggestion");
+    }
     expect(await mem.db.findAccountBySub("mock-subject-1")).toBeNull();
     expect((await browser.post("/auth/oidc/complete", { ticket, username: "ada", invite: invite() })).status).toBe(201);
   });
