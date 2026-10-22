@@ -46,19 +46,33 @@ export async function fetchInstructionStack(internal: InternalApi, docId: string
   }
 }
 
+/** How this turn's edits to a document are reviewed, as the node resolved it, and the title its notices name. */
+export interface TurnReview {
+  mode: ReviewMode;
+  /** At `colleague`, the approver group the document's folders name. */
+  approverGroup: string | null;
+  title: string;
+}
+
 /**
  * Whether this turn's edits to the document wait for review or apply at once,
- * per the document's own setting. Unknown means `review`: a failed read never
+ * per the document's level. Unknown means `review`: a failed read never
  * becomes a silent commit.
  */
-export async function fetchReviewMode(internal: InternalApi, docId: string, meta: SessionMeta): Promise<ReviewMode> {
+export async function fetchReviewMode(internal: InternalApi, docId: string, meta: SessionMeta): Promise<TurnReview> {
+  const unknown: TurnReview = { mode: "review", approverGroup: null, title: "" };
   try {
     const res = await post(internal, "/internal/review-mode", { workspaceId: meta.workspaceId, docId, principals: meta.principals });
-    if (!res.ok) return "review";
-    return parseReviewMode(((await res.json()) as { mode?: unknown } | null)?.mode);
+    if (!res.ok) return unknown;
+    const data = (await res.json()) as { mode?: unknown; approver_group?: unknown; title?: unknown } | null;
+    return {
+      mode: parseReviewMode(data?.mode),
+      approverGroup: typeof data?.approver_group === "string" && data.approver_group ? data.approver_group : null,
+      title: typeof data?.title === "string" ? data.title : "",
+    };
   } catch (e) {
     console.warn("review mode unavailable for this turn; its edits wait for review", { docId, err: String(e) });
-    return "review";
+    return unknown;
   }
 }
 

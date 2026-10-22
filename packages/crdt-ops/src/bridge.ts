@@ -21,10 +21,17 @@ interface ApplyOptions {
   originalMarkdown?: string | null;
 }
 
+/**
+ * The fragment as a document. A fragment nobody has written to is an empty document: the binding
+ * refuses to build one, since the schema wants a block. Content the schema cannot hold throws.
+ */
+function yXmlFragmentToDoc(frag: Y.XmlFragment, schema: Schema = getStugaSchema()): PMNode {
+  return frag.length === 0 ? schema.topNodeType.create() : (yXmlFragmentToProseMirrorRootNode(frag, schema) as PMNode);
+}
+
 /** CRDT → Markdown: the projection an AI turn, an MCP read, and RAG all see. */
 export function yXmlFragmentToMarkdown(frag: Y.XmlFragment, schema: Schema = getStugaSchema()): string {
-  const doc = yXmlFragmentToProseMirrorRootNode(frag, schema) as PMNode;
-  return docToMarkdown(doc);
+  return docToMarkdown(yXmlFragmentToDoc(frag, schema));
 }
 
 /** Markdown → CRDT: apply a proposal to the fragment in place, minimally. */
@@ -38,7 +45,7 @@ export function applyMarkdownToYXmlFragment(
 
   let target: PMNode;
   if (opts.originalMarkdown != null) {
-    const current = yXmlFragmentToProseMirrorRootNode(frag, schema) as PMNode;
+    const current = yXmlFragmentToDoc(frag, schema);
     const original = markdownToDoc(opts.originalMarkdown, schema);
     target = mergeTarget(schema, current, original, proposed);
   } else {

@@ -15,6 +15,7 @@ export function AuthErrorBanner({
   return (
     <Banner
       status="error"
+      role="alert"
       title={message}
       {...(suggestion
         ? {

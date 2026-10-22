@@ -246,7 +246,7 @@ export function AgentSettings() {
           <Text color="secondary">
             {tRich("settings.agents.changes.direct", {
               // The menu item and the page by the names they carry where they are.
-              menuItem: t("library.state.makeAuto"),
+              menuItem: t("library.review.menuItem"),
               page: t("common.reviewAiEdits"),
               strong: (chunks) => <strong>{chunks}</strong>,
               link: (chunks) => <Link onClick={() => nav("/review")}>{chunks}</Link>,

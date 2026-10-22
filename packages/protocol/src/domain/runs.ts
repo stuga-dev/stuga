@@ -2,7 +2,7 @@
  * The agent-run ledger rules the document and database actors share: run ids,
  * list limits, idle rollover, terminal status and the park-or-commit decision.
  */
-import type { ReviewMode } from "./events.js";
+import { stricterReviewMode, type ReviewMode } from "./events.js";
 import { RUN_FEEDBACK_EXCERPT_CHARS, RUN_FEEDBACK_NOTE_MAX_CHARS, RUN_IDLE_MS } from "./limits.js";
 
 /** "run_" + 12 hex chars. */
@@ -40,9 +40,9 @@ export function closedStatus(items: Iterable<{ status: string }>): "applied" | "
   return "rejected";
 }
 
-/** The node's resolved policy word. Anything but "auto" is `review`, never a silent commit. */
+/** The node's resolved policy word. Anything it does not name is `review`, never a silent commit. */
 export function parseReviewMode(raw: unknown): ReviewMode {
-  return raw === "auto" ? "auto" : "review";
+  return raw === "auto" || raw === "colleague" ? raw : "review";
 }
 
 /**
@@ -55,6 +55,66 @@ export function parseReviewMode(raw: unknown): ReviewMode {
  */
 export function shouldCommit(review: ReviewMode, parkedBehindPending: boolean): boolean {
   return review === "auto" && !parkedBehindPending;
+}
+
+/**
+ * Whom a run at `colleague` waits for, as its reviewer reads it: a colleague; or nobody yet, because
+ * nobody else can edit the item (`nobody`) or nobody in its approver group can (`group`).
+ */
+export type RunWaitsFor = "colleague" | "nobody" | "group";
+
+/**
+ * Where a person stands on one run, as the node adds it to what they read: the level its pending
+ * changes are decided at, whether they may accept and reject them, whether they may mark the run
+ * reviewed (at the level it was proposed under, actLevel), and, for its reviewer at `colleague`,
+ * whom it waits for.
+ */
+export interface RunStanding {
+  level: ReviewMode;
+  accept: boolean;
+  reject: boolean;
+  ack: boolean;
+  waits_for?: RunWaitsFor;
+}
+
+/** What a person does with a run: decide its changes, revert or undo what was decided, or mark it reviewed. */
+export type RunAct = "accept" | "reject" | "revert" | "undo" | "ack";
+
+/**
+ * The level `act` on a run is judged at. Its pending changes take the stricter of the level the run
+ * was proposed under and its item's now, so neither a move nor a later loosening releases them.
+ * Marking it reviewed looks back at what applied, under the level it was proposed under: raising
+ * the item later makes nobody else responsible for what landed before.
+ */
+export function actLevel(act: RunAct, proposedAt: ReviewMode, itemNow: ReviewMode): ReviewMode {
+  return act === "ack" ? proposedAt : stricterReviewMode(proposedAt, itemNow);
+}
+
+/**
+ * Whether `by` may do `act` on a run whose reviewer (the person who asked the AI) is `reviewer`, at
+ * `level` (actLevel). The node vouches
+ * for `approver` (someone other than the reviewer who can edit the item, in its approver groups, or
+ * an owner or administrator standing in when nobody else can) and `manager` (the item's owner or a
+ * workspace administrator); the actor holds the run.
+ *
+ * Below `colleague`, the reviewer decides, or a manager, so a run cannot strand when its reviewer
+ * leaves. At `colleague` only an approver accepts, never the reviewer, an administrator included;
+ * the reviewer may still take their AI's changes back, and only someone else marks a run reviewed.
+ */
+export function mayActOnRun(input: {
+  act: RunAct;
+  level: ReviewMode;
+  by: string;
+  reviewer: string;
+  approver: boolean;
+  manager: boolean;
+}): boolean {
+  const { act, level, by, reviewer, approver, manager } = input;
+  if (!by) return false;
+  if (level !== "colleague") return by === reviewer || manager;
+  if (act === "accept") return by !== reviewer && approver;
+  if (act === "ack") return by !== reviewer && (approver || manager);
+  return by === reviewer || approver || manager;
 }
 
 /**

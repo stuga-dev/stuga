@@ -66,6 +66,10 @@ export interface StoredRun {
   reverted?: boolean;
   /** The strictest review mode any proposal in this run carried. */
   review_mode: ReviewMode;
+  /** The approver group the first proposal at `colleague` that named one was made under. */
+  approver_group?: string;
+  /** Hunk id → who accepted it at `colleague`, never its reviewer; an undo takes the entry back out. */
+  approvals?: Record<string, string>;
   created_at: number;
   updated_at: number;
   seq_at_commit?: number;
@@ -121,6 +125,13 @@ function syncHunkMeta(stored: StoredRun, body: RunBody): void {
   }));
 }
 
+/** Who approved the run's changes that stand accepted at `colleague`, in name order. */
+function approvedBy(stored: StoredRun): string[] {
+  const approvals = stored.approvals ?? {};
+  const accepted = stored.hunk_meta.filter((m) => m.status === "accepted" && approvals[m.id]).map((m) => approvals[m.id]!);
+  return [...new Set(accepted)].sort();
+}
+
 /** The run as the workspace inbox mirrors it, counted from the metadata mirror. */
 function runIndexEntry(stored: StoredRun): RunIndexEntry {
   const count = (status: RunHunkStatus) => stored.hunk_meta.filter((m) => m.status === status).length;
@@ -138,6 +149,8 @@ function runIndexEntry(stored: StoredRun): RunIndexEntry {
     reviewer: stored.reviewer,
     status: stored.status,
     reviewMode: stored.review_mode,
+    approverGroup: stored.approver_group ?? null,
+    approvedBy: approvedBy(stored),
     autoApplied: stored.auto_applied,
     reverted: stored.reverted === true,
     acknowledged: stored.acknowledged,
@@ -178,6 +191,7 @@ function toSummary(stored: StoredRun, body: RunBody | null): AgentRunSummary {
   if (stored.reverted) summary.reverted = true;
   if (stored.client) summary.client = stored.client;
   if (stored.model) summary.model = stored.model;
+  if (stored.approver_group) summary.approver_group = stored.approver_group;
   if (stored.seq_at_commit !== undefined) summary.seq_at_commit = stored.seq_at_commit;
   return summary;
 }
@@ -552,10 +566,14 @@ export class RunLedger {
     }
   }
 
-  /** Notify the reviewer. Best-effort: a queue hiccup must not fail an edit that committed or parked. */
+  /**
+   * Notify the reviewer: of what was proposed, saying whether it waits for them or a colleague, or of
+   * what applied at once. Best-effort: a queue hiccup must not fail an edit that committed or parked.
+   */
   async notify(stored: StoredRun, n: { eventType: "AGENT_EDITS_PROPOSED"; count: number } | { eventType: "AGENT_EDITS_APPLIED" }): Promise<void> {
     const agent = stored.agent;
     const doc = stored.doc_title;
+    const waits = stored.review_mode === "colleague" ? "colleague" : "you";
     try {
       await this.env.jobs.send({
         kind: "notify",
@@ -564,11 +582,37 @@ export class RunLedger {
         docId: this.store.docId,
         actor: stored.agent,
         ...(n.eventType === "AGENT_EDITS_PROPOSED"
-          ? { eventType: n.eventType, params: { agent, doc, count: n.count } }
+          ? { eventType: n.eventType, params: { agent, doc, count: n.count, waits } }
           : { eventType: n.eventType, params: { agent, doc } }),
       });
     } catch (err) {
       console.warn("agent-run notify enqueue failed", { docId: this.store.docId, runId: stored.id, err: String(err) });
+    }
+  }
+
+  /**
+   * At `colleague`, tell the people who may approve that the run waits for them; the node works out
+   * who they are. Sent whether or not the reviewer is told (`askerTold`), since the reviewer cannot
+   * approve it.
+   */
+  async notifyApprovers(stored: StoredRun, count: number, askerTold: boolean): Promise<void> {
+    if (stored.review_mode !== "colleague" || !stored.workspace_id) return;
+    try {
+      await this.env.jobs.send({
+        kind: "notify_approvers",
+        workspaceId: stored.workspace_id,
+        docId: this.store.docId,
+        runId: stored.id,
+        reviewer: stored.reviewer,
+        approverGroup: stored.approver_group ?? null,
+        actor: stored.agent_alias,
+        agent: stored.agent,
+        doc: stored.doc_title,
+        count,
+        askerTold,
+      });
+    } catch (err) {
+      console.warn("agent-run approvers notify enqueue failed", { docId: this.store.docId, runId: stored.id, err: String(err) });
     }
   }
 

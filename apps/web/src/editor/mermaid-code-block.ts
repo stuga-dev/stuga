@@ -21,16 +21,21 @@ function isDark(): boolean {
 
 /**
  * Themed from our tokens, read here because mermaid lays the SVG out in a
- * detached subtree where `var()` resolves to nothing.
+ * detached subtree where `var()` resolves to nothing. A token's own value is
+ * `light-dark(…)`, which mermaid cannot parse, so each is read as the colour a
+ * painted element resolves it to.
  */
 function themeVariables(): Record<string, string | boolean> {
-  const dark = isDark();
-  const rootStyle = getComputedStyle(document.documentElement);
-  const token = (name: string) => rootStyle.getPropertyValue(name).trim();
+  const probe = document.body.appendChild(document.createElement("span"));
+  probe.hidden = true;
+  const token = (name: string) => {
+    probe.style.color = `var(${name})`;
+    return getComputedStyle(probe).color;
+  };
 
   const fg = token("--color-text-primary");
-  return {
-    darkMode: dark,
+  const variables = {
+    darkMode: isDark(),
     background: token("--color-background-surface"),
     primaryColor: token("--color-accent-muted"),
     primaryBorderColor: token("--color-accent"),
@@ -39,6 +44,8 @@ function themeVariables(): Record<string, string | boolean> {
     lineColor: token("--color-text-secondary"),
     fontSize: "14px",
   };
+  probe.remove();
+  return variables;
 }
 
 /**

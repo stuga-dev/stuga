@@ -85,8 +85,8 @@ Every pull request and every release checks what Stuga ships against public advi
 An npm or Node.js finding without a severity counts as high, and a scan that does not finish
 blocks too. The rest is reported. The images are scanned again, by digest, before a release's floating tags move to
 them. Every day the latest release is scanned again, the pinned Go and the Mac runtime's PostgreSQL
-and OpenSSL are compared with their newest releases, and frp, pg_search, pgvector and Postgres.app
-with their published advisories.
+and OpenSSL are compared with their newest releases, and frp, pgvector and Postgres.app with their
+published advisories.
 
 **Fix targets**, which are also the longest an exception may last: critical 7 days, high 30,
 anything else 90, the daily watch's findings included. Go findings, which govulncheck does not

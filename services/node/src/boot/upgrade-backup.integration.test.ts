@@ -1,7 +1,7 @@
 /**
  * The backup a node takes of a database an older version, or a build from source,
  * served, against a real Postgres, pg_dump and tar. Needs TEST_DATABASE_URL
- * (Postgres 18 preloading pg_search) and client tools of major 18+ from PG_BIN or
+ * (Postgres 18 with pgvector) and client tools of major 18+ from PG_BIN or
  * PATH; skips without the URL.
  */
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";

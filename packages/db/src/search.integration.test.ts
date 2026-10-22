@@ -225,12 +225,13 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
     expect(await ids("会议")).toEqual(["zh"]);
   });
 
+  // Words of another stem: "notif" finds "notifications" as a whole word, both being notif.
   it("reads the last word as unfinished: a whole-word match first, then a title it begins, then a body word", async () => {
-    await makeDoc("body", "Deadlines", "Send a notification within 72 hours.");
-    await makeDoc("title", "Notifications", "Who to tell.");
-    await makeDoc("exact", "Channels", "The notif channel is muted.");
+    await makeDoc("body", "Deadlines", "Book a conference room within 72 hours.");
+    await makeDoc("title", "Conferences", "Who to tell.");
+    await makeDoc("exact", "Channels", "The conf room is booked.");
     await makeDoc("none", "Other", "Nothing relevant here.");
-    expect((await keyword("notif")).map((r) => r.doc_id)).toEqual(["exact", "title", "body"]);
+    expect((await keyword("conf")).map((r) => r.doc_id)).toEqual(["exact", "title", "body"]);
   });
 
   it("finds a body word the unfinished last word begins, highlighted in the excerpt", async () => {
@@ -265,7 +266,7 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
     expect(hit?.snippet).toContain("a ⟦tapir⟧, a ⟦heron⟧ and a ⟦lemur⟧");
   });
 
-  // pdb.snippet weighed each word by how many rows of the node's index hold it, unreadable ones too.
+  // A window is chosen by its own matches: rows the searcher cannot read never weigh a word.
   it("gives a keyword excerpt the first of the passages showing as many of the query's words, whatever the searcher cannot read", async () => {
     await makeDoc("d", "Notes", `Early on, a tapir met a heron. ${apart}Later, a tapir met a lemur.`);
     const excerpt = async () => (await keyword("tapir heron lemur"))[0]?.snippet;
@@ -283,7 +284,7 @@ describe.skipIf(!URL)("hybrid search and chunk embeddings", () => {
     expect(hits.find((h) => h.doc_id === "65th")?.snippet).toMatch(/^A ⟦tapir⟧ naps\./);
   });
 
-  it("counts only the index's highlights in a keyword excerpt, whatever brackets or tags the text holds", async () => {
+  it("counts only the matches in a keyword excerpt, whatever brackets or tags the text holds", async () => {
     await makeDoc("d", "Notes", `A tapir saw ⟦gecko⟦ ⟦newt⟦ ⟦ibis⟦ and <b>gecko</b> <b>newt</b> <b>ibis</b>. ${apart}Later, a tapir met a heron.`);
     expect((await keyword("tapir heron"))[0]?.snippet).toContain("a ⟦tapir⟧ met a ⟦heron⟧");
     // The text's own brackets and tags come through as written.

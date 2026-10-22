@@ -16,6 +16,7 @@
   "panel.exampleTable": "把結尾的筆記整理成表格",
   "panel.emptyAuto": "此文件的 AI 編輯會直接套用：每輪回覆結束時生效，並留有記錄、可撤回。此對話僅你可見。",
   "panel.emptyReview": "每項編輯都會以建議的形式出現在文件中，由你在那裡接受或拒絕。此對話僅你可見：只有你接受的編輯會進入版本記錄。",
+  "panel.emptyColleague": "每項編輯都會以建議的形式出現在文件中，由同事在那裡核准；你可以拒絕。此對話僅你可見：只有被核准的編輯會進入版本記錄。",
   "panel.uploading": "上傳中…",
   "panel.revisionPaused": "{count, plural, =1 {修改已暫停} other {修改已暫停 · # 個要求}}",
   "panel.revisionQueued": "{count, plural, =1 {修改已排入佇列} other {修改已排入佇列 · # 個要求}}",

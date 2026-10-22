@@ -2,11 +2,11 @@
 # The Stuga node: everything but Postgres. Build from the repository root:
 #   docker build -f packaging/docker/node.Dockerfile --build-arg STUGA_VERSION=1.2.3 .
 # The defaults below are packaging/versions.env; packaging/check-pins.sh keeps them equal.
-ARG NODE_VERSION=26.11.1
+ARG NODE_VERSION=26.12.1
 ARG DEBIAN_SUITE=trixie
 
 FROM node:${NODE_VERSION}-${DEBIAN_SUITE}-slim AS build
-ARG PNPM_VERSION=12.11.2
+ARG PNPM_VERSION=12.14.0
 RUN npm install -g "pnpm@${PNPM_VERSION}"
 ENV npm_config_update_notifier=false
 WORKDIR /src

@@ -269,8 +269,8 @@ export interface NodeOperationalSettings {
   /** The node's time zone for scheduled work, an IANA name. */
   time_zone: string;
   /**
-   * The languages search gets a tokenizer for. While `rebuilding`, and after a rebuild that gave up
-   * (`error` says why), search uses the languages the old and the new choice share.
+   * The languages search stems words in beside English. While `rebuilding`, and after a pass that gave
+   * up (`error` says why), documents not yet written for them match by their English stems.
    */
   search: { languages: SearchLanguage[]; choices: SearchLanguage[]; rebuilding: boolean; error: string | null };
   identity_provider: IdentityProviderSettings;
@@ -311,7 +311,7 @@ export interface NodeOperationalSettingsInput {
   backups?: { auto?: boolean; hour?: number; weekday?: number | null; keep?: number };
   /** An IANA name; null returns to UTC. */
   time_zone?: string | null;
-  /** A change rebuilds the search indexes. */
+  /** A change writes the search index again for them. */
   search?: { languages: SearchLanguage[] };
   /** Null removes it. `client_secret` is a credential; an empty `label` or `scopes` restores the default. */
   identity_provider?: { issuer: string; client_id: string; client_secret?: string; label?: string; scopes?: string } | null;

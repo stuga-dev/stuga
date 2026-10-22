@@ -149,8 +149,8 @@
   transition: border-color 120ms ease, box-shadow 120ms ease; }
 .ask-composer__box:hover:not(:focus-within) { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-border-emphasized) 30%, transparent); }
 .ask-composer__box:focus-within { border-color: var(--color-accent); box-shadow: inset 0 0 0 2px var(--color-accent-muted); }
-.ask-composer .ask-composer__box .astryx-textarea { border-color: transparent; background: transparent; box-shadow: none; border-radius: var(--radius-container) var(--radius-container) 0 0; }
-.ask-composer__box .astryx-textarea textarea { padding: 0.6rem 0.75rem 0.3rem; resize: none; }
+.ask-composer .ask-composer__box .astryx-text-area { border-color: transparent; background: transparent; box-shadow: none; border-radius: var(--radius-container) var(--radius-container) 0 0; }
+.ask-composer__box .astryx-text-area textarea { padding: 0.6rem 0.75rem 0.3rem; resize: none; }
 
 .ask-composer__foot { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.25rem 0.4rem 0.4rem 0.5rem; }
 .ask-composer__hint { font-size: 0.75rem; white-space: nowrap; }

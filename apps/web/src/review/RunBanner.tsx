@@ -9,7 +9,15 @@ import { useToast } from "../ui/use-toast";
 import { ChevronDown, ChevronUp, Sparkles, Zap } from "lucide-react";
 import type { RunNotice } from "./use-run-ledger";
 import { anchorRect, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
-import { t } from "../i18n/i18n";
+import { t, type MessageKey } from "../i18n/i18n";
+import type { RunWaitsFor } from "@stuga/protocol/domain/runs";
+
+/** The run bar's hint for whoever asked the AI, by whom a run at `colleague` waits for. */
+export const WAITS_HINT: Record<RunWaitsFor, MessageKey> = {
+  colleague: "review.runBar.waitsColleague",
+  nobody: "review.runBar.waitsNobody",
+  group: "review.runBar.waitsGroup",
+};
 
 /** How long after its last update a run still reads as streaming in. */
 const LIVE_WINDOW_MS = 5_000;

@@ -45,7 +45,7 @@ export function ident(name: string): string {
  * refuses one stamped higher. A change to any of them raises it, together with the step in the host
  * that brings an older store forward.
  */
-export const DATABASE_STORE_VERSION = 4;
+export const DATABASE_STORE_VERSION = 5;
 
 /** The steps that bring an older store forward, keyed by the version each reaches. */
 export const DATABASE_STORE_UPGRADES: Record<number, StoreUpgrade> = {
@@ -68,6 +68,18 @@ export const DATABASE_STORE_UPGRADES: Record<number, StoreUpgrade> = {
   // could not revert that op and would not stop the follow on a rename, so it must not open the store.
   // All three are new and optional, so a version 3 store is read as it is.
   4: () => {},
+  // 5: the `colleague` review level: the approver group a run was proposed under (`_runs.approver_group`),
+  // the level each op was decided at (`_run_ops.decided_level`), and the trigger that refuses a run's
+  // reviewer accepting it at `colleague`. An older build would let them, so it must not open the store.
+  // Runs and ops recorded before keep NULL in both, and ensureSchema adds the trigger.
+  5: (db) => {
+    const add = (table: string, column: string) => {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (columns.length > 0 && !columns.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+    };
+    add("_runs", "approver_group");
+    add("_run_ops", "decided_level");
+  },
 };
 
 /**
@@ -120,7 +132,7 @@ export function ensureSchema(sql: SqlHandle): void {
        agent_alias TEXT NOT NULL, reviewer TEXT NOT NULL, status TEXT NOT NULL,
        acknowledged INTEGER NOT NULL, auto_applied INTEGER NOT NULL, reverted INTEGER NOT NULL,
        workspace_id TEXT NOT NULL, doc_title TEXT NOT NULL, review_mode TEXT NOT NULL, client TEXT, model TEXT,
-       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, approver_group TEXT)`,
   );
   sql.exec(`CREATE INDEX IF NOT EXISTS _runs_created ON _runs (created_at DESC)`);
   sql.exec(
@@ -129,7 +141,16 @@ export function ensureSchema(sql: SqlHandle): void {
        kind TEXT NOT NULL, table_id TEXT NOT NULL, summary TEXT NOT NULL,
        status TEXT NOT NULL, payload TEXT, blob_key TEXT, bytes INTEGER NOT NULL,
        decided_by TEXT, ledger_op_id TEXT, error TEXT, review TEXT NOT NULL, feedback TEXT, detail TEXT,
-       PRIMARY KEY (run_id, op_id))`,
+       decided_level TEXT, PRIMARY KEY (run_id, op_id))`,
+  );
+  // Nobody accepts a change their own AI proposed where a colleague must approve it, an admin
+  // included: the code refuses it, and so does the store.
+  sql.exec(
+    `CREATE TRIGGER IF NOT EXISTS _run_ops_colleague_approves BEFORE UPDATE OF status ON _run_ops
+     WHEN NEW.status = 'accepted'
+       AND EXISTS (SELECT 1 FROM _runs r WHERE r.run_id = NEW.run_id AND r.reviewer = NEW.decided_by
+                   AND (r.review_mode = 'colleague' OR NEW.decided_level = 'colleague'))
+     BEGIN SELECT RAISE(ABORT, 'a colleague approves this change, not the person who asked the AI'); END`,
   );
 }
 

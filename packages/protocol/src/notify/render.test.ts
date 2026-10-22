@@ -26,9 +26,12 @@ const SAMPLES: { [E in NotificationEvent]: NotificationParams[E] } = {
   REQUEST_ACCESS: { actor: "Ada", doc: "" },
   MENTIONED_IN_DOC: { actor: null, doc: "Q3 plan", excerpt: "Owner: @bo" },
   DATABASE_AGENT_EDIT: { actor: "Scout", doc: "Tasks", change: { kind: "rows_inserted", count: 3 } },
-  DATABASE_AGENT_PROPOSED: { agent: "Scout", doc: "Tasks", count: 2 },
-  AGENT_EDITS_PROPOSED: { agent: "Scout", doc: "Q3 plan", count: 1 },
+  DATABASE_AGENT_PROPOSED: { agent: "Scout", doc: "Tasks", count: 2, waits: "you" },
+  AGENT_EDITS_PROPOSED: { agent: "Scout", doc: "Q3 plan", count: 1, waits: "you" },
   AGENT_EDITS_APPLIED: { agent: "Scout", doc: "Q3 plan" },
+  APPROVAL_WAITING: { agent: "Scout", author: "Liv", doc: "Q3 plan", count: 2 },
+  APPROVER_NEEDED: { agent: "Scout", author: "Liv", doc: "Q3 plan", count: 2, cause: "group" },
+  REVIEW_LEVEL_LOWERED: { actor: "Liv", doc: "Policies", kind: "folder", level: "auto", floor: "colleague", moved: false },
   ACCOUNT_NEW_SIGN_IN: { host: "k7f3q2.mystuga.com", device: "Safari on iPhone", at: AT, from: "203.0.113.7" },
   MEMBER_NEW_SIGN_IN: { name: "Bo", host: "k7f3q2.mystuga.com", device: "Safari on iPhone", at: AT, from: "203.0.113.7" },
   ACCOUNT_PASSWORD_CHANGED: { how: "changed", device: "Safari on Mac", at: AT, recourse: "machine" },
@@ -76,6 +79,12 @@ const ENGLISH: { [E in NotificationEvent]: [title: string, body: string] } = {
   ],
   AGENT_EDITS_PROPOSED: ["“Q3 plan”: Scout proposed changes", "Scout proposed 1 change — waiting for your review"],
   AGENT_EDITS_APPLIED: ["“Q3 plan”: Scout made changes", "Scout changed this document directly, as it is set to allow."],
+  APPROVAL_WAITING: ["“Q3 plan”: waiting for your approval", "Liv’s Scout proposed 2 changes."],
+  APPROVER_NEEDED: [
+    "“Q3 plan”: changes wait for an approver",
+    "Liv’s Scout proposed 2 changes. Give someone in the approver group edit access to approve them.",
+  ],
+  REVIEW_LEVEL_LOWERED: ["“Policies”: review of AI edits loosened", "Liv set this folder to “AI edits apply directly”, looser than its folder."],
   ACCOUNT_NEW_SIGN_IN: [
     "New sign-in at k7f3q2.mystuga.com: Safari on iPhone",
     "New sign-in at k7f3q2.mystuga.com: Safari on iPhone · 2026-09-30 14:02 UTC · from 203.0.113.7. Not you? Sign out everywhere.",
@@ -167,6 +176,21 @@ describe("renderNotification", () => {
     const signIn = renderNotification("ACCOUNT_NEW_SIGN_IN", SAMPLES.ACCOUNT_NEW_SIGN_IN, "de")!.body;
     expect(signIn).toContain(formatInstant(AT, "de"));
     expect(signIn).not.toContain("2026-09-30 14:02 UTC");
+  });
+
+  it("says whom proposed changes wait for, and what a level was loosened to", () => {
+    const body = (waits: "you" | "colleague") => renderNotification("AGENT_EDITS_PROPOSED", { ...SAMPLES.AGENT_EDITS_PROPOSED, waits }, "en")!.body;
+    expect(body("colleague")).toBe("Scout proposed 1 change — waiting for a colleague’s approval");
+    expect(renderNotification("DATABASE_AGENT_PROPOSED", { ...SAMPLES.DATABASE_AGENT_PROPOSED, waits: "colleague" }, "en")!.body).toBe(
+      "Scout proposed 2 changes to this table — waiting for a colleague’s approval in the table’s Activity panel.",
+    );
+    const lowered = renderNotification("REVIEW_LEVEL_LOWERED", { ...SAMPLES.REVIEW_LEVEL_LOWERED, kind: "document", level: "review", floor: null }, "en")!;
+    expect(lowered.body).toBe("Liv set this document to “Reviewed by whoever asked the AI”.");
+    const moved = renderNotification("REVIEW_LEVEL_LOWERED", { ...SAMPLES.REVIEW_LEVEL_LOWERED, level: "review", moved: true }, "en")!;
+    expect(moved.body).toBe("Liv moved this folder, which is now at “Reviewed by whoever asked the AI”, looser than its old folder.");
+    const nobody = renderNotification("APPROVER_NEEDED", { ...SAMPLES.APPROVER_NEEDED, cause: "nobody" }, "en")!;
+    expect(nobody.body).toBe("Liv’s Scout proposed 2 changes. Give a colleague edit access to approve them.");
+    expect(renderNotification("APPROVAL_WAITING", SAMPLES.APPROVAL_WAITING, "zh-Hans")!.title).toBe("“Q3 plan”：等待你批准");
   });
 
   it("says why a reply reached its reader", () => {

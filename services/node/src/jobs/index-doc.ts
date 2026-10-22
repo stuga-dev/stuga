@@ -105,7 +105,7 @@ async function indexDatabaseText(env: JobsEnv, deps: JobDeps, docId: string): Pr
   if (!res.ok) throw new Error(`database search text: actor answered ${res.status}`);
   const body = (await res.json()) as { text?: unknown };
   if (typeof body.text !== "string") throw new Error("database search text: no text in the actor's answer");
-  await deps.db.setDatabaseSearchText(docId, body.text);
+  await deps.db.setDatabaseSearchText(docId, body.text, env.searchLanguages.current());
 }
 
 export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocMessage): Promise<void> {
@@ -274,5 +274,6 @@ export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocM
     embeddingHash: hash,
     chunks,
     embeddingDims: env.embeddingDims,
+    searchLanguages: env.searchLanguages.current(),
   });
 }

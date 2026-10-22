@@ -1,5 +1,6 @@
 /** The document page's dock: the AI co-author, Comments, Versions and Sources. */
 import type * as Y from "yjs";
+import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { StugaProvider } from "../sync/stuga-provider";
 import { Dock, useDockState, type DockController } from "../ui/Dock";
 import { CommentsPanel } from "./CommentsPanel";
@@ -29,7 +30,7 @@ export function DocDock({
   docId,
   ydoc,
   provider,
-  agentAuto,
+  agentMode,
   width,
   onResize,
 }: {
@@ -37,8 +38,8 @@ export function DocDock({
   docId: string;
   ydoc: Y.Doc | null;
   provider: StugaProvider | null;
-  /** The document applies agent changes at once, the co-author's included. */
-  agentAuto: boolean;
+  /** How AI edits to the document are reviewed, the co-author's included. */
+  agentMode: ReviewMode;
   width: number;
   onResize: (next: number) => void;
 }) {
@@ -56,7 +57,7 @@ export function DocDock({
           actions: <AiNewChatButton />,
           render: () =>
             provider ? (
-              <AiPanel agentAuto={agentAuto} />
+              <AiPanel agentMode={agentMode} />
             ) : (
               <VStack gap={2} hAlign="center" paddingBlock={8}>
                 <Spinner label={t("document.dock.connecting")} />

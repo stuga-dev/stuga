@@ -29,20 +29,50 @@ export function isWorkspaceEventType(v: unknown): v is WorkspaceEventType {
 }
 
 /**
- * How an agent's proposal is decided: by the document's (or database's) own
- * `agent_mode`, never by whether a reviewer happens to be watching.
+ * How an agent's proposal is decided: by the level the document (or database) is at, its own
+ * `agent_mode` or else its folder's, never by whether a reviewer happens to be watching. `auto`
+ * applies at once; `review` waits for whoever asked the AI; `colleague` waits for someone else who
+ * can edit it, an administrator included, never the one who asked.
  */
-export type ReviewMode = "review" | "auto";
+export type ReviewMode = "auto" | "review" | "colleague";
 
-const REVIEW_MODES: readonly ReviewMode[] = ["review", "auto"];
+/** Loosest first. */
+export const REVIEW_MODES: readonly ReviewMode[] = ["auto", "review", "colleague"];
 
 export function isReviewMode(v: unknown): v is ReviewMode {
   return typeof v === "string" && (REVIEW_MODES as readonly string[]).includes(v);
 }
 
-const REVIEW_RANK: Record<ReviewMode, number> = { auto: 0, review: 1 };
+const REVIEW_RANK: Record<ReviewMode, number> = { auto: 0, review: 1, colleague: 2 };
 
-/** A run holding `review` hunks must not auto-apply them because a later proposal arrived under `auto`. */
+/**
+ * The stricter of two levels. A run holding `review` hunks must not auto-apply them because a later
+ * proposal arrived under `auto`, and a decision takes the stricter of the level a run was proposed
+ * under and the one its item is at now, so neither a move nor a later loosening releases it.
+ */
 export function stricterReviewMode(a: ReviewMode, b: ReviewMode): ReviewMode {
   return REVIEW_RANK[a] >= REVIEW_RANK[b] ? a : b;
+}
+
+/** An item's level: its own, else the one its folders give it, else `review`. */
+export function reviewLevelOf(own: ReviewMode | null, inherited: ReviewMode | null): ReviewMode {
+  return own ?? inherited ?? "review";
+}
+
+/**
+ * A document's or database's level now: its own, else the one its folders give it, else `review`;
+ * a row page's at least its database's, so a page is never reviewed more loosely than its table.
+ */
+export function docReviewLevel(doc: {
+  agent_mode: ReviewMode | null;
+  folder_agent_mode: ReviewMode | null;
+  database_agent_mode?: ReviewMode | null;
+}): ReviewMode {
+  const own = reviewLevelOf(doc.agent_mode, doc.folder_agent_mode);
+  return doc.database_agent_mode ? stricterReviewMode(own, doc.database_agent_mode) : own;
+}
+
+/** Whether `a` lets more through than `b`. */
+export function looserReviewMode(a: ReviewMode, b: ReviewMode): boolean {
+  return REVIEW_RANK[a] < REVIEW_RANK[b];
 }

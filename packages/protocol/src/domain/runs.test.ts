@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { looserReviewMode, stricterReviewMode } from "./events.js";
 import { RUN_FEEDBACK_EXCERPT_CHARS, RUN_FEEDBACK_NOTE_MAX_CHARS, RUN_IDLE_MS } from "./limits.js";
 import {
+  actLevel,
   agentActorOf,
   clampRunLimit,
   closedStatus,
   feedbackExcerpt,
+  mayActOnRun,
   newFeedbackId,
   newRunId,
   parseDecisionNote,
@@ -44,10 +47,51 @@ describe("run ledger rules", () => {
     expect(closedStatus([])).toBe("rejected");
   });
 
-  it("reads only an explicit auto as auto", () => {
+  it("reads only an explicit auto or colleague as such", () => {
     expect(parseReviewMode("auto")).toBe("auto");
+    expect(parseReviewMode("colleague")).toBe("colleague");
     expect(parseReviewMode("AUTO")).toBe("review");
     expect(parseReviewMode(undefined)).toBe("review");
+  });
+
+  it("orders the levels auto < review < colleague", () => {
+    expect(stricterReviewMode("auto", "review")).toBe("review");
+    expect(stricterReviewMode("colleague", "review")).toBe("colleague");
+    expect(stricterReviewMode("auto", "colleague")).toBe("colleague");
+    expect(stricterReviewMode("review", "review")).toBe("review");
+    expect(looserReviewMode("auto", "colleague")).toBe(true);
+    expect(looserReviewMode("review", "auto")).toBe(false);
+    expect(looserReviewMode("colleague", "colleague")).toBe(false);
+  });
+
+  it("lets the reviewer or a manager decide below colleague, and never the reviewer approve at colleague", () => {
+    const act = (over: Partial<Parameters<typeof mayActOnRun>[0]>) =>
+      mayActOnRun({ act: "accept", level: "review", by: "liv", reviewer: "liv", approver: false, manager: false, ...over });
+    expect(act({})).toBe(true);
+    expect(act({ by: "bo" })).toBe(false);
+    expect(act({ by: "bo", manager: true })).toBe(true);
+    expect(act({ by: "" })).toBe(false);
+    // At colleague, the reviewer is refused whatever the node vouches: an admin approving their own AI's change included.
+    expect(act({ level: "colleague" })).toBe(false);
+    expect(act({ level: "colleague", approver: true, manager: true })).toBe(false);
+    expect(act({ level: "colleague", by: "bo" })).toBe(false);
+    expect(act({ level: "colleague", by: "bo", approver: true })).toBe(true);
+    expect(act({ level: "colleague", by: "bo", manager: true })).toBe(false);
+    // The reviewer may still take their AI's changes back, and only someone else marks it reviewed.
+    expect(act({ level: "colleague", act: "reject" })).toBe(true);
+    expect(act({ level: "colleague", act: "revert" })).toBe(true);
+    expect(act({ level: "colleague", act: "ack" })).toBe(false);
+    expect(act({ level: "colleague", act: "ack", by: "bo", manager: true })).toBe(true);
+    expect(act({ level: "colleague", act: "reject", by: "bo" })).toBe(false);
+  });
+
+  it("decides pending changes at the stricter level, and marks a run reviewed at the level it was proposed under", () => {
+    expect(actLevel("accept", "review", "colleague")).toBe("colleague");
+    expect(actLevel("reject", "colleague", "auto")).toBe("colleague");
+    expect(actLevel("undo", "auto", "review")).toBe("review");
+    // Raising the item later makes nobody else answer for what applied before.
+    expect(actLevel("ack", "auto", "colleague")).toBe("auto");
+    expect(actLevel("ack", "colleague", "auto")).toBe("colleague");
   });
 
   it("commits only auto proposals that are not behind pending work", () => {

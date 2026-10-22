@@ -25,7 +25,7 @@ const TEXT_KEYS = new Set([
 ]);
 /** Props that are never text, whatever their value looks like. */
 const NON_TEXT_PROPS = new Set([
-  "className", "href", "to", "src", "type", "variant", "size", "id", "role", "key", "rel", "target", "method",
+  "className", "controlClassName", "containerClassName", "href", "to", "src", "type", "variant", "size", "id", "role", "key", "rel", "target", "method",
   "autoComplete", "inputMode", "lang", "dir", "spellCheck", "accept", "pattern", "form", "htmlFor", "icon",
   "data-testid", "aria-keyshortcuts", "aria-controls", "aria-labelledby", "aria-describedby", "host",
 ]);

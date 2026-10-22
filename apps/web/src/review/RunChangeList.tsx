@@ -7,7 +7,8 @@ import { useEffect, type KeyboardEvent } from "react";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import { useAgentRuns, pendingHunks } from "./agent-runs-context";
 import { orderRowsForReview, summarizeHunk, unshownReason } from "./hunk-review";
-import { itemKey } from "./run-ledger";
+import { acceptWaitsFor, itemKey } from "./run-ledger";
+import { getAlias } from "../lib/http/client";
 import { Button } from "@astryxdesign/core/Button";
 import { anchorOf, keepFocus, type NoteAnchor } from "./RejectNoteDialog";
 import { t, type MessageKey } from "../i18n/i18n";
@@ -37,6 +38,8 @@ export function RunChangeList({
 
   const rows = orderRowsForReview(pendingHunks(run), (h) => itemKey(run.id, h.id), preview.anchored);
   const loading = loadingHunks.has(run.id);
+  // At `colleague` the person who asked the AI rejects, and someone else accepts.
+  const acceptBlocked = acceptWaitsFor(run, getAlias()) !== null;
 
   if (rows.length === 0) {
     return (
@@ -99,7 +102,7 @@ export function RunChangeList({
                 label={t("review.changeList.accept", position)}
                 variant="secondary"
                 size="sm"
-                isDisabled={posted}
+                isDisabled={posted || acceptBlocked}
                 onClick={() => void decide(run.id, "accept", [row.hunk.id])}
               >
                 {t("common.accept")}

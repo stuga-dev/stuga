@@ -68,6 +68,41 @@ describe.skipIf(!URL)("search ranking quality", () => {
       body: "How to bake sourdough bread with flour, water, salt, and a little patience.",
       chunkVecs: [vec(99)],
     },
+    {
+      id: "retention-en",
+      title: "Backup retention",
+      body: "Backups are retained for thirty days, then deleted for good.",
+    },
+    {
+      id: "holidays-en",
+      title: "Holiday calendar",
+      body: "The office is closed on public holidays, and backups still run.",
+    },
+    {
+      id: "expense-zh",
+      title: "报销流程",
+      body: "员工提交报销单后，由部门经理审批，财务部门核对发票后付款。",
+    },
+    {
+      id: "travel-zh",
+      title: "差旅安排",
+      body: "出差前需要在系统里预订机票和酒店，费用由公司统一结算，经理审批后出发。",
+    },
+    {
+      id: "meeting-zh",
+      title: "會議室使用規定",
+      body: "會議室需要提前預約，使用後請保持整潔。",
+    },
+    {
+      id: "leave-ko",
+      title: "휴가 신청 안내",
+      body: "연차 휴가는 최소 일주일 전에 팀장에게 신청해야 합니다. 승인 후 인사팀에 통보됩니다.",
+    },
+    {
+      id: "security-ko",
+      title: "보안 정책",
+      body: "비밀번호는 90일마다 변경해야 하며 다른 사람과 공유하지 마십시오.",
+    },
   ];
 
   beforeAll(async () => {
@@ -122,9 +157,57 @@ describe.skipIf(!URL)("search ranking quality", () => {
     },
     {
       name: "stopword-only query still recalls the doc that carries those words",
-      // all_text keeps stopwords, so this query still has terms to match.
+      // A title holds its words as written, stopwords too, so this query still has terms to match.
       query: "the and or",
       expected: ["stopwords"],
+    },
+    {
+      name: "keyword: English finds another form of each word, the title's match first",
+      query: "retaining backup",
+      expected: ["retention-en"],
+      top1: "retention-en",
+      mustNotInclude: ["holidays-en", "cooking"],
+    },
+    {
+      name: "keyword: a word in a title outranks the same word in a longer text",
+      query: "backups",
+      expected: ["retention-en", "holidays-en"],
+      top1: "retention-en",
+    },
+    {
+      name: "keyword: Chinese words find the document that holds both, not one holding only one",
+      query: "报销 审批",
+      expected: ["expense-zh"],
+      top1: "expense-zh",
+      mustNotInclude: ["travel-zh", "meeting-zh"],
+    },
+    {
+      name: "keyword: a traditional Chinese query finds simplified text",
+      query: "報銷發票",
+      expected: ["expense-zh"],
+      top1: "expense-zh",
+      mustNotInclude: ["travel-zh"],
+    },
+    {
+      name: "keyword: a simplified Chinese query finds traditional text",
+      query: "会议室预约",
+      expected: ["meeting-zh"],
+      top1: "meeting-zh",
+      mustNotInclude: ["expense-zh", "travel-zh"],
+    },
+    {
+      name: "keyword: Korean words find a text where particles cling to them",
+      query: "휴가 신청",
+      expected: ["leave-ko"],
+      top1: "leave-ko",
+      mustNotInclude: ["security-ko"],
+    },
+    {
+      name: "keyword: a Korean word inside a longer one is found",
+      query: "비밀번호 변경",
+      expected: ["security-ko"],
+      top1: "security-ko",
+      mustNotInclude: ["leave-ko"],
     },
     {
       name: "semantic: best-chunk match surfaces a doc the keyword leg misses",

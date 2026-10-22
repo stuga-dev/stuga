@@ -99,10 +99,10 @@ export const SAMPLE_ME = "{{me}}";
 
 // ---- Types ----------------------------------------------------------------------------------
 
-export type ArchiveAgentMode = "review" | "auto";
+export type ArchiveAgentMode = "review" | "auto" | "colleague";
 export type ArchiveTitleSource = "heading" | "user";
 
-const AGENT_MODES = ["review", "auto"] as const;
+const AGENT_MODES = ["review", "auto", "colleague"] as const;
 const TITLE_SOURCES = ["heading", "user"] as const;
 
 /** A comment as the archive carries it: no account, no anchor, only the quoted text. */

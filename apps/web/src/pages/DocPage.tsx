@@ -299,7 +299,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
               <DocStateChips
                 locked={locked}
                 searchHidden={searchHidden}
-                agentAuto={agentMode === "auto"}
+                agentMode={agentMode}
                 readOnly={readOnly}
               />
               <ConnectionStatus status={connStatus} />
@@ -397,7 +397,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
               docId={docId}
               ydoc={provider?.doc ?? null}
               provider={provider}
-              agentAuto={agentMode === "auto"}
+              agentMode={agentMode}
               width={dockW}
               onResize={setDockW}
             />

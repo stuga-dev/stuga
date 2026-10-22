@@ -17,7 +17,7 @@ import { SectionStatusBanners, useSectionStatus } from "./status";
 /** How often the page asks whether the search index has been rebuilt. */
 const POLL_MS = 2000;
 
-/** The languages search gets a tokenizer for; a change rebuilds the index while search keeps answering. */
+/** The languages search stems words in; a change writes the index again while search keeps answering. */
 export function SearchSection({ ops, onSaved }: { ops: NodeOperationalSettings; onSaved: (s: NodeOperationalSettings) => void }) {
   const nav = useNavigate();
   const status = useSectionStatus();

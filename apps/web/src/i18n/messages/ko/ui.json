@@ -51,7 +51,7 @@
   "personPicker.placeholder": "사용자 이름 또는 이름으로 검색",
   "personPicker.noMatch": "일치하는 사람이 없어요.",
   "searchLanguages.label": "문서의 언어",
-  "searchLanguages.hint": "선택한 언어에서는 검색이 어미와 단어 경계를 인식해요. 다른 언어는 정확히 같은 단어만 일치해요.",
+  "searchLanguages.hint": "선택한 언어에서는 검색이 어미를 인식해요. 다른 언어는 정확히 같은 단어만 일치해요.",
   "searchLanguages.alwaysOn": "항상 사용",
   "searchLanguages.find": "언어 찾기",
   "principal.everyone": "모든 사람",

@@ -20,12 +20,12 @@ export async function upsertAgentRun(sql: Sql, e: RunIndexEntry): Promise<void> 
   await sql`
     INSERT INTO agent_runs
       (run_id, workspace_id, doc_id, doc_kind, doc_title, source, agent, agent_alias, reviewer, status,
-       review_mode, auto_applied, reverted, acknowledged, pending, accepted, rejected, conflicts, applied,
-       client, model, created_at, updated_at)
+       review_mode, approver_group, approved_by, auto_applied, reverted, acknowledged, pending, accepted, rejected,
+       conflicts, applied, client, model, created_at, updated_at)
     SELECT ${e.runId}, ${e.workspaceId}, ${e.docId}, ${e.docKind}, ${e.docTitle}, ${e.source}, ${e.agent},
-           ${e.agentAlias}, ${e.reviewer}, ${e.status}, ${e.reviewMode}, ${e.autoApplied}, ${e.reverted},
-           ${e.acknowledged}, ${e.pending}, ${e.accepted}, ${e.rejected}, ${e.conflicts}, ${e.applied},
-           ${e.client}, ${e.model}, ${createdAt}::timestamptz, ${updatedAt}::timestamptz
+           ${e.agentAlias}, ${e.reviewer}, ${e.status}, ${e.reviewMode}, ${e.approverGroup}, ${e.approvedBy}::text[],
+           ${e.autoApplied}, ${e.reverted}, ${e.acknowledged}, ${e.pending}, ${e.accepted}, ${e.rejected},
+           ${e.conflicts}, ${e.applied}, ${e.client}, ${e.model}, ${createdAt}::timestamptz, ${updatedAt}::timestamptz
     WHERE EXISTS (SELECT 1 FROM workspaces WHERE workspace_id = ${e.workspaceId})
     ON CONFLICT (run_id) DO UPDATE SET
       doc_title = EXCLUDED.doc_title,
@@ -33,6 +33,8 @@ export async function upsertAgentRun(sql: Sql, e: RunIndexEntry): Promise<void> 
       model = EXCLUDED.model,
       status = EXCLUDED.status,
       review_mode = EXCLUDED.review_mode,
+      approver_group = EXCLUDED.approver_group,
+      approved_by = EXCLUDED.approved_by,
       auto_applied = EXCLUDED.auto_applied,
       reverted = EXCLUDED.reverted,
       acknowledged = EXCLUDED.acknowledged,
@@ -64,11 +66,20 @@ export interface ListAgentRunsInput {
   before?: { updatedAt: string; runId: string };
   limit?: number;
   /**
-   * Who is asking, for `attention`: a run needs their attention only when they can decide it, as its
-   * reviewer, the document's owner, or a workspace admin (`admin`). Deciding changes the item, so
-   * pending changes also need write access to it; dismissing what was applied at once does not.
+   * Who is asking, for `attention`: a run needs their attention only when they can act on it. Its
+   * pending changes are decided at the stricter of the run's level and its document's now: below
+   * `colleague` by its reviewer, the document's owner or a workspace admin (`admin`), with write
+   * access to it; at `colleague` by anyone else who can write the document in its approver groups,
+   * or its owner or an admin who might stand in, never its reviewer. What was applied at once is
+   * marked reviewed at the level it was proposed under: below `colleague` by its reviewer, the
+   * owner or an admin, write access or not; at `colleague` by someone else who could approve it.
    */
   decider?: { alias: string; admin: boolean };
+}
+
+/** A level as SQL compares them: the stricter of `a` and `b`, either of which may be NULL. */
+function stricterSql(sql: Sql, a: Fragment, b: Fragment): Fragment {
+  return sql`(CASE WHEN 'colleague' IN (${a}, ${b}) THEN 'colleague' WHEN 'review' IN (${a}, ${b}) THEN 'review' ELSE 'auto' END)`;
 }
 
 /** The inbox page, newest activity first, gated on the document's ACL and hidden with trashed documents. */
@@ -76,29 +87,49 @@ export async function listAgentRuns(sql: Sql, input: ListAgentRunsInput): Promis
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
   const filter = input.filter ?? "attention";
   const collecting = sql`(r.status = 'open' AND (r.pending > 0 OR r.updated_at > now() - make_interval(secs => ${RUN_IDLE_MS / 1000})))`;
+  const writable = sql`d.acl_writers && ${input.principals}`;
+  // The document's level now: its own, else its folders', at least its database's for a row page.
+  const docLevel = stricterSql(sql, sql`coalesce(d.agent_mode, lvl.folder_mode, 'review')`, sql`lvl_db.database_mode`);
+  const me = input.decider;
+  const manager = me ? sql`(${me.admin} OR d.owner = ${`user:${me.alias}`})` : sql`FALSE`;
+  const inGroups = sql`((r.approver_group IS NULL OR r.approver_group = ANY(${input.principals}::text[]))
+                        AND (lvl.folder_group IS NULL OR lvl.folder_group = ANY(${input.principals}::text[])))`;
+  /** May the caller act on the run at `level`: its reviewer or a manager below `colleague`, someone else who may approve at it. */
+  const actsAt = (level: Fragment, colleague: Fragment) =>
+    me
+      ? sql`CASE WHEN ${level} = 'colleague' THEN r.reviewer <> ${me.alias} AND (${colleague})
+                 ELSE r.reviewer = ${me.alias} OR ${manager} END`
+      : sql`TRUE`;
   return sql<AgentRunRow[]>`
     SELECT r.run_id, r.workspace_id, r.doc_id, r.doc_kind,
            coalesce(nullif(d.title, ''), r.doc_title) AS doc_title, d.owner AS doc_owner,
-           (d.acl_writers && ${input.principals}) AS doc_writable,
+           (${writable}) AS doc_writable, d.acl_principals AS doc_readers, d.acl_writers AS doc_writers,
+           ${docLevel} AS doc_level, lvl.folder_group AS doc_approver_group,
            r.source, r.agent, r.agent_alias, r.client, r.model, r.reviewer, r.status, r.review_mode,
-           r.auto_applied, r.reverted, r.acknowledged,
+           r.approver_group, r.approved_by, r.auto_applied, r.reverted, r.acknowledged,
            r.pending, r.accepted, r.rejected, r.conflicts, r.applied,
            r.created_at, r.updated_at
     FROM agent_runs r
     JOIN docs d ON d.doc_id = r.doc_id
+    -- Looked up once per folder and per database, not per run.
+    LEFT JOIN LATERAL (
+      SELECT folder_agent_mode(lf.folder_id) AS folder_mode, folder_approver_group(lf.folder_id) AS folder_group
+      FROM folders lf WHERE lf.folder_id = d.parent_id
+    ) lvl ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT coalesce(ld.agent_mode, folder_agent_mode(ld.parent_id), 'review') AS database_mode
+      FROM docs ld WHERE ld.doc_id = d.page_of
+    ) lvl_db ON TRUE
     WHERE r.workspace_id = ${input.workspaceId}
       AND d.workspace_id = ${input.workspaceId}
       AND d.trashed = FALSE
       AND d.acl_principals && ${input.principals}
       ${
         filter === "attention"
-          ? sql`AND ((r.status = 'open' AND r.pending > 0 AND d.acl_writers && ${input.principals})
-                     OR (r.auto_applied AND NOT r.acknowledged AND NOT r.reverted))
-                ${
-                  input.decider && !input.decider.admin
-                    ? sql`AND (r.reviewer = ${input.decider.alias} OR d.owner = ${`user:${input.decider.alias}`})`
-                    : sql``
-                }`
+          ? sql`AND ((r.status = 'open' AND r.pending > 0 AND ${writable}
+                      AND ${actsAt(stricterSql(sql, sql`r.review_mode`, docLevel), sql`${writable} AND (${inGroups} OR ${manager})`)})
+                     OR (r.auto_applied AND NOT r.acknowledged AND NOT r.reverted
+                         AND ${actsAt(sql`r.review_mode`, sql`(${writable} AND ${inGroups}) OR ${manager}`)}))`
           : filter === "open"
             ? sql`AND ${collecting}`
             : filter === "closed"

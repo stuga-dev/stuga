@@ -1,28 +1,33 @@
 /**
- * A document's lock, search visibility and agent mode: the flags as the library
- * marks, badges and chips show them, and the menu items that change them. The
- * server allows the change only to the owner or a workspace admin, so anyone
- * else finds the items disabled with the reason, and the menu applies a change
- * optimistically and rolls back on a refusal.
+ * A document's lock, search visibility and how AI edits to it are reviewed: the flags as the
+ * library marks, badges and chips show them (a level other than the default), and the menu items
+ * that change them. The server allows a lock or search change only to the owner or a workspace
+ * admin, so anyone else finds those items disabled with the reason, and the menu applies a change
+ * optimistically and rolls back on a refusal. The level is set in its own dialog.
  */
 import { useCallback, useMemo, type ReactNode } from "react";
-import { Lock, LockOpen, Eye, EyeOff, ListChecks, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
+import { Lock, LockOpen, Eye, EyeOff, ListChecks, Sparkles, Users, type LucideIcon } from "lucide-react";
 import { useReviewQueue } from "../review/review-queue";
 import { useToast } from "../ui/use-toast";
-import { useImperativeAlertDialog } from "@astryxdesign/core/AlertDialog";
-import { Docs, type DocSummary } from "../api";
-import type { ReviewMode } from "@stuga/protocol/domain/events";
+import { Docs, type DocSummary, type Folder } from "../api";
 import { t, type MessageKey } from "../i18n/i18n";
 import { useManages } from "./use-manages";
+import { useReviewLevelDialog } from "./use-review-level-dialog";
 
 interface DocState {
   locked: boolean;
   searchHidden: boolean;
   agentAuto: boolean;
+  agentColleague: boolean;
 }
 
 export function docStateOf(doc: Pick<DocSummary, "locked" | "search_hidden" | "agent_mode">): DocState {
-  return { locked: doc.locked, searchHidden: doc.search_hidden, agentAuto: doc.agent_mode === "auto" };
+  return {
+    locked: doc.locked,
+    searchHidden: doc.search_hidden,
+    agentAuto: doc.agent_mode === "auto",
+    agentColleague: doc.agent_mode === "colleague",
+  };
 }
 
 type Noun = "document" | "database";
@@ -80,14 +85,31 @@ export const DOC_STATE_FLAGS: readonly DocStateFlag[] = [
     chip: "yellow",
     tooltip: () => t("library.state.agentAutoTooltip"),
   },
+  {
+    isOn: (s) => s.agentColleague,
+    get label() {
+      return t("library.state.agentColleague");
+    },
+    icon: Users,
+    get mark() {
+      return t("library.state.agentColleagueMark");
+    },
+    badge: "neutral",
+    chip: "gray",
+    tooltip: () => t("library.state.agentColleagueTooltip"),
+  },
 ];
 
-/** Icons beside a title in a list row, where worded badges would push the title into an ellipsis. */
-export function DocStateMarks({ doc }: { doc: DocSummary | undefined }) {
+/**
+ * Icons beside a title in a list row, where worded badges would push the title into an ellipsis. A
+ * folder's row marks only its level, which what is in it follows.
+ */
+export function DocStateMarks({ doc, folder }: { doc: DocSummary | undefined; folder?: Folder }) {
   // AI edits waiting for this person's decision, where the library knows of them.
   const waiting = useReviewQueue()?.waiting.has(doc?.doc_id ?? "") === true;
-  if (!doc) return null;
-  const state = docStateOf(doc);
+  const item = doc ?? (folder && { locked: false, search_hidden: false, agent_mode: folder.agent_mode });
+  if (!item) return null;
+  const state = docStateOf(item);
   const on = DOC_STATE_FLAGS.filter((f) => f.isOn(state));
   if (on.length === 0 && !waiting) return null;
   return (
@@ -115,9 +137,9 @@ interface StateMenuItem {
 }
 
 /**
- * The toggles for a document. `onChanged` runs once optimistically and again
- * with the server's row, or with the original on a refusal. Letting AI edits apply
- * directly asks first, in `dialog`, which the caller renders.
+ * The toggles for a document, and its level's dialog. `onChanged` runs once optimistically and
+ * again with the server's row, or with the original on a refusal; the level's, once it is saved.
+ * `dialog` is rendered by the caller.
  */
 export function useDocStateMenu(): {
   items: (doc: DocSummary, onChanged: (next: DocSummary) => void) => StateMenuItem[];
@@ -125,22 +147,15 @@ export function useDocStateMenu(): {
 } {
   const toast = useToast();
   const manages = useManages();
-  const confirm = useImperativeAlertDialog();
+  const review = useReviewLevelDialog();
   const items = useCallback(
     (doc: DocSummary, onChanged: (next: DocSummary) => void): StateMenuItem[] => {
       const noun: Noun = doc.doc_type === "database" ? "database" : "document";
-      const agentAuto = doc.agent_mode === "auto";
       /** The refusal and the failure for one change, each naming the item. */
-      async function apply(
-        patch: { locked?: boolean; search_hidden?: boolean; agent_mode?: ReviewMode },
-        refusal: { denied: MessageKey; failed: MessageKey },
-        /** Shown only once the server agreed. */
-        okBody?: string,
-      ) {
+      async function apply(patch: { locked?: boolean; search_hidden?: boolean }, refusal: { denied: MessageKey; failed: MessageKey }) {
         onChanged({ ...doc, ...patch });
         try {
           onChanged(await Docs.setState(doc.doc_id, patch));
-          if (okBody) toast({ body: okBody, type: "info" });
         } catch (err) {
           onChanged(doc);
           const status = (err as { status?: number }).status;
@@ -170,34 +185,17 @@ export function useDocStateMenu(): {
                 : { denied: "library.state.hideDenied", failed: "library.state.hideFailed" },
             ),
         },
-        {
-          label: agentAuto ? t("library.state.makeReview") : t("library.state.makeAuto"),
-          icon: agentAuto ? <ShieldCheck size={15} /> : <Sparkles size={15} />,
-          // Only the permissive direction asks first and is confirmed: it is the one that gives something away.
-          onClick: () =>
-            agentAuto
-              ? void apply({ agent_mode: "review" }, { denied: "library.state.reviewDenied", failed: "library.state.reviewFailed" })
-              : confirm.show({
-                  title: t("library.state.makeAutoConfirmTitle"),
-                  description: t("library.state.makeAutoConfirm", { noun }),
-                  actionLabel: t("library.state.makeAuto"),
-                  actionVariant: "primary",
-                  onAction: () => {
-                    confirm.hide();
-                    void apply(
-                      { agent_mode: "auto" },
-                      { denied: "library.state.autoDenied", failed: "library.state.autoFailed" },
-                      t("library.state.agentAutoDone"),
-                    );
-                  },
-                }),
-        },
       ];
-      if (manages(doc.owner)) return entries;
-      // The reason once, under the first of the three it covers.
-      return entries.map((item, i) => ({ ...item, isDisabled: true, ...(i === 0 ? { description: t("library.state.managersOnly") } : {}) }));
+      // The dialog says who may change the level, and shows it to anyone.
+      const level = review.item({ kind: noun, doc, onChanged });
+      if (manages(doc.owner)) return [...entries, level];
+      // The reason once, under the first of the two it covers.
+      return [
+        ...entries.map((item, i) => ({ ...item, isDisabled: true, ...(i === 0 ? { description: t("library.state.managersOnly") } : {}) })),
+        level,
+      ];
     },
-    [toast, manages, confirm.show, confirm.hide],
+    [toast, manages, review.item],
   );
-  return useMemo(() => ({ items, dialog: confirm.element }), [items, confirm.element]);
+  return useMemo(() => ({ items, dialog: review.dialog }), [items, review.dialog]);
 }

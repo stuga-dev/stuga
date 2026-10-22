@@ -236,7 +236,7 @@ export function WorkspaceOnboarding() {
               ) : held?.left_out ? (
                 <>
                   <Heading level={1}>{t("shell.createWorkspace.importTitle")}</Heading>
-                  {error && <Banner ref={errorRef} status="error" title={t("auth.onboarding.createFailed")} description={error} />}
+                  {error && <Banner ref={errorRef} status="error" role="alert" title={t("auth.onboarding.createFailed")} description={error} />}
                   <LeftOutList leftOut={held.left_out} />
                   <TextInput
                     label={t("auth.onboarding.nameLabel")}
@@ -268,7 +268,7 @@ export function WorkspaceOnboarding() {
                 {importing !== null && (
                   <Banner ref={importingRef} status="info" title={t("auth.onboarding.importMayFinish")} description={t("auth.onboarding.importMayFinishBody")} />
                 )}
-                {error && <Banner ref={errorRef} status="error" title={t("auth.onboarding.createFailed")} description={error} />}
+                {error && <Banner ref={errorRef} status="error" role="alert" title={t("auth.onboarding.createFailed")} description={error} />}
                 <VStack gap={4}>
                   <StartWith value={start} onChange={setStart} samples={samples} isDisabled={busy} />
                   <TextInput

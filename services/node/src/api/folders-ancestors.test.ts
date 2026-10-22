@@ -59,6 +59,10 @@ const redacted = (folderId: string, parentId: string | null) => ({
   owner: null,
   created_at: null,
   updated_at: null,
+  // How AI edits beneath it are reviewed is the folder's too: null, as the API says, rather than left out.
+  agent_mode: null,
+  agent_mode_floor: null,
+  approver_group: null,
 });
 
 beforeEach(() => {

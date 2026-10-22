@@ -15,7 +15,7 @@ export interface RetrieveArgs {
   /** A scoped key's folders; null for no folder restriction. */
   scopeFolderIds?: string[] | null;
   embeddingDims: number;
-  /** Read as the query is built: a rebuild of the search indexes changes them. */
+  /** Read as the query is built: Settings can change them at any time. */
   searchLanguages: () => readonly SearchLanguage[];
   topN: number;
   maxPerDoc?: number;

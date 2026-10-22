@@ -51,7 +51,7 @@
   "personPicker.placeholder": "Pesquisar por nome de usuário ou nome",
   "personPicker.noMatch": "Ninguém corresponde.",
   "searchLanguages.label": "Idiomas dos seus documentos",
-  "searchLanguages.hint": "A pesquisa reconhece terminações e divisões de palavras nos idiomas escolhidos. Nos demais, só palavras exatas correspondem.",
+  "searchLanguages.hint": "A pesquisa reconhece as terminações das palavras nos idiomas escolhidos. Nos demais, só palavras exatas correspondem.",
   "searchLanguages.alwaysOn": "Sempre ativo",
   "searchLanguages.find": "Encontrar um idioma",
   "principal.everyone": "Todos",

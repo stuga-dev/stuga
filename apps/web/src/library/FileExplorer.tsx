@@ -38,6 +38,7 @@ import { LibraryToolbar, LibrarySelectionBar, type OwnerFilter, type TypeFilter 
 import { useLibrarySelection } from "./use-library-selection";
 import { useCollectionsMenu } from "./use-collections-menu";
 import { useInstructionsDialog } from "./use-instructions-dialog";
+import { useReviewLevelDialog } from "./use-review-level-dialog";
 import { useMoveCheck } from "./use-move-check";
 import { useDocFileActions } from "./doc-file-actions";
 import { useIsCompact, useIsNarrow } from "../ui/narrow";
@@ -100,7 +101,7 @@ export function FileExplorer({
   onSearch,
 }: FileExplorerProps) {
   const [renaming, setRenaming] = useState<{ kind: "folder" | "doc"; id: string; title: string } | null>(null);
-  const [deleting, setDeleting] = useState<{ id: string; title: string; counts: { docs: number; folders: number } | null } | null>(null);
+  const [deleting, setDeleting] = useState<{ id: string; title: string; counts: { docs: number; folders: number; locked: number } | null } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [dragging, setDragging] = useState<LibraryDragItem[] | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -147,6 +148,7 @@ export function FileExplorer({
   });
   const collectionsMenu = useCollectionsMenu({ refreshKey: refreshKey + localKey, setBusy: setBulkBusy });
   const instructions = useInstructionsDialog();
+  const folderReview = useReviewLevelDialog();
   const moveCheck = useMoveCheck();
   const fileActions = useDocFileActions({ onCopied: bump });
 
@@ -274,7 +276,7 @@ export function FileExplorer({
     setDeleting({ id, title, counts: null });
     Folders.contents(id)
       .then((counts) => setDeleting((cur) => (cur?.id === id ? { ...cur, counts } : cur)))
-      .catch(() => setDeleting((cur) => (cur?.id === id ? { ...cur, counts: { docs: 0, folders: 0 } } : cur)));
+      .catch(() => setDeleting((cur) => (cur?.id === id ? { ...cur, counts: { docs: 0, folders: 0, locked: 0 } } : cur)));
   }
 
   async function doDelete() {
@@ -343,10 +345,20 @@ export function FileExplorer({
       : [];
     const instructionsItem = (kind: "folder" | "document" | "database") => instructions.item({ kind, id: row.id, title: row.title });
     if (row.kind === "folder") {
+      const folder = row.folder;
       return [
         { label: t("library.item.share"), icon: <Share2 size={15} />, onClick: () => onShareFolder(row.id) },
         { label: t("common.renameEllipsis"), icon: <Pencil size={15} />, onClick: () => setRenaming({ kind: "folder", id: row.id, title: row.title }) },
         instructionsItem("folder"),
+        ...(folder
+          ? [
+              folderReview.item({
+                kind: "folder",
+                folder,
+                onChanged: (next) => setRows((cur) => cur?.map((r) => (r.id === next.folder_id ? { ...r, folder: next } : r)) ?? cur),
+              }),
+            ]
+          : []),
         { label: t("library.item.moveToFolder"), icon: <FolderInput size={15} />, onClick: () => onMoveFolder(row.id) },
         ...addToCollection,
         { label: t("library.item.deleteFolder"), icon: <Trash2 size={15} />, onClick: () => askDelete(row.id, row.title) },
@@ -619,6 +631,7 @@ export function FileExplorer({
       />
       {collectionsMenu.dialog}
       {instructions.dialog}
+      {folderReview.dialog}
       {moveCheck.dialog}
       {stateMenu.dialog}
       <AlertDialog
@@ -626,17 +639,19 @@ export function FileExplorer({
         onOpenChange={(o) => !o && !deleteBusy && setDeleting(null)}
         title={t("common.deleteNamed", { name: deleting?.title || t("common.untitledFolder") })}
         description={describeDelete(deleting?.counts ?? null)}
-        actionLabel={t("library.explorer.deleteAction")}
+        actionLabel={deleting?.counts?.locked ? t("common.close") : t("library.explorer.deleteAction")}
+        actionVariant={deleting?.counts?.locked ? "secondary" : "destructive"}
         isActionLoading={deleteBusy}
-        onAction={doDelete}
+        onAction={deleting?.counts?.locked ? () => setDeleting(null) : doDelete}
       />
     </div>
   );
 }
 
-function describeDelete(counts: { docs: number; folders: number } | null): string {
+function describeDelete(counts: { docs: number; folders: number; locked: number } | null): string {
   if (!counts) return t("library.explorer.deleteChecking");
-  const { docs, folders } = counts;
+  const { docs, folders, locked } = counts;
+  if (locked > 0) return t("library.explorer.deleteLocked", { locked });
   const days = TRASH_RETENTION_DAYS;
   if (docs > 0 && folders > 0) return t("library.explorer.deleteBoth", { docs, folders, days });
   if (docs > 0) return t("library.explorer.deleteDocs", { docs, days });

@@ -1,5 +1,6 @@
 /** Messages on the node's background job queue, produced by actors and routes. */
 import type { AuditStatus } from "../domain/audit.js";
+import type { ReviewMode } from "../domain/events.js";
 import type { DocNotification } from "../notify/events.js";
 
 interface IndexDocFields {
@@ -29,6 +30,7 @@ export type IndexMessage =
     })
   | { kind: "gc_check"; docId: string }
   | NotifyMessage
+  | NotifyApproversMessage
   | NotifyDeliverMessage
   | {
       kind: "ai_usage";
@@ -114,7 +116,42 @@ export type NotifyMessage = {
    * the hour are one notification. The root's creation time keeps a reused number a new thread.
    */
   thread?: string;
+  /** `docId` names a folder: the link opens it in the library. */
+  folder?: true;
 } & DocNotification;
+
+/**
+ * Tell the people who may approve a run at `colleague` that it waits for them: an APPROVAL_WAITING
+ * notification each, or APPROVER_NEEDED to the item's owner and admins when nobody may yet. The node
+ * works out who they are when it runs, from who can edit the item then; the run's reviewer is never
+ * one of them.
+ */
+export type NotifyApproversMessage = {
+  kind: "notify_approvers";
+  workspaceId: string;
+  docId: string;
+  runId: string;
+  /** The person who asked the AI. */
+  reviewer: string;
+  /** The approver group the run was proposed under, or null. */
+  approverGroup: string | null;
+  /** The agent's id, which the notifications name as their actor. */
+  actor: string;
+  /** The agent's display name, the item's title and how many changes wait. */
+  agent: string;
+  doc: string;
+  count: number;
+  /**
+   * Whether the person who asked was told that the run waits for a colleague, which a chat channel
+   * then hears instead of a post per approver. The in-app co-author's runs tell nobody who is watching.
+   */
+  askerTold: boolean;
+  /**
+   * Set when a folder's approver group changed while the run waited: the group its item followed
+   * before (null for none). Only those who may approve now and could not then are told.
+   */
+  groupBefore?: string | null;
+};
 
 /**
  * Hand one stored notification to the configured sink. Queued with the row it
@@ -156,7 +193,11 @@ export interface RunIndexEntry {
   model: string | null;
   reviewer: string;
   status: string;
-  reviewMode: "review" | "auto";
+  reviewMode: ReviewMode;
+  /** The approver group the run was proposed under, or null. */
+  approverGroup: string | null;
+  /** Who accepted its changes at `colleague`; never its reviewer. */
+  approvedBy: string[];
   autoApplied: boolean;
   reverted: boolean;
   acknowledged: boolean;

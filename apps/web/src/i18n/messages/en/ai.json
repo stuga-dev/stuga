@@ -16,6 +16,7 @@
   "panel.exampleTable": "Turn the notes at the end into a table",
   "panel.emptyAuto": "AI edits to this document apply directly: they land when a turn ends, recorded and revertible. This chat is private.",
   "panel.emptyReview": "Every edit appears in the document as a suggestion you accept or reject there. This chat is private: only edits you accept reach version history.",
+  "panel.emptyColleague": "Every edit appears in the document as a suggestion a colleague approves there; you can reject it. This chat is private: only approved edits reach version history.",
   "panel.uploading": "Uploading…",
   "panel.revisionPaused": "{count, plural, one {Revision paused} other {Revision paused · # requests}}",
   "panel.revisionQueued": "{count, plural, one {Revision queued} other {Revision queued · # requests}}",

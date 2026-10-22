@@ -204,6 +204,7 @@ describe("text direction", () => {
       locked: false,
       search_hidden: false,
       agent_mode: "review",
+      agent_mode_floor: null,
       page_of: "d_db",
       page_row: "t_1.r_1",
     };

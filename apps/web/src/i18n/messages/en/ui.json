@@ -51,7 +51,7 @@
   "personPicker.placeholder": "Search by username or name",
   "personPicker.noMatch": "No one matches.",
   "searchLanguages.label": "Languages in your documents",
-  "searchLanguages.hint": "Search knows word endings and word breaks in the languages chosen. Others match exact words.",
+  "searchLanguages.hint": "Search knows word endings in the languages chosen. Others match exact words.",
   "searchLanguages.alwaysOn": "Always on",
   "searchLanguages.find": "Find a language",
   "principal.everyone": "Everyone",

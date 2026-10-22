@@ -96,8 +96,8 @@ it starts, and a backup taken at another `PUBLIC_ORIGIN`, after which everyone s
 `verify` only reads.
 
 `verify --going-back` also compares the current database's extensions with the backup's, and
-refuses when one both hold is at another version: an older pg_search or pgvector never opens indexes
-a newer one wrote. The packagings' restore commands pass it when they go back, and the backup's own
+refuses when one both hold is at another version: an older pgvector never opens indexes a newer one
+wrote. The packagings' restore commands pass it when they go back, and the backup's own
 release then serves it at its own schema, so no note says it migrates.
 
 ### list
@@ -114,12 +114,11 @@ the build that took it, and `before_upgrade`.
 to type the backup's name, unless you pass `--yes`.
 
 Before it changes anything, it refuses while a node or another backup or restore holds the database.
-It also refuses when the backup does not verify, when Postgres cannot load pg_search, or when there
-is no room for a second copy of both halves. Then it:
+It also refuses when the backup does not verify, or when there is no room for a second copy of both
+halves. Then it:
 
 1. extracts the archive beside the data directory, into `<DATA_DIR>.restore-<stamp>`;
-2. restores the dump into a new database, `<database>_restore_<stamp>`, without the search indexes,
-   which the node builds when it starts;
+2. restores the dump into a new database, `<database>_restore_<stamp>`;
 3. swaps by renaming, keeping the current halves as `<database>_replaced_<stamp>` and
    `<DATA_DIR>.replaced-<stamp>`.
 
@@ -307,7 +306,7 @@ commit, before anything else writes, the node's log names both versions:
 
 ### Going back
 
-From 0.1.12 on, an earlier release never changes data a later one served, because the later one may
+An earlier release never changes data a later one served, because the later one may
 have changed what it means. Before it writes or backs anything up, a node refuses a database whose
 schema is newer than it knows, or which a newer release served last. It keeps running and changes
 nothing until it is stopped: `/ready` answers `refused`, and a browser gets a page that names the
@@ -331,8 +330,8 @@ that version back: `./stuga restore <backup>` on [Docker](install/docker.md#roll
 `sudo "/Library/Application Support/Stuga/current/bin/stuga" restore <backup>` on a
 [Mac](install/macos.md#go-back-to-an-earlier-version). **Settings → This node → Backups** shows the
 command beside each backup. That backup holds the data as it was before the upgrade. Going back
-stops at a release that changed pg_search or pgvector: `verify --going-back` refuses to cross it,
-and its upgrade notes say so.
+stops at a release that changed pgvector: `verify --going-back` refuses to cross it, and its upgrade
+notes say so.
 
 The other reasons a node refuses to start are listed in
 [Troubleshooting](troubleshooting.md#the-node-does-not-start).

@@ -6,7 +6,7 @@
 #   TEST_DATABASE_URL=postgres:///stuga_test scripts/test-integration.sh    a Postgres you run
 #   scripts/test-integration.sh                                             packaging/docker/test/compose.postgres.yml
 #
-# The database needs pgvector and a preloaded pg_search. The backup suite runs pg_dump and pg_restore
+# The database needs pgvector, pg_trgm and btree_gin. The backup suite runs pg_dump and pg_restore
 # of the server's major from PG_BIN, or from PATH. The published samples' suite builds each sample
 # from SAMPLES_DIR, a checkout of stuga-dev/samples, ../samples when there is one, and skips without.
 #

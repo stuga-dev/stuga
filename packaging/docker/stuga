@@ -430,9 +430,9 @@ refusal_line() {
   compose logs --no-log-prefix --tail 50 node 2>/dev/null | sed -n 's/.*refusing this database: //p' | tail -1 || true
 }
 
-# A first boot can migrate and build search indexes before it listens, so this waits while the
-# container stays up and shows progress (a new log line, or an unblocked statement in Postgres),
-# and gives up when it exits, restarts, goes quiet for READY_QUIET_SECONDS or passes READY_MAX_SECONDS.
+# A first boot can back up and migrate before it serves, so this waits while the container stays up
+# and shows progress (a new log line, or an unblocked statement in Postgres), and gives up when it
+# exits, restarts, goes quiet for READY_QUIET_SECONDS or passes READY_MAX_SECONDS.
 wait_node_ready() {
   local id status restarts first elapsed=0 quiet=0 log="" last_log="" busy
   id="$(compose ps -q node 2>/dev/null | head -1)"
@@ -468,7 +468,7 @@ wait_node_ready() {
       return 1
     fi
     if [ $((elapsed % 30)) -eq 0 ]; then
-      say "  still starting after ${elapsed}s (a first boot can migrate and build search indexes before it serves)"
+      say "  still starting after ${elapsed}s (a first boot can back up and migrate before it serves)"
     fi
   done
 }

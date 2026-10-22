@@ -136,8 +136,8 @@ jobs:
           fi
           printf '%s\n' "$items" > "$RUNNER_TEMP/watch.json"
           # Every page, each a list: an advisory missing from what was read would close its issue.
-          for spec in "frp fatedier/frp $FRP_VERSION" "pg_search paradedb/paradedb $PG_SEARCH_VERSION" \
-            "pgvector pgvector/pgvector $PGVECTOR_VERSION" "postgres.app PostgresApp/PostgresApp $POSTGRES_APP_VERSION"; do
+          for spec in "frp fatedier/frp $FRP_VERSION" "pgvector pgvector/pgvector $PGVECTOR_VERSION" \
+            "postgres.app PostgresApp/PostgresApp $POSTGRES_APP_VERSION"; do
             read -r name repo version <<< "$spec"
             gh api --paginate --slurp "repos/$repo/security-advisories?per_page=100" \
               | jq 'if all(type == "array") then add else error("not a list of advisories") end' \

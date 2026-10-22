@@ -8,8 +8,8 @@ directory.
 ## Pins
 
 `packaging/versions.env` lists every pinned input: Node, pnpm, the Postgres major, pgvector,
-pg_search, Postgres.app, the Debian line and the PGDG key, and for the remote-access connector the
-frp commit, Go and go-licenses. Downloads are pinned by sha256.
+Postgres.app, the Debian line and the PGDG key, and for the remote-access connector the frp commit,
+Go and go-licenses. Downloads are pinned by sha256.
 `INITDB_ARGS` is the one cluster spec for both platforms.
 `packaging/check-pins.sh` fails when `.nvmrc`, the root `package.json` (`packageManager`,
 `@types/node`) or a Dockerfile `ARG` default disagrees with it. It also fails when the Postgres
@@ -79,7 +79,7 @@ The version appears in these places:
 |---|---|
 | `serve` | Run the node. |
 | `backup [--json]` | Back up the database and the data directory into `BACKUP_DIR`, verified, pruned to the number the node's settings keep. |
-| `verify <backup> [--going-back] [--json]` | Check that a backup is whole and that this build can restore it. With `--going-back`, the backup's own release restores it: also refuse when an extension both the current database and the backup hold is at another version, and leave out the note that the node migrates an older schema. Builds before 0.1.12 ignore the flag. |
+| `verify <backup> [--going-back] [--json]` | Check that a backup is whole and that this build can restore it. With `--going-back`, the backup's own release restores it: also refuse when an extension both the current database and the backup hold is at another version, and leave out the note that the node migrates an older schema. |
 | `restore <backup> [--yes] [--json]` | Replace the database and the data directory. The current ones are kept beside the restored ones. |
 | `list [--json]` | List backups, marking those taken before an upgrade, unfinished work, and what restores kept. |
 | `reset-password <username>` | Print a password reset link. |
@@ -207,8 +207,7 @@ count only beside `STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR`.
 ## Postgres
 
 - Postgres `PG_MAJOR` only. The node refuses any other major.
-- pgvector must be available, and pg_search must be available and listed in
-  `shared_preload_libraries`.
+- pgvector and the contrib extensions pg_trgm and btree_gin must be available.
 - The database must use the builtin locale provider with `C.UTF-8`. Create the cluster with
   `initdb $INITDB_ARGS`, which also enables data checksums, or create the database with
   `LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8' TEMPLATE template0`. The node refuses any other
@@ -222,7 +221,7 @@ count only beside `STUGA_REMOTE_SERVICE` and `STUGA_REMOTE_DIR`.
   is no other health endpoint. With `TLS_CERT_DIR` set the node answers only https, so a probe
   follows it. The node listens as soon as it holds its database, and until it serves `/ready`
   answers 503 with a `status` (`starting`, `backing_up`, `upgrading`) and every other request gets
-  a 503, a browser a page that says why. A boot can back up, migrate and build search indexes first,
+  a 503, a browser a page that says why. A boot can back up and migrate first,
   so a supervisor should wait for progress rather than use a short timeout. A running node also
   answers 503 (`maintenance`) for the moment it pauses to back itself up. `refused`, with no
   `retry-after`, is a node that refuses its database ([Version](#version)): it changes nothing and

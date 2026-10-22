@@ -16,6 +16,7 @@
   "panel.exampleTable": "끝부분 메모를 표로 바꾸기",
   "panel.emptyAuto": "이 문서의 AI 편집은 바로 적용돼요. 응답이 끝나면 반영되고, 기록되며 되돌릴 수 있어요. 이 채팅은 비공개예요.",
   "panel.emptyReview": "모든 편집은 문서에 제안으로 표시되고, 문서에서 수락하거나 거부해요. 이 채팅은 비공개예요. 수락한 편집만 버전 기록에 남아요.",
+  "panel.emptyColleague": "모든 편집은 문서에 제안으로 표시되고, 동료가 문서에서 승인해요. 거부는 할 수 있어요. 이 채팅은 비공개예요. 승인된 편집만 버전 기록에 남아요.",
   "panel.uploading": "업로드 중…",
   "panel.revisionPaused": "{count, plural, =1 {수정 일시 중지됨} other {수정 일시 중지됨 · 요청 #개}}",
   "panel.revisionQueued": "{count, plural, =1 {수정 대기 중} other {수정 대기 중 · 요청 #개}}",

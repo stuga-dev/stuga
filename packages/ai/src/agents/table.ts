@@ -32,6 +32,8 @@ export interface TableAgentInput {
   collectionEnabled?: boolean;
   /** The database applies agent changes at once, without review. */
   applyAtOnce?: boolean;
+  /** The database's changes wait for a colleague of the user to approve them. */
+  colleagueApproves?: boolean;
   maxRounds?: number;
   /** The instructions for agents that apply to the database, outermost first; appended to the system prompt. */
   instructions?: InstructionLevel[];
@@ -101,6 +103,8 @@ const REVIEW_LINE =
   "Proposing changes (each call proposes ONE change for the user to Accept or Reject in their grid — changes are NOT applied until accepted, so say you suggested or proposed them, never that you added, changed or staged them):";
 const APPLY_AT_ONCE_LINE =
   "Making changes (this database is set to apply agent changes at once: each call applies ONE change without review, and the user can revert it):";
+const COLLEAGUE_LINE =
+  "Proposing changes (each call proposes ONE change that a colleague of the user approves in the grid — changes are NOT applied until someone other than the user accepts them, and the user may reject them; say you suggested or proposed them, never that you added, changed or staged them):";
 
 const TABLE = Type.String({ description: "Table reference: table_id, physical name, or display name." });
 /** One `type` list rather than `anyOf`, which some OpenAI-compatible servers mishandle. */
@@ -127,7 +131,7 @@ export async function runTableAgentTurn(
   const system =
     SYSTEM.replace("{{SEARCH_TOOL}}", `${collectionEnabled ? SEARCH_TOOL_LINE : NO_SEARCH_LINE}\n`).replace(
       "{{WRITES}}",
-      input.applyAtOnce ? APPLY_AT_ONCE_LINE : REVIEW_LINE,
+      input.applyAtOnce ? APPLY_AT_ONCE_LINE : input.colleagueApproves ? COLLEAGUE_LINE : REVIEW_LINE,
     ) +
     instructionsBlock(input.instructions);
 

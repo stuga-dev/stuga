@@ -5,7 +5,8 @@
  */
 import { DATABASE_RUN_KEEP, DATABASE_RUN_LIST_DEFAULT } from "@stuga/protocol/databases/limits";
 import type { DatabaseActor as DatabaseActorIdentity, DatabaseRunOpPayload, DatabaseRunSummary } from "@stuga/protocol/databases/types";
-import { clampRunLimit, newFeedbackId, parseDecisionNote, type RunFeedback } from "@stuga/protocol/domain/runs";
+import type { ReviewMode } from "@stuga/protocol/domain/events";
+import { actLevel, clampRunLimit, mayActOnRun, newFeedbackId, parseDecisionNote, parseReviewMode, type RunAct, type RunFeedback } from "@stuga/protocol/domain/runs";
 import type { DatabaseRunDecidedPayload } from "@stuga/protocol/wire/db-socket";
 import { encodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
@@ -33,15 +34,27 @@ import {
   type RunRow,
 } from "./runs.js";
 
-/** A run exists and the caller is its reviewer, or the node vouches for them as a manager. Fails closed on a missing name. */
-function reviewerOf(db: Database, body: Record<string, unknown>, field: string): { run: RunRow; by: string } {
+/**
+ * A run exists and the caller may do `act` on it (mayActOnRun) at the level the act is judged at
+ * (actLevel: the stricter of its level and the one the node vouches the database is at now, or for
+ * a dismissal its own), with the node's word on whether they may approve at `colleague`
+ * (`approver`) and manage the database (`manager_override`). Fails closed on a missing name.
+ */
+function deciderOf(db: Database, body: Record<string, unknown>, field: string, act: RunAct): { run: RunRow; by: string; level: ReviewMode } {
   const run = getRun(db.sql, body.run_id);
   if (!run) throw new OpError(404, "run_not_found", `no run with id ${String(body.run_id)}`);
   const by = body[field];
-  if (typeof by !== "string" || by === "" || (by !== run.reviewer && body.manager_override !== true)) {
+  const level = actLevel(act, run.review_mode, parseReviewMode(body.level));
+  const allowed =
+    typeof by === "string" &&
+    mayActOnRun({ act, level, by, reviewer: run.reviewer, approver: body.approver === true, manager: body.manager_override === true });
+  if (!allowed) {
+    if (level === "colleague" && by === run.reviewer) {
+      throw new OpError(403, "own_run", "a colleague approves this run, not the person who asked the AI");
+    }
     throw new OpError(403, "not_reviewer", "only this run's reviewer can decide it");
   }
-  return { run, by };
+  return { run, by: by as string, level };
 }
 
 function idsOf(minted: Record<string, string | string[]>): string[] {
@@ -51,10 +64,10 @@ function idsOf(minted: Record<string, string | string[]>): string[] {
 export async function handleRunDecide(db: Database, req: Request): Promise<Response> {
   const body = await readJson(req);
   const keep = parseOpsKeep(body);
-  const { run, by: decidedBy } = reviewerOf(db, body, "decided_by");
-  db.requireUnlocked("this database is locked; unlock it to review changes");
   const decision = body.decision;
   if (decision !== "accept" && decision !== "reject") throw new OpError(400, "bad_request", "decision must be accept or reject");
+  const { run, by: decidedBy, level } = deciderOf(db, body, "decided_by", decision);
+  db.requireUnlocked("this database is locked; unlock it to review changes");
   const note = parseDecisionNote(decision, body.note);
   if (!note.ok) throw new OpError(400, "bad_request", note.message);
   // One decision, one feedback: the agent is told its rejected ops together, under the reviewer's note.
@@ -89,7 +102,7 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
     if (decision === "reject") {
       const payload = payloads.get(op.op_id)!;
       const detail = feedback ? opDetail(payload, (id) => columnName(op.table_id, id)) : undefined;
-      if (setOpStatus(db.sql, run.run_id, op.op_id, "rejected", { decidedBy, feedback: feedback && { ...feedback, ...(detail ? { detail } : {}) } })) {
+      if (setOpStatus(db.sql, run.run_id, op.op_id, "rejected", { decidedBy, level, feedback: feedback && { ...feedback, ...(detail ? { detail } : {}) } })) {
         statusOf.set(op.op_id, "rejected");
         rejected++;
       }
@@ -113,7 +126,7 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
       continue;
     }
     if (dep === "dead") {
-      if (setOpStatus(db.sql, run.run_id, op.op_id, "conflict", { decidedBy, error: "depends on a change that was rejected" })) {
+      if (setOpStatus(db.sql, run.run_id, op.op_id, "conflict", { decidedBy, level, error: "depends on a change that was rejected" })) {
         statusOf.set(op.op_id, "conflict");
         conflicts++;
       }
@@ -123,7 +136,7 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
       await commitOp(db, opDef(payload.kind), payload, {
         actor: runActor(run),
         keep,
-        claim: { runId: run.run_id, opId: op.op_id, status: "accepted", decidedBy },
+        claim: { runId: run.run_id, opId: op.op_id, status: "accepted", decidedBy, level },
       });
       statusOf.set(op.op_id, "accepted");
       applied++;
@@ -135,7 +148,7 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
         deferred++;
         continue;
       }
-      if (setOpStatus(db.sql, run.run_id, op.op_id, "conflict", { decidedBy, error: e.message })) {
+      if (setOpStatus(db.sql, run.run_id, op.op_id, "conflict", { decidedBy, level, error: e.message })) {
         statusOf.set(op.op_id, "conflict");
         conflicts++;
       }
@@ -172,7 +185,7 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
 }
 
 export async function handleRunAck(db: Database, req: Request): Promise<Response> {
-  const { run } = reviewerOf(db, await readJson(req), "acked_by");
+  const { run } = deciderOf(db, await readJson(req), "acked_by", "ack");
   const now = Date.now();
   acknowledgeRun(db.sql, run.run_id, now);
   // Marking a run reviewed also withdraws what the reviewer requested on it.
@@ -190,7 +203,7 @@ export async function handleRunAck(db: Database, req: Request): Promise<Response
 export async function handleRunRevert(db: Database, req: Request): Promise<Response> {
   const body = await readJson(req);
   const keep = parseOpsKeep(body);
-  const { run, by: requestedBy } = reviewerOf(db, body, "requested_by");
+  const { run, by: requestedBy } = deciderOf(db, body, "requested_by", "revert");
   db.requireUnlocked("this database is locked; unlock it to revert changes");
   if (run.reverted) throw new OpError(409, "already_reverted", "this run was already reverted");
   const note = parseDecisionNote("revert", body.note);

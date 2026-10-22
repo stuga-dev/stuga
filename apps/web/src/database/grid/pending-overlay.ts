@@ -13,6 +13,8 @@ interface GhostInsert {
   opId: string;
   agent: string;
   payload: DbRunOpRowsInsert;
+  /** Its Accept is someone else's: this reader asked the AI for it at `colleague`. */
+  acceptBlocked?: true;
 }
 
 interface PendingOverlay {
@@ -29,7 +31,7 @@ interface PendingOverlay {
 /** Ops whose payload was elided on the wire paint nothing until their detail arrives. */
 export function pendingOverlay(pending: readonly PendingOp[]): PendingOverlay {
   const overlay: PendingOverlay = { ghostCols: [], updates: new Map(), deletes: new Set(), inserts: [] };
-  for (const { runId, agent, op } of pending) {
+  for (const { runId, agent, op, acceptBlocked } of pending) {
     const payload = op.payload;
     if (!payload || payload.kind !== op.kind) continue;
     switch (payload.kind) {
@@ -47,7 +49,7 @@ export function pendingOverlay(pending: readonly PendingOp[]): PendingOverlay {
         for (const id of payload.row_ids) overlay.deletes.add(id);
         break;
       case "rows.insert":
-        overlay.inserts.push({ runId, opId: op.id, agent, payload });
+        overlay.inserts.push({ runId, opId: op.id, agent, payload, ...(acceptBlocked ? { acceptBlocked } : {}) });
         break;
     }
   }

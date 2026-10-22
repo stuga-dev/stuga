@@ -51,7 +51,7 @@
   "personPicker.placeholder": "按用户名或姓名搜索",
   "personPicker.noMatch": "没有匹配的人。",
   "searchLanguages.label": "文档中的语言",
-  "searchLanguages.hint": "搜索能识别所选语言中的词形变化和分词。其他语言按完整词语匹配。",
+  "searchLanguages.hint": "搜索能识别所选语言中的词形变化。其他语言按完整词语匹配。",
   "searchLanguages.alwaysOn": "始终启用",
   "searchLanguages.find": "查找语言",
   "principal.everyone": "所有人",

@@ -16,6 +16,7 @@
   "panel.exampleTable": "Convierte las notas del final en una tabla",
   "panel.emptyAuto": "Las ediciones de IA en este documento se aplican directamente: llegan al terminar cada turno, quedan registradas y se pueden revertir. Este chat es privado.",
   "panel.emptyReview": "Cada edición aparece en el documento como una sugerencia que aceptas o rechazas allí. Este chat es privado: solo las ediciones que aceptas llegan al historial de versiones.",
+  "panel.emptyColleague": "Cada edición aparece en el documento como una sugerencia que un compañero aprueba allí; tú puedes rechazarla. Este chat es privado: solo las ediciones aprobadas llegan al historial de versiones.",
   "panel.uploading": "Subiendo…",
   "panel.revisionPaused": "{count, plural, one {Reescritura en pausa} many {Reescritura en pausa · # solicitudes} other {Reescritura en pausa · # solicitudes}}",
   "panel.revisionQueued": "{count, plural, one {Reescritura en cola} many {Reescritura en cola · # solicitudes} other {Reescritura en cola · # solicitudes}}",

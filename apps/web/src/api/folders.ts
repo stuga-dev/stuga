@@ -1,4 +1,5 @@
 import { api } from "../lib/http/client";
+import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
 import type { AclModel, DocSort, ItemInstructions, SortOrder } from "./docs";
 
@@ -10,6 +11,12 @@ export interface Folder {
   owner: string;
   created_at: string;
   updated_at: string;
+  /** How AI edits beneath it are reviewed: its own level, else the folder above's, else `review`. */
+  agent_mode: ReviewMode;
+  /** The level the folder above gives it; null when none does. */
+  agent_mode_floor: ReviewMode | null;
+  /** At `colleague`, the group whose members approve beneath it; null for anyone else who can edit. */
+  approver_group: string | null;
 }
 
 /** An enclosing folder the caller cannot read: its place in the chain, nothing about it. */
@@ -20,6 +27,9 @@ export interface HiddenFolder {
   owner: null;
   created_at: null;
   updated_at: null;
+  agent_mode: null;
+  agent_mode_floor: null;
+  approver_group: null;
 }
 
 export const Folders = {
@@ -50,10 +60,13 @@ export const Folders = {
     api<Folder>(`/api/folders/${id}`, { method: "PATCH", body: JSON.stringify({ agent_instructions: text }) }),
   /** Any reader may ask; saving needs `can_edit`. */
   instructions: (id: string) => api<ItemInstructions>(`/api/folders/${id}/instructions`),
+  /** The owner or a workspace admin; a level below the folder above's, its owner or an admin. */
+  setReview: (id: string, patch: { agent_mode?: ReviewMode; approver_group?: string | null }) =>
+    api<Folder>(`/api/folders/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   /** Top level first, ending with the folder itself; an enclosing folder the caller cannot read comes back hidden. */
   ancestors: (id: string) => api<{ ancestors: Array<Folder | HiddenFolder> }>(`/api/folders/${id}/ancestors`),
   /** Active documents and descendant folders, for the delete warning. */
-  contents: (id: string) => api<{ docs: number; folders: number }>(`/api/folders/${id}/contents`),
+  contents: (id: string) => api<{ docs: number; folders: number; locked: number }>(`/api/folders/${id}/contents`),
   /** Owner only. Deletes the subtree; its documents move to Trash. */
   remove: (id: string) =>
     api<{ deleted: boolean; folders: number; docs_trashed: number }>(`/api/folders/${id}`, { method: "DELETE" }),

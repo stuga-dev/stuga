@@ -3,7 +3,7 @@
  * Postgres: it parks rather than exits, writes and backs up nothing, holds its
  * writer lock until it is stopped, and exits 0 on SIGTERM. The operator
  * commands that write refuse the same data. Needs TEST_DATABASE_URL (Postgres
- * 18 preloading pg_search); skips without it.
+ * 18 with pgvector); skips without it.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdtemp, readdir, rm } from "node:fs/promises";

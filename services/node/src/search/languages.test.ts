@@ -1,37 +1,26 @@
 /**
- * The online rebuild's order, one-at-a-time and retries, against a fake
- * Postgres that keeps the bm25 catalog and the settings column and records
- * each statement with the languages queries could name while it ran.
+ * The background pass's order, one-at-a-time and retries, against a fake
+ * Postgres that keeps each document's format and the settings column, and a
+ * fake writer that records each document it writes with what queries used then.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SearchLanguage, Sql } from "@stuga/db";
+import { searchFormat, type SearchLanguage, type Sql } from "@stuga/db";
 import { createSearchLanguages, type SearchLanguages } from "./languages.js";
 
-interface FakeIndex {
-  name: string;
-  table: string;
-  valid: boolean;
-  builtBy: string | null;
+interface Write {
+  docId: string;
+  languages: readonly SearchLanguage[];
+  /** What current() said when the document was written. */
+  current: readonly SearchLanguage[];
 }
 
-interface Step {
-  statement: string;
-  /** What current() said when the statement was sent. */
-  queryable: readonly SearchLanguage[];
-}
+/** A write's failure or hold, chosen by the test; undefined writes it. */
+type Hook = (docId: string, languages: readonly SearchLanguage[]) => Promise<void> | void;
 
-/** A statement's failure or hold, chosen by the test; undefined runs it. */
-type Hook = (statement: string) => Promise<void> | void;
-
-function fakePostgres(indexes: string[]) {
-  const catalog: FakeIndex[] = indexes.map((name) => ({
-    name,
-    table: name.startsWith("docs_") ? "docs" : "doc_chunks",
-    valid: true,
-    builtBy: "pg_search 0.25.9",
-  }));
-  const steps: Step[] = [];
-  const cancelled: string[] = [];
+function fakePostgres(docs: number, languages: readonly SearchLanguage[] = []) {
+  const formats = new Map<string, string | null>();
+  for (let i = 1; i <= docs; i++) formats.set(`d${String(i).padStart(3, "0")}`, searchFormat(languages));
+  const writes: Write[] = [];
   let stored: string[] | null = null;
   let coordinator: SearchLanguages | null = null;
   let hook: Hook = () => {};
@@ -39,100 +28,47 @@ function fakePostgres(indexes: string[]) {
 
   const tagged = (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = strings.join("?");
-    if (text.includes("FROM pg_available_extensions")) return Promise.resolve([{ default_version: "0.25.9" }]);
-    if (text.includes("amname = 'bm25'")) return Promise.resolve(catalog.map((i) => ({ ...i })));
-    if (text.includes("SELECT search_languages FROM node_settings")) {
-      return Promise.resolve(stored === null ? [] : [{ search_languages: stored }]);
+    if (text.includes("search_format IS DISTINCT FROM")) {
+      const [format, after, , limit] = values as [string, string | null, string | null, number];
+      const page = [...formats]
+        .filter(([id, f]) => f !== format && (after === null || id > after))
+        .map(([id]) => id)
+        .sort()
+        .slice(0, limit);
+      return Promise.resolve(page.map((doc_id) => ({ doc_id })));
     }
     if (text.includes("INSERT INTO node_settings")) {
-      const languages = [...(values[0] as string[])];
-      return Promise.resolve(languages)
+      const saved = [...(values[0] as string[])];
+      return Promise.resolve(saved)
         .then(saveHook)
         .then(() => {
-          stored = languages;
+          stored = saved;
           return [];
         });
     }
     return Promise.reject(new Error(`unexpected query: ${text}`));
   };
 
-  const unsafe = (statement: string) => {
-    let reject!: (err: Error) => void;
-    let settled = false;
-    const query = new Promise<void>((resolve, rej) => {
-      reject = rej;
-      steps.push({ statement: statement.split("\n")[0]!.trim(), queryable: coordinator?.current() ?? [] });
-      Promise.resolve(hook(statement))
-        .then(() => {
-          if (settled) return;
-          apply(statement);
-          resolve();
-        })
-        .catch(rej);
-    });
-    return Object.assign(query, {
-      cancel: () => {
-        if (settled) return;
-        settled = true;
-        cancelled.push(statement.split("\n")[0]!.trim().replace(/ USING bm25 \($/, ""));
-        // As Postgres does, a cancelled concurrent build leaves its index behind, invalid.
-        const build = /^CREATE INDEX CONCURRENTLY (\w+) ON (\w+)/.exec(statement);
-        if (build) catalog.push({ name: build[1]!, table: build[2]!, valid: false, builtBy: null });
-        reject(new Error("canceling statement due to user request"));
-      },
-    });
+  const reindex = async (_sql: Sql, docId: string, to: readonly SearchLanguage[]) => {
+    writes.push({ docId, languages: to, current: coordinator?.current() ?? [] });
+    await hook(docId, to);
+    formats.set(docId, searchFormat(to));
   };
-
-  function apply(statement: string): void {
-    const create = /^CREATE INDEX (CONCURRENTLY )?(\w+) ON (\w+)/.exec(statement);
-    if (create) {
-      if (catalog.some((i) => i.name === create[2])) throw new Error(`relation "${create[2]}" already exists`);
-      catalog.push({ name: create[2]!, table: create[3]!, valid: true, builtBy: null });
-      return;
-    }
-    const drop = /^DROP INDEX (CONCURRENTLY )?IF EXISTS "(\w+)"/.exec(statement);
-    if (drop) {
-      catalog.splice(catalog.findIndex((i) => i.name === drop[2]) >>> 0, 1);
-      return;
-    }
-    const comment = /^COMMENT ON INDEX "(\w+)" IS '(.*)'$/.exec(statement);
-    if (comment) {
-      catalog.find((i) => i.name === comment[1])!.builtBy = comment[2]!;
-      return;
-    }
-    throw new Error(`unexpected statement: ${statement}`);
-  }
 
   return {
-    sql: Object.assign(tagged, { unsafe }) as unknown as Sql,
-    catalog,
-    steps,
-    cancelled,
+    sql: tagged as unknown as Sql,
+    reindex,
+    writes,
     stored: () => stored,
+    setFormat: (docId: string, format: string) => void formats.set(docId, format),
+    /** The documents not yet written for `languages`. */
+    behind: (to: readonly SearchLanguage[]) => [...formats].filter(([, f]) => f !== searchFormat(to)).map(([id]) => id),
     watch: (c: SearchLanguages) => void (coordinator = c),
-    onStatement: (h: Hook) => void (hook = h),
+    onWrite: (h: Hook) => void (hook = h),
     /** Run before a save of the setting commits; a rejection fails it. */
     onSave: (h: (languages: string[]) => Promise<void> | void) => void (saveHook = h),
-    /** Leave an invalid index under the name the next concurrent build of `table` makes, and fail it. */
-    failNextBuild(table: string) {
-      const previous = hook;
-      let done = false;
-      hook = (statement) => {
-        const m = /^CREATE INDEX CONCURRENTLY (\w+) ON (\w+)/.exec(statement);
-        if (!done && m && m[2] === table) {
-          done = true;
-          catalog.push({ name: m[1]!, table, valid: false, builtBy: null });
-          throw new Error("could not build the index: concurrent update");
-        }
-        return previous(statement);
-      };
-    },
   };
 }
-
-const BASE = ["docs_bm25_v1", "doc_chunks_bm25_v1"];
-const names = (pg: ReturnType<typeof fakePostgres>) => pg.catalog.map((i) => `${i.name}${i.valid ? "" : " (invalid)"}`).sort();
-const statements = (pg: ReturnType<typeof fakePostgres>) => pg.steps.map((s) => s.statement.replace(/ USING bm25 \($/, ""));
 
 function coordinator(pg: ReturnType<typeof fakePostgres>, languages: SearchLanguage[], over: Partial<Parameters<typeof createSearchLanguages>[0]> = {}) {
   const sleeps: number[] = [];
@@ -141,6 +77,7 @@ function coordinator(pg: ReturnType<typeof fakePostgres>, languages: SearchLangu
     languages,
     retryDelaysMs: [5, 30],
     sleep: async (ms) => void sleeps.push(ms),
+    reindex: pg.reindex,
     ...over,
   });
   pg.watch(c);
@@ -151,88 +88,77 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("the online rebuild", () => {
-  it("builds each table's new index concurrently, drops its old one, and only then lets queries name the new languages", async () => {
+describe("the background pass", () => {
+  it("writes every document in another format again, a page at a time, while queries already use the new languages", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
-    const pg = fakePostgres(BASE);
+    const pg = fakePostgres(250);
     const { c } = coordinator(pg, []);
-    await c.rebuild(["ko"]);
-
-    expect(statements(pg)).toEqual([
-      "CREATE INDEX CONCURRENTLY docs_bm25_v1_ko ON docs",
-      `COMMENT ON INDEX "docs_bm25_v1_ko" IS 'pg_search 0.25.9'`,
-      `DROP INDEX CONCURRENTLY IF EXISTS "docs_bm25_v1"`,
-      "CREATE INDEX CONCURRENTLY doc_chunks_bm25_v1_ko ON doc_chunks",
-      `COMMENT ON INDEX "doc_chunks_bm25_v1_ko" IS 'pg_search 0.25.9'`,
-      `DROP INDEX CONCURRENTLY IF EXISTS "doc_chunks_bm25_v1"`,
-    ]);
-    // Nothing named Korean until the index without it was gone.
-    expect(pg.steps.every((s) => s.queryable.length === 0)).toBe(true);
-    expect(c.current()).toEqual(["ko"]);
-    expect(names(pg)).toEqual(["doc_chunks_bm25_v1_ko", "docs_bm25_v1_ko"]);
-    expect(c.status()).toEqual({ languages: ["ko"], rebuilding: false, error: null });
-  });
-
-  it("names only the languages both sets share while it runs", async () => {
-    vi.spyOn(console, "info").mockImplementation(() => {});
-    const pg = fakePostgres(["docs_bm25_v1_ko", "doc_chunks_bm25_v1_ko"]);
-    const { c } = coordinator(pg, ["ko"]);
     let during: unknown = null;
-    pg.onStatement(() => void (during ??= { current: c.current(), status: c.status() }));
-    await c.rebuild(["ko", "ar"]);
-    expect(during).toEqual({ current: ["ko"], status: { languages: ["ko", "ar"], rebuilding: true, error: null } });
-    expect(pg.steps.map((s) => s.queryable)).toEqual(pg.steps.map(() => ["ko"]));
-    expect(c.current()).toEqual(["ko", "ar"]);
-    expect(names(pg)).toEqual(["doc_chunks_bm25_v1_ar_ko", "docs_bm25_v1_ar_ko"]);
+    pg.onWrite(() => void (during ??= c.status()));
+    await c.rebuild(["de"]);
 
-    // Korean off: nothing extra is named until the Korean indexes are gone.
-    pg.steps.length = 0;
-    await c.rebuild(["ar"]);
-    expect(pg.steps.map((s) => s.queryable)).toEqual(pg.steps.map(() => ["ar"]));
-    expect(c.current()).toEqual(["ar"]);
+    expect(pg.writes).toHaveLength(250);
+    expect(new Set(pg.writes.map((w) => w.docId)).size).toBe(250);
+    expect(pg.writes.every((w) => w.current.join() === "de" && w.languages.join() === "de")).toBe(true);
+    expect(during).toEqual({ languages: ["de"], rebuilding: true, error: null });
+    expect(pg.behind(["de"])).toEqual([]);
+    expect(c.current()).toEqual(["de"]);
+    expect(c.status()).toEqual({ languages: ["de"], rebuilding: false, error: null });
   });
 
-  it("does nothing for the languages the indexes are already built for", async () => {
-    const pg = fakePostgres(BASE);
-    const { c } = coordinator(pg, []);
-    await c.rebuild([]);
-    expect(pg.steps).toEqual([]);
-    expect(c.status()).toEqual({ languages: [], rebuilding: false, error: null });
-  });
-
-  it("runs one rebuild at a time, and a request for other languages stops the one under way", async () => {
+  it("sweeps again for a document a write in the old languages left behind it", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
-    const pg = fakePostgres(BASE);
+    const pg = fakePostgres(3);
+    const { c } = coordinator(pg, []);
+    let late = true;
+    pg.onWrite((docId) => {
+      // An index job that read the languages before the change commits d001 once the sweep is past it.
+      if (docId === "d003" && late) {
+        late = false;
+        pg.setFormat("d001", searchFormat([]));
+      }
+    });
+    await c.rebuild(["de"]);
+    expect(pg.writes.map((w) => w.docId)).toEqual(["d001", "d002", "d003", "d001"]);
+    expect(pg.behind(["de"])).toEqual([]);
+  });
+
+  it("writes nothing when every document is in the languages' format already", async () => {
+    const pg = fakePostgres(20, ["de"]);
+    const { c } = coordinator(pg, ["de"]);
+    await c.rebuild(["de"]);
+    expect(pg.writes).toEqual([]);
+    expect(c.status()).toEqual({ languages: ["de"], rebuilding: false, error: null });
+  });
+
+  it("runs one pass at a time, and a request for other languages stops the one under way", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const pg = fakePostgres(10);
     const { c } = coordinator(pg, []);
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
-    pg.onStatement((statement) => (statement.startsWith("CREATE INDEX CONCURRENTLY docs_bm25_v1_ko ") ? held : undefined));
+    pg.onWrite((docId, to) => (docId === "d001" && to.join() === "de" ? held : undefined));
 
-    const first = c.rebuild(["ko"]);
-    await vi.waitFor(() => expect(pg.steps).toHaveLength(1));
-    const second = c.rebuild(["ar"]);
-    const third = c.rebuild(["ko", "ar"]);
-    expect(c.status()).toEqual({ languages: ["ko", "ar"], rebuilding: true, error: null });
-    await Promise.all([first, second, third]);
+    const first = c.rebuild(["de"]);
+    await vi.waitFor(() => expect(pg.writes).toHaveLength(1));
+    const second = c.rebuild(["fr"]);
+    const third = c.rebuild(["de", "fr"]);
+    expect(c.current()).toEqual(["de", "fr"]);
+    expect(c.status()).toEqual({ languages: ["de", "fr"], rebuilding: true, error: null });
     release();
+    await Promise.all([first, second, third]);
 
-    expect(pg.cancelled).toEqual(["CREATE INDEX CONCURRENTLY docs_bm25_v1_ko ON docs"]);
-    expect(statements(pg).filter((s) => s.startsWith("CREATE"))).toEqual([
-      "CREATE INDEX CONCURRENTLY docs_bm25_v1_ko ON docs",
-      "CREATE INDEX CONCURRENTLY docs_bm25_v1_ar_ko ON docs",
-      "CREATE INDEX CONCURRENTLY doc_chunks_bm25_v1_ar_ko ON doc_chunks",
-    ]);
-    // The newest request's pass drops what the stopped build left.
-    expect(statements(pg)).toContain(`DROP INDEX CONCURRENTLY IF EXISTS "docs_bm25_v1_ko"`);
-    expect(names(pg)).toEqual(["doc_chunks_bm25_v1_ar_ko", "docs_bm25_v1_ar_ko"]);
-    expect(c.current()).toEqual(["ko", "ar"]);
+    // The German pass stopped at its first document; the newest request's pass wrote every one.
+    expect(pg.writes.filter((w) => w.languages.join() === "de").map((w) => w.docId)).toEqual(["d001"]);
+    expect(pg.writes.filter((w) => w.languages.join() === "fr")).toEqual([]);
+    expect(pg.behind(["de", "fr"])).toEqual([]);
     expect(c.status().rebuilding).toBe(false);
   });
 
-  it("goes back at once when the languages are changed back while a failed build waits to try again", async () => {
+  it("goes back at once when the languages are changed back while a failed pass waits to try again", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    const pg = fakePostgres(["docs_bm25_v1_ar", "doc_chunks_bm25_v1_ar"]);
+    const pg = fakePostgres(3, ["ar"]);
     const waits: number[] = [];
     const { c } = coordinator(pg, ["ar"], {
       // A wait that only a stop or a replacing request ends.
@@ -242,156 +168,148 @@ describe("the online rebuild", () => {
           signal.addEventListener("abort", () => reject(signal.reason), { once: true });
         }),
     });
-    pg.failNextBuild("docs");
-    const korean = c.rebuild(["ko"]);
+    pg.onWrite((docId, to) => {
+      if (docId === "d002" && to.join() === "de") throw new Error("deadlock detected");
+    });
+    const german = c.rebuild(["de"]);
     await vi.waitFor(() => expect(waits).toEqual([5]));
-    expect(c.current()).toEqual([]);
+    expect(c.current()).toEqual(["de"]);
 
-    await Promise.all([korean, c.rebuild(["ar"])]);
+    await Promise.all([german, c.rebuild(["ar"])]);
     expect(c.current()).toEqual(["ar"]);
     expect(c.status()).toEqual({ languages: ["ar"], rebuilding: false, error: null });
-    // Korean was not tried again, and only its leftover went.
-    expect(statements(pg).filter((s) => s.startsWith("CREATE"))).toEqual(["CREATE INDEX CONCURRENTLY docs_bm25_v1_ko ON docs"]);
-    expect(names(pg)).toEqual(["doc_chunks_bm25_v1_ar", "docs_bm25_v1_ar"]);
+    // German was not tried again; what it wrote is written back.
+    expect(pg.writes.map((w) => `${w.docId} ${w.languages.join()}`)).toEqual(["d001 de", "d002 de", "d003 de", "d001 ar", "d003 ar"]);
+    expect(pg.behind(["ar"])).toEqual([]);
   });
 
-  it("drops what a failed build left and tries again after a wait, naming only the shared languages meanwhile", async () => {
+  it("writes the rest past a document it cannot write, then tries that one again after a wait", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const pg = fakePostgres(BASE);
+    const pg = fakePostgres(3);
     const { c, sleeps } = coordinator(pg, []);
-    pg.failNextBuild("doc_chunks");
+    let failures = 1;
+    pg.onWrite((docId) => {
+      if (docId === "d002" && failures-- > 0) throw new Error("canceling statement due to lock timeout");
+    });
     await c.rebuild(["ar"]);
 
     expect(sleeps).toEqual([5]);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("trying again in 0.005s: could not build the index"));
-    expect(statements(pg)).toEqual([
-      "CREATE INDEX CONCURRENTLY docs_bm25_v1_ar ON docs",
-      `COMMENT ON INDEX "docs_bm25_v1_ar" IS 'pg_search 0.25.9'`,
-      `DROP INDEX CONCURRENTLY IF EXISTS "docs_bm25_v1"`,
-      "CREATE INDEX CONCURRENTLY doc_chunks_bm25_v1_ar ON doc_chunks",
-      // The second try keeps the docs index it built, and clears the invalid one before building its name again.
-      `DROP INDEX CONCURRENTLY IF EXISTS "doc_chunks_bm25_v1_ar"`,
-      "CREATE INDEX CONCURRENTLY doc_chunks_bm25_v1_ar ON doc_chunks",
-      `COMMENT ON INDEX "doc_chunks_bm25_v1_ar" IS 'pg_search 0.25.9'`,
-      `DROP INDEX CONCURRENTLY IF EXISTS "doc_chunks_bm25_v1"`,
-    ]);
-    expect(pg.steps.every((s) => s.queryable.length === 0)).toBe(true);
-    expect(names(pg)).toEqual(["doc_chunks_bm25_v1_ar", "docs_bm25_v1_ar"]);
-    expect(c.current()).toEqual(["ar"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("trying again in 0.005s: 1 document could not be indexed, first d002: canceling statement"));
+    expect(pg.writes.map((w) => w.docId)).toEqual(["d001", "d002", "d003", "d002"]);
+    expect(pg.behind(["ar"])).toEqual([]);
+    expect(c.status()).toEqual({ languages: ["ar"], rebuilding: false, error: null });
   });
 
-  it("gives up once the waits are spent, says why, keeps to the shared languages, and tries again when asked", async () => {
+  it("gives up once the waits are spent, says why, and tries again when asked", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const pg = fakePostgres(["docs_bm25_v1_ko", "doc_chunks_bm25_v1_ko"]);
-    const { c, sleeps } = coordinator(pg, ["ko"]);
+    const pg = fakePostgres(2);
+    const { c, sleeps } = coordinator(pg, []);
     let failing = true;
-    pg.onStatement((statement) => {
-      if (failing && statement.startsWith("CREATE INDEX CONCURRENTLY docs_")) throw new Error("canceling statement due to statement timeout");
+    pg.onWrite((docId) => {
+      if (failing && docId === "d001") throw new Error("could not extend file: No space left on device");
     });
-    await c.rebuild(["ko", "ar"]);
+    await c.rebuild(["ar"]);
     expect(sleeps).toEqual([5, 30]);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("gave up rebuilding the keyword indexes for ko, ar after 3 tries"));
-    expect(c.status()).toEqual({ languages: ["ko", "ar"], rebuilding: false, error: "canceling statement due to statement timeout" });
-    expect(c.current()).toEqual(["ko"]);
-    expect(names(pg)).toEqual(["doc_chunks_bm25_v1_ko", "docs_bm25_v1_ko"]);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("gave up writing the keyword index for English, ar after 3 tries"));
+    expect(c.status()).toEqual({
+      languages: ["ar"],
+      rebuilding: false,
+      error: "1 document could not be indexed, first d001: could not extend file: No space left on device",
+    });
+    expect(pg.behind(["ar"])).toEqual(["d001"]);
 
     failing = false;
-    const again = c.rebuild(["ko", "ar"]);
+    const again = c.rebuild(["ar"]);
     // The failure stands until the next try starts.
     expect(c.status()).toMatchObject({ rebuilding: true, error: null });
     await again;
-    expect(c.current()).toEqual(["ko", "ar"]);
-    expect(names(pg)).toEqual(["doc_chunks_bm25_v1_ar_ko", "docs_bm25_v1_ar_ko"]);
+    expect(pg.behind(["ar"])).toEqual([]);
+    expect(c.status()).toEqual({ languages: ["ar"], rebuilding: false, error: null });
   });
 
   it("does not try a replaced request again", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
-    const pg = fakePostgres(BASE);
+    const pg = fakePostgres(2);
     const { c, sleeps } = coordinator(pg, []);
-    let replaced = false;
-    pg.onStatement((statement) => {
-      if (statement.startsWith("CREATE INDEX CONCURRENTLY docs_bm25_v1_ko ")) {
+    pg.onWrite((docId, to) => {
+      if (to.join() === "de") {
         void c.rebuild(["ar"]);
-        replaced = true;
-        pg.catalog.push({ name: "docs_bm25_v1_ko", table: "docs", valid: false, builtBy: null });
-        throw new Error("could not build the index");
+        throw new Error("could not write the document");
       }
     });
-    await c.rebuild(["ko"]);
-    expect(replaced).toBe(true);
+    await c.rebuild(["de"]);
     expect(sleeps).toEqual([]);
     expect(c.current()).toEqual(["ar"]);
-    // The invalid Korean leftover goes with the other indexes the Arabic set does not want.
-    expect(names(pg)).toEqual(["doc_chunks_bm25_v1_ar", "docs_bm25_v1_ar"]);
+    expect(pg.writes.map((w) => `${w.docId} ${w.languages.join()}`)).toEqual(["d001 de", "d001 ar", "d002 ar"]);
   });
 
-  it("cancels the statement in flight when the node stops, and takes no further requests", async () => {
+  it("stops at the next document when the node stops, and takes no further requests", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
-    const pg = fakePostgres(BASE);
+    const pg = fakePostgres(5);
     const { c, sleeps } = coordinator(pg, []);
-    pg.onStatement((statement) => (statement.startsWith("CREATE INDEX CONCURRENTLY") ? new Promise<void>(() => {}) : undefined));
-    const rebuilding = c.rebuild(["ko"]);
-    await vi.waitFor(() => expect(pg.steps).toHaveLength(1));
-    await c.stop();
-    await rebuilding;
-    expect(pg.cancelled).toEqual(["CREATE INDEX CONCURRENTLY docs_bm25_v1_ko ON docs"]);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    pg.onWrite((docId) => (docId === "d001" ? held : undefined));
+    const rebuilding = c.rebuild(["de"]);
+    await vi.waitFor(() => expect(pg.writes).toHaveLength(1));
+    const stopped = c.stop();
+    release();
+    await Promise.all([stopped, rebuilding]);
+    expect(pg.writes.map((w) => w.docId)).toEqual(["d001"]);
     expect(sleeps).toEqual([]);
     expect(c.status().rebuilding).toBe(false);
-    expect(c.current()).toEqual([]);
 
     await c.rebuild(["ar"]);
-    expect(pg.steps).toHaveLength(1);
+    expect(pg.writes).toHaveLength(1);
   });
 });
 
 describe("a save of the languages", () => {
-  it("waits for the save before it, so the rebuild goes to the one that committed last", async () => {
+  it("waits for the save before it, so the pass goes to the one that committed last", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
-    const pg = fakePostgres(BASE);
+    const pg = fakePostgres(2);
     const { c } = coordinator(pg, []);
     const sent: string[][] = [];
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
     pg.onSave((languages) => {
       sent.push(languages);
-      return languages.includes("ko") ? held : undefined;
+      return languages.includes("de") ? held : undefined;
     });
 
-    const korean = c.save(["ko"], "u_liv");
+    const german = c.save(["de"], "u_liv");
     const arabic = c.save(["ar"], "u_liv");
-    await vi.waitFor(() => expect(sent).toEqual([["ko"]]));
+    await vi.waitFor(() => expect(sent).toEqual([["de"]]));
     await new Promise((r) => setTimeout(r, 10));
-    expect(sent).toEqual([["ko"]]);
+    expect(sent).toEqual([["de"]]);
     release();
-    await Promise.all([korean, arabic]);
+    await Promise.all([german, arabic]);
 
-    expect(sent).toEqual([["ko"], ["ar"]]);
+    expect(sent).toEqual([["de"], ["ar"]]);
     expect(pg.stored()).toEqual(["ar"]);
     expect(c.status().languages).toEqual(["ar"]);
     await c.rebuild(["ar"]);
     expect(c.current()).toEqual(["ar"]);
-    expect(names(pg)).toEqual(["doc_chunks_bm25_v1_ar", "docs_bm25_v1_ar"]);
+    expect(pg.behind(["ar"])).toEqual([]);
   });
 
-  it("rejects when the save fails, rebuilds nothing for it, and lets the next one go", async () => {
+  it("rejects when the save fails, writes nothing for it, and lets the next one go", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
-    const pg = fakePostgres(BASE);
+    const pg = fakePostgres(2);
     const { c } = coordinator(pg, []);
     pg.onSave((languages) => {
-      if (languages.includes("ko")) throw new Error("connection terminated");
+      if (languages.includes("de")) throw new Error("connection terminated");
     });
-    const korean = c.save(["ko"], "u_liv");
+    const german = c.save(["de"], "u_liv");
     const arabic = c.save(["ar"], "u_liv");
-    await expect(korean).rejects.toThrow("connection terminated");
+    await expect(german).rejects.toThrow("connection terminated");
     await arabic;
     expect(pg.stored()).toEqual(["ar"]);
     await c.rebuild(["ar"]);
-    expect(statements(pg).filter((s) => s.startsWith("CREATE"))).toEqual([
-      "CREATE INDEX CONCURRENTLY docs_bm25_v1_ar ON docs",
-      "CREATE INDEX CONCURRENTLY doc_chunks_bm25_v1_ar ON doc_chunks",
-    ]);
+    expect(pg.writes.every((w) => w.languages.join() === "ar")).toBe(true);
+    expect(pg.behind(["ar"])).toEqual([]);
   });
 });

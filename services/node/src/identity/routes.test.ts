@@ -117,14 +117,14 @@ describe("register", () => {
     let firstAccounts = 0;
     const r = () => createIdentityRouter(baseDeps({ onFirstAccount: () => void firstAccounts++ }));
     const body = (username: string, extra: Record<string, unknown>) => ({ username, password: "correct horse", setup_code: TYPED_CODE, ...extra });
-    expect((await r().handle(post("/auth/register", body("ada", { search_languages: ["ko", "fr", "ar"] })))).status).toBe(201);
-    expect(mem.settings.searchLanguages).toEqual(["ar", "fr", "ko"]);
-    // The node rebuilds its search indexes for them once the account is made.
+    expect((await r().handle(post("/auth/register", body("ada", { search_languages: ["de", "fr", "ar"] })))).status).toBe(201);
+    expect(mem.settings.searchLanguages).toEqual(["ar", "de", "fr"]);
+    // The node writes its search index again for them once the account is made.
     expect(firstAccounts).toBe(1);
 
     mem.invites.set(sha256Hex("an-invite"), { tokenHash: sha256Hex("an-invite"), usesLeft: 1 });
     expect((await r().handle(post("/auth/register", body("grace", { invite: "an-invite", search_languages: [] })))).status).toBe(201);
-    expect(mem.settings.searchLanguages).toEqual(["ar", "fr", "ko"]);
+    expect(mem.settings.searchLanguages).toEqual(["ar", "de", "fr"]);
     expect(firstAccounts).toBe(1);
 
     // None chosen is a choice; not sending the field leaves the node's alone.
@@ -137,7 +137,7 @@ describe("register", () => {
   });
 
   it("refuses search languages that are not a list of the choices", async () => {
-    for (const search_languages of ["ko", ["ko", "en"], [null], { ko: true }, null]) {
+    for (const search_languages of ["de", ["de", "zh"], [null], { de: true }, null]) {
       const res = await register("ada", { search_languages });
       expect(res.status, JSON.stringify(search_languages)).toBe(400);
       expect((await res.json()).message).toContain(`search_languages must be a list of: ${SEARCH_LANGUAGES.join(", ")}`);

@@ -34,9 +34,9 @@ here="$(cd "$(dirname "$0")" && pwd -P)"
 # shellcheck source=timemachine.sh
 . "$here/timemachine.sh"
 
-# The first release that carries this command, the hold mark, and a Stuga.app that installs over a
-# newer one. build-pkg.sh builds no release before it.
-GO_BACK_FLOOR=0.1.12
+# The oldest release a restore goes back to: 0.2.0 started the schema over, and no 0.1 release takes
+# a later one's data. build-pkg.sh builds no release before it.
+GO_BACK_FLOOR=0.2.0
 
 root="${STUGA_ROOT:-/Library/Application Support/Stuga}"
 node_plist="${STUGA_NODE_PLIST:-/Library/LaunchDaemons/dev.stuga.node.plist}"
@@ -412,7 +412,7 @@ same_pins() {
   for file in "$expanded"/*/Payload/"Library/Application Support/Stuga/runtime/$2/conf/versions.env"; do
     if [ -f "$file" ]; then theirs="$file"; fi
   done
-  for key in PG_MAJOR PG_SEARCH_VERSION PGVECTOR_VERSION; do
+  for key in PG_MAJOR PGVECTOR_VERSION; do
     a="$(sed -n "/^$key=/{s/^$key=//p;q;}" "$ours" 2> /dev/null)" || a=""
     b=""
     [ -z "$theirs" ] || b="$(sed -n "/^$key=/{s/^$key=//p;q;}" "$theirs")" || b=""

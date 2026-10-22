@@ -110,8 +110,9 @@ export function buildInstructions({ node, workspaces, conventions = "", readOnly
     "returns the link to write there.\n" +
     "REVIEW: by default every edit you make waits for a human, and it waits however long that takes — the user is " +
     "notified, and nothing about whether they happen to have the page open changes the outcome. Each document carries " +
-    "its own setting: its owner may set THAT document to let AI edits apply directly, and then your writes to it land " +
-    "immediately (still recorded, attributed and revertible). The result of every write says which happened, and " +
+    "its own setting, or its folder's: its owner may set THAT document to let AI edits apply directly, and then your " +
+    "writes to it land immediately (still recorded, attributed and revertible), or to be reviewed by a colleague, and " +
+    "then someone other than the user accepts them. The result of every write says which happened, and " +
     "`docs` action:metadata reports it for a document BEFORE you write. `markdown_append` adds text at the end of a " +
     "document or under a heading without touching anything else — prefer it for notes, logs and memory.\n" +
     "FEEDBACK: a reviewer may reject your edit with a note saying what should change. Your reads of that document then " +

@@ -1,20 +1,20 @@
 /**
- * Languages keyword search gets a more accurate tokenizer for, beyond the
- * general one every text gets. That one segments Chinese and Japanese on its
- * own and splits other languages at spaces, keeping each word as written;
- * English it also stems. `zh` adds jieba, which keeps a compound whole beside
- * its parts (人工智能), so a whole-word match ranks first; `ja` and `ko` add a
- * Lindera dictionary, so a glued-on Korean particle (해구의) comes apart; every
- * other choice adds pg_search's stemmer for the language, so `maisons` finds
- * `maison`. Each one is a column in the search indexes, so a node carries only
- * those it chose. ISO 639-1 codes, in the order the node keeps them.
+ * Languages keyword search stems words in, beside English, which it always
+ * does: with French chosen, `maisons` finds `maison`. Each is one of Postgres's
+ * built-in stemmers. Chinese, Japanese, Korean and Thai are found in any
+ * text, by their characters and words, and are not a choice. A word in any
+ * other language matches as written. ISO 639-1 codes, in the order the node
+ * keeps them.
  */
 export const SEARCH_LANGUAGES = [
-  "ar", "cs", "da", "de", "el", "es", "fi", "fr", "hu", "it", "ja",
-  "ko", "nl", "no", "pl", "pt", "ro", "ru", "sv", "ta", "tr", "zh",
+  "ar", "da", "de", "el", "es", "fi", "fr", "hu", "it",
+  "nl", "no", "pt", "ro", "ru", "sv", "ta", "tr",
 ] as const;
 
 export type SearchLanguage = (typeof SEARCH_LANGUAGES)[number];
+
+/** Languages search reads in every text, whatever is chosen. */
+export const ALWAYS_SEARCHED_LANGUAGES = ["en", "ja", "ko", "th", "zh"] as const;
 
 /**
  * A list of languages as the node stores it: known ones only, each once, in

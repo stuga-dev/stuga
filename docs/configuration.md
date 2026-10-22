@@ -111,7 +111,7 @@ and node administrators also see **This node**.
 | This node → **Access** | The node's address and accepted origins, and its remote address once it has one (read-only), the [identity provider](#identity-provider), administrators, the node's audit log, and account recovery links. |
 | This node → **Remote access** | Where the packaging offers it: the node's public https address, turned on with a code and off again, with where it stands and the connector's command ([Remote access](remote-access.md)). |
 | This node → **Storage** | The largest upload, such as an image (a workspace import takes up to 512 MB whatever it is), how long audit history, AI usage records and idle Ask threads are kept, and how many changes each database keeps in its Activity feed. |
-| This node → **Search** | **Languages in your documents**: the [search languages](#search-languages), English always and each other off unless chosen, and where [search strictness](#search-strictness) is set. |
+| This node → **Search** | **Languages in your documents**: the [search languages](#search-languages), English, Chinese, Japanese, Korean and Thai always and each other off unless chosen, and where [search strictness](#search-strictness) is set. |
 | This node → **Backups** | The scheduled backup, on unless turned off: every day or once a week, at an hour in the node's time zone, which first-run setup takes from the browser; how many backups are kept; **Back up now**; and the backups the node keeps ([Operations](operations.md#the-nodes-own-backups)). |
 | This node → **Branding** | The node's name and the colour that marks the selected item. |
 | This node → **About** | The address, listen address, data directory, database, the node's [name](#the-nodes-name-and-id) as agents know it, node ID, and the version with the day it was released. Under **Updates**: a newer version when the node knows of one, with **Update now** on a Mac, and **Check for new versions** ([Operations](operations.md#learning-of-a-new-version)). |
@@ -173,33 +173,35 @@ measurement, and `POST /api/node/ai-settings/calibrate` measures again.
 
 ### Search languages
 
-Keyword search gives every text a general tokenizer, which splits Chinese and Japanese into words as
-well as the languages that space theirs, and keeps each word as written; English is also matched by
-stem, always. The field **Languages in your documents** adds a tokenizer for each language chosen:
+Keyword search reads every text the same way first, in documents and searches alike: full-width
+letters and digits as half-width, traditional Chinese as simplified, and capitals as lower case, so
+`國家圖書館` finds `国家图书馆` and the other way round. Words of languages that space them also drop
+their accents, so `cafe` finds `café`. Then:
 
-- **Chinese** adds jieba, which segments words the general tokenizer splits wrongly beside their
-  neighbours (`智能手机` in `和智能手机`) and keeps a compound whole beside its parts, so a document
-  with `人工智能` ranks above one with `人工` and `智能` apart. Traditional characters are read as
-  simplified, in documents and searches alike, so `国家图书馆` finds `國家圖書館` and the other way round.
-- **Japanese** and **Korean** add a Lindera dictionary; a Korean word with a particle attached is
-  found.
-- Each of the others matches words by stem, so `maisons` finds `maison`: Arabic, Czech, Danish,
-  Dutch, Finnish, French, German, Greek, Hungarian, Italian, Norwegian, Polish, Portuguese,
-  Romanian, Russian, Spanish, Swedish, Tamil and Turkish, which are the stemmers pg_search has. Most
-  also leave out the language's stopwords, as English does.
+- **English** is matched by stem, so `plans` finds `planning`, and its stopwords, such as `the`, are
+  left out.
+- **Chinese**, **Japanese** and **Korean** are read as single characters and pairs of neighbours, so
+  a word is found wherever it stands, beside its neighbours (`智能手机` in `和智能手机`) or with a
+  Korean particle attached. A longer word needs each of its characters in a pair the document holds:
+  `人工智能` finds a document with `人工` and `智能` apart, and ranks one with `人工智能` above it.
+- **Thai**, and Lao, Khmer and Myanmar, are split into words by the dictionaries Node.js carries.
 
-Each one adds a field to the search indexes, which sees only text in the language's script; Chinese
-also skips text with kana, which is Japanese. Every language written in Latin letters indexes all
-Latin text again, so choose the ones your documents use rather than all of them. First-run setup
-asks, with English alone until more are chosen, and a node administrator changes them under
-**Settings → This node → Search**.
+These always work. The field **Languages in your documents** adds stemming in each language chosen,
+so with French `chevaux` finds `cheval`: Arabic, Danish, Dutch, Finnish, French, German, Greek,
+Hungarian, Italian, Norwegian, Portuguese, Romanian, Russian, Spanish, Swedish, Tamil and Turkish,
+each with Postgres's own stemmer. Most also leave out the language's stopwords, as English does.
+Words in other languages match as written.
 
-Saving rebuilds the keyword indexes while the node runs. Until the rebuild is done, search keeps
-answering with the languages the old and the new choice share, and the section says it is
-rebuilding. Saving other languages meanwhile stops it and rebuilds for those. A rebuild that keeps
-failing gives up after five tries, and the section says why; search then keeps to the shared
-languages until they are saved again or the node restarts. A node stopped midway finishes the
-rebuild when it starts again.
+Each language chosen stems every word again and adds its stopwords to those a search leaves out, so
+choose the ones your documents use rather than all of them. First-run setup asks, with none chosen,
+and a node administrator changes them under **Settings → This node → Search**.
+
+Saving writes the keyword index again in the background while the node runs, and the section says it
+is rebuilding. Searches use the new languages at once, and a document not yet written again matches
+each word by its English stem until it is. Saving other languages meanwhile stops the pass and starts
+one for those. A pass that keeps failing gives up after five tries, and the section says why; the
+documents it did not reach match by their English stems until the languages are saved again or the
+node restarts. A node stopped midway finishes the pass when it starts again.
 
 ### The node's name and ID
 

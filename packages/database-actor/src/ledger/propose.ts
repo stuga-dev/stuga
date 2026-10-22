@@ -31,6 +31,7 @@ import {
   pruneRuns,
   setOpStatus,
   setRunReviewMode,
+  stampRunApproverGroup,
   totalOpsOf,
   touchRun,
   type RunRow,
@@ -66,6 +67,7 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
   const docTitle = requiredString(body.doc_title, "doc_title");
   const op = requireObject(body.op, "op must be an object", "bad_request");
   const review = parseReviewMode(body.review);
+  const approverGroup = review === "colleague" && typeof body.approver_group === "string" && body.approver_group ? body.approver_group : null;
   // Feedback ids this proposal answers; nothing is answered by proposing alone.
   const revises = Array.isArray(body.revises) ? body.revises.filter((id): id is string => typeof id === "string").slice(0, RUN_FEEDBACK_REVISES_MAX) : [];
   const now = Date.now();
@@ -122,6 +124,7 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
   const opId = insertRunOp(db.sql, { runId: run.run_id, kind: payload.kind, tableId: payload.table_id, summary, detail, ...fin, review });
   touchRun(db.sql, run.run_id, now);
   setRunReviewMode(db.sql, run.run_id, stricterReviewMode(run.review_mode, review));
+  if (approverGroup) stampRunApproverGroup(db.sql, run.run_id, approverGroup);
   const minted = def.proposal.minted(payload);
 
   // An op parsed against undecided ops of its run may depend on them, so it cannot land ahead of them.
@@ -156,6 +159,8 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
   const pending = pendingCountOf(db.sql, fresh.run_id);
   await db.sendRunUpdated(fresh);
   if (source !== "panel") await db.notifyProposed(fresh, pending);
+  // The people who may approve at `colleague` are not the one watching, the co-author's requester included.
+  await db.notifyApprovers(fresh, pending, source !== "panel");
   db.publishRun(fresh, { type: "run.proposed", actor: agentActorOf(actor.alias), actorKind: "agent", payload: { review, pending } });
   return Response.json({
     mode: "proposed",

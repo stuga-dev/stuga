@@ -16,6 +16,7 @@
   "panel.exampleTable": "Mach aus den Notizen am Ende eine Tabelle",
   "panel.emptyAuto": "KI-Änderungen an diesem Dokument werden direkt übernommen: am Ende jeder Runde, protokolliert und zurücknehmbar. Dieser Chat ist privat.",
   "panel.emptyReview": "Jede Änderung erscheint im Dokument als Vorschlag, den du dort annimmst oder ablehnst. Dieser Chat ist privat: Nur angenommene Änderungen landen im Versionsverlauf.",
+  "panel.emptyColleague": "Jede Änderung erscheint im Dokument als Vorschlag, den ein Kollege dort genehmigt; ablehnen kannst du ihn. Dieser Chat ist privat: Nur genehmigte Änderungen landen im Versionsverlauf.",
   "panel.uploading": "Wird hochgeladen…",
   "panel.revisionPaused": "{count, plural, one {Überarbeitung pausiert} other {Überarbeitung pausiert · # Anfragen}}",
   "panel.revisionQueued": "{count, plural, one {Überarbeitung in der Warteschlange} other {Überarbeitung in der Warteschlange · # Anfragen}}",

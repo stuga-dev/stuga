@@ -68,7 +68,7 @@ export function PasskeyOffer() {
             <Text type="supporting" color="secondary">
               {t("ui.passkeyOffer.body", { host })}
             </Text>
-            {error && <Banner status="error" title={error} />}
+            {error && <Banner status="error" role="alert" title={error} />}
           </LayoutContent>
         }
         footer={

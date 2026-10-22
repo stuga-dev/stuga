@@ -25,6 +25,11 @@ interface ConstraintRow {
   definition: string;
 }
 
+interface FunctionRow {
+  signature: string;
+  body_md5: string;
+}
+
 export async function describeSchema(sql: Sql): Promise<string> {
   const columns = await sql<ColumnRow[]>`
     SELECT table_name, column_name, data_type, is_nullable, column_default
@@ -48,6 +53,16 @@ export async function describeSchema(sql: Sql): Promise<string> {
     WHERE ns.nspname = 'public'
       AND con.contype <> 'n'
     ORDER BY rel.relname, con.conname`;
+
+  // The schema's own functions; an extension's (pgvector's, in `public`) come and go with it.
+  const functions = await sql<FunctionRow[]>`
+    SELECT format('%s(%s) RETURNS %s', p.proname, pg_get_function_arguments(p.oid), pg_get_function_result(p.oid)) AS signature,
+           md5(p.prosrc) AS body_md5
+    FROM pg_proc p
+    JOIN pg_namespace ns ON ns.oid = p.pronamespace
+    WHERE ns.nspname = 'public'
+      AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
+    ORDER BY 1`;
 
   const tables = [...new Set(columns.map((c) => c.table_name))].sort();
   const lines: string[] = [
@@ -74,6 +89,8 @@ export async function describeSchema(sql: Sql): Promise<string> {
     }
     lines.push("");
   }
+  for (const f of functions) lines.push(`FUNCTION ${f.signature} BODY md5:${f.body_md5}`);
+  if (functions.length > 0) lines.push("");
 
   return lines.join("\n");
 }

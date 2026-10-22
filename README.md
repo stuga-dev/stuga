@@ -22,8 +22,10 @@ and [connect an agent](docs/agents.md). Help for people using Stuga: [stuga.dev/
   rejects each one in the document or table. Nothing lands on a timer.
 - **Nobody is blocked.** Collaborators never see pending agent text and keep editing. The agent
   carries on, and its later reads include its own pending edits.
-- **Or apply at once.** The owner of a document or database, or a workspace admin, can choose
-  **Let AI edits apply directly**. Changes then land at once, recorded, attributed and revertible.
+- **Or apply at once, or ask a colleague.** In **Who reviews AI edits…**, the owner of a document,
+  database or folder, or a workspace admin, can choose **AI edits apply directly**: changes land at
+  once, recorded, attributed and revertible. Or **Reviewed by a colleague**: someone other than
+  whoever asked the AI approves them.
 - **A run per session.** Each run records the agent, the person it acts for, the client and model it
   reported, and every change. **Review AI edits** lists the runs that need someone.
 - **Who wrote this?** An agent can ask a document which passages agents wrote and whether a person
@@ -39,8 +41,9 @@ and [connect an agent](docs/agents.md). Help for people using Stuga: [stuga.dev/
   comments, @mentions and version history.
 - **Databases with SQL.** Typed tables beside your documents, each database its own SQLite file,
   with saved views, row pages and CSV import. Agents, Ask and the REST API run read-only SQL on them.
-- **Search that follows permissions.** Keyword (BM25, pg_search) and semantic (pgvector) search in
-  one SQL statement, with access checked inside it. Chinese and Japanese are split into words.
+- **Search that follows permissions.** Keyword (BM25 over Postgres full-text search) and semantic
+  (pgvector) search in one SQL statement, with access checked inside it. Chinese, Japanese, Korean
+  and Thai work without setup.
 - **Built-in AI, off until set up.** A co-author and a table assistant, whose edits are reviewed like
   an agent's, and **Ask**, which cites sources. OpenAI, Anthropic, Gemini, DeepSeek and more, or Ollama.
 - **Sharing and sign-in.** Workspaces, folders, per-document sharing, groups and guests. People join
@@ -86,7 +89,7 @@ turns that off. [docs/privacy.md](docs/privacy.md) lists what the node sends and
   curl -fsSL https://github.com/stuga-dev/stuga/releases/latest/download/install.sh | bash
   ```
 
-A node is one Node.js process and Postgres with pgvector and pg_search; people open it in a browser.
+A node is one Node.js process and Postgres with pgvector; people open it in a browser.
 It backs itself up every day by default and before every upgrade
 ([docs/operations.md](docs/operations.md)). [docs/getting-started.md](docs/getting-started.md) walks
 through the first hour.

@@ -205,6 +205,7 @@ export function ImportMarkdownDialog({ isOpen, parentId, onImported, onClose }: 
               {error && (
                 <Banner
                   status={partial ? "warning" : "error"}
+                  role={partial ? undefined : "alert"}
                   title={partial ? t("library.import.someFailed") : t("library.import.failed")}
                   description={error}
                 />

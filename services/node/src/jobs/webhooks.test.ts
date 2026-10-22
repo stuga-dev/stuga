@@ -60,6 +60,8 @@ const RUN = {
   reviewer: "alice",
   status: "open",
   reviewMode: "review" as const,
+  approverGroup: null,
+  approvedBy: [],
   autoApplied: false,
   reverted: false,
   acknowledged: false,

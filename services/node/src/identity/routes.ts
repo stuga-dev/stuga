@@ -562,7 +562,7 @@ export function createIdentityRouter(deps: IdentityDeps): IdentityRouter {
     const invite = field(body, "invite").trim();
     // Setup gives the node the time zone its schedule runs in, which is the browser's: an unknown name is dropped, not refused.
     const timeZone = knownTimeZone(body.time_zone);
-    // And the languages search gets a tokenizer for: only the choices this build offers.
+    // And the languages search stems words in: only the choices this build offers.
     const searchLanguages = body.search_languages === undefined ? undefined : parseSearchLanguages(body.search_languages);
     if (searchLanguages === null) {
       return fail(400, "bad_request", `search_languages must be a list of: ${SEARCH_LANGUAGES.join(", ")}`);

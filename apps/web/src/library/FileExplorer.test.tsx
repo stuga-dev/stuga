@@ -27,7 +27,9 @@ const folders = vi.hoisted(() => ({
   move: vi.fn(),
   instructions: vi.fn(),
   setInstructions: vi.fn(),
+  setReview: vi.fn(),
 }));
+const groups = vi.hoisted(() => ({ list: vi.fn(), setMembers: vi.fn() }));
 const collections = vi.hoisted(() => ({ list: vi.fn(), addItems: vi.fn(), create: vi.fn() }));
 /** A mouse-driven window this many CSS px wide, for ui/narrow.ts and Astryx AppShell's breakpoints. */
 const viewport = vi.hoisted(() => ({ width: 1280 }));
@@ -37,8 +39,11 @@ vi.mock("../api", async (orig) => ({
   Docs: docs,
   Folders: folders,
   Collections: collections,
+  Groups: groups,
 }));
 vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
+// The person reading the library, who owns none of its items.
+vi.mock(import("../lib/http/client"), async (importOriginal) => ({ ...(await importOriginal()), getAlias: () => "u_9" }));
 vi.mock("../state/favorites", () => ({
   useFavorites: () => ({ ids: new Set<string>(), toggle: vi.fn(async () => true) }),
 }));
@@ -113,6 +118,7 @@ const DOC: DocSummary = {
   locked: false,
   search_hidden: false,
   agent_mode: "review",
+  agent_mode_floor: null,
   page_of: null,
   page_row: null,
 };
@@ -124,6 +130,9 @@ const FOLDER: Folder = {
   owner: "user:u_1",
   created_at: "2026-09-01T00:00:00.000Z",
   updated_at: "2026-09-01T00:00:00.000Z",
+  agent_mode: "review",
+  agent_mode_floor: null,
+  approver_group: null,
 };
 
 let host: HTMLDivElement;
@@ -343,19 +352,47 @@ describe("FileExplorer row actions", () => {
     expect(toastBodies().at(-1)).toBe("Restored “Plan”.");
   });
 
-  it("asks before letting AI edits apply directly, and changes nothing on Cancel", async () => {
+  it("sets how AI edits to a document are reviewed, and a folder's level and approver group, changing nothing on Cancel", async () => {
     const inDialog = (label: string) =>
-      [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button, [role="dialog"] button')].find((b) => b.textContent === label);
-    await click(button("Let AI edits apply directly", DOC.doc_id));
-    expect(document.body.textContent).toContain("Edits from any AI will change this document without asking first.");
-    expect(docs.setState).not.toHaveBeenCalled();
+      [...document.querySelectorAll<HTMLButtonElement>("dialog[open] button")].find((b) => b.textContent === label);
+    const radio = (level: string) => document.querySelector<HTMLInputElement>(`dialog[open] input[type="radio"][value="${level}"]`) ?? undefined;
+    // Under a folder the reader owns: they may set the level of what is in it, whoever owns the item.
+    const parent = { ...FOLDER, folder_id: "f_parent", owner: "user:u_9" };
+    docs.list.mockResolvedValue({ docs: [{ ...DOC, parent_id: "f_parent", agent_mode_floor: "review" }] });
+    folders.list.mockResolvedValue({ folders: [{ ...FOLDER, parent_id: "f_parent", agent_mode_floor: "review" }] });
+    groups.list.mockResolvedValue({ groups: [{ group_id: "group:legal", members: 2 }] });
+    folders.ancestors.mockResolvedValue({ ancestors: [{ ...FOLDER, folder_id: "f_top", owner: "user:u_2" }, { ...parent, parent_id: "f_top" }] });
+    await act(async () => root.unmount());
+    ({ host, root } = mountInto());
+    await renderExplorer();
+
+    await click(button("Who reviews AI edits…", DOC.doc_id));
+    expect(folders.ancestors).toHaveBeenCalledWith("f_parent");
+    expect(document.body.textContent).toContain("Reviewed by whoever asked the AI");
+    await click(radio("colleague"));
     await click(inDialog("Cancel"));
     expect(docs.setState).not.toHaveBeenCalled();
 
-    docs.setState.mockResolvedValue({ ...DOC, agent_mode: "auto" });
-    await click(button("Let AI edits apply directly", DOC.doc_id));
-    await click(inDialog("Let AI edits apply directly"));
-    expect(docs.setState).toHaveBeenCalledExactlyOnceWith(DOC.doc_id, { agent_mode: "auto" });
+    docs.setState.mockResolvedValue({ ...DOC, agent_mode: "colleague", agent_mode_floor: "review" });
+    await click(button("Who reviews AI edits…", DOC.doc_id));
+    await click(radio("colleague"));
+    await click(inDialog("Save"));
+    expect(docs.setState).toHaveBeenCalledExactlyOnceWith(DOC.doc_id, { agent_mode: "colleague" });
+
+    folders.setReview.mockResolvedValue({ ...FOLDER, agent_mode: "colleague", agent_mode_floor: "review" });
+    await click(button("Who reviews AI edits…", FOLDER.folder_id));
+    expect(document.body.textContent).toContain("Approved by");
+    expect(groups.list).toHaveBeenCalled();
+    await click(radio("colleague"));
+    await click(inDialog("Save"));
+    expect(folders.setReview).toHaveBeenCalledExactlyOnceWith(FOLDER.folder_id, { agent_mode: "colleague" });
+
+    // A reader who owns neither the item nor a folder above it sees the level, read-only.
+    folders.ancestors.mockResolvedValue({ ancestors: [{ ...FOLDER, folder_id: "f_top", owner: "user:u_2" }] });
+    await click(button("Who reviews AI edits…", DOC.doc_id));
+    expect(radio("colleague")?.getAttribute("aria-disabled")).toBe("true");
+    expect(inDialog("Save")).toBeUndefined();
+    expect(inDialog("Close")).toBeDefined();
   });
 
   it("opens the instructions for agents from a folder row and from a document row", async () => {

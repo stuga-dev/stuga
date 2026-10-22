@@ -1012,7 +1012,8 @@ describe("another document's instructions", () => {
 
     // Once per document per turn: the next read is the text alone, and so is the edit's result.
     expect(lastToolResult(2)).toBe("Clause 1. Terms.");
-    expect(lastToolResult(3)).toBe("ok: edit proposed for the user's review.");
+    // Another document follows its own level, which the turn does not know.
+    expect(lastToolResult(3)).toBe("ok: edit proposed for review.");
     // The note never enters the working copy an edit matches against.
     expect(r.docEdits[0]!.strEdits).toEqual([{ old_string: "Clause 1.", new_string: "Clause 1 (mutual)." }]);
     expect(r.docEdits[0]!.baselineMarkdown).toBe("Clause 1. Terms.");
@@ -1027,9 +1028,9 @@ describe("another document's instructions", () => {
     const r = await runAgentTurn(CFG, INPUT, runnerWith([WORKSPACE, LEGAL, NDA]), () => {});
 
     const first = lastToolResult(1);
-    expect(first.startsWith("ok: insertion proposed at the end of the document for the user's review.\n\n<<<NOTE about document \"NDA\"")).toBe(true);
+    expect(first.startsWith("ok: insertion proposed at the end of the document for review.\n\n<<<NOTE about document \"NDA\"")).toBe(true);
     expect([...first.matchAll(/^<<<INSTRUCTIONS (.*)$/gm)].map((m) => m[1])).toEqual(['Folder "Legal"', 'Document "NDA"']);
-    expect(lastToolResult(2)).toBe("ok: insertion proposed at the end of the document for the user's review.");
+    expect(lastToolResult(2)).toBe("ok: insertion proposed at the end of the document for review.");
     expect(r.docEdits[0]!.strEdits.map((e) => e.new_string).join("")).not.toContain("NOTE");
   });
 
@@ -1127,6 +1128,14 @@ describe("a document set to apply agent changes at once", () => {
     expect(systemAt(0)).toContain("Edits to the current document apply when your turn ends");
     expect(systemAt(0)).not.toContain("NOT applied until");
     expect(lastMessageAt(1)).toContain("ok: edit made; it applies when your turn ends.");
+  });
+
+  it("tells the model a colleague of the user approves its edits to this document", async () => {
+    mockRounds(rounds());
+    await runAgentTurn(CFG, { ...base, colleagueApproves: true }, NOOP_RUNNER, () => {});
+    expect(systemAt(0)).toContain("a colleague of the user approves");
+    expect(systemAt(0)).not.toContain("NOT applied until the\nuser accepts");
+    expect(lastMessageAt(1)).toContain("ok: edit proposed for a colleague of the user to approve.");
   });
 });
 

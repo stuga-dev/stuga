@@ -359,7 +359,7 @@ export function ImportDialog({ isOpen, docId, table, initialFile = null, onClose
                   </HStack>
                 )}
 
-                {error && <Banner status="error" title={error} />}
+                {error && <Banner status="error" role="alert" title={error} />}
 
                 {phase.kind === "checking" && (
                   <div className="db-import__card db-import__card-head">

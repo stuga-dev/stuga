@@ -1,12 +1,11 @@
 /**
  * The backup a node takes before it changes a database that an older version,
  * or a build from source on either side, served. Data a newer release served
- * never gets here: the node refuses it first (data-version.ts). Migrations,
- * extension updates and search index rebuilds all run at boot and none of them
- * has a way back but a restore, so the node takes the backup itself: every way
- * a new version arrives (an upgrade command, a package, a NAS app store, an
- * image pulled by hand) passes through here, and only some of them would run a
- * backup of their own.
+ * never gets here: the node refuses it first (data-version.ts). Migrations and
+ * extension updates run at boot and neither has a way back but a restore, so
+ * the node takes the backup itself: every way a new version arrives (an upgrade
+ * command, a package, a NAS app store, an image pulled by hand) passes through
+ * here, and only some of them would run a backup of their own.
  *
  * Taken before any actor opens, while the node holds its writer lock, so the
  * two halves describe one instant as a stopped node's would. The manifest's

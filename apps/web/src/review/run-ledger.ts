@@ -4,6 +4,8 @@
  * run is keyed by id with a last-write-wins `updated_at` guard.
  */
 
+import type { ReviewMode } from "@stuga/protocol/domain/events";
+import type { RunStanding, RunWaitsFor } from "@stuga/protocol/domain/runs";
 import { runAgentLabel } from "../state/identity";
 
 type LedgerItemStatus = "pending" | "accepted" | "rejected" | "conflict" | "auto_applied";
@@ -21,8 +23,12 @@ export interface LedgerRun {
   agent: string;
   /** Alias of the proposing agent. */
   agent_alias: string;
-  /** Alias of the human who reviews. */
+  /** Alias of the human who asked the AI, who reviews it below `colleague`. */
   reviewer: string;
+  /** The strictest level a proposal in it carried. */
+  review_mode?: ReviewMode;
+  /** Where this person stands on it, as the node's REST answers say; a live frame carries none. */
+  you?: RunStanding;
   status: "open" | "applied" | "rejected" | "expired";
   acknowledged: boolean;
   auto_applied: boolean;
@@ -110,7 +116,11 @@ export function ledgerReducer<R extends LedgerRun, I extends LedgerItem>(
     case "updated": {
       const known = state.runs.get(action.run.id);
       if (known && action.run.updated_at < known.updated_at) return state;
-      return { runs: withRun(state.runs, action.run) };
+      // A live frame says nothing about who reads it: the standing the last REST answer gave stays,
+      // while the run's level does; a run raised to `colleague` since then reads from its frame.
+      const keep = !action.run.you && known?.you && action.run.review_mode === known.review_mode;
+      const run = keep ? { ...action.run, you: known.you } : action.run;
+      return { runs: withRun(state.runs, run) };
     }
     case "replaced":
       return { runs: withRun(state.runs, action.run) };
@@ -131,12 +141,36 @@ export function pendingItems<R extends LedgerRun, I extends LedgerItem>(shape: R
   return shape.items(run).filter((i) => i.status === "pending");
 }
 
-/** The runs this user reviews, newest first; nothing until the alias is known. */
+/**
+ * The runs this user reviews, newest first; nothing until the alias is known: those they asked
+ * the AI for, and at `colleague` those they may approve. An owner or admin who may also decide
+ * another person's run below `colleague` finds it in the inbox, not painted over their page.
+ */
 export function myRuns<R extends LedgerRun>(state: LedgerState<R>, alias: string | null): R[] {
   if (!alias) return [];
   return [...state.runs.values()]
-    .filter((r) => r.reviewer === alias)
+    .filter((r) => r.reviewer === alias || (r.you?.level === "colleague" && r.you.accept))
     .sort((a, b) => b.updated_at - a.updated_at || b.created_at - a.created_at);
+}
+
+/**
+ * Why this user cannot accept a run they see: it waits for a colleague, or for nobody yet (nobody
+ * else can edit the item, or nobody in its approver group can), when they asked the AI for it at
+ * `colleague`; null when they may. A run seen only from a live frame reads its own level, since the
+ * frame carries no standing.
+ */
+export function acceptWaitsFor(run: LedgerRun, alias: string | null): RunWaitsFor | null {
+  if (run.you) return run.you.accept ? null : (run.you.waits_for ?? "colleague");
+  return run.review_mode === "colleague" && run.reviewer === alias ? "colleague" : null;
+}
+
+/**
+ * Whether this user may mark a run reviewed: as the node's answer says, else, from a live frame,
+ * unless they asked the AI for it at `colleague`, where someone else marks it.
+ */
+export function mayAck(run: LedgerRun, alias: string | null): boolean {
+  if (run.you) return run.you.ack;
+  return !(run.review_mode === "colleague" && run.reviewer === alias);
 }
 
 /** Runs with something to decide now. */

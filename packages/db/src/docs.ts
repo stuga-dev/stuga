@@ -1,8 +1,10 @@
 import type { DocRow, OwnGrantsJson } from "./types.js";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { LIBRARY_LIST_CAP } from "@stuga/protocol/domain/limits";
-import { daysAgo, docCols, globToLike, orderClause, ownGrantsJson, type Queryable, type SortOrder } from "./sql.js";
+import { daysAgo, docCols, docLevelJoins, globToLike, orderClause, ownGrantsJson, type Queryable, type SortOrder } from "./sql.js";
+import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import type { Sql } from "./client.js";
+import { docVectorsSet, writeTitleVectors } from "./search-vectors.js";
 import { retainedVersion } from "./versions.js";
 
 const DOC_SORTS = {
@@ -26,10 +28,26 @@ export async function getDocSearchText(sql: Sql, docId: string): Promise<string 
 
 /**
  * A database's cell text, which the workspace search reads as a document's
- * body. A database has no snapshots and no passages: only `search_text` moves.
+ * body. A database has no snapshots and no passages: only `search_text` moves,
+ * with the keyword vectors, which are then all a database has, stemmed under
+ * the node's search languages.
  */
-export async function setDatabaseSearchText(sql: Sql, docId: string, text: string): Promise<void> {
-  await sql`UPDATE docs SET search_text = ${text} WHERE doc_id = ${docId} AND doc_type = 'database' AND search_text IS DISTINCT FROM ${text}`;
+export async function setDatabaseSearchText(
+  sql: Sql,
+  docId: string,
+  text: string,
+  languages: readonly SearchLanguage[] = [],
+): Promise<void> {
+  await sql.begin(async (tx) => {
+    const [row] = await tx<{ title: string }[]>`
+      SELECT title FROM docs
+      WHERE doc_id = ${docId} AND doc_type = 'database' AND search_text IS DISTINCT FROM ${text}
+      FOR UPDATE`;
+    if (!row) return;
+    await tx`
+      UPDATE docs SET search_text = ${text}, ${docVectorsSet(tx, { title: row.title, text, languages, whole: true })}
+      WHERE doc_id = ${docId}`;
+  });
 }
 
 export interface CreateDocInput {
@@ -59,6 +77,8 @@ export interface CreateDocInput {
   /** For a database row's page: the database's doc_id, and the row as `<table_id>.<row_id>`. */
   pageOf?: string;
   pageRow?: string;
+  /** The node's search languages, which the title's keyword vector stems words under; none when absent. */
+  searchLanguages?: readonly SearchLanguage[];
 }
 
 /** Idempotent on doc_id: an existing row is returned unchanged. */
@@ -85,10 +105,19 @@ export async function createDoc(sql: Sql, input: CreateDocInput): Promise<DocRow
     ...(input.inheritsPerms !== undefined ? { inherits_perms: input.inheritsPerms } : {}),
     own_grants: ownGrantsJson(sql, input.ownGrants ?? { p: principals, w: writers, c: commenters }),
   };
-  const rows = await sql<DocRow[]>`
-    INSERT INTO docs ${sql(row)}
-    ON CONFLICT (doc_id) DO NOTHING
-    RETURNING ${docCols(sql)}`;
+  const rows = await sql.begin(async (tx) => {
+    const inserted = await tx<DocRow[]>`
+      INSERT INTO docs ${tx(row)}
+      ON CONFLICT (doc_id) DO NOTHING
+      RETURNING ${docCols(tx)}`;
+    // A new document's text and passages are empty: its title is all its vectors hold.
+    if (inserted[0]) {
+      await tx`
+        UPDATE docs SET ${docVectorsSet(tx, { title: row.title, text: null, languages: input.searchLanguages ?? [], whole: true })}
+        WHERE doc_id = ${input.docId}`;
+    }
+    return inserted;
+  });
   if (rows[0]) return rows[0];
   const existing = await getDoc(sql, input.docId);
   if (!existing) throw new Error(`createDoc: ${input.docId} vanished after conflict`);
@@ -124,7 +153,7 @@ export async function listDocs(
   const limit = Math.min(Math.max(opts.limit ?? LIBRARY_LIST_CAP, 1), 500);
   const pages = opts.pages ?? "exclude";
   return sql<DocRow[]>`
-    SELECT ${docCols(sql)} FROM docs
+    SELECT ${docCols(sql, "d", { joined: true })} FROM docs d ${docLevelJoins(sql, "d")}
     WHERE workspace_id = ${workspaceId}
       AND acl_principals && ${principals}
       AND trashed = ${opts.trashedOnly ?? false}
@@ -178,7 +207,7 @@ export async function listExportDocs(
   limit = 500,
 ): Promise<DocRow[]> {
   return sql<DocRow[]>`
-    SELECT ${docCols(sql)} FROM docs
+    SELECT ${docCols(sql, "d", { joined: true })} FROM docs d ${docLevelJoins(sql, "d")}
     WHERE workspace_id = ${workspaceId}
       AND acl_principals && ${principals}
       AND trashed = FALSE
@@ -223,7 +252,13 @@ export interface UpdateDocPatch {
   parentId?: string | null;
 }
 
-export async function updateDoc(sql: Sql, docId: string, patch: UpdateDocPatch): Promise<DocRow | null> {
+export async function updateDoc(
+  sql: Sql,
+  docId: string,
+  patch: UpdateDocPatch,
+  /** The node's search languages, which a new title's keyword vectors stem words under; none when absent. */
+  searchLanguages: readonly SearchLanguage[] = [],
+): Promise<DocRow | null> {
   const set: Record<string, unknown> = { updated_at: sql`now()` };
   if (patch.title !== undefined) {
     set.title = patch.title;
@@ -240,16 +275,16 @@ export async function updateDoc(sql: Sql, docId: string, patch: UpdateDocPatch):
       RETURNING ${docCols(sql)}`;
     return rows[0] ?? null;
   }
-  // A rename also moves chunk 0's doc_title, in a second statement: its snapshot
-  // starts after the docs row lock is held, so it sees chunks a concurrent
-  // indexDoc committed while this waited. docs is locked before doc_chunks everywhere.
+  // A rename also writes the vectors the title is in, chunk 0's among them, after
+  // the docs row lock is held, so they read chunks a concurrent indexDoc committed
+  // while this waited. docs is locked before doc_chunks everywhere.
   return sql.begin(async (tx) => {
     const rows = await tx<DocRow[]>`
       UPDATE docs SET ${tx(set)} WHERE doc_id = ${docId}
       RETURNING ${docCols(tx)}`;
     const renamed = rows[0];
     if (!renamed) return null;
-    await tx`UPDATE doc_chunks SET doc_title = ${renamed.title} WHERE doc_id = ${docId} AND chunk_index = 0`;
+    await writeTitleVectors(tx, docId, renamed.title, searchLanguages);
     return renamed;
   });
 }
@@ -361,7 +396,8 @@ export async function setDocAgentInstructions(sql: Sql, docId: string, text: str
   return rows[0] ?? null;
 }
 
-export async function setDocAgentMode(sql: Sql, docId: string, mode: ReviewMode): Promise<DocRow | null> {
+/** The document's own review level; null follows its folder. Who may set which level is the caller's to check. */
+export async function setDocAgentMode(sql: Sql, docId: string, mode: ReviewMode | null): Promise<DocRow | null> {
   const rows = await sql<DocRow[]>`
     UPDATE docs SET agent_mode = ${mode}, updated_at = now()
     WHERE doc_id = ${docId}

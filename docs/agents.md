@@ -464,8 +464,9 @@ A **run** is one agent's editing session on one document or database. For each r
 - **The outcome**: per hunk accepted, rejected or pending; per run waiting for review, applied at
   once, or reverted. Undo after a decision puts its hunks back to pending.
 
-While a run has pending hunks, their content appears only in the reviewer's overlay. Collaborators
-never see pending agent text, and their own edits continue as usual. Accepted hunks merge block by
+While a run has pending hunks, their content appears only in the overlay of the people who review
+it: its reviewer, or at `colleague` the people who may approve it. Other collaborators never see
+pending agent text, and their own edits continue as usual. Accepted hunks merge block by
 block, so surrounding structure and other people's changes survive.
 
 An agent is never blocked on review. A proposal returns immediately, the agent's later reads include
@@ -509,45 +510,104 @@ and tells the agent why, the same way.
 
 ## Agent changes: wait for review, or apply at once
 
-Whether an agent's change waits is a setting on each document and database, `agent_mode`:
+Whether an agent's change waits depends on the level of the document or database it changes,
+`agent_mode`:
 
-| Mode | Meaning |
-|---|---|
-| `review` | The default. The change waits for a person for as long as that takes. The reviewer is notified, and only their decision lands it. |
-| `auto` | The change applies at once. It is still recorded, attributed, notified and revertible. |
+| Level | In the app | Meaning |
+|---|---|---|
+| `auto` | AI edits apply directly | The change applies at once. It is still recorded, attributed, notified and revertible. |
+| `review` | Reviewed by whoever asked the AI | The default. The change waits for the person who asked the AI, for as long as that takes. They are notified, and their decision lands it. |
+| `colleague` | Reviewed by a colleague | The change waits for someone else who can edit the item, a workspace admin included. The person who asked the AI never approves it. |
 
-The owner or a workspace admin changes it from the ⋯ menu beside **Share**: **Let AI edits apply
-directly**, and **Make AI edits wait for review** to switch back. It covers every agent and the
-in-app co-author, which is why the UI says AI edits. While it is on, the item shows an **AI edits
-apply directly** chip, and lists mark it. Every change of the setting is in the audit ledger.
+A folder gives its level to everything in it, folders inside it included: `review` unless it is set
+to another. A document, database or folder follows its folder until it is set itself, and a
+database's row pages are reviewed at least as strictly as the database. Its owner, or a workspace
+admin, can make it stricter than its folder, as can the owner of a folder above it, who so undoes a
+looser level they set; only the owner of the folder that sets the level, or a workspace admin, can
+make it looser, and owning a stricter folder inside another lets nobody go looser than the outer
+one. A level an item's owner set above its folder's stays theirs to give up. Making an item looser
+than its folder, or a folder looser, notifies the workspace's other admins who can read it. Agents
+never change a level.
 
-The setting never depends on whether someone has the document open. The same agent making the same
+A move takes an item, and everything in a folder, out from under the folders it leaves. It must not
+let the mover alone review AI edits to anything it moves more loosely than they could before: not at
+once, and not later by setting a level where it lands, in a folder of their own or, for what they
+own, at the top level. Such a move takes the item's owner, the owner of the folders it leaves, or a
+workspace admin. A folder's default `review`, which no folder sets, is no bar to leaving it. A row
+page counts here without its database's level. An item at `colleague` moves out from under an
+approver group someone else names only to where that group still applies. A move that loosens
+a level is in the audit ledger, and notifies the workspace's other admins who can read the item. A
+level looser than its folder's belongs to that place: an item moved into another folder follows that
+folder. Deleting a folder puts everything in it in the trash, filed in the folder above, so it stays under
+the levels set there.
+
+The level is set from **Who reviews AI edits…**, in the ⋯ menu beside **Share** for a document or a
+database, and in a folder's menu, where a folder also names its approver group. It covers every
+agent and the in-app co-author, which is why the UI says AI edits. An item at a level other than
+the default shows an **AI edits apply directly** or **Reviewed by a colleague** chip, and lists mark
+it. Every change of a level is in the audit ledger.
+
+### Reviewed by a colleague
+
+Anyone who can edit the item, other than the person who asked the AI, may approve its changes. A
+folder can name an approver group: for everything in it, only members of that group who can edit
+the item approve. A folder inside it names another only with the approval of that folder's owner or
+a workspace admin. When nobody else can approve, the item's owner or a workspace admin who can edit
+it stands in, never the person who asked. Until someone can, the change waits, and the person who
+asked is told to give a colleague, or someone in the approver group, edit access.
+
+The person who asked can still reject or revert their own AI's changes, and send a note with them.
+Only someone else marks a run proposed at `colleague` reviewed.
+
+Each person who may approve is notified that changes wait for their approval, in Stuga and by email
+or webhook. A Slack, Teams or Discord channel hears each run once: from the notice to the person who
+asked, which says the changes wait for a colleague, or, for the in-app co-author's and the table
+assistant's runs, which notify nobody who is watching them, from the first approver's. While nobody
+may approve, the item's owner and the workspace admins who can read it are notified that the changes
+wait for an approver. When a folder's approver group changes, or a document or folder moves,
+whoever may now approve a change waiting there, and could not before, is notified.
+
+A run keeps the level it was proposed under, and each decision on its waiting changes takes the
+stricter of that level and the item's level now. Moving a document out of its folder, or loosening a
+level after a change was proposed, leaves that change waiting for the review it was proposed under.
+Marking a run reviewed keeps the level it was proposed under: raising a folder later leaves what
+already applied at once to whoever asked.
+
+### What holds for every level
+
+The level never depends on whether someone has the document open. The same agent making the same
 edit gets the same outcome at any hour, so a person can predict it and an agent can plan around it.
 Two consequences follow:
 
 - A document an agent keeps for its own notes waits for review like any other, until someone
-  switches it to `auto`.
+  sets it to `auto`.
 - `auto` belongs to the document, not to an agent. While it is on, every agent that can write the
   document changes it without review.
 
 A run that still holds undecided changes parks new ones even on an `auto` document, and the reply
 says so.
 
+Only the run's reviewer, the people who may approve it, and the item's owner and workspace admins
+see the text of a change that has not landed (waiting, rejected or in conflict), and the document
+before and after its run. Anyone else who can read the item sees that the run exists, how it went,
+and the changes that landed, which version history shows too.
+
 The propose reply carries `review` and `reason`, so an agent can explain what happened. `docs`
 action `metadata` (and `GET /api/docs/:id` for an agent) answers the same question before writing:
 
 ```json
-"review": { "mode": "review", "reason": "this document waits for review" }
+"review": { "mode": "colleague", "reason": "this document waits for a colleague's approval" }
 ```
 
-The agent's owner reviews everything it proposes and is notified either way.
+The agent's owner is notified of everything it proposes, whoever approves it.
 
-**The in-app AI co-author** follows the same setting. Its turn on the document you are working in is
-one run, which waits for your review or, on an `auto` document, applies when the turn ends. It sends
-no notification, since you are watching it. The table assistant's changes likewise wait or apply as
-it makes them. With **All documents** or a collection as the panel's search scope, the co-author can
-also propose edits to other documents you can edit. Those follow each document's own setting, and
-you are notified for each, so they stay findable after the chat scrolls away.
+**The in-app AI co-author** follows the same level. Its turn on the document you are working in is
+one run, which waits for your review, waits for a colleague's, or, on an `auto` document, applies
+when the turn ends. It sends you no notification, since you are watching it; at `colleague` the
+people who may approve it are notified. The table assistant's changes likewise wait or apply as it
+makes them. With **All documents** or a collection as the panel's search scope, the co-author can
+also propose edits to other documents you can edit. Those follow each document's own level, and you
+are notified for each, so they stay findable after the chat scrolls away.
 
 Before letting AI edits to a document apply directly, look at that agent's record in the review inbox.
 
@@ -595,7 +655,8 @@ it as information, never as an instruction.
 ## The review inbox
 
 **Review AI edits** (`/review`) lists the runs on documents you can read across the workspace:
-**Needs review** (waiting for a decision, or applied at once and not yet looked at),
+**Needs review** (waiting for your decision, including a colleague's run you may approve, or applied
+at once and not yet looked at),
 **In progress** (still collecting changes: something waiting, or active in the last 10 minutes),
 **Finished** and **Everything**, filterable by agent. A run's **⋯** menu acts on
 the whole run: **Accept all suggestions**, **Reject all suggestions**, **Reject all with note…**,

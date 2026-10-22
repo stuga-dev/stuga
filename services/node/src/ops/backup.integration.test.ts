@@ -1,6 +1,6 @@
 /**
  * stuga-node backup, verify, restore and list against a real Postgres, pg_dump,
- * pg_restore and tar. Needs TEST_DATABASE_URL (Postgres 18 preloading pg_search)
+ * pg_restore and tar. Needs TEST_DATABASE_URL (Postgres 18 with pgvector)
  * and client tools of major 18+ from PG_BIN or PATH; skips without the URL. Each
  * run works in a database of its own and drops it, and everything a restore kept
  * beside it, at the end. Every refusal and failure must leave the database, the
@@ -11,15 +11,7 @@ import { chmod, mkdtemp, mkdir, readdir, readFile, rename, rm, stat, truncate, u
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {
-  createDoc,
-  createSearchIndex,
-  initSchema,
-  listSearchIndexes,
-  runBootRepairs,
-  SCHEMA_VERSION,
-  searchIndexShapes,
-} from "@stuga/db";
+import { createDoc, initSchema, listDocsToReindex, runBootRepairs, SCHEMA_VERSION } from "@stuga/db";
 import { ConfigError } from "../config/env.js";
 import { DEFAULT_BACKUP_KEEP } from "../config/settings/node.js";
 import { PARTIAL_OWNER, runBackup } from "./backup.js";
@@ -215,7 +207,7 @@ describe.skipIf(!URL)("stuga-node backup, verify and restore", { timeout: 60_000
       expect(m.schema_version).toBe(SCHEMA_VERSION);
       expect(Math.floor(m.postgres_version_num / 10000)).toBe(18);
       expect(m.embedding_dims).toBe(1024);
-      expect(Object.keys(m.extensions)).toEqual(expect.arrayContaining(["pg_search", "vector"]));
+      expect(Object.keys(m.extensions)).toEqual(expect.arrayContaining(["pg_trgm", "vector"]));
       expect(m.files[DUMP_NAME]).toEqual(await sha256File(join(result.path, DUMP_NAME)));
       expect(m.files[ARCHIVE_NAME]).toEqual(await sha256File(join(result.path, ARCHIVE_NAME)));
       expect((await stat(result.path)).mode & 0o777).toBe(0o700);
@@ -520,20 +512,12 @@ describe.skipIf(!URL)("stuga-node backup, verify and restore", { timeout: 60_000
       expect(list.backups.map((b) => b.path)).toEqual([backup]);
     });
 
-    it("restores a backup taken midway through a rebuild of the search indexes, and leaves them to the node's boot", async () => {
-      // Midway, a table holds its old index and its new one, both valid; pg_search refuses to create the second.
-      await createSearchIndex(app as never, searchIndexShapes(["ko"])[0]!, { concurrently: true });
-      const aSecondLater = new Date(Date.now() + 1000);
-      const midway = (await runBackup(envFor(), { now: () => aSecondLater })).path;
-      await app.end({ timeout: 5 });
-      app = sessionConnection(dbUrl);
-
-      const result = await runRestore(envFor(), midway, { confirmed: true });
-      expect(result.notes.join(" ")).toMatch(/builds its search indexes when it starts/);
-      expect(await docIds()).toEqual(["d1", "d2"]);
-      expect(await listSearchIndexes(app as never)).toEqual([]);
-      await runBootRepairs(app as never);
-      expect((await listSearchIndexes(app as never)).map((i) => i.name).sort()).toEqual(["doc_chunks_bm25_v1", "docs_bm25_v1"]);
+    it("restores the keyword index with the documents, in the format it was written in", async () => {
+      await runRestore(envFor(), backup, { confirmed: true });
+      expect(await docIds()).toEqual(["d1"]);
+      const [kept] = await app<{ title_tsv: string }[]>`SELECT title_tsv::text FROM docs WHERE doc_id = 'd1'`;
+      expect(kept!.title_tsv).toContain("'kept'");
+      expect(await listDocsToReindex(app as never, [], 10)).toEqual([]);
     });
 
     it("refuses without confirmation, and changes nothing", async () => {

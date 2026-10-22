@@ -78,14 +78,14 @@ describe.skipIf(!URL)("folders", () => {
 
   it("counts active docs and descendant folders for the delete confirmation", async () => {
     await seedTree();
-    expect(await getFolderContentCounts(sql, "f_root", WS)).toEqual({ docs: 2, folders: 1 });
-    expect(await getFolderContentCounts(sql, "f_child", WS)).toEqual({ docs: 1, folders: 0 });
+    expect(await getFolderContentCounts(sql, "f_root", WS)).toEqual({ docs: 2, folders: 1, locked: 0 });
+    expect(await getFolderContentCounts(sql, "f_child", WS)).toEqual({ docs: 1, folders: 0, locked: 0 });
 
     await updateDoc(sql, "d_child", { trashed: true });
-    expect(await getFolderContentCounts(sql, "f_root", WS)).toEqual({ docs: 1, folders: 1 });
+    expect(await getFolderContentCounts(sql, "f_root", WS)).toEqual({ docs: 1, folders: 1, locked: 0 });
 
     await createFolder(sql, { workspaceId: WS, folderId: "f_empty", owner: "user:alice", title: "Empty", parentId: null });
-    expect(await getFolderContentCounts(sql, "f_empty", WS)).toEqual({ docs: 0, folders: 0 });
+    expect(await getFolderContentCounts(sql, "f_empty", WS)).toEqual({ docs: 0, folders: 0, locked: 0 });
   });
 
   it("deletes the whole subtree and moves its documents to Trash", async () => {
@@ -105,6 +105,31 @@ describe.skipIf(!URL)("folders", () => {
     const trashed = await listDocs(sql, ALICE, WS, { trashedOnly: true });
     expect(trashed.map((d) => d.doc_id).sort()).toEqual(["d_child", "d_root"]);
     for (const d of trashed) expect(d.trashed_at).toBeTruthy();
+  });
+
+  it("files what was in a deleted folder in the trash, under the folder above it", async () => {
+    await seedTree();
+    await createFolder(sql, { workspaceId: WS, folderId: "f_top", owner: "user:alice", title: "Top", parentId: null });
+    await sql`UPDATE folders SET parent_id = 'f_top' WHERE folder_id = 'f_root'`;
+    await deleteFolderCascade(sql, "f_root", WS);
+    const rows = await sql<{ doc_id: string; parent_id: string | null; trashed: boolean }[]>`
+      SELECT doc_id, parent_id, trashed FROM docs WHERE doc_id IN ('d_root', 'd_child') ORDER BY doc_id`;
+    expect(rows).toEqual([
+      { doc_id: "d_child", parent_id: "f_top", trashed: true },
+      { doc_id: "d_root", parent_id: "f_top", trashed: true },
+    ]);
+  });
+
+  it("deletes nothing while a document anywhere in the folder is locked, and counts it for the confirmation", async () => {
+    await seedTree();
+    await sql`UPDATE docs SET locked = TRUE WHERE doc_id = 'd_child'`;
+    expect(await getFolderContentCounts(sql, "f_root", WS)).toEqual({ docs: 2, folders: 1, locked: 1 });
+    const result = await deleteFolderCascade(sql, "f_root", WS);
+    expect(result).toEqual({ folderIds: [], trashedDocIds: [], trashedDocs: [], locked: 1 });
+    const folders = await listFolders(sql, ALICE, WS);
+    expect(folders.map((f) => f.folder_id).sort()).toEqual(["f_child", "f_root", "f_sib"]);
+    const trashed = await listDocs(sql, ALICE, WS, { trashedOnly: true });
+    expect(trashed).toEqual([]);
   });
 
   it("leaves an already-trashed doc's retention clock untouched", async () => {
@@ -136,7 +161,7 @@ describe.skipIf(!URL)("folders", () => {
     });
 
     const miss = await deleteFolderCascade(sql, "f_other", WS);
-    expect(miss).toEqual({ folderIds: [], trashedDocIds: [], trashedDocs: [] });
+    expect(miss).toEqual({ folderIds: [], trashedDocIds: [], trashedDocs: [], locked: 0 });
     expect(await listFolders(sql, ["user:bob"], OTHER_WS)).toHaveLength(1);
 
     await deleteFolderCascade(sql, "f_root", WS);
@@ -150,7 +175,7 @@ describe.skipIf(!URL)("folders", () => {
     await createDoc(sql, { workspaceId: WS, docId: "d_top", owner: "user:alice", title: "Top", aclPrincipals: ALICE });
 
     const res = await deleteFolderCascade(sql, "f_empty", WS);
-    expect(res).toEqual({ folderIds: ["f_empty"], trashedDocIds: [], trashedDocs: [] });
+    expect(res).toEqual({ folderIds: ["f_empty"], trashedDocIds: [], trashedDocs: [], locked: 0 });
     const active = await listDocs(sql, ALICE, WS);
     expect(active.map((d) => d.doc_id)).toEqual(["d_top"]);
   });

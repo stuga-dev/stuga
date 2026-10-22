@@ -12,8 +12,9 @@ import { useAgentRuns, pendingHunks } from "./agent-runs-context";
 import { useRejectNote, type NoteAnchor } from "./RejectNoteDialog";
 import { summarizeHunk, unshownReason } from "./hunk-review";
 import { RunChangeList } from "./RunChangeList";
-import { RunBanner, RunNotices } from "./RunBanner";
-import { itemKey } from "./run-ledger";
+import { RunBanner, RunNotices, WAITS_HINT } from "./RunBanner";
+import { acceptWaitsFor, itemKey } from "./run-ledger";
+import { getAlias } from "../lib/http/client";
 import { noteLabels, noteModeOf } from "./note-mode";
 import { RUN_HUNK_EVENT, type HunkKey, type RunHunkDecisionDetail } from "../editor/run-preview/plan";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -137,6 +138,8 @@ function AgentRunBanner({ run, locked }: { run: AgentRunSummary; locked: boolean
 
   // The list is offered when it says something the ghosts can't.
   const hasList = n > 1 || run.hunks_truncated === true || unanchoredCount > 0;
+  // At `colleague` the person who asked the AI can take its changes back, and someone else lets them in.
+  const waits = acceptWaitsFor(run, getAlias());
 
   return (
     <>
@@ -147,10 +150,12 @@ function AgentRunBanner({ run, locked }: { run: AgentRunSummary; locked: boolean
             ? t("review.runBar.docTitle", { agent: runAgentLabel(run), count: n })
             : t("review.runBar.docTitleNoCount", { agent: runAgentLabel(run) })
         }
-        acceptBlocked={locked}
+        acceptBlocked={locked || waits !== null}
         hint={
           locked
             ? t("review.runBar.lockedHint")
+            : waits !== null
+            ? t(WAITS_HINT[waits])
             : unanchoredCount === 0
             ? t("review.runBar.docHint")
             : sharedReason

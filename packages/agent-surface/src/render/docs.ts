@@ -77,7 +77,7 @@ export function renderPropose(res: ProposeBody): string {
   switch (res.mode) {
     case "proposed":
       return (
-        `Proposed — your edit is waiting for the user to accept it (${res.reason}). ` +
+        `Proposed — your edit is waiting for ${res.run.review_mode === "colleague" ? "a colleague of the user" : "the user"} to accept it (${res.reason}). ` +
         `Run ${res.run.id}, ${res.pending} pending. This is SUCCESS: do NOT retry, and do not ` +
         `rewrite the document because the change looks missing. The user has been notified. ` +
         `Later reads include your pending edits; check \`markdown\` action:status for their decision.${mediaNote(res.media_note)}` +

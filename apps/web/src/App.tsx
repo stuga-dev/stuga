@@ -124,7 +124,7 @@ function WorkspaceLayout() {
       <AppShell>
         <Section padding={6} variant="transparent">
           <VStack gap={3} hAlign="center" style={{ paddingTop: "20vh" }}>
-            <Banner status="error" title={t("ui.app.loadFailed")} />
+            <Banner status="error" role="alert" title={t("ui.app.loadFailed")} />
             <Button label={t("common.retry")} variant="secondary" onClick={retry} />
           </VStack>
         </Section>

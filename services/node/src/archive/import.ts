@@ -458,7 +458,7 @@ function stateOf(item: ArchiveDocSettings): DocState {
   return {
     ...(item.agent_instructions ? { agent_instructions: item.agent_instructions } : {}),
     ...(item.search_hidden ? { search_hidden: true } : {}),
-    ...(item.agent_mode === "auto" ? { agent_mode: "auto" as const } : {}),
+    ...(item.agent_mode !== "review" ? { agent_mode: item.agent_mode } : {}),
     ...(item.locked ? { locked: true } : {}),
   };
 }

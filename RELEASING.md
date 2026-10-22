@@ -25,9 +25,9 @@ A version is a plain `1.2.3`. There are no pre-releases: the workflow refuses a 
 `v1.2.3-rc.1`, and a running node compares itself only with plain versions.
 
 `GO_BACK_FLOOR` in `packaging/macos/runtime/bin/stuga` is the earliest release a Mac goes back to:
-the first that carries `bin/stuga`, its hold mark and the node's refusal of newer data, 0.1.12. If
-that work ships in another release, set it to that release before tagging, and every 0.1.12 in
-`docs/` and `packaging/contract.md` with it. `build-pkg.sh` refuses to build a release below it.
+0.2.0, the first whose data an earlier release can take back. If that changes, set it before
+tagging, and every 0.2.0 that names the floor in `docs/` with it. `build-pkg.sh` refuses to build a
+release below it.
 
 ## The changelog
 
@@ -62,7 +62,7 @@ an empty `## [Unreleased]` above it. Give it a **Security** section if it fixes 
 an **Upgrade notes** section if the version needs a decision or an action from someone running a
 node. `node packaging/release/feed.mjs check 1.2.3` passes once the entry is the newest one, and
 `node packaging/release/feed.mjs notes 1.2.3` prints the notes the Release will carry. A release
-that changes `PG_MAJOR`, `PG_SEARCH_VERSION` or `PGVECTOR_VERSION` says in its **Upgrade notes** that
+that changes `PG_MAJOR` or `PGVECTOR_VERSION` says in its **Upgrade notes** that
 going back from it to an earlier release is refused.
 
 A tag freezes what it ships: the migrations and their checksums in `MIGRATION_CHECKSUMS`, and each
@@ -201,8 +201,8 @@ the next patch, or to go back by restoring the backup taken before the upgrade
 
 `packaging/versions.env` holds every pinned input ([packaging/contract.md](packaging/contract.md#pins)).
 Bump a version and its checksums together, then run `bash packaging/check-pins.sh`, which names
-every other file that must follow. Release a pin bump on its own: pgvector and pg_search own index
-formats, and every per-actor store runs on Node's `node:sqlite`.
+every other file that must follow. Release a pin bump on its own: pgvector owns an index format, and
+every per-actor store runs on Node's `node:sqlite`.
 
 A Go security release is a reason to bump `GO_VERSION` (with its three checksums from
 [go.dev/dl](https://go.dev/dl/)), since the connector links Go's standard library: a govulncheck

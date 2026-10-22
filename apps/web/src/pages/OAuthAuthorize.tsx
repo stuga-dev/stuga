@@ -208,6 +208,7 @@ export function OAuthAuthorize() {
               // Its name is whatever it registered itself as, so the warning is a callout, not small print.
               <Banner
                 status="warning"
+                role="alert"
                 title={t("auth.oauth.unverifiedTitle")}
                 description={local ? t("auth.oauth.unverifiedLocal") : tRich("auth.oauth.unverified", { redirect: redirectHost, strong })}
               />

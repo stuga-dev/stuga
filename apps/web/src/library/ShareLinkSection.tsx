@@ -140,7 +140,7 @@ export function ShareLinkSection({
             variant="ghost"
             size="sm"
             width={ROLE_WIDTH}
-            className="share-role"
+            controlClassName="share-role"
             value={live ? live.role : "off"}
             isDisabled={links === null || busy}
             onChange={choose}

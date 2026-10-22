@@ -61,7 +61,7 @@ component() {
 # version cannot be read, so the list never names a library without one.
 write_components() {
   local version="$2" connector="${3:-}" pg="$1/postgres" lib="$1/postgres/lib" app
-  local postgres openssl xml xslt icu lz4 zstd vector search
+  local postgres openssl xml xslt icu lz4 zstd vector
   app="Postgres.app $POSTGRES_APP_VERSION"
   postgres="$("$pg/bin/postgres" --version | sed -n 's/^postgres (PostgreSQL) \([0-9][0-9.]*\).*/\1/p')" || return 1
   [ -n "$postgres" ] || { echo "error: cannot read the PostgreSQL version" >&2; return 1; }
@@ -73,7 +73,6 @@ write_components() {
   lz4="$(file_version "$lib" liblz4)" || return 1
   zstd="$(file_version "$lib" libzstd)" || return 1
   vector="$(sed -n "s/^default_version = '\(.*\)'$/\1/p" "$pg/share/postgresql/extension/vector.control")"
-  search="$(sed -n "s/^default_version = '\(.*\)'$/\1/p" "$pg/share/postgresql/extension/pg_search.control")"
   local f
   for f in wal2json.dylib plugin_debugger.dylib; do
     [ -f "$lib/postgresql/$f" ] || { echo "error: $lib/postgresql/$f is missing" >&2; return 1; }
@@ -87,7 +86,6 @@ write_components() {
     component postgres.app "$POSTGRES_APP_VERSION" "pkg:github/postgresapp/postgresapp@v$POSTGRES_APP_VERSION"
     component postgresql "$postgres" "pkg:generic/postgresql@$postgres" "$app"
     component pgvector "$vector" "pkg:github/pgvector/pgvector@v$vector" "$app"
-    component pg_search "$search" "pkg:github/paradedb/paradedb@v$search"
     component wal2json "" "" "$app"
     component pldbgapi "" "" "$app"
     component openssl "$openssl" "pkg:generic/openssl@$openssl" "$app"

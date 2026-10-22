@@ -10,7 +10,7 @@ import type { AiCitation, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
 import { retrieveAndRerank } from "../retrieval/retrieve.js";
 import { COLLECTION_UNAVAILABLE, OPEN_DOCUMENT_ONLY, OUTSIDE_COLLECTION, sessionCollectionScope } from "../retrieval/scope.js";
 import { proposeDocEdit } from "../agents/edits.js";
-import { agentReviewMode } from "../authz/review-mode.js";
+import { agentReviewMode, proposalApproverGroup } from "../authz/review-mode.js";
 import { json } from "../http/respond.js";
 import { matchRoute, type PathMatch, type Route } from "../http/router.js";
 import { hostExternalImages, MAX_INGEST_PER_EDIT, type HostedImage } from "../media/media-ingest.js";
@@ -145,16 +145,20 @@ async function handleInternalAgentInstructions(req: Request, env: NodeEnv): Prom
 }
 
 /**
- * Whether the co-author's turn on a document waits for review or applies at once: asked per turn,
- * so switching the setting applies to the next message. Anything but a document the principals
- * can write in this workspace is `review`, never a silent commit.
+ * Whether the co-author's turn on a document waits for review or applies at once, by its level: asked
+ * per turn, so changing the level applies to the next message. Anything but a document the principals
+ * can write in this workspace is `review`, never a silent commit. At `colleague` it also names the
+ * approver group the run is stamped with; the title is what the approvers' notices name.
  */
 async function handleInternalReviewMode(req: Request, env: NodeEnv): Promise<Response> {
   const body = (await req.json().catch(() => ({}))) as { workspaceId?: unknown; docId?: unknown; principals?: unknown };
   const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";
   const doc = workspaceId && typeof body.docId === "string" && body.docId ? await getDoc(env.sql, body.docId) : null;
   const writable = !!doc && !doc.trashed && doc.workspace_id === workspaceId && hasAccess(doc.acl_writers, principalsOf(body));
-  return json({ mode: writable ? agentReviewMode(doc).mode : "review" });
+  if (!writable) return json({ mode: "review" });
+  const mode = agentReviewMode(doc).mode;
+  const group = await proposalApproverGroup(env, doc, mode);
+  return json({ mode, ...(group ? { approver_group: group } : {}), title: doc.title });
 }
 
 /** The documents the principals may edit, inside the turn's scope, for the co-author's list_documents tool. */

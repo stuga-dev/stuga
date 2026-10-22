@@ -57,8 +57,12 @@ export interface DocRow {
   own_grants: OwnGrantsJson;
   /** The principal that created the row. Provenance only. */
   created_by: string | null;
-  /** Whether agent proposals wait for a person or apply at once. */
-  agent_mode: ReviewMode;
+  /** Its own review level for AI edits; null follows its folder. What it is at is docReviewLevel's. */
+  agent_mode: ReviewMode | null;
+  /** The level its folder gives it (folder_agent_mode), read with the row; null when none sets one. */
+  folder_agent_mode: ReviewMode | null;
+  /** For a row page, its database's level now, which it is reviewed at least as strictly as; null for any other document. */
+  database_agent_mode: ReviewMode | null;
   /** Instructions for agents on this item (a database's reach its row pages); '' when none. */
   agent_instructions: string;
   /** The database this document is a row page of. */
@@ -87,6 +91,12 @@ export interface FolderRow {
   own_grants: OwnGrantsJson;
   /** Instructions for agents on everything beneath this folder; '' when none. */
   agent_instructions: string;
+  /** Its own review level for AI edits beneath it; null follows the folder above. */
+  agent_mode: ReviewMode | null;
+  /** At `colleague`, the group whose members approve beneath it; null for anyone else who can edit. */
+  approver_group: string | null;
+  /** The level the folder above gives it (folder_agent_mode), read with the row; null when none sets one. */
+  parent_agent_mode: ReviewMode | null;
   created_at: string;
   updated_at: string;
 }
@@ -410,6 +420,12 @@ export interface AgentRunRow {
   doc_owner: string;
   /** Whether the caller may write the document, which deciding its changes needs. */
   doc_writable: boolean;
+  /** The document's ACL arrays, for working out who else may approve; never sent on. */
+  doc_readers: string[];
+  doc_writers: string[];
+  /** The document's level now, and the approver group its folders name. */
+  doc_level: ReviewMode;
+  doc_approver_group: string | null;
   source: string;
   agent: string;
   agent_alias: string;
@@ -418,6 +434,8 @@ export interface AgentRunRow {
   reviewer: string;
   status: string;
   review_mode: ReviewMode;
+  approver_group: string | null;
+  approved_by: string[];
   auto_applied: boolean;
   reverted: boolean;
   acknowledged: boolean;

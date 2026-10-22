@@ -147,7 +147,5 @@ describe.skipIf(!URL)("boot repairs", () => {
     await runBootRepairs(sql);
     const second = await runBootRepairs(sql);
     expect(second.updatedExtensions).toEqual([]);
-    expect(second.searchIndexChanges).toEqual([]);
-    expect(second.rebuiltSearchIndexes).toEqual([]);
   });
 });

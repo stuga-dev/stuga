@@ -3,7 +3,17 @@
  * the node's gates decide who may propose, and compute `manager_override`.
  */
 import type { AgentRunSource, AgentRunSummary, AiCitation, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
-import { clampRunLimit, newFeedbackId, parseDecisionNote, parseReviewMode, type RunFeedback } from "@stuga/protocol/domain/runs";
+import { stricterReviewMode } from "@stuga/protocol/domain/events";
+import {
+  actLevel,
+  clampRunLimit,
+  mayActOnRun,
+  newFeedbackId,
+  parseDecisionNote,
+  parseReviewMode,
+  type RunAct,
+  type RunFeedback,
+} from "@stuga/protocol/domain/runs";
 import { RUN_FEEDBACK_REVISES_MAX } from "@stuga/protocol/domain/limits";
 import { applyStrEditsStrict } from "@stuga/crdt-ops";
 import { proposeRunEdit, type ProposeAction } from "./propose.js";
@@ -11,13 +21,32 @@ import { pendingOf, RUN_LIST_DEFAULT_LIMIT, RUN_ORDER_MAX, type RunLedger, type 
 
 const badRequest = () => Response.json({ error: "bad request" }, { status: 400 });
 
+/** What the node vouches for beside a decision: the document's level now, and who the caller is to it. */
+interface Vouched {
+  /** The document's level now; the run's own stamp is the other half of the stricter. */
+  level?: unknown;
+  /** The caller may approve at `colleague`. */
+  approver?: unknown;
+  /** The caller manages the document. */
+  manager_override?: unknown;
+}
+
 /**
- * Decisions (accept/reject, revert, dismiss) belong to the run's reviewer, or to
- * someone the node vouches for as the document's manager, so a run cannot strand
- * when its reviewer leaves. Fails closed on a missing actor.
+ * Decisions (accept/reject, revert, undo, dismiss) at the level each is judged at (actLevel: the
+ * stricter of the run's level and the document's now, or for a dismissal the run's own) by
+ * mayActOnRun: below `colleague` its reviewer's, or a manager's, so a run cannot strand when its
+ * reviewer leaves; at `colleague` an approver's, never the reviewer's to accept. Fails closed on a
+ * missing actor.
  */
-function notReviewer(stored: StoredRun, actor: string | undefined, managerOverride: unknown): Response | null {
-  if (actor && (actor === stored.reviewer || managerOverride === true)) return null;
+function refused(stored: StoredRun, act: RunAct, by: string | undefined, v: Vouched): Response | null {
+  const level = actLevel(act, stored.review_mode, parseReviewMode(v.level));
+  const allowed =
+    typeof by === "string" &&
+    mayActOnRun({ act, level, by, reviewer: stored.reviewer, approver: v.approver === true, manager: v.manager_override === true });
+  if (allowed) return null;
+  if (level === "colleague" && by === stored.reviewer) {
+    return Response.json({ error: "own_run", message: "a colleague approves this run, not the person who asked the AI" }, { status: 403 });
+  }
   return Response.json({ error: "not_reviewer", message: "only this run's reviewer can decide it" }, { status: 403 });
 }
 
@@ -46,6 +75,7 @@ export async function handleRunPropose(ledger: RunLedger, req: Request): Promise
     doc_title?: string;
     heading?: string | null;
     review?: string;
+    approver_group?: unknown;
     client?: string | null;
     model?: string | null;
     /** Feedback ids this proposal answers. */
@@ -76,6 +106,7 @@ export async function handleRunPropose(ledger: RunLedger, req: Request): Promise
     op,
     source: body.source ?? "stdio",
     review: parseReviewMode(body.review),
+    approverGroup: typeof body.approver_group === "string" && body.approver_group ? body.approver_group : null,
     agent: body.agent || agentAlias,
     agentAlias,
     reviewer,
@@ -141,21 +172,21 @@ export async function handleRunDetail(ledger: RunLedger, url: URL): Promise<Resp
 export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<Response> {
   const store = ledger.store;
   await store.ensureLoaded();
-  const input = (await req.json().catch(() => null)) as {
+  const input = (await req.json().catch(() => null)) as ({
     run_id?: string;
     decision?: "accept" | "reject";
     hunk_ids?: string[];
     decided_by?: string;
-    manager_override?: boolean;
     note?: unknown;
-  } | null;
+  } & Vouched) | null;
   if (!input || !input.run_id || (input.decision !== "accept" && input.decision !== "reject")) return badRequest();
   const note = parseDecisionNote(input.decision, input.note);
   if (!note.ok) return Response.json({ error: "bad request", message: note.message }, { status: 400 });
   const stored = await ledger.load(input.run_id);
   if (!stored) return Response.json({ error: "not_found" }, { status: 404 });
-  const denied = notReviewer(stored, input.decided_by, input.manager_override);
+  const denied = refused(stored, input.decision, input.decided_by, input);
   if (denied) return denied;
+  const level = stricterReviewMode(stored.review_mode, parseReviewMode(input.level));
   const body = await ledger.loadBody(stored);
   // Without the hunk text there is nothing to decide, and closing would persist the empty body.
   if (ledger.bodyLost(stored, body)) return runUnavailable();
@@ -200,6 +231,13 @@ export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<
     }
     decided = settled;
     appliedCount = applied.size;
+    // Who let each one in where a colleague must: the node's mirror refuses the reviewer here too.
+    const approvals = { ...stored.approvals };
+    for (const h of settled) {
+      if (h.status === "accepted" && level === "colleague") approvals[h.id] = decidedBy;
+      else delete approvals[h.id];
+    }
+    stored.approvals = approvals;
     // The accepting human gets version credit for what they let through. A person's decision is
     // snapshotted at once, so version history has it now (and records a version when one is due).
     await store.commitMarkdown(ledger.commitTarget(result.markdown, body), current, { alias: decidedBy }, "run-large");
@@ -234,18 +272,17 @@ export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<
 export async function handleRunRevert(ledger: RunLedger, req: Request): Promise<Response> {
   const store = ledger.store;
   await store.ensureLoaded();
-  const input = (await req.json().catch(() => null)) as {
+  const input = (await req.json().catch(() => null)) as ({
     run_id?: string;
     requested_by?: string;
-    manager_override?: boolean;
     note?: unknown;
-  } | null;
+  } & Vouched) | null;
   if (!input || !input.run_id) return badRequest();
   const note = parseDecisionNote("revert", input.note);
   if (!note.ok) return Response.json({ error: "bad request", message: note.message }, { status: 400 });
   const stored = await ledger.load(input.run_id);
   if (!stored) return Response.json({ error: "not_found" }, { status: 404 });
-  const denied = notReviewer(stored, input.requested_by, input.manager_override);
+  const denied = refused(stored, "revert", input.requested_by, input);
   if (denied) return denied;
   // A reverted run keeps its hunks' statuses, so without this a second revert would unwind again and report a conflict.
   if (stored.reverted) return Response.json({ error: "already_reverted" }, { status: 409 });
@@ -310,19 +347,18 @@ export async function handleRunRevert(ledger: RunLedger, req: Request): Promise<
 export async function handleRunUndo(ledger: RunLedger, req: Request): Promise<Response> {
   const store = ledger.store;
   await store.ensureLoaded();
-  const input = (await req.json().catch(() => null)) as {
+  const input = (await req.json().catch(() => null)) as ({
     run_id?: string;
     hunk_ids?: unknown;
     requested_by?: string;
-    manager_override?: boolean;
     /** The node's word that the document is locked: undoing a rejection may go on, taking text back out may not. */
     locked?: boolean;
-  } | null;
+  } & Vouched) | null;
   const ids = Array.isArray(input?.hunk_ids) ? new Set(input.hunk_ids.filter((id): id is string => typeof id === "string")) : null;
   if (!input || !input.run_id || !ids || ids.size === 0) return badRequest();
   const stored = await ledger.load(input.run_id);
   if (!stored) return Response.json({ error: "not_found" }, { status: 404 });
-  const denied = notReviewer(stored, input.requested_by, input.manager_override);
+  const denied = refused(stored, "undo", input.requested_by, input);
   if (denied) return denied;
   const refuse = (error: string, message: string) => Response.json({ error, message }, { status: 409 });
   if (stored.reverted) return refuse("reverted", "this run was reverted, so its decisions can’t be undone");
@@ -359,13 +395,17 @@ export async function handleRunUndo(ledger: RunLedger, req: Request): Promise<Re
     await store.flush("run");
   }
   let unlist = false;
+  const approvals = { ...stored.approvals };
   for (const h of targets) {
     if (h.feedback) {
       delete h.feedback;
       unlist = true;
     }
+    // Waiting again, it was approved by nobody.
+    delete approvals[h.id];
     h.status = "pending";
   }
+  stored.approvals = approvals;
   if (reopens) {
     stored.status = "open";
     delete stored.seq_at_commit;
@@ -385,17 +425,16 @@ export async function handleRunUndo(ledger: RunLedger, req: Request): Promise<Re
   return Response.json({ run: ledger.summaryOf(stored, body), reopened: targets.length });
 }
 
-/** Dismiss a catch-up card; only its reviewer may mark it read. */
+/** Dismiss a catch-up card: its reviewer marks it read, or at `colleague` someone else who may decide it. */
 export async function handleRunAck(ledger: RunLedger, req: Request): Promise<Response> {
-  const input = (await req.json().catch(() => null)) as {
+  const input = (await req.json().catch(() => null)) as ({
     run_id?: string;
     acked_by?: string;
-    manager_override?: boolean;
-  } | null;
+  } & Vouched) | null;
   if (!input || !input.run_id) return badRequest();
   const stored = await ledger.load(input.run_id);
   if (!stored) return Response.json({ error: "not_found" }, { status: 404 });
-  const denied = notReviewer(stored, input.acked_by, input.manager_override);
+  const denied = refused(stored, "ack", input.acked_by, input);
   if (denied) return denied;
   const body = await ledger.loadBody(stored);
   if (ledger.bodyLost(stored, body)) return runUnavailable();

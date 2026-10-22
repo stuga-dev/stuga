@@ -244,7 +244,7 @@ describe("createDocument", () => {
     // No heading is added: the copy reads like the original.
     const seed = actorCalls.find((c) => c.url.includes("/apply-edits"))!;
     expect(seed.body.str_edits).toEqual([{ old_string: "", new_string: "Notes\n\n* [ ] Turn on ovens" }]);
-    expect(vi.mocked(updateDoc)).toHaveBeenCalledWith(expect.anything(), inserted().docId, { title: "Copy of Notes" });
+    expect(vi.mocked(updateDoc)).toHaveBeenCalledWith(expect.anything(), inserted().docId, { title: "Copy of Notes" }, []);
 
     vi.clearAllMocks();
     mockGetDoc.mockResolvedValue({ doc_id: "src", workspace_id: "ws1", doc_type: "prose", title: "Notes", trashed: false, parent_id: null, acl_principals: ["user:carol"] } as never);

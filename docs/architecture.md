@@ -14,7 +14,7 @@ snapshots, media, each actor's own SQLite file, keys and secrets live on disk un
 │ jobs         indexing · notifications · events · webhooks · audit       │
 │ maintenance  embedding repair · retention · trash purge · backup        │
 └─────────────────────────────────────────────────────────────────────────┘
-   Postgres 18, pgvector, pg_search           DATA_DIR
+   Postgres 18, pgvector                      DATA_DIR
    metadata · ACLs · search · audit · jobs    snapshots · media · actor SQLite
                                               keys · secrets
 ```
@@ -72,7 +72,7 @@ build step. A checkout runs the node's source through tsx; a release bundles it
 | `comments/` | Posting a comment from the app, REST, MCP and the co-author: what each writer may mention, who hears of it, the hourly allowance on an agent's notices, and how a caller reads comments. |
 | `governance/` | The event feed, the review inbox, webhooks. |
 | `retrieval/` | Collection scope, the retrieval pipeline, the Ask tool runner. |
-| `search/` | The search languages, and the rebuild of the keyword indexes, while the node serves, when they change. |
+| `search/` | The search languages, and the background pass that writes the keyword index again, while the node serves, when they or its format change. |
 | `media/`, `audit/` | Media storage and serving; writing and reading the audit ledger. |
 | `mcp/` | `/mcp`, and the OAuth authorization server whose grants and tokens it accepts. |
 | `internal/` | The routes actors call back into. |
@@ -84,8 +84,8 @@ build step. A checkout runs the node's source through tsx; a release bundles it
 | `updates/` | The daily look for a newer version: the release list, the comparison, and the notice to administrators; and the request to the packaging's upgrade helper behind **Update now**. |
 | `writer-lock.ts` | The Postgres advisory locks that allow one node per database and keep a node and a backup or restore apart. |
 
-Boot runs in order: parse the environment; check the Postgres major, pg_search and the database
-collation; take the writer lock; listen, answering that the node is starting; refuse data a newer
+Boot runs in order: parse the environment; check the Postgres major and the database collation;
+take the writer lock; listen, answering that the node is starting; refuse data a newer
 version served, staying up with a page that says so and writing nothing; check the embedding width;
 back up the database when an older version, or a build from source, served it last; apply
 migrations; record this version; run the boot repairs; load the settings and the signing key;
@@ -228,10 +228,9 @@ key for socket tickets, media tickets and import upload signatures.
 **Schema.** The numbered files in `packages/db/migrations/` are the whole schema. The runner
 (`packages/db/src/schema/migrate.ts`) applies the migrations a database has not seen, in order, in
 one transaction under an advisory lock, and records each with a checksum in `schema_migrations`. The
-node refuses a database on which an applied file has changed, or one written by a newer build. Two
-things are re-asserted on every boot instead (`schema/boot-repairs.ts`): extensions are updated to the installed binaries, and the BM25 indexes are
-reconciled to the node's search languages and rebuilt when a different pg_search version built them,
-or a rebuild the node stopped in the middle left them invalid. The node reads the migration SQL from its source tree at runtime.
+node refuses a database on which an applied file has changed, or one written by a newer build. One
+thing is re-asserted on every boot instead (`schema/boot-repairs.ts`): extensions are updated to the
+installed binaries. The node reads the migration SQL from its source tree at runtime.
 
 **Tenancy.** `workspace_id` is the hard tenant filter on every tenant-owned row, and foreign keys to
 `workspaces` cascade on delete.
@@ -254,36 +253,47 @@ WHERE d.workspace_id = $1
   AND d.acl_principals && $2::text[]   -- the caller's principal set
 ```
 
-**Hybrid search is one SQL statement** (`packages/db/src/search.ts`). The keyword leg is BM25 through
-pg_search, under an ICU tokenizer: Unicode word breaks for scripts that space their words, and
-dictionary breaks for those that do not. `马里亚纳海沟` indexes as 马里·亚·纳·海沟, not six
-characters, and Japanese segments the same way. English matches by stem with stopwords ignored, so
-`plan` finds `planning`. The node's [search languages](configuration.md#search-languages) each add a
-field: jieba for Chinese, a Lindera dictionary for Japanese or Korean, or a language's stemmer. A
-field sees only text containing its script, so a Chinese document costs the Latin-script languages
-nothing, and the Chinese field skips text with kana. An index name that would pass Postgres's 63 characters carries a
-hash of its languages in place of their codes. The search box needs every non-stopword term of the query (a query of stopwords alone
-matches them as written) and tolerates a one-letter typo in a title when every word of the query has
-four characters or more and none is in a script written without spaces. A keyword hit's excerpt is the
-passage of its text, among the first 64 holding a match, showing the most different matching words
-(`breach` and `breaches` count as two), then the most matches, then the first, so it stays the same
-whatever else the node's index holds. The semantic leg is pgvector
-HNSW over chunk embeddings, keeping chunks within the distance of the node's
-[search strictness](configuration.md#search-strictness). Its iterative scan walks on past passages the searcher
-cannot read; when they can read 5,000 chunks or fewer, a count taken first sends the leg to an exact
-scan instead, so a crowd of unreadable passages near the question never hides theirs. The two legs are fused with Reciprocal Rank Fusion in
-the same statement, and the tenant, trash, hidden-from-search, ACL and key-scope filters sit inside
-each leg.
+**Hybrid search is one SQL statement** (`packages/db/src/search.ts`). The keyword leg runs on
+Postgres's own full-text search, over text the node spells out first (`search-text.ts`): NFKC, so
+full-width letters and digits read as half-width, then traditional Chinese as simplified, then lower
+case. Words of scripts that space theirs drop their accents and are stemmed under English and under
+each of the node's [search languages](configuration.md#search-languages), so `plan` finds
+`planning`. Chinese, Japanese and Korean are written as every character and every pair of
+neighbours (`审批人` as 审 批 人 审批 批人), so a word is found wherever it stands, beside its
+neighbours or with a Korean particle attached; Thai, Lao, Khmer and Myanmar as the words
+`Intl.Segmenter` finds. A query is cut and spelled the same way, so the index and the query always
+agree. A document's title and text, and each chunk, keep a `tsvector` under a GIN index, with its
+count of terms (`search-vectors.ts`).
+
+BM25 is computed in SQL (`search-keyword.ts`): k1 1.2, b 0.75 and Lucene's IDF. A term's document
+frequency is counted for each query over the rows the searcher may see, and so are the row count and
+the average length, so a document someone cannot open never weighs a word in their results. The
+keyword score is never returned. The search box needs every word of the query, in the title or the
+text, stopwords left out (a query of stopwords alone finds titles holding them as written), and
+counts the title's score twice. The query's last word, which may still be being typed (three
+characters or more, or two Hangul syllables, in a script that spaces its words), also finds the
+words it begins, below every whole match. A title one typo away matches too, through pg_trgm,
+when every word of the query has four characters or more and none is in a script written without
+spaces; it ranks below every other match. A keyword hit's excerpt is cut in the node
+(`search-excerpt.ts`) at the positions where its text holds the query's terms: the passage, among
+the first 64 holding a match, showing the most different matching words (`breach` and `breaches`
+count as two), then the most matches, then the first, so it stays the same whatever else the node's
+index holds. The semantic leg is pgvector HNSW over chunk embeddings, keeping chunks within the
+distance of the node's [search strictness](configuration.md#search-strictness). Its iterative scan
+walks on past passages the searcher cannot read; when they can read 5,000 chunks or fewer, a count
+taken first sends the leg to an exact scan instead, so a crowd of unreadable passages near the
+question never hides theirs. The two legs are fused with Reciprocal Rank Fusion in the same
+statement, and the tenant, trash, hidden-from-search, ACL and key-scope filters sit inside each leg.
 Search is permission-correct and current by construction: it reads the live rows, so an ACL change
 applies to the very next query.
 
-pg_search reads only the newest valid BM25 index on a table, and a query naming a field that index
-lacks fails. So a change of search languages rebuilds online (`services/node/src/search/languages.ts`):
-queries name only the languages the old and the new set share; table by table, the new index is
-built with `CREATE INDEX CONCURRENTLY` and the old one dropped the same way; and only then do queries
-name the new set. A query that read the languages before the swap and fails on a missing field is run
-once more with the languages read again. A restore leaves the BM25 indexes out and the boot builds
-them, since a backup taken midway can hold two on one table, which pg_search refuses to create.
+A change of search languages writes the keyword index again in the background, a document at a time
+(`services/node/src/search/languages.ts`). Queries and writes use the new languages at once, and a
+row not yet written again still matches each word by its English stem, so search keeps answering.
+Each row records the format it was written in: the languages, the version of the text's spelling,
+and the ICU version of Node.js, whose dictionaries draw the Thai word breaks. Boot starts the same
+pass for any row in another format, so an update that changes one rewrites the index while the node
+serves.
 
 Every snapshot flush queues an `index_doc` job. It extracts the text, splits it into sections, embeds
 the sections that changed, and replaces the document's chunks. How chunks are cut and how Ask
@@ -369,13 +379,20 @@ on the Settings page.
 ## The run ledger
 
 An agent never changes a document or database directly. Each content write is a proposal to the
-actor, which the node sends with the review mode it resolved from the document's `agent_mode`
-(`authz/review-mode.ts`):
+actor, which the node sends with the review level it resolved from the document's `agent_mode`, or
+its folders', and for a row page at least its database's (`authz/review-mode.ts`). Levels are read
+with each row: a listing looks up each folder's once per query. A move that would loosen a level is
+checked against the folders it leaves before anything moves (`documents/review-level.ts`):
 
 - **`review`**, the default: the change parks as pending hunks (or ops) in a run, one agent session
   on one document, and the reviewer is notified. Pending state lives in the actor's storage, not in
   the Yjs document, so collaborators never see unreviewed agent content, and nothing lands it except
   a person's decision.
+- **`colleague`**: parked the same way, for someone other than the person who asked the AI to
+  accept. The run is stamped with the level (and the folder's approver group); each decision reads
+  the run from the actor and judges the caller at the stricter of that level and the document's now
+  (marking it reviewed, at its own level), and the actor checks again. The database actor's store refuses the reviewer's accept with a
+  trigger, and the `agent_runs` mirror with a CHECK.
 - **`auto`**: the change applies at once, is recorded as applied without review, and can be reverted.
   The reviewer is notified. A run that still holds undecided changes parks new ones even on an `auto`
   document.

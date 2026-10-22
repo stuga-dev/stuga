@@ -51,7 +51,7 @@
   "personPicker.placeholder": "依使用者名稱或姓名搜尋",
   "personPicker.noMatch": "沒有符合的人。",
   "searchLanguages.label": "文件中的語言",
-  "searchLanguages.hint": "搜尋能辨識所選語言的詞形變化與斷詞。其他語言則比對完全相同的字詞。",
+  "searchLanguages.hint": "搜尋能辨識所選語言的詞形變化。其他語言則比對完全相同的字詞。",
   "searchLanguages.alwaysOn": "一律啟用",
   "searchLanguages.find": "尋找語言",
   "principal.everyone": "所有人",

@@ -1,7 +1,7 @@
 /**
  * The backups a running node takes of itself, against a real Postgres, pg_dump
  * and tar; the node's quieting is a stand-in that records what it was asked.
- * Needs TEST_DATABASE_URL (Postgres 18 preloading pg_search) and client tools
+ * Needs TEST_DATABASE_URL (Postgres 18 with pgvector) and client tools
  * of major 18+ from PG_BIN or PATH; skips without the URL.
  */
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";

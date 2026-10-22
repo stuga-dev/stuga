@@ -35,6 +35,7 @@ function summary(over: Partial<DocSummary> = {}): DocSummary {
     locked: false,
     search_hidden: false,
     agent_mode: "review",
+    agent_mode_floor: null,
     page_of: null,
     page_row: null,
     ...over,

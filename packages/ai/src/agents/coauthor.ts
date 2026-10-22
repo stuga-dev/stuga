@@ -36,6 +36,8 @@ export interface AgentInput {
   currentDocId: string;
   /** The current document applies this turn's edits when it ends, without review. */
   applyAtOnce?: boolean;
+  /** The current document's edits wait for a colleague of the user to approve them. */
+  colleagueApproves?: boolean;
   /**
    * Images attached to this turn, already in the media store. The model places
    * them with an ordinary edit. With `bytes` (base64) it can see them; without,
@@ -213,6 +215,9 @@ const REVIEW_LINE =
   NO_COUNT;
 const APPLY_AT_ONCE_LINE =
   "Edits to the current document apply when your turn ends, without review: this\ndocument is set to apply agent changes at once. The user can revert them. " + NO_COUNT;
+const COLLEAGUE_LINE =
+  "Edits to the current document are shown as suggestions that a colleague of the user approves —\nthey are NOT applied until someone other than the user accepts them, and the user may reject\nthem. Say you suggested or proposed them, never that you added, changed or staged them. " +
+  NO_COUNT;
 
 const SEARCH_TOOL_LINE =
   "- search_collection(query): search the user's selected knowledge base for relevant passages. Cite facts you use with a [^n] footnote marker.";
@@ -501,7 +506,7 @@ export async function runAgentTurn(
   // Instructions go last: most salient, and the prompt is unchanged when there are none.
   const system =
     SYSTEM.replace("{{ASK}}", runner.askInComment ? ASK_TOOL_LINE : "")
-      .replace("{{REVIEW}}", input.applyAtOnce ? APPLY_AT_ONCE_LINE : REVIEW_LINE)
+      .replace("{{REVIEW}}", input.applyAtOnce ? APPLY_AT_ONCE_LINE : input.colleagueApproves ? COLLEAGUE_LINE : REVIEW_LINE)
       .replace("{{SEARCH_TOOL}}", input.collectionEnabled ? SEARCH_TOOL_LINE : "")
       .replace("{{MULTIDOC_TOOLS}}", input.collectionEnabled ? MULTIDOC_TOOL_LINES : "")
       .replace(
@@ -574,6 +579,8 @@ export async function runAgentTurn(
     const isCurrent = key === CURRENT;
     return {
       atOnce: isCurrent && input.applyAtOnce === true,
+      // Another document follows its own level, which the turn does not know.
+      waitsFor: isCurrent ? (input.colleagueApproves === true ? "colleague" : "user") : "review",
       text: () => working.get(key) ?? "",
       stage: (next, edit) => {
         working.set(key, next);
@@ -866,6 +873,8 @@ function anchorLabel(anchor: string): string {
 interface EditTarget {
   /** The edit applies when the turn ends instead of waiting for review. */
   atOnce: boolean;
+  /** Otherwise, who accepts it: the user, a colleague of theirs, or whoever its document's level names. */
+  waitsFor: "user" | "colleague" | "review";
   text(): string;
   /** Replace the working copy and record the edit that produced it. */
   stage(next: string, edit: AiStrEdit): void;
@@ -880,6 +889,13 @@ function uniqueMatch(haystack: string, needle: string, refusal: { missing: strin
   throw new Error(findFuzzyMatch(haystack, needle) ? refusal.ambiguous : refusal.missing);
 }
 
+/** Who a proposed edit waits for, as its tool result says it. */
+const WAITS_FOR: Record<EditTarget["waitsFor"], string> = {
+  user: "for the user's review",
+  colleague: "for a colleague of the user to approve",
+  review: "for review",
+};
+
 /**
  * An edit's result, then the other document's instructions note when the model
  * edits it before reading it: an append needs no read, and the note still lets
@@ -890,7 +906,7 @@ function staged(what: "edit" | "insertion", target: EditTarget, where?: string):
   const placed = where ? ` ${where}` : "";
   const result = target.atOnce
     ? `ok: ${what} made${placed}; it applies when your turn ends.`
-    : `ok: ${what} proposed${placed} for the user's review.`;
+    : `ok: ${what} proposed${placed} ${WAITS_FOR[target.waitsFor]}.`;
   const note = target.instructionsNote();
   return note ? `${result}\n\n${note}` : result;
 }

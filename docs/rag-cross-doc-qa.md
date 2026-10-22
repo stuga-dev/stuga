@@ -79,8 +79,10 @@ It is one SQL statement:
 
 - a **semantic leg**: the 96 chunks nearest the question by cosine distance, at any distance (the
   search box has its own cutoff: [Search strictness](configuration.md#search-strictness));
-- a **keyword leg**: BM25 through pg_search over each chunk's heading path and text, plus the title on
-  chunk 0, matching a passage on any word of the question, by English stem, with stopwords ignored;
+- a **keyword leg**: BM25 on Postgres's full-text search over each chunk's heading path and text,
+  plus the title on chunk 0, matching a passage on any word of the question as the
+  [search languages](configuration.md#search-languages) describe, with stopwords ignored; of the
+  passages the asker can see, up to 1,000 holding the question's rarest words are scored;
 - **Reciprocal Rank Fusion** of the two per-passage ranks into one `score`;
 - the **permission check inside each leg**: a chunk survives only if its document is in the caller's
   workspace, not trashed, not hidden from search, and its `acl_principals` overlap the caller's live

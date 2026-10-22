@@ -146,39 +146,24 @@ export interface QuoteAnchor {
  */
 export function quoteAnchor(ydoc: Y.Doc, quote: string): QuoteAnchor | null {
   if (!quote) return null;
-  // y-tiptap's converter deletes or merges Yjs items it cannot represent in the
-  // document it reads, so it reads a copy. The copy holds the same item IDs, so
-  // positions made on it resolve on every client.
-  const copy = new Y.Doc();
+  // Reading never writes to the document. Content the schema cannot hold makes it unreadable, as the
+  // editor finds it too.
+  const frag = ydoc.getXmlFragment("default");
+  let read: ReturnType<typeof initProseMirrorDoc>;
   try {
-    Y.applyUpdate(copy, Y.encodeStateAsUpdate(ydoc));
-    const frag = copy.getXmlFragment("default");
-    // Any transaction on the copy means the converter changed it: positions in a
-    // changed copy may name items the live document still shows otherwise.
-    const watch = { changed: false };
-    copy.on("afterTransaction", () => {
-      watch.changed = true;
-    });
-    let read: ReturnType<typeof initProseMirrorDoc>;
-    try {
-      read = initProseMirrorDoc(frag, getStugaSchema());
-    } catch {
-      return null; // a fragment the editor cannot read either
-    }
-    const match = findFuzzyMatch(docText(read.doc).text, quote, { wantUnique: true });
-    if (!match) return null;
-    const range = textRange(read.doc, match.index, match.matched.length);
-    if (!range) return null;
-    const quoteOnly: QuoteAnchor = { start: null, end: null, quote: match.matched };
-    if (watch.changed) return quoteOnly;
-    try {
-      const start = absolutePositionToRelativePosition(range.from, frag, read.mapping) as Y.RelativePosition;
-      const end = absolutePositionToRelativePosition(range.to, frag, read.mapping) as Y.RelativePosition;
-      return { start: encodeRelPos(start), end: encodeRelPos(end), quote: match.matched };
-    } catch {
-      return quoteOnly;
-    }
-  } finally {
-    copy.destroy();
+    read = initProseMirrorDoc(frag, getStugaSchema());
+  } catch {
+    return null;
+  }
+  const match = findFuzzyMatch(docText(read.doc).text, quote, { wantUnique: true });
+  if (!match) return null;
+  const range = textRange(read.doc, match.index, match.matched.length);
+  if (!range) return null;
+  try {
+    const start = absolutePositionToRelativePosition(range.from, frag, read.mapping) as Y.RelativePosition;
+    const end = absolutePositionToRelativePosition(range.to, frag, read.mapping) as Y.RelativePosition;
+    return { start: encodeRelPos(start), end: encodeRelPos(end), quote: match.matched };
+  } catch {
+    return { start: null, end: null, quote: match.matched };
   }
 }

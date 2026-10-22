@@ -77,7 +77,7 @@ interface NodeServices {
   calibrator: Calibrator;
   /** Every other setting the Settings page edits. */
   settings: NodeSettingsStore;
-  /** The languages keyword search answers for, and the rebuild of its indexes when they change. */
+  /** The languages keyword search stems words in, and the pass that writes its index again when they change. */
   searchLanguages: SearchLanguages;
   /** Verifies a bearer session token against the node's own signing key. */
   verifier: TokenVerifier;

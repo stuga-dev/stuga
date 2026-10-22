@@ -1,13 +1,16 @@
 /** Every query the job code runs, bound to one client, so tests can substitute an in-memory version. */
 import {
   type AuditEventInsert,
+  type SearchLanguage,
   type Sql,
   type WorkspaceEventInsert,
   advanceEmbeddingBackfill,
   advanceSnapshotSeq,
   bumpChunkEmbedAttempt,
   clearDocChunks,
+  colleagueApprovers,
   countAccounts,
+  managersWhoCanRead,
   deleteDoc,
   findChunksMissingEmbeddings,
   findExpiredTrash,
@@ -58,6 +61,7 @@ import {
   upsertAgentRun,
 } from "@stuga/db";
 import type { IndexMessage, NotifyDeliverMessage, RunIndexEntry } from "@stuga/protocol/internal/jobs";
+import { folderReviewChain } from "../authz/review-mode.js";
 import { mentionReaders } from "../mentions/recipients.js";
 import { queueSnapshotSweep } from "./snapshot-sweep.js";
 
@@ -72,7 +76,8 @@ export function jobsDb(sql: Sql) {
     insertAiUsage: (u: Parameters<typeof insertAiUsage>[1]) => insertAiUsage(sql, u),
     indexDoc: (input: Parameters<typeof indexDoc>[1]) => indexDoc(sql, input),
     advanceSnapshotSeq: (docId: string, snapshotSeq: number) => advanceSnapshotSeq(sql, docId, snapshotSeq),
-    setDatabaseSearchText: (docId: string, text: string) => setDatabaseSearchText(sql, docId, text),
+    setDatabaseSearchText: (docId: string, text: string, languages: readonly SearchLanguage[]) =>
+      setDatabaseSearchText(sql, docId, text, languages),
     /**
      * Store a notification and, when the row is new, queue its sink delivery in the same
      * transaction: a retried job then never finds its own row and skips a delivery that never ran.
@@ -133,6 +138,15 @@ export function jobsDb(sql: Sql) {
     countAccounts: () => countAccounts(sql),
     listNodeAdmins: () => listNodeAdmins(sql),
     recordUpdateCheck: (result: Parameters<typeof recordUpdateCheck>[1]) => recordUpdateCheck(sql, result),
+    /** The approver group a document's folders name now, or null. */
+    docApproverGroup: async (doc: { parent_id: string | null; workspace_id: string }): Promise<string | null> =>
+      (await folderReviewChain(sql, doc.parent_id, doc.workspace_id)).approverGroup,
+    /** Who may approve a run at `colleague` on this item, which `reviewer` asked the AI for. */
+    colleagueApprovers: (doc: Parameters<typeof colleagueApprovers>[1], reviewer: string, groups: string[]) =>
+      colleagueApprovers(sql, doc, reviewer, groups),
+    /** The item's owner and the workspace's owners and admins who can read it, `exclude` left out. */
+    managersWhoCanRead: (doc: { workspace_id: string; acl_principals: string[]; owner: string }, exclude: string) =>
+      managersWhoCanRead(sql, doc.workspace_id, doc, exclude),
     /** The folder ids above a document, outermost first; empty at the root. */
     docFolderAncestry: async (docId: string): Promise<string[]> => {
       const doc = await getDoc(sql, docId);

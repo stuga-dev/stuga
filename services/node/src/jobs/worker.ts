@@ -4,7 +4,7 @@ import type { AuditEventInsert, JobBatch } from "@stuga/db";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { type JobDeps, type JobsEnv, isTerminal, jobDeps } from "./deps.js";
 import { handleIndexDoc } from "./index-doc.js";
-import { handleNotify, handleNotifyDeliver } from "./notify.js";
+import { handleNotify, handleNotifyApprovers, handleNotifyDeliver } from "./notify.js";
 import { handleGcCheck } from "./snapshot-sweep.js";
 import { handleEvent, handleWebhookDeliver } from "./webhooks.js";
 
@@ -61,6 +61,8 @@ export async function dispatchJob(env: JobsEnv, msg: IndexMessage, deps: Partial
       return handleGcCheck(env, d, msg);
     case "notify":
       return handleNotify(env, d, msg);
+    case "notify_approvers":
+      return handleNotifyApprovers(env, d, msg);
     case "notify_deliver":
       return handleNotifyDeliver(env, d, msg);
     case "ai_usage":

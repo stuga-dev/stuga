@@ -11,6 +11,8 @@ vi.mock("@stuga/db", async (importOriginal) => ({
   rotateApiKeySecret: vi.fn(async () => true),
   setDocAgentMode: vi.fn(),
   updateDoc: vi.fn(),
+  clampMovedReviewLevels: vi.fn(async () => []),
+  waitingRunsIn: vi.fn(async () => []),
   folderEffectiveAcl: vi.fn(async () => null),
   getWorkspace: vi.fn(async () => ({ workspace_id: "ws1", name: "W", agent_instructions: "Be brief." })),
   listAgentRuns: vi.fn(async () => []),
@@ -322,7 +324,12 @@ describe("PATCH /api/docs/:id/state — agent_mode", () => {
     expect(out.status).toBe(200);
     expect(out.json).toMatchObject({ agent_mode: "auto" });
     expect(mockSetAgentMode).toHaveBeenCalledWith(expect.anything(), "d1", "auto");
-    expect(audit()).toContainEqual(expect.objectContaining({ action: "doc.agent_mode", detail: { mode: "auto", from: "review" } }));
+    expect(audit()).toContainEqual(
+      expect.objectContaining({
+        action: "doc.agent_mode",
+        detail: { mode: "auto", from: "review", follows_folder: false, floor: null, below_floor: false },
+      }),
+    );
   });
 
   it("writes nothing when the mode already matches", async () => {

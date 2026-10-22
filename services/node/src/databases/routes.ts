@@ -2,12 +2,14 @@
 import { touchDoc, type DocRow } from "@stuga/db";
 import { csvFileName, rowsToCsv } from "@stuga/protocol/databases/csv";
 import { selectOnlyViolation } from "@stuga/protocol/databases/sql-guard";
-import { parseDecisionNote } from "@stuga/protocol/domain/runs";
+import { parseDecisionNote, type RunAct } from "@stuga/protocol/domain/runs";
 import type { DatabaseOpSummary, DatabaseRunSummary } from "@stuga/protocol/databases/types";
 import { agentNameMap } from "../agents/names.js";
 import { recordAudit } from "../audit/record.js";
 import { docInstructionLabelsOrNone } from "../documents/instructions.js";
-import { canWriteDoc, manages } from "../authz/authz.js";
+import type { Ctx } from "../auth/context.js";
+import { canWriteDoc } from "../authz/authz.js";
+import { RunJudge, decisionRefusal, mayAct, vouched, type RunVerdict } from "../authz/review-mode.js";
 import { lockedError } from "../documents/access.js";
 import { docAgentInstructions } from "../documents/instructions.js";
 import { afterDatabaseMutation, authorizedDatabase, callDatabaseActor, databaseActor, projectedSchema, proxyActor } from "./gate.js";
@@ -380,9 +382,51 @@ export async function queryDatabase({ ctx, docId, body }: DatabaseCall): Promise
   return proxyActor(res, "query failed");
 }
 
-// Deciding a run belongs to its reviewer, which the actor checks, or to a
-// manager of the database, which only the node can tell (manager_override).
-export async function listDatabaseRuns({ ctx, url, docId }: DatabaseCall): Promise<Response> {
+/** Ops that landed: what they wrote is in the database and its activity for any reader. */
+const LANDED: ReadonlySet<string> = new Set(["accepted", "auto_applied"]);
+
+/**
+ * The run for a person, with where they stand on it (`you`). An op that has not landed (waiting,
+ * rejected or in conflict), its summary, detail, note and error included, goes only to its reviewer,
+ * its approvers and the database's managers: anyone else who can read the database sees that the
+ * run exists, how it went, and the ops that landed, as a document's runs show them.
+ */
+function forPerson(run: DatabaseRunSummary, v: RunVerdict): DatabaseRunSummary {
+  const out: DatabaseRunSummary = { ...run, you: v.standing };
+  if (v.seesText) return out;
+  const ops = run.ops.filter((op) => LANDED.has(op.status));
+  if (ops.length === run.ops.length) return out;
+  return { ...out, ops, ops_withheld: true };
+}
+
+/**
+ * The actor's 403 as the client reads it: at `colleague` it refuses the run's reviewer on its own
+ * word too, when the level rose after the node read the run.
+ */
+async function actorRefusal(res: Response, otherwise: string): Promise<Response> {
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  return error(403, body?.error === "own_run" ? "a colleague approves these changes, not the person who asked the AI" : otherwise);
+}
+
+/**
+ * Read the run and judge whether the caller may do `act` on it, before the actor is asked: the
+ * actor holds the run and re-checks; the node alone knows the database's level, its approvers and
+ * who manages it.
+ */
+async function judgeAct(ctx: Ctx, doc: DocRow, runId: string, act: RunAct): Promise<Response | { run: DatabaseRunSummary; verdict: RunVerdict }> {
+  const res = await databaseActor(ctx, doc.doc_id).fetch(`http://actor/runs/detail?${new URLSearchParams({ dbId: doc.doc_id, runId })}`);
+  if (res.status === 404) return error(404, "not found");
+  if (!res.ok) return error(502, "run unavailable");
+  const run = ((await res.json()) as { run?: DatabaseRunSummary }).run;
+  if (!run) return error(502, "run unavailable");
+  const verdict = await new RunJudge(ctx, doc).judge(run);
+  if (!mayAct(ctx, run, verdict, act)) return error(403, decisionRefusal(ctx, run, verdict, act, "database"));
+  return { run, verdict };
+}
+
+// Deciding a run is the node's call (RunJudge: the database's level, its approvers, who manages it),
+// which the actor, holding the run, checks again.
+export async function listDatabaseRuns({ ctx, url, doc, docId }: DatabaseCall): Promise<Response> {
   const qs = new URLSearchParams({ dbId: docId });
   const limit = url.searchParams.get("limit");
   if (limit) qs.set("limit", limit);
@@ -391,10 +435,12 @@ export async function listDatabaseRuns({ ctx, url, docId }: DatabaseCall): Promi
   const data = (await res.json()) as { runs?: DatabaseRunSummary[] };
   const runs = data.runs ?? [];
   // An agent sees only its own runs.
-  return json({ runs: ctx.isAgent ? runs.filter((r) => r.agent_alias === ctx.alias) : runs });
+  if (ctx.isAgent) return json({ runs: runs.filter((r) => r.agent_alias === ctx.alias) });
+  const verdicts = await new RunJudge(ctx, doc).judgeAll(runs);
+  return json({ runs: runs.map((r, i) => forPerson(r, verdicts[i]!)) });
 }
 
-export async function getDatabaseRun({ ctx, url, match, docId }: DatabaseCall): Promise<Response> {
+export async function getDatabaseRun({ ctx, url, match, doc, docId }: DatabaseCall): Promise<Response> {
   const qs = new URLSearchParams({ dbId: docId, runId: match[2]! });
   if (url.searchParams.get("full") === "1") qs.set("full", "1");
   // `sample=N` cuts a rows.insert payload to its first N rows.
@@ -403,8 +449,9 @@ export async function getDatabaseRun({ ctx, url, match, docId }: DatabaseCall): 
   const res = await databaseActor(ctx, docId).fetch(`http://actor/runs/detail?${qs}`);
   if (!res.ok) return error(res.status === 404 ? 404 : 502, "run unavailable");
   const detail = (await res.json()) as { run?: DatabaseRunSummary };
-  if (ctx.isAgent && detail.run?.agent_alias !== ctx.alias) return error(404, "not found");
-  return json(detail);
+  if (ctx.isAgent) return detail.run?.agent_alias === ctx.alias ? json(detail) : error(404, "not found");
+  if (!detail.run) return error(502, "run unavailable");
+  return json({ ...detail, run: forPerson(detail.run, await new RunJudge(ctx, doc).judge(detail.run)) });
 }
 
 export async function decideDatabaseRun({ ctx, match, doc, docId, canWrite, body }: DatabaseCall): Promise<Response> {
@@ -420,15 +467,17 @@ export async function decideDatabaseRun({ ctx, match, doc, docId, canWrite, body
   const note = parseDecisionNote(b.decision, b.note);
   if (!note.ok) return error(400, note.message);
   const opIds = Array.isArray(b.op_ids) ? b.op_ids.filter((x): x is string => typeof x === "string") : undefined;
+  const judged = await judgeAct(ctx, doc, match[2]!, b.decision);
+  if (judged instanceof Response) return judged;
   const res = await callDatabaseActor(ctx, docId, "runs/decide", {
     run_id: match[2]!,
     decision: b.decision,
     op_ids: opIds,
     decided_by: ctx.alias,
-    manager_override: manages(ctx, doc),
+    ...vouched(judged.verdict),
     ...(note.note ? { note: note.note } : {}),
   });
-  if (res.status === 403) return error(403, "only this run's reviewer (or the database's owner) can decide it");
+  if (res.status === 403) return actorRefusal(res, "only this run's reviewer (or the database's owner) can decide it");
   if (!res.ok) return proxyActor(res, "decision failed");
   const decided = (await res.json()) as {
     run?: DatabaseRunSummary;
@@ -436,6 +485,7 @@ export async function decideDatabaseRun({ ctx, match, doc, docId, canWrite, body
     rejected?: number;
     conflicts?: number;
   };
+  if (decided.run) decided.run = forPerson(decided.run, judged.verdict);
   // An accepted rows.delete took its rows' pages with it.
   await reconcileDocLinks(ctx, doc);
   recordAudit(ctx, {
@@ -451,6 +501,9 @@ export async function decideDatabaseRun({ ctx, match, doc, docId, canWrite, body
       applied: decided.applied ?? 0,
       rejected: decided.rejected ?? 0,
       conflicts: decided.conflicts ?? 0,
+      level: judged.verdict.level,
+      // On whose behalf the agent proposed: at `colleague`, never the one who decided.
+      asked_by: judged.run.reviewer,
     },
   });
   return json(decided);
@@ -462,18 +515,21 @@ export async function revertDatabaseRun({ ctx, match, doc, docId, writeRefusal, 
   if (r) return r;
   const note = parseDecisionNote("revert", (await body()).note);
   if (!note.ok) return error(400, note.message);
+  const judged = await judgeAct(ctx, doc, match[2]!, "revert");
+  if (judged instanceof Response) return judged;
   const res = await callDatabaseActor(ctx, docId, "runs/revert", {
     run_id: match[2]!,
     requested_by: ctx.alias,
-    manager_override: manages(ctx, doc),
+    ...vouched(judged.verdict),
     ...(note.note ? { note: note.note } : {}),
   });
-  if (res.status === 403) return error(403, "only this run's reviewer (or the database's owner) can revert it");
+  if (res.status === 403) return actorRefusal(res, "only this run's reviewer (or the database's owner) can revert it");
   if (!res.ok) return proxyActor(res, "revert failed");
   await touchDoc(ctx.sql, doc.doc_id).catch(() => {});
   // Reverted deletes bring their rows' pages back; reverted inserts may have taken some away.
   await reconcileDocLinks(ctx, doc);
   const reverted = (await res.json()) as { run?: DatabaseRunSummary; restored?: number; missing?: number };
+  if (reverted.run) reverted.run = forPerson(reverted.run, judged.verdict);
   recordAudit(ctx, {
     action: "run.revert",
     targetKind: "database",
@@ -491,15 +547,19 @@ export async function revertDatabaseRun({ ctx, match, doc, docId, writeRefusal, 
 
 export async function ackDatabaseRun({ ctx, match, doc, docId }: DatabaseCall): Promise<Response> {
   if (ctx.isAgent) return error(403, "agents cannot acknowledge agent edits");
-  // Not write- or lock-gated: dismissing a catch-up card changes no data.
+  // Not write- or lock-gated: dismissing a catch-up card changes no data. At `colleague` only someone
+  // other than the person who asked marks it reviewed.
+  const judged = await judgeAct(ctx, doc, match[2]!, "ack");
+  if (judged instanceof Response) return judged;
   const res = await callDatabaseActor(ctx, docId, "runs/ack", {
     run_id: match[2]!,
     acked_by: ctx.alias,
-    manager_override: manages(ctx, doc),
+    ...vouched(judged.verdict),
   });
-  if (res.status === 403) return error(403, "only this run's reviewer (or the database's owner) can dismiss it");
+  if (res.status === 403) return actorRefusal(res, "only this run's reviewer (or the database's owner) can dismiss it");
   if (!res.ok) return proxyActor(res, "ack failed");
   const acked = (await res.json()) as { run?: DatabaseRunSummary };
+  if (acked.run) acked.run = forPerson(acked.run, judged.verdict);
   recordAudit(ctx, {
     action: "run.ack",
     targetKind: "database",

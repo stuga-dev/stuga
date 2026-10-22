@@ -228,7 +228,7 @@ interface SettingsCandidate {
   identityProvider: StoredIdentityProvider | null;
   /** undefined keeps the client secret on file, null deletes it, a string replaces it. */
   idpClientSecret: string | null | undefined;
-  /** undefined keeps them; a change rebuilds the search indexes. */
+  /** undefined keeps them; a change writes the search index again for them. */
   searchLanguages: SearchLanguage[] | undefined;
 }
 
@@ -511,7 +511,7 @@ async function nodeSettingsResponse(ctx: Ctx): Promise<Response> {
     // The backups themselves, and whether one is running: GET /api/node/backups.
     backups: saved.backups,
     time_zone: saved.timeZone,
-    // The languages chosen; while `rebuilding`, and after a rebuild that gave up (`error`), search uses those both sets share.
+    // The languages chosen. While `rebuilding`, and after a pass that gave up (`error`), documents not yet written for them match by their English stems.
     search: {
       languages: search.languages,
       choices: SEARCH_LANGUAGES,

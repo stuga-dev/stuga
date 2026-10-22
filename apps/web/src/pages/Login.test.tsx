@@ -192,25 +192,25 @@ describe("Login · a username the node refuses", () => {
     expect(registered().at(-1)).not.toHaveProperty("update_check");
   });
 
-  it("offers the languages of the documents at setup, English alone until more are chosen, and sends the choice with the account", async () => {
+  it("offers the languages of the documents at setup, those always read alone until more are chosen, and sends the choice with the account", async () => {
     // The browser's languages choose nothing: whoever sets the node up picks.
     const languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["ko-KR", "en-US"]);
     try {
       setAuthConfigForTest({ unclaimed: true, nodeName: NODE_NAME });
       fetchMock.mockImplementation(async () => reply(409, { error: "username_taken", message: "that username is taken" }));
       await open("/login?setup=ABCDE-12345");
-      expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("English");
+      expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("Chinese, English, Japanese, Korean, Thai");
 
       await type("Username", "ada");
       await type("Password", "battery staple 9");
       await click("Create administrator account");
       expect(registered().at(-1)).toMatchObject({ username: "ada", search_languages: [] });
 
-      // English is always on: its row does not toggle, and it is never sent.
-      await toggleOptions(host, SEARCH_LANGUAGES_LABEL, "Chinese", "French", "English");
-      expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("Chinese, English, French");
+      // English, Chinese, Japanese, Korean and Thai are always on: their rows do not toggle, and they are never sent.
+      await toggleOptions(host, SEARCH_LANGUAGES_LABEL, "German", "French", "English", "Chinese");
+      expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("Chinese, English, French, German, Japanese, Korean, Thai");
       await click("Create administrator account");
-      expect(registered().at(-1)).toMatchObject({ search_languages: ["fr", "zh"] });
+      expect(registered().at(-1)).toMatchObject({ search_languages: ["de", "fr"] });
     } finally {
       languages.mockRestore();
     }

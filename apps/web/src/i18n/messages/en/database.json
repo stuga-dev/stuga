@@ -260,6 +260,7 @@
   "ai.empty": "Ask for changes to this database — “add a Status column and mark the done rows”, “insert the Q3 milestones”, “dedupe rows by Name”.",
   "ai.emptyAuto": "AI edits to this database apply directly: each lands as it is made, recorded and revertible.",
   "ai.emptyReview": "Every change is proposed for your review before it lands.",
+  "ai.emptyColleague": "Every change is proposed for a colleague’s approval before it lands.",
   "ai.placeholder": "Ask the AI to change this database…",
   "ai.placeholderDocs": "Ask the AI to change this database, using your documents…",
   "ai.scopeBase": "This database only",

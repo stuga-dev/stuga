@@ -60,7 +60,7 @@ import { startInterval } from "../platform/interval.js";
 import { serveStatic } from "../platform/static.js";
 import { VERSION, bootSummary, previousBuild } from "../version.js";
 import { holdWriterLock } from "../writer-lock.js";
-import { assertDatabaseLocale, assertPgSearch, assertPostgresVersion } from "./preflight.js";
+import { assertDatabaseLocale, assertPostgresVersion } from "./preflight.js";
 import { runShutdown, SHUTDOWN_DEADLINE_MS } from "./shutdown.js";
 import { backupBeforeUpgrade } from "./upgrade-backup.js";
 import { dataRefusal, goBackTo, readServedData, refusalText } from "./data-version.js";
@@ -96,7 +96,6 @@ async function boot(): Promise<void> {
 
   // Before any DDL, so a wrong server is refused before it is written to.
   await assertPostgresVersion(sql);
-  await assertPgSearch(sql);
   await assertDatabaseLocale(sql);
 
   // Before any DDL, so migrations never run against a database a restore is replacing.
@@ -215,23 +214,14 @@ async function boot(): Promise<void> {
   const { nodeId, previousVersion } = await recordNodeBoot(sql, VERSION);
   console.info(`[node] ${bootSummary({ version: VERSION, previousVersion, schema })}`);
 
-  // The indexes are reconciled to the node's search languages; none until setup chooses.
-  const bootLanguages = (await getSearchLanguages(sql)) ?? [];
-  const repairs = await runBootRepairs(sql, { searchLanguages: bootLanguages });
+  const repairs = await runBootRepairs(sql);
   if (repairs.updatedExtensions.length > 0) {
     console.info(`[node] extensions updated to this build's versions: ${repairs.updatedExtensions.join(", ")}`);
   }
-  if (repairs.searchIndexChanges.length > 0) {
-    console.info(
-      `[node] search languages ${bootLanguages.join(", ") || "(none)"}: ` +
-        `${repairs.searchIndexChanges.join(", ")} (a + is one index built over the whole corpus, once)`,
-    );
-  }
-  if (repairs.rebuiltSearchIndexes.length > 0) {
-    console.info(`[node] search indexes rebuilt: ${repairs.rebuiltSearchIndexes.join(", ")}`);
-  }
-  // From here on the languages change online, from Settings and from setup.
-  const searchLanguages = createSearchLanguages({ sql, languages: bootLanguages });
+  // The languages keyword search stems words in; none until setup chooses. Rows written in another
+  // format (other languages, another spelling of the text) are written again in the background.
+  const searchLanguages = createSearchLanguages({ sql, languages: (await getSearchLanguages(sql)) ?? [] });
+  void searchLanguages.rebuild(searchLanguages.current());
 
   // Only whoever holds the setup code may make the first account, which administers the node.
   const setupCodeAt = setupCodeFile(cfg.dataDir, cfg.setupCodeFile);
@@ -340,7 +330,7 @@ async function boot(): Promise<void> {
       void removeSetupCode(setupCodeAt).catch((err: unknown) => console.warn("[node] could not remove the used setup code", err));
       // Setup gave the node its time zone, in the account's own transaction.
       void settings.refresh().catch(() => {});
-      // And chosen search languages, which the indexes, built at boot for none, are rebuilt for.
+      // And chosen search languages, which the index, written until now for none, is written again for.
       void getSearchLanguages(sql)
         .then((languages) => searchLanguages.rebuild(languages ?? []))
         .catch((err: unknown) => console.warn("[node] could not read the search languages setup chose", err));
@@ -480,7 +470,7 @@ async function boot(): Promise<void> {
       { name: "HTTP listener", run: () => server.close() },
       { name: "maintenance loop", run: () => maintenance.stop() },
       { name: "socket sweep", run: () => socketSweep.stop() },
-      { name: "search index rebuild", run: () => searchLanguages.stop() },
+      { name: "search index pass", run: () => searchLanguages.stop() },
       { name: "job worker", run: () => worker.stop() },
       { name: "embedding measurement", run: () => calibrator.stop() },
       { name: "document actors", run: () => docs.close() },

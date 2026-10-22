@@ -33,6 +33,7 @@ function ctxOf(alias: string, role: string, over: Record<string, unknown> = {}):
       internalSecret: "s".repeat(43),
       jobs: { send: vi.fn(async (m: Record<string, unknown>) => void jobs.push(m)) },
       docs: { get: () => ({ fetch: vi.fn(async () => Response.json({})) }) },
+      searchLanguages: { current: () => [] },
     },
     ...over,
   } as unknown as Ctx;

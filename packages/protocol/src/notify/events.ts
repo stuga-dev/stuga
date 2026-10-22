@@ -4,6 +4,7 @@
  * tray and in what the node sends outside the app. Names, titles and addresses in the params are
  * data and stay as they were written; instants are ISO strings.
  */
+import type { ReviewMode } from "../domain/events";
 
 /** A notification channel as an alert names it: which service, and where, never its secret. */
 export interface ChannelParams {
@@ -61,9 +62,31 @@ export interface NotificationParams {
   /** `actor` is null when an agent's edit made the mention. */
   MENTIONED_IN_DOC: { actor: string | null; doc: string; excerpt: string };
   DATABASE_AGENT_EDIT: { actor: string; doc: string; change: DatabaseChange };
-  DATABASE_AGENT_PROPOSED: { agent: string; doc: string; count: number };
-  AGENT_EDITS_PROPOSED: { agent: string; doc: string; count: number };
+  /** `waits`: who approves, the recipient (who asked the AI) or a colleague. */
+  DATABASE_AGENT_PROPOSED: { agent: string; doc: string; count: number; waits: "you" | "colleague" };
+  AGENT_EDITS_PROPOSED: { agent: string; doc: string; count: number; waits: "you" | "colleague" };
   AGENT_EDITS_APPLIED: { agent: string; doc: string };
+  /** To each person who may approve: `author` asked `agent`, whose changes wait for their approval. */
+  APPROVAL_WAITING: { agent: string; author: string; doc: string; count: number };
+  /**
+   * To the item's owner and the workspace's admins who can read it, the person who asked left out:
+   * changes `author`'s `agent` proposed wait at `colleague`, and nobody may approve them yet, because
+   * nobody else can edit the item (`nobody`) or nobody in its approver group can (`group`).
+   */
+  APPROVER_NEEDED: { agent: string; author: string; doc: string; count: number; cause: "nobody" | "group" };
+  /**
+   * To the workspace's other administrators who can read it: `actor` set how AI edits to `doc` (a
+   * document, database or folder) are reviewed to `level`, looser than before, or `moved` it where
+   * they are; `floor` is the level its folder set when `level` is below it, else null.
+   */
+  REVIEW_LEVEL_LOWERED: {
+    actor: string;
+    doc: string;
+    kind: "document" | "database" | "folder";
+    level: ReviewMode;
+    floor: ReviewMode | null;
+    moved: boolean;
+  };
 
   ACCOUNT_NEW_SIGN_IN: { host: string; device: string; at: string; from: string };
   MEMBER_NEW_SIGN_IN: { name: string; host: string; device: string; at: string; from: string };
@@ -114,7 +137,10 @@ export type DocNotificationEvent =
   | "DATABASE_AGENT_EDIT"
   | "DATABASE_AGENT_PROPOSED"
   | "AGENT_EDITS_PROPOSED"
-  | "AGENT_EDITS_APPLIED";
+  | "AGENT_EDITS_APPLIED"
+  | "APPROVAL_WAITING"
+  | "APPROVER_NEEDED"
+  | "REVIEW_LEVEL_LOWERED";
 
 /** An event with its params, typed together. */
 export type NotificationOf<E extends NotificationEvent> = { eventType: E; params: NotificationParams[E] };

@@ -34,8 +34,8 @@ done
 
 [ -n "$tree" ] || { echo "usage: $0 --identity \"Developer ID Application: Name (TEAMID)\" <tree> | --dry-run <tree>" >&2; exit 2; }
 [ -d "$tree" ] || { echo "error: $tree is not a directory" >&2; exit 2; }
-if [ ! -x "$tree/bin/postgres" ] || [ ! -f "$tree/lib/postgresql/pg_search.dylib" ]; then
-  echo "error: $tree is not a Postgres tree (no bin/postgres or lib/postgresql/pg_search.dylib); this script signs only that" >&2
+if [ ! -x "$tree/bin/postgres" ] || [ ! -f "$tree/lib/postgresql/vector.dylib" ]; then
+  echo "error: $tree is not a Postgres tree (no bin/postgres or lib/postgresql/vector.dylib); this script signs only that" >&2
   exit 2
 fi
 if [ "$dry_run" = no ] && [ -z "$identity" ]; then

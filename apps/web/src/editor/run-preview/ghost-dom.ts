@@ -144,7 +144,10 @@ function decisionRow(
     btn.title = LABELS[decision].title;
     btn.setAttribute("aria-label", changeLabel(LABELS[decision].label, part, ordinal, total));
     if (scope) btn.setAttribute("aria-describedby", scope.id);
-    if (pending) {
+    // Asked for at `colleague`, its Accept is someone else's: greyed out, saying why, with Reject left.
+    const blocked = decision === "accept" && part.acceptBlocked === true;
+    if (blocked) btn.title = t("review.runBar.waitsColleague");
+    if (pending || blocked) {
       btn.disabled = true;
       btn.setAttribute("aria-disabled", "true");
     }

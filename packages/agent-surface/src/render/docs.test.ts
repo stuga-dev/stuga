@@ -126,6 +126,13 @@ describe("instructionFields", () => {
 });
 
 describe("renderPropose", () => {
+  it("says a change at colleague waits for a colleague of the user", () => {
+    expect(renderPropose({ mode: "proposed", run: run({ review_mode: "colleague" }), pending: 1, reason: "r" })).toMatch(
+      /^Proposed — your edit is waiting for a colleague of the user to accept it/,
+    );
+    expect(renderPropose({ mode: "proposed", run: run(), pending: 1, reason: "r" })).toMatch(/^Proposed — your edit is waiting for the user to accept it/);
+  });
+
   it("names the instructions below the workspace after a write, and says nothing when none apply", () => {
     const labels = ['Folder "Journal"', 'Document "2026-09-17"'];
     const proposed = renderPropose({ mode: "proposed", run: run(), pending: 1, reason: "r", instructions_labels: labels });

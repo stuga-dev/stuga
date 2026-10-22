@@ -29,24 +29,12 @@ describe("logNotice", () => {
     vi.restoreAllMocks();
   });
 
-  it("drops pg_search's planner warnings", () => {
+  it("logs every notice as one line, a warning included", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    logNotice({
-      severity: "WARNING",
-      code: "01000",
-      message: "Aggregate Scan (DataFusion) not used: all tables in the join must have BM25 indexes (table: join)",
-      file: "planner_warnings.rs",
-      routine: "pg_search::postgres::planner_warnings::emit_planner_warnings::{{closure}}",
-    });
-    expect(warn).not.toHaveBeenCalled();
-  });
-
-  it("logs every other notice as one line, a warning from elsewhere included", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    logNotice({ severity: "NOTICE", code: "42P06", message: 'schema "paradedb" already exists, skipping', routine: "CreateSchemaCommand" });
+    logNotice({ severity: "NOTICE", code: "42P06", message: 'schema "audit" already exists, skipping', routine: "CreateSchemaCommand" });
     logNotice({ severity: "WARNING", code: "01000", message: "something else", routine: "exec_stmt_raise" });
     expect(warn.mock.calls).toEqual([
-      ['[postgres] NOTICE: schema "paradedb" already exists, skipping'],
+      ['[postgres] NOTICE: schema "audit" already exists, skipping'],
       ["[postgres] WARNING: something else"],
     ]);
   });

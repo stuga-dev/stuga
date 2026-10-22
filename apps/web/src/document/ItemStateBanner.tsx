@@ -120,6 +120,7 @@ export function EndedBanner({
   return (
     <Banner
       status="error"
+      role="alert"
       title={title}
       description={noun === "document" ? t("document.ended.body") : t("document.ended.bodyDatabase")}
       endContent={

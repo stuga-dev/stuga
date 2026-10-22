@@ -12,7 +12,7 @@ import type { DatabaseRunSummary } from "@stuga/protocol/databases/types";
 import { ALL_DOCUMENTS_SCOPE } from "@stuga/protocol/wire/doc-socket";
 import type { Ctx } from "../auth/context.js";
 import { scopeFolderIds } from "../authz/authz.js";
-import { agentReviewMode } from "../authz/review-mode.js";
+import { agentReviewMode, proposalApproverGroup } from "../authz/review-mode.js";
 import { docInstructionStack } from "../documents/instructions.js";
 import { error, sse } from "../http/respond.js";
 import { passageCitations } from "../retrieval/passages.js";
@@ -34,6 +34,8 @@ export function tableToolRunner(
   const actor = panelActor(ctx);
   const docId = doc.doc_id;
   const review = agentReviewMode(doc).mode;
+  // Read once per turn, with the level: the group the run is stamped with at `colleague`.
+  const approverGroup = proposalApproverGroup(ctx, doc, review).catch(() => null);
   let runId: string | null = null;
   // Keeps the [n] numbers in result text in step with the loop's own citation counter.
   let citationOffset = 0;
@@ -66,6 +68,7 @@ export function tableToolRunner(
           op,
           source: "panel",
           review,
+          ...((await approverGroup) ? { approver_group: await approverGroup } : {}),
           agent: "AI co-author",
           reviewer: ctx.alias,
           workspace_id: ctx.workspaceId,
@@ -85,7 +88,8 @@ export function tableToolRunner(
       const mintedNote = Object.keys(minted).length ? ` ${JSON.stringify(minted)}` : "";
       // The actor's word, not `review`: a run holding undecided ops parks even on `auto`.
       const applied = parsed.mode === "applied";
-      return { staged: true, applied, text: `ok: ${applied ? "applied" : "proposed for the user's review"}.${mintedNote}` };
+      const waits = review === "colleague" ? "proposed; a colleague of the user approves it" : "proposed for the user's review";
+      return { staged: true, applied, text: `ok: ${applied ? "applied" : waits}.${mintedNote}` };
     },
     // Offered only with a collection selected. Never throws: a refusal is text the model can act on.
     searchCollection: collectionId
@@ -164,6 +168,7 @@ export async function databaseCoauthor({ ctx, doc, docId, writeRefusal, body }: 
           history,
           collectionEnabled: collectionId !== null,
           applyAtOnce: agentReviewMode(doc).mode === "auto",
+          colleagueApproves: agentReviewMode(doc).mode === "colleague",
           instructions,
           signal,
         },

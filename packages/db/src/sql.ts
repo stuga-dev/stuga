@@ -36,14 +36,73 @@ export const DOC_COLUMNS = [
   "page_row",
 ] as const;
 
-/** The DocRow projection. `search_text` stays out: it is unbounded. */
-export function docCols(sql: Queryable, alias?: string): Fragment {
-  return sql.unsafe(DOC_COLUMNS.map((c) => (alias ? `${alias}.${c}` : c)).join(", "));
+/** A row page's database's level now, `page_of` naming it; NULL for any other document. */
+function databaseLevelOf(pageOf: string): string {
+  return `(SELECT coalesce(lvd.agent_mode, folder_agent_mode(lvd.parent_id), 'review') FROM docs lvd WHERE lvd.doc_id = ${pageOf})`;
 }
 
-export function folderCols(sql: Queryable): Fragment {
+/**
+ * The DocRow projection. `search_text` stays out: it is unbounded. The levels its folders give it
+ * (`folder_agent_mode`) and, for a row page, its database's (`database_agent_mode`) are read with
+ * the row, after any update a RETURNING applies, so a moved document reads its new folder's level.
+ * That walks the folders above it once per row: a query that reads many rows passes `joined` and
+ * reads them through docLevelJoins instead.
+ */
+export function docCols(sql: Queryable, alias?: string, opts: { joined?: boolean } = {}): Fragment {
+  const col = (c: string) => (alias ? `${alias}.${c}` : c);
+  // Qualified, so the subquery's own `docs` cannot capture the outer row's columns.
+  const ref = (c: string) => `${alias ?? "docs"}.${c}`;
+  const levels = opts.joined
+    ? "lvl_folder.folder_agent_mode, lvl_database.database_agent_mode"
+    : `folder_agent_mode(${ref("parent_id")}) AS folder_agent_mode, ${databaseLevelOf(ref("page_of"))} AS database_agent_mode`;
+  return sql.unsafe(`${DOC_COLUMNS.map(col).join(", ")}, ${levels}`);
+}
+
+/**
+ * For a listing of documents as `alias`: the levels docCols(sql, alias, { joined: true }) reads,
+ * looked up by folder and by database, which the planner caches (Memoize) or hashes, so each folder
+ * chain is walked once per query rather than once per row.
+ */
+export function docLevelJoins(sql: Queryable, alias: string): Fragment {
   return sql.unsafe(
-    "folder_id, workspace_id, parent_id, owner, title, acl_principals, acl_writers, inherits_perms, own_grants, agent_instructions, created_at, updated_at",
+    `LEFT JOIN LATERAL (SELECT folder_agent_mode(lvf.folder_id) AS folder_agent_mode FROM folders lvf WHERE lvf.folder_id = ${alias}.parent_id) lvl_folder ON TRUE ` +
+      `LEFT JOIN LATERAL (SELECT coalesce(lvd.agent_mode, folder_agent_mode(lvd.parent_id), 'review') AS database_agent_mode ` +
+      `FROM docs lvd WHERE lvd.doc_id = ${alias}.page_of) lvl_database ON TRUE`,
+  );
+}
+
+/** The folders columns a FolderRow carries as stored. */
+export const FOLDER_COLUMNS = [
+  "folder_id",
+  "workspace_id",
+  "parent_id",
+  "owner",
+  "title",
+  "acl_principals",
+  "acl_writers",
+  "inherits_perms",
+  "own_grants",
+  "agent_instructions",
+  "agent_mode",
+  "approver_group",
+  "created_at",
+  "updated_at",
+] as const;
+
+/**
+ * The FolderRow projection, with the level the folders above give it (`parent_agent_mode`), read
+ * once per row; a listing passes `joined` and reads it through folderLevelJoin.
+ */
+export function folderCols(sql: Queryable, alias?: string, opts: { joined?: boolean } = {}): Fragment {
+  const col = (c: string) => (alias ? `${alias}.${c}` : c);
+  const level = opts.joined ? "lvl_parent.parent_agent_mode" : `folder_agent_mode(${col("parent_id")}) AS parent_agent_mode`;
+  return sql.unsafe(`${FOLDER_COLUMNS.map(col).join(", ")}, ${level}`);
+}
+
+/** For a listing of folders as `alias`: the level folderCols(sql, alias, { joined: true }) reads, once per parent. */
+export function folderLevelJoin(sql: Queryable, alias: string): Fragment {
+  return sql.unsafe(
+    `LEFT JOIN LATERAL (SELECT folder_agent_mode(lvp.folder_id) AS parent_agent_mode FROM folders lvp WHERE lvp.folder_id = ${alias}.parent_id) lvl_parent ON TRUE`,
   );
 }
 

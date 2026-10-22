@@ -51,7 +51,7 @@
   "personPicker.placeholder": "Nach Benutzername oder Name suchen",
   "personPicker.noMatch": "Niemand passt.",
   "searchLanguages.label": "Sprachen in deinen Dokumenten",
-  "searchLanguages.hint": "In den gewählten Sprachen kennt die Suche Wortendungen und Wortgrenzen. Andere finden nur exakte Wörter.",
+  "searchLanguages.hint": "In den gewählten Sprachen kennt die Suche Wortendungen. Andere finden nur exakte Wörter.",
   "searchLanguages.alwaysOn": "Immer aktiv",
   "searchLanguages.find": "Sprache suchen",
   "principal.everyone": "Alle",

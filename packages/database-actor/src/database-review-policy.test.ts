@@ -140,4 +140,52 @@ describe("review policy in the database actor", () => {
     const decided = sent.find((m) => m.kind === "event" && m.type === "run.decided");
     expect(decided).toMatchObject({ actor: `user:${HUMAN.alias}`, payload: { decision: "accept", applied: 1 } });
   });
+
+  it("`colleague` parks, stamps its approver group, and the store refuses its reviewer an accept", async () => {
+    const h = makeState();
+    const sent = h.jobs.sent;
+    const { actor } = makeActor(h);
+    const starter = await initStarter(actor);
+    const out = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "raise" }] }, { review: "colleague", approver_group: "group:legal" });
+    expect(out.mode).toBe("proposed");
+    expect(out.run).toMatchObject({ review_mode: "colleague", approver_group: "group:legal" });
+    expect(sent.filter((m) => m.kind === "notify")).toMatchObject([{ eventType: "DATABASE_AGENT_PROPOSED", params: { waits: "colleague" } }]);
+    expect(sent.find((m) => m.kind === "notify_approvers")).toMatchObject({ reviewer: HUMAN.alias, approverGroup: "group:legal", count: 1 });
+
+    // An admin who asked the AI is still the one who asked, whatever the node vouches.
+    const own = await doJson(actor, "/runs/decide", {
+      actor: HUMAN,
+      run_id: out.run.id,
+      decision: "accept",
+      decided_by: HUMAN.alias,
+      level: "colleague",
+      approver: true,
+      manager_override: true,
+    }, 403);
+    expect(own).toMatchObject({ error: "own_run" });
+    expect(await total(actor, starter.table_id)).toBe(0);
+    await doJson(actor, "/runs/decide", { actor: HUMAN, run_id: out.run.id, decision: "accept", decided_by: "user:bo", level: "colleague" }, 403);
+
+    await doJson(actor, "/runs/decide", { actor: HUMAN, run_id: out.run.id, decision: "accept", decided_by: "user:bo", level: "colleague", approver: true });
+    expect(await total(actor, starter.table_id)).toBe(1);
+    const mirror = sent.filter((m) => m.kind === "run_index").at(-1) as Extract<IndexMessage, { kind: "run_index" }>;
+    expect(mirror.run).toMatchObject({ reviewMode: "colleague", approvedBy: ["user:bo"] });
+  });
+
+  it("decides at the stricter of the run's level and the database's now", async () => {
+    const h = makeState();
+    const { actor } = makeActor(h);
+    const starter = await initStarter(actor);
+    const out = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "x" }] }, { review: "review" });
+    await doJson(actor, "/runs/decide", { actor: HUMAN, run_id: out.run.id, decision: "accept", decided_by: HUMAN.alias, level: "colleague" }, 403);
+    await doJson(actor, "/runs/decide", { actor: HUMAN, run_id: out.run.id, decision: "reject", decided_by: HUMAN.alias, level: "colleague" });
+  });
+
+  it("lets its reviewer mark reviewed a run proposed below colleague, whatever the database is at now", async () => {
+    const h = makeState();
+    const { actor } = makeActor(h);
+    const starter = await initStarter(actor);
+    const out = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "x" }] }, { review: "auto" });
+    await doJson(actor, "/runs/ack", { actor: HUMAN, run_id: out.run.id, acked_by: HUMAN.alias, level: "colleague" });
+  });
 });

@@ -7,7 +7,6 @@
   - It runs through `current`, so an update is a symlink change and a restart.
   - ExitTimeOut gives the fast shutdown and its checkpoint minutes instead of launchd's 20 s.
   - KeepAlive restarts a crash, not a stop.
-  - The file limit is raised for pg_search, whose index segments are many small files.
 -->
 <plist version="1.0">
 <dict>
@@ -52,17 +51,6 @@
   <integer>300</integer>
   <key>ProcessType</key>
   <string>Standard</string>
-
-  <key>SoftResourceLimits</key>
-  <dict>
-    <key>NumberOfFiles</key>
-    <integer>65536</integer>
-  </dict>
-  <key>HardResourceLimits</key>
-  <dict>
-    <key>NumberOfFiles</key>
-    <integer>65536</integer>
-  </dict>
 
   <key>StandardOutPath</key>
   <string>@LOGS@/postgres.log</string>

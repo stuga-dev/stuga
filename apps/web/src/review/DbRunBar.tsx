@@ -9,8 +9,9 @@ import { Text } from "@astryxdesign/core/Text";
 import type { DatabaseRunOp, DatabaseRunSummary, TableSchema } from "@stuga/protocol/databases/types";
 import { pendingOps, useDbRuns } from "./db-runs-context";
 import { anchorOf, keepFocus, useRejectNote, type NoteAnchor } from "./RejectNoteDialog";
-import { RunBanner, RunNotices } from "./RunBanner";
-import { itemKey } from "./run-ledger";
+import { RunBanner, RunNotices, WAITS_HINT } from "./RunBanner";
+import { acceptWaitsFor, itemKey } from "./run-ledger";
+import { getAlias } from "../lib/http/client";
 import { noteLabels } from "./note-mode";
 import { t } from "../i18n/i18n";
 import { describeProposal } from "../database/op-lines";
@@ -65,17 +66,22 @@ function DbRunBanner({
   const tableName = (tableId: string) => tables.find((table) => table.table_id === tableId)?.display ?? t("review.runBar.newTable");
   const offTable = pending.filter((op) => op.table_id !== activeTableId).length;
   const agent = runAgentLabel(run);
+  // At `colleague` the person who asked the AI can take its changes back, and someone else lets them in.
+  const waits = acceptWaitsFor(run, getAlias());
+  const acceptBlocked = locked || waits !== null;
 
   return (
     <>
       <RunBanner
         updatedAt={run.updated_at}
         title={t("review.runBar.dbTitle", { agent, count: n })}
-        acceptBlocked={locked}
+        acceptBlocked={acceptBlocked}
         hint={
           locked
             ? t("review.runBar.lockedHint")
-            : offTable > 0
+            : waits !== null
+              ? t(WAITS_HINT[waits])
+              : offTable > 0
               ? t("review.runBar.dbHintOffTable", { count: offTable })
               : t("review.runBar.dbHint")
         }
@@ -107,7 +113,7 @@ function DbRunBanner({
                         label={t("review.runBar.acceptOne")}
                         variant="secondary"
                         size="sm"
-                        isDisabled={flying || locked}
+                        isDisabled={flying || acceptBlocked}
                         onClick={() => void decide(run.id, "accept", [op.id])}
                       >
                         {t("common.accept")}

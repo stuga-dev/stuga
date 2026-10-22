@@ -261,7 +261,7 @@ export function ConnectForm({
 
   return (
     <VStack gap={3}>
-      {problem && problem.field === null && <Banner status="error" title={t("nodeAccess.connect.notConnected")} description={problem.message} />}
+      {problem && problem.field === null && <Banner status="error" role="alert" title={t("nodeAccess.connect.notConnected")} description={problem.message} />}
       <Selector label={t("nodeAccess.connect.service")} options={presets.map((o) => ({ value: o.value, label: o.label }))} value={service} onChange={pick} />
       {isBedrock && (
         <TextInput

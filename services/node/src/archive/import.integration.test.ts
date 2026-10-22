@@ -65,6 +65,7 @@ describe.skipIf(!URL)("importing an archive into a new workspace", () => {
       media: new MemoryBlobStore(),
       jobs,
       settings: { current: () => ({ databaseOpsKeep: 500, maxBodyBytes: DEFAULT_MAX_BODY_BYTES }) },
+      searchLanguages: { current: () => [] },
     } as unknown as NodeEnv;
   });
 
@@ -104,7 +105,8 @@ describe.skipIf(!URL)("importing an archive into a new workspace", () => {
     expect(rows.every((r) => r.owner === "user:u_liv" && !r.acl_writers.includes(`org:${WS}`))).toBe(true);
     expect(gdpr).toMatchObject({ parent_id: folders[0]!.folder_id, title: "Regulation (EU) 2016/679", title_source: "user", locked: true });
     expect(gdpr).toMatchObject({ agent_mode: "auto", search_hidden: true, agent_instructions: "Quote articles." });
-    expect(page).toMatchObject({ page_of: db.docId, locked: false, agent_mode: "review" });
+    // `review` is what a page follows anyway: it keeps no level of its own.
+    expect(page).toMatchObject({ page_of: db.docId, locked: false, agent_mode: null });
     expect(dbRow).toMatchObject({ doc_type: "database", title: "Obligations", locked: true, agent_instructions: "One row per law and topic." });
     expect(out.startDocId).toBe(startId);
     // Each body a version of its own, by the person importing.

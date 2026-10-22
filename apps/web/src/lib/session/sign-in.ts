@@ -38,7 +38,7 @@ export async function signUp(
     setupCode?: string;
     /** This browser's time zone, which setup gives the node for its schedule. */
     timeZone?: string;
-    /** Setup's choice of the languages search gets a tokenizer for. */
+    /** Setup's choice of the languages search stems words in. */
     searchLanguages?: SearchLanguage[];
   } = {},
 ): Promise<Session> {

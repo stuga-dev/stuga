@@ -11,15 +11,14 @@ postgres/
   Chris Pastl, Mattt Thompson and contributors, under the PostgreSQL License.
 
   PostgreSQL, Postgres.app, pgvector ........ PostgreSQL License (A)
-  pg_search (ParadeDB) ...................... AGPL-3.0 (B)
-  wal2json .................................. BSD 3-Clause (C)
-  pl/pgsql debugger API (pldbgapi) .......... Artistic License 2.0 (D)
-  OpenSSL (libssl, libcrypto) ............... Apache License 2.0 (E)
+  wal2json .................................. BSD 3-Clause (B)
+  pl/pgsql debugger API (pldbgapi) .......... Artistic License 2.0 (C)
+  OpenSSL (libssl, libcrypto) ............... Apache License 2.0 (D)
   ICU ....................................... Unicode License v3, postgres/share/icu/<version>/LICENSE
-  LZ4 ....................................... BSD 2-Clause (F)
-  Zstandard ................................. BSD 3-Clause (G)
-  libxml2 ................................... MIT (H)
-  libxslt, libexslt ......................... MIT (I)
+  LZ4 ....................................... BSD 2-Clause (E)
+  Zstandard ................................. BSD 3-Clause (F)
+  libxml2 ................................... MIT (G)
+  libxslt, libexslt ......................... MIT (H)
 
 node/
   Node.js @NODE_VERSION@, MIT, with the licenses of the components it bundles in node/LICENSE. The
@@ -66,16 +65,7 @@ ON AN "AS IS" BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATIONS TO
 PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 
 ================================================================================
-(B) pg_search (ParadeDB) @PG_SEARCH_VERSION@: AGPL-3.0
-================================================================================
-
-Installed from ParadeDB's package pg_search-pg@PG_MAJOR@-@PG_SEARCH_VERSION@.pkg, with its local
-symbols removed (strip -x) and signed again; the code is unmodified.
-Corresponding source: https://github.com/paradedb/paradedb/tree/v@PG_SEARCH_VERSION@
-The license is the GNU Affero General Public License version 3, the same text as app/LICENSE.
-
-================================================================================
-(C) wal2json: BSD 3-Clause
+(B) wal2json: BSD 3-Clause
 ================================================================================
 
 Copyright (c) 2013-2024, Euler Taveira de Oliveira
@@ -107,7 +97,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-(D) pl/pgsql debugger API: Artistic License 2.0
+(C) pl/pgsql debugger API: Artistic License 2.0
 ================================================================================
 
 Copyright (c) 2004-2024 EnterpriseDB Corporation. All Rights Reserved.
@@ -200,7 +190,7 @@ General Provisions
 THE PACKAGE IS PROVIDED BY THE COPYRIGHT HOLDER AND CONTRIBUTORS "AS IS" AND WITHOUT ANY EXPRESS OR IMPLIED WARRANTIES. THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT ARE DISCLAIMED TO THE EXTENT PERMITTED BY YOUR LOCAL LAW. UNLESS REQUIRED BY LAW, NO COPYRIGHT HOLDER OR CONTRIBUTOR WILL BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES ARISING IN ANY WAY OUT OF THE USE OF THE PACKAGE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-(E) OpenSSL: Apache License 2.0
+(D) OpenSSL: Apache License 2.0
 ================================================================================
 
 
@@ -382,7 +372,7 @@ THE PACKAGE IS PROVIDED BY THE COPYRIGHT HOLDER AND CONTRIBUTORS "AS IS" AND WIT
    END OF TERMS AND CONDITIONS
 
 ================================================================================
-(F) LZ4 library: BSD 2-Clause
+(E) LZ4 library: BSD 2-Clause
 ================================================================================
 
 LZ4 Library
@@ -411,7 +401,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-(G) Zstandard: BSD 3-Clause (used under the BSD side of its dual license)
+(F) Zstandard: BSD 3-Clause (used under the BSD side of its dual license)
 ================================================================================
 
 BSD License
@@ -446,7 +436,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-(H) libxml2: MIT
+(G) libxml2: MIT
 ================================================================================
 
 Except where otherwise noted in the source code (e.g. the files dict.c and
@@ -475,7 +465,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ================================================================================
-(I) libxslt and libexslt: MIT
+(H) libxslt and libexslt: MIT
 ================================================================================
 
 Licence for libxslt except libexslt

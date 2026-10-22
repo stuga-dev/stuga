@@ -1,6 +1,6 @@
 import type { CoauthorActivity, CoauthorError, CoauthorNotice, CrossDocError } from "../api/ai-turn.js";
 import type { ReviewMode } from "../domain/events.js";
-import type { RunFeedback } from "../domain/runs.js";
+import type { RunFeedback, RunStanding } from "../domain/runs.js";
 import type { WriteRejectedKind } from "./opcodes.js";
 
 /** Who sent an AWARENESS frame; the Yjs payload carries what changed. */
@@ -197,6 +197,12 @@ export interface AgentRunSummary {
   reverted?: boolean;
   /** The strictest review mode any proposal in this run carried. */
   review_mode: ReviewMode;
+  /** The approver group the run was proposed under, when its document named one. */
+  approver_group?: string;
+  /** Added by the node for the person reading it; absent on a live frame. */
+  you?: RunStanding;
+  /** The hunks' text was left out: only the run's reviewer, its approvers and the document's managers read it. */
+  hunks_withheld?: true;
   /** epoch ms */
   created_at: number;
   updated_at: number;

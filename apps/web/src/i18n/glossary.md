@@ -290,10 +290,13 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
 | Review AI edits | 审阅 AI 编辑 | 審閱 AI 編輯 | AIの編集をレビュー | AI 편집 검토 | KI-Änderungen prüfen | Vérifier les modifications de l’IA | Revisar ediciones de IA | Revisar edições da IA | The review inbox (`/review`). Sidebar item and page title. |
 | review | 审阅 | 審閱 | レビュー | 검토 | prüfen | vérifier | revisar | revisar | Noun: 审阅, Prüfung, vérification, revisión, revisão. |
 | Needs review | 待审阅 | 待審閱 | 要レビュー | 검토 필요 | Prüfung nötig | À vérifier | Pendiente de revisión | Aguardando revisão | Inbox tab. Next to it: In progress · Finished · Everything = 进行中 · 已完成 · 全部 (zh-Hant 進行中 · 已完成 · 全部; ja 進行中 · 完了 · すべて; ko 진행 중 · 완료 · 전체; de Läuft · Abgeschlossen · Alle; fr En cours · Terminées · Tout; es En curso · Terminadas · Todo; pt-BR Em andamento · Concluídas · Tudo). |
-| Let AI edits apply directly | 允许 AI 编辑直接应用 | 允許 AI 編輯直接套用 | AIの編集を直接適用する | AI 편집 바로 적용 | KI-Änderungen direkt übernehmen | Appliquer directement les modifications de l’IA | Aplicar directamente las ediciones de IA | Aplicar diretamente as edições da IA | ⋯ menu item. |
-| Make AI edits wait for review | 让 AI 编辑等待审阅 | 讓 AI 編輯等待審閱 | AIの編集をレビュー待ちにする | AI 편집을 검토 후 적용 | KI-Änderungen auf Prüfung warten lassen | Soumettre les modifications de l’IA à vérification | Hacer que las ediciones de IA esperen revisión | Fazer as edições da IA aguardarem revisão | ⋯ menu item, the reverse of the one above. |
-| AI edits apply directly | AI 编辑直接应用 | AI 編輯直接套用 | AIの編集を直接適用 | AI 편집 바로 적용됨 | KI-Änderungen direkt übernommen | Modifications de l’IA appliquées directement | Ediciones de IA aplicadas directamente | Edições da IA aplicadas diretamente | Status chip. |
-| review mode | 审阅模式 | 審閱模式 | レビューモード | 검토 모드 | Prüfmodus | mode vérification | modo de revisión | modo de revisão | Docs only. The UI shows the two menu items above. |
+| Who reviews AI edits… | 谁审阅 AI 编辑… | 誰審閱 AI 編輯… | AIの編集をレビューする人… | AI 편집 검토자… | Wer KI-Änderungen prüft… | Qui vérifie les modifications de l’IA… | Quién revisa las ediciones de IA… | Quem revisa as edições da IA… | ⋯ menu item of a document, database or folder; opens the level dialog. Not the inbox, Review AI edits. |
+| AI edits apply directly | AI 编辑直接应用 | AI 編輯直接套用 | AIの編集を直接適用 | AI 편집 바로 적용됨 | KI-Änderungen direkt übernommen | Modifications de l’IA appliquées directement | Ediciones de IA aplicadas directamente | Edições da IA aplicadas diretamente | The `auto` level, and its status chip. |
+| Reviewed by whoever asked the AI | 由发起人审阅 | 由發起人審閱 | 依頼した人がレビュー | 요청한 사람이 검토 | Prüfung durch die Person, die die KI beauftragt hat | Vérifiées par la personne qui a sollicité l’IA | Revisadas por quien pidió a la IA | Revisadas por quem pediu à IA | The `review` level, the default. |
+| Reviewed by a colleague | 由同事审阅 | 由同事審閱 | 同僚がレビュー | 동료가 검토 | Prüfung durch Kollegen | Vérifiées par un collègue | Revisadas por un compañero | Revisadas por um colega | The `colleague` level, and its status chip. |
+| approve | 批准 | 核准 | 承認 | 승인 | genehmigen | approuver | aprobar | aprovar | What a colleague does to an AI edit at `colleague`. |
+| approver group | 审批群组 | 核准群組 | 承認グループ | 승인 그룹 | Genehmigungsgruppe | groupe d’approbation | grupo de aprobación | grupo de aprovação | A folder’s group whose members approve at `colleague`. “Approved by” = 批准人, 核准人, 承認者, 승인하는 사람, Genehmigt von, Approuvées par, Aprobadas por, Aprovadas por. |
+| review mode | 审阅模式 | 審閱模式 | レビューモード | 검토 모드 | Prüfmodus | mode vérification | modo de revisión | modo de revisão | Docs only. The UI names the three levels above. |
 | apply | 应用 | 套用 | 適用 | 적용 | übernehmen | appliquer | aplicar | aplicar | Edits that land. de: the Apply button on a filter is “Anwenden”. “Applied” = 已应用, 已套用, 適用済み, 적용됨, Übernommen, Appliqué, Aplicado, Aplicado. |
 | Accept | 接受 | 接受 | 承認 | 수락 | Annehmen | Accepter | Aceptar | Aceitar | |
 | Reject | 拒绝 | 拒絕 | 拒否 | 거부 | Ablehnen | Refuser | Rechazar | Rejeitar | |
@@ -337,8 +340,8 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
 | search | 搜索 | 搜尋 | 検索 | 검색 | suchen | rechercher | buscar | pesquisar | Noun: Suche, recherche, búsqueda, pesquisa. |
 | keyword search | 关键词搜索 | 關鍵字搜尋 | キーワード検索 | 키워드 검색 | Stichwortsuche | recherche par mots-clés | búsqueda por palabras clave | pesquisa por palavras-chave | “Matching words only” is the same idea. |
 | Semantic search | 语义搜索 | 語意搜尋 | セマンティック検索 | 시맨틱 검색 | Semantische Suche | Recherche sémantique | Búsqueda semántica | Pesquisa semântica | |
-| Languages in your documents | 文档中的语言 | 文件中的語言 | ドキュメントの言語 | 문서의 언어 | Sprachen in deinen Dokumenten | Langues de vos documents | Idiomas de tus documentos | Idiomas dos seus documentos | The search-languages setting. Not the interface language. |
-| Always on | 始终启用 | 一律啟用 | 常に有効 | 항상 사용 | Immer aktiv | Toujours actif | Siempre activo | Sempre ativo | Search-language list section. |
+| Languages in your documents | 文档中的语言 | 文件中的語言 | ドキュメントの言語 | 문서의 언어 | Sprachen in deinen Dokumenten | Langues de vos documents | Idiomas de tus documentos | Idiomas dos seus documentos | The search-languages setting: the languages search knows word endings in. Not the interface language. |
+| Always on | 始终启用 | 一律啟用 | 常に有効 | 항상 사용 | Immer aktiv | Toujours actif | Siempre activo | Sempre ativo | Search-language list section: English, Chinese, Japanese, Korean and Thai. |
 | Hidden from search · Hide from search · Show in search | 已从搜索中隐藏 · 从搜索中隐藏 · 在搜索中显示 | 已從搜尋中隱藏 · 從搜尋中隱藏 · 在搜尋中顯示 | 検索に非表示 · 検索に表示しない · 検索に表示 | 검색에서 숨겨짐 · 검색에서 숨기기 · 검색에 표시 | In der Suche ausgeblendet · In der Suche ausblenden · In der Suche anzeigen | Masqué dans la recherche · Masquer dans la recherche · Afficher dans la recherche | Oculto en la búsqueda · Ocultar en la búsqueda · Mostrar en la búsqueda | Oculto na pesquisa · Ocultar da pesquisa · Mostrar na pesquisa | |
 
 ### Editor
@@ -390,7 +393,7 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
 Leave these exactly as written in every language. Grammar may go around them (`Stuga 的`,
 `Stugaの`, `de Stuga`) but never inside them.
 
-- **Names:** Stuga, MCP, Markdown, Notion, Obsidian, Postgres, pgvector, pg_search, Mermaid,
+- **Names:** Stuga, MCP, Markdown, Notion, Obsidian, Postgres, pgvector, Mermaid,
   OpenID Connect, OAuth, GitHub, Docker, Let’s Encrypt (and its *Subscriber Agreement*, which
   exists only in English), Slack, Microsoft Teams, Discord, Claude, Claude Code, Claude Desktop,
   Codex, Antigravity, Cursor, VS Code, Kiro, Goose, LM Studio, DeepSeek Harness, Pi, Ollama, OpenAI,

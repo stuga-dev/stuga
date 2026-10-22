@@ -4,6 +4,7 @@
  * ledgered and reverts exactly like a direct write.
  */
 import type { DatabaseActor as DatabaseActorIdentity, DatabaseOpChangeDetail, DatabaseOpKind, DatabaseRunOpPayload } from "@stuga/protocol/databases/types";
+import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { Database } from "../database.js";
 import { describeOp } from "../ledger/op-detail.js";
 import { finalizeInverse, recordOp, type InverseJson } from "../ledger/ops-ledger.js";
@@ -94,6 +95,8 @@ interface RunOpClaim {
   opId: string;
   status: "accepted" | "auto_applied";
   decidedBy: string;
+  /** The level a person decided it at. */
+  level?: ReviewMode;
 }
 
 /**
@@ -119,8 +122,8 @@ export async function commitOp(
     const now = Date.now();
     if (args.claim) {
       db.requireUnlocked(locked);
-      const { runId, opId: runOpId, status, decidedBy } = args.claim;
-      if (!setOpStatus(db.sql, runId, runOpId, status, { decidedBy, ledgerOpId: opId })) {
+      const { runId, opId: runOpId, status, decidedBy, level } = args.claim;
+      if (!setOpStatus(db.sql, runId, runOpId, status, { decidedBy, ledgerOpId: opId, ...(level ? { level } : {}) })) {
         throw new OpError(409, "already_decided", "this change was already decided");
       }
     }

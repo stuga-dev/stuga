@@ -72,6 +72,9 @@ describe("runTableAgentTurn", () => {
     await runTableAgentTurn(CFG, { ...INPUT, applyAtOnce: true }, NOOP_RUNNER, () => {});
     expect(system()).toContain("each call applies ONE change without review");
     expect(system()).not.toContain("NOT applied until accepted");
+    mockRounds([textRound("ok")]);
+    await runTableAgentTurn(CFG, { ...INPUT, colleagueApproves: true }, NOOP_RUNNER, () => {});
+    expect(system()).toContain("a colleague of the user approves");
   });
 
   it("tells the model, with no documents in scope, to point the user at the Search scope menu", async () => {

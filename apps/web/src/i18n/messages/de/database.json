@@ -260,6 +260,7 @@
   "ai.empty": "Bitte um Änderungen an dieser Datenbank – „füge eine Spalte Status hinzu und markiere die erledigten Zeilen“, „füge die Q3-Meilensteine ein“, „entferne doppelte Zeilen nach Name“.",
   "ai.emptyAuto": "KI-Änderungen an dieser Datenbank werden direkt übernommen: jede sofort, protokolliert und zurücknehmbar.",
   "ai.emptyReview": "Jede Änderung wird dir zur Prüfung vorgeschlagen, bevor sie übernommen wird.",
+  "ai.emptyColleague": "Jede Änderung wird Kollegen zur Genehmigung vorgeschlagen, bevor sie übernommen wird.",
   "ai.placeholder": "Bitte die KI, diese Datenbank zu ändern…",
   "ai.placeholderDocs": "Bitte die KI, diese Datenbank anhand deiner Dokumente zu ändern…",
   "ai.scopeBase": "Nur diese Datenbank",

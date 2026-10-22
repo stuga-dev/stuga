@@ -1,5 +1,6 @@
 /** The database page's dock: the AI co-author, the Activity feed and the open row. */
 import type { TableSchema } from "@stuga/protocol/databases/types";
+import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { useState } from "react";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { History, PanelRightOpen, RefreshCw, Sparkles } from "lucide-react";
@@ -29,7 +30,7 @@ export function DatabaseDock({
   table,
   rowId,
   readOnly,
-  agentAuto,
+  agentMode,
   rowsKey,
   editsKey,
   onRowSaved,
@@ -45,8 +46,8 @@ export function DatabaseDock({
   table: TableSchema | null;
   rowId: string | null;
   readOnly: boolean;
-  /** The database applies agent changes at once, the co-author's included. */
-  agentAuto: boolean;
+  /** How AI edits to the database are reviewed, the co-author's included. */
+  agentMode: ReviewMode;
   /** Bumped when rows change. */
   rowsKey: number;
   /** Bumped when the grid edits a cell. */
@@ -67,7 +68,7 @@ export function DatabaseDock({
           id: "ai",
           label: aiCoauthorLabel(),
           icon: <Sparkles size={15} />,
-          render: () => <TableAiPanel docId={docId} activeTable={table?.display ?? null} agentAuto={agentAuto} />,
+          render: () => <TableAiPanel docId={docId} activeTable={table?.display ?? null} agentMode={agentMode} />,
         },
         {
           id: "activity",

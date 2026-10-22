@@ -110,7 +110,6 @@ export function DatabasePage({ doc, onTrashed }: { doc: DocSummary; onTrashed?: 
   const [docState, setDocState] = useState<DocSummary>(doc);
   const locked = !!docState.locked;
   const searchHidden = !!docState.search_hidden;
-  const agentAuto = docState.agent_mode === "auto";
   /** The live channel closed for good: deleted, or the membership ended. */
   const [ended, setEnded] = useState<"deleted" | "removed" | null>(null);
   /** Read-only for a reason the state chips show: the lock or the caller's access. */
@@ -398,7 +397,7 @@ export function DatabasePage({ doc, onTrashed }: { doc: DocSummary; onTrashed?: 
             <DocStateChips
               locked={locked}
               searchHidden={searchHidden}
-              agentAuto={agentAuto}
+              agentMode={docState.agent_mode}
               readOnly={chipsReadOnly}
               noun="database"
             />
@@ -509,7 +508,7 @@ export function DatabasePage({ doc, onTrashed }: { doc: DocSummary; onTrashed?: 
             table={activeTable}
             rowId={openRowId}
             readOnly={readOnly}
-            agentAuto={agentAuto}
+            agentMode={docState.agent_mode}
             rowsKey={rowsKey}
             editsKey={editsKey}
             onRowSaved={() => setRowsKey((k) => k + 1)}

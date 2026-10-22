@@ -16,6 +16,7 @@
   "panel.exampleTable": "把末尾的笔记整理成表格",
   "panel.emptyAuto": "对此文档的 AI 编辑会直接应用：在每轮回复结束时生效，有记录且可撤回。此对话仅你可见。",
   "panel.emptyReview": "每项编辑都会以建议的形式出现在文档中，由你在那里接受或拒绝。此对话仅你可见：只有你接受的编辑才会进入版本历史。",
+  "panel.emptyColleague": "每项编辑都会以建议的形式出现在文档中，由同事在那里批准；你可以拒绝。此对话仅你可见：只有被批准的编辑才会进入版本历史。",
   "panel.uploading": "正在上传…",
   "panel.revisionPaused": "{count, plural, =1 {修改已暂停} other {修改已暂停 · # 个请求}}",
   "panel.revisionQueued": "{count, plural, =1 {修改已排队} other {修改已排队 · # 个请求}}",

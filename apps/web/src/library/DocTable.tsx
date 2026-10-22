@@ -271,7 +271,7 @@ export function DocTable({
               <span className="doc-table__page-mark-name">{pageParentLabel(r.doc.page_of)}</span>
             </span>
           )}
-          <DocStateMarks doc={r.doc} />
+          <DocStateMarks doc={r.doc} folder={r.folder} />
           {/* Without room for the Last edited column, the time follows the name. */}
           {!keep.includes("updated") && columns.includes("updated") && (
             <span className="doc-table__muted doc-table__when" title={absoluteTime(r.updated_at)}>

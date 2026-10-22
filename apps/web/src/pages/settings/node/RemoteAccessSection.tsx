@@ -340,7 +340,7 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
     const reason = error && error.message !== NODE_DENIED ? presentServerMessage(error.message) : undefined;
     body = (
       <>
-        <Banner status="error" title={t("nodeAccess.remote.denied")} description={reason || undefined} />
+        <Banner status="error" role="alert" title={t("nodeAccess.remote.denied")} description={reason || undefined} />
         {turnOffRow}
       </>
     );
@@ -349,6 +349,7 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
       <>
         <Banner
           status="error"
+          role="alert"
           title={errorSentence(error)}
           endContent={error.code === "outdated" ? updateLink : undefined}
           description={
@@ -419,6 +420,7 @@ function RemoteAccessPanel({ status, onStatus }: { status: Status; onStatus: (s:
         {status.state === "degraded" && error && (
           <Banner
             status={error.code === "wrong_certificate" ? "error" : "warning"}
+            role={error.code === "wrong_certificate" ? "alert" : undefined}
             title={title}
             description={error.retry_at ? t("nodeAccess.remote.nextTry", { time: when(error.retry_at) }) : undefined}
           />

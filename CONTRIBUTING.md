@@ -209,6 +209,10 @@ Once a release ships a migration, the file and its pin never change. Every datab
 recorded its checksum, and the node refuses to start when the file no longer matches. A migration
 no release has shipped yet may still change, with its pin; recreate your dev database afterwards.
 
+The 0.1 releases were previews. Their migrations were folded into `0001_initial.sql` before 0.2.0,
+and a node set up by a 0.1 release starts over with a new data directory. The freeze applies from
+0.2.0 on.
+
 Every older build reads `schema_migrations(id)` and `node_state(id, app_version, last_boot_at)`
 before it writes, to refuse data a newer one changed, and the packagings' `stuga` scripts read
 `node_state.app_version` to decide how to go back. No migration may rename, drop or retype them.
@@ -221,9 +225,11 @@ while the snapshot and the schema disagree.
 pnpm --filter @stuga/db schema:snapshot
 ```
 
-A statement that must hold on every boot, such as extension versions or the BM25 indexes in
-`schema/search-indexes.ts`, is not a migration. It belongs in
-`packages/db/src/schema/boot-repairs.ts`, which runs each time the node starts.
+A statement that must hold on every boot, such as an extension's catalog matching its installed
+version, is not a migration. It belongs in `packages/db/src/schema/boot-repairs.ts`, which runs each
+time the node starts. Keyword vectors are not migrated either: a change to what
+`packages/db/src/search-text.ts` or `search-vectors.ts` writes moves `SEARCH_FORMAT` or `VECTORS`,
+and the node writes every row in another format again in the background.
 
 The structured databases are not Postgres: each one is SQLite inside its actor, created by
 `ensureSchema` in `packages/database-actor/src/schema-ops.ts`, which has no migration mechanism of

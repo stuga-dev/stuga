@@ -35,6 +35,7 @@ import {
   DATABASE_ROWS_PAGE_MAX,
 } from "@stuga/protocol/databases/limits";
 import type { RowFilterNode, RowValue, TableSchema, ViewSpec } from "@stuga/protocol/databases/types";
+import { docReviewLevel } from "@stuga/protocol/domain/events";
 import { MAX_AGENT_INSTRUCTIONS_CHARS } from "@stuga/protocol/domain/limits";
 import { UNSAFE_TEXT, hasVisibleText } from "@stuga/protocol/domain/node-name";
 import { SAMPLE_AGENT_ALIAS, SAMPLE_AGENT_NAME } from "@stuga/protocol/domain/workspaces";
@@ -809,7 +810,8 @@ async function docSettings(state: WriteState, doc: DocRow, title: string): Promi
   const settings: ArchiveDocSettings = {
     title,
     title_source: doc.title_source === "user" ? "user" : "heading",
-    agent_mode: doc.agent_mode === "auto" ? "auto" : "review",
+    // The level it is at, its folders' (and a row page's database's) included: an archive carries no folder's level.
+    agent_mode: docReviewLevel(doc),
     locked: doc.locked,
     search_hidden: doc.search_hidden,
     agent_instructions: instructionsOf(doc.agent_instructions),

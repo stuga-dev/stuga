@@ -103,7 +103,7 @@ export function ResetPassword() {
             </Text>
           </VStack>
 
-          {error && <Banner status="error" title={error} />}
+          {error && <Banner status="error" role="alert" title={error} />}
 
           <VStack gap={4}>
             <TextInput

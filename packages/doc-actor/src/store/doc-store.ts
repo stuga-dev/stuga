@@ -38,7 +38,7 @@ interface Hashed {
  * higher. A change to a stored shape raises it, together with the step in the host that brings an
  * older store forward.
  */
-export const DOC_STORE_VERSION = 4;
+export const DOC_STORE_VERSION = 5;
 
 /** The steps that bring an older store forward, keyed by the version each reaches. */
 export const DOC_STORE_UPGRADES: Record<number, StoreUpgrade> = {
@@ -53,6 +53,10 @@ export const DOC_STORE_UPGRADES: Record<number, StoreUpgrade> = {
   // a retried reply is not answered twice, and its `coauthor-clean:<alias>` key, the waiting hunks staged
   // by a turn that saw only this document. Both are new and optional, so a version 3 store is read as it is.
   4: () => {},
+  // 5: the `colleague` review level on a run, the approver group it was proposed under and who approved
+  // it (`approver_group`, `approved_by`). An older build would let a run's reviewer approve it, so it must
+  // not open the store. The fields are new and optional, so a version 4 store is read as it is.
+  5: () => {},
 };
 
 const FLUSH_THRESHOLD = 100; // updates

@@ -92,6 +92,21 @@ describe("review inbox status", () => {
     expect(runStatus(run({ pending: 1, reviewer: "liv", can_decide: false }))).toBe("1 change waiting for liv");
   });
 
+  it("says a run at colleague waits for a colleague, or for one to be given edit access", () => {
+    const waits = (waits_for: "colleague" | "nobody" | "group") =>
+      run({ pending: 2, reviewer: "liv", can_decide: true, you: { level: "colleague", accept: false, reject: true, ack: false, waits_for } });
+    expect(runStatus(waits("colleague"))).toBe("2 changes waiting for a colleague’s approval");
+    expect(runStatus(waits("nobody"))).toBe("2 changes waiting: give a colleague edit access to approve them");
+    expect(runStatus(waits("group"))).toBe("2 changes waiting: give someone in the approver group edit access to approve them");
+    // Someone outside the approver group reads whom it waits for, never its asker's name.
+    expect(runStatus(run({ pending: 1, reviewer: "liv", can_decide: false, you: { level: "colleague", accept: false, reject: false, ack: false } }))).toBe(
+      "1 change waiting for a colleague’s approval",
+    );
+    expect(runStatus(run({ pending: 1, reviewer: "liv", can_decide: true, you: { level: "colleague", accept: true, reject: true, ack: true } }))).toBe(
+      "1 change waiting for your decision",
+    );
+  });
+
   it("reads a reverted run as reverted", () => {
     expect(runStatus(reverted)).toBe("Changes reverted");
     expect(runStatus(revertedAuto)).toBe("Changes reverted");
@@ -113,6 +128,14 @@ describe("review inbox actions", () => {
     expect(runActions(autoSession)).toEqual({ decide: false, revert: true, dismiss: true });
     expect(runActions(autoRolledOver)).toEqual({ decide: false, revert: true, dismiss: true });
     expect(runActions(autoChecked)).toEqual({ decide: false, revert: true, dismiss: false });
+  });
+
+  it("lets whoever asked the AI take back a run at colleague, and leaves marking it reviewed to someone else", () => {
+    const asked = { level: "colleague" as const, accept: false, reject: true, ack: false, waits_for: "colleague" as const };
+    expect(runActions({ ...parked, you: asked })).toEqual({ decide: true, revert: false, dismiss: false });
+    expect(runActions({ ...autoSession, you: asked })).toEqual({ decide: false, revert: true, dismiss: false });
+    // Applied at once before its folder was raised: still theirs to mark reviewed.
+    expect(runActions({ ...autoSession, you: { ...asked, ack: true } })).toEqual({ decide: false, revert: true, dismiss: true });
   });
 
   it("offers nothing on a run someone else decides", () => {

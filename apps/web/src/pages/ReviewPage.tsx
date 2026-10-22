@@ -97,12 +97,15 @@ export function needsAttention(run: InboxRun): boolean {
 /** The whole-run actions a row offers: none on a run someone else decides. */
 export function runActions(run: InboxRun): { decide: boolean; revert: boolean; dismiss: boolean } {
   const state = runState(run);
-  if (run.can_decide === false) return { decide: false, revert: false, dismiss: false };
+  // Marking a run reviewed changes nothing, so it needs no write access; where a colleague approves
+  // what a run proposed, someone other than the person who asked the AI does it (`you.ack`).
+  const dismiss = state === "unchecked" && (run.you ? run.you.ack : run.can_decide !== false);
+  if (run.can_decide === false) return { decide: false, revert: false, dismiss };
   return {
     decide: state === "waiting",
     // Only landed changes unwind; a document refuses a run with none.
     revert: state !== "reverted" && run.accepted + run.applied > 0,
-    dismiss: state === "unchecked",
+    dismiss,
   };
 }
 
@@ -125,6 +128,9 @@ export function runStatus(run: InboxRun): string {
     case "reverted":
       return t("review.inbox.status.reverted");
     case "waiting":
+      if (run.you?.waits_for === "nobody") return t("review.inbox.status.waitingNobody", { count: run.pending });
+      if (run.you?.waits_for === "group") return t("review.inbox.status.waitingGroup", { count: run.pending });
+      if (run.you?.level === "colleague" && !run.you.accept) return t("review.inbox.status.waitingColleague", { count: run.pending });
       return run.can_decide === false
         ? t("review.inbox.status.waitingFor", { count: run.pending, name: principalLabel(`user:${run.reviewer}`) })
         : t("review.inbox.status.waiting", { count: run.pending });
@@ -339,8 +345,9 @@ export function ReviewPage() {
                 {runs.map((row) => {
                   const actions = runActions(row);
                   const isBusy = busy.has(row.run_id);
-                  // Another person's decision is theirs to make: shown, not flagged.
-                  const attention = needsAttention(row) && row.can_decide !== false;
+                  // Another person's decision is theirs to make, and a colleague's approval theirs: shown, not flagged.
+                  const attention =
+                    (runState(row) === "waiting" && row.can_decide !== false && !row.you?.waits_for) || actions.dismiss;
                   const status = runStatus(row);
                   const title = row.doc_title || t("common.untitled");
                   const items = [

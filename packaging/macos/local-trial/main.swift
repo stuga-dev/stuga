@@ -427,8 +427,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let inForce = services.publicOrigin() ?? config.origin
                 update { self.origin = inForce; self.refresh() }
                 try services.bootstrap(config.nodeLabel)
-                // A first start migrates the database and builds its search indexes before it
-                // serves anything, however long that takes; only a failure ends the wait.
+                // A first start migrates the database before it serves anything, however long
+                // that takes; only a failure ends the wait.
                 waiting: while lifecycle.attempt == mine {
                     switch services.watch.observe(services.look(), at: Date()).health {
                     case .serving: break waiting

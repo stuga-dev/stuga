@@ -164,6 +164,7 @@ export function NotificationsSection({ ops, onSaved }: { ops: NodeOperationalSet
         {notifyProbe && (
           <Banner
             status={notifyProbe.ok ? "success" : "error"}
+            role={notifyProbe.ok ? undefined : "alert"}
             title={notifyProbe.ok ? t("nodeAccess.notify.sent", { sink: notifyProbe.sink }) : t("nodeAccess.notify.refused", { sink: notifyProbe.sink })}
             {...(notifyProbe.message ? { description: presentServerMessage(notifyProbe.message) } : {})}
           />

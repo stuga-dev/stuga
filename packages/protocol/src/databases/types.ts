@@ -4,7 +4,7 @@
  * structured ops and read-only SQL. No Yjs.
  */
 import type { ReviewMode } from "../domain/events.js";
-import type { RunFeedback } from "../domain/runs.js";
+import type { RunFeedback, RunStanding } from "../domain/runs.js";
 
 // ---- Column types ------------------------------------------------------------
 
@@ -399,6 +399,12 @@ export interface DatabaseRunSummary {
   reverted?: boolean;
   /** The strictest review mode any proposal in this run carried. */
   review_mode: ReviewMode;
+  /** The approver group the run was proposed under, when its database named one. */
+  approver_group?: string;
+  /** Added by the node for the person reading it; absent on a live frame. */
+  you?: RunStanding;
+  /** The ops' payloads were left out: only the run's reviewer, its approvers and the database's managers read them. */
+  ops_withheld?: true;
   /** epoch ms */
   created_at: number;
   updated_at: number;
@@ -452,7 +458,7 @@ export interface DatabaseImportTicket {
   /** ISO timestamp after which the upload and the commit are refused. */
   expires_at: string;
   /** How the commit will land: parked, applied by `auto`, or a human's direct write. */
-  review: "review" | "auto" | "direct";
+  review: ReviewMode | "direct";
   /** The table's Import dialog, for a person to upload the file when the caller cannot. */
   import_page_url: string;
 }

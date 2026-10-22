@@ -113,7 +113,7 @@ write_components "$staging" "$version" "$connector_sha256" > "$staging/conf/comp
 "$staging/node/bin/node" -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' \
   "$staging/conf/components.cdx.json"
 sed -e "s/@PG_MAJOR@/$PG_MAJOR/g" -e "s/@POSTGRES_APP_VERSION@/$POSTGRES_APP_VERSION/g" \
-  -e "s/@PG_SEARCH_VERSION@/$PG_SEARCH_VERSION/g" -e "s/@NODE_VERSION@/$NODE_VERSION/g" \
+  -e "s/@NODE_VERSION@/$NODE_VERSION/g" \
   "$macos/runtime/THIRD-PARTY-NOTICES.txt.in" > "$staging/THIRD-PARTY-NOTICES.txt"
 if grep -q '@[A-Z_]*@' "$staging/THIRD-PARTY-NOTICES.txt"; then
   echo "error: THIRD-PARTY-NOTICES.txt.in names a pin build-runtime.sh does not fill in" >&2

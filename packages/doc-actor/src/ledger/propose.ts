@@ -33,8 +33,10 @@ export type ProposeAction =
 export interface ProposeRunInput {
   op: ProposeAction;
   source: AgentRunSource;
-  /** The document's `agent_mode` as the node resolved it. */
+  /** The document's level as the node resolved it. */
   review: ReviewMode;
+  /** At `colleague`, the approver group the document's folders name; stamped on the run. */
+  approverGroup?: string | null;
   /**
    * Whether to tell the reviewer. Only the co-author's turn on this document opts
    * out — its reviewer is watching it land; its cross-document proposals arrive
@@ -230,6 +232,8 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
   if (input.client) stored.client = input.client;
   if (input.model) stored.model = input.model;
   stored.review_mode = stricterReviewMode(stored.review_mode, input.review);
+  // The group it was first proposed under stays; a decision also asks for the document's group now.
+  if (input.review === "colleague" && input.approverGroup && !stored.approver_group) stored.approver_group = input.approverGroup;
   if (citations) runBody.citations = citations;
 
   if (!commit) {
@@ -239,6 +243,8 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
     if (input.notifyReviewer !== false) {
       await ledger.notify(stored, { eventType: "AGENT_EDITS_PROPOSED", count: pending });
     }
+    // Whoever may approve at `colleague` is not the one watching, the co-author's turn included.
+    await ledger.notifyApprovers(stored, pending, input.notifyReviewer !== false);
     ledger.sendUpdated(stored, runBody);
     ledger.emitEvent("run.proposed", stored, agentActorOf(agentAlias), "agent", {
       review: input.review,

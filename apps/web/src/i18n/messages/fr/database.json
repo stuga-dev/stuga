@@ -260,6 +260,7 @@
   "ai.empty": "Demandez des modifications de cette base de données – « ajouter une colonne Statut et marquer les lignes terminées », « insérer les jalons du T3 », « dédoublonner les lignes par Nom ».",
   "ai.emptyAuto": "Les modifications de l’IA sur cette base de données s’appliquent directement : chacune prend effet aussitôt, consignée et réversible.",
   "ai.emptyReview": "Chaque modification vous est proposée pour vérification avant de prendre effet.",
+  "ai.emptyColleague": "Chaque modification est proposée à l’approbation d’un collègue avant de prendre effet.",
   "ai.placeholder": "Demandez à l’IA de modifier cette base de données…",
   "ai.placeholderDocs": "Demandez à l’IA de modifier cette base de données à l’aide de vos documents…",
   "ai.scopeBase": "Cette base de données uniquement",

@@ -10,6 +10,8 @@ TABLE agent_runs
   agent text NOT NULL
   agent_alias text NOT NULL
   applied integer NOT NULL DEFAULT 0
+  approved_by ARRAY NOT NULL DEFAULT '{}'::text[]
+  approver_group text
   auto_applied boolean NOT NULL DEFAULT false
   client text
   conflicts integer NOT NULL DEFAULT 0
@@ -28,8 +30,10 @@ TABLE agent_runs
   status text NOT NULL
   updated_at timestamp with time zone NOT NULL
   workspace_id text NOT NULL
+  CONSTRAINT agent_runs_approved_by_check CHECK ((NOT (reviewer = ANY (approved_by))))
   CONSTRAINT agent_runs_doc_kind_check CHECK ((doc_kind = ANY (ARRAY['prose'::text, 'database'::text])))
   CONSTRAINT agent_runs_pkey PRIMARY KEY (run_id)
+  CONSTRAINT agent_runs_review_mode_check CHECK ((review_mode = ANY (ARRAY['auto'::text, 'review'::text, 'colleague'::text])))
   CONSTRAINT agent_runs_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
   INDEX agent_runs_doc_idx CREATE INDEX agent_runs_doc_idx ON public.agent_runs USING btree (doc_id)
   INDEX agent_runs_pkey CREATE UNIQUE INDEX agent_runs_pkey ON public.agent_runs USING btree (run_id)
@@ -182,18 +186,19 @@ TABLE comments
 TABLE doc_chunks
   chunk_index integer NOT NULL
   content text NOT NULL
+  dl integer NOT NULL DEFAULT 0
   doc_id text NOT NULL
-  doc_title text
   embed_attempts integer NOT NULL DEFAULT 0
   embed_hash text
   embedding USER-DEFINED
   heading_path text
+  tsv tsvector NOT NULL DEFAULT ''::tsvector
   workspace_id text NOT NULL
   CONSTRAINT doc_chunks_doc_id_fkey FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
   CONSTRAINT doc_chunks_pkey PRIMARY KEY (doc_id, chunk_index)
-  INDEX doc_chunks_bm25_v1 CREATE INDEX doc_chunks_bm25_v1 ON public.doc_chunks USING bm25 (doc_id, ((((((COALESCE(doc_title, ''::text) || ' '::text) || COALESCE(heading_path, ''::text)) || ' '::text) || content))::pdb.icu('stemmer=english', 'stopwords_language=english', 'alias=chunk_text'))) WITH (key_field=doc_id)
   INDEX doc_chunks_doc_idx CREATE INDEX doc_chunks_doc_idx ON public.doc_chunks USING btree (doc_id)
   INDEX doc_chunks_pkey CREATE UNIQUE INDEX doc_chunks_pkey ON public.doc_chunks USING btree (doc_id, chunk_index)
+  INDEX doc_chunks_tsv_gin CREATE INDEX doc_chunks_tsv_gin ON public.doc_chunks USING gin (tsv) WITH (fastupdate=off)
   INDEX doc_chunks_vec_hnsw CREATE INDEX doc_chunks_vec_hnsw ON public.doc_chunks USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='200')
   INDEX doc_chunks_ws_idx CREATE INDEX doc_chunks_ws_idx ON public.doc_chunks USING btree (workspace_id)
 
@@ -210,7 +215,7 @@ TABLE docs
   acl_principals ARRAY NOT NULL DEFAULT '{}'::text[]
   acl_writers ARRAY NOT NULL DEFAULT '{}'::text[]
   agent_instructions text NOT NULL DEFAULT ''::text
-  agent_mode text NOT NULL DEFAULT 'review'::text
+  agent_mode text
   created_at timestamp with time zone NOT NULL DEFAULT now()
   created_by text
   doc_id text NOT NULL
@@ -225,30 +230,36 @@ TABLE docs
   page_of text
   page_row text
   parent_id text
+  search_dl integer NOT NULL DEFAULT 0
+  search_format text
   search_hidden boolean NOT NULL DEFAULT false
   search_text text NOT NULL DEFAULT ''::text
+  search_tsv tsvector NOT NULL DEFAULT ''::tsvector
   snapshot_seq bigint NOT NULL DEFAULT 0
   title text NOT NULL DEFAULT ''::text
+  title_dl integer NOT NULL DEFAULT 0
   title_source text NOT NULL DEFAULT 'heading'::text
+  title_tsv tsvector NOT NULL DEFAULT ''::tsvector
   trashed boolean NOT NULL DEFAULT false
   trashed_at timestamp with time zone
   updated_at timestamp with time zone NOT NULL DEFAULT now()
   version_floor bigint
   workspace_id text NOT NULL
-  CONSTRAINT docs_agent_mode_check CHECK ((agent_mode = ANY (ARRAY['review'::text, 'auto'::text])))
+  CONSTRAINT docs_agent_mode_check CHECK ((agent_mode = ANY (ARRAY['auto'::text, 'review'::text, 'colleague'::text])))
   CONSTRAINT docs_owner_check CHECK ((owner ~ '^(user|agent):.'::text))
   CONSTRAINT docs_page_of_fkey FOREIGN KEY (page_of) REFERENCES docs(doc_id) ON DELETE SET NULL
   CONSTRAINT docs_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES folders(folder_id) ON DELETE SET NULL
   CONSTRAINT docs_pkey PRIMARY KEY (doc_id)
   CONSTRAINT docs_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
   INDEX docs_acl_gin CREATE INDEX docs_acl_gin ON public.docs USING gin (acl_principals)
-  INDEX docs_bm25_v1 CREATE INDEX docs_bm25_v1 ON public.docs USING bm25 (doc_id, ((title)::pdb.icu), ((search_text)::pdb.icu('stemmer=english', 'stopwords_language=english')), ((((title || ' '::text) || search_text))::pdb.icu('alias=all_text')), ((((title || ' '::text) || search_text))::pdb.icu('stemmer=english', 'stopwords_language=english', 'alias=all_text_en'))) WITH (key_field=doc_id, mutable_segment_rows='0')
   INDEX docs_commenters_gin CREATE INDEX docs_commenters_gin ON public.docs USING gin (acl_commenters)
   INDEX docs_owner_idx CREATE INDEX docs_owner_idx ON public.docs USING btree (owner)
   INDEX docs_page_of_idx CREATE INDEX docs_page_of_idx ON public.docs USING btree (workspace_id, page_of) WHERE (page_of IS NOT NULL)
   INDEX docs_parent_idx CREATE INDEX docs_parent_idx ON public.docs USING btree (parent_id)
   INDEX docs_pkey CREATE UNIQUE INDEX docs_pkey ON public.docs USING btree (doc_id)
+  INDEX docs_search_tsv_gin CREATE INDEX docs_search_tsv_gin ON public.docs USING gin (search_tsv) WITH (fastupdate=off)
   INDEX docs_title_trgm CREATE INDEX docs_title_trgm ON public.docs USING gin (title gin_trgm_ops)
+  INDEX docs_title_tsv_gin CREATE INDEX docs_title_tsv_gin ON public.docs USING gin (title_tsv) WITH (fastupdate=off)
   INDEX docs_trashed_idx CREATE INDEX docs_trashed_idx ON public.docs USING btree (trashed_at) WHERE (trashed = true)
   INDEX docs_writers_gin CREATE INDEX docs_writers_gin ON public.docs USING gin (acl_writers)
   INDEX docs_ws_acl_gin CREATE INDEX docs_ws_acl_gin ON public.docs USING gin (workspace_id, acl_principals)
@@ -287,6 +298,8 @@ TABLE folders
   acl_principals ARRAY NOT NULL DEFAULT '{}'::text[]
   acl_writers ARRAY NOT NULL DEFAULT '{}'::text[]
   agent_instructions text NOT NULL DEFAULT ''::text
+  agent_mode text
+  approver_group text
   created_at timestamp with time zone NOT NULL DEFAULT now()
   folder_id text NOT NULL
   inherits_perms boolean NOT NULL DEFAULT true
@@ -296,9 +309,11 @@ TABLE folders
   title text NOT NULL
   updated_at timestamp with time zone NOT NULL DEFAULT now()
   workspace_id text NOT NULL
+  CONSTRAINT folders_agent_mode_check CHECK ((agent_mode = ANY (ARRAY['auto'::text, 'review'::text, 'colleague'::text])))
   CONSTRAINT folders_owner_check CHECK ((owner ~ '^(user|agent):.'::text))
   CONSTRAINT folders_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES folders(folder_id) ON DELETE SET NULL
   CONSTRAINT folders_pkey PRIMARY KEY (folder_id)
+  CONSTRAINT folders_workspace_id_approver_group_fkey FOREIGN KEY (workspace_id, approver_group) REFERENCES groups(workspace_id, group_id) ON DELETE SET NULL (approver_group)
   CONSTRAINT folders_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
   INDEX folders_acl_gin CREATE INDEX folders_acl_gin ON public.folders USING gin (acl_principals)
   INDEX folders_parent_idx CREATE INDEX folders_parent_idx ON public.folders USING btree (parent_id)
@@ -847,3 +862,6 @@ TABLE workspaces
   CONSTRAINT workspaces_pkey PRIMARY KEY (workspace_id)
   INDEX workspaces_embedding_backfill_idx CREATE INDEX workspaces_embedding_backfill_idx ON public.workspaces USING btree (embedding_backfill_at) WHERE (embedding_backfill_at IS NOT NULL)
   INDEX workspaces_pkey CREATE UNIQUE INDEX workspaces_pkey ON public.workspaces USING btree (workspace_id)
+
+FUNCTION folder_agent_mode(start_id text) RETURNS text BODY md5:1991aaa5a8bd7c5394242ef5a42ce218
+FUNCTION folder_approver_group(start_id text) RETURNS text BODY md5:20949ec0bf0a9a3218dd84be207c2fe2

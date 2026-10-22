@@ -65,6 +65,8 @@ export interface PreviewHunkPart {
   agent?: string;
   /** What a note on this change does, which names its button; `agent` when absent. */
   noteMode?: NoteMode;
+  /** Its Accept is not this reader's: they asked the AI for it at `colleague`, where someone else accepts. */
+  acceptBlocked?: true;
 }
 
 /** One anchored structural change segment: strike its region, ghost its blocks. */
@@ -181,7 +183,8 @@ export function ghostVariant(
       const busy = pendingKeys.has(p.key) ? "!" : "";
       const role = roles.get(p.key);
       const part = role ? `${role.kind}${role.index}/${role.parts}` : "";
-      return `${ordinals.get(p.key) ?? 0}of${(total.get(p.key) ?? 0)}${busy}${part}${shape}${p.noteMode ?? ""}${hash32(p.summary + (p.agent ?? ""))}`;
+      const blocked = p.acceptBlocked ? "x" : "";
+      return `${ordinals.get(p.key) ?? 0}of${(total.get(p.key) ?? 0)}${busy}${part}${shape}${p.noteMode ?? ""}${blocked}${hash32(p.summary + (p.agent ?? ""))}`;
     })
     .join(",");
 }
@@ -307,6 +310,8 @@ export interface RunPreviewHunk {
   /** Agent display name, shown on the ghost when more than one run is open. */
   agent?: string;
   noteMode?: NoteMode;
+  /** Its Accept is someone else's (PreviewHunkPart.acceptBlocked). */
+  acceptBlocked?: true;
 }
 
 /** A run segment before it is anchored: live positions plus the hunks it renders. */
@@ -646,6 +651,7 @@ export function buildRunSegments(
       summary: hunkSummary(h.old_string, h.new_string),
       ...(showAgent && h.agent ? { agent: h.agent } : {}),
       ...(h.noteMode ? { noteMode: h.noteMode } : {}),
+      ...(h.acceptBlocked ? { acceptBlocked: true as const } : {}),
     };
     const mine: RunSegmentDraft[] = [];
     let removedSpan = 0;

@@ -53,7 +53,8 @@ export function renderDatabasePropose(res: DatabaseProposeBody, applied: string,
       : "";
     return JSON.stringify({
       result:
-        `Proposed — your change is waiting for the user to accept it (run ${run?.id}, ${pending} pending).${why} ` +
+        `Proposed — your change is waiting for ${run?.review_mode === "colleague" ? "a colleague of the user" : "the user"} to accept it ` +
+        `(run ${run?.id}, ${pending} pending).${why} ` +
         `This is SUCCESS. Do NOT retry; continue your work. Your schema reads already include this pending change ` +
         `(query results note what is pending); check \`databases\` action:status for decisions.${note}${instructions}${feedback}`,
       ...minted,

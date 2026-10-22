@@ -74,6 +74,7 @@ async function insertOwnedDoc(ctx: Ctx, input: OwnedDocInput): Promise<DocRow> {
     ...(input.page ? { pageOf: input.page.of, pageRow: input.page.row } : {}),
     // Who made it, as distinct from who owns it; review decisions read agent_mode, not this.
     createdBy: ctx.isAgent ? agentPrincipal(ctx.alias) : userPrincipal(ctx.alias),
+    searchLanguages: ctx.env.searchLanguages.current(),
   });
 }
 
@@ -270,7 +271,7 @@ export async function createDocument(ctx: Ctx, input: CreateDocumentInput): Prom
   }
 
   // Named as a rename names it, so the copy's first line does not take the title back.
-  const created = copied && doc.title ? ((await updateDoc(ctx.sql, doc.doc_id, { title: doc.title })) ?? doc) : doc;
+  const created = copied && doc.title ? ((await updateDoc(ctx.sql, doc.doc_id, { title: doc.title }, ctx.env.searchLanguages.current())) ?? doc) : doc;
   announceDoc(ctx, created);
   return { ok: true, doc: created };
 }

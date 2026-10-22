@@ -91,7 +91,7 @@ share:
 |---|---|
 | `title` | 1 to 200 characters, one line. A line break or other control character in a title is written as a space. |
 | `title_source` | `heading`: the body's first line gives the title. `user`: someone named it. |
-| `agent_mode` | `review` or `auto`. |
+| `agent_mode` | `review`, `auto` or `colleague`: the level the item was at when it was exported, its folder's included. |
 | `locked` | `true` or `false`. |
 | `search_hidden` | `true` or `false`. |
 | `agent_instructions` | Up to 20,000 characters; `""` for none. |

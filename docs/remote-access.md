@@ -404,7 +404,7 @@ warning and checks the directory as it does without either.
 The Mac package and the Docker install from `install.sh` run the connector themselves. Anywhere
 else, such as a compose file of your own, in development, and in the Mac's local trial
 ([Build from a checkout](install/macos.md#build-from-a-checkout)), run it as the node's user, with
-frp 0.71.0:
+frp 0.71.1:
 
 ```sh
 frpc -c <STUGA_REMOTE_DIR>/<relay>.toml

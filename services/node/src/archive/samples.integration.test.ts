@@ -100,7 +100,7 @@ describe.skipIf(!URL || !BUILD || !existsSync(BUILD))("creating a workspace from
     namespaces = [docs, databases];
     const settings = await createNodeSettingsStore({ sql, dataDir: dir, publicOrigin: "https://node.test" });
     const media = fsBlobStore(join(dir, "media"));
-    env = { sql, publicOrigin: "https://node.test", extraOrigins: [], samplesUrl, docs, databases, snapshots, media, jobs, settings } as unknown as NodeEnv;
+    env = { sql, publicOrigin: "https://node.test", extraOrigins: [], samplesUrl, docs, databases, snapshots, media, jobs, settings, searchLanguages: { current: () => [] } } as unknown as NodeEnv;
   }, 120_000);
 
   afterAll(async () => {

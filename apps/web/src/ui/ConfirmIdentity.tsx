@@ -155,7 +155,7 @@ export function ConfirmIdentity() {
                   {t("ui.confirmIdentity.signInAgain")}
                 </Text>
               )}
-              {!byPassword && error && <Banner status="error" title={error} />}
+              {!byPassword && error && <Banner status="error" role="alert" title={error} />}
               {byPasskey && methods.includes("password") && (
                 <Button label={t("ui.confirmIdentity.usePassword")} variant="ghost" size="sm" onClick={() => setUsePassword(true)} isDisabled={busy} />
               )}

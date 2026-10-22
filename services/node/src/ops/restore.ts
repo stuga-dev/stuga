@@ -3,12 +3,10 @@
  * undone. Everything slow happens beside the current data, which is only renamed.
  *
  *   1. refuse unless no other backup or restore runs, the node is stopped, the
- *      backup verifies, the server can load pg_search, the person confirmed, and
- *      there is room for a second copy of both halves;
+ *      backup verifies, the person confirmed, and there is room for a second
+ *      copy of both halves;
  *   2. extract the archive into `<DATA_DIR>.restore-<stamp>`;
- *   3. restore the dump into `<db>_restore_<stamp>`, stopping at the first error,
- *      without the search indexes, which the node builds when it starts, unless
- *      the dump is from before the search languages were a setting;
+ *   3. restore the dump into `<db>_restore_<stamp>`, stopping at the first error;
  *   4. confirm the ops lock is still held, then swap by four renames, keeping the
  *      current halves as `<db>_replaced_<stamp>` and `<DATA_DIR>.replaced-<stamp>`.
  *
@@ -17,12 +15,9 @@
  * names cannot be restored does it exit 4, saying where each half is. The next
  * restore removes what a killed one left.
  */
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { isSearchIndexName, preloadsPgSearch } from "@stuga/db";
 import { TRASH_RETENTION_DAYS } from "@stuga/protocol/domain/limits";
-import { pgSearchProblem } from "../boot/preflight.js";
 import { mib, nodeRunningRefusal } from "./backup.js";
 import type { BackupEnv } from "./env.js";
 import {
@@ -102,35 +97,9 @@ export interface RestoreDumpOptions {
   signal?: AbortSignal;
 }
 
-/**
- * Restore the dump without its search indexes, which the node's boot builds for
- * its search languages: a dump taken while the node rebuilt them can hold two on
- * one table, and pg_search refuses to create the second.
- */
+/** Restore the dump, stopping at the first error. */
 export async function defaultRestoreDump(env: BackupEnv, dump: string, sideUrl: string, opts: RestoreDumpOptions): Promise<void> {
-  const { signal } = opts;
-  const restore = (...list: string[]) =>
-    run(pgTool(env, "pg_restore"), ["--no-owner", "--no-acl", "--exit-on-error", ...list, `--dbname=${sideUrl}`, dump], { signal });
-  const dir = await mkdtemp(join(tmpdir(), "stuga-restore-"));
-  try {
-    const list = join(dir, "toc.list");
-    await run(pgTool(env, "pg_restore"), ["--list", `--file=${list}`, dump], { signal });
-    await writeFile(list, withoutSearchIndexes(await readFile(list, "utf8")));
-    await restore(`--use-list=${list}`);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
-/** A dump's table of contents (`pg_restore --list`) without the entries that create a search index or comment on one. */
-export function withoutSearchIndexes(toc: string): string {
-  return toc
-    .split("\n")
-    .filter((line) => {
-      const entry = /^\d+; \d+ \d+ (?:INDEX public|COMMENT public INDEX) (\S+)(?: |$)/.exec(line);
-      return !(entry && isSearchIndexName(entry[1]!));
-    })
-    .join("\n");
+  await run(pgTool(env, "pg_restore"), ["--no-owner", "--no-acl", "--exit-on-error", `--dbname=${sideUrl}`, dump], { signal: opts.signal });
 }
 
 async function defaultRenameDatabase(sql: LockSql, from: string, to: string): Promise<void> {
@@ -237,15 +206,6 @@ export async function runRestore(
     const [server] = await maintenance<{ v: string }[]>`SELECT current_setting('server_version_num') AS v`;
     const notes = checkCompatibility(env, manifest, Number(server!.v));
 
-    // A dump with BM25 indexes fails mid-restore on a server that cannot load pg_search.
-    const [ext] = await maintenance<{ available: boolean }[]>`
-      SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_search') AS available`;
-    const preloaded = await maintenance<{ shared_preload_libraries?: string }[]>`SHOW shared_preload_libraries`
-      .then((r) => (typeof r[0]?.shared_preload_libraries === "string" ? preloadsPgSearch(r[0].shared_preload_libraries) : null))
-      .catch(() => null);
-    const pgSearch = pgSearchProblem({ available: ext?.available === true, preloaded });
-    if (pgSearch) throw refused(`${pgSearch} Nothing was changed.`);
-
     if (!opts.confirmed) {
       throw refused(`restoring replaces the current database and data directory; confirm it (--yes). Nothing was changed.`);
     }
@@ -343,7 +303,6 @@ export async function runRestore(
       throw await unchanged(`the restore failed while swapping (${reason}); everything was put back`);
     }
 
-    notes.push("the node builds its search indexes when it starts, which on a large database takes a while");
     notes.push(
       "within minutes of starting, the node's maintenance runs against today's date: " +
         `trash older than ${TRASH_RETENTION_DAYS} days and audit rows past their retention are removed for good`,

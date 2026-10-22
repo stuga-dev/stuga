@@ -94,6 +94,7 @@ function fakeEnv(overrides: Partial<JobsEnv> = {}): JobsEnv {
       rerank: { enabled: false, baseUrl: "", model: "" },
     }),
     settings: nodeSettings(),
+    searchLanguages: { current: () => [], status: () => ({ languages: [], rebuilding: false, error: null }), rebuild: async () => {}, save: async () => {}, stop: async () => {} },
     publicOrigin: "http://localhost:8787",
     embeddingDims: 4,
     ...overrides,
@@ -298,6 +299,78 @@ describe("notify", () => {
     );
     expect(deliver).not.toHaveBeenCalled();
     expect(m.acked()).toBe(true);
+  });
+
+  describe("telling who may approve a run at colleague", () => {
+    const fanout = (over: Partial<Extract<IndexMessage, { kind: "notify_approvers" }>> = {}): IndexMessage => ({
+      kind: "notify_approvers",
+      workspaceId: "w1",
+      docId: "d1",
+      runId: "run_1",
+      reviewer: "liv",
+      approverGroup: "group:legal",
+      actor: "agent-1",
+      agent: "Scout",
+      doc: "Policy",
+      count: 2,
+      askerTold: true,
+      ...over,
+    });
+    const DOC = { doc_id: "d1", workspace_id: "w1", trashed: false, parent_id: null, title: "Policy", acl_principals: ["org:w1"], owner: "user:liv" };
+    const deps = (approvers: (groups: string[]) => { aliases: string[]; standIn: boolean; cause: "nobody" | "group" | null }) => ({
+      db: fakeDb({
+        getDoc: vi.fn(async () => DOC) as never,
+        displayNameOf: vi.fn(async () => "Liv"),
+        colleagueApprovers: vi.fn(async (_doc: unknown, _reviewer: string, groups: string[]) => approvers(groups)) as never,
+        docApproverGroup: vi.fn(async () => null),
+        managersWhoCanRead: vi.fn(async () => ["dee"]),
+      }),
+      log: silentLog,
+      deliver: vi.fn(async () => null),
+    });
+    const email = () => fakeEnv({ settings: nodeSettings({ notify: { sink: "email", smtpUrl: "smtp://x", emailFrom: "a@b" } }) });
+    const slack = () => fakeEnv({ settings: nodeSettings({ notify: { sink: "slack", webhookUrl: "https://hooks.slack.test/x" } }) });
+    const sent = (d: ReturnType<typeof deps>) => vi.mocked(d.db.insertNotification).mock.calls;
+
+    it("tells each, by email, once per run: a second run on the same item is told too", async () => {
+      const d = deps(() => ({ aliases: ["bo", "cy"], standIn: false, cause: null }));
+      await dispatchJob(email(), fanout(), d);
+      expect(d.db.colleagueApprovers).toHaveBeenCalledWith(expect.objectContaining({ doc_id: "d1" }), "liv", ["group:legal"]);
+      expect(sent(d).map(([row]) => row.recipient_alias)).toEqual(["bo", "cy"]);
+      expect(sent(d)[0]![0]).toMatchObject({ event_type: "APPROVAL_WAITING", payload: { agent: "Scout", author: "Liv", doc: "Policy", count: 2 } });
+      expect(sent(d).every(([, delivery]) => delivery?.channel === "email")).toBe(true);
+      await dispatchJob(email(), fanout({ runId: "run_2", reviewer: "cy" }), d);
+      const ids = sent(d).map(([row]) => row.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it("posts to a chat channel once: never when the asker's notice said it, once when nobody was told", async () => {
+      const told = deps(() => ({ aliases: ["bo", "cy"], standIn: false, cause: null }));
+      await dispatchJob(slack(), fanout(), told);
+      expect(sent(told).map(([, delivery]) => delivery)).toEqual([null, null]);
+      // The in-app co-author's run tells nobody who is watching: the channel hears it from the first approver's notice.
+      const untold = deps(() => ({ aliases: ["bo", "cy"], standIn: false, cause: null }));
+      await dispatchJob(slack(), fanout({ askerTold: false }), untold);
+      expect(sent(untold).map(([, delivery]) => delivery?.channel ?? null)).toEqual(["slack", null]);
+    });
+
+    it("tells the owner and admins who can read it when nobody may approve, and why", async () => {
+      const d = deps(() => ({ aliases: [], standIn: true, cause: "group" }));
+      await dispatchJob(email(), fanout(), d);
+      expect(d.db.managersWhoCanRead).toHaveBeenCalledWith(expect.objectContaining({ doc_id: "d1" }), "liv");
+      expect(sent(d).map(([row]) => [row.recipient_alias, row.event_type, row.payload])).toEqual([
+        ["dee", "APPROVER_NEEDED", { agent: "Scout", author: "Liv", doc: "Policy", count: 2, cause: "group" }],
+      ]);
+    });
+
+    it("after the approver group changed, tells only those who may approve now and could not before", async () => {
+      const d = deps((groups) =>
+        groups.includes("group:finance") ? { aliases: ["bo", "eve"], standIn: false, cause: null } : { aliases: ["bo"], standIn: false, cause: null },
+      );
+      vi.mocked(d.db.docApproverGroup).mockResolvedValue("group:finance");
+      await dispatchJob(email(), fanout({ approverGroup: null, groupBefore: "group:legal" }), d);
+      expect(sent(d).map(([row]) => row.recipient_alias)).toEqual(["eve"]);
+    });
   });
 
   it("links a comment's notification to that comment, and keeps two comments within the hour apart", async () => {
@@ -584,7 +657,7 @@ describe("index_doc: a database", () => {
     const env = fakeEnv({ databases: { get: vi.fn(() => ({ fetch })) } as unknown as JobsEnv["databases"] });
     await dispatchJob(env, { kind: "index_doc", docId: "db1", reason: "database_changed" }, { db, log: silentLog, embed: vi.fn() });
     expect(fetch.mock.calls[0]![0]).toBe("http://actor/search-text?dbId=db1");
-    expect(db.setDatabaseSearchText).toHaveBeenCalledWith("db1", "Orders\nORD-00777 · 236.3 · Refunded");
+    expect(db.setDatabaseSearchText).toHaveBeenCalledWith("db1", "Orders\nORD-00777 · 236.3 · Refunded", []);
     expect(db.indexDoc).not.toHaveBeenCalled();
   });
 
@@ -649,6 +722,13 @@ describe("index_doc: the version half", () => {
     await dispatchJob(env, msg, { db, log: silentLog, embed });
     expect(db.recordVersion).not.toHaveBeenCalled();
     expect(db.indexDoc).toHaveBeenCalledTimes(1);
+  });
+
+  it("indexes in the search languages the node has when the job runs", async () => {
+    const { db, env, msg } = fixture(false);
+    const languages = { ...env.searchLanguages, current: () => ["de", "fr"] as const };
+    await dispatchJob({ ...env, searchLanguages: languages }, msg, { db, log: silentLog, embed });
+    expect(vi.mocked(db.indexDoc).mock.calls[0]![0]).toMatchObject({ docId: "d1", searchLanguages: ["de", "fr"] });
   });
 
   it("records nothing for a producer that sets no flag at all", async () => {

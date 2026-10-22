@@ -377,12 +377,37 @@ describe("instructions for agents", () => {
 describe("folders", () => {
   it("lists summaries: neither grants nor a folder's instructions ride along", async () => {
     vi.mocked(listFolders).mockResolvedValue([
-      { ...FOLDER, parent_id: null, title: "Legal", inherits_perms: true, own_grants: { p: [], w: [], c: [] }, agent_instructions: "Never promise dates.", created_at: "t0", updated_at: "t1" },
+      {
+        ...FOLDER,
+        parent_id: null,
+        title: "Legal",
+        inherits_perms: true,
+        own_grants: { p: [], w: [], c: [] },
+        agent_instructions: "Never promise dates.",
+        agent_mode: null,
+        approver_group: null,
+        parent_agent_mode: null,
+        created_at: "t0",
+        updated_at: "t1",
+      },
     ] as never);
     const r = await callTool(ctxOf(), "folders", {});
     expect(r.isError).toBe(false);
     expect(JSON.parse(r.text)).toEqual({
-      folders: [{ folder_id: "f1", parent_id: null, title: "Legal", owner: "user:carol", created_at: "t0", updated_at: "t1" }],
+      folders: [
+        {
+          folder_id: "f1",
+          parent_id: null,
+          title: "Legal",
+          owner: "user:carol",
+          created_at: "t0",
+          updated_at: "t1",
+          // How AI edits beneath it are reviewed, which an agent may read like anyone who can see the folder.
+          agent_mode: "review",
+          agent_mode_floor: null,
+          approver_group: null,
+        },
+      ],
     });
   });
 });

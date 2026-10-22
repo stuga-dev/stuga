@@ -28,7 +28,7 @@ type SectionStatus = ReturnType<typeof useSectionStatus>;
 export function SectionStatusBanners({ status }: { status: SectionStatus }) {
   return (
     <>
-      {status.error && <Banner status="error" title={t("node.status.failed")} description={status.error} />}
+      {status.error && <Banner status="error" role="alert" title={t("node.status.failed")} description={status.error} />}
       {status.notice && <Banner status={status.notice.status} title={presentServerMessage(status.notice.message)} />}
     </>
   );

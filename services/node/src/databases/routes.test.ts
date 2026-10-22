@@ -72,7 +72,13 @@ let actorStatus: number;
 let actorBody: unknown;
 let actorRoutes: Record<string, { status?: number; body: unknown }>;
 const actorCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
+/** The run a decision reads first, unless `actorRoutes` scripts /runs/detail; not counted in actorCalls. */
+let heldRun: Record<string, unknown>;
 const actorFetch = vi.fn(async (url: string, init?: RequestInit) => {
+  const path = new URL(url).pathname;
+  if (path === "/runs/detail" && !actorRoutes[path] && (init?.method ?? "GET") === "GET") {
+    return new Response(JSON.stringify({ run: heldRun }), { status: 200, headers: { "content-type": "application/json" } });
+  }
   actorCalls.push({
     url,
     body: init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : {},
@@ -113,6 +119,7 @@ beforeEach(() => {
   actorStatus = 200;
   actorBody = { ok: true };
   actorRoutes = {};
+  heldRun = { id: "run_abc123def456", agent_alias: "agent-1", reviewer: "bob", review_mode: "review", ops: [] };
   mockGetDoc.mockReset();
   mockGetDoc.mockResolvedValue({ ...DB_DOC });
   mockTouchDoc.mockClear();

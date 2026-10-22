@@ -21,9 +21,7 @@ power cut. With FileVault on, a Mac waits for someone to unlock its disk after a
 anything starts; `sudo fdesetup authrestart` restarts it without that, once.
 
 The package is signed by Stuga's developer and notarized by Apple, and nothing is compiled on your
-Mac: it carries its own Postgres (Postgres.app's build with pgvector, plus ParadeDB's pg_search) and
-its own Node.js. pg_search's macOS build is published by ParadeDB and not tested by them; Stuga runs
-its Postgres test suites against this exact build before every release.
+Mac: it carries its own Postgres (Postgres.app's build with pgvector) and its own Node.js.
 
 ### The menu bar
 
@@ -105,11 +103,11 @@ replaced is kept, and the command ends with how to remove it. If it stops after 
 earlier version, Stuga stays stopped with the data unchanged, and the message says how to finish or
 go forward.
 
-Going back reaches 0.1.12 and later releases that run the same Postgres major, pg_search and
-pgvector as the version running; a release that changes one says so in its upgrade notes. To
-restore a backup of a newer version's data, update first. Opening an earlier `Stuga-<version>.pkg`
-instead changes no data: from 0.1.12 on, an earlier Stuga refuses data a newer one served, and the
-menu says `Stuga is older than its data`.
+Going back reaches 0.2.0 and later releases that run the same Postgres major and pgvector as the
+version running; a release that changes one says so in its upgrade notes. To restore a backup of a
+newer version's data, update first. Opening an earlier `Stuga-<version>.pkg` instead changes no
+data: an earlier Stuga refuses data a newer one served, and the menu says `Stuga is older than its
+data`.
 
 ### Where things live
 
@@ -217,7 +215,7 @@ Switching branches or rebuilding the web app in it changes what Stuga runs.
 | `--origin <url>` | The address other devices use, such as `http://192.168.1.50:8787`. By default the address follows the Mac's local host name. |
 | `--local-only` | Serve this Mac only. |
 | `--app-dir <dir>` | Where Stuga.app goes. Default `~/Applications`. |
-| `--identity <name>` | Sign the Postgres tree, Node and the app with this code-signing identity, which turns on library validation. Without it, Node, pg_search and the app are signed ad hoc, and the rest of the Postgres tree keeps its upstream signatures. |
+| `--identity <name>` | Sign the Postgres tree, Node and the app with this code-signing identity, which turns on library validation. Without it, Node and the app are signed ad hoc, and the Postgres tree keeps its upstream signatures. |
 | `--postgres-tree <dir>` | Copy this Postgres tree instead of the pinned one. |
 | `--skip-web-build` | Use the checkout's web app and MCP server builds as they are. |
 | `--uninstall` | Remove the app and the runtime, and keep the data. |

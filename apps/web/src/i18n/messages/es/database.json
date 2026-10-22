@@ -240,6 +240,7 @@
   "ai.empty": "Pide cambios en esta base de datos: “añade una columna Estado y marca las filas terminadas”, “inserta los hitos del T3”, “quita las filas duplicadas por Nombre”.",
   "ai.emptyAuto": "Las ediciones de IA en esta base de datos se aplican directamente: cada una se aplica al hacerse, queda registrada y se puede revertir.",
   "ai.emptyReview": "Cada cambio se propone para que lo revises antes de aplicarse.",
+  "ai.emptyColleague": "Cada cambio se propone para que lo apruebe un compañero antes de aplicarse.",
   "ai.placeholder": "Pide a la IA que cambie esta base de datos…",
   "ai.placeholderDocs": "Pide a la IA que cambie esta base de datos usando tus documentos…",
   "ai.scopeBase": "Solo esta base de datos",

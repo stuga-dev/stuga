@@ -1,8 +1,9 @@
 export * from "./types.js";
 export * from "./client.js";
-export type { SortOrder } from "./sql.js";
+export type { Queryable, SortOrder } from "./sql.js";
 export * from "./docs.js";
 export * from "./folders.js";
+export * from "./review.js";
 export * from "./instructions.js";
 export * from "./search.js";
 export * from "./versions.js";
@@ -27,17 +28,6 @@ export * from "./node.js";
 export * from "./remote-access.js";
 export { runBootRepairs, type RepairOutcome } from "./schema/boot-repairs.js";
 export { initSchema, readSchemaVersion, SCHEMA_VERSION, type MigrationOutcome } from "./schema/migrate.js";
-export {
-  SEARCH_LANGUAGES,
-  createSearchIndex,
-  dropSearchIndex,
-  isPlainIndexName,
-  isSearchIndexName,
-  listSearchIndexes,
-  preloadsPgSearch,
-  searchIndexShapes,
-  type PresentSearchIndex,
-  type SearchIndexShape,
-  type SearchLanguage,
-} from "./schema/search-indexes.js";
+export { SEARCH_LANGUAGES, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
+export { listDocsToReindex, reindexDocVectors, searchFormat } from "./search-vectors.js";
 export { pgJobQueue, startJobWorker, type JobBatch, type JobMessage } from "./jobs.js";

@@ -23,8 +23,10 @@ export interface DocSummary {
   locked: boolean;
   /** Left out of every search surface. */
   search_hidden: boolean;
-  /** Whether agent changes wait for a person or apply at once. */
+  /** How AI edits to it are reviewed now: its own level, else its folder's, else `review`. */
   agent_mode: ReviewMode;
+  /** The level its folder gives it, which only the folder's owner or an admin sets it below; null when none does. */
+  agent_mode_floor: ReviewMode | null;
   /** For a database row's page: the database, and the row as `<table_id>.<row_id>`. Pages stay out of library lists. */
   page_of: string | null;
   page_row: string | null;

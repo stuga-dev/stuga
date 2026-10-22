@@ -6,24 +6,27 @@ import { Token } from "@astryxdesign/core/Token";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Eye } from "lucide-react";
-import { DOC_STATE_FLAGS } from "./doc-state";
+import type { ReviewMode } from "@stuga/protocol/domain/events";
+import { DOC_STATE_FLAGS, docStateOf } from "./doc-state";
 import { t } from "../i18n/i18n";
 
 export function DocStateChips({
   locked,
   searchHidden,
-  agentAuto,
+  agentMode,
   readOnly,
   noun = "document",
 }: {
   locked: boolean;
   searchHidden: boolean;
-  agentAuto: boolean;
+  /** How AI edits to it are reviewed: a chip shows a level other than the default. */
+  agentMode: ReviewMode;
   /** The caller lacks edit access, independent of the lock. */
   readOnly: boolean;
   noun?: "document" | "database";
 }) {
-  const on = DOC_STATE_FLAGS.filter((f) => f.isOn({ locked, searchHidden, agentAuto }));
+  const state = docStateOf({ locked, search_hidden: searchHidden, agent_mode: agentMode });
+  const on = DOC_STATE_FLAGS.filter((f) => f.isOn(state));
   const viewOnly = readOnly && !locked;
   if (on.length === 0 && !viewOnly) return null;
   return (

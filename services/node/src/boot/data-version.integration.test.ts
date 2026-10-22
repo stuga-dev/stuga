@@ -1,6 +1,6 @@
 /**
  * What a node reads of its database before it writes anything, against a real
- * Postgres. Needs TEST_DATABASE_URL (Postgres 18 preloading pg_search); skips
+ * Postgres. Needs TEST_DATABASE_URL (Postgres 18 with pgvector); skips
  * without it.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

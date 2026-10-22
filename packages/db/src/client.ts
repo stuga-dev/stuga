@@ -31,12 +31,8 @@ export function pgConnection(connectionString: string): { url: string; options: 
   return { url: connectionString.slice(0, q) + (rest ? `?${rest}` : ""), options };
 }
 
-/**
- * A server notice as one log line. pg_search's planner warnings are dropped: they
- * only say that a faster plan did not apply, and repeat on every such query.
- */
+/** A server notice as one log line. */
 export function logNotice(notice: Notice): void {
-  if (notice.code === "01000" && /^pg_search::(\w+::)*planner_warnings::/.test(notice.routine ?? "")) return;
   console.warn(`[postgres] ${notice.severity}: ${notice.message}`);
 }
 

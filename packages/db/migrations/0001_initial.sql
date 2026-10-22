@@ -6,11 +6,10 @@
 -- refuses to start when the configuration disagrees.
 
 -- btree_gin lets a scalar workspace_id prefix a GIN index, so the ACL
--- intersection stays index-selective within a tenant. pg_search needs vector.
+-- intersection stays index-selective within a tenant.
 CREATE EXTENSION vector;
 CREATE EXTENSION pg_trgm;
 CREATE EXTENSION btree_gin;
-CREATE EXTENSION pg_search;
 
 -- ============================================================================
 -- Tenancy. A workspace is a hard isolation unit: the "everyone" principal is
@@ -50,6 +49,16 @@ CREATE TABLE workspace_members (
 CREATE INDEX workspace_members_alias_idx ON workspace_members (alias, joined_at);
 CREATE INDEX workspace_members_ws_role_idx ON workspace_members (workspace_id, role);
 
+-- Groups are workspace-scoped: group:eng in two tenants is two rows.
+CREATE TABLE groups (
+    workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    group_id     TEXT NOT NULL,
+    members      TEXT[] NOT NULL DEFAULT '{}',
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (workspace_id, group_id)
+);
+CREATE INDEX groups_members_gin ON groups USING GIN (members);
+
 -- ============================================================================
 -- Folders and documents.
 --
@@ -71,8 +80,18 @@ CREATE TABLE folders (
     -- Instructions for agents working on anything beneath this folder; '' when none.
     -- Stacked under the workspace's and every ancestor folder's, never instead of them.
     agent_instructions TEXT NOT NULL DEFAULT '',
+    -- How AI edits to everything beneath it are reviewed, unless an item sets its own: 'auto'
+    -- (they apply at once), 'review' (whoever asked the AI approves) or 'colleague' (someone else
+    -- who can edit the item approves). NULL follows the folder above, else 'review'. An item may be
+    -- stricter than its folder; only the folder's owner or a workspace admin sets one looser.
+    agent_mode      TEXT CHECK (agent_mode IN ('auto', 'review', 'colleague')),
+    -- At 'colleague', only members of this group approve, beneath it unless a nearer folder names
+    -- another. NULL: anyone else who can edit the item.
+    approver_group  TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (workspace_id, approver_group) REFERENCES groups (workspace_id, group_id)
+        ON DELETE SET NULL (approver_group)
 );
 CREATE INDEX folders_acl_gin     ON folders USING GIN (acl_principals);
 CREATE INDEX folders_writers_gin ON folders USING GIN (acl_writers);
@@ -111,15 +130,23 @@ CREATE TABLE docs (
     locked_at       TIMESTAMPTZ,
     -- Excluded from every search and retrieval surface; its chunks are deleted.
     search_hidden   BOOLEAN NOT NULL DEFAULT FALSE,
-    -- Plain text of the body; the BM25 indexes read it.
+    -- The body as Markdown, which excerpts are cut from.
     search_text     TEXT NOT NULL DEFAULT '',
+    -- The keyword index of the title and of the body, and how many terms each
+    -- holds (BM25's length), written by the node (search-vectors.ts) in the
+    -- format named here; a row in another is written again in the background.
+    title_tsv       TSVECTOR NOT NULL DEFAULT '',
+    title_dl        INTEGER NOT NULL DEFAULT 0,
+    search_tsv      TSVECTOR NOT NULL DEFAULT '',
+    search_dl       INTEGER NOT NULL DEFAULT 0,
+    search_format   TEXT,
     -- sha-256 of the last embedded text, so an unchanged flush skips the model call.
     embedding_hash  TEXT,
     -- Oldest snapshot seq still in the version ring. Only ever rises, so a
     -- retried job cannot reopen a pruned version. NULL = no ring published.
     version_floor   BIGINT,
-    -- 'review' (agent changes wait for a person) or 'auto' (apply at once).
-    agent_mode      TEXT NOT NULL DEFAULT 'review' CHECK (agent_mode IN ('review', 'auto')),
+    -- Its own review level for AI edits, as folders.agent_mode; NULL follows its folder.
+    agent_mode      TEXT CHECK (agent_mode IN ('auto', 'review', 'colleague')),
     -- Instructions for agents working on this document (for a database, on it and
     -- its row pages), stacked under its folders' and the workspace's; '' when none.
     agent_instructions TEXT NOT NULL DEFAULT '',
@@ -132,13 +159,44 @@ CREATE TABLE docs (
 CREATE INDEX docs_acl_gin        ON docs USING GIN (acl_principals);
 CREATE INDEX docs_writers_gin    ON docs USING GIN (acl_writers);
 CREATE INDEX docs_commenters_gin ON docs USING GIN (acl_commenters);
+-- Title filters and the typo leg of search; pg_trgm folds case itself.
 CREATE INDEX docs_title_trgm     ON docs USING GIN (title gin_trgm_ops);
+-- Written as each row is, so a search never reads a pending list.
+CREATE INDEX docs_title_tsv_gin  ON docs USING GIN (title_tsv) WITH (fastupdate = off);
+CREATE INDEX docs_search_tsv_gin ON docs USING GIN (search_tsv) WITH (fastupdate = off);
 CREATE INDEX docs_parent_idx     ON docs (parent_id);
 CREATE INDEX docs_owner_idx      ON docs (owner);
 CREATE INDEX docs_ws_acl_gin     ON docs USING GIN (workspace_id, acl_principals);
 CREATE INDEX docs_ws_writers_gin ON docs USING GIN (workspace_id, acl_writers);
 CREATE INDEX docs_trashed_idx    ON docs (trashed_at) WHERE trashed = TRUE;
 CREATE INDEX docs_page_of_idx    ON docs (workspace_id, page_of) WHERE page_of IS NOT NULL;
+
+-- The review level a folder gives what is in it: its own, else the nearest folder's above it that
+-- sets one; NULL when none does (then 'review'). Walked at most 32 deep, as every folder chain is.
+CREATE FUNCTION folder_agent_mode(start_id TEXT) RETURNS TEXT
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    WITH RECURSIVE up(parent_id, agent_mode, depth) AS (
+        SELECT parent_id, agent_mode, 0 FROM folders WHERE folder_id = start_id
+        UNION ALL
+        SELECT f.parent_id, f.agent_mode, u.depth + 1
+        FROM folders f JOIN up u ON f.folder_id = u.parent_id
+        WHERE u.agent_mode IS NULL AND u.depth < 32
+    )
+    SELECT agent_mode FROM up WHERE agent_mode IS NOT NULL ORDER BY depth LIMIT 1
+$$;
+
+-- The approver group a folder gives what is in it, the same way.
+CREATE FUNCTION folder_approver_group(start_id TEXT) RETURNS TEXT
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    WITH RECURSIVE up(parent_id, approver_group, depth) AS (
+        SELECT parent_id, approver_group, 0 FROM folders WHERE folder_id = start_id
+        UNION ALL
+        SELECT f.parent_id, f.approver_group, u.depth + 1
+        FROM folders f JOIN up u ON f.folder_id = u.parent_id
+        WHERE u.approver_group IS NULL AND u.depth < 32
+    )
+    SELECT approver_group FROM up WHERE approver_group IS NOT NULL ORDER BY depth LIMIT 1
+$$;
 
 -- Per-chunk index rows, replaced wholesale on each real index of a document.
 CREATE TABLE doc_chunks (
@@ -148,9 +206,11 @@ CREATE TABLE doc_chunks (
     content        TEXT NOT NULL,
     -- "Overview > Geophysics"; NULL for a preamble or headingless text.
     heading_path   TEXT,
-    -- The document title, on chunk 0 only, kept equal to docs.title by indexDoc
-    -- and rename (both holding the docs row lock).
-    doc_title      TEXT,
+    -- The keyword index of the heading and the passage, chunk 0's with the
+    -- document title, kept so by indexDoc and rename (both holding the docs row
+    -- lock), and the terms it holds.
+    tsv            TSVECTOR NOT NULL DEFAULT '',
+    dl             INTEGER NOT NULL DEFAULT 0,
     embedding      vector(@EMBEDDING_DIMS@),
     -- sha-256 of the exact embed input, so an unchanged chunk reuses its vector.
     embed_hash     TEXT,
@@ -160,6 +220,7 @@ CREATE TABLE doc_chunks (
 );
 CREATE INDEX doc_chunks_doc_idx  ON doc_chunks (doc_id);
 CREATE INDEX doc_chunks_ws_idx   ON doc_chunks (workspace_id);
+CREATE INDEX doc_chunks_tsv_gin  ON doc_chunks USING GIN (tsv) WITH (fastupdate = off);
 CREATE INDEX doc_chunks_vec_hnsw ON doc_chunks USING hnsw (embedding vector_cosine_ops)
     WITH (m = 16, ef_construction = 200);
 
@@ -208,16 +269,6 @@ CREATE TABLE doc_mentions (
     PRIMARY KEY (doc_id, alias)
 );
 
--- Groups are workspace-scoped: group:eng in two tenants is two rows.
-CREATE TABLE groups (
-    workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-    group_id     TEXT NOT NULL,
-    members      TEXT[] NOT NULL DEFAULT '{}',
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (workspace_id, group_id)
-);
-CREATE INDEX groups_members_gin ON groups USING GIN (members);
-
 CREATE TABLE favorites (
     user_alias TEXT NOT NULL,
     doc_id     TEXT NOT NULL REFERENCES docs(doc_id) ON DELETE CASCADE,
@@ -237,7 +288,12 @@ CREATE TABLE notifications (
     actor_alias     TEXT,
     payload         JSONB NOT NULL DEFAULT '{}',
     read            BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Whether it also went out through the node's sink: the channel is set when the row is written,
+    -- 'none' when it is shown in Stuga only, and each attempt sets `delivered_at` or `delivery_error`.
+    delivery_channel TEXT CHECK (delivery_channel IN ('none', 'slack', 'teams', 'discord', 'email', 'webhook')),
+    delivered_at     TIMESTAMPTZ,
+    delivery_error   TEXT CHECK (length(delivery_error) <= 300)
 );
 CREATE INDEX notifications_recipient_idx ON notifications (recipient_alias, created_at DESC);
 CREATE INDEX notifications_recipient_unread_idx ON notifications (recipient_alias) WHERE read = FALSE;
@@ -269,7 +325,16 @@ CREATE TABLE users (
     email        TEXT,
     -- The identity provider's subject for this account, when linked. One provider per node, so no issuer column.
     oidc_sub     TEXT UNIQUE,
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- "Sign in faster next time" is offered once, after a password sign-in at the remote address;
+    -- this is when the person said Not now.
+    passkey_offer_dismissed_at TIMESTAMPTZ,
+    -- The interface language a person chose; NULL follows their browser. The node checks the value
+    -- against the languages it has catalogs for, so a new language needs no migration.
+    ui_language          TEXT CHECK (ui_language ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$'),
+    -- What their browser asked for at their last sign-in: the language for what the node sends
+    -- them outside the app while they follow their browser.
+    ui_language_detected TEXT CHECK (ui_language_detected ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$')
 );
 
 -- The local password, when the account has one. An account made through the
@@ -299,6 +364,33 @@ CREATE TABLE password_resets (
 CREATE INDEX password_resets_alias_idx  ON password_resets (alias);
 CREATE INDEX password_resets_expiry_idx ON password_resets (expires_at);
 
+-- Passkeys, only at the remote address: a credential's public key, for the host (`rp_id`) it was
+-- made at, never its private key. `backup_eligible` is set once, as the authenticator reported it at
+-- registration; `synced` follows what it reports at each sign-in.
+CREATE TABLE passkeys (
+    credential_id   TEXT PRIMARY KEY CHECK (length(credential_id) BETWEEN 1 AND 1400),
+    alias           TEXT NOT NULL REFERENCES users(alias) ON DELETE CASCADE,
+    rp_id           TEXT NOT NULL,
+    public_key      BYTEA NOT NULL,
+    algorithm       INTEGER NOT NULL CHECK (algorithm IN (-8, -7, -257)),
+    sign_count      BIGINT NOT NULL DEFAULT 0 CHECK (sign_count >= 0),
+    transports      TEXT[] NOT NULL DEFAULT '{}',
+    backup_eligible BOOLEAN NOT NULL,
+    synced          BOOLEAN NOT NULL,
+    -- Named by the node from the authenticator and the browser ("iCloud Keychain"); the person may rename it.
+    name            TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at    TIMESTAMPTZ,
+    CONSTRAINT passkeys_synced_check CHECK (backup_eligible OR NOT synced)
+);
+CREATE INDEX passkeys_alias_idx ON passkeys (alias, rp_id);
+
+-- A row is one refresh token; `session_id` is the sign-in its rotations continue, which every access
+-- token names (`sid`) and every request looks up. Renewal, and a sibling issued for a duplicate
+-- renewal, copy every column from `session_id` on and change none: the absolute limit is fixed at
+-- sign-in. A credential is good only at the listener that issued it, the node's own on its network
+-- ('local') or its remote address ('remote'). A sign-in made with a passkey ends when the passkey is
+-- removed.
 CREATE TABLE refresh_sessions (
     id          TEXT PRIMARY KEY,
     alias       TEXT NOT NULL,
@@ -308,10 +400,41 @@ CREATE TABLE refresh_sessions (
     revoked_at  TIMESTAMPTZ,
     -- The successor's token_hash, set only by rotation: it tells a rotated session
     -- from a revoked one, so a duplicate rotation inside the grace window is forgiven.
-    replaced_by TEXT
+    replaced_by TEXT,
+    session_id          TEXT NOT NULL,
+    arrival             TEXT NOT NULL CHECK (arrival IN ('local', 'remote')),
+    signed_in_with      TEXT NOT NULL
+        CHECK (signed_in_with IN ('password', 'provider', 'passkey', 'reset', 'invite', 'setup')),
+    passkey_id          TEXT REFERENCES passkeys(credential_id) ON DELETE CASCADE,
+    signed_in_at        TIMESTAMPTZ NOT NULL,
+    -- When the person last proved who they are in this session: set at sign-in, and by re-confirming.
+    confirmed_at        TIMESTAMPTZ NOT NULL,
+    -- Only at the remote address, where a session ends this long after it began.
+    absolute_expires_at TIMESTAMPTZ,
+    CONSTRAINT refresh_sessions_remote_ends CHECK ((arrival = 'remote') = (absolute_expires_at IS NOT NULL)),
+    CONSTRAINT refresh_sessions_passkey_check CHECK ((signed_in_with = 'passkey') = (passkey_id IS NOT NULL)),
+    CONSTRAINT refresh_sessions_passkey_remote CHECK (arrival = 'remote' OR signed_in_with <> 'passkey')
 );
 CREATE INDEX refresh_sessions_alias_idx  ON refresh_sessions (alias);
 CREATE INDEX refresh_sessions_expiry_idx ON refresh_sessions (expires_at);
+CREATE INDEX refresh_sessions_session_idx ON refresh_sessions (session_id);
+CREATE INDEX refresh_sessions_passkey_idx ON refresh_sessions (passkey_id) WHERE passkey_id IS NOT NULL;
+
+-- Browsers that have signed in to an account, by a cookie each holds (only its sha-256 is kept), per
+-- listener. A sign-in at the remote address from a browser not listed here is reported.
+CREATE TABLE known_devices (
+    alias        TEXT NOT NULL REFERENCES users(alias) ON DELETE CASCADE,
+    arrival      TEXT NOT NULL CHECK (arrival IN ('local', 'remote')),
+    token_hash   TEXT NOT NULL,
+    -- From the User-Agent, such as "Safari on iPhone".
+    label        TEXT NOT NULL CHECK (length(label) <= 64),
+    -- The address of the first sign-in from it.
+    first_from   TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (alias, arrival, token_hash)
+);
+CREATE INDEX known_devices_seen_idx ON known_devices (last_seen_at);
 
 -- A sign-in through the identity provider, from /auth/oidc/start until its callback.
 -- binding_hash is the sha-256 of the cookie start set, so only the browser that
@@ -323,13 +446,19 @@ CREATE TABLE oidc_flows (
     code_verifier TEXT NOT NULL,
     -- Repeated exactly in the token request.
     redirect_uri  TEXT NOT NULL,
-    -- 'none' for a silent sign-in, 'select_account' to ask which account after a sign-out.
-    prompt        TEXT CHECK (prompt IN ('none', 'select_account')),
+    -- 'none' for a silent sign-in, 'select_account' to ask which account after a sign-out, 'login'
+    -- when a signed-in person confirms who they are again through the provider.
+    prompt        TEXT CHECK (prompt IN ('none', 'select_account', 'login')),
     -- Set when a signed-in person links the provider to their account.
     link_alias    TEXT REFERENCES users(alias) ON DELETE CASCADE,
     return_to     TEXT NOT NULL,
     expires_at    TIMESTAMPTZ NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- The sign-in (`refresh_sessions.session_id`) a confirmation is for: the callback moves only its
+    -- `confirmed_at`, never when it ends. It links nothing.
+    confirm_session TEXT,
+    CONSTRAINT oidc_flows_confirm_check
+        CHECK (confirm_session IS NULL OR (link_alias IS NOT NULL AND prompt = 'login'))
 );
 CREATE INDEX oidc_flows_expiry_idx ON oidc_flows (expires_at);
 
@@ -480,7 +609,9 @@ CREATE TABLE oauth_codes (
     access          TEXT NOT NULL CHECK (access IN ('read', 'propose')),
     redirect_uri    TEXT NOT NULL,
     code_challenge  TEXT NOT NULL,
-    expires_at      TIMESTAMPTZ NOT NULL
+    expires_at      TIMESTAMPTZ NOT NULL,
+    -- A code is exchanged, and its tokens renewed, only at the listener where the person consented.
+    arrival         TEXT NOT NULL CHECK (arrival IN ('local', 'remote'))
 );
 CREATE INDEX oauth_codes_expiry_idx ON oauth_codes (expires_at);
 
@@ -521,7 +652,8 @@ CREATE TABLE oauth_tokens (
     expires_at TIMESTAMPTZ NOT NULL,
     -- A refresh token is spent once exchanged.
     used_at    TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    arrival    TEXT NOT NULL CHECK (arrival IN ('local', 'remote'))
 );
 CREATE INDEX oauth_tokens_grant_idx ON oauth_tokens (grant_id);
 CREATE INDEX oauth_tokens_family_idx ON oauth_tokens (family_id);
@@ -563,9 +695,6 @@ CREATE TABLE node_ai_settings (
     embed_base_url         TEXT,
     embed_model            TEXT,
     embed_api_key_fp       TEXT,
-    -- Maximum cosine distance for the semantic leg of search and of retrieval; NULL takes the default.
-    search_max_distance    DOUBLE PRECISION CHECK (search_max_distance > 0 AND search_max_distance <= 2),
-    retrieval_max_distance DOUBLE PRECISION CHECK (retrieval_max_distance > 0 AND retrieval_max_distance <= 2),
     -- A System One reranker (TypeSafe's Jev), set up when a model is set; FALSE switches it off,
     -- keeping it. Without one, the chat model reranks while chat is on.
     rerank_enabled         BOOLEAN,
@@ -573,7 +702,31 @@ CREATE TABLE node_ai_settings (
     rerank_model           TEXT,
     rerank_api_key_fp      TEXT,
     updated_by             TEXT,
-    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- The search box's cutoff by meaning, a level at distances the node measures for the embedding
+    -- model in force (embed_calibrations); NULL takes the default level. Ask and agents take the
+    -- nearest passages and leave relevance to the reranker.
+    search_strictness      TEXT CHECK (search_strictness IN ('strict', 'balanced', 'loose', 'off'))
+);
+
+-- One measurement per embedding configuration: the key hashes everything that changes distances.
+-- The five most recent are kept, so going back to an earlier model needs no new measurement.
+CREATE TABLE embed_calibrations (
+    config_key      TEXT PRIMARY KEY CHECK (config_key ~ '^[0-9a-f]{64}$'),
+    model           TEXT NOT NULL,
+    state           TEXT NOT NULL CHECK (state IN ('running', 'ready', 'failed')),
+    -- The last successful measurement: it stays in force while the same key is measured again.
+    result          JSONB,
+    error           TEXT,
+    error_kind      TEXT CHECK (error_kind IN ('endpoint', 'inseparable')),
+    attempts        INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at TIMESTAMPTZ,
+    -- Whom the measurement's tokens are attributed to in ai_usage.
+    triggered_by    TEXT NOT NULL,
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at     TIMESTAMPTZ,
+    CONSTRAINT embed_calibrations_ready_check CHECK (state <> 'ready' OR result IS NOT NULL),
+    CONSTRAINT embed_calibrations_failed_check CHECK ((state = 'failed') = (error IS NOT NULL AND error_kind IS NOT NULL))
 );
 
 -- Which build last booted against this database, and the node's id.
@@ -620,8 +773,8 @@ CREATE TABLE node_settings (
     backup_keep               SMALLINT CHECK (backup_keep IS NULL OR backup_keep BETWEEN 1 AND 100),
     -- The node's time zone for scheduled work, an IANA name; NULL is UTC. Setup sends the browser's.
     time_zone                 TEXT CHECK (time_zone IS NULL OR length(time_zone) BETWEEN 1 AND 64),
-    -- The extra keyword tokenizers, language codes (ko, ar) checked by the node rather
-    -- than a CHECK, so a new language needs no migration. NULL: nobody has chosen, which is none.
+    -- The languages keyword search stems words in beside English, codes (de, ar) checked by
+    -- the node rather than a CHECK, so a new language needs no migration. NULL: nobody has chosen, which is none.
     search_languages          TEXT[],
     -- The identity provider, at most one. The client secret is a file; this is its fingerprint.
     idp_issuer                TEXT,
@@ -698,6 +851,11 @@ CREATE TABLE node_remote_access (
     -- {code, message, at, retry_at?, service_code?, reason?}; NULL when nothing is wrong.
     last_error                  JSONB,
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- The oldest release the remote-access service last named as fit to serve a remote address
+    -- (check-in's min_version, docs/remote-access.md): an older release keeps its remote address closed
+    -- until it is updated. Kept once met too, so going back to an older release stays closed. NULL
+    -- while the service names none.
+    min_version                 TEXT CHECK (min_version ~ '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'),
     CHECK (NOT enabled OR (remote_id IS NOT NULL AND hostname IS NOT NULL AND api_url IS NOT NULL
                            AND ca_terms_accepted_at IS NOT NULL))
 );
@@ -717,7 +875,10 @@ CREATE TABLE workspace_invites (
     max_uses     INTEGER,
     use_count    INTEGER NOT NULL DEFAULT 0,
     revoked_at   TIMESTAMPTZ,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Who the link is for, in its maker's words ("Sofia", "Kitchen team"), so the list of links and
+    -- the audit log can say which is which. NULL for a link made without one.
+    note         TEXT CHECK (char_length(note) BETWEEN 1 AND 80)
 );
 CREATE INDEX workspace_invites_ws_idx ON workspace_invites (workspace_id);
 
@@ -786,7 +947,14 @@ CREATE TABLE agent_runs (
     model        TEXT,
     reviewer     TEXT NOT NULL,
     status       TEXT NOT NULL,
-    review_mode  TEXT NOT NULL DEFAULT 'review',
+    -- The strictest level a proposal in the run carried; a decision takes the stricter of it and the item's now.
+    review_mode  TEXT NOT NULL DEFAULT 'review' CHECK (review_mode IN ('auto', 'review', 'colleague')),
+    -- The approver group it was proposed under, if any.
+    approver_group TEXT,
+    -- Who accepted its changes at 'colleague'. Never the person who asked the AI, an administrator
+    -- included: the actor refuses it, and so does this row.
+    approved_by  TEXT[] NOT NULL DEFAULT '{}'
+                 CONSTRAINT agent_runs_approved_by_check CHECK (NOT (reviewer = ANY (approved_by))),
     auto_applied BOOLEAN NOT NULL DEFAULT FALSE,
     reverted     BOOLEAN NOT NULL DEFAULT FALSE,
     acknowledged BOOLEAN NOT NULL DEFAULT FALSE,

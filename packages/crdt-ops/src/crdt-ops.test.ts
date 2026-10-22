@@ -73,6 +73,21 @@ describe("markdown ↔ schema", () => {
     applyMarkdownToYXmlFragment(frag2, out);
     expect(nodeNames(frag2)).toEqual(nodeNames(frag));
   });
+
+  it("reads a document nobody has written to as empty, and merges a proposal into it", () => {
+    const frag = freshFrag();
+    expect(yXmlFragmentToMarkdown(frag)).toBe("");
+    applyMarkdownToYXmlFragment(frag, "Hello", { originalMarkdown: "" });
+    expect(yXmlFragmentToMarkdown(frag)).toBe("Hello");
+  });
+
+  it("refuses to read content the schema cannot hold, and leaves it in place", () => {
+    const frag = freshFrag();
+    applyMarkdownToYXmlFragment(frag, "Alpha\n\nBeta");
+    frag.insert(1, [new Y.XmlElement("unknownBlock")]);
+    expect(() => yXmlFragmentToMarkdown(frag)).toThrow();
+    expect(nodeNames(frag)).toEqual(["paragraph", "unknownBlock", "paragraph"]);
+  });
 });
 
 describe("AI-citation footnotes (round-trip losslessly, not empty-serialized)", () => {

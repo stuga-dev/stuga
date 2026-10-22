@@ -12,7 +12,7 @@
 #   - an LC_RPATH is absolute, or a symlink dangles or leaves the tree.
 #   - an extension's SQL loads a module lib/postgresql lacks, or `requires` names an
 #     extension without a control file.
-#   - the server major, pgvector or pg_search differ from packaging/versions.env.
+#   - the server major or pgvector differ from packaging/versions.env.
 #   - a library in lib/ belongs to no component of the runtime's component list (lib/components.sh),
 #     so a Postgres.app that adds one fails here until it is listed, with its license.
 #
@@ -193,7 +193,6 @@ check_extension_pin() {
   [ "$found" = "$2" ] || { echo "FAIL extension $1 is ${found:-missing}, pinned $2"; fail=1; }
 }
 check_extension_pin vector "$PGVECTOR_VERSION"
-check_extension_pin pg_search "$PG_SEARCH_VERSION"
 major="$("$tree/bin/postgres" --version | sed -n 's/^postgres (PostgreSQL) \([0-9]*\)\..*/\1/p')"
 [ "$major" = "$PG_MAJOR" ] || { echo "FAIL server major is ${major:-unknown}, pinned $PG_MAJOR"; fail=1; }
 
@@ -203,4 +202,4 @@ if [ "$fail" -ne 0 ]; then
   echo "tree is NOT self-contained or not the pinned one" >&2
   exit 1
 fi
-echo "tree is self-contained: PostgreSQL $PG_MAJOR, pgvector $PGVECTOR_VERSION, pg_search $PG_SEARCH_VERSION"
+echo "tree is self-contained: PostgreSQL $PG_MAJOR, pgvector $PGVECTOR_VERSION"

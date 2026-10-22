@@ -3,6 +3,7 @@ import { principalId } from "@stuga/auth";
 import {
   type DocSortKey,
   type SortOrder,
+  clampMovedReviewLevels,
   clearDocChunks,
   deleteDoc,
   folderEffectiveAcl,
@@ -13,6 +14,7 @@ import {
   setDocLocked,
   setDocSearchHidden,
   updateDoc,
+  waitingRunsIn,
 } from "@stuga/db";
 import { isReviewMode } from "@stuga/protocol/domain/events";
 import { databaseDocMessage, readDocMarkdownWithProjection } from "../agents/edits.js";
@@ -35,6 +37,17 @@ import {
   rematerializeDoc,
 } from "../documents/access.js";
 import { createDocument } from "../documents/create.js";
+import {
+  type LevelChange,
+  type MovePlan,
+  docLevelTarget,
+  notifyRegrouped,
+  planLevelChange,
+  planMove,
+  recordClampedLevels,
+  recordLevelChange,
+  recordMove,
+} from "../documents/review-level.js";
 import { docAgentInstructions, docAgentInstructionsOrNone, docInstructionStack, inheritedLevels } from "../documents/instructions.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
@@ -130,14 +143,24 @@ export async function updateDocument({ ctx, req, match }: WorkspaceCall): Promis
     if (!canWriteFolder(ctx, dest)) return error(403, "view-only access to the destination folder");
   }
   const movingFolder = body.parent_id !== undefined && body.parent_id !== pdoc.parent_id;
+  // A move must not review AI edits to it more loosely than the folders it leaves allow.
+  let movePlan: MovePlan | null = null;
+  if (movingFolder) {
+    const planned = await planMove(ctx, { kind: "doc", doc: pdoc }, body.parent_id ?? null);
+    if (planned instanceof Response) return planned;
+    movePlan = planned;
+  }
+  // The runs waiting on it, with the group each followed, to tell whoever may approve them once it moves.
+  const waitingBefore = movingFolder ? await waitingRunsIn(ctx.sql, { docId }, ctx.workspaceId) : [];
   // Read before the restore below clears the stamp that links them.
   const pagesToRestore =
     pdoc.doc_type === "database" && body.trashed === false && pdoc.trashed ? await pagesTrashedWithDatabase(ctx, pdoc) : [];
-  const updated = await updateDoc(ctx.sql, docId, {
-    title: body.title,
-    trashed: body.trashed,
-    parentId: body.parent_id,
-  });
+  let updated = await updateDoc(
+    ctx.sql,
+    docId,
+    { title: body.title, trashed: body.trashed, parentId: body.parent_id },
+    ctx.env.searchLanguages.current(),
+  );
   if (updated && body.trashed === true && !pdoc.trashed) {
     recordEvent(ctx, "doc.trashed", docId, { title: updated.title, doc_type: updated.doc_type });
   }
@@ -163,6 +186,14 @@ export async function updateDocument({ ctx, req, match }: WorkspaceCall): Promis
         : null;
     await rematerializeDoc(ctx, updated, parentEff);
   }
+  // A level set below the old folder's was an exception for that place: it does not travel.
+  if (updated && movingFolder && pdoc.agent_mode) {
+    const clamped = await clampMovedReviewLevels(ctx.sql, { kind: "doc", id: docId }, ctx.workspaceId);
+    recordClampedLevels(ctx, clamped);
+    if (clamped.length > 0) updated = (await getDoc(ctx.sql, docId)) ?? updated;
+  }
+  if (updated && movePlan) await recordMove(ctx, movePlan);
+  if (updated && movingFolder) await notifyRegrouped(ctx, { docId }, waitingBefore);
   return updated ? json(docSummary(updated)) : error(404, "not found");
 }
 
@@ -240,24 +271,35 @@ export async function getDocInstructions({ ctx, match }: WorkspaceCall): Promise
   return json({ own: doc.agent_instructions, inherited, can_edit: manages(ctx, doc) });
 }
 
-// Lock, search visibility, agent mode and instructions for agents: owner or workspace admin only.
+// Lock, search visibility, review level and instructions for agents: owner or workspace admin only, but
+// for a review level below the folder's, which its folder's owner may also set (planLevelChange).
 export async function updateDocState({ ctx, req, match }: WorkspaceCall): Promise<Response> {
   const docId = match[1]!;
   const doc = await authorizedDoc(ctx, docId);
   if (!doc) return error(404, "not found");
-  if (!manages(ctx, doc)) return error(403, "only the owner or a workspace admin can change these settings");
   const body = (await req.json().catch(() => ({}))) as {
     locked?: boolean;
     search_hidden?: boolean;
     agent_mode?: unknown;
     agent_instructions?: unknown;
   };
+  const managed = manages(ctx, doc);
+  // A level alone may also come from the owner of the folder it is in; an agent changes none of it.
+  const levelOnly = !ctx.isAgent && body.agent_mode !== undefined && Object.keys(body).every((k) => k === "agent_mode");
+  if (!managed && !levelOnly) return error(403, "only the owner or a workspace admin can change these settings");
   // Every field is checked before the first write, so a refused request changes nothing.
   if (body.agent_mode !== undefined && !isReviewMode(body.agent_mode)) {
-    return error(400, "agent_mode must be review | auto");
+    return error(400, "agent_mode must be auto | review | colleague");
   }
   const instructionsError = agentInstructionsError(body.agent_instructions);
   if (instructionsError) return instructionsError;
+  const levelTarget = docLevelTarget(ctx, doc);
+  let level: LevelChange | null = null;
+  if (isReviewMode(body.agent_mode) && body.agent_mode !== levelTarget.current) {
+    const planned = await planLevelChange(ctx, levelTarget, body.agent_mode);
+    if (planned instanceof Response) return planned;
+    level = planned;
+  }
   let updated = doc;
   if (typeof body.locked === "boolean" && body.locked !== doc.locked) {
     updated = (await setDocLocked(ctx.sql, docId, body.locked, ctx.alias)) ?? updated;
@@ -273,16 +315,10 @@ export async function updateDocState({ ctx, req, match }: WorkspaceCall): Promis
       await ctx.env.jobs.send({ kind: "index_doc", docId, force: true });
     }
   }
-  // No actor push: every propose re-reads the row.
-  if (isReviewMode(body.agent_mode) && body.agent_mode !== doc.agent_mode) {
-    updated = (await setDocAgentMode(ctx.sql, docId, body.agent_mode)) ?? updated;
-    recordAudit(ctx, {
-      action: "doc.agent_mode",
-      targetKind: itemKind(doc),
-      targetId: docId,
-      targetLabel: doc.title,
-      detail: { mode: body.agent_mode, from: doc.agent_mode },
-    });
+  // No actor push: every propose re-reads the row, and every decision takes the stricter of the run's level and this.
+  if (level && isReviewMode(body.agent_mode)) {
+    updated = (await setDocAgentMode(ctx.sql, docId, level.own)) ?? updated;
+    await recordLevelChange(ctx, levelTarget, body.agent_mode, level);
   }
   // Stored verbatim. Advice read on every agent turn, so no push; the ledger keeps sizes, never the text.
   if (typeof body.agent_instructions === "string" && body.agent_instructions !== doc.agent_instructions) {

@@ -253,6 +253,23 @@ describe("nested segments", () => {
     expect(el.querySelector<HTMLButtonElement>(".ai-preview-hunk-btn--accept")!.disabled).toBe(false);
   });
 
+  it("greys out Accept, keeping Reject, on a change whose reader asked the AI for it where a colleague approves", () => {
+    const doc = markdownToDoc(CHECKLIST, schema);
+    const { segments } = buildRunSegments(
+      doc,
+      CHECKLIST,
+      [{ ...hunk("h1", "* Task is Walked and estimated in points\n\n", ""), acceptBlocked: true }],
+      schema,
+    );
+    const part = segments[0]!.hunks[0]!;
+    expect(part.acceptBlocked).toBe(true);
+    const el = runGhost([part], new Map([[part.key, 1]]), sameTotal(1, part.key), new Set());
+    const accept = el.querySelector<HTMLButtonElement>(".ai-preview-hunk-btn--accept")!;
+    expect(accept.disabled).toBe(true);
+    expect(accept.title).toBe("a colleague approves these; you can still reject");
+    expect(el.querySelector<HTMLButtonElement>(".ai-preview-hunk-btn--reject")!.disabled).toBe(false);
+  });
+
   it("rewords one bullet as WORDS, leaving its siblings untouched", () => {
     const doc = markdownToDoc(CHECKLIST, schema);
     const { segments } = buildRunSegments(

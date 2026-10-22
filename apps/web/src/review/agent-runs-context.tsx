@@ -14,12 +14,12 @@ import { historyRedo, historyUndo, previewStorage } from "../editor/run-preview/
 import { RUN_HUNK_EVENT, type HunkKey, type RunHunkDecisionDetail, type RunPreviewHunk } from "../editor/run-preview/plan";
 import { hash32 } from "../lib/hash";
 import { Runs } from "../api";
-import { itemKey, pendingItems, pendingItemsOf, type Decision, type RunShape } from "./run-ledger";
+import { acceptWaitsFor, itemKey, pendingItems, pendingItemsOf, type Decision, type RunShape } from "./run-ledger";
 import { useRunLedger, type LedgerApi, type RunNotice } from "./use-run-ledger";
 import { ReviewHistory, type LocalUndoManager } from "./review-history";
 import { noteModeOf } from "./note-mode";
 import { useOptionalAiCoauthor } from "../ai/ai-coauthor-context";
-import type { ApiError } from "../lib/http/client";
+import { getAlias, type ApiError } from "../lib/http/client";
 import { t } from "../i18n/i18n";
 
 const DOC_RUN: RunShape<AgentRunSummary, AgentRunHunk> = {
@@ -217,10 +217,13 @@ export function AgentRunsProvider({
     () => new Map(openRuns.map((r) => [r.id, noteModeOf(r.source, coauthorAvailable)])),
     [openRuns, coauthorAvailable],
   );
+  // At `colleague` the person who asked the AI may reject its changes, and someone else accepts them.
+  const acceptBlocked = useMemo(() => new Set(openRuns.filter((r) => acceptWaitsFor(r, getAlias()) !== null).map((r) => r.id)), [openRuns]);
   // Keyed on the hunk text, so the costly block diff reruns only when the pending set really changes.
   const previewKey = useMemo(
-    () => `${previewKeyOf(pending)}#${[...noteModes].map(([id, mode]) => `${id}=${mode}`).join(",")}`,
-    [pending, noteModes],
+    () =>
+      `${previewKeyOf(pending)}#${[...noteModes].map(([id, mode]) => `${id}=${mode}${acceptBlocked.has(id) ? "!" : ""}`).join(",")}`,
+    [pending, noteModes, acceptBlocked],
   );
   const previewHunks = useMemo<RunPreviewHunk[]>(
     () =>
@@ -231,6 +234,7 @@ export function AgentRunsProvider({
         new_string: p.hunk.new_string,
         agent: p.agent,
         noteMode: noteModes.get(p.runId) ?? "agent",
+        ...(acceptBlocked.has(p.runId) ? { acceptBlocked: true } : {}),
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [previewKey],
@@ -275,12 +279,13 @@ export function AgentRunsProvider({
   // Only pairs on screen and not already in flight are posted. A note may start a revision,
   // so the run's banner answers that one.
   const shown = useMemo(() => new Set(pending.map((p) => itemKey(p.runId, p.hunk.id))), [pending]);
-  const live = useRef({ shown, inFlight, decide });
-  live.current = { shown, inFlight, decide };
+  const live = useRef({ shown, inFlight, decide, acceptBlocked });
+  live.current = { shown, inFlight, decide, acceptBlocked };
   useEffect(() => {
     const onHunk = (e: Event) => {
       const detail = (e as CustomEvent<RunHunkDecisionDetail>).detail;
       if (!detail?.runId || !detail.hunkId || detail.decision === "request_changes") return;
+      if (detail.decision === "accept" && live.current.acceptBlocked.has(detail.runId)) return;
       const key = itemKey(detail.runId, detail.hunkId);
       if (!live.current.shown.has(key) || live.current.inFlight.has(key)) return;
       void live.current.decide(detail.runId, detail.decision, [detail.hunkId]);

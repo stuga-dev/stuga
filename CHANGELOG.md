@@ -9,6 +9,10 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- A node set up by a 0.1 release starts over with a new data directory: 0.1 releases were previews, and the database schema starts again here. Export each workspace from 0.1 first (**Settings → This workspace → General → Export workspace**) and import it into the new node ([Workspace archives](docs/workspace-archive.md)).
+
 ### Added
 
 - When the AI co-author needs a fact or a choice only you can give, it asks in a comment on the passage and goes on with the rest. Reply with **Send to AI** ticked, and it edits the document as usual and answers in the thread ([Questions in comments](docs/agents.md#questions-in-comments)).
@@ -23,9 +27,22 @@ Releases before 0.1.7 were previews. Their notes are on their
 - AI setup forms no longer link to each service's key page.
 - Comments and their notifications name an agent by the person it works for, such as "Liv's agent", never by its own name.
 - An agent's comment may mention at most 5 people: more is refused with `400` and nothing is saved, where REST used to keep the first 20. One person's agents send at most 60 comment notices an hour in a workspace; past that the comment is still saved, and the answer carries `notifications_held` ([Agents in comment threads](docs/agents.md#agents-in-comment-threads)).
+- Keyword search runs on Postgres's own full-text search, ranked by BM25 over the documents you can see, and matches Chinese, Japanese, Korean and Thai better, in any text and with no setting ([Search languages](docs/configuration.md#search-languages)).
+- **Languages in your documents** chooses the languages search matches by stem: Arabic, Danish, Dutch, Finnish, French, German, Greek, Hungarian, Italian, Norwegian, Portuguese, Romanian, Russian, Spanish, Swedish, Tamil and Turkish. English, Chinese, Japanese, Korean and Thai are always on. A change applies to searches at once, while the index is written again in the background.
+- The node's Postgres needs pgvector and the extensions Postgres ships with, so the Mac package is smaller and a Postgres you run yourself needs only pgvector added ([packaging/contract.md](packaging/contract.md#postgres)).
+- Deleting a folder puts every document in it in the trash. While one of them is locked, nothing is deleted and the confirmation says how many to unlock.
+
+### Removed
+
+- Czech and Polish as search languages; their words match as written.
+
+### Security
+
+- The Mac package and the Docker image run Node.js 26.12.1, a security release.
 
 ### Fixed
 
+- Mermaid diagrams render again: their colours came through in a form the diagram renderer refused.
 - A comment posted, resolved or deleted while the AI co-author is working on the document no longer waits for it to finish.
 - An agent's comment notifies the people it mentions, as documented.
 - An agent's comment over REST is attached to a passage only by `quote`, held to the same rule as over MCP: its `anchor_quote` must appear once in the text as written, and positions are refused with `400`.

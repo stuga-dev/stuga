@@ -10,19 +10,27 @@ import { AiScopePicker } from "../ai/AiScopePicker";
 import { ChatComposer } from "../ai/ChatComposer";
 import { ChatTranscript } from "../ai/ChatTranscript";
 import { useTableAi } from "./use-table-ai";
-import { t } from "../i18n/i18n";
+import { t, type MessageKey } from "../i18n/i18n";
+import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { aiCoauthorLabel } from "../lib/format";
+
+/** What an empty chat says of how its changes land, by the database's level. */
+const EMPTY_NOTE: Record<ReviewMode, MessageKey> = {
+  auto: "database.ai.emptyAuto",
+  review: "database.ai.emptyReview",
+  colleague: "database.ai.emptyColleague",
+};
 
 export function TableAiPanel({
   docId,
   activeTable,
-  agentAuto,
+  agentMode,
 }: {
   docId: string;
   /** Display name of the table on screen (steers the model's defaults). */
   activeTable: string | null;
-  /** The database applies agent changes at once. */
-  agentAuto: boolean;
+  /** How AI edits to the database are reviewed. */
+  agentMode: ReviewMode;
 }) {
   const ai = useTableAi(docId, activeTable);
   const [draft, setDraft] = useState("");
@@ -42,7 +50,7 @@ export function TableAiPanel({
         reviewIn="grid"
         empty={
           <>
-            {t("database.ai.empty")} {agentAuto ? t("database.ai.emptyAuto") : t("database.ai.emptyReview")}
+            {t("database.ai.empty")} {t(EMPTY_NOTE[agentMode])}
             {/* The table assistant reads this database alone until someone widens it; say where. */}
             {ai.collectionId === null && <> {t("database.ai.scopeHint")}</>}
           </>

@@ -39,7 +39,7 @@ while [ $# -gt 0 ]; do
 done
 if [ -z "$version" ] || [ -z "$out" ]; then usage; fi
 printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "error: --version takes a release such as 1.2.3" >&2; exit 2; }
-# bin/stuga goes back only as far as the first release that carries it, so none is built before it.
+# bin/stuga goes back only as far as GO_BACK_FLOOR, so no release is built before it.
 floor="$(sed -n 's/^GO_BACK_FLOOR=//p' "$macos/runtime/bin/stuga")"
 is_release "$floor" || { echo "error: runtime/bin/stuga sets no GO_BACK_FLOOR" >&2; exit 1; }
 if is_release "$version" && newer "$floor" "$version"; then

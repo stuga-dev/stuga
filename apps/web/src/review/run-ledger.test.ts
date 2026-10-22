@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  acceptWaitsFor,
+  mayAck,
   emptyLedger,
   itemKey,
   ledgerReducer,
@@ -206,5 +208,50 @@ describe("pendingItemsOf", () => {
     const [first] = pendingItemsOf(SHAPE, [run({ source: "panel", agent: "stored name", agent_alias: "panel:me-sub" })]);
     expect(first?.agent).toBe("AI co-author");
     expect(pendingItemsOf(SHAPE, [run()])[0]?.agent).toBe("Claude");
+  });
+});
+
+describe("runs a colleague approves", () => {
+  const colleagueRun = (over: Partial<TestRun> = {}) =>
+    run({ reviewer: "liv", review_mode: "colleague", you: { level: "colleague", accept: true, reject: true, ack: true }, ...over });
+
+  it("lists a run for whoever may approve it, as well as for whoever asked the AI", () => {
+    const mine = run({ id: "run_mine" });
+    const theirs = colleagueRun({ id: "run_theirs" });
+    const notMine = run({ id: "run_other", reviewer: "bo", you: { level: "review", accept: false, reject: false, ack: false } });
+    // An owner or admin may decide another person's run below `colleague`, from the inbox; it is not painted on their page.
+    const managed = run({ id: "run_managed", reviewer: "bo", you: { level: "review", accept: true, reject: true, ack: true } });
+    expect(myRuns(stateOf(mine, theirs, notMine, managed), ME).map((r) => r.id).sort()).toEqual(["run_mine", "run_theirs"]);
+  });
+
+  it("drops the kept standing when a frame raises the run's level", () => {
+    const loaded = stateOf(run({ review_mode: "review", you: { level: "review", accept: true, reject: true, ack: true } }));
+    const raised = reduce(loaded, { type: "updated", run: { ...run({ review_mode: "colleague" }), updated_at: T0 + 1 } });
+    expect(raised.runs.get("run_a")!.you).toBeUndefined();
+    expect(acceptWaitsFor(raised.runs.get("run_a")!, ME)).toBe("colleague");
+  });
+
+  it("keeps the standing a REST answer gave when a live frame without one arrives", () => {
+    const loaded = stateOf(colleagueRun({ reviewer: ME, you: { level: "colleague", accept: false, reject: true, ack: false, waits_for: "nobody" } }));
+    const framed = reduce(loaded, { type: "updated", run: { ...run({ reviewer: ME, review_mode: "colleague" }), updated_at: T0 + 1 } });
+    expect(framed.runs.get("run_a")!.you).toEqual({ level: "colleague", accept: false, reject: true, ack: false, waits_for: "nobody" });
+  });
+
+  it("says whom a run waits for, from the node's answer or else from the run's own level", () => {
+    expect(acceptWaitsFor(colleagueRun(), ME)).toBeNull();
+    expect(acceptWaitsFor(colleagueRun({ reviewer: ME, you: { level: "colleague", accept: false, reject: true, ack: false, waits_for: "nobody" } }), ME)).toBe("nobody");
+    expect(acceptWaitsFor(colleagueRun({ reviewer: ME, you: { level: "colleague", accept: false, reject: true, ack: false } }), ME)).toBe("colleague");
+    // A frame alone: the asker's own run at `colleague` waits for someone else.
+    expect(acceptWaitsFor(run({ review_mode: "colleague" }), ME)).toBe("colleague");
+    expect(acceptWaitsFor(run({ review_mode: "review" }), ME)).toBeNull();
+  });
+
+  it("leaves marking a run reviewed to someone else only where it was proposed at colleague", () => {
+    expect(mayAck(colleagueRun({ reviewer: ME, you: { level: "colleague", accept: false, reject: true, ack: false } }), ME)).toBe(false);
+    // Applied at once before its folder was raised, the node says so.
+    expect(mayAck(run({ review_mode: "auto", you: { level: "colleague", accept: false, reject: true, ack: true } }), ME)).toBe(true);
+    // A frame alone reads the run's own level.
+    expect(mayAck(run({ review_mode: "colleague" }), ME)).toBe(false);
+    expect(mayAck(run({ review_mode: "auto" }), ME)).toBe(true);
   });
 });

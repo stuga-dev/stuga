@@ -30,6 +30,7 @@ interface ProposeBody {
   find?: string;
   replace?: string;
   review?: string;
+  approver_group?: string;
   agent_alias?: string;
 }
 
@@ -240,5 +241,120 @@ describe("review verdicts in the document actor", () => {
     expect(res.status).toBe(200);
     expect(ofKind(h, "run_index")).toHaveLength(0);
     expect(ofKind(h, "event")).toHaveLength(0);
+  });
+
+  describe("a run at `colleague`", () => {
+    async function decide(dobj: DocActor, body: Record<string, unknown>): Promise<{ status: number; json: Record<string, unknown> }> {
+      const res = await dobj.fetch(
+        new Request(`http://actor/runs/decide?docId=${DOC}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+      return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+    }
+
+    it("is stamped with its approver group, and tells its reviewer it waits for a colleague, and the node to find who", async () => {
+      const h = harness();
+      const dobj = makeActor(h);
+      await seed(dobj);
+      const out = await propose(dobj, { action: "str_replace", find: "Alpha", replace: "Alpha!", review: "colleague", approver_group: "group:legal" });
+      expect(runOf(out.json)).toMatchObject({ review_mode: "colleague", approver_group: "group:legal" });
+      expect(ofKind(h, "notify")).toMatchObject([{ eventType: "AGENT_EDITS_PROPOSED", recipient: "alice", params: { waits: "colleague", count: 1 } }]);
+      expect(ofKind(h, "notify_approvers")).toMatchObject([{ reviewer: "alice", approverGroup: "group:legal", count: 1, doc: "Notes" }]);
+    });
+
+    it("refuses its reviewer an accept whatever the node vouches, lets them take it back, and records who approved", async () => {
+      const h = harness();
+      const dobj = makeActor(h);
+      await seed(dobj);
+      const base = await markdownOf(dobj);
+      const out = await propose(dobj, { action: "str_replace", find: "Alpha", replace: "Alpha!", review: "colleague" });
+      const run = runOf(out.json);
+      // An admin who asked the AI is still the one who asked.
+      const own = await decide(dobj, { run_id: run.id, decision: "accept", decided_by: "alice", level: "colleague", approver: true, manager_override: true });
+      expect(own.status).toBe(403);
+      expect(own.json.error).toBe("own_run");
+      expect(await markdownOf(dobj)).toBe(base);
+      // Someone else the node does not vouch for as an approver is refused too.
+      expect((await decide(dobj, { run_id: run.id, decision: "accept", decided_by: "bo", level: "colleague" })).status).toBe(403);
+
+      const accepted = await decide(dobj, { run_id: run.id, decision: "accept", decided_by: "bo", level: "colleague", approver: true });
+      expect(accepted.status).toBe(200);
+      expect(await markdownOf(dobj)).toContain("Alpha! paragraph.");
+      const mirror = ofKind(h, "run_index").at(-1) as Extract<IndexMessage, { kind: "run_index" }>;
+      expect(mirror.run).toMatchObject({ reviewMode: "colleague", approvedBy: ["bo"], reviewer: "alice" });
+
+      const again = await propose(dobj, { action: "str_replace", find: "Bravo", replace: "Bravo!", review: "colleague" });
+      expect((await decide(dobj, { run_id: runOf(again.json).id, decision: "reject", decided_by: "alice", level: "colleague" })).status).toBe(200);
+    });
+
+    it("takes the stricter of the run's level and the document's now, and never the looser", async () => {
+      const h = harness();
+      const dobj = makeActor(h);
+      await seed(dobj);
+      const reviewed = runOf((await propose(dobj, { action: "str_replace", find: "Alpha", replace: "Alpha!", review: "review" })).json);
+      // The document is at `colleague` now: its reviewer may no longer accept what waits.
+      expect((await decide(dobj, { run_id: reviewed.id, decision: "accept", decided_by: "alice", level: "colleague" })).status).toBe(403);
+      expect((await decide(dobj, { run_id: reviewed.id, decision: "accept", decided_by: "alice", level: "review" })).status).toBe(200);
+
+      const strict = runOf((await propose(dobj, { action: "str_replace", find: "Bravo", replace: "Bravo!", review: "colleague", agent_alias: "agent-2" })).json);
+      // Loosened since it was proposed, and a decision that says nothing of the level: still `colleague`.
+      expect((await decide(dobj, { run_id: strict.id, decision: "accept", decided_by: "alice", level: "auto" })).status).toBe(403);
+      expect((await decide(dobj, { run_id: strict.id, decision: "accept", decided_by: "alice" })).status).toBe(403);
+      expect((await detail(dobj, strict.id)).hunks[0]!.status).toBe("pending");
+    });
+
+    it("lets only someone other than its reviewer mark it reviewed", async () => {
+      const h = harness();
+      const dobj = makeActor(h);
+      await seed(dobj);
+      const run = runOf((await propose(dobj, { action: "str_replace", find: "Alpha", replace: "Alpha!", review: "colleague" })).json);
+      const ack = (body: Record<string, unknown>) =>
+        dobj.fetch(
+          new Request(`http://actor/runs/ack?docId=${DOC}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ run_id: run.id, ...body }),
+          }),
+        );
+      expect((await ack({ acked_by: "alice", level: "colleague", manager_override: true })).status).toBe(403);
+      expect((await ack({ acked_by: "dee", level: "colleague", manager_override: true })).status).toBe(200);
+    });
+
+    it("lets its reviewer mark reviewed a run proposed below colleague, whatever the document is at now", async () => {
+      const h = harness();
+      const dobj = makeActor(h);
+      await seed(dobj);
+      const run = runOf((await propose(dobj, { action: "str_replace", find: "Alpha", replace: "Alpha!", review: "auto" })).json);
+      const res = await dobj.fetch(
+        new Request(`http://actor/runs/ack?docId=${DOC}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ run_id: run.id, acked_by: "alice", level: "colleague" }),
+        }),
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("names in its mirror only who approved what stands accepted: an undo takes them back out", async () => {
+      const h = harness();
+      const dobj = makeActor(h);
+      await seed(dobj);
+      const run = runOf((await propose(dobj, { action: "str_replace", find: "Alpha", replace: "Alpha!", review: "colleague" })).json);
+      expect((await decide(dobj, { run_id: run.id, decision: "accept", decided_by: "bo", level: "colleague", approver: true })).status).toBe(200);
+      const mirror = () => (ofKind(h, "run_index").at(-1) as Extract<IndexMessage, { kind: "run_index" }>).run;
+      expect(mirror().approvedBy).toEqual(["bo"]);
+      const undone = await dobj.fetch(
+        new Request(`http://actor/runs/undo?docId=${DOC}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ run_id: run.id, hunk_ids: ["h1"], requested_by: "alice", level: "colleague" }),
+        }),
+      );
+      expect(undone.status).toBe(200);
+      expect(mirror().approvedBy).toEqual([]);
+    });
   });
 });

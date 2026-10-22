@@ -502,6 +502,7 @@ export function DocList() {
                 {searchError && (
                   <Banner
                     status="error"
+                    role="alert"
                     title={t("pages.docList.search.failedTitle")}
                     description={searchError}
                     // Spins on the button: swapping the banner for the page spinner would drop focus.

@@ -203,7 +203,7 @@ api POST "/api/databases/$TABLE_DB/tables/$TABLE/rows/list" '{}' "$TOKEN2" | gre
   || die "the database table row is gone — the database actor's store did not survive"
 pass "the database table row survived"
 
-# Every check above reads by id; only a search reads the pg_search extension and BM25 indexes.
+# Every check above reads by id; only a search reads the full-text indexes.
 found_by_search "$TOKEN2" || die "a keyword search for the marker no longer finds the document — the search indexes did not survive the restore"
 pass "keyword search finds it"
 

@@ -53,7 +53,6 @@ data a newer version served keeps running instead, changes nothing, and logs a l
 | `refusing this database: it is at schema …` | The same, for a schema newer than this build knows. |
 | `the backup this node takes before upgrading a database did not complete` | Nothing was upgraded, and the data is as the previous version left it. The message ends with why. For lack of disk space, free some or set `BACKUP_DIR` to a larger disk, then start the node again. |
 | `this node is built for Postgres …, but the server it connected to is Postgres …` | Follow the message. A newer Postgres needs a Stuga built for it. Data in an older one has to move to the major Stuga is built for. |
-| `does not offer the pg_search extension`, or `pg_search is missing from shared_preload_libraries` | Install pg_search for that Postgres, list it in `shared_preload_libraries`, and restart Postgres. |
 | `this database's default collation is …` | Create the database again with the builtin `C.UTF-8` locale, as the message shows. A backup restores into it. |
 | `migration … has been edited since it ran on this database` | Put the migration file back as it was. |
 
@@ -196,7 +195,7 @@ give the node an https address as [Network access](network-access.md#https) desc
 | Semantic search returns unrelated documents | Choose **Strict** the same way. A large workspace has more unrelated passages near any query. |
 | **Couldn't measure** under **Semantic search** | The node could not embed its measuring texts, and the banner says why. It tries again on its own; **Measure again** tries now. |
 | **… can't tell related text from unrelated** | The embedding model places related and unrelated text alike, as a chat model served at an embeddings address does. Choose an embedding model. |
-| A word is missed in another of its forms (Korean with a particle attached, French `chevaux` for `cheval`), or a Chinese word is missed beside its neighbour | Add the language under **Languages in your documents** in **Settings → This node → Search**: [Search languages](configuration.md#search-languages). |
+| A word is missed in another of its forms, such as French `chevaux` for `cheval` | Add the language under **Languages in your documents** in **Settings → This node → Search**: [Search languages](configuration.md#search-languages). |
 
 ## Uploads and disk
 
@@ -232,6 +231,6 @@ mounted late, the call answers that there is nothing to recover and changes noth
 | `this backup came from Postgres … and this runtime is built for Postgres …` | Restore it with a Stuga built for the backup's Postgres major. |
 | `this backup is at schema …` | The backup is newer than this Stuga. Restore it with the version that took it. |
 | `this backup holds data Stuga … served, and this is Stuga …` | A newer release served the backup's data. Restore it with that release or a later one. |
-| `going back across … is not supported` | The backup's release runs another pg_search, pgvector or Postgres major than the data here. Going back stops at such an update, and nothing was changed. |
+| `going back across … is not supported` | The backup's release runs another pgvector or Postgres major than the data here. Going back stops at such an update, and nothing was changed. |
 | `this backup stores embeddings of width …` | Set `AI_EMBED_DIMS` to the width the message names, then restore. |
 | A command exits 4 | Something changed before it failed. Read the message before doing anything else: it says what changed and how to put it back. |

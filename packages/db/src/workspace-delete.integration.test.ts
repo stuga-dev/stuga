@@ -77,7 +77,7 @@ describe.skipIf(!URL)("deleteWorkspaceCascade", () => {
     await upsertAgentRun(sql, {
       runId: `r-${suffix}`, workspaceId: ws, docId: `d-${suffix}`, docKind: "prose", docTitle: "Doc", source: "stdio",
       agent: "Agent", agentAlias: `agent-${suffix}`, client: null, model: null, reviewer: owner, status: "open",
-      reviewMode: "review", autoApplied: false, reverted: false, acknowledged: false,
+      reviewMode: "review", approverGroup: null, approvedBy: [], autoApplied: false, reverted: false, acknowledged: false,
       pending: 1, accepted: 0, rejected: 0, conflicts: 0, applied: 0, createdAt: now, updatedAt: now,
     });
     await insertWorkspaceEvent(sql, { workspaceId: ws, type: "doc.created", docId: `d-${suffix}`, actor: `user:${owner}`, actorKind: "human" });

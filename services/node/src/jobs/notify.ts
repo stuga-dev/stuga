@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { NotifyDeliverMessage, NotifyMessage } from "@stuga/protocol/internal/jobs";
+import type { NotifyApproversMessage, NotifyDeliverMessage, NotifyMessage } from "@stuga/protocol/internal/jobs";
 import type { DeliveryErrorCode } from "@stuga/protocol/notify/events";
 import { recipientLanguage } from "@stuga/protocol/notify/render";
 import type { NotifyConfig } from "../env.js";
@@ -76,7 +76,11 @@ export async function handleNotify(env: JobsEnv, deps: JobDeps, msg: NotifyMessa
   // Access requests are per requester, since each is answered on its own.
   const from = eventType === "REQUEST_ACCESS" ? `${msg.actor}:` : "";
   const id = `${eventType}:${about}:${recipient}:${from}${Math.floor(Date.now() / HOUR_MS)}`;
-  const url = commentNum === undefined ? `${env.publicOrigin}/doc/${docId}` : `${env.publicOrigin}/doc/${docId}?comment=${commentNum}`;
+  const url = msg.folder
+    ? `${env.publicOrigin}/?folder=${encodeURIComponent(docId)}`
+    : commentNum === undefined
+      ? `${env.publicOrigin}/doc/${docId}`
+      : `${env.publicOrigin}/doc/${docId}?comment=${commentNum}`;
   const delivery = sinkDelivery(env.settings.current().notify, { recipient, eventType, params, url });
 
   await deps.db.insertNotification(
@@ -94,6 +98,65 @@ export async function handleNotify(env: JobsEnv, deps: JobDeps, msg: NotifyMessa
     },
     delivery,
   );
+}
+
+/** Sinks that post to one shared channel: a notice each for N approvers would be N posts there. */
+const CHAT_SINKS: ReadonlySet<string> = new Set(["slack", "teams", "discord"]);
+
+/**
+ * Tell each person who may approve a run at `colleague` that it waits for them (APPROVAL_WAITING): who
+ * can write the item now, holding its approver groups, other than whoever asked the AI, or the owner or
+ * an admin standing in when nobody else can. After a folder's approver group changed, only those who
+ * could not approve it before. When nobody may, the item's owner and the workspace's admins who can
+ * read it hear that it waits for an approver (APPROVER_NEEDED), the person who asked left out.
+ *
+ * In the app always, and through the node's channel: by email or webhook to each; to a chat channel
+ * once, from the notice to the person who asked when they were told, else from the first of these.
+ * One notice per person, run and hour, so a second run on the same item is told too.
+ */
+export async function handleNotifyApprovers(env: JobsEnv, deps: JobDeps, msg: NotifyApproversMessage): Promise<void> {
+  const doc = await deps.db.getDoc(msg.docId);
+  if (!doc || doc.trashed || doc.workspace_id !== msg.workspaceId) return;
+  const current = await deps.db.docApproverGroup(doc);
+  const groupsWith = (group: string | null) => [...new Set([msg.approverGroup, group].filter((g): g is string => !!g))];
+  const { aliases, cause } = await deps.db.colleagueApprovers(doc, msg.reviewer, groupsWith(current));
+  const before = msg.groupBefore !== undefined ? new Set((await deps.db.colleagueApprovers(doc, msg.reviewer, groupsWith(msg.groupBefore))).aliases) : null;
+  const author = (await deps.db.displayNameOf(msg.reviewer)) || msg.reviewer;
+  const base = { agent: msg.agent, author, doc: msg.doc || doc.title, count: msg.count };
+  const url = `${env.publicOrigin}/doc/${msg.docId}`;
+  const cfg = env.settings.current().notify;
+  const hour = Math.floor(Date.now() / HOUR_MS);
+  const chat = CHAT_SINKS.has(cfg.sink);
+  let channelPosted = msg.askerTold;
+  const send = async (recipient: string, eventType: "APPROVAL_WAITING" | "APPROVER_NEEDED", params: Record<string, unknown>) => {
+    const delivery = chat && channelPosted ? null : sinkDelivery(cfg, { recipient, eventType, params, url });
+    if (chat && delivery) channelPosted = true;
+    await deps.db.insertNotification(
+      {
+        id: `${eventType}:${msg.docId}:${msg.runId}:${recipient}:${hour}`,
+        workspace_id: msg.workspaceId,
+        recipient_alias: recipient,
+        event_type: eventType,
+        resource_id: msg.docId,
+        resource_title: base.doc,
+        resource_url: url,
+        actor_alias: msg.actor,
+        payload: params,
+      },
+      delivery,
+    );
+  };
+  if (aliases.length === 0) {
+    // Whoever can open it up to an approver: the item's owner and the admins who can read it.
+    for (const recipient of await deps.db.managersWhoCanRead(doc, msg.reviewer)) {
+      await send(recipient, "APPROVER_NEEDED", { ...base, cause: cause ?? "nobody" });
+    }
+    return;
+  }
+  for (const recipient of aliases) {
+    if (before?.has(recipient)) continue;
+    await send(recipient, "APPROVAL_WAITING", base);
+  }
 }
 
 /**

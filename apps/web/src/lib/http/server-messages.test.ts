@@ -25,6 +25,12 @@ const ERROR_FIELDS = new Set(["error", "message"]);
  * still has to be in its `from` file.
  */
 const SENT_OTHERWISE = new Set<string>([
+  "a colleague approves these changes, not the person who asked the AI",
+  "^only someone in this (document|database)'s approver group approves these changes$",
+  // documents/review-level.ts: the refusals a level change and a move share
+  "only the folder's owner or a workspace admin can make this looser than its folder",
+  "only its owner, its folder's owner or a workspace admin can move this somewhere AI edits are reviewed less strictly",
+  "a folder above names the approver group; only its owner or a workspace admin can move this where another group approves",
   // http/serving-gate.ts: the status a paused node answers with, from the notify catalog it renders
   "Stuga is starting.",
   "Stuga is backing up before an upgrade.",

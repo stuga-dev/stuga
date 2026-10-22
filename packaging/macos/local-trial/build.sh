@@ -6,8 +6,8 @@
 #
 # Options:
 #   --identity <name|sha1>   re-sign the Postgres tree (library validation on), Node and the app
-#                            with it; without one Node, pg_search and the app are signed ad hoc
-#                            and the rest of the tree keeps its upstream signatures
+#                            with it; without one, Node and the app are signed ad hoc and the
+#                            Postgres tree keeps its upstream signatures
 #   --postgres-tree <dir>    copy this Postgres tree instead of the pinned assembled one
 #   --app-dir <dir>          where Stuga.app goes (default ~/Applications)
 #   --port <n>               the node's port (default 8787)
@@ -154,7 +154,7 @@ PLIST
     "$ROOT/runtime/$version/node/bin/node"
   rm -f "$entitlements"
 else
-  echo "no --identity: Node and pg_search are signed ad hoc, and library validation stays off"
+  echo "no --identity: Node is signed ad hoc, and library validation stays off"
 fi
 ln -sfn "runtime/$version" "$ROOT/current"
 

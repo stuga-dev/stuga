@@ -6,6 +6,7 @@ import {
   emptyLedger,
   itemKey,
   ledgerReducer,
+  mayAck,
   myRuns,
   openRunsOf,
   pendingItems,
@@ -150,7 +151,9 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
 
   const runs = useMemo(() => myRuns(state, alias), [state, alias]);
   const openRuns = useMemo(() => openRunsOf(shape, runs), [shape, runs]);
-  const unseenApplied = useMemo(() => unseenAppliedOf(runs), [runs]);
+  // Where a colleague approves what a run proposed, someone other than the person who asked marks it
+  // reviewed, so they get no card to dismiss.
+  const unseenApplied = useMemo(() => unseenAppliedOf(runs).filter((r) => mayAck(r, alias)), [runs, alias]);
 
   const decide = useCallback(
     async (runId: string, decision: Decision, itemIds?: string[], note?: string) => {
@@ -161,7 +164,9 @@ export function useRunLedger<R extends LedgerRun, I extends LedgerItem>({
       if (keys.length > 0) setInFlight((prev) => withKeys(prev, keys, true));
       if (targets.length > 0) dispatch({ type: "optimistic", runId, itemIds: targets, decision });
       try {
-        const res = await apiRef.current.decide(runId, decision, itemIds, note);
+        // Accept all names the changes it shows: one the agent added since, unseen here, keeps waiting.
+        const named = itemIds ?? (decision === "accept" && targets.length > 0 ? targets : undefined);
+        const res = await apiRef.current.decide(runId, decision, named, note);
         // The authoritative statuses; a blocked item comes back pending, undoing its guess.
         dispatch({ type: "updated", run: res.run });
         if (res.conflicts > 0) notify("conflict", hooks.current.conflictMessage(res.conflicts));

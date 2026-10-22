@@ -1,7 +1,8 @@
 /**
- * Who may decide an agent run, at the request layer: the node identifies the caller to the actor
- * and says whether they manage the document; the actor compares against the run's reviewer.
- * Also the audit row each decision leaves.
+ * Who may decide an agent run, at the request layer: the node reads the run from the actor, judges
+ * the caller against its reviewer and level, then identifies them to the actor and says whether they
+ * manage the document and may approve; the actor checks again against the run it holds. Also the
+ * audit row each decision leaves, and what a reader who does not review a run sees of it.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -36,8 +37,13 @@ const DOC = {
 let actorStatus: number;
 let actorBody: unknown;
 const actorCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
+/** The run a decision reads first, from /runs/detail; not counted in actorCalls. */
+let heldRun: Record<string, unknown>;
 
 const actorFetch = vi.fn(async (url: string, init?: RequestInit) => {
+  if (url.includes("/runs/detail") && init?.method !== "POST" && heldRun) {
+    return new Response(JSON.stringify({ run: heldRun }), { status: 200, headers: { "content-type": "application/json" } });
+  }
   actorCalls.push({
     url,
     body: init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : {},
@@ -68,6 +74,7 @@ beforeEach(() => {
   actorFetch.mockClear();
   actorStatus = 200;
   actorBody = { run: { id: "run_x", agent_alias: "agent-1" }, applied: 1, conflicts: 0 };
+  heldRun = { id: "run_x", agent_alias: "agent-1", reviewer: "bob", review_mode: "review", hunks: [] };
   mockGetDoc.mockReset();
   mockGetDoc.mockResolvedValue({ ...DOC });
 });
@@ -202,6 +209,7 @@ describe("the gates around the review routes", () => {
 
   it("lets a reviewer dismiss their own catch-up card after losing write access", async () => {
     mockGetDoc.mockResolvedValue({ ...DOC, acl_writers: ["user:owner-1"], locked: true });
+    heldRun = { ...heldRun, reviewer: "alice" };
     const res = await call(userCtx({ alias: "alice", principals: ["user:alice"] }), "POST", "/api/docs/d1/runs/run_x/ack", {});
     expect(res.status).toBe(200);
     expect(actorCalls[0]!.body.acked_by).toBe("alice");
@@ -253,6 +261,11 @@ describe("agent isolation on the run reads", () => {
   const agent = () =>
     userCtx({ alias: "agent-1", isAgent: true, onBehalfOf: "owner-1", principals: ["agent:agent-1"] });
 
+  // These read the run detail itself, as the actor answers it.
+  beforeEach(() => {
+    heldRun = undefined as unknown as Record<string, unknown>;
+  });
+
   it("hides another agent's run detail behind the same 404 as a missing one", async () => {
     actorBody = { run: { id: "run_x", agent_alias: "agent-2" }, hunks: [{ old_string: "a", new_string: "b" }] };
     const res = await call(agent(), "GET", "/api/docs/d1/runs/run_x?full=1");
@@ -268,16 +281,62 @@ describe("agent isolation on the run reads", () => {
   });
 
   it("shows a human every run on a document they can read", async () => {
-    actorBody = { run: { id: "run_x", agent_alias: "agent-2" } };
+    actorBody = { run: { id: "run_x", agent_alias: "agent-2", reviewer: "alice", review_mode: "review", hunks: [] } };
     expect((await call(userCtx(), "GET", "/api/docs/d1/runs/run_x")).status).toBe(200);
   });
 
   it("filters the run list for an agent and leaves it whole for a human", async () => {
-    actorBody = { runs: [{ id: "run_a", agent_alias: "agent-1" }, { id: "run_b", agent_alias: "agent-2" }] };
+    const run = (id: string, agent_alias: string) => ({ id, agent_alias, reviewer: "bob", review_mode: "review", hunks: [] });
+    actorBody = { runs: [run("run_a", "agent-1"), run("run_b", "agent-2")] };
     const mine = (await (await call(agent(), "GET", "/api/docs/d1/runs")).json()) as { runs: unknown[] };
-    expect(mine.runs).toEqual([{ id: "run_a", agent_alias: "agent-1" }]);
+    expect(mine.runs).toEqual([run("run_a", "agent-1")]);
     const all = (await (await call(userCtx(), "GET", "/api/docs/d1/runs")).json()) as { runs: unknown[] };
     expect(all.runs).toHaveLength(2);
+  });
+});
+
+describe("what a reader sees of a run", () => {
+  const hunk = { id: "h1", old_string: "Alpha.", new_string: "The pending text.", status: "pending", review: "review" };
+  const pending = { id: "run_x", agent_alias: "agent-1", reviewer: "alice", review_mode: "review", hunks: [hunk] };
+
+  beforeEach(() => {
+    heldRun = undefined as unknown as Record<string, unknown>;
+  });
+
+  it("gives a reader who does not review the run its summary without the text, in the list and by id", async () => {
+    // Bob can write the document, but neither asked for the run nor manages the document.
+    actorBody = { runs: [pending] };
+    const list = (await (await call(userCtx(), "GET", "/api/docs/d1/runs")).json()) as { runs: Array<Record<string, unknown>> };
+    expect(list.runs[0]).toMatchObject({ id: "run_x", hunks: [], hunks_withheld: true, you: { accept: false, reject: false } });
+    expect(JSON.stringify(list)).not.toContain("The pending text.");
+
+    actorBody = { run: pending, baseline_markdown: "Alpha.", final_markdown: "The pending text.", hunks: [hunk] };
+    const detail = await (await call(userCtx(), "GET", "/api/docs/d1/runs/run_x?full=1")).text();
+    expect(detail).not.toContain("The pending text.");
+    expect(detail).not.toContain("baseline_markdown");
+  });
+
+  it("gives that reader the text of the changes that landed, which version history shows anyway", async () => {
+    const landed = { ...hunk, id: "h2", new_string: "The landed text.", status: "accepted" };
+    actorBody = { runs: [{ ...pending, hunks: [hunk, landed] }] };
+    const list = (await (await call(userCtx(), "GET", "/api/docs/d1/runs")).json()) as { runs: Array<Record<string, unknown>> };
+    expect(list.runs[0]).toMatchObject({ hunks: [landed], hunks_withheld: true });
+    expect(JSON.stringify(list)).not.toContain("The pending text.");
+    // A run with nothing waiting withholds nothing.
+    actorBody = { runs: [{ ...pending, hunks: [landed] }] };
+    const done = (await (await call(userCtx(), "GET", "/api/docs/d1/runs")).json()) as { runs: Array<Record<string, unknown>> };
+    expect(done.runs[0]!.hunks_withheld).toBeUndefined();
+  });
+
+  it("gives its reviewer and the document's managers the text", async () => {
+    actorBody = { runs: [pending] };
+    const reviewer = userCtx({ alias: "alice", principals: ["user:alice"] });
+    const own = (await (await call(reviewer, "GET", "/api/docs/d1/runs")).json()) as { runs: Array<Record<string, unknown>> };
+    expect(own.runs[0]).toMatchObject({ hunks: [hunk], you: { level: "review", accept: true, reject: true } });
+    expect(own.runs[0]!.hunks_withheld).toBeUndefined();
+    const owner = userCtx({ alias: "owner-1", principals: ["user:owner-1"] });
+    const managed = (await (await call(owner, "GET", "/api/docs/d1/runs")).json()) as { runs: Array<Record<string, unknown>> };
+    expect(managed.runs[0]).toMatchObject({ hunks: [hunk] });
   });
 });
 

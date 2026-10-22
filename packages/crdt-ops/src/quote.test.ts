@@ -109,35 +109,29 @@ describe("quoteAnchor", () => {
   });
 
   it("never changes the live document", () => {
-    const ydoc = docOf("# Plan\n\nThe **tub** is freestanding.\n\n- one\n- two");
-    // Something the schema cannot hold, which the converter deletes from what it reads.
-    ydoc.getXmlFragment("default").insert(1, [new Y.XmlElement("unknownBlock")]);
-    const vector = Y.encodeStateVector(ydoc);
-    const state = Y.encodeStateAsUpdate(ydoc);
-    let updates = 0;
-    ydoc.on("update", () => updates++);
+    const withBlock = docOf("# Plan\n\nThe **tub** is freestanding.\n\n- one\n- two");
+    // Something the schema cannot hold: the editor leaves it in place and cannot open the document.
+    withBlock.getXmlFragment("default").insert(1, [new Y.XmlElement("unknownBlock")]);
+    const withMark = docOf("The tub is freestanding.\n\nThe sink stays.");
+    blockText(withMark, 0).format(4, 3, { unknownMark: {} });
+    for (const [ydoc, quote, found] of [
+      [docOf("# Plan\n\nThe **tub** is freestanding."), "tub is freestanding", true],
+      [withBlock, "tub is freestanding", false],
+      [withMark, "sink stays", false],
+    ] as const) {
+      const vector = Y.encodeStateVector(ydoc);
+      const state = Y.encodeStateAsUpdate(ydoc);
+      let updates = 0;
+      ydoc.on("update", () => updates++);
 
-    expect(quoteAnchor(ydoc, "tub is freestanding")).not.toBeNull();
-    expect(quoteAnchor(ydoc, "not there")).toBeNull();
+      expect(quoteAnchor(ydoc, quote) !== null).toBe(found);
+      expect(quoteAnchor(ydoc, "not there")).toBeNull();
 
-    expect(updates).toBe(0);
-    expect(Y.encodeStateVector(ydoc)).toEqual(vector);
-    expect(Y.encodeStateAsUpdate(ydoc)).toEqual(state);
-    expect(ydoc.getXmlFragment("default").length).toBe(4);
-  });
-
-  it("falls back to the quote alone when reading the copy changed it", () => {
-    const ydoc = docOf("The tub is freestanding.\n\nThe sink stays.");
-    ydoc.getXmlFragment("default").insert(1, [new Y.XmlElement("unknownBlock")]);
-    expect(quoteAnchor(ydoc, "sink stays")).toEqual({ start: null, end: null, quote: "sink stays" });
-  });
-
-  it("falls back to the quote alone when text with a mark the schema lacks is dropped", () => {
-    const ydoc = docOf("The tub is freestanding.\n\nThe sink stays.");
-    blockText(ydoc, 0).format(4, 3, { unknownMark: {} });
-    expect(quoteAnchor(ydoc, "sink stays")).toEqual({ start: null, end: null, quote: "sink stays" });
-    // The editor drops that text too, so it is not there to quote.
-    expect(quoteAnchor(ydoc, "tub")).toBeNull();
+      expect(updates).toBe(0);
+      expect(Y.encodeStateVector(ydoc)).toEqual(vector);
+      expect(Y.encodeStateAsUpdate(ydoc)).toEqual(state);
+    }
+    expect(withBlock.getXmlFragment("default").length).toBe(4);
   });
 
   it("makes the positions a binding on the live document makes", () => {

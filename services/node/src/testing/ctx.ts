@@ -32,7 +32,8 @@ export interface CtxOverrides {
 
 /**
  * A member of ws1: `user:<alias>` and the workspace's org floor unless `principals` says otherwise, on a node
- * at PUBLIC_ORIGIN, asking on the LAN in session `sess-1`. `env` is added to that origin and no EXTRA_ORIGINS, not put in their place.
+ * at PUBLIC_ORIGIN with no search languages chosen, asking on the LAN in session `sess-1`. `env` is added to
+ * that origin, no EXTRA_ORIGINS and those languages, not put in their place.
  */
 export function personCtx(over: CtxOverrides = {}): Ctx {
   const { alias = "human-1", workspaceId = "ws1", env, ...rest } = over;
@@ -49,7 +50,7 @@ export function personCtx(over: CtxOverrides = {}): Ctx {
     arrival: "local",
     sid: "sess-1",
     ...rest,
-    env: { publicOrigin: PUBLIC_ORIGIN, extraOrigins: [], ...env },
+    env: { publicOrigin: PUBLIC_ORIGIN, extraOrigins: [], searchLanguages: fixed([]), ...env },
   } as unknown as Ctx;
 }
 

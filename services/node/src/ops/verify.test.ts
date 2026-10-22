@@ -5,7 +5,7 @@ import type { Manifest } from "./manifest.js";
 import { exitCodeOf } from "./outcome.js";
 import { checkCompatibility, checkSameExtensions } from "./verify.js";
 
-const BACKUP = { plpgsql: "1.0", btree_gin: "1.3", pg_search: "0.21.4", vector: "0.8.1" };
+const BACKUP = { plpgsql: "1.0", btree_gin: "1.3", pg_trgm: "1.6", vector: "0.8.1" };
 
 function refusal(live: Record<string, string>): unknown {
   try {

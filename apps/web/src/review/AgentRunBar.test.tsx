@@ -183,7 +183,8 @@ describe("AgentRunBar", () => {
     await click(byLabel("Accept all"));
     const post = calls.find((c) => c.method === "POST")!;
     expect(post.url).toBe("/api/docs/d1/runs/run_a/decision");
-    expect(post.body).toEqual({ decision: "accept", hunk_ids: undefined });
+    // Accept all names the changes it shows: one the agent added since stays waiting.
+    expect(post.body).toEqual({ decision: "accept", hunk_ids: ["h1", "h2", "h3"] });
   });
 
   it("walks the changes in document order, not the order the agent wrote them, wrapping at both ends", async () => {

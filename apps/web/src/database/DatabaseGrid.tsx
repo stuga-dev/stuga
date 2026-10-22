@@ -695,6 +695,7 @@ export function DatabaseGrid({
                       payload={g.payload}
                       busy={runs.inFlight.has(key)}
                       readOnly={readOnly}
+                      acceptBlocked={g.acceptBlocked === true}
                       onDecide={(d) => void runs.decide(g.runId, d, [g.opId])}
                     />
                   );

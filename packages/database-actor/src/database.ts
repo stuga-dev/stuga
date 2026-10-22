@@ -146,11 +146,36 @@ export class Database {
         workspaceId: run.workspace_id,
         eventType: "DATABASE_AGENT_PROPOSED",
         docId: this.dbId,
-        params: { agent: run.agent, doc: run.doc_title, count: pending },
+        params: { agent: run.agent, doc: run.doc_title, count: pending, waits: run.review_mode === "colleague" ? "colleague" : "you" },
         actor: run.agent_alias,
       });
     } catch (err) {
       console.warn("database-run notify enqueue failed", { databaseId: this.dbId, runId: run.run_id, err: String(err) });
+    }
+  }
+
+  /**
+   * At `colleague`, tell the people who may approve that the run waits for them; the node works out
+   * who they are. `askerTold`: the person who asked was notified too, as for any run but the table assistant's.
+   */
+  async notifyApprovers(run: RunRow, pending: number, askerTold: boolean): Promise<void> {
+    if (run.review_mode !== "colleague") return;
+    try {
+      await this.env.jobs.send({
+        kind: "notify_approvers",
+        workspaceId: run.workspace_id,
+        docId: this.dbId,
+        runId: run.run_id,
+        reviewer: run.reviewer,
+        approverGroup: run.approver_group,
+        actor: run.agent_alias,
+        agent: run.agent,
+        doc: run.doc_title,
+        count: pending,
+        askerTold,
+      });
+    } catch (err) {
+      console.warn("database-run approvers notify enqueue failed", { databaseId: this.dbId, runId: run.run_id, err: String(err) });
     }
   }
 }

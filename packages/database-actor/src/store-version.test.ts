@@ -26,7 +26,15 @@ const PINNED: Record<number, string> = {
   2: "8d9ed624efe89b80",
   3: "d3f3a5ba37b6da61",
   4: "dfdc1d1458cd3df0",
+  5: "43c9bf9b78b7df2b",
 };
+
+/** Take out of a fresh store what version 5 brought: the colleague level's columns and trigger. */
+function withoutColleagueLevel(db: DatabaseSync): void {
+  db.exec(`DROP TRIGGER _run_ops_colleague_approves`);
+  db.exec(`ALTER TABLE _run_ops DROP COLUMN decided_level`);
+  db.exec(`ALTER TABLE _runs DROP COLUMN approver_group`);
+}
 
 let dir = "";
 afterEach(() => {
@@ -127,6 +135,7 @@ describe("a database's store", () => {
         `INSERT INTO _run_ops (run_id, op_id, position, kind, table_id, summary, status, bytes, decided_by, review)
          VALUES ('run_1', 'o1', 1, 'rows.insert', 't1', 'Insert 1 row', 'rejected', 2, 'alice', 'review')`,
       );
+      withoutColleagueLevel(v1);
       v1.exec(`ALTER TABLE _run_ops DROP COLUMN detail`);
       v1.exec(`ALTER TABLE _run_ops DROP COLUMN feedback`);
       v1.exec(`PRAGMA user_version = 1`);
@@ -187,6 +196,7 @@ describe("a database's store", () => {
     // The ledger as version 2 left it: the op init recorded, without its detail.
     const v2 = new DatabaseSync(file);
     try {
+      withoutColleagueLevel(v2);
       v2.exec(`ALTER TABLE _ops DROP COLUMN detail`);
       v2.exec(`ALTER TABLE _run_ops DROP COLUMN detail`);
       v2.exec(`PRAGMA user_version = 2`);
@@ -211,5 +221,75 @@ describe("a database's store", () => {
       ["tables.create", true],
     ]);
     expect(listed[1]!.summary).toMatch(/^Created table /);
+  });
+  it("brings a version 4 store forward with the colleague level, refusing a run's reviewer who accepts it there", async () => {
+    dir = mkdtempSync(join(tmpdir(), "stuga-db-store-"));
+    const file = join(dir, "db_test.sqlite");
+    const open = () =>
+      createActorNamespace(
+        DatabaseActor,
+        { snapshots: new MemoryBlobStore(), jobs: new MemoryJobQueue<IndexMessage>() },
+        {
+          name: "databases",
+          heartbeat: { request: Heartbeat.PING, response: Heartbeat.PONG },
+          dir,
+          storeVersion: DATABASE_STORE_VERSION,
+          storeUpgrades: DATABASE_STORE_UPGRADES,
+        },
+      );
+    const ledgerSql = () => {
+      const db = new DatabaseSync(file, { readOnly: true });
+      try {
+        return (db.prepare(`SELECT name, sql FROM sqlite_master WHERE name IN ('_runs', '_run_ops', '_run_ops_colleague_approves') ORDER BY name`).all() as Array<{ sql: string }>)
+          .map((r) => r.sql.replace(/\s+/g, " "));
+      } finally {
+        db.close();
+      }
+    };
+    const fresh = open();
+    try {
+      await post(fresh.get("db_test"), "/schema/init", {});
+    } finally {
+      await fresh.close();
+    }
+    const current = ledgerSql();
+
+    // The ledger as version 4 left it: a run with one op waiting, no level decided on anything.
+    const v4 = new DatabaseSync(file);
+    try {
+      withoutColleagueLevel(v4);
+      v4.exec(
+        `INSERT INTO _runs (run_id, source, agent, agent_alias, reviewer, status, acknowledged, auto_applied, reverted,
+           workspace_id, doc_title, review_mode, client, model, created_at, updated_at)
+         VALUES ('run_1', 'stdio', 'Agent', 'agent-1', 'alice', 'open', 0, 0, 0, 'ws', 'Tasks', 'colleague', NULL, NULL, 1, 1)`,
+      );
+      v4.exec(
+        `INSERT INTO _run_ops (run_id, op_id, position, kind, table_id, summary, status, bytes, review)
+         VALUES ('run_1', 'o1', 1, 'rows.insert', 't1', 'Insert 1 row', 'pending', 2, 'colleague')`,
+      );
+      v4.exec(`PRAGMA user_version = 4`);
+    } finally {
+      v4.close();
+    }
+
+    const upgraded = open();
+    try {
+      await post(upgraded.get("db_test"), "/schema/init", {});
+    } finally {
+      await upgraded.close();
+    }
+    expect(ledgerSql()).toEqual(current);
+    const db = new DatabaseSync(file);
+    try {
+      expect((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(DATABASE_STORE_VERSION);
+      expect(db.prepare(`SELECT approver_group FROM _runs`).all()).toEqual([{ approver_group: null }]);
+      // The store refuses it whatever the code does: the run is at `colleague` and alice asked for it.
+      expect(() => db.exec(`UPDATE _run_ops SET status = 'accepted', decided_by = 'alice' WHERE op_id = 'o1'`)).toThrow(
+        /a colleague approves this change/,
+      );
+      db.exec(`UPDATE _run_ops SET status = 'accepted', decided_by = 'bo', decided_level = 'colleague' WHERE op_id = 'o1'`);
+    } finally {
+      db.close();
+    }
   });
 });

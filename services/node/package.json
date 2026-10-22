@@ -28,7 +28,7 @@
     "@stuga/runtime": "workspace:*",
     "postgres": "^3.4.9",
     "tsx": "^4.23.15",
-    "undici": "^8.11.2",
+    "undici": "^8.12.3",
     "ws": "^8.22.0",
     "yjs": "^13.6.33"
   },
@@ -36,9 +36,9 @@
     "@simplewebauthn/browser": "14.0.0",
     "@types/ws": "^8.18.2",
     "esbuild": "^0.28.2",
-    "jose": "^6.2.12",
-    "playwright-core": "1.64.0",
+    "jose": "^6.2.13",
+    "playwright-core": "1.64.1",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.5"
   }
 }

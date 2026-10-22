@@ -1,47 +1,32 @@
 /**
- * The languages keyword search answers for, and the online rebuild of its BM25
- * indexes when an administrator changes them.
- *
- * pg_search reads only the newest valid bm25 index on a table, and a query that
- * names a field that index lacks fails. So a change goes in four steps: queries
- * name only the languages the old and the new set share; a table's new index is
- * built concurrently, while writes go on and queries keep reading the old one;
- * the table's old indexes are dropped, concurrently, so the new one is all that
- * is left whatever its OID; and once every table is done, queries name the new
- * set. One rebuild runs at a time, and a request for other languages stops it.
- * A restart in the middle is finished by the boot reconcile, which drops what is
- * not wanted and rebuilds what a stopped build left invalid.
+ * The languages keyword search stems words in, and the background pass that
+ * writes the keyword index again for them: when an administrator changes them,
+ * and at boot when rows were written in another format (a newer spelling of the
+ * text, or another Node's ICU). Queries and writes use the newest languages at
+ * once; a row not yet written again still matches each word by its English stem,
+ * so search keeps answering. One pass runs at a time, a request for other
+ * languages stops it, and a restart in the middle is finished by the next boot's.
  */
 import { setTimeout as delay } from "node:timers/promises";
-import {
-  createSearchIndex,
-  dropSearchIndex,
-  isPlainIndexName,
-  listSearchIndexes,
-  saveSearchLanguages,
-  searchIndexShapes,
-  type SearchLanguage,
-  type Sql,
-} from "@stuga/db";
+import { listDocsToReindex, reindexDocVectors, saveSearchLanguages, type SearchLanguage, type Sql } from "@stuga/db";
 
 export interface SearchLanguagesStatus {
   /** The languages chosen last. */
   languages: SearchLanguage[];
-  /** Whether the indexes are still being rebuilt for them. */
+  /** Whether the index is still being written for them. */
   rebuilding: boolean;
-  /** Why the last rebuild gave up, until the next one starts; meanwhile search uses the languages both sets share. */
+  /** Why the last pass gave up, until the next one starts; meanwhile rows it did not reach match by their English stems. */
   error: string | null;
 }
 
 export interface SearchLanguages {
-  /** The languages a query may name now; during a rebuild, only those the old and the new indexes share. */
+  /** The languages queries and writes stem words in: the newest chosen. */
   current(): readonly SearchLanguage[];
   status(): SearchLanguagesStatus;
   /**
-   * Rebuild the indexes for `languages`, online. A request for other languages
-   * stops the rebuild under way, whose half-built index the next one drops.
-   * Settles when the indexes match the newest request, or the rebuild gave up;
-   * never rejects.
+   * Write every row not yet in `languages`' format again, in the background. A
+   * request for other languages stops the pass under way. Settles when the index
+   * matches the newest request, or the pass gave up; never rejects.
    */
   rebuild(languages: readonly SearchLanguage[]): Promise<void>;
   /**
@@ -50,86 +35,94 @@ export interface SearchLanguages {
    * saved, while the rebuild goes on; rejects when the save fails.
    */
   save(languages: readonly SearchLanguage[], updatedBy: string | null): Promise<void>;
-  /** Cancel a rebuild in progress, for shutdown; the next boot finishes it. */
+  /** Stop a pass in progress, for shutdown; the next boot finishes it. */
   stop(): Promise<void>;
 }
 
+/** Documents one query of the pass lists, each then written in a transaction of its own. */
+const PAGE = 100;
+
 /**
- * Between the tries of a failed rebuild: a build can fail under concurrent
- * writes, or wait out a statement timeout. Once they are spent, the rebuild
- * waits for the next change or start.
+ * Between the tries of a pass that could not write every document: one can
+ * wait out a lock or a statement timeout. Once they are spent, the pass waits
+ * for the next change or start.
  */
 const RETRY_DELAYS_MS: readonly number[] = [5_000, 30_000, 120_000, 600_000];
 
 const sameSet = (a: readonly SearchLanguage[], b: readonly SearchLanguage[]) =>
   a.length === b.length && a.every((l) => b.includes(l));
 
-const named = (languages: readonly SearchLanguage[]) => (languages.length ? languages.join(", ") : "no extra languages");
+const named = (languages: readonly SearchLanguage[]) => (languages.length ? `English, ${languages.join(", ")}` : "English");
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export function createSearchLanguages(deps: {
   sql: Sql;
-  /** What the boot reconciled the indexes to. */
+  /** The languages the node's settings hold. */
   languages: readonly SearchLanguage[];
   retryDelaysMs?: readonly number[];
   /** Resolves after `ms`; rejects when `signal` aborts. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Writes one document's index again; tests replace it to fail one. */
+  reindex?: (sql: Sql, docId: string, languages: readonly SearchLanguage[]) => Promise<void>;
 }): SearchLanguages {
   const { sql } = deps;
   const retryDelays = deps.retryDelaysMs ?? RETRY_DELAYS_MS;
   const sleep = deps.sleep ?? ((ms: number, signal: AbortSignal) => delay(ms, undefined, { signal }));
+  const reindex = deps.reindex ?? reindexDocVectors;
   const stopping = new AbortController();
 
-  /** What queries may name. */
-  let queryable: readonly SearchLanguage[] = [...deps.languages];
-  /** What the indexes are built for, or null while a rebuild is unfinished. */
-  let built: readonly SearchLanguage[] | null = [...deps.languages];
-  /** The newest request. */
+  /** The newest request, which queries and writes use. */
   let wanted: readonly SearchLanguage[] = [...deps.languages];
   /** Set before a drain starts and cleared by it, even when it has nothing to do and ends at once. */
   let draining = false;
   let running: Promise<void> = Promise.resolve();
-  /** The attempt under way, which a request for other languages stops. */
+  /** The pass under way, which a request for other languages stops. */
   let attempting: { to: readonly SearchLanguage[]; replaced: AbortController } | null = null;
   let error: string | null = null;
   /** The save under way, which the next one waits for. */
   let saving: Promise<unknown> = Promise.resolve();
 
   /**
-   * One pass of the four steps, a table at a time: a table's old indexes go as
-   * soon as its new one is valid, so it keeps two, each updated on every write,
-   * no longer than it must. Returns the indexes built (`+name`) and dropped
-   * (`-name`).
+   * Write every document not in `to`'s format again, a page at a time in
+   * doc_id order, and sweep again until a sweep writes nothing: a write that
+   * read the languages before they changed may land behind the sweep. One that
+   * fails is passed over, so the rest are written, and the pass then throws.
+   * Returns how many were written.
    */
-  async function swap(to: readonly SearchLanguage[], signal: AbortSignal): Promise<string[]> {
-    queryable = queryable.filter((l) => to.includes(l));
-    built = null;
-    const present = await listSearchIndexes(sql);
-    const changes: string[] = [];
-    for (const index of searchIndexShapes(to)) {
-      const have = present.find((p) => p.name === index.name);
-      if (!have?.valid) {
-        // A build that failed or was stopped leaves an invalid index under the name it would have had.
-        if (have) await dropSearchIndex(sql, index.name, { concurrently: true, signal });
-        await createSearchIndex(sql, index, { concurrently: true, signal });
-        changes.push(`+${index.name}`);
+  async function pass(to: readonly SearchLanguage[], signal: AbortSignal): Promise<number> {
+    let written = 0;
+    for (;;) {
+      const failed: string[] = [];
+      let swept = 0;
+      let after: string | null = null;
+      for (;;) {
+        signal.throwIfAborted();
+        const page: string[] = await listDocsToReindex(sql, to, PAGE, after);
+        if (page.length === 0) break;
+        for (const docId of page) {
+          signal.throwIfAborted();
+          try {
+            await reindex(sql, docId, to);
+            swept++;
+          } catch (err) {
+            failed.push(`${docId}: ${messageOf(err)}`);
+          }
+        }
+        after = page[page.length - 1]!;
       }
-      for (const { name, table } of present) {
-        if (table !== index.table || name === index.name || !isPlainIndexName(name)) continue;
-        await dropSearchIndex(sql, name, { concurrently: true, signal });
-        changes.push(`-${name}`);
+      written += swept;
+      if (failed.length > 0) {
+        throw new Error(`${failed.length} document${failed.length === 1 ? "" : "s"} could not be indexed, first ${failed[0]}`);
       }
+      if (swept === 0) return written;
     }
-    queryable = to;
-    built = to;
-    return changes;
   }
 
   /**
-   * Swap to `to`, trying again after each delay. "gave up" once the delays are
-   * spent; "stopped" when the node stops, or a request for other languages
-   * replaced it.
+   * Run the pass for `to`, trying again after each delay. "gave up" once the
+   * delays are spent; "stopped" when the node stops, or a request for other
+   * languages replaced it.
    */
   async function attempt(to: readonly SearchLanguage[]): Promise<"done" | "gave up" | "stopped"> {
     const replaced = new AbortController();
@@ -137,14 +130,14 @@ export function createSearchLanguages(deps: {
     attempting = { to, replaced };
     error = null;
     const started = Date.now();
-    const meanwhile = queryable.filter((l) => to.includes(l));
-    console.info(`[search] rebuilding the keyword indexes for ${named(to)}; meanwhile search uses ${named(meanwhile)}`);
     try {
       for (let tries = 0; ; tries++) {
         try {
-          const changes = await swap(to, signal);
-          const seconds = ((Date.now() - started) / 1000).toFixed(1);
-          console.info(`[search] keyword indexes ready for ${named(to)} after ${seconds}s: ${changes.join(", ") || "nothing to change"}`);
+          const written = await pass(to, signal);
+          if (written > 0) {
+            const seconds = ((Date.now() - started) / 1000).toFixed(1);
+            console.info(`[search] keyword index written for ${named(to)}: ${written} documents in ${seconds}s`);
+          }
           return "done";
         } catch (err) {
           if (signal.aborted) return "stopped";
@@ -152,12 +145,12 @@ export function createSearchLanguages(deps: {
           if (wait === undefined) {
             error = messageOf(err);
             console.error(
-              `[search] gave up rebuilding the keyword indexes for ${named(to)} after ${tries + 1} tries: ${error}. ` +
-                `Search uses ${named(queryable)} until the languages are saved again or the node restarts, which finishes the rebuild.`,
+              `[search] gave up writing the keyword index for ${named(to)} after ${tries + 1} tries: ${error}. ` +
+                `The documents it did not reach match by their English stems until the languages are saved again or the node restarts.`,
             );
             return "gave up";
           }
-          console.warn(`[search] rebuilding the keyword indexes for ${named(to)} failed, trying again in ${wait / 1000}s: ${messageOf(err)}`);
+          console.warn(`[search] writing the keyword index for ${named(to)} failed, trying again in ${wait / 1000}s: ${messageOf(err)}`);
           try {
             await sleep(wait, signal);
           } catch {
@@ -174,9 +167,9 @@ export function createSearchLanguages(deps: {
     try {
       while (!stopping.signal.aborted) {
         const to = wanted;
-        if (built && sameSet(built, to)) return;
-        // Given up with nothing newer asked for: the next request or start tries again.
-        if ((await attempt(to)) === "gave up" && sameSet(wanted, to)) return;
+        const outcome = await attempt(to);
+        // Done, or given up with nothing newer asked for: the next request or start tries again.
+        if (outcome !== "stopped" && sameSet(wanted, to)) return;
       }
     } finally {
       // In the same turn as the last check, so a request made after it starts a new drain.
@@ -187,7 +180,7 @@ export function createSearchLanguages(deps: {
   function rebuild(languages: readonly SearchLanguage[]): Promise<void> {
     if (stopping.signal.aborted) return Promise.resolve();
     wanted = [...languages];
-    // What it builds is of no use to these: stop it, and the drain goes on to them.
+    // What it writes is of no use to these: stop it, and the drain goes on to them.
     if (attempting && !sameSet(attempting.to, wanted)) attempting.replaced.abort();
     if (!draining) {
       draining = true;
@@ -197,7 +190,7 @@ export function createSearchLanguages(deps: {
   }
 
   return {
-    current: () => queryable,
+    current: () => wanted,
     status: () => ({ languages: [...wanted], rebuilding: draining, error }),
     rebuild,
     save(languages, updatedBy) {

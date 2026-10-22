@@ -293,8 +293,8 @@ export async function saveNodeSettings(sql: Sql, input: NodeSettingsInput): Prom
 
 /**
  * Delete the settings row, the identity provider with it, and every link to a
- * provider, in one transaction. The search languages stay: the indexes were
- * built for them. Returns the provider that was set, for the audit.
+ * provider, in one transaction. The search languages stay: the keyword index
+ * was written for them. Returns the provider that was set, for the audit.
  */
 export async function resetNodeSettings(
   sql: Sql,

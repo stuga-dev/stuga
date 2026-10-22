@@ -419,7 +419,7 @@ export function ShareDialog({
                   )}
                 </VStack>
               )}
-              {error && <Banner status="error" title={t("library.share.failed")} description={error} />}
+              {error && <Banner status="error" role="alert" title={t("library.share.failed")} description={error} />}
 
               {requests.length > 0 && !readOnly && (
                 <VStack gap={1}>
@@ -438,7 +438,7 @@ export function ShareDialog({
                             variant="ghost"
                             size="sm"
                             width={ROLE_WIDTH}
-                            className="share-role"
+                            controlClassName="share-role"
                             placeholder={t("library.share.approve")}
                             onChange={(v) => void answerRequest(r.principal, v)}
                             options={requestOptions}
@@ -486,7 +486,7 @@ export function ShareDialog({
                               variant="ghost"
                               size="sm"
                               width={ROLE_WIDTH}
-                              className={value === "remove" ? "share-role share-role--removed" : "share-role"}
+                              controlClassName={value === "remove" ? "share-role share-role--removed" : "share-role"}
                               value={value}
                               onChange={(v) => setRole(g, v as RowValue)}
                               options={personOptions}
@@ -545,7 +545,7 @@ export function ShareDialog({
                             variant="ghost"
                             size="sm"
                             width={ROLE_WIDTH}
-                            className="share-role"
+                            controlClassName="share-role"
                             value={inherits || confirmingStop ? "inherit" : "none"}
                             // Granting needs no warning; revoking waits for the confirmation below.
                             onChange={(v) => {
@@ -615,7 +615,7 @@ export function ShareDialog({
                           variant="ghost"
                           size="sm"
                           width={ROLE_WIDTH}
-                          className="share-role"
+                          controlClassName="share-role"
                           value={general}
                           onChange={(v) => setGeneral(v as GeneralAccess)}
                           options={generalOptions}

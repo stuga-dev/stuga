@@ -37,7 +37,6 @@ function runtime({ openssl = ["OpenSSL 3.5.7 9 Jun 2026"], xml = "21503" } = {})
   writeFileSync(join(pg, "lib/postgresql/wal2json.dylib"), "");
   writeFileSync(join(pg, "lib/postgresql/plugin_debugger.dylib"), "");
   writeFileSync(join(pg, "share/postgresql/extension/vector.control"), "default_version = '0.8.6'\n");
-  writeFileSync(join(pg, "share/postgresql/extension/pg_search.control"), "default_version = '0.25.9'\n");
   return root;
 }
 
@@ -64,7 +63,6 @@ test("the component list carries the versions the files state, as CycloneDX", ()
     "postgres.app": version["postgres.app"],
     postgresql: "18.6",
     pgvector: "0.8.6",
-    pg_search: "0.25.9",
     wal2json: null,
     pldbgapi: null,
     openssl: "3.5.7",

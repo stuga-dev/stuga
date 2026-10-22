@@ -51,7 +51,7 @@
   "personPicker.placeholder": "ユーザー名または名前で検索",
   "personPicker.noMatch": "一致する人はいません。",
   "searchLanguages.label": "ドキュメントの言語",
-  "searchLanguages.hint": "選択した言語では、検索が語形変化と単語の区切りを認識します。それ以外の言語は完全に一致する語句で検索します。",
+  "searchLanguages.hint": "選択した言語では、検索が語形変化を認識します。それ以外の言語は完全に一致する語句で検索します。",
   "searchLanguages.alwaysOn": "常に有効",
   "searchLanguages.find": "言語を検索",
   "principal.everyone": "全員",

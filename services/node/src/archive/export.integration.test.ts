@@ -90,7 +90,7 @@ describe.skipIf(!URL)("workspace export with real actors", () => {
     namespaces = [docs, databases];
     const settings = await createNodeSettingsStore({ sql, dataDir: dir, publicOrigin: "https://node.test" });
     const media = fsBlobStore(join(dir, "media"));
-    env = { sql, publicOrigin: "https://node.test", extraOrigins: [], docs, databases, snapshots, media, jobs: queue, settings };
+    env = { sql, publicOrigin: "https://node.test", extraOrigins: [], docs, databases, snapshots, media, jobs: queue, settings, searchLanguages: { current: () => [] } };
   });
 
   afterAll(async () => {

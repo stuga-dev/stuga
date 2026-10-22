@@ -11,7 +11,7 @@ import {
 import type { AgentFeedback } from "@stuga/protocol/domain/runs";
 import { recordAudit } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
-import { resolveReviewMode } from "../authz/review-mode.js";
+import { proposalApproverGroup, resolveReviewMode } from "../authz/review-mode.js";
 import { afterDatabaseMutation, callDatabaseActor } from "./gate.js";
 import { reconcileDocLinks } from "./row-pages.js";
 
@@ -60,11 +60,13 @@ export async function proposeDatabaseOp(
   opts: { revises?: string[] } = {},
 ): Promise<DatabaseProposeOutcome> {
   const review = resolveReviewMode(ctx, doc);
+  const approverGroup = await proposalApproverGroup(ctx, doc, review.mode);
   const res = await callDatabaseActor(ctx, doc.doc_id, "runs/propose", {
     op,
     source,
     revises: opts.revises ?? [],
     review: review.mode,
+    ...(approverGroup ? { approver_group: approverGroup } : {}),
     agent: ctx.displayName || ctx.alias,
     client: ctx.client ?? null,
     model: ctx.model ?? null,

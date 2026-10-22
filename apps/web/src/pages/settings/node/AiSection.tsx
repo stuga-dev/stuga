@@ -103,6 +103,7 @@ function ProbeBanner({ probe, half, labels }: { probe: AiProbe; half: Half; labe
   return (
     <Banner
       status={ok ? "success" : "error"}
+      role={ok ? undefined : "alert"}
       title={ok ? t("node.ai.probe.answered") : t("node.ai.probe.unexpected")}
       description={
         <VStack gap={1}>
@@ -756,6 +757,7 @@ export function AiSection({ settings, onSaved }: { settings: NodeAiSettings; onS
         {searchSetUp && banner && (
           <Banner
             status={banner.status}
+            role={banner.status === "error" ? "alert" : undefined}
             title={banner.title}
             description={banner.description}
             endContent={banner.retry ? <Button label={t("node.ai.measureAgain")} variant="secondary" size="sm" isLoading={busy === "measure"} onClick={() => void measureAgain()} /> : undefined}

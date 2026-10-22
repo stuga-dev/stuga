@@ -9,6 +9,7 @@ import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { FileText, ImagePlus, SquarePen, X } from "lucide-react";
 import { ALL_DOCUMENTS_SCOPE } from "@stuga/protocol/wire/doc-socket";
+import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { useAiCoauthor } from "./ai-coauthor-context";
 import { useAgentRuns } from "../review/agent-runs-context";
 import { useComments } from "../comments/comments-context";
@@ -41,10 +42,17 @@ export function AiNewChatButton() {
   );
 }
 
+/** What an empty chat says of how its edits land, by the document's level. */
+const EMPTY_NOTE: Record<ReviewMode, MessageKey> = {
+  auto: "ai.panel.emptyAuto",
+  review: "ai.panel.emptyReview",
+  colleague: "ai.panel.emptyColleague",
+};
+
 /** What an empty chat offers to ask. */
 const EXAMPLES = ["ai.panel.exampleOutline", "ai.panel.exampleSummary", "ai.panel.exampleTable"] as const satisfies readonly MessageKey[];
 
-export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
+export function AiPanel({ agentMode }: { agentMode: ReviewMode }) {
   const {
     turns,
     streaming,
@@ -115,7 +123,7 @@ export function AiPanel({ agentAuto }: { agentAuto: boolean }) {
                 ))}
               </span>
             )}
-            <span className="ai-empty__note">{agentAuto ? t("ai.panel.emptyAuto") : t("ai.panel.emptyReview")}</span>
+            <span className="ai-empty__note">{t(EMPTY_NOTE[agentMode])}</span>
           </span>
         }
       />

@@ -498,7 +498,7 @@ describe("reading an archive", () => {
 
   it.each<[string, (m: Json, f: Record<string, string | Uint8Array>) => void, RegExp]>([
     ["a newer version", (m) => void (m.version = 2), /^stuga\.json: version: the archive is version 2, from a newer Stuga/],
-    ["a bad setting", (m) => void (m.items[0].agent_mode = "sometimes"), /^stuga\.json: items\[0\]\.agent_mode: must be one of review, auto$/],
+    ["a bad setting", (m) => void (m.items[0].agent_mode = "sometimes"), /^stuga\.json: items\[0\]\.agent_mode: must be one of review, auto, colleague$/],
     ["a manifest that is not JSON", (_m, f) => void (f[MANIFEST_NAME] = "{"), /^stuga\.json: is not JSON$/],
     ["a missing body", (_m, f) => void delete f["Laws/GDPR.md"], /^Laws\/GDPR\.md: is missing; stuga\.json names it$/],
     ["a body that is not UTF-8", (_m, f) => void (f["Laws/GDPR.md"] = new Uint8Array([0x23, 0x20, 0xff])), /^Laws\/GDPR\.md: is not UTF-8 text$/],

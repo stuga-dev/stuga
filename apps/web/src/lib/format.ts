@@ -1,4 +1,3 @@
-import type { SearchLanguage } from "@stuga/protocol/domain/search-languages";
 import { formatLocale, t, uiLanguage } from "../i18n/i18n";
 
 /** Thousands-separated integer. */
@@ -118,8 +117,8 @@ export function aiCoauthorLabel(): string {
   return t("format.aiCoauthor");
 }
 
-/** What a search language is called, in the interface language. */
-export function searchLanguageLabel(language: SearchLanguage): string {
+/** What a language search reads is called, in the interface language: an ISO 639-1 code. */
+export function searchLanguageLabel(language: string): string {
   try {
     return new Intl.DisplayNames([uiLanguage() === "en-XA" ? "en" : uiLanguage()], { type: "language" }).of(language) ?? language;
   } catch {

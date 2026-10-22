@@ -75,6 +75,8 @@ function doc(doc_id: string, patch: Partial<DocRow> = {}): DocRow {
     own_grants: { p: [], w: [], c: [] },
     created_by: "user:u_liv",
     agent_mode: "review",
+    folder_agent_mode: null,
+    database_agent_mode: null,
     agent_instructions: "",
     page_of: null,
     page_row: null,
@@ -94,6 +96,9 @@ function folder(folder_id: string, title: string, parent_id: string | null, agen
     inherits_perms: true,
     own_grants: { p: [], w: [], c: [] },
     agent_instructions,
+    agent_mode: null,
+    approver_group: null,
+    parent_agent_mode: null,
     created_at: "2026-09-01T00:00:00Z",
     updated_at: "2026-09-01T00:00:00Z",
   };

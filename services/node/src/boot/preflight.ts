@@ -2,13 +2,12 @@
  * What the node checks about its Postgres before it agrees to run. The decisions
  * are pure functions of what the server reports; the `assert*` wrappers query and throw.
  */
-import { preloadsPgSearch, type Sql } from "@stuga/db";
+import type { Sql } from "@stuga/db";
 import { ConfigError } from "../config/env.js";
 
 /**
  * The Postgres major this node is built against, as server_version_num
- * (18.6 → 180006): the pg_search and pgvector binaries it ships with are built
- * for this major only.
+ * (18.6 → 180006): the pgvector binary it ships with is built for this major only.
  */
 export const PG_MIN = 180000;
 export const PG_MAX_EXCLUSIVE = 190000;
@@ -29,32 +28,6 @@ export function postgresVersionProblem(serverVersionNum: number): string | null 
       : `This node has written nothing, and a Postgres major does not change in place: dump the database with ` +
         `the Postgres ${found} that wrote it, then restore into Postgres ${want}.`)
   );
-}
-
-/**
- * Null when this database can serve search (every keyword leg is a BM25 query),
- * otherwise the message the operator sees. `available`, not `installed`: the
- * migration creates the extension after this runs. `preloaded` is null when the
- * role may not read the setting, which is not reported as a problem.
- */
-export function pgSearchProblem(db: { available: boolean; preloaded: boolean | null }): string | null {
-  const want = majorOf(PG_MIN);
-  if (!db.available) {
-    return (
-      `this Postgres does not offer the pg_search extension — it is not in pg_available_extensions, so the ` +
-      `node cannot create it, and every search runs through it. Install pg_search built for Postgres ${want} ` +
-      `on this server, list pg_search in its shared_preload_libraries, and restart Postgres. This node has ` +
-      `written nothing.`
-    );
-  }
-  if (db.preloaded === false) {
-    return (
-      `this Postgres offers the pg_search extension, but does not load it: pg_search is missing from ` +
-      `shared_preload_libraries. Add it to that setting in postgresql.conf, keeping any library already listed, ` +
-      `and restart Postgres — a running server cannot load it, which is why this is a boot error and not a warning.`
-    );
-  }
-  return null;
 }
 
 /** The builtin-provider locale every Stuga database is created with, on every platform. */
@@ -97,22 +70,6 @@ export async function assertDatabaseLocale(sql: Sql): Promise<void> {
   const row = rows[0];
   if (!row) throw new ConfigError("could not read this database's locale from pg_database");
   const problem = databaseLocaleProblem(row);
-  if (problem) throw new ConfigError(problem);
-}
-
-/** Read the catalog and the preload setting, and refuse to run on a server that cannot serve search. */
-export async function assertPgSearch(sql: Sql): Promise<void> {
-  const rows = await sql<{ available: boolean }[]>`
-    SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_search') AS available`;
-  const available = rows[0]?.available === true;
-  // The column SHOW returns is named after the setting.
-  const preloaded = await sql<{ shared_preload_libraries?: string }[]>`SHOW shared_preload_libraries`
-    .then((r) => {
-      const setting = r[0]?.shared_preload_libraries;
-      return typeof setting === "string" ? preloadsPgSearch(setting) : null;
-    })
-    .catch(() => null);
-  const problem = pgSearchProblem({ available, preloaded });
   if (problem) throw new ConfigError(problem);
 }
 

@@ -45,6 +45,11 @@ const PINNED: Record<number, { keys: string[]; schema: string }> = {
     keys: ["coauthor-clean:*", "coauthor-threads:*", "feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"],
     schema: "d5faf519fff506b3",
   },
+  // The `colleague` level on a run, with the approver group it was proposed under and who approved it.
+  5: {
+    keys: ["coauthor-clean:*", "coauthor-threads:*", "feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"],
+    schema: "0f08c4ae72761d0e",
+  },
 };
 
 /** Per version from 3 on: the node and mark types the text may hold. A released version's entry never changes. */
@@ -58,6 +63,14 @@ const TEXT_TYPES: Record<number, { nodes: string[]; marks: string[] }> = {
     marks: ["bold", "code", "italic", "link", "strike", "underline"],
   },
   4: {
+    nodes: [
+      "blockquote", "bulletList", "codeBlock", "doc", "footnoteDefinition", "footnoteReference", "hardBreak", "heading",
+      "horizontalRule", "image", "listItem", "mention", "orderedList", "paragraph", "table", "tableCell", "tableHeader",
+      "tableRow", "taskItem", "taskList", "text",
+    ],
+    marks: ["bold", "code", "italic", "link", "strike", "underline"],
+  },
+  5: {
     nodes: [
       "blockquote", "bulletList", "codeBlock", "doc", "footnoteDefinition", "footnoteReference", "hardBreak", "heading",
       "horizontalRule", "image", "listItem", "mention", "orderedList", "paragraph", "table", "tableCell", "tableHeader",
@@ -89,7 +102,9 @@ describe("a document's store", () => {
       acknowledged: boolean;
       auto_applied: boolean;
       reverted?: boolean;
-      review_mode: "review" | "auto";
+      review_mode: "auto" | "review" | "colleague";
+      approver_group?: string;
+      approvals?: Record<string, string>;
       created_at: number;
       updated_at: number;
       seq_at_commit?: number;
@@ -253,18 +268,18 @@ describe("a document's store", () => {
     expect(unknown, `a document's store holds keys it did not: ${unknown.join(", ")}. ${RAISE}`).toEqual([]);
   });
 
-  it("brings a version 3 store forward as it is", async () => {
+  it.each([3, 4])("brings a version %i store forward as it is", async (version) => {
     dir = mkdtempSync(join(tmpdir(), "stuga-doc-store-"));
     const env = harness().env;
-    const v3 = namespace(3, undefined, env);
+    const older = namespace(version, undefined, env);
     let runId = "";
     try {
-      const doc = v3.get("doc1");
+      const doc = older.get("doc1");
       await call(doc, "/apply-edits", { str_edits: [{ old_string: "", new_string: "# Notes\n\nAlpha.\n" }], agent: "seed" });
       runId = ((await call(doc, "/runs/propose", PROPOSAL)).run as { id: string }).id;
       await call(doc, "/runs/decide", { run_id: runId, decision: "reject", decided_by: "alice", note: "Keep Alpha." });
     } finally {
-      await v3.close();
+      await older.close();
     }
 
     const upgraded = namespace(DOC_STORE_VERSION, DOC_STORE_UPGRADES, env);

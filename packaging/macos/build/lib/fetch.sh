@@ -38,11 +38,6 @@ postgres_app_url() {
     "$POSTGRES_APP_VERSION" "$POSTGRES_APP_VERSION" "$PG_MAJOR"
 }
 
-pg_search_pkg_url() {
-  printf 'https://github.com/paradedb/paradedb/releases/download/v%s/pg_search-pg%s-%s.pkg' \
-    "$PG_SEARCH_VERSION" "$PG_MAJOR" "$PG_SEARCH_VERSION"
-}
-
 node_darwin_arm64_url() {
   printf 'https://nodejs.org/dist/v%s/node-v%s-darwin-arm64.tar.gz' "$NODE_VERSION" "$NODE_VERSION"
 }
@@ -58,7 +53,7 @@ go_url() {
 cached_postgres_tree() {
   local lib key tree
   lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-  key="$( { printf '%s %s\n' "$POSTGRES_APP_DMG_SHA256" "$PG_SEARCH_POSTGRESAPP_PKG_SHA256" &&
+  key="$( { printf '%s\n' "$POSTGRES_APP_DMG_SHA256" &&
     cat "$lib/../assemble-postgres.sh" "$lib/../prune.sh" "$lib/devtools.sh"; } | shasum -a 256 | cut -c1-12)" || return 1
   tree="$STUGA_MACOS_CACHE/postgres-$PG_MAJOR-$key"
   if [ ! -x "$tree/bin/postgres" ]; then

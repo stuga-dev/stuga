@@ -212,7 +212,7 @@ export class CoAuthor {
       // Per turn, so switching the setting applies to the next message. The run's
       // own undecided hunks hold this turn's edits back even on `auto`.
       const review = await fetchReviewMode(this.env.internal, docId, meta);
-      const applyAtOnce = review === "auto" && ownPending.length === 0;
+      const applyAtOnce = review.mode === "auto" && ownPending.length === 0;
       const citations: AiCitation[] = [];
       const runner: ToolRunner = {
         // Re-serialized per call so a collaborator's concurrent edits show.
@@ -236,6 +236,7 @@ export class CoAuthor {
           collectionEnabled: !!req.collection_id,
           currentDocId: docId,
           applyAtOnce,
+          colleagueApproves: review.mode === "colleague",
           // Per turn, so an edited instruction, or a move to another folder, applies to the next message.
           instructions: await fetchInstructionStack(this.env.internal, docId, meta),
           feedback,
@@ -293,16 +294,17 @@ export class CoAuthor {
         const out = await proposeRunEdit(this.ledger, {
           op: { action: "cited_edits", edits: result.strEdits, citations: result.citations },
           source: "panel",
-          review,
-          // In front of the reviewer who asked; mail would be noise.
+          review: review.mode,
+          approverGroup: review.approverGroup,
+          // In front of the reviewer who asked; mail would be noise. Approvers at `colleague` are still told.
           notifyReviewer: false,
           agent: PANEL_AGENT,
           agentAlias: panelAlias,
           model: result.modelId,
           reviewer: meta.alias,
           workspaceId: meta.workspaceId,
-          // Only a notification reads it, and this run never notifies.
-          docTitle: "",
+          // Only a notification reads it: the approvers' at `colleague`.
+          docTitle: review.title,
         });
         if (out.mode === "proposed") {
           staged = out.pending;

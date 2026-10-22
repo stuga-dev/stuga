@@ -1,5 +1,6 @@
 /** The document and folder fields a browser may see; ACL arrays and grants stay server-side. */
 import type { DocRow, FolderRow } from "@stuga/db";
+import { docReviewLevel, reviewLevelOf, stricterReviewMode, type ReviewMode } from "@stuga/protocol/domain/events";
 
 const DOC_SUMMARY_KEYS = [
   "doc_id",
@@ -35,10 +36,41 @@ function pickKeys<T extends object, K extends readonly (keyof T)[]>(row: T, keys
   return out;
 }
 
-export function docSummary(row: DocRow): Pick<DocRow, (typeof DOC_SUMMARY_KEYS)[number]> {
-  return pickKeys(row, DOC_SUMMARY_KEYS);
+/** How AI edits to an item are reviewed, as a summary says it. */
+interface ReviewFields {
+  /** Its level now: its own, else its folder's, else `review`; a row page's at least its database's. */
+  agent_mode: ReviewMode;
+  /**
+   * The level it cannot be set below by its owner: its folder's (`review` unless one sets another),
+   * which only the folder's owner or an admin sets it below, and a row page's database's, which
+   * nobody does; null at the top level.
+   */
+  agent_mode_floor: ReviewMode | null;
 }
 
-export function folderSummary(row: FolderRow): Pick<FolderRow, (typeof FOLDER_SUMMARY_KEYS)[number]> {
-  return pickKeys(row, FOLDER_SUMMARY_KEYS);
+/** The level a folder gives what is in it, null at the top level. */
+function floorOf(parentId: string | null, inherited: ReviewMode | null): ReviewMode | null {
+  return parentId === null ? null : reviewLevelOf(null, inherited);
+}
+
+export function docSummary(row: DocRow): Omit<Pick<DocRow, (typeof DOC_SUMMARY_KEYS)[number]>, "agent_mode"> & ReviewFields {
+  const floor = floorOf(row.parent_id, row.folder_agent_mode);
+  const database = row.database_agent_mode;
+  return {
+    ...pickKeys(row, DOC_SUMMARY_KEYS),
+    agent_mode: docReviewLevel(row),
+    agent_mode_floor: database ? (floor ? stricterReviewMode(floor, database) : database) : floor,
+  };
+}
+
+export function folderSummary(
+  row: FolderRow,
+): Pick<FolderRow, (typeof FOLDER_SUMMARY_KEYS)[number]> & ReviewFields & { approver_group: string | null } {
+  return {
+    ...pickKeys(row, FOLDER_SUMMARY_KEYS),
+    agent_mode: reviewLevelOf(row.agent_mode, row.parent_agent_mode),
+    agent_mode_floor: floorOf(row.parent_id, row.parent_agent_mode),
+    // At `colleague`, only its members approve beneath it; null for anyone else who can edit.
+    approver_group: row.approver_group,
+  };
 }

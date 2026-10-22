@@ -13,8 +13,11 @@ import { MIGRATIONS, MIGRATION_CHECKSUMS, migrationChecksum } from "./migrate.js
 const REPO = fileURLToPath(new URL("../../../../", import.meta.url));
 const read = (name: string) => readFileSync(fileURLToPath(new URL(`../../migrations/${name}`, import.meta.url)), "utf8");
 
-/** The first release whose migrations are frozen: earlier releases were previews. */
-const FROZEN_FROM = [0, 1, 7];
+/**
+ * The first release whose migrations are frozen. Releases before it were previews whose schema was
+ * reset into one 0001 before anyone used them.
+ */
+const FROZEN_FROM = [0, 2, 0];
 
 function git(...args: string[]): string | null {
   try {

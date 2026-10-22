@@ -331,46 +331,46 @@ describe("the search languages", () => {
     audit.mockClear();
   });
 
-  it("answers the languages chosen, the choices, whether the indexes are being rebuilt and why the last rebuild gave up", async () => {
-    expect((await get(ctx(null, searchLanguages(["ko"])))).search).toEqual({
-      languages: ["ko"],
+  it("answers the languages chosen, the choices, whether the index is being written for them and why the last pass gave up", async () => {
+    expect((await get(ctx(null, searchLanguages(["de"])))).search).toEqual({
+      languages: ["de"],
       choices: [...SEARCH_LANGUAGES],
       rebuilding: false,
       error: null,
     });
-    expect((await get(ctx(null, searchLanguages(["ko"], "could not extend file: No space left on device")))).search).toMatchObject({
+    expect((await get(ctx(null, searchLanguages(["de"], "could not extend file: No space left on device")))).search).toMatchObject({
       rebuilding: false,
       error: "could not extend file: No space left on device",
     });
   });
 
-  it("saves them on their own, starts one rebuild, and answers that it is rebuilding", async () => {
+  it("saves them on their own, starts one pass, and answers that it is rebuilding", async () => {
     const search = searchLanguages();
-    const res = await put(ctx(null, search), { search: { languages: ["ko", "fr", "ko"] } });
+    const res = await put(ctx(null, search), { search: { languages: ["de", "fr", "de"] } });
     expect(res?.status).toBe(200);
     expect(search.save).toHaveBeenCalledTimes(1);
-    expect(search.save).toHaveBeenCalledWith(["fr", "ko"], "admin-1");
+    expect(search.save).toHaveBeenCalledWith(["de", "fr"], "admin-1");
     // The rest of the row is not written for them.
     expect(save).not.toHaveBeenCalled();
     expect(((await res!.json()) as Record<string, unknown>).search).toEqual({
-      languages: ["fr", "ko"],
+      languages: ["de", "fr"],
       choices: [...SEARCH_LANGUAGES],
       rebuilding: true,
       error: null,
     });
     const detail = audit.mock.calls.find((c) => c[1].action === "node.settings.update")![1].detail;
     expect(detail.before.search_languages).toEqual([]);
-    expect(detail.after.search_languages).toEqual(["fr", "ko"]);
+    expect(detail.after.search_languages).toEqual(["de", "fr"]);
   });
 
   it("saves none as a choice", async () => {
-    const search = searchLanguages(["ko"]);
+    const search = searchLanguages(["de"]);
     expect((await put(ctx(null, search), { search: { languages: [] } }))?.status).toBe(200);
     expect(search.save).toHaveBeenCalledWith([], "admin-1");
   });
 
   it("refuses a language that is not a choice, or anything but a list, and saves nothing", async () => {
-    for (const languages of [["ko", "en"], "ko", [1], null]) {
+    for (const languages of [["de", "zh"], "de", [1], null]) {
       const search = searchLanguages();
       const res = await put(ctx(null, search), { search: { languages } });
       expect(res?.status, JSON.stringify(languages)).toBe(400);
@@ -392,7 +392,7 @@ describe("the search languages", () => {
   it("are a node administrator's to change", async () => {
     (isNodeAdminAlias as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
     const search = searchLanguages();
-    const res = await put(ctx(null, search), { search: { languages: ["ko"] } });
+    const res = await put(ctx(null, search), { search: { languages: ["de"] } });
     expect(res?.status).toBe(403);
     expect(search.save).not.toHaveBeenCalled();
   });
@@ -402,7 +402,7 @@ describe("the search languages", () => {
     failing.save.mockRejectedValue(new Error("connection terminated unexpectedly"));
     const updates = () => audit.mock.calls.filter((c) => c[1].action === "node.settings.update");
 
-    await expect(put(ctx(null, failing), { node_name: "Liv's Mac", search: { languages: ["ko"] } })).rejects.toThrow("connection terminated unexpectedly");
+    await expect(put(ctx(null, failing), { node_name: "Liv's Mac", search: { languages: ["de"] } })).rejects.toThrow("connection terminated unexpectedly");
     expect(save).toHaveBeenCalledTimes(1);
     expect(save.mock.calls[0]![1]).toMatchObject({ nodeName: "Liv's Mac" });
     expect(updates()).toHaveLength(1);
@@ -410,7 +410,7 @@ describe("the search languages", () => {
     expect(updates()[0]![1].detail.after.search_languages).toEqual([]);
 
     audit.mockClear();
-    await expect(put(ctx(null, failing), { search: { languages: ["ko"] } })).rejects.toThrow("connection terminated unexpectedly");
+    await expect(put(ctx(null, failing), { search: { languages: ["de"] } })).rejects.toThrow("connection terminated unexpectedly");
     expect(updates()).toEqual([]);
   });
 

@@ -126,7 +126,7 @@ export function CreateWorkspaceDialog({ isOpen, onSubmit, onOpen, onClose }: Cre
       {mayFinish && (
         <Banner ref={mayFinishRef} status="info" title={t("shell.createWorkspace.mayFinishTitle")} description={t("shell.createWorkspace.mayFinishBody")} />
       )}
-      {error && <Banner ref={errorRef} status="error" title={t("shell.createWorkspace.failedTitle")} description={error} />}
+      {error && <Banner ref={errorRef} status="error" role="alert" title={t("shell.createWorkspace.failedTitle")} description={error} />}
     </>
   );
 

@@ -16,7 +16,7 @@ import { hostExternalImages, ingestNote, type HostedImage } from "../media/media
 import { recordAudit } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
 import { canReadDoc, canWriteDoc, READ_ONLY_MESSAGE } from "../authz/authz.js";
-import { resolveReviewMode } from "../authz/review-mode.js";
+import { proposalApproverGroup, resolveReviewMode } from "../authz/review-mode.js";
 
 export interface ProposeInput {
   docId: string;
@@ -226,6 +226,7 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
     return { kind: "error", message: `document ${docId} is locked; unlock it to make changes`, status: 423 };
   }
   const review = resolveReviewMode(ctx, doc);
+  const approverGroup = await proposalApproverGroup(ctx, doc, review.mode);
 
   // Before the size gate, since a `data:` image shrinks to a short path once
   // stored; after the ACL gates, so only a writer can make the node fetch a URL.
@@ -259,6 +260,7 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
       revises: input.revises ?? [],
       source: input.source,
       review: review.mode,
+      ...(approverGroup ? { approver_group: approverGroup } : {}),
       agent: ctx.displayName || ctx.alias,
       agent_alias: ctx.alias,
       client: ctx.client ?? null,

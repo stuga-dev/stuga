@@ -130,7 +130,7 @@ export function Login() {
   const [password, setPassword] = useState("");
   /** Only while a password is being chosen: signing in scores nothing. */
   const strength = useRemoteStrength(view === "signin" ? "" : password, { username, displayName: name });
-  /** Setup only: what search gets a tokenizer for beyond English; none until chosen. */
+  /** Setup only: the languages search stems words in beside English; none until chosen. */
   const [searchLanguages, setSearchLanguages] = useState<SearchLanguage[]>([]);
   /** Setup only: the node's setup code, from the link it printed (?setup=) or typed. */
   const [setupCode, setSetupCode] = useState(() => new URLSearchParams(location.search).get("setup") ?? "");

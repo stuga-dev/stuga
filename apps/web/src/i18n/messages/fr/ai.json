@@ -16,6 +16,7 @@
   "panel.exampleTable": "Transformer les notes de la fin en tableau",
   "panel.emptyAuto": "Les modifications de l’IA sur ce document s’appliquent directement : elles arrivent à la fin d’un tour, enregistrées et réversibles. Ce chat est privé.",
   "panel.emptyReview": "Chaque modification apparaît dans le document comme une suggestion à accepter ou refuser sur place. Ce chat est privé : seules les modifications acceptées entrent dans l’historique des versions.",
+  "panel.emptyColleague": "Chaque modification apparaît dans le document comme une suggestion qu’un collègue approuve sur place ; vous pouvez la refuser. Ce chat est privé : seules les modifications approuvées entrent dans l’historique des versions.",
   "panel.uploading": "Téléversement…",
   "panel.revisionPaused": "{count, plural, one {Révision en pause} many {Révision en pause · # demandes} other {Révision en pause · # demandes}}",
   "panel.revisionQueued": "{count, plural, one {Révision en file d’attente} many {Révision en file d’attente · # demandes} other {Révision en file d’attente · # demandes}}",

@@ -165,7 +165,7 @@ const OPS: NodeOperationalSettings = {
   updates: { check: true },
   backups: { auto: true, hour: 3, weekday: null, keep: 3 },
   time_zone: "UTC",
-  search: { languages: [], choices: ["ko", "ar"], rebuilding: false, error: null },
+  search: { languages: [], choices: ["de", "ar"], rebuilding: false, error: null },
   identity_provider: {
     issuer: null,
     client_id: null,
@@ -1355,20 +1355,20 @@ describe("NodeSettingsPage", () => {
 
   it("saves the search languages, and says the index is rebuilding until the node is done", async () => {
     await mount("search");
-    const rebuilding = { ...OPS, search: { ...OPS.search, languages: ["ko" as const], rebuilding: true } };
+    const rebuilding = { ...OPS, search: { ...OPS.search, languages: ["de" as const], rebuilding: true } };
     nodeApi.saveSettings.mockResolvedValue(rebuilding);
     nodeApi.settings.mockResolvedValue(rebuilding);
-    expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("English");
+    expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("Chinese, English, Japanese, Korean, Thai");
     expect(host.textContent).not.toContain("Rebuilding the search index");
 
     vi.useFakeTimers();
     try {
       const wait = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
-      await toggleOptions(host, SEARCH_LANGUAGES_LABEL, "Korean");
+      await toggleOptions(host, SEARCH_LANGUAGES_LABEL, "German");
       await click("Save");
       await wait(0);
-      expect(nodeApi.saveSettings).toHaveBeenCalledWith({ search: { languages: ["ko"] } });
-      expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("English, Korean");
+      expect(nodeApi.saveSettings).toHaveBeenCalledWith({ search: { languages: ["de"] } });
+      expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("Chinese, English, German, Japanese, Korean, Thai");
       expect(host.textContent).toContain("Rebuilding the search index");
       // A status a screen reader announces, named by the words shown; aria-labelledby wins over aria-label.
       const statuses = [...host.querySelectorAll('[role="status"]')].map(
@@ -1394,7 +1394,7 @@ describe("NodeSettingsPage", () => {
   it("says a rebuild is running when Search opens during one", async () => {
     nodeApi.settings.mockResolvedValue({ ...OPS, search: { ...OPS.search, languages: ["ar"], rebuilding: true } });
     await mount("search");
-    expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("Arabic, English");
+    expect(dropdown(host, SEARCH_LANGUAGES_LABEL).textContent).toBe("Arabic, Chinese, English, Japanese, Korean, Thai");
     expect(host.textContent).toContain("Rebuilding the search index");
     // A ring on Save's line, named by the words beside it rather than stacked over them.
     const ring = host.querySelector<HTMLElement>('[role="status"][aria-labelledby]')!;
@@ -1404,7 +1404,7 @@ describe("NodeSettingsPage", () => {
   });
 
   it("says why the last rebuild gave up, until the next one starts", async () => {
-    const failed = { ...OPS, search: { ...OPS.search, languages: ["ko" as const], error: "could not extend file: No space left on device" } };
+    const failed = { ...OPS, search: { ...OPS.search, languages: ["de" as const], error: "could not extend file: No space left on device" } };
     nodeApi.settings.mockResolvedValue(failed);
     await mount("search");
     expect(host.textContent).toContain("The search index wasn’t rebuilt");
@@ -1412,7 +1412,7 @@ describe("NodeSettingsPage", () => {
 
     nodeApi.saveSettings.mockResolvedValue({ ...failed, search: { ...failed.search, rebuilding: true, error: null } });
     await click("Save");
-    expect(nodeApi.saveSettings).toHaveBeenCalledWith({ search: { languages: ["ko"] } });
+    expect(nodeApi.saveSettings).toHaveBeenCalledWith({ search: { languages: ["de"] } });
     expect(host.textContent).not.toContain("The search index wasn’t rebuilt");
     expect(host.textContent).toContain("Rebuilding the search index");
   });

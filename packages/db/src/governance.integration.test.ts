@@ -59,6 +59,8 @@ describe.skipIf(!URL)("agent governance queries", () => {
     reviewer: "alice",
     status: "open",
     reviewMode: "review",
+    approverGroup: null,
+    approvedBy: [],
     autoApplied: false,
     reverted: false,
     acknowledged: false,

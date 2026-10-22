@@ -260,6 +260,7 @@
   "ai.empty": "Peça alterações neste banco de dados – “adicione uma coluna Status e marque as linhas concluídas”, “insira os marcos do T3”, “remova linhas duplicadas por Nome”.",
   "ai.emptyAuto": "As edições da IA neste banco de dados são aplicadas diretamente: cada uma entra assim que é feita, com registro e possibilidade de reverter.",
   "ai.emptyReview": "Cada alteração é proposta para sua revisão antes de ser aplicada.",
+  "ai.emptyColleague": "Cada alteração é proposta para a aprovação de um colega antes de ser aplicada.",
   "ai.placeholder": "Peça à IA para alterar este banco de dados…",
   "ai.placeholderDocs": "Peça à IA para alterar este banco de dados usando seus documentos…",
   "ai.scopeBase": "Somente este banco de dados",

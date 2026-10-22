@@ -331,13 +331,13 @@ describe.skipIf(!URL)("local accounts", () => {
 
   it("stores setup's search languages with the first account, and takes them from nobody after", async () => {
     await sql`DELETE FROM node_settings`;
-    await createLocalAccount(sql, { alias: "u1", username: "ada", passwordHash: "h", mayClaim: true, searchLanguages: ["ko"] });
-    expect(await getSearchLanguages(sql)).toEqual(["ko"]);
+    await createLocalAccount(sql, { alias: "u1", username: "ada", passwordHash: "h", mayClaim: true, searchLanguages: ["de"] });
+    expect(await getSearchLanguages(sql)).toEqual(["de"]);
 
     await provisionWorkspace(sql, { workspaceId: "ws", name: "W", owner: "u1" });
     await insertWorkspaceInvite(sql, { tokenHash: "many", workspaceId: "ws", role: "member", createdBy: "u1", expiresAt: null, maxUses: 100 });
     await createLocalAccount(sql, { alias: "u2", username: "bob", passwordHash: "h", inviteHash: "many", searchLanguages: [] });
-    expect(await getSearchLanguages(sql)).toEqual(["ko"]);
+    expect(await getSearchLanguages(sql)).toEqual(["de"]);
   });
 
   it("stores setup's choice of no search languages as a choice", async () => {

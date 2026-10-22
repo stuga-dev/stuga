@@ -43,6 +43,8 @@ export interface RunRow {
   doc_title: string;
   /** The strictest review mode any proposal in this run carried. */
   review_mode: ReviewMode;
+  /** The approver group the first proposal at `colleague` that named one was made under. */
+  approver_group: string | null;
   client: string | null;
   model: string | null;
   created_at: number;
@@ -69,6 +71,8 @@ export interface RunOpRow {
   error: string | null;
   /** The review mode the op was proposed under. */
   review: ReviewMode;
+  /** The level it was decided at, by a person; null while pending or when the policy applied it. */
+  decided_level: ReviewMode | null;
   /** Set when a reviewer rejected it. */
   feedback: RunFeedback | null;
 }
@@ -89,6 +93,7 @@ function asRunRow(row: Record<string, unknown>): RunRow {
     workspace_id: String(row.workspace_id),
     doc_title: String(row.doc_title),
     review_mode: String(row.review_mode) as ReviewMode,
+    approver_group: nullable(row.approver_group),
     client: nullable(row.client),
     model: nullable(row.model),
     created_at: Number(row.created_at),
@@ -113,6 +118,7 @@ function asRunOpRow(row: Record<string, unknown>): RunOpRow {
     ledger_op_id: nullable(row.ledger_op_id),
     error: nullable(row.error),
     review: String(row.review) as ReviewMode,
+    decided_level: row.decided_level == null ? null : (String(row.decided_level) as ReviewMode),
     feedback: row.feedback == null ? null : (JSON.parse(String(row.feedback)) as RunFeedback),
   };
 }
@@ -178,6 +184,10 @@ export function runIndexEntry(sql: SqlHandle, run: RunRow, databaseId: string): 
     counts.set(String(r.status), Number(r.n));
   }
   const count = (status: DatabaseRunOpStatus) => counts.get(status) ?? 0;
+  const approvedBy = sql
+    .exec(`SELECT DISTINCT decided_by FROM _run_ops WHERE run_id = ? AND status = 'accepted' AND decided_level = 'colleague' ORDER BY decided_by`, run.run_id)
+    .toArray()
+    .map((r) => String(r.decided_by));
   return {
     runId: run.run_id,
     workspaceId: run.workspace_id,
@@ -192,6 +202,8 @@ export function runIndexEntry(sql: SqlHandle, run: RunRow, databaseId: string): 
     reviewer: run.reviewer,
     status: run.status,
     reviewMode: run.review_mode,
+    approverGroup: run.approver_group,
+    approvedBy,
     autoApplied: run.auto_applied,
     reverted: run.reverted,
     acknowledged: run.acknowledged,
@@ -248,6 +260,11 @@ export function touchRun(sql: SqlHandle, runId: string, now: number): void {
 
 export function setRunReviewMode(sql: SqlHandle, runId: string, mode: ReviewMode): void {
   sql.exec(`UPDATE _runs SET review_mode = ? WHERE run_id = ?`, mode, runId);
+}
+
+/** Stamp the approver group a proposal at `colleague` named, unless an earlier one did. */
+export function stampRunApproverGroup(sql: SqlHandle, runId: string, group: string): void {
+  sql.exec(`UPDATE _runs SET approver_group = ? WHERE run_id = ? AND approver_group IS NULL`, group, runId);
 }
 
 export function markRunAutoApplied(sql: SqlHandle, runId: string): void {
@@ -366,16 +383,17 @@ export function setOpStatus(
   runId: string,
   opId: string,
   status: Exclude<DatabaseRunOpStatus, "pending">,
-  opts: { decidedBy: string; ledgerOpId?: string; error?: string; feedback?: RunFeedback },
+  opts: { decidedBy: string; ledgerOpId?: string; error?: string; feedback?: RunFeedback; level?: ReviewMode },
 ): boolean {
   const won = sql.exec(
-    `UPDATE _run_ops SET status = ?, decided_by = ?, ledger_op_id = ?, error = ?, feedback = ?
+    `UPDATE _run_ops SET status = ?, decided_by = ?, ledger_op_id = ?, error = ?, feedback = ?, decided_level = ?
      WHERE run_id = ? AND op_id = ? AND status = 'pending' RETURNING op_id`,
     status,
     opts.decidedBy,
     opts.ledgerOpId ?? null,
     opts.error ?? null,
     opts.feedback ? JSON.stringify(opts.feedback) : null,
+    opts.level ?? null,
     runId,
     opId,
   );
@@ -608,6 +626,7 @@ export async function toRunSummary(
     created_at: run.created_at,
     updated_at: run.updated_at,
   };
+  if (run.approver_group) summary.approver_group = run.approver_group;
   if (!withPayloads) summary.ops_truncated = true;
   if (run.reverted) summary.reverted = true;
   return summary;

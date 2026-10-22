@@ -223,6 +223,7 @@ export function GhostInsertRows({
   payload,
   busy,
   readOnly,
+  acceptBlocked = false,
   onDecide,
 }: {
   columns: ColumnSpec[];
@@ -232,6 +233,8 @@ export function GhostInsertRows({
   payload: DbRunOpRowsInsert;
   busy: boolean;
   readOnly: boolean;
+  /** The reader asked the AI for it at `colleague`: someone else accepts it, and they may reject it. */
+  acceptBlocked?: boolean;
   onDecide: (decision: "accept" | "reject") => void;
 }) {
   // A staged import can be one op of many thousands of rows; its detail arrives sampled.
@@ -264,7 +267,14 @@ export function GhostInsertRows({
           </span>
           {!readOnly && (
             <span className="db-ghost-actions__buttons">
-              <Button label={t("common.accept")} variant="primary" size="sm" isDisabled={busy} onClick={() => onDecide("accept")} />
+              <Button
+                label={t("common.accept")}
+                variant="primary"
+                size="sm"
+                isDisabled={busy || acceptBlocked}
+                {...(acceptBlocked ? { tooltip: t("review.runBar.waitsColleague") } : {})}
+                onClick={() => onDecide("accept")}
+              />
               <Button label={t("common.reject")} variant="ghost" size="sm" isDisabled={busy} onClick={() => onDecide("reject")} />
             </span>
           )}

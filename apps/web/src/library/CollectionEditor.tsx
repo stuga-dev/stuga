@@ -148,6 +148,7 @@ export function CollectionEditor({
               {saveErr && (
                 <Banner
                   status="error"
+                  role="alert"
                   container="section"
                   title={t("library.collectionEditor.saveFailed")}
                   description={t("library.collectionEditor.saveFailedBody")}

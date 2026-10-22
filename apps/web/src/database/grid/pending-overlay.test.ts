@@ -52,6 +52,12 @@ describe("pendingOverlay", () => {
     expect(o.inserts).toEqual([{ runId: "run_1", opId: "o2", agent: "Claude", payload: insert }]);
   });
 
+  it("marks an insert whose Accept is someone else's, as its run says", () => {
+    const insert = { kind: "rows.insert" as const, table_id: "tbl_1", rows: [{ a: "1" }], row_ids: ["n1"] };
+    const o = pendingOverlay([{ ...pending("o1", insert), acceptBlocked: true }]);
+    expect(o.inserts).toEqual([{ runId: "run_1", opId: "o1", agent: "Claude", payload: insert, acceptBlocked: true }]);
+  });
+
   it("paints nothing for an op whose payload was elided", () => {
     const o = pendingOverlay([pending("o1", undefined, "Claude", "rows.delete")]);
     expect(o.deletes.size).toBe(0);

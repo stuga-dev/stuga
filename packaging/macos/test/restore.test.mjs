@@ -34,7 +34,7 @@ const TM_EXCLUDE_VALUE = /^TM_EXCLUDE_VALUE=(\S+)$/m.exec(readFileSync(join(bin,
 const roots = [];
 after(() => roots.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
 
-const PINS = "PG_MAJOR=18\nPGVECTOR_VERSION=0.8.6\nPG_SEARCH_VERSION=0.25.9\n";
+const PINS = "PG_MAJOR=18\nPGVECTOR_VERSION=0.8.6\n";
 const NAME = "2026-10-04T030000Z";
 const RELEASES = "https://releases.test/download";
 
@@ -123,7 +123,7 @@ echo "pkgutil $*" >> "$STUB_DIR/calls"
 version="$(sed -n 's/^version=//p' "$2")"
 conf="$3/stuga-node.pkg/Payload/Library/Application Support/Stuga/runtime/$version/conf"
 mkdir -p "$conf"
-grep -E '^(PG_MAJOR|PG_SEARCH_VERSION|PGVECTOR_VERSION)=' "$2" > "$conf/versions.env"
+grep -E '^(PG_MAJOR|PGVECTOR_VERSION)=' "$2" > "$conf/versions.env"
 `,
   installer: String.raw`#!/bin/bash
 # installer -pkg <pkg> -target /: what a package's preinstall and postinstall do to $STUGA_ROOT.
@@ -179,7 +179,7 @@ const RESTORED = (root) =>
  * A root running Stuga `installed` on data `served` last wrote, a backup NAME of `backup`'s data, the
  * node and Postgres running, and the release `older` published.
  */
-function setup({ installed = "0.1.14", served = installed, backup = installed, older = "0.1.13", olderPins = PINS } = {}) {
+function setup({ installed = "0.2.2", served = installed, backup = installed, older = "0.2.1", olderPins = PINS } = {}) {
   // Real, as `pwd -P` and the runtime's own paths give it: the temporary directory is behind /var.
   const base = realpathSync(mkdtempSync(join(tmpdir(), "stuga-restore-")));
   roots.push(base);
@@ -307,7 +307,7 @@ function setup({ installed = "0.1.14", served = installed, backup = installed, o
 }
 
 /** Whatever happened, nothing was stopped and nothing was replaced. */
-function nothingChanged(h, installed = "0.1.14") {
+function nothingChanged(h, installed = "0.2.2") {
   const calls = h.calls();
   assert.ok(!calls.some((c) => c.startsWith("launchctl bootout") || c.startsWith("installer")), calls.join("\n"));
   assert.deepEqual(h.node("restore"), []);
@@ -325,12 +325,12 @@ test("the same version: checked under the mark, then the node stopped, restored 
 
   const backup = join(h.root, "data", "backups", NAME);
   const [verify] = h.node("verify");
-  assert.ok(verify.startsWith(`stuga-node verify ${backup} --json [runtime 0.1.14] [mark held] [cwd ${join(h.root, "data")}]`), verify);
+  assert.ok(verify.startsWith(`stuga-node verify ${backup} --json [runtime 0.2.2] [mark held] [cwd ${join(h.root, "data")}]`), verify);
   assert.doesNotMatch(verify, /--going-back/);
   const [restore] = h.node("restore");
   assert.equal(
     restore,
-    `stuga-node restore ${backup} --yes --json [runtime 0.1.14] [mark held] [cwd ${join(h.root, "data")}] [DATA_DIR ${join(h.root, "data", "node")}] [PG_BIN ${join(h.root, "runtime", "0.1.14", "postgres", "bin")}]`,
+    `stuga-node restore ${backup} --yes --json [runtime 0.2.2] [mark held] [cwd ${join(h.root, "data")}] [DATA_DIR ${join(h.root, "data", "node")}] [PG_BIN ${join(h.root, "runtime", "0.2.2", "postgres", "bin")}]`,
   );
   assert.equal(
     h.inOrder([
@@ -383,9 +383,9 @@ test("not root: refused before anything", { skip }, () => {
 });
 
 for (const [backup, why] of [
-  ["0.1.15", /holds Stuga 0\.1\.15's data, newer than this Stuga 0\.1\.14\. Update first, then run this again\. Nothing was changed\./],
-  ["0.1.11", /going back is possible to Stuga 0\.1\.12 and later; .* holds Stuga 0\.1\.11's data\. Nothing was changed\./],
-  ["0.0.0-dev", /holds Stuga 0\.0\.0-dev's data and this is Stuga 0\.1\.14: only a release goes back to another/],
+  ["0.2.3", /holds Stuga 0\.2\.3's data, newer than this Stuga 0\.2\.2\. Update first, then run this again\. Nothing was changed\./],
+  ["0.1.16", /going back is possible to Stuga 0\.2\.0 and later; .* holds Stuga 0\.1\.16's data\. Nothing was changed\./],
+  ["0.0.0-dev", /holds Stuga 0\.0\.0-dev's data and this is Stuga 0\.2\.2: only a release goes back to another/],
 ]) {
   test(`a backup of Stuga ${backup}'s data is refused before anything stops`, { skip }, () => {
     const h = setup({ backup });
@@ -399,7 +399,7 @@ for (const [backup, why] of [
 }
 
 test("going back: the older release is downloaded, checked and installed, and its runtime restores", { skip }, () => {
-  const h = setup({ backup: "0.1.13" });
+  const h = setup({ backup: "0.2.1" });
   const run = h.stuga(["restore", "--yes", NAME]);
   assert.equal(run.status, 0, run.stderr);
 
@@ -407,7 +407,7 @@ test("going back: the older release is downloaded, checked and installed, and it
   assert.equal(
     h.inOrder([
       "stuga-node verify",
-      `curl ${RELEASES}/v0.1.13/Stuga-0.1.13.pkg`,
+      `curl ${RELEASES}/v0.2.1/Stuga-0.2.1.pkg`,
       "spctl --assess --type install",
       "xar -xf",
       "pkgutil --expand-full",
@@ -418,25 +418,25 @@ test("going back: the older release is downloaded, checked and installed, and it
     ]),
     "in order",
   );
-  assert.match(h.node("verify")[0], /--json --going-back \[runtime 0\.1\.14\] \[mark held\]/);
-  assert.match(h.node("restore")[0], /\[runtime 0\.1\.13\] \[mark held\]/);
+  assert.match(h.node("verify")[0], /--json --going-back \[runtime 0\.2\.2\] \[mark held\]/);
+  assert.match(h.node("restore")[0], /\[runtime 0\.2\.1\] \[mark held\]/);
   const installer = calls.find((c) => c.startsWith("installer"));
-  assert.match(installer, /^installer -pkg \/private\/var\/tmp\/stuga-restore\.[A-Za-z0-9]+\/Stuga-0\.1\.13\.pkg -target \/ \(directory 700\)$/);
+  assert.match(installer, /^installer -pkg \/private\/var\/tmp\/stuga-restore\.[A-Za-z0-9]+\/Stuga-0\.2\.1\.pkg -target \/ \(directory 700\)$/);
   assert.ok(!existsSync(installer.split(" ")[2]), "the working directory goes");
   // The installer started the older node under the mark: no process, until the restore was done.
   const bootstraps = calls.filter((c) => c === `launchctl bootstrap system ${h.nodePlist}`);
   assert.equal(bootstraps.length, 2, calls.join("\n"));
 
-  assert.equal(readlinkSync(join(h.root, "current")), "runtime/0.1.13");
-  assert.ok(!existsSync(join(h.root, "runtime", "0.1.14")), "the runtime that ran bin/stuga is gone, and it finished");
+  assert.equal(readlinkSync(join(h.root, "current")), "runtime/0.2.1");
+  assert.ok(!existsSync(join(h.root, "runtime", "0.2.2")), "the runtime that ran bin/stuga is gone, and it finished");
   assert.ok(!existsSync(join(h.root, "status", "upgrade.json")), "the newer release's upgrade status goes");
   assert.ok(!h.marked());
   assert.ok(h.job("dev.stuga.node").running);
-  assert.match(run.stdout, new RegExp(`^Restored ${NAME}; Stuga 0\\.1\\.13 runs\\. What it replaced is kept`, "m"));
+  assert.match(run.stdout, new RegExp(`^Restored ${NAME}; Stuga 0\\.2\\.1 runs\\. What it replaced is kept`, "m"));
 });
 
 test("going back with a package that fails its checks installs nothing and stops nothing", { skip }, () => {
-  const h = setup({ backup: "0.1.13" });
+  const h = setup({ backup: "0.2.1" });
   h.touch("spctl-status", "3");
   const run = h.stuga(["restore", "--yes", NAME]);
   assert.equal(run.status, 2);
@@ -444,33 +444,33 @@ test("going back with a package that fails its checks installs nothing and stops
   nothingChanged(h);
 });
 
-test("going back across another pg_search is refused before anything changes", { skip }, () => {
-  const h = setup({ backup: "0.1.13", olderPins: PINS.replace("PG_SEARCH_VERSION=0.25.9", "PG_SEARCH_VERSION=0.24.0") });
+test("going back across another pgvector is refused before anything changes", { skip }, () => {
+  const h = setup({ backup: "0.2.1", olderPins: PINS.replace("PGVECTOR_VERSION=0.8.6", "PGVECTOR_VERSION=0.8.0") });
   const run = h.stuga(["restore", "--yes", NAME]);
   assert.equal(run.status, 2);
-  assert.match(run.stderr, /Stuga 0\.1\.13 has PG_SEARCH_VERSION 0\.24\.0 and this Stuga 0\.25\.9: going back across it is not supported\. Nothing was changed\./);
+  assert.match(run.stderr, /Stuga 0\.2\.1 has PGVECTOR_VERSION 0\.8\.0 and this Stuga 0\.8\.6: going back across it is not supported\. Nothing was changed\./);
   nothingChanged(h);
 });
 
 test("going back offline: --pkg gives the installer a copy, never the file given", { skip }, () => {
-  const h = setup({ backup: "0.1.13" });
+  const h = setup({ backup: "0.2.1" });
   const downloads = join(h.base, "Downloads");
   mkdirSync(downloads);
-  copyFileSync(join(h.stub, "serve", "Stuga-0.1.13.pkg"), join(downloads, "Stuga-0.1.13.pkg"));
-  rmSync(join(h.stub, "serve", "Stuga-0.1.13.pkg"));
-  const run = h.stuga(["restore", "--yes", "--pkg", "Stuga-0.1.13.pkg", NAME], { cwd: downloads });
+  copyFileSync(join(h.stub, "serve", "Stuga-0.2.1.pkg"), join(downloads, "Stuga-0.2.1.pkg"));
+  rmSync(join(h.stub, "serve", "Stuga-0.2.1.pkg"));
+  const run = h.stuga(["restore", "--yes", "--pkg", "Stuga-0.2.1.pkg", NAME], { cwd: downloads });
   assert.equal(run.status, 0, run.stderr);
   assert.ok(!h.calls().some((c) => c.startsWith("curl")), "nothing is downloaded");
   const installer = h.calls().find((c) => c.startsWith("installer"));
-  assert.match(installer, /^installer -pkg \/private\/var\/tmp\/stuga-restore\.[A-Za-z0-9]+\/Stuga-0\.1\.13\.pkg /);
-  assert.ok(existsSync(join(downloads, "Stuga-0.1.13.pkg")));
+  assert.match(installer, /^installer -pkg \/private\/var\/tmp\/stuga-restore\.[A-Za-z0-9]+\/Stuga-0\.2\.1\.pkg /);
+  assert.ok(existsSync(join(downloads, "Stuga-0.2.1.pkg")));
 });
 
 test("going back offline that stopped short: the same command with --pkg finishes it", { skip }, () => {
-  const h = setup({ backup: "0.1.13" });
-  const pkg = join(h.base, "Stuga-0.1.13.pkg");
-  copyFileSync(join(h.stub, "serve", "Stuga-0.1.13.pkg"), pkg);
-  rmSync(join(h.stub, "serve", "Stuga-0.1.13.pkg"));
+  const h = setup({ backup: "0.2.1" });
+  const pkg = join(h.base, "Stuga-0.2.1.pkg");
+  copyFileSync(join(h.stub, "serve", "Stuga-0.2.1.pkg"), pkg);
+  rmSync(join(h.stub, "serve", "Stuga-0.2.1.pkg"));
   h.answer("restore", 3, { ok: false, exit_code: 3, error: "pg_restore failed; nothing was changed." });
   let run = h.stuga(["restore", "--yes", "--pkg", pkg, NAME]);
   assert.equal(run.status, 4, run.stderr);
@@ -480,30 +480,30 @@ test("going back offline that stopped short: the same command with --pkg finishe
   h.answer("restore", 0, RESTORED(h.root));
   run = h.stuga(["restore", "--yes", "--pkg", pkg, NAME]);
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stderr, /^note: Stuga 0\.1\.13 is installed already; --pkg is not needed\.$/m);
+  assert.match(run.stderr, /^note: Stuga 0\.2\.1 is installed already; --pkg is not needed\.$/m);
   assert.ok(!h.calls().some((c) => c.startsWith("installer") || c.startsWith("curl")));
-  assert.match(h.node("verify")[0], /--json --going-back \[runtime 0\.1\.13\]/);
-  assert.match(h.node("restore")[0], /\[runtime 0\.1\.13\]/);
+  assert.match(h.node("verify")[0], /--json --going-back \[runtime 0\.2\.1\]/);
+  assert.match(h.node("restore")[0], /\[runtime 0\.2\.1\]/);
   assert.deepEqual(h.job("dev.stuga.node"), { loaded: true, running: true, disabled: false });
 });
 
 test("--pkg refuses a link, and a restore that goes back to nothing", { skip }, () => {
-  const h = setup({ backup: "0.1.13" });
-  symlinkSync(join(h.stub, "serve", "Stuga-0.1.13.pkg"), join(h.base, "Stuga-0.1.13.pkg"));
-  let run = h.stuga(["restore", "--yes", "--pkg", join(h.base, "Stuga-0.1.13.pkg"), NAME]);
+  const h = setup({ backup: "0.2.1" });
+  symlinkSync(join(h.stub, "serve", "Stuga-0.2.1.pkg"), join(h.base, "Stuga-0.2.1.pkg"));
+  let run = h.stuga(["restore", "--yes", "--pkg", join(h.base, "Stuga-0.2.1.pkg"), NAME]);
   assert.equal(run.status, 2);
-  assert.match(run.stderr, /Stuga-0\.1\.13\.pkg is not a package file\. Nothing was changed\./);
+  assert.match(run.stderr, /Stuga-0\.2\.1\.pkg is not a package file\. Nothing was changed\./);
   nothingChanged(h);
 
   const same = setup();
-  run = same.stuga(["restore", "--yes", "--pkg", join(same.stub, "serve", "Stuga-0.1.13.pkg"), NAME]);
+  run = same.stuga(["restore", "--yes", "--pkg", join(same.stub, "serve", "Stuga-0.2.1.pkg"), NAME]);
   assert.equal(run.status, 2);
   assert.match(run.stderr, /^error: --pkg is for going back\. Nothing was changed\.$/m);
   nothingChanged(same);
 });
 
 test("going back when the live data's version cannot be read is refused", { skip }, () => {
-  const h = setup({ backup: "0.1.13" });
+  const h = setup({ backup: "0.2.1" });
   h.touch("psql-fails");
   const run = h.stuga(["restore", "--yes", NAME]);
   assert.equal(run.status, 2);
@@ -512,13 +512,13 @@ test("going back when the live data's version cannot be read is refused", { skip
 });
 
 test("a restore that fails after going back leaves the older release stopped, and running it again finishes", { skip }, () => {
-  const h = setup({ backup: "0.1.13" });
+  const h = setup({ backup: "0.2.1" });
   h.answer("restore", 3, { ok: false, exit_code: 3, error: "pg_restore failed; nothing was changed." });
   let run = h.stuga(["restore", "--yes", NAME]);
   assert.equal(run.status, 4);
   assert.ok(
     run.stderr.includes(
-      `Stuga 0.1.13 is installed and stopped; your data is still Stuga 0.1.14's and was not changed: pg_restore failed; nothing was changed. Fix that and run this again, or open Stuga-0.1.14.pkg (${RELEASES}/v0.1.14/Stuga-0.1.14.pkg) to go forward.`,
+      `Stuga 0.2.1 is installed and stopped; your data is still Stuga 0.2.2's and was not changed: pg_restore failed; nothing was changed. Fix that and run this again, or open Stuga-0.2.2.pkg (${RELEASES}/v0.2.2/Stuga-0.2.2.pkg) to go forward.`,
     ),
     run.stderr,
   );
@@ -531,18 +531,18 @@ test("a restore that fails after going back leaves the older release stopped, an
   h.answer("restore", 0, RESTORED(h.root));
   run = h.stuga(["restore", "--yes", NAME]);
   assert.equal(run.status, 0, run.stderr);
-  assert.match(h.node("verify")[0], /--json --going-back \[runtime 0\.1\.13\]/);
+  assert.match(h.node("verify")[0], /--json --going-back \[runtime 0\.2\.1\]/);
   assert.ok(!h.calls().some((c) => c.startsWith("installer") || c.startsWith("curl")));
-  assert.match(h.node("restore")[0], /\[runtime 0\.1\.13\]/);
+  assert.match(h.node("restore")[0], /\[runtime 0\.2\.1\]/);
   assert.deepEqual(h.job("dev.stuga.node"), { loaded: true, running: true, disabled: false });
 });
 
 test("an installer that stops before it replaced anything starts Stuga again, and running it again finishes", { skip }, () => {
-  const h = setup({ backup: "0.1.13" });
+  const h = setup({ backup: "0.2.1" });
   h.touch("installer-fails");
   let run = h.stuga(["restore", "--yes", NAME]);
   assert.equal(run.status, 3);
-  assert.match(run.stderr, /^error: the installer stopped: installer: The install failed\. Stuga 0\.1\.14 was started again; nothing was changed\.$/m);
+  assert.match(run.stderr, /^error: the installer stopped: installer: The install failed\. Stuga 0\.2\.2 was started again; nothing was changed\.$/m);
   assert.deepEqual(h.node("restore"), []);
   assert.ok(!h.marked());
   assert.ok(h.job("dev.stuga.node").running && h.job("dev.stuga.postgres").running);
@@ -551,15 +551,15 @@ test("an installer that stops before it replaced anything starts Stuga again, an
   rmSync(join(h.stub, "installer-fails"));
   run = h.stuga(["restore", "--yes", NAME]);
   assert.equal(run.status, 0, run.stderr);
-  assert.equal(readlinkSync(join(h.root, "current")), "runtime/0.1.13");
+  assert.equal(readlinkSync(join(h.root, "current")), "runtime/0.2.1");
 });
 
 test("an installer that stops after it replaced the runtime leaves the node stopped", { skip }, () => {
-  const h = setup({ backup: "0.1.13" });
+  const h = setup({ backup: "0.2.1" });
   h.touch("installer-fails-after");
   const run = h.stuga(["restore", "--yes", NAME]);
   assert.equal(run.status, 4);
-  assert.ok(run.stderr.includes(`Your data was not changed. Open Stuga-0.1.14.pkg (${RELEASES}/v0.1.14/Stuga-0.1.14.pkg) to go forward.`), run.stderr);
+  assert.ok(run.stderr.includes(`Your data was not changed. Open Stuga-0.2.2.pkg (${RELEASES}/v0.2.2/Stuga-0.2.2.pkg) to go forward.`), run.stderr);
   assert.deepEqual(h.node("restore"), []);
   assert.equal(h.job("dev.stuga.node").disabled, true);
 });
@@ -615,34 +615,34 @@ test("an interrupt during the restore waits for stuga-node, which finishes", { s
 
 test("an upgrade the helper began before the mark, done during the checks: refused, and the new version starts", { skip }, () => {
   const h = setup();
-  const newer = join(h.stub, "runtimes", "0.1.15");
-  cpSync(join(h.root, "runtime", "0.1.14"), newer, { recursive: true, verbatimSymlinks: true });
-  writeFileSync(join(newer, "app", "VERSION"), "0.1.15\n");
-  writeFileSync(join(h.stub, "serve", "Stuga-0.1.15.pkg"), `version=0.1.15\n${PINS}`);
-  // The helper's installer, run while bin/stuga verifies: it moves `current` and removes 0.1.14.
+  const newer = join(h.stub, "runtimes", "0.2.3");
+  cpSync(join(h.root, "runtime", "0.2.2"), newer, { recursive: true, verbatimSymlinks: true });
+  writeFileSync(join(newer, "app", "VERSION"), "0.2.3\n");
+  writeFileSync(join(h.stub, "serve", "Stuga-0.2.3.pkg"), `version=0.2.3\n${PINS}`);
+  // The helper's installer, run while bin/stuga verifies: it moves `current` and removes 0.2.2.
   writeFileSync(
     join(h.stub, "node", "verify.sh"),
-    `PATH="$STUB_DIR/bin:/usr/bin:/bin" STUGA_NODE_PLIST=${JSON.stringify(h.nodePlist)} installer -pkg "$STUB_DIR/serve/Stuga-0.1.15.pkg" -target /\n`,
+    `PATH="$STUB_DIR/bin:/usr/bin:/bin" STUGA_NODE_PLIST=${JSON.stringify(h.nodePlist)} installer -pkg "$STUB_DIR/serve/Stuga-0.2.3.pkg" -target /\n`,
   );
   const run = h.stuga(["restore", "--yes", NAME]);
   assert.equal(run.status, 2, run.stderr);
   assert.match(run.stderr, /^error: Stuga was updated meanwhile; run this again\. Nothing was changed\.$/m);
   assert.deepEqual(h.node("restore"), []);
-  assert.deepEqual(h.calls().filter((c) => c.startsWith("pg_isready")), ["pg_isready [runtime 0.1.14]"], "no wait on a removed runtime");
-  assert.equal(readlinkSync(join(h.root, "current")), "runtime/0.1.15");
+  assert.deepEqual(h.calls().filter((c) => c.startsWith("pg_isready")), ["pg_isready [runtime 0.2.2]"], "no wait on a removed runtime");
+  assert.equal(readlinkSync(join(h.root, "current")), "runtime/0.2.3");
   assert.ok(!h.marked());
   assert.ok(h.job("dev.stuga.node").running, "the node the mark held back is started");
 });
 
 test("Ctrl-C while the older release's database starts: the node stays stopped, saying how to finish", { skip }, async () => {
-  const h = setup({ backup: "0.1.13" });
-  const pgIsready = join(h.stub, "runtimes", "0.1.13", "postgres", "bin", "pg_isready");
-  writeFileSync(pgIsready, `#!/bin/bash\necho "pg_isready [runtime 0.1.13]" >> "${h.stub}/calls"\nexit 1\n`);
-  const run = await h.interrupt(["restore", "--yes", NAME], () => h.calls().includes("pg_isready [runtime 0.1.13]"));
+  const h = setup({ backup: "0.2.1" });
+  const pgIsready = join(h.stub, "runtimes", "0.2.1", "postgres", "bin", "pg_isready");
+  writeFileSync(pgIsready, `#!/bin/bash\necho "pg_isready [runtime 0.2.1]" >> "${h.stub}/calls"\nexit 1\n`);
+  const run = await h.interrupt(["restore", "--yes", NAME], () => h.calls().includes("pg_isready [runtime 0.2.1]"));
   assert.equal(run.status, 4, run.stderr);
   assert.ok(
     run.stderr.includes(
-      `Stuga 0.1.13 is installed and stopped; your data is still Stuga 0.1.14's and was not changed: interrupted. Fix that and run this again, or open Stuga-0.1.14.pkg (${RELEASES}/v0.1.14/Stuga-0.1.14.pkg) to go forward.`,
+      `Stuga 0.2.1 is installed and stopped; your data is still Stuga 0.2.2's and was not changed: interrupted. Fix that and run this again, or open Stuga-0.2.2.pkg (${RELEASES}/v0.2.2/Stuga-0.2.2.pkg) to go forward.`,
     ),
     run.stderr,
   );
@@ -652,10 +652,10 @@ test("Ctrl-C while the older release's database starts: the node stays stopped, 
 });
 
 test("going back, ended before the restore by anything unforeseen: the older node stays stopped, saying how to finish", { skip }, async () => {
-  const h = setup({ backup: "0.1.13" });
+  const h = setup({ backup: "0.2.1" });
   // The older release's database answers once the test says so.
-  const pgIsready = join(h.stub, "runtimes", "0.1.13", "postgres", "bin", "pg_isready");
-  writeFileSync(pgIsready, `#!/bin/bash\necho "pg_isready [runtime 0.1.13]" >> "${h.stub}/calls"\n[ -f "${h.stub}/postgres-up" ]\n`);
+  const pgIsready = join(h.stub, "runtimes", "0.2.1", "postgres", "bin", "pg_isready");
+  writeFileSync(pgIsready, `#!/bin/bash\necho "pg_isready [runtime 0.2.1]" >> "${h.stub}/calls"\n[ -f "${h.stub}/postgres-up" ]\n`);
   h.touch("sleep-real");
   // SIGPIPE ignored, as bash then leaves it: a write to the closed output fails, and set -e ends it.
   const stuga = join(h.root, "current", "bin", "stuga");
@@ -663,12 +663,12 @@ test("going back, ended before the restore by anything unforeseen: the older nod
   let stderr = "";
   child.stderr.on("data", (d) => (stderr += d));
   const exited = new Promise((resolve) => child.on("exit", resolve));
-  for (let i = 0; i < 300 && !h.calls().includes("pg_isready [runtime 0.1.13]"); i++) await new Promise((r) => setTimeout(r, 50));
+  for (let i = 0; i < 300 && !h.calls().includes("pg_isready [runtime 0.2.1]"); i++) await new Promise((r) => setTimeout(r, 50));
   child.stdout.destroy();
   h.touch("postgres-up");
   assert.equal(await exited, 4, stderr);
   // bash's unwritten output may land inside the address; the rest is whole.
-  assert.match(stderr, /error: Stuga 0\.1\.13 is installed and stopped; your data is still Stuga 0\.1\.14's and was not changed\. Run this again, or open Stuga-0\.1\.14\.pkg \(/);
+  assert.match(stderr, /error: Stuga 0\.2\.1 is installed and stopped; your data is still Stuga 0\.2\.2's and was not changed\. Run this again, or open Stuga-0\.2\.2\.pkg \(/);
   assert.deepEqual(h.node("restore"), []);
   assert.deepEqual(h.job("dev.stuga.node"), { loaded: false, running: false, disabled: true });
   assert.ok(!h.marked());
@@ -725,12 +725,12 @@ test("refused while a package installs, or while the database is down", { skip }
 });
 
 test("without --yes it asks for the backup's name", { skip }, () => {
-  const h = setup({ backup: "0.1.13" });
+  const h = setup({ backup: "0.2.1" });
   let run = h.stuga(["restore", NAME], { input: "yes\n" });
   assert.equal(run.status, 2);
   assert.ok(
     run.stderr.includes(
-      `This replaces Stuga's data with ${NAME}, and goes back from Stuga 0.1.14 to Stuga 0.1.13.\n` +
+      `This replaces Stuga's data with ${NAME}, and goes back from Stuga 0.2.2 to Stuga 0.2.1.\n` +
         "Work done since the backup is kept aside; the restore says where.\n" +
         "Type the backup name to confirm: \n",
     ),
@@ -747,13 +747,13 @@ test("without --yes it asks for the backup's name", { skip }, () => {
 });
 
 test("going back offline without --pkg: refused before anything stops, naming the package to download", { skip }, () => {
-  const h = setup({ backup: "0.1.13" });
-  rmSync(join(h.stub, "serve", "Stuga-0.1.13.pkg"));
+  const h = setup({ backup: "0.2.1" });
+  rmSync(join(h.stub, "serve", "Stuga-0.2.1.pkg"));
   const run = h.stuga(["restore", "--yes", NAME]);
   assert.equal(run.status, 3);
   assert.ok(
     run.stderr.includes(
-      `error: could not download Stuga 0.1.13. Nothing was changed. Without a connection, download ${RELEASES}/v0.1.13/Stuga-0.1.13.pkg elsewhere and pass it with --pkg <file>.`,
+      `error: could not download Stuga 0.2.1. Nothing was changed. Without a connection, download ${RELEASES}/v0.2.1/Stuga-0.2.1.pkg elsewhere and pass it with --pkg <file>.`,
     ),
     run.stderr,
   );
@@ -765,7 +765,7 @@ test("the other commands are stuga-node's, run as the node, with its exit status
   h.answer("list", 3, { ok: false, exit_code: 3, error: "no" });
   const run = h.stuga(["list", "--json"]);
   assert.equal(run.status, 3);
-  assert.match(h.calls()[0], new RegExp(`^stuga-node list --json \\[runtime 0\\.1\\.14\\] \\[mark none\\] \\[cwd ${join(h.root, "data").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]`));
+  assert.match(h.calls()[0], new RegExp(`^stuga-node list --json \\[runtime 0\\.2\\.2\\] \\[mark none\\] \\[cwd ${join(h.root, "data").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]`));
   const verify = h.stuga(["verify", NAME]);
   assert.equal(verify.status, 0, verify.stderr);
   assert.ok(h.node("verify")[0].startsWith(`stuga-node verify ${join(h.root, "data", "backups", NAME)} [runtime`));

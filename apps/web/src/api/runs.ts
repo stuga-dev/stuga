@@ -1,5 +1,6 @@
 import type { AgentRunHunk, AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
+import type { RunStanding } from "@stuga/protocol/domain/runs";
 import { api } from "../lib/http/client";
 
 interface RunDetail {
@@ -61,8 +62,10 @@ export interface InboxRun {
   client: string | null;
   model: string | null;
   reviewer: string;
-  /** Whether this person may decide the run: its reviewer, or someone who manages the item. */
+  /** Whether this person may decide the run: accept or reject it, with write access to the item. */
   can_decide?: boolean;
+  /** Where this person stands on it: its level now, what they may do, and whom it waits for. */
+  you?: RunStanding;
   status: "open" | "applied" | "rejected" | "expired" | string;
   review_mode: ReviewMode;
   auto_applied: boolean;

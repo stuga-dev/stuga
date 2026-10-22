@@ -7,7 +7,8 @@ import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode }
 import { DatabaseRuns } from "../api";
 import type { DatabaseRunOp, DatabaseRunSummary } from "@stuga/protocol/databases/types";
 import type { DatabaseSocket } from "../sync/database-socket";
-import { pendingItems, pendingItemsOf, type Decision, type RunShape } from "./run-ledger";
+import { acceptWaitsFor, pendingItems, pendingItemsOf, type Decision, type RunShape } from "./run-ledger";
+import { getAlias } from "../lib/http/client";
 import { useRunLedger, type LedgerApi, type RunNotice } from "./use-run-ledger";
 import { t } from "../i18n/i18n";
 
@@ -30,6 +31,8 @@ export interface PendingOp {
   runId: string;
   agent: string;
   op: DatabaseRunOp;
+  /** Its Accept is someone else's: this reader asked the AI for it at `colleague`. */
+  acceptBlocked?: true;
 }
 
 interface DbRunsCtx {
@@ -116,10 +119,16 @@ export function DbRunsProvider({
     }
   }, [state, docId, dispatch]);
 
-  const pending = useMemo(
-    () => pendingItemsOf(DB_RUN, openRuns).map(({ runId, agent, item }) => ({ runId, agent, op: item })),
-    [openRuns],
-  );
+  const pending = useMemo(() => {
+    // At `colleague` the person who asked the AI may reject its changes, and someone else accepts them.
+    const blocked = new Set(openRuns.filter((r) => acceptWaitsFor(r, getAlias()) !== null).map((r) => r.id));
+    return pendingItemsOf(DB_RUN, openRuns).map(({ runId, agent, item }): PendingOp => ({
+      runId,
+      agent,
+      op: item,
+      ...(blocked.has(runId) ? { acceptBlocked: true as const } : {}),
+    }));
+  }, [openRuns]);
 
   const value: DbRunsCtx = {
     runs: ledger.runs,

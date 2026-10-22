@@ -1,5 +1,5 @@
 import type { DocRow } from "./types.js";
-import { docCols } from "./sql.js";
+import { docCols, docLevelJoins } from "./sql.js";
 import type { Sql } from "./client.js";
 
 /**
@@ -26,9 +26,10 @@ export async function listFavoriteDocs(
   workspaceId: string,
 ): Promise<DocRow[]> {
   return sql<DocRow[]>`
-    SELECT ${docCols(sql, "d")}
+    SELECT ${docCols(sql, "d", { joined: true })}
     FROM favorites f
     JOIN docs d ON d.doc_id = f.doc_id
+    ${docLevelJoins(sql, "d")}
     WHERE f.user_alias = ${userAlias}
       AND d.workspace_id = ${workspaceId}
       AND d.acl_principals && ${principals}
