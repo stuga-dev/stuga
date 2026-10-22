@@ -50,6 +50,18 @@ function refused(stored: StoredRun, act: RunAct, by: string | undefined, v: Vouc
   return Response.json({ error: "not_reviewer", message: "only this run's reviewer can decide it" }, { status: 403 });
 }
 
+/** An accept of a run that waits behind another of the agent's runs here, still undecided. */
+function queuedRefusal(ahead: StoredRun): Response {
+  return Response.json(
+    {
+      error: "queued",
+      message: "these changes wait behind earlier changes to this page; decide those first",
+      behind: { run_id: ahead.id, change_id: ahead.change_id ?? null },
+    },
+    { status: 409 },
+  );
+}
+
 function runUnavailable(): Response {
   return Response.json(
     { error: "run_unavailable", message: "this run's contents could not be read; try again shortly" },
@@ -80,6 +92,8 @@ export async function handleRunPropose(ledger: RunLedger, req: Request): Promise
     model?: string | null;
     /** Feedback ids this proposal answers. */
     revises?: unknown;
+    /** The change it belongs to, which the node checked belongs to this agent. */
+    change_id?: unknown;
   } | null;
   const agentAlias = body?.agent_alias ?? "";
   const reviewer = body?.reviewer ?? "";
@@ -114,6 +128,7 @@ export async function handleRunPropose(ledger: RunLedger, req: Request): Promise
     docTitle: body.doc_title ?? "",
     client: typeof body.client === "string" ? body.client : null,
     model: typeof body.model === "string" ? body.model : null,
+    changeId: typeof body.change_id === "string" && body.change_id ? body.change_id : null,
   });
 
   if (result.mode === "noop") return Response.json({ mode: "noop" });
@@ -134,6 +149,7 @@ export async function handleRunPropose(ledger: RunLedger, req: Request): Promise
         run: result.run,
         pending: result.pending,
         parked_behind_pending: result.parkedBehindPending,
+        ...(result.queuedBehind ? { queued_behind: { run_id: result.queuedBehind.runId, change_id: result.queuedBehind.changeId } } : {}),
         ...(result.placed ? { placed: result.placed } : {}),
         feedback,
         revised,
@@ -202,6 +218,9 @@ export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<
   if (!stored) return Response.json({ error: "not_found" }, { status: 404 });
   const denied = refused(stored, input.decision, input.decided_by, input);
   if (denied) return denied;
+  // A queued run's hunks were proposed on top of the run ahead's: it is accepted only once that one is decided.
+  const ahead = input.decision === "accept" ? await ledger.aheadOf(stored) : null;
+  if (ahead) return queuedRefusal(ahead);
   const level = stricterReviewMode(stored.review_mode, parseReviewMode(input.level));
   const body = await ledger.loadBody(stored);
   // Without the hunk text there is nothing to decide, and closing would persist the empty body.
@@ -343,7 +362,7 @@ export async function handleRunRevert(ledger: RunLedger, req: Request): Promise<
   body.final_markdown = store.markdown();
   if (feedback) await ledger.noteFeedback(stored);
   await ledger.save(stored, body);
-  await ledger.clearActive(stored.agent_alias);
+  await ledger.unlink(stored);
   ledger.sendDecided(stored, body, "reject", [...landed, ...orphaned].map((h) => h.id), requestedBy);
   ledger.emitEvent("run.reverted", stored, `user:${requestedBy}`, "human", {
     decided_by: requestedBy,
@@ -392,6 +411,10 @@ export async function handleRunUndo(ledger: RunLedger, req: Request): Promise<Re
       return refuse("superseded", "the agent has proposed again since; decide its newer changes instead");
     }
   }
+  // Accepted hunks go back to waiting: undone ahead of a run still undecided, they would land ahead of it.
+  if (targets.some((h) => h.status === "accepted") && (await ledger.aheadOf(stored))) {
+    return refuse("queued", "these changes wait behind earlier ones to this page; decide those first");
+  }
 
   const requestedBy = input.requested_by!;
   // Unwound as revert does: newest first, sides swapped, and never a deletion, which has nothing to anchor on.
@@ -426,6 +449,8 @@ export async function handleRunUndo(ledger: RunLedger, req: Request): Promise<Re
     stored.status = "open";
     delete stored.seq_at_commit;
     delete body.final_markdown;
+    // The run it waited behind is decided by now, or it would not have closed.
+    if (stored.queued_behind && !(await ledger.aheadOf(stored))) delete stored.queued_behind;
   }
   stored.updated_at = Date.now();
   await ledger.save(stored, body);

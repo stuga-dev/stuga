@@ -6,7 +6,7 @@
  * caller's extra grants stack on top.
  */
 import { type OwnGrants, agentPrincipal, materializeAcl, orgPrincipal, userPrincipal } from "@stuga/auth";
-import { type DocRow, type FolderRow, createDoc, deleteDoc, getFolder, getWorkspace, updateDoc } from "@stuga/db";
+import { type DocRow, type FolderRow, createDoc, deleteDoc, getFolder, getWorkspace, holdChangePage, updateDoc } from "@stuga/db";
 import {
   MAX_IMPORT_MARKDOWN_BYTES,
   markdownByteLength,
@@ -22,6 +22,8 @@ import { type ColumnSpecInput, parseColumnSpecs } from "../databases/propose.js"
 import { newId } from "../ids.js";
 import { queueSnapshotSweep } from "../jobs/snapshot-sweep.js";
 import { authorizedFolder, destroyActorStorage } from "./access.js";
+import { holdPlan } from "../changes/held.js";
+import { discardOpened, openChange, resolveChange, type ChangeArgs, type ResolvedChange } from "../changes/resolve.js";
 
 interface OwnedDocInput {
   title: string;
@@ -78,9 +80,12 @@ async function insertOwnedDoc(ctx: Ctx, input: OwnedDocInput): Promise<DocRow> {
   });
 }
 
-/** Record the new document in the event feed and the audit ledger; `detail` adds to the audit row. */
-function announceDoc(ctx: Ctx, doc: DocRow, detail?: Record<string, unknown>): void {
-  recordEvent(ctx, "doc.created", doc.doc_id, { title: doc.title, doc_type: doc.doc_type, parent_id: doc.parent_id });
+/**
+ * Record the new document in the event feed and the audit ledger; `detail` adds to the audit row. A
+ * new page a change holds is announced in the feed only once it is approved (changes/held.ts).
+ */
+function announceDoc(ctx: Ctx, doc: DocRow, detail?: Record<string, unknown>, held = false): void {
+  if (!held) recordEvent(ctx, "doc.created", doc.doc_id, { title: doc.title, doc_type: doc.doc_type, parent_id: doc.parent_id });
   recordAudit(ctx, {
     action: "doc.create",
     targetKind: doc.doc_type === "database" ? "database" : "doc",
@@ -145,9 +150,17 @@ export interface CreateDocumentInput {
   table?: unknown;
   /** Databases only: the starter table's columns `[{ name, type, choices? }]`. */
   columns?: unknown;
+  /** An agent's: the change it belongs to, or the title that opens one. */
+  change?: ChangeArgs;
 }
 
-export type CreateDocumentOutcome = { ok: true; doc: DocRow } | { ok: false; status: number; message: string };
+/**
+ * `change`: the change an agent's new item belongs to. `held`: it is a new page held until that change
+ * is approved, since AI edits where it was made wait for a colleague.
+ */
+export type CreateDocumentOutcome =
+  | { ok: true; doc: DocRow; change?: ResolvedChange | null; held?: boolean }
+  | { ok: false; status: number; message: string };
 
 const TITLE_MAX = 200;
 
@@ -237,21 +250,65 @@ export async function createDocument(ctx: Ctx, input: CreateDocumentInput): Prom
   }
 
   const requestedTitle = typeof input.title === "string" ? input.title.trim().slice(0, TITLE_MAX) : "";
-  const doc = await insertOwnedDoc(ctx, {
-    // An import keeps title and body in sync: the title is derived from the body. A blank one
-    // stays blank, which every reader shows as "Untitled" in their own language, until the first line names it.
-    title: imported ? imported.title : requestedTitle,
-    // An agent's title names the document, so accepting its text never retitles it. A person's
-    // title, blank or not, is a stand-in their first line replaces until they rename it.
-    ...(ctx.isAgent && requestedTitle && !imported ? { titleSource: "user" as const } : {}),
-    docType,
-    parent,
-    grants: await visibilityFloor(ctx, parent),
-    inheritsPerms: true,
-  });
+  const title = imported ? imported.title : requestedTitle;
+  // An agent's new item belongs to its change. Where AI edits wait for a colleague it is held until
+  // that change is approved, so it has one: an untitled change of its own when the agent named none.
+  // Never titled after the page: a change's title reaches whoever decides any page of it, and the
+  // page's only those who may open it.
+  const hold = await holdPlan(ctx, parent);
+  let change: ResolvedChange | null = null;
+  if (ctx.isAgent) {
+    const resolved = await resolveChange(ctx, input.change, null);
+    if (!resolved.ok) return refuse(resolved.status, resolved.message);
+    change = resolved.resolved;
+    if (!change && hold) change = { change: await openChange(ctx, "", ""), opened: true };
+  }
+  const floor = await visibilityFloor(ctx, parent);
+  let doc: DocRow;
+  try {
+    doc = await insertOwnedDoc(ctx, {
+      // An import keeps title and body in sync: the title is derived from the body. A blank one
+      // stays blank, which every reader shows as "Untitled" in their own language, until the first line names it.
+      title,
+      // An agent's title names the document, so accepting its text never retitles it. A person's
+      // title, blank or not, is a stand-in their first line replaces until they rename it.
+      ...(ctx.isAgent && requestedTitle && !imported ? { titleSource: "user" as const } : {}),
+      docType,
+      parent,
+      // Held: its folder's access is not inherited; only its owner and those who may approve it open it.
+      grants: hold ? { p: hold.grants, w: hold.grants, c: [] } : floor,
+      inheritsPerms: !hold,
+    });
+  } catch (err) {
+    await discardOpened(ctx, change);
+    throw err;
+  }
+  if (hold && change && ctx.isAgent) {
+    // What it gets once approved: the grants a page made here takes, as the creator's own are kept.
+    const ownership = await docOwnership(ctx);
+    const release = { p: [...new Set([...ownership.ownGrants.p, ...floor.p])], w: [...new Set([...ownership.ownGrants.w, ...floor.w])], c: [...floor.c] };
+    const held = await holdChangePage(ctx.sql, {
+      docId: doc.doc_id,
+      changeId: change.change.change_id,
+      workspaceId: ctx.workspaceId,
+      heldGrants: hold.grants,
+      releaseGrants: release,
+      reviewer: ctx.onBehalfOf,
+      approverGroup: hold.approverGroup,
+    }).then(
+      () => true,
+      () => false,
+    );
+    if (!held) {
+      await discardCreatedDoc(ctx, doc);
+      await discardOpened(ctx, change);
+      return refuse(502, "could not hold the new page for approval");
+    }
+  }
 
-  if (imported && imported.markdown !== "" && !(await seedBody(ctx, doc.doc_id, imported.markdown))) {
+  if (imported && imported.markdown !== "" && !(await seedBody(ctx, doc.doc_id, imported.markdown, { change }))) {
     await discardCreatedDoc(ctx, doc);
+    await discardOpened(ctx, change);
     return refuse(502, "could not write the imported content");
   }
 
@@ -266,14 +323,15 @@ export async function createDocument(ctx: Ctx, input: CreateDocumentInput): Prom
       .catch(() => false);
     if (!initialized) {
       await discardCreatedDoc(ctx, doc);
+      await discardOpened(ctx, change);
       return refuse(502, "could not initialize the database");
     }
   }
 
   // Named as a rename names it, so the copy's first line does not take the title back.
   const created = copied && doc.title ? ((await updateDoc(ctx.sql, doc.doc_id, { title: doc.title }, ctx.env.searchLanguages.current())) ?? doc) : doc;
-  announceDoc(ctx, created);
-  return { ok: true, doc: created };
+  announceDoc(ctx, created, change ? { change_id: change.change.change_id, ...(hold ? { held: true } : {}) } : undefined, !!hold);
+  return { ok: true, doc: created, ...(ctx.isAgent ? { change, held: !!hold } : {}) };
 }
 
 /**
@@ -284,10 +342,11 @@ export async function createDocument(ctx: Ctx, input: CreateDocumentInput): Prom
  * `flush`, a person's is saved as a version before this returns, so the caller
  * can release the document's actor at once.
  */
-export async function seedBody(ctx: Ctx, docId: string, markdown: string, opts: { flush?: boolean } = {}): Promise<boolean> {
+export async function seedBody(ctx: Ctx, docId: string, markdown: string, opts: { flush?: boolean; change?: ResolvedChange | null } = {}): Promise<boolean> {
   if (ctx.isAgent) {
     const source = ctx.surface === "mcp" ? "connector" : "stdio";
-    const proposed = await proposeDocEdit(ctx, { docId, action: "write", text: markdown, source }).catch(() => null);
+    const resolvedChange = opts.change ? { change: opts.change.change, opened: false } : null;
+    const proposed = await proposeDocEdit(ctx, { docId, action: "write", text: markdown, source, resolvedChange }).catch(() => null);
     return proposed?.kind === "proposed" || proposed?.kind === "auto_applied";
   }
   const seeded = await ctx.env.docs

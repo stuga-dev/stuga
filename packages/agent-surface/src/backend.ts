@@ -35,16 +35,38 @@ export interface DocListing {
   updated_at: string;
 }
 
+/** A write's change, as the caller names it: the id an earlier write returned, or a title that opens one. */
+export interface ChangeFields {
+  change_id?: string;
+  change_title?: string;
+  change_summary?: string;
+}
+
+/** The change a write went into, so the agent passes the id to its next write for the same work. */
+export interface ChangeAnswer {
+  change_id?: string;
+  change_title?: string;
+}
+
+/** The run a queued write waits behind: the agent's earlier change to the item, still undecided. */
+export interface QueuedBehind {
+  run_id: string;
+  change_id: string | null;
+  change_title: string | null;
+}
+
 /** The new document, with the instructions stack it was placed under. */
-export interface CreatedDoc extends Partial<AgentInstructions> {
+export interface CreatedDoc extends Partial<AgentInstructions>, ChangeAnswer {
   doc_id: string;
   title: string;
+  /** A new page held until its change is approved: only the user and those who may approve it can open it. */
+  held?: boolean;
 }
 
 /** One document's facts as the node reports them, with the instructions stack that applies to it. */
 export type DocMetadata = Record<string, unknown> & Partial<AgentInstructions>;
 
-export interface CreateDocInput {
+export interface CreateDocInput extends ChangeFields {
   title: string;
   parent_id?: string;
   doc_type?: "prose" | "database";
@@ -195,7 +217,7 @@ export interface MarkdownBody extends Partial<AgentInstructions> {
   feedback?: AgentFeedback[];
 }
 
-export interface ProposeInput {
+export interface ProposeInput extends ChangeFields {
   action: "write" | "str_replace" | "append" | "cited_edits";
   text?: string;
   heading?: string;
@@ -228,12 +250,14 @@ export interface ProposePlacement {
 }
 
 export type ProposeBody =
-  | ({ mode: "proposed"; run: AgentRunSummary; pending: number; reason: string; media_note?: string } & ProposeInstructionLabels &
+  | ({ mode: "proposed"; run: AgentRunSummary; pending: number; reason: string; media_note?: string; queued_behind?: QueuedBehind } & ProposeInstructionLabels &
       ProposeFeedback &
-      ProposePlacement)
+      ProposePlacement &
+      ChangeAnswer)
   | ({ mode: "auto_applied"; run: AgentRunSummary; seq: number; reason: string; review_url: string; media_note?: string } & ProposeInstructionLabels &
       ProposeFeedback &
-      ProposePlacement)
+      ProposePlacement &
+      ChangeAnswer)
   | { mode: "noop"; message: string };
 
 export interface ProvenancePassage {
@@ -337,8 +361,8 @@ export type DatabaseMutation =
   | { action: "create_view"; table_id: string; view: ViewShape & { name: string } }
   | { action: "update_view"; table_id: string; view_id: string; changes: ViewShape };
 
-/** A database write, with the feedback ids it answers. */
-export type DatabaseProposal = DatabaseMutation & { revises?: string[] };
+/** A database write, with the feedback ids it answers and the change it belongs to. */
+export type DatabaseProposal = DatabaseMutation & { revises?: string[] } & ChangeFields;
 
 /**
  * A database write's envelope: `proposed` waits for review, `applied` landed at
@@ -352,6 +376,10 @@ export type DatabaseProposeBody = ProposeInstructionLabels & {
   minted?: Record<string, unknown>;
   /** An `auto` database parked this anyway: the run still holds undecided ops. */
   held?: boolean;
+  /** It waits behind the agent's earlier change here, still undecided. */
+  queued_behind?: QueuedBehind;
+  change_id?: string;
+  change_title?: string;
   /** The agent's open feedback here, and the ids this proposal answered. */
   feedback?: AgentFeedback[];
   revised?: string[];

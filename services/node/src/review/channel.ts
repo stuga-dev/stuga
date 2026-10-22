@@ -6,7 +6,7 @@
  * a channel has many readers.
  */
 import { WEBHOOK_HOSTS, type WebhookKind } from "@stuga/protocol/domain/webhooks";
-import { renderReviewOpen, renderReviewPost, type ReviewPostWords } from "@stuga/protocol/notify/render";
+import { renderChangePost, renderReviewOpen, renderReviewPost, type ChangePostWords, type ReviewPostWords } from "@stuga/protocol/notify/render";
 import { vetOutboundUrl } from "../net/outbound.js";
 
 /** Why an address is refused for a Slack review channel. */
@@ -45,7 +45,16 @@ export function slackText(text: string): string {
  * told not to unfurl the link, which would only fetch the sign-in page.
  */
 export function slackPostBody(post: ReviewPostWords, cardUrl: string, language: string): string {
-  const line = slackText(renderReviewPost(post, language));
+  return slackBody(renderReviewPost(post, language), cardUrl, language);
+}
+
+/** The body a Slack review channel is sent about a change: its title, never a page's, and the link to its card. */
+export function slackChangePostBody(post: ChangePostWords, cardUrl: string, language: string): string {
+  return slackBody(renderChangePost(post, language), cardUrl, language);
+}
+
+function slackBody(text: string, cardUrl: string, language: string): string {
+  const line = slackText(text);
   const open = slackText(renderReviewOpen(language));
   return JSON.stringify({ text: `${line} · <${cardUrl}|${open}>`, unfurl_links: false, unfurl_media: false });
 }

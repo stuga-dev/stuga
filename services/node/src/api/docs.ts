@@ -55,6 +55,7 @@ import { queueSnapshotSweep } from "../jobs/snapshot-sweep.js";
 import { deleteDatabaseFiles } from "../media/media.js";
 import { docMediaHashes, reclaimDeletedDocImages } from "../media/media-scan.js";
 import { docSummary } from "./summaries.js";
+import { changeAnswer, changeArgsOf } from "../changes/resolve.js";
 
 function reviewJson(r: ResolvedReview): { mode: string; reason: string } {
   return { mode: r.mode, reason: r.reason };
@@ -104,12 +105,16 @@ export async function createDocumentRoute({ ctx, req }: WorkspaceCall): Promise<
     copyOf: body.copy_of,
     table: body.table,
     columns: body.columns,
+    change: changeArgsOf(body),
   });
   if (!out.ok) return error(out.status, out.message);
   // An agent learns at once what applies to the document it just made.
   if (!ctx.isAgent) return json(out.doc, { status: 201 });
   // The document exists now: a failed lookup must not read as a failed create, or the agent makes another.
-  return json({ ...out.doc, ...(await docAgentInstructionsOrNone(ctx, out.doc)) }, { status: 201 });
+  return json(
+    { ...out.doc, ...changeAnswer(out.change ?? null), ...(out.held ? { held: true } : {}), ...(await docAgentInstructionsOrNone(ctx, out.doc)) },
+    { status: 201 },
+  );
 }
 
 export async function getDocument({ ctx, match }: WorkspaceCall): Promise<Response> {

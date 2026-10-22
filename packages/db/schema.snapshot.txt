@@ -21,6 +21,7 @@ TABLE agent_runs
   doc_title text NOT NULL DEFAULT ''::text
   model text
   pending integer NOT NULL DEFAULT 0
+  queued_behind text
   rejected integer NOT NULL DEFAULT 0
   reverted boolean NOT NULL DEFAULT false
   review_mode text NOT NULL DEFAULT 'review'::text
@@ -717,12 +718,12 @@ TABLE refresh_sessions
 
 TABLE review_posts
   created_at timestamp with time zone NOT NULL DEFAULT now()
-  run_id text NOT NULL
+  subject_id text NOT NULL
   webhook_id text NOT NULL
-  CONSTRAINT review_posts_pkey PRIMARY KEY (webhook_id, run_id)
+  CONSTRAINT review_posts_pkey PRIMARY KEY (webhook_id, subject_id)
   CONSTRAINT review_posts_webhook_id_fkey FOREIGN KEY (webhook_id) REFERENCES webhooks(webhook_id) ON DELETE CASCADE
   INDEX review_posts_created_idx CREATE INDEX review_posts_created_idx ON public.review_posts USING btree (created_at)
-  INDEX review_posts_pkey CREATE UNIQUE INDEX review_posts_pkey ON public.review_posts USING btree (webhook_id, run_id)
+  INDEX review_posts_pkey CREATE UNIQUE INDEX review_posts_pkey ON public.review_posts USING btree (webhook_id, subject_id)
 
 TABLE schema_migrations
   applied_at timestamp with time zone NOT NULL DEFAULT now()
@@ -816,6 +817,59 @@ TABLE webhooks
   CONSTRAINT webhooks_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
   INDEX webhooks_pkey CREATE UNIQUE INDEX webhooks_pkey ON public.webhooks USING btree (webhook_id)
   INDEX webhooks_ws_idx CREATE INDEX webhooks_ws_idx ON public.webhooks USING btree (workspace_id)
+
+TABLE wiki_change_pages
+  approver_group text
+  change_id text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  decided_at timestamp with time zone
+  decided_by text
+  doc_id text NOT NULL
+  held_grants ARRAY NOT NULL DEFAULT '{}'::text[]
+  note text
+  release_grants jsonb NOT NULL DEFAULT '{"c": [], "p": [], "w": []}'::jsonb
+  reviewer text NOT NULL
+  state text NOT NULL DEFAULT 'held'::text
+  workspace_id text NOT NULL
+  CONSTRAINT wiki_change_pages_change_id_fkey FOREIGN KEY (change_id) REFERENCES wiki_changes(change_id) ON DELETE CASCADE
+  CONSTRAINT wiki_change_pages_doc_id_fkey FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
+  CONSTRAINT wiki_change_pages_pkey PRIMARY KEY (doc_id)
+  CONSTRAINT wiki_change_pages_state_check CHECK ((state = ANY (ARRAY['held'::text, 'released'::text, 'removed'::text])))
+  CONSTRAINT wiki_change_pages_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX wiki_change_pages_change_idx CREATE INDEX wiki_change_pages_change_idx ON public.wiki_change_pages USING btree (change_id)
+  INDEX wiki_change_pages_held_idx CREATE INDEX wiki_change_pages_held_idx ON public.wiki_change_pages USING btree (doc_id) WHERE (state = 'held'::text)
+  INDEX wiki_change_pages_pkey CREATE UNIQUE INDEX wiki_change_pages_pkey ON public.wiki_change_pages USING btree (doc_id)
+
+TABLE wiki_change_runs
+  change_id text NOT NULL
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  doc_id text NOT NULL
+  doc_kind text NOT NULL
+  run_id text NOT NULL
+  CONSTRAINT wiki_change_runs_change_id_fkey FOREIGN KEY (change_id) REFERENCES wiki_changes(change_id) ON DELETE CASCADE
+  CONSTRAINT wiki_change_runs_doc_kind_check CHECK ((doc_kind = ANY (ARRAY['prose'::text, 'database'::text])))
+  CONSTRAINT wiki_change_runs_pkey PRIMARY KEY (change_id, run_id)
+  CONSTRAINT wiki_change_runs_run_id_key UNIQUE (run_id)
+  INDEX wiki_change_runs_doc_idx CREATE INDEX wiki_change_runs_doc_idx ON public.wiki_change_runs USING btree (doc_id)
+  INDEX wiki_change_runs_pkey CREATE UNIQUE INDEX wiki_change_runs_pkey ON public.wiki_change_runs USING btree (change_id, run_id)
+  INDEX wiki_change_runs_run_id_key CREATE UNIQUE INDEX wiki_change_runs_run_id_key ON public.wiki_change_runs USING btree (run_id)
+
+TABLE wiki_changes
+  agent text NOT NULL
+  agent_alias text NOT NULL
+  change_id text NOT NULL
+  client text
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  model text
+  on_behalf_of text NOT NULL
+  summary text NOT NULL DEFAULT ''::text
+  title text NOT NULL
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+  workspace_id text NOT NULL
+  CONSTRAINT wiki_changes_pkey PRIMARY KEY (change_id)
+  CONSTRAINT wiki_changes_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX wiki_changes_pkey CREATE UNIQUE INDEX wiki_changes_pkey ON public.wiki_changes USING btree (change_id)
+  INDEX wiki_changes_ws_updated_idx CREATE INDEX wiki_changes_ws_updated_idx ON public.wiki_changes USING btree (workspace_id, updated_at DESC)
 
 TABLE workspace_events
   actor text NOT NULL

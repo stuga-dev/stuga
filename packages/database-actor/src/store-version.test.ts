@@ -27,10 +27,17 @@ const PINNED: Record<number, string> = {
   3: "d3f3a5ba37b6da61",
   4: "dfdc1d1458cd3df0",
   5: "43c9bf9b78b7df2b",
+  6: "cc4c37e98f09e188",
 };
 
-/** Take out of a fresh store what version 5 brought: the colleague level's columns and trigger. */
+/** Take out of a fresh store what version 6 brought: the change a run belongs to and the run it waits behind. */
+function withoutChanges(db: DatabaseSync): void {
+  for (const column of ["stacked_on", "queued_behind", "change_id"]) db.exec(`ALTER TABLE _runs DROP COLUMN ${column}`);
+}
+
+/** Take out of a fresh store what versions 5 and 6 brought: the colleague level's columns and trigger, and changes. */
 function withoutColleagueLevel(db: DatabaseSync): void {
+  withoutChanges(db);
   db.exec(`DROP TRIGGER _run_ops_colleague_approves`);
   db.exec(`ALTER TABLE _run_ops DROP COLUMN decided_level`);
   db.exec(`ALTER TABLE _runs DROP COLUMN approver_group`);
@@ -288,6 +295,65 @@ describe("a database's store", () => {
         /a colleague approves this change/,
       );
       db.exec(`UPDATE _run_ops SET status = 'accepted', decided_by = 'bo', decided_level = 'colleague' WHERE op_id = 'o1'`);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("brings a version 5 store forward with the change a run belongs to, its runs in none", async () => {
+    dir = mkdtempSync(join(tmpdir(), "stuga-db-store-"));
+    const file = join(dir, "db_test.sqlite");
+    const open = () =>
+      createActorNamespace(
+        DatabaseActor,
+        { snapshots: new MemoryBlobStore(), jobs: new MemoryJobQueue<IndexMessage>() },
+        {
+          name: "databases",
+          heartbeat: { request: Heartbeat.PING, response: Heartbeat.PONG },
+          dir,
+          storeVersion: DATABASE_STORE_VERSION,
+          storeUpgrades: DATABASE_STORE_UPGRADES,
+        },
+      );
+    const runsSql = () => {
+      const db = new DatabaseSync(file, { readOnly: true });
+      try {
+        return (db.prepare(`SELECT sql FROM sqlite_master WHERE name = '_runs'`).get() as { sql: string }).sql.replace(/\s+/g, " ");
+      } finally {
+        db.close();
+      }
+    };
+    const fresh = open();
+    try {
+      await post(fresh.get("db_test"), "/schema/init", {});
+    } finally {
+      await fresh.close();
+    }
+    const current = runsSql();
+    const v5 = new DatabaseSync(file);
+    try {
+      withoutChanges(v5);
+      v5.exec(
+        `INSERT INTO _runs (run_id, source, agent, agent_alias, reviewer, status, acknowledged, auto_applied, reverted,
+           workspace_id, doc_title, review_mode, client, model, created_at, updated_at, approver_group)
+         VALUES ('run_1', 'stdio', 'Agent', 'agent-1', 'alice', 'open', 0, 0, 0, 'ws', 'Tasks', 'review', NULL, NULL, 1, 1, NULL)`,
+      );
+      v5.exec(`PRAGMA user_version = 5`);
+    } finally {
+      v5.close();
+    }
+    const upgraded = open();
+    try {
+      await post(upgraded.get("db_test"), "/schema/init", {});
+    } finally {
+      await upgraded.close();
+    }
+    expect(runsSql()).toBe(current);
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      expect(db.prepare(`SELECT run_id, change_id, queued_behind, stacked_on FROM _runs`).all()).toEqual([
+        { run_id: "run_1", change_id: null, queued_behind: null, stacked_on: null },
+      ]);
     } finally {
       db.close();
     }

@@ -456,8 +456,54 @@ export interface AgentRunRow {
   rejected: number;
   conflicts: number;
   applied: number;
+  /** The change it belongs to, or null. */
+  change_id: string | null;
+  /** The run of the same agent on the same item it waits behind, or null. */
+  queued_behind: string | null;
+  /** Its item is a new page of a change, held until approved: shown only to those who can open it, which the ACL already says. */
+  doc_held: boolean;
   created_at: string;
   updated_at: string;
+}
+
+/** A change: the runs one agent made across several pages for one piece of work. */
+export interface WikiChangeRow {
+  change_id: string;
+  workspace_id: string;
+  title: string;
+  summary: string;
+  agent: string;
+  agent_alias: string;
+  on_behalf_of: string;
+  client: string | null;
+  model: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One run of a change. */
+export interface WikiChangeRunRow {
+  change_id: string;
+  doc_id: string;
+  run_id: string;
+  doc_kind: "prose" | "database";
+  created_at: string;
+}
+
+/** A page an agent made in a change at `colleague`, held until approved. */
+export interface WikiChangePageRow {
+  doc_id: string;
+  change_id: string;
+  workspace_id: string;
+  state: "held" | "released" | "removed";
+  held_grants: string[];
+  release_grants: OwnGrantsJson;
+  reviewer: string;
+  approver_group: string | null;
+  note: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  created_at: string;
 }
 
 /** Per-agent aggregates over agent_runs. */

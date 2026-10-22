@@ -2,6 +2,7 @@
   "untitled": "無題",
   "action.open": "開く",
   "review.post": "「{doc}」：{author}の{agent}が{count, plural, other {#件の変更}}を提案しました · {level, select, colleague {同僚がレビュー} review {依頼した人がレビュー} other {AIの編集を直接適用}}",
+  "review.postChange": "「{change}」：{author}の{agent}が変更を提案しました · {level, select, colleague {同僚がレビュー} review {依頼した人がレビュー} other {AIの編集を直接適用}}",
   "review.open": "レビュー",
 
   "MENTIONED_IN_COMMENT.title": "{actor}が「{doc}」のコメントであなたをメンションしました",
@@ -28,6 +29,12 @@
   "APPROVAL_WAITING.body": "{author}の{agent}が{count, plural, other {#件の変更}}を提案しました。",
   "APPROVER_NEEDED.title": "「{doc}」：変更が承認する人を待っています",
   "APPROVER_NEEDED.body": "{author}の{agent}が{count, plural, other {#件の変更}}を提案しました。{cause, select, group {承認してもらうには、承認グループのメンバーに編集権限を付与してください。} other {承認してもらうには、同僚に編集権限を付与してください。}}",
+  "CHANGE_PROPOSED.title": "「{change}」：{agent}が変更を提案しました",
+  "CHANGE_PROPOSED.body": "承認する人は各ページに表示されます。",
+  "CHANGE_APPLIED.title": "「{change}」：{agent}が変更を加えました",
+  "CHANGE_APPLIED.body": "{agent}が、AIの編集を直接適用する設定のページを変更しました。",
+  "CHANGE_APPROVAL_WAITING.title": "「{change}」：あなたの承認待ちです",
+  "CHANGE_APPROVAL_WAITING.body": "{author}の{agent}が変更を提案しました。",
   "REVIEW_LEVEL_LOWERED.title": "「{doc}」：AIの編集のレビューが緩和されました",
   "REVIEW_LEVEL_LOWERED.body": "{moved, select, yes {{actor}が{kind, select, folder {このフォルダー} database {このデータベース} other {このドキュメント}}を移動しました。レベルは「{level, select, auto {AIの編集を直接適用} review {依頼した人がレビュー} other {同僚がレビュー}}」になりました。{floorKnown, select, yes {移動前のフォルダーより緩い設定です。} other {}}} other {{actor}が{kind, select, folder {このフォルダー} database {このデータベース} other {このドキュメント}}を「{level, select, auto {AIの編集を直接適用} review {依頼した人がレビュー} other {同僚がレビュー}}」に設定しました。{floorKnown, select, yes {フォルダーのレベルより緩い設定です。} other {}}}}",
 

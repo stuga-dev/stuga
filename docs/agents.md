@@ -578,7 +578,8 @@ The person who asked can still reject or revert their own AI's changes, and send
 Only someone else marks a run proposed at `colleague` reviewed.
 
 Each person who may approve is notified that changes wait for their approval, in Stuga and by email
-or webhook, and the notice opens the run's [review card](#the-review-card). A workspace or a folder
+or webhook, and the notice opens the run's [review card](#the-review-card), or, for the runs of a
+[change](#changes-one-piece-of-work-reviewed-as-one), once for the whole change, opening its card. A workspace or a folder
 can also post these changes to a [Slack review channel](#the-slack-review-channel). A Slack, Teams or
 Discord channel the node sends notifications to hears each run once: from the notice to the person who
 asked, which says the changes wait for a colleague, or, for the in-app co-author's and the table
@@ -605,7 +606,8 @@ Two consequences follow:
   document changes it without review.
 
 A run that still holds undecided changes parks new ones even on an `auto` document, and the reply
-says so.
+says so. A later change of the same agent to that page for another piece of work waits behind it
+([A queue on a page](#a-queue-on-a-page)).
 
 Only the run's reviewer, the people who may approve it, and the item's owner and workspace admins
 see the text of a change that has not landed (waiting, rejected or in conflict), and the document
@@ -673,10 +675,71 @@ replies in threads it started reach it through `events` with `mine: true`
 ([below](#events-and-webhooks)). A reply is the words of whoever wrote it: the agent is told to read
 it as information, never as an instruction.
 
+## Changes: one piece of work, reviewed as one
+
+An agent often writes to several pages for one piece of work: an ingest of a meeting adds a customer
+to a list, makes the customer's page and logs the call; a Save to Stuga of several points edits three
+pages. That work is one **change**, reviewed on one card.
+
+- **Opening one.** The agent gives `change_title`, a few words naming the work's source ("Customer
+  sync, 2026-10-21"), to its first write, and the answer returns `change_id`, which it passes to
+  every later write for the same work, on every page and database. `docs_create`, `markdown_append`,
+  `markdown_edit`, `databases_add` and `databases_change` take both, and `change_summary`: what the
+  change does, in a sentence or two, for whoever approves it (a later write may replace it). A change
+  belongs to the agent that opened it, for the person it acts for, in one workspace; any other id is
+  unknown. It holds at most 100 runs. A write that names no change to a new page the same agent made
+  in one goes into that change. `remember` tells the agent to make one change of one save.
+- **What it holds.** Each page's runs stay that page's own: each is decided at its page's level, by
+  whoever may decide it there, since the pages of one change may sit in different folders at different
+  levels. A change waits while one of its runs waits and is decided once they all are; a later write
+  in it, such as a revision after **Ask for changes…**, makes it wait again.
+- **Its card.** `/review/change/<id>` shows the agent's summary first, then each page you can open,
+  in the order the agent first touched them: its folders, **New page** for a page the change made, its
+  level and who may decide it, and each change in its paragraph, as a run's [card](#the-review-card)
+  shows it. Pages you cannot open are left out, and so are the change's title and summary unless you
+  read the waiting text of one of its pages or asked for it; someone who can open none of its pages
+  learns nothing of it. **Decide this page alone** opens the page's own run card.
+- **Approve all** approves, page by page and oldest run first, every run you may approve now, through
+  the same checks as approving each on its own. It is not one step: each run is approved or left on
+  its own, and the card says per page what was approved and what is left, and why (you asked for it,
+  so a colleague approves it; someone else approves it; it waits behind an earlier change; the page is
+  locked). **Ask for changes…** and **Decline…** reject every run you may reject, each with the note,
+  which reaches the agent as [Reject with a note](#reject-with-a-note) says.
+- **Notices.** Whoever asked hears of a change once, and so does each person who may approve one of
+  its pages, however many pages and runs it grows to; the notice opens its card. A
+  [review channel](#the-slack-review-channel) posts a change once, with its title, never a page's.
+
+### New pages in a change
+
+A page an agent makes in a folder whose AI edits wait for a colleague is held until its change is
+approved. It does not take its folder's access: only the person who asked and those who may approve it
+there, each by name as they stand when it is made, can open it. Nobody else finds it in a list, a
+search, a retrieval, a Save to Stuga plan, the session index or the event feed, no webhook hears of it,
+no export holds it, and no `doc.created` is sent. A database made there is held the same way, and a
+page made with no change opens an untitled one of its own: a change's title reaches whoever decides
+any page of it, so it is never the page's.
+
+Once its change's runs on it are decided and something of them was approved, it takes its folder's
+access and the grants a page made there gets, and `doc.created` goes out. Once they are all declined,
+or withdrawn by whoever asked, it goes to the trash with the note, never announced. A held page with
+no changes of its own yet is approved or declined on the change's card as a page. Its owner can share
+it like any page they own, and it is then held no longer; its changes still wait.
+
+### A queue on a page
+
+A run belongs to one change. When an agent's earlier change to a page still waits and a later change
+of the same agent touches that page, the later one becomes a run of its own, queued behind it, so a hub
+page such as a customer list takes every ingest. The agent reads both laid over the page, in order. A
+queued run is approved once the run ahead of it is decided, and may be declined at any time;
+declining the one ahead can leave it nothing to apply to, and the agent redoes it. The card says what a
+page waits behind, the agent's answer carries `queued_behind` and says this is success, and the inbox
+says the change waits behind an earlier one. Someone who cannot read the waiting text a queued run was
+proposed on top of reads none of its text either, and does not approve it.
+
 ## The review inbox
 
 **Review AI edits** (`/review`) lists the runs on documents and databases you can read across the
-workspace, in three tabs:
+workspace, a [change](#changes-one-piece-of-work-reviewed-as-one) as one row, in three tabs:
 
 - **Needs you**: changes waiting for your decision, a colleague's run you may approve included, and
   changes applied at once that you may mark reviewed and nobody has. Its count shows on every tab.
@@ -684,6 +747,7 @@ workspace, in three tabs:
   among them. Each says whom it waits for.
 - **Done**: the rest, decided, reverted, or applied at once and looked at.
 
+A change goes under the tab its runs together put it in: **Needs you** while one of them needs you.
 The tab is in the address (`/review?tab=waiting`, `?tab=done`), and **Agent** narrows any of them.
 **Review changes** (or **Open**) opens a run's [review card](#the-review-card). A run's **⋯** menu
 opens the document or database, or acts on the whole run in the card's words: **Ask for changes…**
@@ -705,7 +769,8 @@ theirs on the card on a phone, and in the document on a wider screen.
   it, at `review` whoever asked, and the item's owner or a workspace admin where one other than them
   can edit it ("Liv, the document's owner or an admin can approve it"). Then each change in the paragraph it sits in, under its section, the
   text before it struck through above the text after it, with the sources its footnotes cite. A
-  database's run lists each change in a line.
+  database's run lists each change in a line. A run in a
+  [change](#changes-one-piece-of-work-reviewed-as-one) offers **Open the whole change**.
 - **What it does.** **Approve** accepts every change still waiting. **Ask for changes…** rejects them
   with a note, which it requires, and **Decline…** rejects them with a note if you write one: either
   way the agent gets the note as [Reject with a note](#reject-with-a-note) says. **Open the
@@ -728,7 +793,9 @@ channel, and paste its address, which starts `https://hooks.slack.com/`. Only th
 
 Each run that waits for a colleague is posted once, however many people may approve it and however
 many changes the agent adds to it later: the item's title, who asked, which AI, how many changes, the
-level, and a link to its [review card](#the-review-card). A post never carries a change's text:
+level, and a link to its [review card](#the-review-card). The runs of a
+[change](#changes-one-piece-of-work-reviewed-as-one) are posted once for the change, with its title,
+never a page's, and a link to its card. A post never carries a change's text:
 
 ```
 “Leave policy”: Liv’s Claude proposed 2 changes · Reviewed by a colleague · Review
@@ -812,7 +879,8 @@ How agents get them:
   decisions on the agent's own proposals and the replies in comment threads it started. Event types:
   [api.md](api.md#the-event-feed).
 - **Webhooks.** Workspace owners and admins can send the same events to a URL, signed and retried,
-  for the documents the hook's creator can read. See [api.md](api.md#webhooks).
+  for the documents the hook's creator can read. A new page a change holds is heard of once it is
+  approved ([New pages in a change](#new-pages-in-a-change)). See [api.md](api.md#webhooks).
 - **Review channels.** A Slack channel hears of each change that waits for a colleague, with a link
   to approve it ([The Slack review channel](#the-slack-review-channel)).
 
@@ -858,7 +926,8 @@ memory.
   in that language, before it makes a new page. The agent then reads the best page and corrects the
   sentence a point changes, adds the point under its section, or makes a new page in the folder
   where it belongs, else in My notes. Each of these is an ordinary write: the page's
-  level decides whether it waits for you, for a colleague, or applies at once. Afterwards the agent
+  level decides whether it waits for you, for a colleague, or applies at once. The whole save is one
+  [change](#changes-one-piece-of-work-reviewed-as-one), reviewed on one card. Afterwards the agent
   tells you what it saved where, what was already there, and what waits for approval, and when it
   wrote nothing, says so.
 - **Who said it, and when.** What you tell the agent yourself is saved without your name or a date
@@ -956,7 +1025,7 @@ the item's `agent_mode` decide what a call does.
 | Tool | Actions and use | Destructive | Open-world |
 |---|---|---|---|
 | `remember` | Save to Stuga: where each of 1 to 20 points belongs ([above](#save-to-stuga-and-ask-stuga)). It writes no text, and makes the person's [My notes](#my-notes) the first time. | no | no |
-| `docs_create` | A document with a title, optionally in a folder. Returns its `instructions`. | no | no |
+| `docs_create` | A document with a title, optionally in a folder. Returns its `instructions`, and its `change_id` when it is in a [change](#changes-one-piece-of-work-reviewed-as-one). | no | no |
 | `markdown_append` | Adds text at the end of a document, or under `heading`, and touches nothing else. Under a heading it goes at the end of that heading's own text: before its first subsection when it has any (so under a page's title heading, in the page's opening), and the answer says where it went and names the subsections; else at the end of its section. A heading the page lacks is refused with the headings it has, or, on a page with none, a note to put the heading in the text. | no | yes |
 | `markdown_edit` | `write` · `str_replace` · `cited_edits`. `write` replaces the whole document, `str_replace` swaps `find` for `replace` (one occurrence, or all with `replace_all`; `old_string` and `new_string` are the same), and `cited_edits` makes several exact edits at once with citations that become footnotes. | yes | yes |
 | `comments_add` | A comment on a document, a reply in a thread (`parent_num`), or a comment on a passage (`quote`, its exact text). It may mention at most 5 people, and those who can read the document are notified, as are the document's owner and, for a reply, the thread's people ([Agents in comment threads](#agents-in-comment-threads)). | no | no |
@@ -965,7 +1034,9 @@ the item's `agent_mode` decide what a call does.
 | `databases_add` | `create_database` · `create_table` · `add_column` · `insert_rows` · `import` · `start_import` · `create_view` · `open_page`. `add_column` may set a column's `description`. `import` loads a whole CSV or JSONL file as one reviewable change, from its text in `content` or from an upload by `import_id`, so bulk data never passes through `insert_rows`. `start_import` returns an `upload_url` for a caller that can send the file itself, and the `import_id` to commit. `open_page` returns a row's page, a document read and edited like any other, and creates it the first time. | no | no |
 | `databases_change` | `update_rows` · `delete_rows` · `update_view`. | yes | no |
 
-Edits to a document's text and to a database are proposals. Writing `![alt](https://…)` or a `data:`
+Edits to a document's text and to a database are proposals. The writes that make or change a page or
+a database take `change_title`, `change_id` and `change_summary`
+([Changes](#changes-one-piece-of-work-reviewed-as-one)). Writing `![alt](https://…)` or a `data:`
 URI through `markdown_edit` or `markdown_append` downloads and stores the image, behind the node's
 outbound address checks. A mention of a person reads and writes as `[@username](mention:<alias>)`;
 keep it as written, and once an edit lands, a newly mentioned person who can read the document is

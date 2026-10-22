@@ -163,6 +163,9 @@ async function purgeRetention(env: JobsEnv, d: JobDeps): Promise<void> {
   if (runs > 0) d.log.info("purged closed agent runs from the inbox", { purged: runs });
   // A review channel's claims last as long as closed runs do; a run still open past them may be posted again.
   await d.db.purgeReviewPosts(AGENT_RUN_RETENTION_DAYS);
+  // A change goes with its runs, unless one of them is still open or a page it made still waits.
+  const changes = await d.db.purgeWikiChanges(AGENT_RUN_RETENTION_DAYS);
+  if (changes > 0) d.log.info("purged settled changes from the inbox", { purged: changes });
   const events = await d.db.purgeWorkspaceEvents(EVENT_RETENTION_DAYS);
   if (events > 0) d.log.info("purged old workspace events", { purged: events });
 }

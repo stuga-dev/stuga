@@ -199,6 +199,15 @@ export interface AgentRunSummary {
   review_mode: ReviewMode;
   /** The approver group the run was proposed under, when its document named one. */
   approver_group?: string;
+  /** The change it belongs to: one piece of an agent's work across several pages, reviewed as one. */
+  change_id?: string;
+  /**
+   * The earlier run of the same agent on this document it waits behind: it was proposed on top of
+   * that run's undecided changes, so it is approved only once that run is decided. Rejecting it never waits.
+   */
+  queued_behind?: string;
+  /** Every run it was proposed on top of: its changes may quote their text, read only by whoever reads theirs. */
+  stacked_on?: string[];
   /** Added by the node for the person reading it; absent on a live frame. */
   you?: RunStanding;
   /** The hunks' text was left out: only the run's reviewer, its approvers and the document's managers read it. */

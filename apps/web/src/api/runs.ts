@@ -3,6 +3,7 @@ import type { AgentRunHunk, AgentRunSummary } from "@stuga/protocol/wire/doc-soc
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { RunStanding } from "@stuga/protocol/domain/runs";
 import { api } from "../lib/http/client";
+import type { InboxChange } from "./changes";
 
 /** Who may decide a run's waiting changes now: given only to whoever may read them. */
 export interface RunDeciders {
@@ -122,10 +123,11 @@ export interface AgentStats {
 export const INBOX_PAGE_LIMIT = 100;
 
 export const Inbox = {
+  /** Runs in no change, and each change as one row. */
   list: (filter: InboxFilter = "attention", agent?: string, limit = INBOX_PAGE_LIMIT) => {
     const q = new URLSearchParams({ filter, limit: String(limit) });
     if (agent) q.set("agent", agent);
-    return api<{ runs: InboxRun[]; filter: InboxFilter }>(`/api/runs?${q}`);
+    return api<{ runs: InboxRun[]; changes?: InboxChange[]; filter: InboxFilter }>(`/api/runs?${q}`);
   },
   stats: () => api<{ agents: AgentStats[] }>("/api/agents/stats"),
 };

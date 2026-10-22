@@ -17,7 +17,7 @@ import {
   type CitationInput,
 } from "@stuga/crdt-ops";
 import { appendMarkdown, type AppendPlacement } from "../append.js";
-import { PENDING_RUN_MAX, pendingOf, runBlobKey, type RunBody, type RunLedger } from "./run-store.js";
+import { layOver, PENDING_RUN_MAX, pendingOf, runBlobKey, type RunBody, type RunLedger, type StoredRun } from "./run-store.js";
 
 /**
  * What a caller asks for. `write`, `str_replace` and `append` are the MCP/REST
@@ -54,11 +54,25 @@ export interface ProposeRunInput {
   /** Labels recorded on the run; the latest proposal's wins. */
   client?: string | null;
   model?: string | null;
+  /**
+   * The change this proposal belongs to, or null. A run belongs to one change: a proposal for another
+   * than the agent's open run here starts a run of its own, queued behind that one while it waits.
+   */
+  changeId?: string | null;
 }
 
 export type ProposeRunResult =
   | { mode: "noop" }
-  | { mode: "proposed"; run: AgentRunSummary; pending: number; hunkIds: string[]; parkedBehindPending?: boolean; placed?: AppendPlacement }
+  | {
+      mode: "proposed";
+      run: AgentRunSummary;
+      pending: number;
+      hunkIds: string[];
+      parkedBehindPending?: boolean;
+      /** The run it waits behind: an earlier change of this agent's here, still undecided. */
+      queuedBehind?: { runId: string; changeId: string | null };
+      placed?: AppendPlacement;
+    }
   | { mode: "auto_applied"; run: AgentRunSummary; seq: number; applied: number; hunkIds: string[]; placed?: AppendPlacement }
   /** `headings`: an append's heading was not there; these are, as the agent's view has them. `empty`: that view is empty. */
   | { mode: "error"; status: number; error: string; message?: string; count?: number; headings?: string[]; empty?: boolean };
@@ -85,10 +99,25 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
   if (store.trashed) return { mode: "error", status: 409, error: "trashed", message: "this document is in the trash" };
 
   // Every storage read happens before `current` is read, so nothing awaits between reading and committing.
-  const open = await ledger.openRunFor(agentAlias, { closeIdle: true });
+  let open = await ledger.openRunFor(agentAlias, { closeIdle: true });
   if (open && ledger.bodyLost(open.stored, open.body)) {
     return { mode: "error", status: 503, error: "unavailable", message: "run ledger unavailable" };
   }
+  const changeId = input.changeId ?? null;
+  // A run belongs to one change. The agent's open run here, from another change, is finished when
+  // nothing in it waits (it closes, as an idle one would); otherwise this proposal starts a run queued behind it.
+  if (open && (open.stored.change_id ?? null) !== changeId) {
+    if (pendingOf(open.body).length === 0) {
+      await ledger.close(open.stored, open.body);
+      ledger.sendUpdated(open.stored, open.body);
+    }
+    open = null;
+  }
+  // Every open run of the agent here, oldest first: what this proposal is made on top of.
+  const chain = await ledger.chainFor(agentAlias);
+  const waiting = chain.filter((r) => pendingOf(r.body).length > 0);
+  // The run a new one would wait behind: the newest of the agent's runs here that still holds undecided hunks.
+  const ahead: StoredRun | null = open ? null : (waiting.at(-1)?.stored ?? null);
   // Backpressure instead of deletion: only a proposal that would open a new run is refused.
   if (!open) {
     const pending = await ledger.pendingRunCount();
@@ -103,9 +132,9 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
     }
   }
   const current = store.markdown();
-  const existingPending = open ? pendingOf(open.body) : [];
-  // What the agent believes the document says: the live text plus its own pending hunks.
-  const working = existingPending.length > 0 ? applyStrEditsStrict(current, existingPending).markdown : current;
+  const existingPending = waiting.flatMap((r) => pendingOf(r.body));
+  // What the agent believes the document says: the live text plus its own pending hunks, run after run.
+  const working = existingPending.length > 0 ? layOver(current, waiting) : current;
 
   let next: string;
   let renumber = new Map<number, number>();
@@ -220,6 +249,9 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
       acknowledged: false,
       auto_applied: false,
       review_mode: input.review,
+      ...(changeId ? { change_id: changeId } : {}),
+      // Its hunks quote the text of the runs it is proposed on top of, so it is accepted only after them.
+      ...(ahead ? { queued_behind: ahead.id, stacked_on: waiting.map((r) => r.stored.id) } : {}),
       created_at: now,
       updated_at: now,
       workspace_id: input.workspaceId,
@@ -241,6 +273,8 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
   if (citations) runBody.citations = citations;
 
   if (!commit) {
+    const behind = stored.queued_behind ? chain.find((r) => r.stored.id === stored!.queued_behind)?.stored : undefined;
+    const queuedBehind = behind ? { runId: behind.id, changeId: behind.change_id ?? null } : undefined;
     await ledger.save(stored, runBody);
     const pending = pendingOf(runBody).length;
     // The reviewer is usually not looking when an agent writes; a parked proposal nobody hears about is a silent queue.
@@ -262,6 +296,7 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
       hunkIds: added.map((h) => h.id),
       // Said only when it contradicts the `auto` the agent read.
       parkedBehindPending: parkedBehindPending && input.review === "auto",
+      ...(queuedBehind ? { queuedBehind } : {}),
       ...(placed ? { placed } : {}),
     };
   }

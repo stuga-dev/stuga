@@ -16,7 +16,7 @@ import { Database } from "./database.js";
 import type { DatabaseActorEnv } from "./env.js";
 import { handleOpsList, handleOpsRevert, handleRunAck, handleRunDecide, handleRunDetail, handleRunList, handleRunRevert } from "./ledger/decide.js";
 import { handleRunPropose } from "./ledger/propose.js";
-import { feedbackFor, openRunOf, outstandingRunsFor, pendingCountOf } from "./ledger/runs.js";
+import { feedbackFor, openChainOf, outstandingRunsFor, pendingCountOf } from "./ledger/runs.js";
 import { commitOp, opDef, type OpPayload } from "./ops/registry.js";
 import { SchemaView } from "./ops/schema-view.js";
 import { followTitle, isInitialized, schemaInit, tablesRename, titleTable } from "./ops/tables.js";
@@ -204,8 +204,9 @@ export class DatabaseActor implements Actor<SessionMeta> {
       throw new OpError(400, "sql_error", e instanceof Error ? e.message : String(e));
     }
     // SQL reads live data only; without this an agent reads its unreviewed rows as missing and proposes them again.
-    const run = actor.is_agent ? openRunOf(this.db.sql, actor.alias) : null;
-    const pending = run ? pendingCountOf(this.db.sql, run.run_id) : 0;
+    const chain = actor.is_agent ? openChainOf(this.db.sql, actor.alias) : [];
+    const pending = chain.reduce((n, r) => n + pendingCountOf(this.db.sql, r.run_id), 0);
+    const run = chain.at(-1);
     if (run && pending > 0) {
       result.pending_note = `Results reflect live data only — your ${pending} proposed change(s) (run ${run.run_id}) are awaiting the user's review and are not included.`;
     }

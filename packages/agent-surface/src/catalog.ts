@@ -26,6 +26,7 @@ import {
 } from "@stuga/protocol/databases/types";
 import { WORKSPACE_EVENT_TYPES } from "@stuga/protocol/domain/events";
 import { RUN_FEEDBACK_LOOKBACK_DAYS, RUN_FEEDBACK_REVISES_MAX } from "@stuga/protocol/domain/limits";
+import { CHANGE_SUMMARY_MAX, CHANGE_TITLE_MAX } from "@stuga/protocol/domain/changes";
 import { askStugaElsewhere, saveToStugaElsewhere } from "@stuga/protocol/domain/ui-languages";
 import { MAX_IMPORT_MARKDOWN_BYTES } from "@stuga/protocol/text/markdown-import";
 
@@ -234,6 +235,31 @@ const PROPOSED =
   "item to let AI edits apply directly, and then the result says `Applied`; or to be reviewed by a colleague, so " +
   "someone other than the user accepts it.";
 
+/** A write's change: one piece of work across several pages, reviewed as one. */
+const changeArgs = {
+  change_title: z
+    .string()
+    .max(CHANGE_TITLE_MAX)
+    .optional()
+    .describe('Opens a change for this piece of work and returns its `change_id`: a few words naming its source, as "Customer sync, 2026-10-21".'),
+  change_id: z.string().max(40).optional().describe("The `change_id` your first write for this piece of work returned: pass it to every later write for it."),
+  change_summary: z
+    .string()
+    .max(CHANGE_SUMMARY_MAX)
+    .optional()
+    .describe("What the change does, in a sentence or two, for whoever approves it; a later write may replace it."),
+};
+
+/** Said by every write that takes a change. */
+const CHANGES =
+  "ONE piece of work is ONE change, reviewed on one card: an ingest of a meeting or an email, or one Save to Stuga " +
+  "of several points. Give `change_title` (a few words naming its source, never a page's title) to your FIRST write " +
+  "for it, and pass the `change_id` the answer returns to EVERY later write for it, on every page and database; " +
+  "`change_summary` says what it does. A new page made inside a change, where AI edits wait for a colleague, stays " +
+  "visible only to the user and those who may approve it until it is approved. When your earlier change to a page " +
+  "is still undecided, a write there for another change waits behind it in a queue (`queued_behind`): that is " +
+  "SUCCESS, never retry it.";
+
 const workspacesTool: ToolDefinition = {
   title: "Workspaces",
   description:
@@ -271,11 +297,13 @@ const docsCreateTool: ToolDefinition = {
   description:
     "Create a document titled `title`, optionally inside the folder `parent_id`. Returns its doc_id and the standing " +
     "`instructions` that apply where it was placed — follow them when writing there. Fill it with `markdown_edit` or " +
-    "`markdown_append`. For a structured database use `databases_add` action:create_database.",
+    "`markdown_append`, in the same change. For a structured database use `databases_add` action:create_database. " +
+    `${CHANGES} Where AI edits wait for a colleague and you name no change, the page opens an untitled one of its own: the answer's \`change_id\`.`,
   inputSchema: {
     workspace_id: workspaceId,
     title: z.string().max(200),
     parent_id: z.string().optional(),
+    ...changeArgs,
   },
   annotations: ADDITIVE,
 };
@@ -353,6 +381,7 @@ const markdownTool: ToolDefinition = {
 
 /** The ids of the CHANGES REQUESTED a proposal answers. */
 const revisesArg = z.array(z.string().max(40)).max(RUN_FEEDBACK_REVISES_MAX).optional();
+
 const REVISES =
   "`revises`: the ids of the CHANGES REQUESTED this proposal answers (from the block your reads open with); until a " +
   "proposal names them, they keep leading your reads.";
@@ -368,13 +397,14 @@ const markdownAppendTool: ToolDefinition = {
     "subsection when it has any (so under a page's title heading it goes in the page's opening, and the answer says " +
     "so), else at the end of its section. A `heading` the page lacks is refused with the headings it has; to start a " +
     "new section, put its heading in `text` and leave `heading` out. It touches nothing else, so prefer it for notes, " +
-    `logs and memory. ${PROPOSED} ${REVISES} ${IMAGES_IN_MARKDOWN}`,
+    `logs and memory. ${PROPOSED} ${REVISES} ${CHANGES} ${IMAGES_IN_MARKDOWN}`,
   inputSchema: {
     workspace_id: workspaceId,
     doc_id: z.string(),
     text: z.string().max(MAX_IMPORT_MARKDOWN_BYTES),
     heading: z.string().max(500).optional(),
     revises: revisesArg,
+    ...changeArgs,
   },
   annotations: { ...ADDITIVE, ...FETCHES_IMAGES },
 };
@@ -390,11 +420,12 @@ const markdownEditTool: ToolDefinition = {
     "heading_path?, content?}]) that become footnotes when the edits land — the shape for grounded edits drawn from " +
     `\`retrieve\`. ${PROPOSED} Never rewrite the document because your change looks missing: your reads include it, ` +
     "and `markdown` action:status reports what the user decided. Edits 3-way merge with concurrent human edits. " +
-    `${REVISES} ${IMAGES_IN_MARKDOWN}`,
+    `${REVISES} ${CHANGES} ${IMAGES_IN_MARKDOWN}`,
   inputSchema: {
     workspace_id: workspaceId,
     doc_id: z.string(),
     action: z.enum(MARKDOWN_EDIT_ACTIONS),
+    ...changeArgs,
     text: z.string().max(MAX_IMPORT_MARKDOWN_BYTES).optional(),
     find: z.string().max(1_000_000).optional(),
     replace: z.string().max(MAX_IMPORT_MARKDOWN_BYTES).optional(),
@@ -633,11 +664,12 @@ const databasesAddTool: ToolDefinition = {
     "`column_map` {file header → column, or null to skip}, `on_error` abort|skip_bad_rows, `max_bad_rows`, " +
     "`date_order` mdy|dmy, `dry_run` to check without loading. Cells are read the way people write them (1/4/26, 4 " +
     `Jan 2026, $1,234.50, yes/no); row-level errors come back with hints. ${COLUMN_TYPES} ${VIEW_SHAPE} ${PROPOSED} ` +
-    `Your own schema reads include your pending changes, and query results carry a note while changes are pending. ${REVISES}`,
+    `Your own schema reads include your pending changes, and query results carry a note while changes are pending. ${REVISES} ${CHANGES}`,
   inputSchema: {
     workspace_id: workspaceId,
     action: z.enum(DATABASES_ADD_ACTIONS),
     revises: revisesArg,
+    ...changeArgs,
     database_id: z.string().optional(),
     title: z.string().max(DATABASE_MAX_DISPLAY_LENGTH).optional(),
     /** A table_id, physical name or display name; for create_database, the starter table's name. */
@@ -670,11 +702,12 @@ const databasesChangeTool: ToolDefinition = {
     "Change what a structured database already holds. action: update_rows (`database_id`, `table`, `updates`: " +
     "[{_id, values}] — get _id values from `query`) | delete_rows (`database_id`, `table`, `row_ids`) | update_view " +
     "(`database_id`, `table`, `view` = view_id or name, plus the view fields to change; `name` renames it). " +
-    `${COLUMN_TYPES} ${VIEW_SHAPE} ${PROPOSED} ${REVISES}`,
+    `${COLUMN_TYPES} ${VIEW_SHAPE} ${PROPOSED} ${REVISES} ${CHANGES}`,
   inputSchema: {
     workspace_id: workspaceId,
     action: z.enum(DATABASES_CHANGE_ACTIONS),
     revises: revisesArg,
+    ...changeArgs,
     database_id: z.string(),
     table: z.string().max(DATABASE_MAX_DISPLAY_LENGTH),
     updates: z
@@ -753,7 +786,8 @@ const rememberTool: ToolDefinition = {
     'user\'s own "My notes" folder in the workspace, where their own notes go (`home.shared`: whether anyone else ' +
     "reads it now); " +
     "`home.pages` are the pages in it. `instructions` is what people wrote for agents about these places: follow it. " +
-    "THEN, for each point not already saved: read the best place with `markdown` action:read, and write — " +
+    "THEN, for each point not already saved: read the best place with `markdown` action:read, and write — ONE " +
+    "change for the whole save: `change_title` on your first write, its `change_id` on every other — " +
     "`markdown_edit` str_replace when it corrects or updates a sentence there (change that sentence: never leave the " +
     "old and the new both standing), `markdown_append` with `heading` to add a new fact under the right section, or " +
     "`docs_create` for a new page (in the `new_page` folder, or the folder whose instructions say it belongs, else in " +

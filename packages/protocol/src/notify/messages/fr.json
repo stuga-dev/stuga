@@ -2,6 +2,7 @@
   "untitled": "Sans titre",
   "action.open": "Ouvrir",
   "review.post": "« {doc} » : {agent} de {author} a proposé {count, plural, one {# modification} many {# modifications} other {# modifications}} · {level, select, colleague {Vérifiées par un collègue} review {Vérifiées par la personne qui a sollicité l’IA} other {Modifications de l’IA appliquées directement}}",
+  "review.postChange": "« {change} » : {agent} de {author} a proposé des modifications · {level, select, colleague {Vérifiées par un collègue} review {Vérifiées par la personne qui a sollicité l’IA} other {Modifications de l’IA appliquées directement}}",
   "review.open": "Vérifier",
 
   "MENTIONED_IN_COMMENT.title": "{actor} vous a mentionné dans un commentaire sur « {doc} »",
@@ -28,6 +29,12 @@
   "APPROVAL_WAITING.body": "{agent} de {author} a proposé {count, plural, one {# modification} many {# modifications} other {# modifications}}.",
   "APPROVER_NEEDED.title": "« {doc} » : des modifications attendent quelqu’un qui les approuve",
   "APPROVER_NEEDED.body": "{agent} de {author} a proposé {count, plural, one {# modification} many {# modifications} other {# modifications}}. {cause, select, group {Donnez à un membre du groupe d’approbation l’accès en modification pour qu’il les approuve.} other {Donnez à un collègue l’accès en modification pour qu’il les approuve.}}",
+  "CHANGE_PROPOSED.title": "« {change} » : {agent} a proposé des modifications",
+  "CHANGE_PROPOSED.body": "Chaque page indique qui l’approuve.",
+  "CHANGE_APPLIED.title": "« {change} » : {agent} a apporté des modifications",
+  "CHANGE_APPLIED.body": "{agent} a modifié des pages où les modifications de l’IA s’appliquent directement.",
+  "CHANGE_APPROVAL_WAITING.title": "« {change} » : en attente de votre approbation",
+  "CHANGE_APPROVAL_WAITING.body": "{agent} de {author} a proposé des modifications.",
   "REVIEW_LEVEL_LOWERED.title": "« {doc} » : vérification des modifications de l’IA assouplie",
   "REVIEW_LEVEL_LOWERED.body": "{moved, select, yes {{actor} a déplacé {kind, select, folder {ce dossier} database {cette base de données} other {ce document}} ; son niveau est désormais « {level, select, auto {Modifications de l’IA appliquées directement} review {Vérifiées par la personne qui a sollicité l’IA} other {Vérifiées par un collègue}} »{floorKnown, select, yes {, plus souple que dans son ancien dossier} other {}}.} other {{actor} a réglé {kind, select, folder {ce dossier} database {cette base de données} other {ce document}} sur « {level, select, auto {Modifications de l’IA appliquées directement} review {Vérifiées par la personne qui a sollicité l’IA} other {Vérifiées par un collègue}} »{floorKnown, select, yes {, un niveau plus souple que celui de son dossier} other {}}.}}",
 

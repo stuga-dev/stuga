@@ -156,6 +156,8 @@ export interface RunPolicyFields {
   reviewer: string;
   review_mode: ReviewMode;
   approver_group?: string | null;
+  /** The run of the same agent on the item it waits behind: accepted only once that one is decided. */
+  queued_behind?: string | null;
 }
 
 /** What the node vouches for beside a decision, and what the person reading the run is shown. */
@@ -233,18 +235,67 @@ export class RunJudge {
       }
       const may = (act: RunAct) =>
         mayActOnRun({ act, level: actLevel(act, run.review_mode, itemLevel), by: me, reviewer: run.reviewer, approver, manager });
+      const queued = !!run.queued_behind;
       const standing: RunStanding = {
         level,
-        // Deciding changes the item, so both need write access to it, as the decision routes ask.
-        accept: writer && may("accept"),
+        // Deciding changes the item, so both need write access to it, as the decision routes ask. A
+        // queued run is accepted once the run it waits behind is decided; the actor holds it to that.
+        accept: writer && may("accept") && !queued,
         reject: writer && may("reject"),
         // Marking it reviewed changes nothing, and works after access is withdrawn.
         ack: !ctx.isAgent && may("ack"),
         ...(waitsFor ? { waits_for: waitsFor } : {}),
+        ...(queued && writer && may("accept") ? { queued: true as const } : {}),
       };
       return { level, itemLevel, approver, manager, seesText: me === run.reviewer || approver || manager, standing };
     });
   }
+}
+
+/** A run as the stacking rule reads it: its id, what it was proposed on top of, and where its items stand. */
+interface StackedRun extends RunPolicyFields {
+  id: string;
+  stacked_on?: string[];
+  hunks?: ReadonlyArray<{ status: string }>;
+  /** Its hunks were left out for their size: their statuses are not known from this summary. */
+  hunks_truncated?: boolean;
+  ops?: ReadonlyArray<{ status: string }>;
+}
+
+const LANDED_ITEM: ReadonlySet<string> = new Set(["accepted", "auto_applied"]);
+
+/**
+ * A queued run's changes were proposed on top of the waiting text of the runs before it, and may quote
+ * it. While any of those holds text that has not landed, the queued run's text is read only by someone
+ * who reads theirs too, so a stricter level on the later run never widens who reads the earlier's; who
+ * may not read it may not decide it either. `load` reads a run in full (every item's status) when it is
+ * not in `runs`, or its summary there left its items out; one it cannot read, or whose items are still
+ * not known, counts as holding text that has not landed.
+ */
+export async function narrowStacked(
+  ctx: Pick<Ctx, "alias">,
+  judge: RunJudge,
+  runs: readonly StackedRun[],
+  verdicts: RunVerdict[],
+  load: (runId: string) => Promise<StackedRun | null>,
+): Promise<RunVerdict[]> {
+  const out = [...verdicts];
+  for (let i = 0; i < runs.length; i++) {
+    const run = runs[i]!;
+    const v = out[i]!;
+    if (!run.stacked_on?.length || !v.seesText || ctx.alias === run.reviewer || v.manager) continue;
+    for (const id of run.stacked_on) {
+      const listed = runs.find((r) => r.id === id);
+      const under = listed && !listed.hunks_truncated ? listed : await load(id);
+      const items = under && !under.hunks_truncated ? (under.hunks ?? under.ops ?? null) : null;
+      // Landed text is anyone's who reads the item; only what has not landed is narrowed.
+      if (items && items.every((h) => LANDED_ITEM.has(h.status))) continue;
+      if (under && (await judge.judge(under)).seesText) continue;
+      out[i] = { ...v, seesText: false, approver: false, standing: { ...v.standing, accept: false, reject: v.standing.reject && v.manager } };
+      break;
+    }
+  }
+  return out;
 }
 
 /** Who may decide a run's waiting changes now, as its review card names them to whoever reads them. */

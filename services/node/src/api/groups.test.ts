@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@stuga/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@stuga/db")>()),
+  // No document here is a new page a change holds.
+  changePageOf: vi.fn(async () => null),
   upsertGroup: vi.fn(async () => {}),
   listGroupMembers: vi.fn(async () => ["user:alice", "user:bob"]),
   getDoc: vi.fn(),

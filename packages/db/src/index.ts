@@ -42,6 +42,7 @@ export * from "./notifications.js";
 export * from "./agents.js";
 export * from "./grants.js";
 export * from "./governance.js";
+export * from "./changes.js";
 export * from "./audit.js";
 export * from "./node.js";
 export * from "./remote-access.js";

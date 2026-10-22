@@ -4,18 +4,20 @@ import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
-import type { InboxRun } from "../api";
-import { ReviewPage, madeBy, needsAttention, runActions, runStatus, tabOf } from "./ReviewPage";
+import type { InboxChange, InboxRun } from "../api";
+import { ReviewPage, changeStatus, inboxItems, madeBy, needsAttention, runActions, runStatus, tabOf } from "./ReviewPage";
 import { toasts } from "../test/toast";
 import { mountInto, typeInto } from "../test/form-input";
 
 const inbox = vi.hoisted(() => ({ list: vi.fn(), stats: vi.fn() }));
 const docRuns = vi.hoisted(() => ({ decide: vi.fn(), revert: vi.fn(), ack: vi.fn(), detail: vi.fn() }));
+const changeApi = vi.hoisted(() => ({ get: vi.fn(), decide: vi.fn() }));
 
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   Inbox: inbox,
   Runs: docRuns,
+  Changes: changeApi,
 }));
 vi.mock("@astryxdesign/core/Toast", () => import("../test/toast"));
 vi.mock("../shell/AppTopNav", () => ({ AppTopNav: () => null }));
@@ -354,5 +356,73 @@ describe("the revert dialog", () => {
     expect(toasts.shown).toEqual([{ body: "Reverted the changes in “Q3 plan”.", type: "info" }]);
     // Reverted is not something to review, so the row leaves the list.
     expect(host.textContent).toContain("All caught up");
+  });
+});
+
+/** A change as the inbox lists it: one row for its runs on several pages. */
+const change = (overrides: Partial<InboxChange> = {}): InboxChange => ({
+  change_id: "chg_0123456789ab",
+  title: "Customer sync, 2026-10-21",
+  agent: "Scout",
+  agent_alias: "agent-1",
+  agent_name: "Scout",
+  source: "connector",
+  client: "claude-code",
+  model: null,
+  reviewer: "liv",
+  run_ids: ["run_a", "run_b", "run_c"],
+  pages: 3,
+  page_titles: ["Initech", "Customer list", "Sync log"],
+  pending: 3,
+  accepted: 0,
+  rejected: 0,
+  conflicts: 0,
+  applied: 0,
+  level: "colleague",
+  you: { accept: true, reject: true },
+  can_decide: true,
+  status: "open",
+  created_at: "2026-10-22T08:00:00.000Z",
+  updated_at: "2026-10-22T08:05:00.000Z",
+  ...overrides,
+});
+
+describe("a change in the inbox", () => {
+  it("says what of it waits and for whom, and what became of it", () => {
+    expect(changeStatus(change())).toBe("3 changes waiting for your decision");
+    expect(changeStatus(change({ you: { accept: false, reject: true, queued: true } }))).toBe("3 changes waiting behind an earlier change");
+    expect(changeStatus(change({ you: { accept: false, reject: true } }))).toBe("3 changes waiting for a colleague’s approval");
+    expect(changeStatus(change({ status: "decided", pending: 0, accepted: 2, rejected: 1 }))).toBe("2 approved · 1 declined");
+  });
+
+  it("is listed with the runs in no change, the latest first", () => {
+    const older = run({ run_id: "run_x", updated_at: "2026-10-21T00:00:00.000Z" });
+    const items = inboxItems([older], [change()]);
+    expect(items.map((i) => i.kind)).toEqual(["change", "run"]);
+  });
+
+  it("is one row, opening the change's card, with Ask for changes and Decline for the whole change", async () => {
+    const { host, root } = mountInto();
+    inbox.list.mockResolvedValue({ runs: [], changes: [change()], filter: "attention" });
+    inbox.stats.mockResolvedValue({ agents: [] });
+    changeApi.decide.mockResolvedValue({ change_id: "chg_0123456789ab", decision: "reject", atomic: false, pages: [] });
+    let path = "";
+    const Where = () => {
+      path = useLocation().pathname;
+      return null;
+    };
+    await act(async () => root.render(createElement(MemoryRouter, { initialEntries: ["/review"] }, createElement(ReviewPage), createElement(Where))));
+    expect(host.querySelector("h2")?.textContent).toBe("1 item needs review");
+    expect(host.textContent).toContain("Customer sync, 2026-10-21");
+    expect(host.textContent).toContain("Initech · Customer list · Sync log");
+    expect(host.textContent).toContain("3 pages");
+    const review = [...host.querySelectorAll("button")].find((b) => b.textContent === "Review changes")!;
+    await act(async () => review.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(path).toBe("/review/change/chg_0123456789ab");
+    const decline = [...host.querySelectorAll("button")].find((b) => b.textContent === "Decline")!;
+    await act(async () => decline.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(changeApi.decide).toHaveBeenCalledExactlyOnceWith("chg_0123456789ab", "reject", undefined);
+    // Declined, it leaves Needs you.
+    expect(host.textContent).not.toContain("Customer sync, 2026-10-21");
   });
 });

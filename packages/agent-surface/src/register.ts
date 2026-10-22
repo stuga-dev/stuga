@@ -17,6 +17,7 @@ import { isWorkspaceEventType } from "@stuga/protocol/domain/events";
 import {
   isRefusal,
   type AgentBackend,
+  type ChangeFields,
   type ColumnSpecInput,
   type CommentAddInput,
   type DatabaseProposal,
@@ -254,6 +255,15 @@ async function answer<T>(pending: Promise<T | Refusal>, render: (value: T) => st
 
 const json = (value: unknown): string => JSON.stringify(value);
 
+/** The change fields a write passes on, only those it was given. */
+function changeOf(args: ChangeFields): ChangeFields {
+  return {
+    ...(args.change_id !== undefined ? { change_id: args.change_id } : {}),
+    ...(args.change_title !== undefined ? { change_title: args.change_title } : {}),
+    ...(args.change_summary !== undefined ? { change_summary: args.change_summary } : {}),
+  };
+}
+
 interface MarkdownEditArgs extends Omit<ProposeInput, "action" | "citations"> {
   doc_id: string;
   action: "write" | "str_replace" | "cited_edits";
@@ -278,7 +288,7 @@ interface CommentsAddArgs extends CommentAddInput {
   doc_id: string;
 }
 
-interface DatabasesArgs {
+interface DatabasesArgs extends ChangeFields {
   action: string;
   database_id?: string;
   title?: string;
@@ -336,8 +346,16 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
     return answer(b.docMetadata(doc_id), json);
   }),
 
-  docs_create: (async ({ title, parent_id }: { title: string; parent_id?: string }, b: AgentBackend) =>
-    answer(b.createDoc({ title, ...(parent_id ? { parent_id } : {}) }), (d) => json({ doc_id: d.doc_id, title: d.title, ...instructionFields(d) }))),
+  docs_create: (async (args: { title: string; parent_id?: string } & ChangeFields, b: AgentBackend) =>
+    answer(b.createDoc({ title: args.title, ...(args.parent_id ? { parent_id: args.parent_id } : {}), ...changeOf(args) }), (d) =>
+      json({
+        doc_id: d.doc_id,
+        title: d.title,
+        ...(d.change_id ? { change_id: d.change_id, change_title: d.change_title } : {}),
+        ...(d.held ? { held: true, note: HELD_NOTE } : {}),
+        ...instructionFields(d),
+      }),
+    )),
 
   markdown: (async ({ doc_id, action }: { doc_id: string; action: "read" | "status" | "provenance" }, b: AgentBackend) => {
     if (action === "read") return answer(b.readMarkdown(doc_id), renderRead);
@@ -345,8 +363,8 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
     return answer(b.provenance(doc_id), renderProvenance);
   }),
 
-  markdown_append: (async ({ doc_id, text, heading, revises }: { doc_id: string; text: string; heading?: string; revises?: string[] }, b: AgentBackend) =>
-    answer(b.propose(doc_id, { action: "append", text, heading, revises }), renderPropose)),
+  markdown_append: (async (args: { doc_id: string; text: string; heading?: string; revises?: string[] } & ChangeFields, b: AgentBackend) =>
+    answer(b.propose(args.doc_id, { action: "append", text: args.text, heading: args.heading, revises: args.revises, ...changeOf(args) }), renderPropose)),
 
   markdown_edit: (async (args: MarkdownEditArgs, b: AgentBackend) => {
     const { doc_id, action, text, replace_all, edits, citations, revises } = args;
@@ -366,6 +384,7 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
         edits,
         citations: citations?.map((c) => ({ ...c, heading_path: c.heading_path ?? null, content: c.content ?? "" })),
         revises,
+        ...changeOf(args),
       }),
       renderPropose,
     );
@@ -457,6 +476,11 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
 
 const collectionRef = (c: { collection_id: string; name: string }): string => json({ collection_id: c.collection_id, name: c.name });
 
+/** Said of a new page held until its change is approved. */
+const HELD_NOTE =
+  "AI edits here wait for a colleague, so this page stays visible only to the user and those who may approve it " +
+  "until its change is approved. Fill it in the same change.";
+
 async function collectionsEdit({ action, collection_id, name, doc_ids, folder_ids }: CollectionsEditArgs, b: AgentBackend): Promise<ToolText> {
   if (action === "create") {
     if (!name?.trim()) return err("create requires `name`");
@@ -531,6 +555,7 @@ async function databasesAdd(args: DatabasesArgs, b: AgentBackend): Promise<ToolT
   if (action === "create_database") {
     const created = await b.createDoc({
       title: args.title ?? "",
+      ...changeOf(args),
       doc_type: "database",
       ...(args.table !== undefined ? { table: args.table } : {}),
       ...(args.columns !== undefined ? { columns: args.columns } : {}),
@@ -552,7 +577,7 @@ async function databasesAdd(args: DatabasesArgs, b: AgentBackend): Promise<ToolT
     return propose(
       b,
       databaseId,
-      { revises: args.revises, action: "create_table", display, ...(columns.length > 0 ? { columns } : {}) },
+      { revises: args.revises, ...changeOf(args), action: "create_table", display, ...(columns.length > 0 ? { columns } : {}) },
       `created table "${display}"${columns.length > 0 ? ` with ${plural(columns.length, "column")}` : ""}.`,
     );
   }
@@ -607,6 +632,7 @@ async function databasesAdd(args: DatabasesArgs, b: AgentBackend): Promise<ToolT
         databaseId,
         {
           revises: args.revises,
+          ...changeOf(args),
           action: "add_column",
           table_id: id,
           display: args.name,
@@ -618,10 +644,10 @@ async function databasesAdd(args: DatabasesArgs, b: AgentBackend): Promise<ToolT
       );
     case "insert_rows":
       if (!args.rows?.length) return err("insert_rows requires `rows` — for a whole file use action:import");
-      return propose(b, databaseId, { revises: args.revises, action: "insert_rows", table_id: id, rows: args.rows }, `inserted ${args.rows.length} row(s) into ${table.name}.`, bulkSteer(args.rows.length));
+      return propose(b, databaseId, { revises: args.revises, ...changeOf(args), action: "insert_rows", table_id: id, rows: args.rows }, `inserted ${args.rows.length} row(s) into ${table.name}.`, bulkSteer(args.rows.length));
     case "create_view":
       if (!args.name) return err("create_view requires `name`");
-      return propose(b, databaseId, { revises: args.revises, action: "create_view", table_id: id, view: { name: args.name, ...viewShape(args) } }, `created view "${args.name}" on ${table.name}.`);
+      return propose(b, databaseId, { revises: args.revises, ...changeOf(args), action: "create_view", table_id: id, view: { name: args.name, ...viewShape(args) } }, `created view "${args.name}" on ${table.name}.`);
     case "open_page":
       if (!args.row_id) return err("open_page requires `row_id` (a row's `_id`, from `query`)");
       return answer(b.openRowPage(databaseId, id, args.row_id), renderOpenPage);
@@ -638,16 +664,16 @@ async function databasesChange(args: DatabasesArgs, b: AgentBackend): Promise<To
   switch (args.action) {
     case "update_rows":
       if (!args.updates?.length) return err("update_rows requires `updates`");
-      return propose(b, databaseId, { revises: args.revises, action: "update_rows", table_id: id, updates: args.updates }, `updated ${args.updates.length} row(s) in ${table.name}.`);
+      return propose(b, databaseId, { revises: args.revises, ...changeOf(args), action: "update_rows", table_id: id, updates: args.updates }, `updated ${args.updates.length} row(s) in ${table.name}.`);
     case "delete_rows":
       if (!args.row_ids?.length) return err("delete_rows requires `row_ids`");
-      return propose(b, databaseId, { revises: args.revises, action: "delete_rows", table_id: id, row_ids: args.row_ids }, `deleted ${args.row_ids.length} row(s) from ${table.name}.`);
+      return propose(b, databaseId, { revises: args.revises, ...changeOf(args), action: "delete_rows", table_id: id, row_ids: args.row_ids }, `deleted ${args.row_ids.length} row(s) from ${table.name}.`);
     case "update_view": {
       const hit = resolveView(table, args.view);
       if ("error" in hit) return err(hit.error);
       const changes = { ...(args.name ? { name: args.name } : {}), ...viewShape(args) };
       if (Object.keys(changes).length === 0) return err("update_view needs something to change: name, filter, sorts, group_by or hidden_columns");
-      return propose(b, databaseId, { revises: args.revises, action: "update_view", table_id: id, view_id: hit.view.view_id, changes }, `changed view "${hit.view.name}" on ${table.name}.`);
+      return propose(b, databaseId, { revises: args.revises, ...changeOf(args), action: "update_view", table_id: id, view_id: hit.view.view_id, changes }, `changed view "${hit.view.name}" on ${table.name}.`);
     }
     default:
       return err(`unknown action ${args.action}`);

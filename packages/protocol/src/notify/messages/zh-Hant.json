@@ -2,6 +2,7 @@
   "untitled": "未命名",
   "action.open": "開啟",
   "review.post": "「{doc}」：{author} 的 {agent} 建議了 {count, plural, other {# 項變更}} · {level, select, colleague {由同事審閱} review {由發起人審閱} other {AI 編輯直接套用}}",
+  "review.postChange": "「{change}」：{author} 的 {agent} 建議了變更 · {level, select, colleague {由同事審閱} review {由發起人審閱} other {AI 編輯直接套用}}",
   "review.open": "審閱",
 
   "MENTIONED_IN_COMMENT.title": "{actor} 在「{doc}」的留言中提及了你",
@@ -28,6 +29,12 @@
   "APPROVAL_WAITING.body": "{author} 的 {agent} 建議了 {count, plural, other {# 項變更}}。",
   "APPROVER_NEEDED.title": "「{doc}」：變更等待有人核准",
   "APPROVER_NEEDED.body": "{author} 的 {agent} 建議了 {count, plural, other {# 項變更}}。{cause, select, group {給核准群組中的成員編輯權限以核准這些變更。} other {給同事編輯權限以核准這些變更。}}",
+  "CHANGE_PROPOSED.title": "「{change}」：{agent} 建議了變更",
+  "CHANGE_PROPOSED.body": "每個頁面都會註明由誰核准。",
+  "CHANGE_APPLIED.title": "「{change}」：{agent} 做了變更",
+  "CHANGE_APPLIED.body": "{agent} 變更了設為 AI 編輯直接套用的頁面。",
+  "CHANGE_APPROVAL_WAITING.title": "「{change}」：等待你核准",
+  "CHANGE_APPROVAL_WAITING.body": "{author} 的 {agent} 建議了變更。",
   "REVIEW_LEVEL_LOWERED.title": "「{doc}」：AI 編輯的審閱已放寬",
   "REVIEW_LEVEL_LOWERED.body": "{moved, select, yes {{actor} 移動了{kind, select, folder {此資料夾} database {此資料庫} other {此文件}}，其層級現為「{level, select, auto {AI 編輯直接套用} review {由發起人審閱} other {由同事審閱}}」{floorKnown, select, yes {，比原資料夾更寬鬆} other {}}。} other {{actor} 將{kind, select, folder {此資料夾} database {此資料庫} other {此文件}}設為「{level, select, auto {AI 編輯直接套用} review {由發起人審閱} other {由同事審閱}}」{floorKnown, select, yes {，比其資料夾更寬鬆} other {}}。}}",
 

@@ -999,6 +999,9 @@ CREATE TABLE agent_runs (
     rejected     INTEGER NOT NULL DEFAULT 0,
     conflicts    INTEGER NOT NULL DEFAULT 0,
     applied      INTEGER NOT NULL DEFAULT 0,
+    -- The run of the same agent on the same item it waits behind: proposed on top of that run's
+    -- undecided changes, it is approved only once that one is decided.
+    queued_behind TEXT,
     created_at   TIMESTAMPTZ NOT NULL,
     updated_at   TIMESTAMPTZ NOT NULL
 );
@@ -1041,11 +1044,64 @@ CREATE TABLE webhooks (
 );
 CREATE INDEX webhooks_ws_idx ON webhooks (workspace_id);
 
--- The runs a review channel has posted: one post per hook and run, however often the run grows.
+-- What a review channel has posted: one post per hook and run, or per hook and change for the runs of a
+-- change, however often it grows. subject_id is the run's id or the change's.
 CREATE TABLE review_posts (
     webhook_id TEXT NOT NULL REFERENCES webhooks(webhook_id) ON DELETE CASCADE,
-    run_id     TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (webhook_id, run_id)
+    PRIMARY KEY (webhook_id, subject_id)
 );
 CREATE INDEX review_posts_created_idx ON review_posts (created_at);
+
+-- A change: the runs one agent makes across several pages for one piece of work (an ingest of a
+-- meeting, a Save to Stuga of several points), reviewed as one. Each run stays its page's own, decided
+-- at that page's level. The agent opens it with a title; the summary is its own words for approvers.
+CREATE TABLE wiki_changes (
+    change_id    TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    title        TEXT NOT NULL,
+    summary      TEXT NOT NULL DEFAULT '',
+    -- The agent's label, its alias (the run identity) and the person it acts for, who asked.
+    agent        TEXT NOT NULL,
+    agent_alias  TEXT NOT NULL,
+    on_behalf_of TEXT NOT NULL,
+    client       TEXT,
+    model        TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX wiki_changes_ws_updated_idx ON wiki_changes (workspace_id, updated_at DESC);
+
+-- The runs of a change, on documents and databases alike; a run belongs to one change.
+CREATE TABLE wiki_change_runs (
+    change_id  TEXT NOT NULL REFERENCES wiki_changes(change_id) ON DELETE CASCADE,
+    doc_id     TEXT NOT NULL,
+    run_id     TEXT NOT NULL UNIQUE,
+    doc_kind   TEXT NOT NULL CHECK (doc_kind IN ('prose', 'database')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (change_id, run_id)
+);
+CREATE INDEX wiki_change_runs_doc_idx ON wiki_change_runs (doc_id);
+
+-- A page an agent made in a change where AI edits wait for a colleague. While held, only the person who
+-- asked and those who may approve it can open it (held_grants, its folder's access not inherited), and no
+-- event, webhook or export names it. Approved, it takes release_grants and its folder's access; declined
+-- or withdrawn, it goes to the trash with the note. reviewer and approver_group are how it was judged
+-- when made, for approving a page that holds no change yet.
+CREATE TABLE wiki_change_pages (
+    doc_id         TEXT PRIMARY KEY REFERENCES docs(doc_id) ON DELETE CASCADE,
+    change_id      TEXT NOT NULL REFERENCES wiki_changes(change_id) ON DELETE CASCADE,
+    workspace_id   TEXT NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    state          TEXT NOT NULL DEFAULT 'held' CHECK (state IN ('held', 'released', 'removed')),
+    held_grants    TEXT[] NOT NULL DEFAULT '{}',
+    release_grants JSONB NOT NULL DEFAULT '{"p":[],"w":[],"c":[]}',
+    reviewer       TEXT NOT NULL,
+    approver_group TEXT,
+    note           TEXT,
+    decided_by     TEXT,
+    decided_at     TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX wiki_change_pages_change_idx ON wiki_change_pages (change_id);
+CREATE INDEX wiki_change_pages_held_idx   ON wiki_change_pages (doc_id) WHERE state = 'held';

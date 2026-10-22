@@ -4,6 +4,7 @@ import type { AgentRunSummary, RunHunkStatus } from "@stuga/protocol/wire/doc-so
 import type { MarkdownBody, PendingChange, ProposeBody, ProvenanceBody, WaitsFor } from "../backend.js";
 import { feedbackOfRun, hunkChange, renderFeedback, revisedNote, statusFeedbackLines, type FeedbackPlace } from "./feedback.js";
 import { instructionsPointer } from "./instructions.js";
+import { changeSentence, queuedSentence } from "./changes.js";
 
 /** Only the newest few runs are worth the agent's context. */
 export const MAX_STATUS_RUNS = 3;
@@ -153,9 +154,9 @@ export function renderPropose(res: ProposeBody): string {
     case "proposed":
       return (
         `Proposed — your edit is waiting for ${res.run.review_mode === "colleague" ? "a colleague of the user" : "the user"} to accept it (${res.reason}). ` +
-        `Run ${res.run.id}, ${res.pending} pending. This is SUCCESS: do NOT retry, and do not ` +
+        `Run ${res.run.id}, ${res.pending} pending.${res.queued_behind ? ` ${queuedSentence(res.queued_behind)}` : ""} This is SUCCESS: do NOT retry, and do not ` +
         `rewrite the document because the change looks missing. The user has been notified. ` +
-        `Later reads include your pending edits; check \`markdown\` action:status for their decision.${writeNote(res.media_note)}${writeNote(res.placement_note)}` +
+        `Later reads include your pending edits; check \`markdown\` action:status for their decision.${changeSentence(res.change_id)}${writeNote(res.media_note)}${writeNote(res.placement_note)}` +
         instructionsPointer(res.instructions_labels, "`docs` action:metadata") +
         revisedNote(res.revised) +
         feedbackAfter(res.feedback)
@@ -163,7 +164,7 @@ export function renderPropose(res: ProposeBody): string {
     case "auto_applied":
       return (
         `Applied (server seq ${res.seq}) — ${res.reason}, so the edit landed without waiting for review; ` +
-        `the user has been notified and can review or revert at ${res.review_url}.${writeNote(res.media_note)}${writeNote(res.placement_note)}` +
+        `the user has been notified and can review or revert at ${res.review_url}.${changeSentence(res.change_id)}${writeNote(res.media_note)}${writeNote(res.placement_note)}` +
         instructionsPointer(res.instructions_labels, "`docs` action:metadata") +
         revisedNote(res.revised) +
         feedbackAfter(res.feedback)

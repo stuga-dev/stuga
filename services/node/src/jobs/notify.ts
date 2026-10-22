@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { NotifyApproversMessage, NotifyDeliverMessage, NotifyMessage } from "@stuga/protocol/internal/jobs";
 import type { DeliveryErrorCode } from "@stuga/protocol/notify/events";
 import { reviewCardPath } from "@stuga/protocol/domain/runs";
+import { changeCardPath } from "@stuga/protocol/domain/changes";
+import type { WikiChangeRow } from "@stuga/db";
 import { recipientLanguage } from "@stuga/protocol/notify/render";
 import type { NotifyConfig } from "../env.js";
 import type { JobDeps, JobsEnv } from "./deps.js";
@@ -72,8 +74,51 @@ function aboutOf(msg: NotifyMessage): string {
   return msg.docId;
 }
 
+/** The notice a run's own becomes when the run belongs to a change: its person hears of the change once. */
+const CHANGE_NOTICE: Partial<Record<string, "CHANGE_PROPOSED" | "CHANGE_APPLIED">> = {
+  AGENT_EDITS_PROPOSED: "CHANGE_PROPOSED",
+  DATABASE_AGENT_PROPOSED: "CHANGE_PROPOSED",
+  AGENT_EDITS_APPLIED: "CHANGE_APPLIED",
+};
+
+/** A run's change, when the message names one of this workspace's. */
+async function changeOf(deps: JobDeps, changeId: string | undefined, workspaceId: string | null): Promise<WikiChangeRow | null> {
+  if (!changeId) return null;
+  const change = await deps.db.getChange(changeId);
+  return change && change.workspace_id === workspaceId ? change : null;
+}
+
+/**
+ * The notice to whoever asked about a run of a change: one per change, however many pages and runs
+ * it grows to, opening the change's card. Its title is the change's, never a page's.
+ */
+async function notifyChange(env: JobsEnv, deps: JobDeps, msg: NotifyMessage, change: WikiChangeRow, eventType: "CHANGE_PROPOSED" | "CHANGE_APPLIED"): Promise<void> {
+  const params = { agent: String((msg.params as { agent?: unknown }).agent ?? change.agent), change: change.title };
+  const url = `${env.publicOrigin}${changeCardPath(change.change_id, msg.workspaceId)}`;
+  const delivery = sinkDelivery(env.settings.current().notify, { recipient: msg.recipient, eventType, params, url });
+  await deps.db.insertNotification(
+    {
+      id: `${eventType}:change:${change.change_id}:${msg.recipient}`,
+      workspace_id: msg.workspaceId,
+      recipient_alias: msg.recipient,
+      event_type: eventType,
+      resource_id: msg.docId || null,
+      resource_title: change.title,
+      resource_url: url,
+      actor_alias: msg.actor,
+      payload: params,
+    },
+    delivery,
+  );
+}
+
 /** Store an in-app notification; a new one also queues its delivery to the configured sink. */
 export async function handleNotify(env: JobsEnv, deps: JobDeps, msg: NotifyMessage): Promise<void> {
+  const asChange = CHANGE_NOTICE[msg.eventType];
+  if (asChange) {
+    const change = await changeOf(deps, msg.changeId, msg.workspaceId);
+    if (change) return notifyChange(env, deps, msg, change, asChange);
+  }
   const { recipient, eventType, docId, params, commentNum } = msg;
   const about = aboutOf(msg);
   // Access requests are per requester, since each is answered on its own.
@@ -128,8 +173,12 @@ export async function handleNotifyApprovers(env: JobsEnv, deps: JobDeps, msg: No
   const before = msg.groupBefore !== undefined ? new Set((await deps.db.colleagueApprovers(doc, msg.reviewer, groupsWith(msg.groupBefore))).aliases) : null;
   const author = (await deps.db.displayNameOf(msg.reviewer)) || msg.reviewer;
   const base = { agent: msg.agent, author, doc: msg.doc || doc.title, count: msg.count };
+  // A run of a change: each approver hears of the change once, and its card opens.
+  const change = await changeOf(deps, msg.changeId, msg.workspaceId);
   // The run's review card, where an approver decides it on any screen.
-  const url = `${env.publicOrigin}${reviewCardPath(msg.docId, msg.runId, msg.workspaceId)}`;
+  const url = change
+    ? `${env.publicOrigin}${changeCardPath(change.change_id, msg.workspaceId)}`
+    : `${env.publicOrigin}${reviewCardPath(msg.docId, msg.runId, msg.workspaceId)}`;
   const cfg = env.settings.current().notify;
   const hour = Math.floor(Date.now() / HOUR_MS);
   const chat = CHAT_SINKS.has(cfg.sink);
@@ -161,7 +210,27 @@ export async function handleNotifyApprovers(env: JobsEnv, deps: JobDeps, msg: No
   }
   for (const recipient of aliases) {
     if (before?.has(recipient)) continue;
-    await send(recipient, "APPROVAL_WAITING", base);
+    if (!change) {
+      await send(recipient, "APPROVAL_WAITING", base);
+      continue;
+    }
+    const params = { agent: msg.agent, author, change: change.title };
+    const delivery = chat && channelPosted ? null : sinkDelivery(cfg, { recipient, eventType: "CHANGE_APPROVAL_WAITING", params, url });
+    if (chat && delivery) channelPosted = true;
+    await deps.db.insertNotification(
+      {
+        id: `CHANGE_APPROVAL_WAITING:change:${change.change_id}:${recipient}`,
+        workspace_id: msg.workspaceId,
+        recipient_alias: recipient,
+        event_type: "CHANGE_APPROVAL_WAITING",
+        resource_id: msg.docId,
+        resource_title: change.title,
+        resource_url: url,
+        actor_alias: msg.actor,
+        payload: params,
+      },
+      delivery,
+    );
   }
 }
 

@@ -5,7 +5,7 @@
  */
 import { DATABASE_RUN_OPS_MAX } from "@stuga/protocol/databases/limits";
 import { RUN_FEEDBACK_REVISES_MAX } from "@stuga/protocol/domain/limits";
-import type { DatabaseActor as DatabaseActorIdentity, DatabaseRunSource } from "@stuga/protocol/databases/types";
+import type { DatabaseActor as DatabaseActorIdentity, DatabaseRunOpPayload, DatabaseRunSource } from "@stuga/protocol/databases/types";
 import { stricterReviewMode } from "@stuga/protocol/domain/events";
 import { agentActorOf, newRunId, parseReviewMode, runIsIdle, shouldCommit } from "@stuga/protocol/domain/runs";
 import type { Database } from "../database.js";
@@ -24,6 +24,8 @@ import {
   listPendingRunOps,
   loadOpPayload,
   markRunAutoApplied,
+  moveQueueUp,
+  openChainOf,
   openRunOf,
   pendingCountOf,
   pendingPayloads,
@@ -70,14 +72,27 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
   const approverGroup = review === "colleague" && typeof body.approver_group === "string" && body.approver_group ? body.approver_group : null;
   // Feedback ids this proposal answers; nothing is answered by proposing alone.
   const revises = Array.isArray(body.revises) ? body.revises.filter((id): id is string => typeof id === "string").slice(0, RUN_FEEDBACK_REVISES_MAX) : [];
+  // The change it belongs to, which the node checked belongs to this agent.
+  const changeId = typeof body.change_id === "string" && body.change_id ? body.change_id : null;
   const now = Date.now();
 
   let run = openRunOf(db.sql, actor.alias);
+  // A run belongs to one change. The agent's open run from another change is finished when nothing in
+  // it waits (it closes, as an idle one would); otherwise this proposal starts a run queued behind it.
+  if (run && run.change_id !== changeId) {
+    if (pendingCountOf(db.sql, run.run_id) === 0) {
+      closeRun(db.sql, run.run_id, now);
+      for (const moved of moveQueueUp(db.sql, run)) db.publishRun(getRun(db.sql, moved)!);
+      await db.sendRunUpdated(getRun(db.sql, run.run_id)!);
+    }
+    run = null;
+  }
   // A run closes when it has gone quiet with nothing pending, or when a receipt
   // run reaches the op cap (`auto` must never block the agent). A run a person
   // still has to review refuses at the cap instead.
   if (run && pendingCountOf(db.sql, run.run_id) === 0 && (runIsIdle(run.updated_at, now) || totalOpsOf(db.sql, run.run_id) >= DATABASE_RUN_OPS_MAX)) {
     closeRun(db.sql, run.run_id, now);
+    for (const moved of moveQueueUp(db.sql, run)) db.publishRun(getRun(db.sql, moved)!);
     await db.sendRunUpdated(getRun(db.sql, run.run_id)!);
     run = null;
   }
@@ -87,7 +102,14 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
 
   const def = proposableDef(op.kind);
   if (!def) throw new OpError(400, "bad_request", `unknown op kind: ${String(op.kind)}`);
-  const view = SchemaView.projected(db.sql, run ? (await pendingPayloads(db.sql, db.bucket, run.run_id)).map((p) => p.payload) : []);
+  // Every open run of the agent here, oldest first: what this proposal is made on top of.
+  const chain = openChainOf(db.sql, actor.alias).filter((r) => pendingCountOf(db.sql, r.run_id) > 0 || r.run_id === run?.run_id);
+  const stacked: DatabaseRunOpPayload[] = [];
+  for (const r of chain) stacked.push(...(await pendingPayloads(db.sql, db.bucket, r.run_id)).map((p) => p.payload));
+  const view = SchemaView.projected(db.sql, stacked);
+  // The run a new one would wait behind: the newest of the agent's runs here that still holds undecided ops.
+  const waitingRuns = chain.filter((r) => pendingCountOf(db.sql, r.run_id) > 0);
+  const ahead = waitingRuns.at(-1) ?? null;
   const payload = def.parse(op, view);
   const summary = def.proposal.describe(payload, view);
   const detail = proposalDetail(payload, view);
@@ -107,6 +129,10 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
         reviewMode: review,
         client: optionalString(body.client),
         model: optionalString(body.model),
+        changeId,
+        // Its ops may name what the runs it is proposed on top of mint, so it is accepted only after them.
+        queuedBehind: ahead?.run_id ?? null,
+        stackedOn: waitingRuns.map((r) => r.run_id),
       },
       now,
     );
@@ -120,15 +146,17 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
   const fin = await finalizeRunPayload(db.bucket, db.dbId, run.run_id, payload);
   db.requireUnlocked(lockedMessage);
   const reloaded = getRun(db.sql, run.run_id);
-  run = reloaded !== null && reloaded.status === "open" ? reloaded : mintRun();
+  run = reloaded !== null && reloaded.status === "open" && reloaded.change_id === changeId ? reloaded : mintRun();
   const opId = insertRunOp(db.sql, { runId: run.run_id, kind: payload.kind, tableId: payload.table_id, summary, detail, ...fin, review });
   touchRun(db.sql, run.run_id, now);
   setRunReviewMode(db.sql, run.run_id, stricterReviewMode(run.review_mode, review));
   if (approverGroup) stampRunApproverGroup(db.sql, run.run_id, approverGroup);
   const minted = def.proposal.minted(payload);
 
-  // An op parsed against undecided ops of its run may depend on them, so it cannot land ahead of them.
-  const parkedBehindPending = listPendingRunOps(db.sql, run.run_id).some((o) => o.review !== "auto");
+  // An op parsed against undecided ops of its run, or of the runs it waits behind, may depend on them, so it cannot land ahead of them.
+  const parkedBehindPending =
+    listPendingRunOps(db.sql, run.run_id).some((o) => o.review !== "auto") ||
+    waitingRuns.some((r) => r.run_id !== run!.run_id);
   if (shouldCommit(review, parkedBehindPending)) {
     const outcome = await autoApplyPending(db, getRun(db.sql, run.run_id)!, keep);
     const fresh = getRun(db.sql, run.run_id)!;
@@ -162,11 +190,13 @@ export async function handleRunPropose(db: Database, req: Request): Promise<Resp
   // The people who may approve at `colleague` are not the one watching, the co-author's requester included.
   await db.notifyApprovers(fresh, pending, source !== "panel");
   db.publishRun(fresh, { type: "run.proposed", actor: agentActorOf(actor.alias), actorKind: "agent", payload: { review, pending } });
+  const behind = fresh.queued_behind ? getRun(db.sql, fresh.queued_behind) : null;
   return Response.json({
     mode: "proposed",
     run: await db.runSummary(fresh),
     pending,
     minted,
+    ...(behind && behind.status === "open" ? { queued_behind: { run_id: behind.run_id, change_id: behind.change_id } } : {}),
     // Said only when it contradicts the word the node sent, so an agent that just read `auto` is told why it waits.
     parked_behind_pending: parkedBehindPending && review === "auto",
     revised: answerFeedback(db.sql, actor.alias, revises),

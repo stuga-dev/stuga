@@ -341,7 +341,7 @@ describe.skipIf(!URL)("the review card, the inbox and the review channel", () =>
       expect(toSlack[0]!.headers["x-stuga-signature"]).toMatch(/^sha256=[0-9a-f]{64}$/);
       // The generic hook gets the events themselves, and the channel none of them.
       expect(fetched.filter((x) => x.url === "https://93.184.215.14/hook").length).toBeGreaterThan(0);
-      expect(await sql`SELECT run_id FROM review_posts WHERE webhook_id = ${webhook.webhook_id}`).toEqual([{ run_id: run.id }]);
+      expect(await sql`SELECT subject_id FROM review_posts WHERE webhook_id = ${webhook.webhook_id}`).toEqual([{ subject_id: run.id }]);
       await ok(person("carddee"), "DELETE", `/api/webhooks/${generic.webhook.webhook_id}`);
     });
 

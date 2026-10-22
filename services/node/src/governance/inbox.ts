@@ -1,6 +1,6 @@
 /** The workspace's review inbox and per-agent statistics, for humans. */
-import { type AgentRunRow, type RunInboxFilter, agentNames, agentRunStats, approversFor, listAgentRuns } from "@stuga/db";
-import { stricterReviewMode } from "@stuga/protocol/domain/events";
+import { type AgentRunRow, type RunInboxFilter, agentNames, agentRunStats, approversFor, getChanges, listAgentRuns } from "@stuga/db";
+import { stricterReviewMode, type ReviewMode } from "@stuga/protocol/domain/events";
 import { actLevel, mayActOnRun, type RunAct, type RunStanding } from "@stuga/protocol/domain/runs";
 import { instant } from "../audit/read.js";
 import type { Ctx } from "../auth/context.js";
@@ -51,17 +51,75 @@ async function withAgentNames(ctx: Ctx, runs: AgentRunRow[]) {
     }
     const may = (act: RunAct) =>
       mayActOnRun({ act, level: actLevel(act, r.review_mode, r.doc_level), by: ctx.alias, reviewer: r.reviewer, approver, manager });
+    const queued = !!r.queued_behind && r.status === "open" && r.pending > 0;
     const you: RunStanding = {
       level,
-      accept: writer && may("accept"),
+      // A run queued behind the agent's earlier changes is accepted once those are decided.
+      accept: writer && may("accept") && !queued,
       reject: writer && may("reject"),
       ack: !ctx.isAgent && may("ack"),
       ...(waitsFor ? { waits_for: waitsFor } : {}),
+      ...(queued && writer && may("accept") ? { queued: true as const } : {}),
     };
     // The document's ACL, owner and levels stay on the node.
     const { doc_owner: _owner, doc_writable: _writable, doc_readers: _readers, doc_writers: _writers, doc_level: _level, doc_approver_group: _group, ...row } = r;
     return { ...row, agent_name: names.get(r.agent_alias) ?? r.agent, you, can_decide: you.accept || you.reject };
   });
+}
+
+/** Where a set of runs stands for the caller, as the tabs split them: one change goes under one tab. */
+function tabOf(runs: readonly InboxRow[]): "attention" | "waiting" | "done" {
+  if (runs.some(asksCaller)) return "attention";
+  if (runs.some(waits)) return "waiting";
+  return "done";
+}
+
+/**
+ * A change as the inbox lists it: one row for all its runs the caller can see. Its title is the agent's
+ * words about waiting text, so it goes only to someone who decides one of its runs or asked for it.
+ */
+function changeRow(changeId: string, runs: InboxRow[], change: { title: string; agent: string; agent_alias: string } | undefined, me: string) {
+  const sum = (k: "pending" | "accepted" | "rejected" | "conflicts" | "applied") => runs.reduce((n, r) => n + r[k], 0);
+  const waiting = runs.filter(waits);
+  const level = waiting.reduce<ReviewMode | null>((m, r) => (m ? stricterReviewMode(m, r.you.level) : r.you.level), null);
+  const sees = runs.some((r) => r.reviewer === me || r.you.accept || r.you.reject || r.you.queued === true);
+  const first = runs[0]!;
+  const docs = [...new Map(runs.map((r) => [r.doc_id, r.doc_title])).entries()];
+  const at = (r: InboxRow) => new Date(r.updated_at).getTime();
+  const latest = runs.reduce((a, b) => (at(b) > at(a) ? b : a));
+  return {
+    change_id: changeId,
+    title: sees ? (change?.title ?? null) : null,
+    agent: first.agent,
+    agent_alias: first.agent_alias,
+    agent_name: first.agent_name,
+    source: first.source,
+    client: first.client,
+    model: first.model,
+    reviewer: first.reviewer,
+    run_ids: runs.map((r) => r.run_id),
+    pages: docs.length,
+    page_titles: docs.map(([, title]) => title),
+    pending: sum("pending"),
+    // Of those, the ones the caller may approve now.
+    pending_yours: waiting.filter((r) => r.you.accept).reduce((n, r) => n + r.pending, 0),
+    accepted: sum("accepted"),
+    rejected: sum("rejected"),
+    conflicts: sum("conflicts"),
+    applied: sum("applied"),
+    level: level ?? first.you.level,
+    // What the caller may do with it: accept or reject a run of it now, or only once the runs ahead are decided.
+    you: {
+      accept: waiting.some((r) => r.you.accept),
+      reject: waiting.some((r) => r.you.reject),
+      ...(waiting.some((r) => r.you.queued) ? { queued: true as const } : {}),
+      ...(waiting.length > 0 && waiting.every((r) => r.you.waits_for) ? { waits_for: waiting[0]!.you.waits_for } : {}),
+    },
+    can_decide: waiting.some((r) => r.you.accept || r.you.reject),
+    status: waiting.length > 0 ? "open" : "decided",
+    created_at: runs.reduce((a, r) => (new Date(r.created_at).getTime() < new Date(a).getTime() ? r.created_at : a), first.created_at),
+    updated_at: latest.updated_at,
+  };
 }
 
 export async function listRunInbox({ ctx, url }: WorkspaceCall): Promise<Response> {
@@ -85,15 +143,40 @@ export async function listRunInbox({ ctx, url }: WorkspaceCall): Promise<Respons
       limit,
       decider: { alias: ctx.alias, admin: isWorkspaceAdmin(ctx) },
     });
-  if (filter !== "attention" && filter !== "waiting") return json({ runs: await withAgentNames(ctx, await list(filter)), filter });
-  // The query counts an owner or admin outside a run's approver groups among those who may approve
-  // it; they stand in only while nobody else may, which withAgentNames works out. Such a run waits on others.
-  const needs = await withAgentNames(ctx, await list("attention"));
-  if (filter === "attention") return json({ runs: needs.filter(asksCaller), filter });
-  const others = [...(await withAgentNames(ctx, await list("waiting"))), ...needs.filter((r) => !asksCaller(r) && waits(r))];
-  const at = (r: InboxRow) => new Date(r.updated_at).getTime();
-  others.sort((a, b) => at(b) - at(a) || b.run_id.localeCompare(a.run_id));
-  return json({ runs: others.slice(0, limit ?? others.length), filter });
+  let rows: InboxRow[];
+  if (filter !== "attention" && filter !== "waiting") rows = await withAgentNames(ctx, await list(filter));
+  else {
+    // The query counts an owner or admin outside a run's approver groups among those who may approve
+    // it; they stand in only while nobody else may, which withAgentNames works out. Such a run waits on others.
+    const needs = await withAgentNames(ctx, await list("attention"));
+    if (filter === "attention") rows = needs.filter(asksCaller);
+    else {
+      const others = [...(await withAgentNames(ctx, await list("waiting"))), ...needs.filter((r) => !asksCaller(r) && waits(r))];
+      const at = (r: InboxRow) => new Date(r.updated_at).getTime();
+      others.sort((a, b) => at(b) - at(a) || b.run_id.localeCompare(a.run_id));
+      rows = others.slice(0, limit ?? others.length);
+    }
+  }
+  // The runs of a change are one row, under the tab all of them together put it in.
+  const changeIds = [...new Set(rows.flatMap((r) => (r.change_id ? [r.change_id] : [])))];
+  if (changeIds.length === 0) return json({ runs: rows, changes: [], filter });
+  const siblings = await withAgentNames(
+    ctx,
+    await listAgentRuns(ctx.sql, {
+      workspaceId: ctx.workspaceId,
+      principals: ctx.principals,
+      filter: "all",
+      changeIds,
+      limit: 200,
+      decider: { alias: ctx.alias, admin: isWorkspaceAdmin(ctx) },
+    }),
+  );
+  const changes = new Map((await getChanges(ctx.sql, changeIds)).map((c) => [c.change_id, c]));
+  const grouped = changeIds
+    .map((id) => ({ id, runs: siblings.filter((r) => r.change_id === id).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) }))
+    .filter((g) => g.runs.length > 0 && (filter === "all" || tabOf(g.runs) === filter))
+    .map((g) => changeRow(g.id, g.runs, changes.get(g.id), ctx.alias));
+  return json({ runs: rows.filter((r) => !r.change_id), changes: grouped, filter });
 }
 
 type InboxRow = Awaited<ReturnType<typeof withAgentNames>>[number];

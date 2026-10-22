@@ -118,7 +118,8 @@ export type ApproveBlock =
   | { kind: "own"; waitsFor: "colleague" | "nobody" | "group" }
   | { kind: "colleague"; group: string | null }
   | { kind: "reviewer" }
-  | { kind: "locked" };
+  | { kind: "locked" }
+  | { kind: "queued" };
 
 /**
  * Why Approve is off for this reader, said beside it, never only in a tooltip. Nothing when they
@@ -138,6 +139,8 @@ export function approveBlock(input: {
   const { you, me, reviewer, level, pending } = input;
   if (pending === 0 || !you) return null;
   if (you.accept) return input.locked ? { kind: "locked" } : null;
+  // Waits behind the agent's earlier changes to the page: approved once those are decided.
+  if (you.queued) return { kind: "queued" };
   if (level === "colleague" && me === reviewer) return { kind: "own", waitsFor: you.waits_for ?? "colleague" };
   if (level === "colleague") return { kind: "colleague", group: input.approverGroup };
   return { kind: "reviewer" };

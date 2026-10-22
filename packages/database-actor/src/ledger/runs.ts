@@ -45,6 +45,12 @@ export interface RunRow {
   review_mode: ReviewMode;
   /** The approver group the first proposal at `colleague` that named one was made under. */
   approver_group: string | null;
+  /** The change it belongs to; a proposal for another change starts a run of its own. */
+  change_id: string | null;
+  /** The agent's earlier open run here it waits behind, accepted only once that one is decided; moves up as runs close. */
+  queued_behind: string | null;
+  /** Every run whose undecided ops it was proposed on top of, kept after they close: its ops may name what they mint. */
+  stacked_on: string[];
   client: string | null;
   model: string | null;
   created_at: number;
@@ -94,6 +100,9 @@ function asRunRow(row: Record<string, unknown>): RunRow {
     doc_title: String(row.doc_title),
     review_mode: String(row.review_mode) as ReviewMode,
     approver_group: nullable(row.approver_group),
+    change_id: nullable(row.change_id),
+    queued_behind: nullable(row.queued_behind),
+    stacked_on: row.stacked_on == null ? [] : (JSON.parse(String(row.stacked_on)) as string[]),
     client: nullable(row.client),
     model: nullable(row.model),
     created_at: Number(row.created_at),
@@ -133,8 +142,36 @@ export function getRun(sql: SqlHandle, runId: unknown): RunRow | null {
 
 /** The agent's newest open run. */
 export function openRunOf(sql: SqlHandle, agentAlias: string): RunRow | null {
-  const row = sql.exec(`SELECT * FROM _runs WHERE agent_alias = ? AND status = 'open' ORDER BY created_at DESC LIMIT 1`, agentAlias).toArray()[0];
+  const row = sql.exec(`SELECT * FROM _runs WHERE agent_alias = ? AND status = 'open' ORDER BY created_at DESC, rowid DESC LIMIT 1`, agentAlias).toArray()[0];
   return row ? asRunRow(row) : null;
+}
+
+/**
+ * The agent's open runs here, oldest first: the run it adds to and those it waits behind. A proposal
+ * for another change than the newest's starts a run queued behind it, so one table never refuses an
+ * agent's later work while its earlier changes wait.
+ */
+export function openChainOf(sql: SqlHandle, agentAlias: string): RunRow[] {
+  return sql.exec(`SELECT * FROM _runs WHERE agent_alias = ? AND status = 'open' ORDER BY created_at, rowid`, agentAlias).toArray().map(asRunRow);
+}
+
+/** The run `run` waits behind, while that one is still open: an accept of it is refused until then. */
+export function aheadOf(sql: SqlHandle, run: RunRow): RunRow | null {
+  if (!run.queued_behind) return null;
+  const ahead = getRun(sql, run.queued_behind);
+  return ahead && ahead.status === "open" ? ahead : null;
+}
+
+/**
+ * After `run` closed: the runs queued behind it move up behind the run it waited behind, while that
+ * one is open, so the next in line can be approved. Returns the runs that moved, to mirror.
+ */
+export function moveQueueUp(sql: SqlHandle, run: RunRow): string[] {
+  const ahead = aheadOf(sql, run);
+  return sql
+    .exec(`UPDATE _runs SET queued_behind = ?, updated_at = ? WHERE queued_behind = ? RETURNING run_id`, ahead?.run_id ?? null, Date.now(), run.run_id)
+    .toArray()
+    .map((r) => String(r.run_id));
 }
 
 export function getRunOp(sql: SqlHandle, runId: string, opId: string): RunOpRow | null {
@@ -204,6 +241,8 @@ export function runIndexEntry(sql: SqlHandle, run: RunRow, databaseId: string): 
     reviewMode: run.review_mode,
     approverGroup: run.approver_group,
     approvedBy,
+    changeId: run.change_id,
+    queuedBehind: run.queued_behind,
     autoApplied: run.auto_applied,
     reverted: run.reverted,
     acknowledged: run.acknowledged,
@@ -232,13 +271,17 @@ export function insertRun(
     reviewMode: ReviewMode;
     client: string | null;
     model: string | null;
+    changeId: string | null;
+    /** The run it waits behind, and every run whose undecided ops it is proposed on top of. */
+    queuedBehind: string | null;
+    stackedOn: string[];
   },
   now: number,
 ): void {
   sql.exec(
     `INSERT INTO _runs (run_id, source, agent, agent_alias, reviewer, status, acknowledged, auto_applied, reverted,
-       workspace_id, doc_title, review_mode, client, model, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'open', 0, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+       workspace_id, doc_title, review_mode, client, model, created_at, updated_at, change_id, queued_behind, stacked_on)
+     VALUES (?, ?, ?, ?, ?, 'open', 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     d.runId,
     d.source,
     d.agent,
@@ -251,6 +294,9 @@ export function insertRun(
     d.model,
     now,
     now,
+    d.changeId,
+    d.queuedBehind,
+    d.stackedOn.length > 0 ? JSON.stringify(d.stackedOn) : null,
   );
 }
 
@@ -627,6 +673,9 @@ export async function toRunSummary(
     updated_at: run.updated_at,
   };
   if (run.approver_group) summary.approver_group = run.approver_group;
+  if (run.change_id) summary.change_id = run.change_id;
+  if (run.queued_behind) summary.queued_behind = run.queued_behind;
+  if (run.stacked_on.length > 0) summary.stacked_on = run.stacked_on;
   if (!withPayloads) summary.ops_truncated = true;
   if (run.reverted) summary.reverted = true;
   return summary;

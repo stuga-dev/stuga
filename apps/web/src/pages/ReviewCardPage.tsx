@@ -30,6 +30,7 @@ import type { DatabaseRunOp, DatabaseRunSummary } from "@stuga/protocol/database
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { RUN_FEEDBACK_NOTE_MAX_CHARS } from "@stuga/protocol/domain/limits";
 import type { RunStanding } from "@stuga/protocol/domain/runs";
+import { changeCardPath } from "@stuga/protocol/domain/changes";
 import type { AgentRunSummary, RunHunkStatus } from "@stuga/protocol/wire/doc-socket";
 import { DatabaseRuns, Docs, Folders, Runs, groupName, type DocSummary, type RunDeciders } from "../api";
 import { describeProposal } from "../database/op-lines";
@@ -84,7 +85,7 @@ async function loadCard(docId: string, runId: string): Promise<Loaded> {
   return { kind: "prose", doc, path, run: d.run, changes: cardChanges(d.baseline_markdown ?? null, hunks, d.citations ?? []), deciders: d.deciders ?? null };
 }
 
-const STATUS_LABEL: Record<RunHunkStatus, MessageKey> = {
+export const STATUS_LABEL: Record<RunHunkStatus, MessageKey> = {
   pending: "review.card.status.pending",
   accepted: "review.card.status.accepted",
   rejected: "review.card.status.rejected",
@@ -92,7 +93,7 @@ const STATUS_LABEL: Record<RunHunkStatus, MessageKey> = {
   auto_applied: "review.card.status.applied",
 };
 
-const STATUS_COLOR: Record<RunHunkStatus, TokenColor> = {
+export const STATUS_COLOR: Record<RunHunkStatus, TokenColor> = {
   pending: "default",
   accepted: "green",
   rejected: "gray",
@@ -100,7 +101,7 @@ const STATUS_COLOR: Record<RunHunkStatus, TokenColor> = {
   auto_applied: "green",
 };
 
-const LEVEL_COLOR: Record<ReviewMode, TokenColor> = { auto: "green", review: "default", colleague: "blue" };
+export const LEVEL_COLOR: Record<ReviewMode, TokenColor> = { auto: "green", review: "default", colleague: "blue" };
 
 /** Who decides below `colleague` besides whoever asked, as the lines name them. */
 type Others = "owner" | "admin" | "both";
@@ -145,7 +146,7 @@ export function decidersLine(level: ReviewMode, deciders: RunDeciders | null, me
 }
 
 /** Why Approve is off, in words, beside it. */
-function blockLine(block: ApproveBlock, reviewer: string, noun: "document" | "database"): string {
+export function blockLine(block: ApproveBlock, reviewer: string, noun: "document" | "database"): string {
   switch (block.kind) {
     case "locked":
       return t("review.card.reason.locked");
@@ -161,18 +162,20 @@ function blockLine(block: ApproveBlock, reviewer: string, noun: "document" | "da
         : t("review.card.reason.colleague", { name: principalLabel(`user:${reviewer}`) });
     case "reviewer":
       return t("review.card.reason.reviewer", { name: principalLabel(`user:${reviewer}`), noun });
+    case "queued":
+      return t("review.card.reason.queued");
   }
 }
 
 /** The counts of a run's items by status. */
-function countsOf(items: ReadonlyArray<{ status: string }>): Record<RunHunkStatus, number> {
+export function countsOf(items: ReadonlyArray<{ status: string }>): Record<RunHunkStatus, number> {
   const out: Record<RunHunkStatus, number> = { pending: 0, accepted: 0, rejected: 0, conflict: 0, auto_applied: 0 };
   for (const i of items) if (i.status in out) out[i.status as RunHunkStatus] += 1;
   return out;
 }
 
 /** What became of the run's items that are decided, as the inbox says it. */
-function outcomeLine(c: Record<RunHunkStatus, number>): string {
+export function outcomeLine(c: Record<RunHunkStatus, number>): string {
   const parts: string[] = [];
   if (c.accepted > 0) parts.push(t("review.inbox.outcome.kept", { count: c.accepted }));
   if (c.rejected > 0) parts.push(t("review.inbox.outcome.skipped", { count: c.rejected }));
@@ -394,18 +397,19 @@ export default function ReviewCardPage() {
       {card.kind === "prose" ? (
         <VStack gap={3}>
           {card.changes.map((change, i) => (
-            <ChangeCard key={change.hunk.id} change={change} index={i} total={card.changes.length} onOpenSource={(id) => nav(`/doc/${id}`)} />
+            <HunkCard key={change.hunk.id} change={change} index={i} total={card.changes.length} onOpenSource={(id) => nav(`/doc/${id}`)} />
           ))}
         </VStack>
       ) : (
         card.run.ops.length > 0 && <OpsCard ops={card.run.ops} />
       )}
-      <HStack>
+      <HStack gap={2} wrap="wrap">
         <Button
           label={card.kind === "database" ? t("review.card.openDatabase") : t("review.card.openDocument")}
           variant="secondary"
           onClick={() => nav(`/doc/${docId}`)}
         />
+        {run.change_id && <Button label={t("review.card.openChange")} variant="ghost" onClick={() => nav(changeCardPath(run.change_id!))} />}
       </HStack>
       <NoteDialog
         asking={waiting ? asking : null}
@@ -421,8 +425,9 @@ export default function ReviewCardPage() {
 }
 
 /** One change: where it is, its paragraph before (struck) and after, and what it cites. */
-function ChangeCard({ change, index, total, onOpenSource }: { change: CardChange; index: number; total: number; onOpenSource: (docId: string) => void }) {
-  const blocks = useMemo(() => blockDiffMarkdown(change.before, change.after), [change.before, change.after]);
+export function HunkCard({ change, index, total, onOpenSource }: { change: CardChange; index: number; total: number; onOpenSource: (docId: string) => void }) {
+  // A change to an empty page has nothing before it: no struck-out block to show.
+  const blocks = useMemo(() => blockDiffMarkdown(change.before, change.after).filter((b) => b.markdown.trim() !== ""), [change.before, change.after]);
   const feedback = change.hunk.feedback?.note;
   return (
     <Card>
@@ -491,7 +496,7 @@ function Sources({ sources, onOpen }: { sources: CardSource[]; onOpen: (docId: s
 }
 
 /** A database run's changes, each said in a line. */
-function OpsCard({ ops }: { ops: DatabaseRunOp[] }) {
+export function OpsCard({ ops }: { ops: DatabaseRunOp[] }) {
   return (
     <Card>
       <List hasDividers density="compact">
@@ -511,7 +516,7 @@ function OpsCard({ ops }: { ops: DatabaseRunOp[] }) {
 }
 
 /** A note to go with Ask for changes (required: it is what the AI revises from) or Decline (optional). */
-function NoteDialog({ asking, onClose, onSend }: { asking: null | "ask" | "decline"; onClose: () => void; onSend: (note: string | undefined) => Promise<void> }) {
+export function NoteDialog({ asking, onClose, onSend }: { asking: null | "ask" | "decline"; onClose: () => void; onSend: (note: string | undefined) => Promise<void> }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

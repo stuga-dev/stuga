@@ -120,6 +120,11 @@ export type NotifyMessage = {
   folder?: true;
   /** The run it is about: the link opens its review card. */
   runId?: string;
+  /**
+   * The change that run belongs to: the person hears of the whole change once, and the link opens its
+   * card. The node writes the change's notice in place of the run's.
+   */
+  changeId?: string;
 } & DocNotification;
 
 /**
@@ -153,6 +158,8 @@ export type NotifyApproversMessage = {
    * before (null for none). Only those who may approve now and could not then are told.
    */
   groupBefore?: string | null;
+  /** The change the run belongs to: each approver hears of the change once, however many of its pages they may approve. */
+  changeId?: string;
 };
 
 /**
@@ -200,6 +207,10 @@ export interface RunIndexEntry {
   approverGroup: string | null;
   /** Who accepted its changes at `colleague`; never its reviewer. */
   approvedBy: string[];
+  /** The change it belongs to, or null; the node also links it when the proposal returns. */
+  changeId?: string | null;
+  /** The earlier run of the same agent on the item it waits behind, or null. */
+  queuedBehind?: string | null;
   autoApplied: boolean;
   reverted: boolean;
   acknowledged: boolean;

@@ -20,6 +20,7 @@ import type {
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { IndexMessage, RunIndexEntry } from "@stuga/protocol/internal/jobs";
 import { closedStatus, feedbackExcerpt, runIsIdle, type AgentFeedback } from "@stuga/protocol/domain/runs";
+import { stricterReviewMode } from "@stuga/protocol/domain/events";
 import { RUN_FEEDBACK_LOOKBACK_DAYS, RUN_FEEDBACK_MAX_CHANGES } from "@stuga/protocol/domain/limits";
 import { encodeJson } from "@stuga/protocol/wire/frame";
 import { Opcode } from "@stuga/protocol/wire/opcodes";
@@ -70,6 +71,15 @@ export interface StoredRun {
   approver_group?: string;
   /** Hunk id → who accepted it at `colleague`, never its reviewer; an undo takes the entry back out. */
   approvals?: Record<string, string>;
+  /** The change it belongs to; a run belongs to one change, and a proposal for another starts a run of its own. */
+  change_id?: string;
+  /**
+   * The agent's earlier open run here it waits behind: it was proposed on top of that run's undecided
+   * hunks, so it is accepted only once that run is decided. Moves up as the runs ahead close.
+   */
+  queued_behind?: string;
+  /** Every run whose undecided text it was proposed on top of, kept after they close: its hunks may quote them. */
+  stacked_on?: string[];
   created_at: number;
   updated_at: number;
   seq_at_commit?: number;
@@ -117,6 +127,16 @@ export function pendingOf(body: RunBody): AgentRunHunk[] {
   return body.hunks.filter((h) => h.status === "pending");
 }
 
+/** `live` with each run's pending hunks laid over it in turn, as the agent proposed them on top of each other. */
+export function layOver(live: string, chain: ReadonlyArray<{ body: RunBody }>): string {
+  let text = live;
+  for (const r of chain) {
+    const pending = pendingOf(r.body);
+    if (pending.length > 0) text = applyStrEditsStrict(text, pending).markdown;
+  }
+  return text;
+}
+
 function syncHunkMeta(stored: StoredRun, body: RunBody): void {
   stored.hunk_meta = body.hunks.map((h) => ({
     id: h.id,
@@ -151,6 +171,8 @@ function runIndexEntry(stored: StoredRun): RunIndexEntry {
     reviewMode: stored.review_mode,
     approverGroup: stored.approver_group ?? null,
     approvedBy: approvedBy(stored),
+    changeId: stored.change_id ?? null,
+    queuedBehind: stored.queued_behind ?? null,
     autoApplied: stored.auto_applied,
     reverted: stored.reverted === true,
     acknowledged: stored.acknowledged,
@@ -192,6 +214,9 @@ function toSummary(stored: StoredRun, body: RunBody | null): AgentRunSummary {
   if (stored.client) summary.client = stored.client;
   if (stored.model) summary.model = stored.model;
   if (stored.approver_group) summary.approver_group = stored.approver_group;
+  if (stored.change_id) summary.change_id = stored.change_id;
+  if (stored.queued_behind) summary.queued_behind = stored.queued_behind;
+  if (stored.stacked_on?.length) summary.stacked_on = stored.stacked_on;
   if (stored.seq_at_commit !== undefined) summary.seq_at_commit = stored.seq_at_commit;
   return summary;
 }
@@ -386,10 +411,62 @@ export class RunLedger {
   }> {
     const live = this.store.markdown();
     const open = await this.openRunFor(agentAlias);
-    const pending = open ? pendingOf(open.body) : [];
-    const run = open ? { created_at: open.stored.created_at, review_mode: open.stored.review_mode } : null;
+    // Every open run of the agent, the queued ones included, in the order they were proposed on top of each other.
+    const chain = open ? await this.chainFor(agentAlias) : [];
+    const pending = chain.flatMap((r) => pendingOf(r.body));
+    const run = open ? { created_at: (chain[0]?.stored ?? open.stored).created_at, review_mode: chain.reduce((m, r) => stricterReviewMode(m, r.stored.review_mode), open.stored.review_mode) } : null;
     if (!open || pending.length === 0) return { markdown: live, approved: live, pending: [], runId: open?.stored.id ?? null, run };
-    return { markdown: applyStrEditsStrict(live, pending).markdown, approved: live, pending, runId: open.stored.id, run };
+    return { markdown: layOver(live, chain), approved: live, pending, runId: open.stored.id, run };
+  }
+
+  /**
+   * The agent's open runs here, oldest first: the run it is adding to and those it waits behind. A
+   * proposal for another change than the newest's starts a run queued behind it, so a hub page never
+   * refuses an agent's later work while its earlier changes wait. Bodies that did not load are left out.
+   */
+  async chainFor(agentAlias: string): Promise<Array<{ stored: StoredRun; body: RunBody }>> {
+    const out: Array<{ stored: StoredRun; body: RunBody }> = [];
+    for (const id of await this.order()) {
+      const stored = await this.load(id);
+      if (!stored || stored.agent_alias !== agentAlias || stored.status !== "open") continue;
+      const body = await this.loadBody(stored);
+      if (this.bodyLost(stored, body)) continue;
+      out.push({ stored, body });
+    }
+    return out;
+  }
+
+  /**
+   * After `stored` closed (decided, reverted, or rolled over): the agent's pointer goes back to the run
+   * it waited behind, if that is still open, and the runs queued behind it move up behind that one, so
+   * the next in line can be approved.
+   */
+  async unlink(stored: StoredRun): Promise<void> {
+    const ahead = stored.queued_behind ? await this.load(stored.queued_behind) : null;
+    const next = ahead && ahead.status === "open" ? ahead.id : null;
+    const active = await this.storage.get<string>(runActiveKey(stored.agent_alias));
+    if (active === stored.id) {
+      if (next) await this.storage.put(runActiveKey(stored.agent_alias), next);
+      else await this.storage.delete(runActiveKey(stored.agent_alias));
+    }
+    for (const id of await this.order()) {
+      const behind = await this.load(id);
+      if (!behind || behind.queued_behind !== stored.id) continue;
+      const body = await this.loadBody(behind);
+      if (this.bodyLost(behind, body)) continue;
+      if (next) behind.queued_behind = next;
+      else delete behind.queued_behind;
+      behind.updated_at = Date.now();
+      await this.save(behind, body);
+      this.sendUpdated(behind, body);
+    }
+  }
+
+  /** The run `stored` waits behind, while that one is still open: an accept of it is refused until then. */
+  async aheadOf(stored: StoredRun): Promise<StoredRun | null> {
+    if (!stored.queued_behind) return null;
+    const ahead = await this.load(stored.queued_behind);
+    return ahead && ahead.status === "open" ? ahead : null;
   }
 
   /**
@@ -522,7 +599,7 @@ export class RunLedger {
     stored.seq_at_commit = this.store.seq;
     body.final_markdown = this.store.markdown();
     await this.save(stored, body);
-    await this.clearActive(stored.agent_alias);
+    await this.unlink(stored);
   }
 
   /**
@@ -592,6 +669,7 @@ export class RunLedger {
         ...(n.eventType === "AGENT_EDITS_PROPOSED"
           ? { eventType: n.eventType, params: { agent, doc, count: n.count, waits }, runId: stored.id }
           : { eventType: n.eventType, params: { agent, doc } }),
+        ...(stored.change_id ? { changeId: stored.change_id } : {}),
       });
     } catch (err) {
       console.warn("agent-run notify enqueue failed", { docId: this.store.docId, runId: stored.id, err: String(err) });
@@ -618,6 +696,7 @@ export class RunLedger {
         doc: stored.doc_title,
         count,
         askerTold,
+        ...(stored.change_id ? { changeId: stored.change_id } : {}),
       });
     } catch (err) {
       console.warn("agent-run approvers notify enqueue failed", { docId: this.store.docId, runId: stored.id, err: String(err) });
@@ -647,6 +726,7 @@ export class RunLedger {
         reviewer: stored.reviewer,
         status: stored.status,
         doc_title: stored.doc_title,
+        ...(stored.change_id ? { change_id: stored.change_id } : {}),
         ...payload,
       },
     });

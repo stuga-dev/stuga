@@ -1,6 +1,6 @@
 /** The agent write path for databases, and declarative table creation. */
 import { principalId } from "@stuga/auth";
-import { type DocRow, touchDoc } from "@stuga/db";
+import { type DocRow, getChange, linkChangeRun, touchDoc } from "@stuga/db";
 import { DATABASE_MAX_COLUMN_DESCRIPTION_CHARS, DATABASE_MAX_COLUMNS, DATABASE_MAX_DISPLAY_LENGTH } from "@stuga/protocol/databases/limits";
 import {
   DATABASE_COLUMN_TYPES,
@@ -13,6 +13,8 @@ import { recordAudit } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
 import { proposalApproverGroup, resolveReviewMode } from "../authz/review-mode.js";
 import { afterDatabaseMutation, callDatabaseActor } from "./gate.js";
+import { changeAnswer, discardOpened, resolveChange, type ChangeArgs, type ResolvedChange } from "../changes/resolve.js";
+import type { QueuedBehind } from "../agents/edits.js";
 import { reconcileDocLinks } from "./row-pages.js";
 
 export type DatabaseProposeOutcome =
@@ -26,6 +28,9 @@ export type DatabaseProposeOutcome =
       held: boolean;
       feedback?: AgentFeedback[];
       revised?: string[];
+      change?: ResolvedChange | null;
+      /** The agent's earlier run here it waits behind, still undecided. */
+      queuedBehind?: QueuedBehind;
     }
   | {
       kind: "applied";
@@ -34,14 +39,27 @@ export type DatabaseProposeOutcome =
       minted: Record<string, unknown>;
       feedback?: AgentFeedback[];
       revised?: string[];
+      change?: ResolvedChange | null;
     }
   | { kind: "error"; status: number; message: string };
 
 /** The answer to a proposal that went through, the same over REST and /mcp. */
 export function databaseProposeBody(outcome: Exclude<DatabaseProposeOutcome, { kind: "error" }>) {
-  const feedback = { ...(outcome.feedback ? { feedback: outcome.feedback } : {}), ...(outcome.revised ? { revised: outcome.revised } : {}) };
+  const feedback = {
+    ...(outcome.feedback ? { feedback: outcome.feedback } : {}),
+    ...(outcome.revised ? { revised: outcome.revised } : {}),
+    ...changeAnswer(outcome.change ?? null),
+  };
   if (outcome.kind === "proposed") {
-    return { mode: "proposed" as const, run: outcome.run, pending: outcome.pending, minted: outcome.minted, held: outcome.held, ...feedback };
+    return {
+      mode: "proposed" as const,
+      run: outcome.run,
+      pending: outcome.pending,
+      minted: outcome.minted,
+      held: outcome.held,
+      ...(outcome.queuedBehind ? { queued_behind: outcome.queuedBehind } : {}),
+      ...feedback,
+    };
   }
   return { mode: "applied" as const, run: outcome.run, minted: outcome.minted, ...outcome.result, ...feedback };
 }
@@ -57,7 +75,27 @@ export async function proposeDatabaseOp(
   doc: DocRow,
   op: Record<string, unknown>,
   source: DatabaseRunSource,
-  opts: { revises?: string[] } = {},
+  opts: { revises?: string[]; change?: ChangeArgs; resolvedChange?: ResolvedChange | null } = {},
+): Promise<DatabaseProposeOutcome> {
+  // The change it belongs to, opened here when it names a title; a refused write takes an opened one back.
+  let change: ResolvedChange | null = opts.resolvedChange ?? null;
+  if (opts.resolvedChange === undefined) {
+    const resolved = await resolveChange(ctx, opts.change, doc);
+    if (!resolved.ok) return { kind: "error", status: resolved.status, message: resolved.message };
+    change = resolved.resolved;
+  }
+  const outcome = await proposeDatabaseOpIn(ctx, doc, op, source, opts, change);
+  if (outcome.kind === "error") await discardOpened(ctx, change);
+  return outcome;
+}
+
+async function proposeDatabaseOpIn(
+  ctx: Ctx,
+  doc: DocRow,
+  op: Record<string, unknown>,
+  source: DatabaseRunSource,
+  opts: { revises?: string[] },
+  change: ResolvedChange | null,
 ): Promise<DatabaseProposeOutcome> {
   const review = resolveReviewMode(ctx, doc);
   const approverGroup = await proposalApproverGroup(ctx, doc, review.mode);
@@ -73,6 +111,7 @@ export async function proposeDatabaseOp(
     reviewer: ctx.isAgent ? ctx.onBehalfOf : principalId(doc.owner),
     workspace_id: ctx.workspaceId,
     doc_title: doc.title || "Untitled",
+    ...(change ? { change_id: change.change.change_id } : {}),
   });
   const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
   if (!res.ok || !body) {
@@ -81,6 +120,10 @@ export async function proposeDatabaseOp(
   }
   const run = body.run as DatabaseRunSummary;
   const minted = (body.minted ?? {}) as Record<string, unknown>;
+  if (change && run?.id) {
+    // Linked as it is answered; the inbox mirror links it again, so a link this loses heals.
+    await linkChangeRun(ctx.sql, { changeId: change.change.change_id, workspaceId: ctx.workspaceId, docId: doc.doc_id, runId: run.id, docKind: "database" }).catch(() => {});
+  }
   // An agent's answer only: a person's own proposals carry nothing new.
   const handed = body.feedback as AgentFeedback[] | undefined;
   const revised = body.revised as string[] | undefined;
@@ -89,8 +132,11 @@ export async function proposeDatabaseOp(
     await afterDatabaseMutation(ctx, doc, { kind: "changes_made", count: Math.max(1, run.ops.length) }, summarizeApplied(run));
     // An applied op may have deleted rows that had pages.
     await reconcileDocLinks(ctx, doc);
-    return { kind: "applied", run, result: (body.result ?? null) as Record<string, unknown> | null, minted, ...feedback };
+    return { kind: "applied", run, result: (body.result ?? null) as Record<string, unknown> | null, minted, ...feedback, change };
   }
+  const queued = body.queued_behind as { run_id?: string; change_id?: string | null } | undefined;
+  const ahead = queued?.change_id ? await getChange(ctx.sql, queued.change_id) : null;
+  const queuedBehind = queued?.run_id ? { run_id: queued.run_id, change_id: queued.change_id ?? null, change_title: ahead?.title ?? null } : undefined;
   await touchDoc(ctx.sql, doc.doc_id).catch(() => {});
   recordAudit(ctx, {
     action: "database.propose",
@@ -111,6 +157,8 @@ export async function proposeDatabaseOp(
     minted,
     held: body.parked_behind_pending === true,
     ...feedback,
+    change,
+    ...(queuedBehind ? { queuedBehind } : {}),
   };
 }
 
@@ -181,11 +229,12 @@ export async function proposeTableWithColumns(
   display: string,
   columns: ColumnSpecInput[],
   source: DatabaseRunSource,
-  opts: { revises?: string[] } = {},
+  opts: { revises?: string[]; change?: ChangeArgs } = {},
 ): Promise<DatabaseProposeOutcome> {
   // The table's proposal answers the feedback; the columns' find it answered already.
   const first = await proposeDatabaseOp(ctx, doc, { kind: "tables.create", display }, source, opts);
   if (first.kind === "error") return first;
+  const change = first.change ?? null;
   const tableId = String(first.minted.table_id ?? "");
   const columnIds: string[] = [];
   let last = first;
@@ -195,6 +244,7 @@ export async function proposeTableWithColumns(
       doc,
       { kind: "columns.add", table: tableId, display: c.display, type: c.type, choices: c.choices, description: c.description },
       source,
+      { resolvedChange: change ? { change: change.change, opened: false } : null },
     );
     if (outcome.kind === "error") {
       return {
@@ -212,6 +262,6 @@ export async function proposeTableWithColumns(
   // What the last proposal still saw open, and what the first answered.
   const feedback = { ...(last.feedback ? { feedback: last.feedback } : {}), ...(first.revised ? { revised: first.revised } : {}) };
   return last.kind === "proposed"
-    ? { kind: "proposed", run: last.run, pending: last.pending, minted, held: last.held, ...feedback }
-    : { kind: "applied", run: last.run, result: { table_id: tableId, column_ids: columnIds }, minted, ...feedback };
+    ? { kind: "proposed", run: last.run, pending: last.pending, minted, held: last.held, ...feedback, change, ...(last.queuedBehind ? { queuedBehind: last.queuedBehind } : {}) }
+    : { kind: "applied", run: last.run, result: { table_id: tableId, column_ids: columnIds }, minted, ...feedback, change };
 }

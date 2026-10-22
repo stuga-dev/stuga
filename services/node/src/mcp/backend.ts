@@ -78,6 +78,7 @@ import {
 } from "../databases/propose.js";
 import { findRowPage, openRowPage } from "../databases/row-pages.js";
 import { createDocument } from "../documents/create.js";
+import { changeAnswer, changeArgsOf } from "../changes/resolve.js";
 import { docAgentInstructions, docAgentInstructionsOrNone, docInstructionLabelsOrNone } from "../documents/instructions.js";
 import {
   MediaValidationError,
@@ -168,10 +169,17 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
         parentId: input.parent_id,
         table: input.table,
         columns: input.columns,
+        change: changeArgsOf(input),
       });
       if (!out.ok) return { error: out.message };
       // The document exists now: a failed lookup must not read as a failed create, or the agent makes another.
-      return { doc_id: out.doc.doc_id, title: out.doc.title, ...(await docAgentInstructionsOrNone(ctx, out.doc)) };
+      return {
+        doc_id: out.doc.doc_id,
+        title: out.doc.title,
+        ...changeAnswer(out.change ?? null),
+        ...(out.held ? { held: true } : {}),
+        ...(await docAgentInstructionsOrNone(ctx, out.doc)),
+      };
     },
 
     async readMarkdown(docId) {
@@ -215,6 +223,7 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
         citations: input.citations,
         revises: input.revises,
         source: "connector",
+        change: changeArgsOf(input),
       });
       if (outcome.kind === "error") return { error: outcome.message };
       const answer = proposeBody(outcome, `${ctx.servedOrigin}/doc/${docId}`);
@@ -352,12 +361,13 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
       if ("error" in doc) return doc;
       // A write needs no schema read, so the answer names what governs this database; the schema carries the text.
       const labels = () => docInstructionLabelsOrNone(ctx, doc);
+      const change = changeArgsOf(mutation);
       if (mutation.action === "create_table" && mutation.columns?.length) {
         const specs = parseColumnSpecs(mutation.columns);
         if (!specs.ok) return { error: specs.message };
-        return proposeAnswer(await proposeTableWithColumns(ctx, doc, mutation.display, specs.columns, "connector", { revises: mutation.revises }), await labels());
+        return proposeAnswer(await proposeTableWithColumns(ctx, doc, mutation.display, specs.columns, "connector", { revises: mutation.revises, change }), await labels());
       }
-      return proposeAnswer(await proposeDatabaseOp(ctx, doc, databaseOp(mutation), "connector", { revises: mutation.revises }), await labels());
+      return proposeAnswer(await proposeDatabaseOp(ctx, doc, databaseOp(mutation), "connector", { revises: mutation.revises, change }), await labels());
     },
 
     async openRowPage(databaseId, tableId, rowId) {

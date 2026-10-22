@@ -7,7 +7,11 @@ import {
   advanceEmbeddingBackfill,
   advanceSnapshotSeq,
   agentRunClosed,
+  changeRunsClosed,
   claimReviewPost,
+  getChange,
+  itemUnreleased,
+  purgeWikiChanges,
   bumpChunkEmbedAttempt,
   clearDocChunks,
   colleagueApprovers,
@@ -150,6 +154,12 @@ export function jobsDb(sql: Sql) {
     purgeReviewPosts: (days: number) => purgeReviewPosts(sql, days),
     /** Whether a run's mirror says it is closed: decided or reverted. */
     agentRunClosed: (runId: string) => agentRunClosed(sql, runId),
+    /** Whether every run of a change is closed, as the mirror says. */
+    changeRunsClosed: (changeId: string) => changeRunsClosed(sql, changeId),
+    getChange: (changeId: string) => getChange(sql, changeId),
+    /** A new page a change holds, or a row page of such a database: no review channel names it. */
+    itemUnreleased: (docId: string) => itemUnreleased(sql, docId),
+    purgeWikiChanges: (days: number) => purgeWikiChanges(sql, days),
     getWebhook: (webhookId: string) => getWebhook(sql, webhookId),
     recordWebhookDelivery: (webhookId: string, status: number | null, ok: boolean) => recordWebhookDelivery(sql, webhookId, status, ok),
     updateWebhook: (workspaceId: string, webhookId: string, patch: { active?: boolean }) =>

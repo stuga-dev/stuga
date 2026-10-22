@@ -3,19 +3,23 @@ import { AiError } from "@stuga/ai";
 import type { WebhookRow, WorkspaceEventRow } from "@stuga/db";
 import { isReviewMode } from "@stuga/protocol/domain/events";
 import { reviewCardPath } from "@stuga/protocol/domain/runs";
+import { changeCardPath } from "@stuga/protocol/domain/changes";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
 import { recipientLanguage } from "@stuga/protocol/notify/render";
 import { WEBHOOK_MAX_FAILURES, WEBHOOK_TIMEOUT_MS, signWebhookBody } from "../governance/webhooks/sign.js";
 import { OutboundRefusedError } from "../net/outbound.js";
-import { slackPostBody } from "../review/channel.js";
+import { slackChangePostBody, slackPostBody } from "../review/channel.js";
 import type { JobDeps, JobsEnv } from "./deps.js";
 
 /** What an event names that a review channel's post needs, read from a run event's payload. */
-function runOf(event: Pick<WorkspaceEventRow, "payload">): { runId: string; reviewer: string; agent: string; title: string; review: string; pending: number } | null {
+function runOf(
+  event: Pick<WorkspaceEventRow, "payload">,
+): { runId: string; changeId: string | null; reviewer: string; agent: string; title: string; review: string; pending: number } | null {
   const p = event.payload as Record<string, unknown>;
   if (typeof p.run_id !== "string" || typeof p.reviewer !== "string") return null;
   return {
     runId: p.run_id,
+    changeId: typeof p.change_id === "string" ? p.change_id : null,
     reviewer: p.reviewer,
     agent: typeof p.agent === "string" ? p.agent : "",
     title: typeof p.doc_title === "string" ? p.doc_title : "",
@@ -49,11 +53,12 @@ export async function handleEvent(env: JobsEnv, deps: JobDeps, msg: Extract<Inde
   for (const hook of hooks) {
     await env.jobs.send({ kind: "webhook_deliver", webhookId: hook.webhook_id, eventId: row.id });
   }
-  // A review channel hears of a run once, when it first waits for a colleague, however many approvers it has.
+  // A review channel hears of a run once, when it first waits for a colleague, however many approvers
+  // it has; of the runs of a change, once for the change.
   const run = runOf(row);
   if (msg.type !== "run.proposed" || !msg.docId || !run || run.review !== "colleague") return;
   for (const channel of await deps.db.matchingReviewChannels(msg.workspaceId, ancestry, msg.docId)) {
-    await deps.db.claimReviewPost(channel.webhook_id, run.runId, { kind: "webhook_deliver", webhookId: channel.webhook_id, eventId: row.id });
+    await deps.db.claimReviewPost(channel.webhook_id, run.changeId ?? run.runId, { kind: "webhook_deliver", webhookId: channel.webhook_id, eventId: row.id });
   }
 }
 
@@ -66,7 +71,19 @@ export async function handleEvent(env: JobsEnv, deps: JobDeps, msg: Extract<Inde
 async function reviewPost(env: JobsEnv, deps: JobDeps, hook: WebhookRow, event: WorkspaceEventRow): Promise<string | null> {
   const run = runOf(event);
   if (event.type !== "run.proposed" || !event.doc_id || !run) return null;
+  const change = run.changeId ? await deps.db.getChange(run.changeId) : null;
+  if (change && change.workspace_id === event.workspace_id) {
+    // A change is posted with its own title, never a page's, while something of it still waits.
+    if (await deps.db.changeRunsClosed(change.change_id)) return null;
+    const [author, language] = await Promise.all([deps.db.displayNameOf(run.reviewer), deps.db.uiLanguage(hook.created_by)]);
+    const card = `${env.publicOrigin}${changeCardPath(change.change_id, event.workspace_id)}`;
+    const words = { change: change.title, author: author || run.reviewer, agent: run.agent, level: "colleague" as const };
+    return slackChangePostBody(words, card, recipientLanguage(language));
+  }
   if (await deps.db.agentRunClosed(run.runId)) return null;
+  // A page a change holds is posted only as part of a change, by the change's title: a run in none
+  // would name the page to the channel.
+  if (await deps.db.itemUnreleased(event.doc_id)) return null;
   const [doc, author, language] = await Promise.all([
     deps.db.getDoc(event.doc_id),
     deps.db.displayNameOf(run.reviewer),

@@ -38,7 +38,7 @@ interface Hashed {
  * higher. A change to a stored shape raises it, together with the step in the host that brings an
  * older store forward.
  */
-export const DOC_STORE_VERSION = 5;
+export const DOC_STORE_VERSION = 6;
 
 /** The steps that bring an older store forward, keyed by the version each reaches. */
 export const DOC_STORE_UPGRADES: Record<number, StoreUpgrade> = {
@@ -57,6 +57,11 @@ export const DOC_STORE_UPGRADES: Record<number, StoreUpgrade> = {
   // it (`approver_group`, `approved_by`). An older build would let a run's reviewer approve it, so it must
   // not open the store. The fields are new and optional, so a version 4 store is read as it is.
   5: () => {},
+  // 6: the change a run belongs to (`change_id`), and the run it waits behind (`queued_behind`, with
+  // `stacked_on`): an agent's runs here for other changes queue behind each other. An older build would
+  // let a queued run be accepted ahead of the run it was proposed on top of, so it must not open the
+  // store. The fields are new and optional, so a version 5 store is read as it is.
+  6: () => {},
 };
 
 const FLUSH_THRESHOLD = 100; // updates

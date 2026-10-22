@@ -5,7 +5,7 @@
  * for a person, `auto` applies at once, attributed and revertible. Shared by
  * the REST propose route and /mcp, so both run the same gates.
  */
-import { getDoc, type DocRow } from "@stuga/db";
+import { getChange, getDoc, linkChangeRun, type DocRow } from "@stuga/db";
 import { markdownByteLength, MAX_IMPORT_MARKDOWN_BYTES } from "@stuga/protocol/text/markdown-import";
 import type { AgentRunSource, AgentRunSummary, AiCitation, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
@@ -17,6 +17,7 @@ import { recordAudit } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
 import { canReadDoc, canWriteDoc, READ_ONLY_MESSAGE } from "../authz/authz.js";
 import { proposalApproverGroup, resolveReviewMode } from "../authz/review-mode.js";
+import { changeAnswer, discardOpened, resolveChange, type ChangeArgs, type ResolvedChange } from "../changes/resolve.js";
 
 export interface ProposeInput {
   docId: string;
@@ -35,6 +36,18 @@ export interface ProposeInput {
   /** Feedback ids this proposal answers. */
   revises?: string[];
   source: AgentRunSource;
+  /** The change it belongs to, or the title that opens one. */
+  change?: ChangeArgs;
+  /** A change the caller already resolved (a create that seeds its body). */
+  resolvedChange?: ResolvedChange | null;
+}
+
+/** The run a queued proposal waits behind: the same agent's earlier change here, still undecided. */
+export interface QueuedBehind {
+  run_id: string;
+  change_id: string | null;
+  /** That change's title, for the agent's answer; null for a run in no change. */
+  change_title: string | null;
 }
 
 export type ProposeOutcome =
@@ -54,6 +67,8 @@ export type ProposeOutcome =
       doc: DocRow;
       feedback?: AgentFeedback[];
       revised?: string[];
+      change?: ResolvedChange | null;
+      queuedBehind?: QueuedBehind;
     }
   | {
       kind: "auto_applied";
@@ -67,6 +82,7 @@ export type ProposeOutcome =
       doc: DocRow;
       feedback?: AgentFeedback[];
       revised?: string[];
+      change?: ResolvedChange | null;
     }
   | { kind: "noop" }
   | { kind: "error"; message: string; retryable?: boolean; status?: number };
@@ -142,6 +158,8 @@ interface ProposeResponse {
   applied?: number;
   /** The actor parked an `auto` proposal because the run holds undecided work. */
   parked_behind_pending?: boolean;
+  /** The proposal started a run that waits behind the agent's earlier run here, still undecided. */
+  queued_behind?: { run_id: string; change_id: string | null };
   feedback?: AgentFeedback[];
   revised?: string[];
   /** An append under a heading with subsections: it went before the first of them. */
@@ -184,6 +202,20 @@ const HEADINGS_SHOWN = 40;
 /** Why an `auto` document parked this one anyway. */
 const HELD_REASON =
   "this document lets AI edits apply directly, but your earlier changes in this run are still waiting for the user";
+
+/** Why this proposal waits behind another of the agent's runs here. */
+function queuedReason(behind: QueuedBehind): string {
+  return behind.change_title
+    ? `your earlier change ${JSON.stringify(behind.change_title)} to this document is still undecided, so this one waits behind it in the queue and is approved after it`
+    : "your earlier changes to this document are still undecided, so this one waits behind them in the queue and is approved after them";
+}
+
+/** The run a queued proposal waits behind, with its change's title. */
+async function queuedBehindOf(ctx: Ctx, raw: ProposeResponse["queued_behind"]): Promise<QueuedBehind | undefined> {
+  if (!raw?.run_id) return undefined;
+  const change = raw.change_id ? await getChange(ctx.sql, raw.change_id) : null;
+  return { run_id: raw.run_id, change_id: raw.change_id ?? null, change_title: change?.title ?? null };
+}
 
 function docActor(ctx: Ctx, docId: string) {
   return ctx.env.docs.get(docId);
@@ -266,6 +298,19 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
   // Before the size gate, since a `data:` image shrinks to a short path once
   // stored; after the ACL gates, so only a writer can make the node fetch a URL.
   const { text, replace, edits, mediaNote } = await hostAgentImages(ctx, doc.workspace_id, docId, input);
+  return proposeChecked(ctx, input, doc, review, approverGroup, { text, replace, edits, mediaNote });
+}
+
+/** The proposal after the gates: its change, the size checks and the actor's answer. */
+async function proposeChecked(
+  ctx: Ctx,
+  input: ProposeInput,
+  doc: DocRow,
+  review: ReturnType<typeof resolveReviewMode>,
+  approverGroup: string | null,
+  hosted: Awaited<ReturnType<typeof hostAgentImages>>,
+): Promise<ProposeOutcome> {
+  const { text, replace, edits, mediaNote } = hosted;
 
   if (input.action === "write" || input.action === "append") {
     if (text == null) return { kind: "error", message: `${input.action} requires \`text\``, status: 400 };
@@ -280,6 +325,29 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
     if (replace != null && markdownByteLength(replace) > MAX_IMPORT_MARKDOWN_BYTES) return tooLarge();
   }
 
+  // The change it belongs to, opened here when it names a title; a refused write takes an opened one back.
+  let change: ResolvedChange | null = input.resolvedChange ?? null;
+  if (input.resolvedChange === undefined) {
+    const resolved = await resolveChange(ctx, input.change, doc);
+    if (!resolved.ok) return { kind: "error", message: resolved.message, status: resolved.status };
+    change = resolved.resolved;
+  }
+  const outcome = await proposeToActor(ctx, input, doc, review, approverGroup, { text, replace, edits, mediaNote }, change);
+  if (outcome.kind === "error" || outcome.kind === "noop") await discardOpened(ctx, change);
+  return outcome;
+}
+
+async function proposeToActor(
+  ctx: Ctx,
+  input: ProposeInput,
+  doc: DocRow,
+  review: ReturnType<typeof resolveReviewMode>,
+  approverGroup: string | null,
+  hosted: Awaited<ReturnType<typeof hostAgentImages>>,
+  change: ResolvedChange | null,
+): Promise<ProposeOutcome> {
+  const { docId } = input;
+  const { text, replace, edits, mediaNote } = hosted;
   const res = await docActor(ctx, docId).fetch(`http://actor/runs/propose?docId=${encodeURIComponent(docId)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -304,6 +372,7 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
       reviewer: ctx.isAgent ? ctx.onBehalfOf : ctx.alias,
       workspace_id: ctx.workspaceId,
       doc_title: doc.title ?? "",
+      ...(change ? { change_id: change.change.change_id } : {}),
     }),
   });
   const body = (await res.json().catch(() => null)) as ProposeResponse | null;
@@ -313,12 +382,17 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
     ...(ctx.isAgent && body?.revised?.length ? { revised: body.revised } : {}),
   };
 
+  if (res.ok && change && body?.run && (body.mode === "proposed" || body.mode === "auto_applied")) {
+    // Linked as it is answered; the inbox mirror links it again, so a link this loses heals.
+    await linkChangeRun(ctx.sql, { changeId: change.change.change_id, workspaceId: ctx.workspaceId, docId, runId: body.run.id, docKind: "prose" }).catch(() => {});
+  }
   if (res.ok) {
     if (body?.mode === "proposed" && body.run) {
-      // A run holding undecided hunks parks even on an `auto` document.
+      // A run holding undecided hunks parks even on an `auto` document; one behind the agent's earlier run here waits in its queue.
+      const queuedBehind = await queuedBehindOf(ctx, body.queued_behind);
       const held = body.parked_behind_pending === true;
       const mode: ReviewMode = held ? "review" : review.mode;
-      const reason = held ? HELD_REASON : review.reason;
+      const reason = queuedBehind ? queuedReason(queuedBehind) : held ? HELD_REASON : review.reason;
       recordAudit(ctx, {
         action: "doc.propose",
         targetKind: "doc",
@@ -336,6 +410,8 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
         reason,
         doc,
         ...feedback,
+        change,
+        ...(queuedBehind ? { queuedBehind } : {}),
       };
     }
     if (body?.mode === "auto_applied" && body.run) {
@@ -357,6 +433,7 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
         reason: review.reason,
         doc,
         ...feedback,
+        change,
       };
     }
     if (body?.mode === "noop") return { kind: "noop" };
@@ -402,6 +479,8 @@ export function proposeBody(
     ...(outcome.kind !== "noop" && outcome.placementNote ? { placement_note: outcome.placementNote } : {}),
     ...(outcome.kind !== "noop" && outcome.feedback ? { feedback: outcome.feedback } : {}),
     ...(outcome.kind !== "noop" && outcome.revised ? { revised: outcome.revised } : {}),
+    ...(outcome.kind !== "noop" ? changeAnswer(outcome.change ?? null) : {}),
+    ...(outcome.kind === "proposed" && outcome.queuedBehind ? { queued_behind: outcome.queuedBehind } : {}),
   };
   switch (outcome.kind) {
     case "proposed":

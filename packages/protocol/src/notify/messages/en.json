@@ -2,6 +2,7 @@
   "untitled": "Untitled",
   "action.open": "Open",
   "review.post": "“{doc}”: {author}’s {agent} proposed {count, plural, one {# change} other {# changes}} · {level, select, colleague {Reviewed by a colleague} review {Reviewed by whoever asked the AI} other {AI edits apply directly}}",
+  "review.postChange": "“{change}”: {author}’s {agent} proposed changes · {level, select, colleague {Reviewed by a colleague} review {Reviewed by whoever asked the AI} other {AI edits apply directly}}",
   "review.open": "Review",
 
   "MENTIONED_IN_COMMENT.title": "{actor} mentioned you in a comment on “{doc}”",
@@ -28,6 +29,12 @@
   "APPROVAL_WAITING.body": "{author}’s {agent} proposed {count, plural, one {# change} other {# changes}}.",
   "APPROVER_NEEDED.title": "“{doc}”: changes wait for an approver",
   "APPROVER_NEEDED.body": "{author}’s {agent} proposed {count, plural, one {# change} other {# changes}}. {cause, select, group {Give someone in the approver group edit access to approve them.} other {Give a colleague edit access to approve them.}}",
+  "CHANGE_PROPOSED.title": "“{change}”: {agent} proposed changes",
+  "CHANGE_PROPOSED.body": "Each page says who approves it.",
+  "CHANGE_APPLIED.title": "“{change}”: {agent} made changes",
+  "CHANGE_APPLIED.body": "{agent} changed pages set to let AI edits apply directly.",
+  "CHANGE_APPROVAL_WAITING.title": "“{change}”: waiting for your approval",
+  "CHANGE_APPROVAL_WAITING.body": "{author}’s {agent} proposed changes.",
   "REVIEW_LEVEL_LOWERED.title": "“{doc}”: review of AI edits loosened",
   "REVIEW_LEVEL_LOWERED.body": "{moved, select, yes {{actor} moved this {kind, select, folder {folder} database {database} other {document}}, which is now at “{level, select, auto {AI edits apply directly} review {Reviewed by whoever asked the AI} other {Reviewed by a colleague}}”{floorKnown, select, yes {, looser than its old folder} other {}}.} other {{actor} set this {kind, select, folder {folder} database {database} other {document}} to “{level, select, auto {AI edits apply directly} review {Reviewed by whoever asked the AI} other {Reviewed by a colleague}}”{floorKnown, select, yes {, looser than its folder} other {}}.}}",
 

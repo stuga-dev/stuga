@@ -157,6 +157,7 @@ function argumentsOf(params: Record<string, unknown>, lang: UiLanguage): Values 
     else if (isDatabaseChange(value)) out[name] = renderDatabaseChange(value, lang);
   }
   if (out.doc === "") out.doc = format(lang, "untitled");
+  if (out.change === "") out.change = format(lang, "untitled");
   return out;
 }
 
@@ -196,6 +197,21 @@ export interface ReviewPostWords {
 export function renderReviewPost(post: ReviewPostWords, language: string): string {
   const lang = notifyLanguage(language);
   return format(lang, "review.post", { ...post, doc: post.doc || format(lang, "untitled") });
+}
+
+/** What a review channel says of a change waiting for a decision: its title, who asked and which AI, never a page's title or text. */
+export interface ChangePostWords {
+  /** The change's title; empty reads as Untitled. */
+  change: string;
+  author: string;
+  agent: string;
+  level: "auto" | "review" | "colleague";
+}
+
+/** A review channel's post about a change, in `language`. */
+export function renderChangePost(post: ChangePostWords, language: string): string {
+  const lang = notifyLanguage(language);
+  return format(lang, "review.postChange", { ...post, change: post.change || format(lang, "untitled") });
 }
 
 /** The label of the link a review channel's post carries to the run's review card. */

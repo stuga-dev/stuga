@@ -30,13 +30,14 @@ import { ChevronRight, ListChecks } from "lucide-react";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import type { DatabaseRunSummary } from "@stuga/protocol/databases/types";
 import { reviewCardPath } from "@stuga/protocol/domain/runs";
+import { changeCardPath } from "@stuga/protocol/domain/changes";
 import { clientName } from "../agents/client-configs";
 import { AppTopNav } from "../shell/AppTopNav";
 import { LoadFailed } from "../ui/LoadFailed";
 import { PageColumn } from "../ui/PageColumn";
 import { useIsNarrow } from "../ui/narrow";
 import { absoluteTime, fmtInt, relativeTime } from "../lib/format";
-import { DatabaseRuns, INBOX_PAGE_LIMIT, Inbox, Runs, type AgentStats, type InboxFilter, type InboxRun } from "../api";
+import { Changes, DatabaseRuns, INBOX_PAGE_LIMIT, Inbox, Runs, type AgentStats, type InboxChange, type InboxFilter, type InboxRun } from "../api";
 import { errorMessage } from "../lib/http/client";
 import { useRejectNote } from "../review/RejectNoteDialog";
 import { summarizeHunk } from "../review/hunk-review";
@@ -163,8 +164,36 @@ export function runStatus(run: InboxRun): string {
   }
 }
 
+/** A change's status line: what of it waits and for whom, or what became of it. */
+export function changeStatus(c: InboxChange): string {
+  if (c.status !== "open" || c.pending === 0) {
+    const parts: string[] = [];
+    if (c.accepted > 0) parts.push(t("review.inbox.outcome.kept", { count: c.accepted }));
+    if (c.rejected > 0) parts.push(t("review.inbox.outcome.skipped", { count: c.rejected }));
+    if (c.applied > 0) parts.push(t("review.inbox.outcome.applied", { count: c.applied }));
+    if (c.conflicts > 0) parts.push(t("review.inbox.outcome.conflicts", { count: c.conflicts }));
+    return parts.join(" · ") || t("review.inbox.status.nothingWaiting");
+  }
+  if (c.you.accept) return t("review.inbox.status.waiting", { count: c.pending_yours ?? c.pending });
+  if (c.you.queued) return t("review.inbox.status.queued", { count: c.pending });
+  if (c.you.waits_for === "nobody") return t("review.inbox.status.waitingNobody", { count: c.pending });
+  if (c.you.waits_for === "group") return t("review.inbox.status.waitingGroup", { count: c.pending });
+  if (c.level === "colleague") return t("review.inbox.status.waitingColleague", { count: c.pending });
+  return t("review.inbox.status.waitingFor", { count: c.pending, name: principalLabel(`user:${c.reviewer}`) });
+}
+
+/** One row of the inbox: a run in no change, or a whole change. */
+type InboxItem = { kind: "run"; row: InboxRun } | { kind: "change"; row: InboxChange };
+
+/** Runs and changes in one list, the latest activity first. */
+export function inboxItems(runs: readonly InboxRun[], changes: readonly InboxChange[]): InboxItem[] {
+  const items: InboxItem[] = [...runs.map((row) => ({ kind: "run" as const, row })), ...changes.map((row) => ({ kind: "change" as const, row }))];
+  const at = (i: InboxItem) => new Date(i.row.updated_at).getTime();
+  return items.sort((a, b) => at(b) - at(a));
+}
+
 /** Who made a run: its agent, then the app it came through when the name does not already say it. */
-export function madeBy(run: InboxRun): string[] {
+export function madeBy(run: Pick<InboxRun, "source" | "agent" | "agent_alias" | "agent_name" | "client">): string[] {
   const name = runAgentLabel(run);
   // The co-author's name already says how it was made.
   const via = run.source === "panel" || !run.client ? null : clientName(run.client);
@@ -236,6 +265,7 @@ export function ReviewPage() {
   const narrow = useIsNarrow();
   const [agent, setAgent] = useState("");
   const [runs, setRuns] = useState<InboxRun[] | null>(null);
+  const [changes, setChanges] = useState<InboxChange[]>([]);
   /** How many runs need this person, for the badge on Needs you whichever tab is open. */
   const [needsCount, setNeedsCount] = useState<number | null>(null);
   /** The last load filled a page, so the count is a floor until the next load. */
@@ -259,10 +289,11 @@ export function ReviewPage() {
         whole ? null : Inbox.list("attention").catch(() => null),
       ]);
       setRuns(inbox.runs);
-      setCapped(inbox.runs.length >= INBOX_PAGE_LIMIT);
+      setChanges(inbox.changes ?? []);
+      setCapped(inbox.runs.length + (inbox.changes?.length ?? 0) >= INBOX_PAGE_LIMIT);
       setStats(agents.agents);
-      const counted = whole ? inbox.runs : needs?.runs;
-      if (counted) setNeedsCount(counted.length);
+      const counted = whole ? inbox : needs;
+      if (counted) setNeedsCount(counted.runs.length + (counted.changes?.length ?? 0));
     } catch {
       setFailed(true);
       setRuns(null);
@@ -274,14 +305,14 @@ export function ReviewPage() {
   }, [load]);
 
   // Rows someone else decides name that person.
-  useUserNames((runs ?? []).filter((r) => r.can_decide === false).map((r) => `user:${r.reviewer}`));
+  useUserNames([...(runs ?? []), ...changes].filter((r) => r.can_decide === false).map((r) => `user:${r.reviewer}`));
 
   const agentOptions = useMemo(
     () => [{ value: "", label: t("review.inbox.allAgents") }, ...stats.map((s) => ({ value: s.agent_alias, label: runAgentLabel(s) }))],
     [stats],
   );
 
-  const shown = runs?.length ?? 0;
+  const shown = (runs?.length ?? 0) + changes.length;
   const listHeading =
     filter === "attention"
       ? capped ? t("review.inbox.headingAttentionCapped", { count: shown }) : t("review.inbox.headingAttention", { count: shown })
@@ -332,6 +363,23 @@ export function ReviewPage() {
       return false;
     } finally {
       markBusy(row.run_id, false);
+    }
+  }
+
+  /** Ask for changes or Decline on a whole change: every run of it the person may decline, each with the note. */
+  async function actOnChange(row: InboxChange, note?: string): Promise<boolean> {
+    markBusy(row.change_id, true);
+    try {
+      await Changes.decide(row.change_id, "reject", note);
+      setChanges((prev) => prev.filter((c) => c.change_id !== row.change_id || filter !== "attention"));
+      toast({ body: t("review.inbox.done.change", { title: row.title || t("common.untitled") }), type: "info" });
+      window.setTimeout(() => void load(), MIRROR_SETTLE_MS);
+      return true;
+    } catch (e) {
+      toast({ body: errorMessage(e, t("review.inbox.actionFailed")), type: "error" });
+      return false;
+    } finally {
+      markBusy(row.change_id, false);
     }
   }
 
@@ -389,7 +437,7 @@ export function ReviewPage() {
               <VStack gap={2} hAlign="center" padding={6}>
                 <Spinner label={t("review.inbox.loading")} />
               </VStack>
-            ) : runs.length === 0 ? (
+            ) : runs.length + changes.length === 0 ? (
               <EmptyState
                 icon={<ListChecks size={28} />}
                 title={agent ? t("review.inbox.noMatch") : t(EMPTY[filter][0])}
@@ -401,7 +449,81 @@ export function ReviewPage() {
                 density={filter === "attention" ? "spacious" : "balanced"}
                 header={<Heading level={2}>{listHeading}</Heading>}
               >
-                {runs.map((row) => {
+                {inboxItems(runs, changes).map((item) => {
+                  if (item.kind === "change") {
+                    const c = item.row;
+                    const isBusy = busy.has(c.change_id);
+                    const waiting = c.status === "open" && c.pending > 0;
+                    const attention = waiting && c.you.accept;
+                    const title = c.title || t("review.change.untitled", { name: principalLabel(`user:${c.reviewer}`), agent: runAgentLabel(c) });
+                    const menu = waiting && c.you.reject
+                      ? [
+                          {
+                            label: t("review.card.askChanges"),
+                            onClick: () =>
+                              askNote({
+                                title: t("review.card.note.askTitle"),
+                                submitLabel: t("review.card.note.askSend"),
+                                onSubmit: (note) => void actOnChange(c, note),
+                              }),
+                            isDisabled: isBusy,
+                          },
+                          { label: t("review.inbox.decline"), onClick: () => void actOnChange(c), isDisabled: isBusy },
+                        ]
+                      : [];
+                    const open = () => nav(changeCardPath(c.change_id));
+                    return (
+                      <ListItem
+                        key={c.change_id}
+                        label={title}
+                        startContent={<StatusDot variant={attention ? "warning" : "neutral"} label={attention ? t("review.inbox.needsReview") : t("review.inbox.noActionNeeded")} />}
+                        description={
+                          <VStack gap={1}>
+                            <Text color="secondary">{changeStatus(c)}</Text>
+                            <Text color="secondary" maxLines={1}>
+                              {c.page_titles.map((p) => p || t("common.untitled")).join(" · ")}
+                            </Text>
+                            <RowFacts
+                              facts={[
+                                t("review.inbox.change.pages", { count: c.pages }),
+                                ...madeBy(c),
+                                <time key="when" dateTime={c.updated_at} title={absoluteTime(c.updated_at)}>
+                                  {relativeTime(c.updated_at)}
+                                </time>,
+                              ]}
+                            />
+                          </VStack>
+                        }
+                        endContent={
+                          <HStack gap={1} vAlign="center">
+                            {narrow ? (
+                              <IconButton
+                                label={attention ? t("review.inbox.reviewChanges") : t("common.open")}
+                                variant="secondary"
+                                size="sm"
+                                icon={<ChevronRight size={16} />}
+                                onClick={open}
+                              />
+                            ) : (
+                              <Button label={attention ? t("review.inbox.reviewChanges") : t("common.open")} variant="secondary" size="sm" onClick={open} />
+                            )}
+                            {menu.length > 0 && (
+                              <MoreMenu
+                                label={t("common.actionsFor", { name: title })}
+                                variant="ghost"
+                                size="sm"
+                                alignment="end"
+                                presentation="adaptive"
+                                isDisabled={isBusy}
+                                items={menu}
+                              />
+                            )}
+                          </HStack>
+                        }
+                      />
+                    );
+                  }
+                  const row = item.row;
                   const actions = runActions(row);
                   const isBusy = busy.has(row.run_id);
                   // Another person's decision is theirs to make, and a colleague's approval theirs: shown, not flagged.

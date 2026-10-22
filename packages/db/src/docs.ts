@@ -240,6 +240,10 @@ export async function listExportDocs(
     WHERE workspace_id = ${workspaceId}
       AND acl_principals && ${principals}
       AND trashed = FALSE
+      -- A new page a change holds, or a row page of such a database, is not the workspace's until it is approved.
+      AND NOT EXISTS (
+        SELECT 1 FROM wiki_change_pages h
+        WHERE h.state = 'held' AND (h.doc_id = d.doc_id OR h.doc_id = d.page_of))
       ${after === null ? sql`` : sql`AND doc_id > ${after}`}
     ORDER BY doc_id
     LIMIT ${Math.min(Math.max(limit, 1), 1000)}`;

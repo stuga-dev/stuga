@@ -84,6 +84,11 @@ export interface RunStanding {
   reject: boolean;
   ack: boolean;
   waits_for?: RunWaitsFor;
+  /**
+   * It waits behind the same agent's earlier changes to the item, still undecided: whoever may approve
+   * it does so once those are decided (`accept` is false meanwhile); rejecting it never waits.
+   */
+  queued?: true;
 }
 
 /** What a person does with a run: decide its changes, revert or undo what was decided, or mark it reviewed. */

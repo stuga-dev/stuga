@@ -9,10 +9,13 @@ import { recordAudit } from "../audit/record.js";
 import { docInstructionLabelsOrNone } from "../documents/instructions.js";
 import type { Ctx } from "../auth/context.js";
 import { canWriteDoc } from "../authz/authz.js";
-import { RunJudge, decisionRefusal, mayAct, runDeciders, vouched, type RunVerdict } from "../authz/review-mode.js";
+import { RunJudge, decisionRefusal, mayAct, narrowStacked, runDeciders, vouched, type RunVerdict } from "../authz/review-mode.js";
 import { lockedError } from "../documents/access.js";
 import { docAgentInstructions } from "../documents/instructions.js";
-import { afterDatabaseMutation, authorizedDatabase, callDatabaseActor, databaseActor, projectedSchema, proxyActor } from "./gate.js";
+import { actorRefusalStatus, afterDatabaseMutation, authorizedDatabase, callDatabaseActor, databaseActor, projectedSchema, proxyActor } from "./gate.js";
+import type { DecisionBlock } from "../api/runs.js";
+import { settleHeldPage } from "../changes/held.js";
+import { changeArgsOf, type ChangeArgs } from "../changes/resolve.js";
 import { commitDatabaseImport, createDatabaseImport, parseCommitOptions } from "./imports/staging.js";
 import {
   databaseProposeBody,
@@ -35,8 +38,8 @@ export interface DatabaseCall extends WorkspaceCall {
   body(): Promise<Record<string, unknown>>;
   /** An agent write's answer; mode "proposed" means queued for review. An agent's also names the instructions here. */
   proposeEnvelope(outcome: DatabaseProposeOutcome): Promise<Response>;
-  /** Propose one op on the run ledger as a REST (stdio) agent. */
-  proposeOrError(op: Record<string, unknown>): Promise<Response>;
+  /** Propose one op on the run ledger as a REST (stdio) agent, in the change its body names. */
+  proposeOrError(op: Record<string, unknown>, change?: ChangeArgs): Promise<Response>;
   /** Renaming, retyping and deleting tables or columns has no reviewable form, so it stays a person's act. */
   agentSchemaRefusal(): Response | null;
 }
@@ -62,8 +65,8 @@ export function databaseRoute(handler: (call: DatabaseCall) => Promise<Response>
       const body = databaseProposeBody(outcome);
       return json(ctx.isAgent ? { ...body, ...(await docInstructionLabelsOrNone(ctx, doc)) } : body);
     };
-    const proposeOrError = (op: Record<string, unknown>): Promise<Response> =>
-      proposeDatabaseOp(ctx, doc, op, "stdio").then(proposeEnvelope);
+    const proposeOrError = (op: Record<string, unknown>, change?: ChangeArgs): Promise<Response> =>
+      proposeDatabaseOp(ctx, doc, op, "stdio", change ? { change } : {}).then(proposeEnvelope);
     const agentSchemaRefusal = (): Response | null =>
       ctx.isAgent
         ? error(
@@ -117,9 +120,9 @@ export async function createTable({ ctx, doc, docId, writeRefusal, body, propose
   const specs = b.columns === undefined ? { ok: true as const, columns: [] } : parseColumnSpecs(b.columns);
   if (!specs.ok) return error(400, specs.message);
   if (ctx.isAgent) {
-    if (specs.columns.length === 0) return proposeOrError({ kind: "tables.create", display: b.display });
+    if (specs.columns.length === 0) return proposeOrError({ kind: "tables.create", display: b.display }, changeArgsOf(b));
     if (typeof b.display !== "string" || b.display.trim() === "") return error(400, "display must not be empty");
-    return proposeEnvelope(await proposeTableWithColumns(ctx, doc, b.display, specs.columns, "stdio"));
+    return proposeEnvelope(await proposeTableWithColumns(ctx, doc, b.display, specs.columns, "stdio", { change: changeArgsOf(b) }));
   }
   const res = await callDatabaseActor(ctx, docId, "tables/create", { display: b.display, columns: specs.columns });
   if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "table_created" });
@@ -153,7 +156,7 @@ export async function addColumn({ ctx, match, doc, docId, writeRefusal, body, pr
   if (r) return r;
   const b = await body();
   if (ctx.isAgent) {
-    return proposeOrError({ kind: "columns.add", table: match[2]!, display: b.display, type: b.type, choices: b.choices, description: b.description });
+    return proposeOrError({ kind: "columns.add", table: match[2]!, display: b.display, type: b.type, choices: b.choices, description: b.description }, changeArgsOf(b));
   }
   const res = await callDatabaseActor(ctx, docId, "columns/add", {
     table_id: match[2]!,
@@ -227,7 +230,7 @@ export async function createView({ ctx, match, doc, docId, writeRefusal, body, p
   if (r) return r;
   const b = await body();
   const tableId = match[2]!;
-  if (ctx.isAgent) return proposeOrError({ kind: "views.create", table: tableId, ...viewOpFields(b) });
+  if (ctx.isAgent) return proposeOrError({ kind: "views.create", table: tableId, ...viewOpFields(b) }, changeArgsOf(b));
   const res = await callDatabaseActor(ctx, docId, "views/create", { table_id: tableId, ...viewFields(b) });
   if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "view_created" });
   return proxyActor(res, "could not create the view");
@@ -238,7 +241,7 @@ export async function updateView({ ctx, match, doc, docId, writeRefusal, body, p
   const r = writeRefusal();
   if (r) return r;
   const b = await body();
-  if (ctx.isAgent) return proposeOrError({ kind: "views.update", table: tableId, view: viewId, ...viewOpFields(b) });
+  if (ctx.isAgent) return proposeOrError({ kind: "views.update", table: tableId, view: viewId, ...viewOpFields(b) }, changeArgsOf(b));
   const res = await callDatabaseActor(ctx, docId, "views/update", { table_id: tableId, view_id: viewId, ...viewFields(b) });
   if (res.ok) await afterDatabaseMutation(ctx, doc, { kind: "view_changed" });
   return proxyActor(res, "could not change the view");
@@ -328,7 +331,7 @@ export async function insertRows({ ctx, match, doc, docId, writeRefusal, body, p
   const r = writeRefusal();
   if (r) return r;
   const b = await body();
-  if (ctx.isAgent) return proposeOrError({ kind: "rows.insert", table: tableId, rows: b.rows });
+  if (ctx.isAgent) return proposeOrError({ kind: "rows.insert", table: tableId, rows: b.rows }, changeArgsOf(b));
   const res = await callDatabaseActor(ctx, docId, "rows/insert", { table_id: tableId, rows: b.rows });
   if (!res.ok) return proxyActor(res, "could not insert rows");
   const out = (await res.json().catch(() => null)) as { inserted?: number } | null;
@@ -343,7 +346,7 @@ export async function updateRows({ ctx, match, doc, docId, writeRefusal, body, p
   const r = writeRefusal();
   if (r) return r;
   const b = await body();
-  if (ctx.isAgent) return proposeOrError({ kind: "rows.update", table: tableId, updates: b.updates });
+  if (ctx.isAgent) return proposeOrError({ kind: "rows.update", table: tableId, updates: b.updates }, changeArgsOf(b));
   const res = await callDatabaseActor(ctx, docId, "rows/update", { table_id: tableId, updates: b.updates });
   if (!res.ok) return proxyActor(res, "could not update rows");
   // The count the actor changed, not the count requested.
@@ -360,7 +363,7 @@ export async function deleteRows({ ctx, match, doc, docId, writeRefusal, body, p
   const r = writeRefusal();
   if (r) return r;
   const b = await body();
-  if (ctx.isAgent) return proposeOrError({ kind: "rows.delete", table: match[2]!, row_ids: b.row_ids });
+  if (ctx.isAgent) return proposeOrError({ kind: "rows.delete", table: match[2]!, row_ids: b.row_ids }, changeArgsOf(b));
   const res = await callDatabaseActor(ctx, docId, "rows/delete", { table_id: match[2]!, row_ids: b.row_ids });
   if (!res.ok) return proxyActor(res, "could not delete rows");
   const out = (await res.json().catch(() => null)) as { deleted?: number } | null;
@@ -391,7 +394,7 @@ const LANDED: ReadonlySet<string> = new Set(["accepted", "auto_applied"]);
  * its approvers and the database's managers: anyone else who can read the database sees that the
  * run exists, how it went, and the ops that landed, as a document's runs show them.
  */
-function forPerson(run: DatabaseRunSummary, v: RunVerdict): DatabaseRunSummary {
+export function forPerson(run: DatabaseRunSummary, v: RunVerdict): DatabaseRunSummary {
   const out: DatabaseRunSummary = { ...run, you: v.standing };
   if (v.seesText) return out;
   const ops = run.ops.filter((op) => LANDED.has(op.status));
@@ -415,14 +418,113 @@ async function actorRefusal(res: Response, otherwise: string): Promise<Response>
  * who manages it.
  */
 async function judgeAct(ctx: Ctx, doc: DocRow, runId: string, act: RunAct): Promise<Response | { run: DatabaseRunSummary; verdict: RunVerdict }> {
+  const judged = await judgeRunAct(ctx, doc, runId, act);
+  return "status" in judged ? error(judged.status, judged.message) : judged;
+}
+
+async function judgeRunAct(
+  ctx: Ctx,
+  doc: DocRow,
+  runId: string,
+  act: RunAct,
+): Promise<{ status: number; message: string; block: DecisionBlock } | { run: DatabaseRunSummary; verdict: RunVerdict }> {
   const res = await databaseActor(ctx, doc.doc_id).fetch(`http://actor/runs/detail?${new URLSearchParams({ dbId: doc.doc_id, runId })}`);
-  if (res.status === 404) return error(404, "not found");
-  if (!res.ok) return error(502, "run unavailable");
+  if (res.status === 404) return { status: 404, message: "not found", block: "gone" };
+  if (!res.ok) return { status: 502, message: "run unavailable", block: "gone" };
   const run = ((await res.json()) as { run?: DatabaseRunSummary }).run;
-  if (!run) return error(502, "run unavailable");
-  const verdict = await new RunJudge(ctx, doc).judge(run);
-  if (!mayAct(ctx, run, verdict, act)) return error(403, decisionRefusal(ctx, run, verdict, act, "database"));
+  if (!run) return { status: 502, message: "run unavailable", block: "gone" };
+  const verdict = (await judgeDatabaseRuns(ctx, doc, [run]))[0]!;
+  if (!mayAct(ctx, run, verdict, act)) return { status: 403, message: decisionRefusal(ctx, run, verdict, act, "database"), block: "refused" };
   return { run, verdict };
+}
+
+/** What a decision on one database run came to, or why it did not go through. */
+export type DatabaseRunDecision =
+  | { ok: true; run: DatabaseRunSummary; verdict: RunVerdict; applied: number; rejected: number; conflicts: number; blocked: number; answer: Record<string, unknown> }
+  | { ok: false; status: number; message: string; block: DecisionBlock };
+
+/**
+ * Accept or reject a database run's waiting ops as `ctx`, through the gates the decision route runs:
+ * write access, the lock (an accept only), who may act on it (RunJudge, checked again by the actor),
+ * and the queue. Recorded in the audit ledger as the route records it.
+ */
+export async function decideDatabaseRunAs(
+  ctx: Ctx,
+  doc: DocRow,
+  runId: string,
+  decision: "accept" | "reject",
+  opts: { note?: string; opIds?: string[] } = {},
+): Promise<DatabaseRunDecision> {
+  if (ctx.isAgent) return { ok: false, status: 403, message: "agents cannot review agent edits", block: "refused" };
+  if (!canWriteDoc(ctx, doc)) return { ok: false, status: 403, message: "view-only access", block: "view_only" };
+  // As on a document: a lock holds the data as it is, and a rejected proposal never touched it.
+  if (decision === "accept" && doc.locked) return { ok: false, status: 423, message: "this document is locked; unlock it to make changes", block: "locked" };
+  const judged = await judgeRunAct(ctx, doc, runId, decision);
+  if ("status" in judged) return { ok: false, ...judged };
+  const res = await callDatabaseActor(ctx, doc.doc_id, "runs/decide", {
+    run_id: runId,
+    decision,
+    op_ids: opts.opIds,
+    decided_by: ctx.alias,
+    ...vouched(judged.verdict),
+    ...(opts.note ? { note: opts.note } : {}),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string; message?: string } | null;
+    if (res.status === 403) {
+      return body?.error === "own_run"
+        ? { ok: false, status: 403, message: "a colleague approves these changes, not the person who asked the AI", block: "refused" }
+        : { ok: false, status: 403, message: "only this run's reviewer (or the database's owner) can decide it", block: "refused" };
+    }
+    if (res.status === 409 && body?.error === "queued") return { ok: false, status: 409, message: body.message ?? "these changes wait behind earlier ones", block: "queued" };
+    if (res.status === 423) return { ok: false, status: 423, message: body?.message ?? "this database is locked", block: "locked" };
+    return { ok: false, status: actorRefusalStatus(res), message: body?.message ?? "decision failed", block: "gone" };
+  }
+  const decided = (await res.json()) as { run?: DatabaseRunSummary; applied?: number; rejected?: number; conflicts?: number; blocked?: number };
+  if (decided.run) decided.run = forPerson(decided.run, judged.verdict);
+  // An accepted rows.delete took its rows' pages with it.
+  await reconcileDocLinks(ctx, doc);
+  recordAudit(ctx, {
+    action: "run.decide",
+    targetKind: "database",
+    targetId: doc.doc_id,
+    targetLabel: doc.title,
+    detail: {
+      run_id: runId,
+      decision,
+      agent: decided.run?.agent ?? null,
+      ops: opts.opIds ? opts.opIds.length : (decided.run?.ops?.length ?? 0),
+      applied: decided.applied ?? 0,
+      rejected: decided.rejected ?? 0,
+      conflicts: decided.conflicts ?? 0,
+      level: judged.verdict.level,
+      // On whose behalf the agent proposed: at `colleague`, never the one who decided.
+      asked_by: judged.run.reviewer,
+    },
+  });
+  // A new database of a change is released once its changes are approved, or removed once they are declined.
+  await settleHeldPage(ctx, doc, opts.note ?? null);
+  return {
+    ok: true,
+    run: decided.run ?? judged.run,
+    verdict: judged.verdict,
+    applied: decided.applied ?? 0,
+    rejected: decided.rejected ?? 0,
+    conflicts: decided.conflicts ?? 0,
+    blocked: decided.blocked ?? 0,
+    answer: decided as Record<string, unknown>,
+  };
+}
+
+/** Where the caller stands on runs of a database, a queued run's ops narrowed to whoever reads what it was stacked on. */
+export async function judgeDatabaseRuns(ctx: Ctx, doc: DocRow, runs: readonly DatabaseRunSummary[]): Promise<RunVerdict[]> {
+  const judge = new RunJudge(ctx, doc);
+  const verdicts = await judge.judgeAll(runs);
+  if (!runs.some((r) => r.stacked_on?.length)) return verdicts;
+  return narrowStacked(ctx, judge, runs, verdicts, async (id) => {
+    const res = await databaseActor(ctx, doc.doc_id).fetch(`http://actor/runs/detail?${new URLSearchParams({ dbId: doc.doc_id, runId: id })}`);
+    return res.ok ? (((await res.json()) as { run?: DatabaseRunSummary }).run ?? null) : null;
+  });
 }
 
 // Deciding a run is the node's call (RunJudge: the database's level, its approvers, who manages it),
@@ -437,7 +539,7 @@ export async function listDatabaseRuns({ ctx, url, doc, docId }: DatabaseCall): 
   const runs = data.runs ?? [];
   // An agent sees only its own runs.
   if (ctx.isAgent) return json({ runs: runs.filter((r) => r.agent_alias === ctx.alias) });
-  const verdicts = await new RunJudge(ctx, doc).judgeAll(runs);
+  const verdicts = await judgeDatabaseRuns(ctx, doc, runs);
   return json({ runs: runs.map((r, i) => forPerson(r, verdicts[i]!)) });
 }
 
@@ -452,13 +554,13 @@ export async function getDatabaseRun({ ctx, url, match, doc, docId }: DatabaseCa
   const detail = (await res.json()) as { run?: DatabaseRunSummary };
   if (ctx.isAgent) return detail.run?.agent_alias === ctx.alias ? json(detail) : error(404, "not found");
   if (!detail.run) return error(502, "run unavailable");
-  const verdict = await new RunJudge(ctx, doc).judge(detail.run);
+  const verdict = (await judgeDatabaseRuns(ctx, doc, [detail.run]))[0]!;
   const run = forPerson(detail.run, verdict);
   // Whoever reads its waiting ops also reads who may decide them: the review card names them.
   return json(verdict.seesText ? { ...detail, run, deciders: await runDeciders(ctx, doc, detail.run, verdict) } : { ...detail, run });
 }
 
-export async function decideDatabaseRun({ ctx, match, doc, docId, canWrite, body }: DatabaseCall): Promise<Response> {
+export async function decideDatabaseRun({ ctx, match, doc, canWrite, body }: DatabaseCall): Promise<Response> {
   if (ctx.isAgent) return error(403, "agents cannot review agent edits");
   if (!canWrite) return error(403, "view-only access");
   const b = await body();
@@ -471,46 +573,9 @@ export async function decideDatabaseRun({ ctx, match, doc, docId, canWrite, body
   const note = parseDecisionNote(b.decision, b.note);
   if (!note.ok) return error(400, note.message);
   const opIds = Array.isArray(b.op_ids) ? b.op_ids.filter((x): x is string => typeof x === "string") : undefined;
-  const judged = await judgeAct(ctx, doc, match[2]!, b.decision);
-  if (judged instanceof Response) return judged;
-  const res = await callDatabaseActor(ctx, docId, "runs/decide", {
-    run_id: match[2]!,
-    decision: b.decision,
-    op_ids: opIds,
-    decided_by: ctx.alias,
-    ...vouched(judged.verdict),
-    ...(note.note ? { note: note.note } : {}),
-  });
-  if (res.status === 403) return actorRefusal(res, "only this run's reviewer (or the database's owner) can decide it");
-  if (!res.ok) return proxyActor(res, "decision failed");
-  const decided = (await res.json()) as {
-    run?: DatabaseRunSummary;
-    applied?: number;
-    rejected?: number;
-    conflicts?: number;
-  };
-  if (decided.run) decided.run = forPerson(decided.run, judged.verdict);
-  // An accepted rows.delete took its rows' pages with it.
-  await reconcileDocLinks(ctx, doc);
-  recordAudit(ctx, {
-    action: "run.decide",
-    targetKind: "database",
-    targetId: doc.doc_id,
-    targetLabel: doc.title,
-    detail: {
-      run_id: match[2]!,
-      decision: b.decision,
-      agent: decided.run?.agent ?? null,
-      ops: opIds ? opIds.length : (decided.run?.ops?.length ?? 0),
-      applied: decided.applied ?? 0,
-      rejected: decided.rejected ?? 0,
-      conflicts: decided.conflicts ?? 0,
-      level: judged.verdict.level,
-      // On whose behalf the agent proposed: at `colleague`, never the one who decided.
-      asked_by: judged.run.reviewer,
-    },
-  });
-  return json(decided);
+  const decided = await decideDatabaseRunAs(ctx, doc, match[2]!, b.decision, { ...(note.note ? { note: note.note } : {}), ...(opIds ? { opIds } : {}) });
+  if (!decided.ok) return error(decided.status, decided.message);
+  return json(decided.answer);
 }
 
 export async function revertDatabaseRun({ ctx, match, doc, docId, writeRefusal, body }: DatabaseCall): Promise<Response> {

@@ -50,6 +50,11 @@ const PINNED: Record<number, { keys: string[]; schema: string }> = {
     keys: ["coauthor-clean:*", "coauthor-threads:*", "feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"],
     schema: "0f08c4ae72761d0e",
   },
+  // The change a run belongs to, and the run it waits behind.
+  6: {
+    keys: ["coauthor-clean:*", "coauthor-threads:*", "feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"],
+    schema: "8a5f1aba9e0e7676",
+  },
 };
 
 /** Per version from 3 on: the node and mark types the text may hold. A released version's entry never changes. */
@@ -71,6 +76,14 @@ const TEXT_TYPES: Record<number, { nodes: string[]; marks: string[] }> = {
     marks: ["bold", "code", "italic", "link", "strike", "underline"],
   },
   5: {
+    nodes: [
+      "blockquote", "bulletList", "codeBlock", "doc", "footnoteDefinition", "footnoteReference", "hardBreak", "heading",
+      "horizontalRule", "image", "listItem", "mention", "orderedList", "paragraph", "table", "tableCell", "tableHeader",
+      "tableRow", "taskItem", "taskList", "text",
+    ],
+    marks: ["bold", "code", "italic", "link", "strike", "underline"],
+  },
+  6: {
     nodes: [
       "blockquote", "bulletList", "codeBlock", "doc", "footnoteDefinition", "footnoteReference", "hardBreak", "heading",
       "horizontalRule", "image", "listItem", "mention", "orderedList", "paragraph", "table", "tableCell", "tableHeader",
@@ -105,6 +118,9 @@ describe("a document's store", () => {
       review_mode: "auto" | "review" | "colleague";
       approver_group?: string;
       approvals?: Record<string, string>;
+      change_id?: string;
+      queued_behind?: string;
+      stacked_on?: string[];
       created_at: number;
       updated_at: number;
       seq_at_commit?: number;

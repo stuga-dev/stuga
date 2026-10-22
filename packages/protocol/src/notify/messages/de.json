@@ -2,6 +2,7 @@
   "untitled": "Unbenannt",
   "action.open": "Öffnen",
   "review.post": "„{doc}“: {agent} von {author} hat {count, plural, one {# Änderung} other {# Änderungen}} vorgeschlagen · {level, select, colleague {Prüfung durch Kollegen} review {Prüfung durch die Person, die die KI beauftragt hat} other {KI-Änderungen direkt übernommen}}",
+  "review.postChange": "„{change}“: {agent} von {author} hat Änderungen vorgeschlagen · {level, select, colleague {Prüfung durch Kollegen} review {Prüfung durch die Person, die die KI beauftragt hat} other {KI-Änderungen direkt übernommen}}",
   "review.open": "Prüfen",
 
   "MENTIONED_IN_COMMENT.title": "{actor} hat dich in einem Kommentar zu „{doc}“ erwähnt",
@@ -28,6 +29,12 @@
   "APPROVAL_WAITING.body": "{agent} von {author} hat {count, plural, one {# Änderung} other {# Änderungen}} vorgeschlagen.",
   "APPROVER_NEEDED.title": "„{doc}“: Änderungen warten auf jemanden, der sie genehmigt",
   "APPROVER_NEEDED.body": "{agent} von {author} hat {count, plural, one {# Änderung} other {# Änderungen}} vorgeschlagen. {cause, select, group {Gib jemandem aus der Genehmigungsgruppe Bearbeitungsrechte, damit er sie genehmigt.} other {Gib Kollegen Bearbeitungsrechte, damit sie diese genehmigen.}}",
+  "CHANGE_PROPOSED.title": "„{change}“: {agent} hat Änderungen vorgeschlagen",
+  "CHANGE_PROPOSED.body": "Jede Seite zeigt, wer sie genehmigt.",
+  "CHANGE_APPLIED.title": "„{change}“: {agent} hat Änderungen vorgenommen",
+  "CHANGE_APPLIED.body": "{agent} hat Seiten geändert, bei denen KI-Änderungen direkt übernommen werden.",
+  "CHANGE_APPROVAL_WAITING.title": "„{change}“: wartet auf deine Genehmigung",
+  "CHANGE_APPROVAL_WAITING.body": "{agent} von {author} hat Änderungen vorgeschlagen.",
   "REVIEW_LEVEL_LOWERED.title": "„{doc}“: Prüfung von KI-Änderungen gelockert",
   "REVIEW_LEVEL_LOWERED.body": "{moved, select, yes {{actor} hat {kind, select, folder {diesen Ordner} database {diese Datenbank} other {dieses Dokument}} verschoben; die Stufe ist jetzt „{level, select, auto {KI-Änderungen direkt übernommen} review {Prüfung durch die Person, die die KI beauftragt hat} other {Prüfung durch Kollegen}}“{floorKnown, select, yes {, lockerer als im bisherigen Ordner} other {}}.} other {{actor} hat {kind, select, folder {diesen Ordner} database {diese Datenbank} other {dieses Dokument}} auf „{level, select, auto {KI-Änderungen direkt übernommen} review {Prüfung durch die Person, die die KI beauftragt hat} other {Prüfung durch Kollegen}}“ gesetzt{floorKnown, select, yes {, lockerer als die Stufe des Ordners} other {}}.}}",
 

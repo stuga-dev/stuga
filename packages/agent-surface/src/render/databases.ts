@@ -11,6 +11,7 @@ import type { AgentFeedback } from "@stuga/protocol/domain/runs";
 import { MAX_STATUS_RUNS, feedbackAfter, instructionFields, tally } from "./docs.js";
 import { feedbackOfRun, renderFeedback, revisedNote, statusFeedbackLines } from "./feedback.js";
 import { instructionsPointer } from "./instructions.js";
+import { changeSentence, queuedSentence } from "./changes.js";
 
 /** Rows in one insert_rows call past which the result steers the agent to import. */
 export const BULK_STEER_ROWS = 50;
@@ -43,20 +44,25 @@ export function renderDatabaseRead(res: DatabaseSchemaBody | Record<string, unkn
 
 /** A database write's result, with the ids the actor minted so the agent can name them next. */
 export function renderDatabasePropose(res: DatabaseProposeBody, applied: string, note = ""): string {
-  const { mode, run, pending, minted, held, instructions_labels, feedback: handed, revised, ...rest } = res;
+  const { mode, run, pending, minted, held, queued_behind, change_id, change_title, instructions_labels, feedback: handed, revised, ...rest } = res;
   // A write needs no schema read, so the answer names what governs this database; `schema` carries the text.
   const instructions = instructionsPointer(instructions_labels, "`databases` action:schema");
   const feedback = revisedNote(revised) + feedbackAfter(handed, "database");
+  const change = change_id ? { change_id, change_title } : {};
   if (mode === "proposed") {
-    const why = held
-      ? " This database lets AI edits apply directly, but your earlier changes in this run are still waiting for the user."
-      : "";
+    const why = queued_behind
+      ? ` ${queuedSentence(queued_behind)}`
+      : held
+        ? " This database lets AI edits apply directly, but your earlier changes in this run are still waiting for the user."
+        : "";
     return JSON.stringify({
       result:
         `Proposed — your change is waiting for ${run?.review_mode === "colleague" ? "a colleague of the user" : "the user"} to accept it ` +
         `(run ${run?.id}, ${pending} pending).${why} ` +
         `This is SUCCESS. Do NOT retry; continue your work. Your schema reads already include this pending change ` +
-        `(query results note what is pending); check \`databases\` action:status for decisions.${note}${instructions}${feedback}`,
+        `(query results note what is pending); check \`databases\` action:status for decisions.${changeSentence(change_id)}${note}${instructions}${feedback}`,
+      ...change,
+      ...(queued_behind ? { queued_behind } : {}),
       ...minted,
     });
   }
@@ -64,7 +70,8 @@ export function renderDatabasePropose(res: DatabaseProposeBody, applied: string,
     return JSON.stringify({
       result:
         `Applied — ${applied} This database is set to let AI edits apply directly, so it landed without waiting for review; the ` +
-        `user has been notified and can review or revert it from the table's Activity panel.${note}${instructions}${feedback}`,
+        `user has been notified and can review or revert it from the table's Activity panel.${changeSentence(change_id)}${note}${instructions}${feedback}`,
+      ...change,
       ...minted,
       ...rest,
     });
@@ -115,6 +122,8 @@ export function renderCreatedDatabase(doc: CreatedDoc, schema: DatabaseSchema | 
   return JSON.stringify({
     database_id: doc.doc_id,
     title: doc.title,
+    ...(doc.change_id ? { change_id: doc.change_id, change_title: doc.change_title } : {}),
+    ...(doc.held ? { held: true } : {}),
     ...(first
       ? {
           table_id: first.table_id,

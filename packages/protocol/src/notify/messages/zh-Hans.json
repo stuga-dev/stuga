@@ -2,6 +2,7 @@
   "untitled": "未命名",
   "action.open": "打开",
   "review.post": "“{doc}”：{author} 的 {agent} 建议了 {count, plural, other {# 处更改}} · {level, select, colleague {由同事审阅} review {由发起人审阅} other {AI 编辑直接应用}}",
+  "review.postChange": "“{change}”：{author} 的 {agent} 建议了更改 · {level, select, colleague {由同事审阅} review {由发起人审阅} other {AI 编辑直接应用}}",
   "review.open": "审阅",
 
   "MENTIONED_IN_COMMENT.title": "{actor} 在“{doc}”的评论中提及了你",
@@ -28,6 +29,12 @@
   "APPROVAL_WAITING.body": "{author} 的 {agent} 建议了 {count, plural, other {# 处更改}}。",
   "APPROVER_NEEDED.title": "“{doc}”：更改等待有人批准",
   "APPROVER_NEEDED.body": "{author} 的 {agent} 建议了 {count, plural, other {# 处更改}}。{cause, select, group {给审批群组中的成员编辑权限以批准这些更改。} other {给同事编辑权限以批准这些更改。}}",
+  "CHANGE_PROPOSED.title": "“{change}”：{agent} 建议了更改",
+  "CHANGE_PROPOSED.body": "每个页面都写明了由谁批准。",
+  "CHANGE_APPLIED.title": "“{change}”：{agent} 做了更改",
+  "CHANGE_APPLIED.body": "{agent} 更改了设为 AI 编辑直接应用的页面。",
+  "CHANGE_APPROVAL_WAITING.title": "“{change}”：等待你批准",
+  "CHANGE_APPROVAL_WAITING.body": "{author} 的 {agent} 建议了更改。",
   "REVIEW_LEVEL_LOWERED.title": "“{doc}”：AI 编辑的审阅已放宽",
   "REVIEW_LEVEL_LOWERED.body": "{moved, select, yes {{actor} 移动了{kind, select, folder {此文件夹} database {此数据库} other {此文档}}，其级别现为“{level, select, auto {AI 编辑直接应用} review {由发起人审阅} other {由同事审阅}}”{floorKnown, select, yes {，比原文件夹更宽松} other {}}。} other {{actor} 将{kind, select, folder {此文件夹} database {此数据库} other {此文档}}设为“{level, select, auto {AI 编辑直接应用} review {由发起人审阅} other {由同事审阅}}”{floorKnown, select, yes {，比其文件夹更宽松} other {}}。}}",
 

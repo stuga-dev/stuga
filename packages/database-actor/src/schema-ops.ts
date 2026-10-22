@@ -45,7 +45,7 @@ export function ident(name: string): string {
  * refuses one stamped higher. A change to any of them raises it, together with the step in the host
  * that brings an older store forward.
  */
-export const DATABASE_STORE_VERSION = 5;
+export const DATABASE_STORE_VERSION = 6;
 
 /** The steps that bring an older store forward, keyed by the version each reaches. */
 export const DATABASE_STORE_UPGRADES: Record<number, StoreUpgrade> = {
@@ -79,6 +79,17 @@ export const DATABASE_STORE_UPGRADES: Record<number, StoreUpgrade> = {
     };
     add("_runs", "approver_group");
     add("_run_ops", "decided_level");
+  },
+  // 6: the change a run belongs to (`_runs.change_id`) and the run it waits behind (`_runs.queued_behind`,
+  // with `_runs.stacked_on`): an agent's runs for other changes queue behind each other. An older build
+  // would accept a queued run ahead of the one it was proposed on top of, so it must not open the store.
+  // Runs recorded before keep NULL in all three.
+  6: (db) => {
+    const columns = db.prepare(`PRAGMA table_info(_runs)`).all() as Array<{ name: string }>;
+    if (columns.length === 0) return;
+    for (const column of ["change_id", "queued_behind", "stacked_on"]) {
+      if (!columns.some((c) => c.name === column)) db.exec(`ALTER TABLE _runs ADD COLUMN ${column} TEXT`);
+    }
   },
 };
 
@@ -132,7 +143,8 @@ export function ensureSchema(sql: SqlHandle): void {
        agent_alias TEXT NOT NULL, reviewer TEXT NOT NULL, status TEXT NOT NULL,
        acknowledged INTEGER NOT NULL, auto_applied INTEGER NOT NULL, reverted INTEGER NOT NULL,
        workspace_id TEXT NOT NULL, doc_title TEXT NOT NULL, review_mode TEXT NOT NULL, client TEXT, model TEXT,
-       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, approver_group TEXT)`,
+       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, approver_group TEXT,
+       change_id TEXT, queued_behind TEXT, stacked_on TEXT)`,
   );
   sql.exec(`CREATE INDEX IF NOT EXISTS _runs_created ON _runs (created_at DESC)`);
   sql.exec(

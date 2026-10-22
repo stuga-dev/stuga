@@ -121,6 +121,8 @@ const PINNED = [
   "GET /api/agent-setup: allowed",
   "GET /api/agent-bundle: agents refused",
   "GET /api/runs: agents refused",
+  "GET /api/changes/:id: agents refused",
+  "POST /api/changes/:id/decision: refused",
   "GET /api/agents/stats: agents refused",
   "GET /api/webhooks: agents refused",
   "POST /api/webhooks: refused",

@@ -88,6 +88,7 @@ import {
 import { listNotificationsRoute, markNotificationsReadRoute, unreadNotifications } from "../api/notifications.js";
 import { addOtherNode, listOtherNodes, removeOtherNode } from "../api/other-nodes.js";
 import { ackDocRun, decideDocRun, getDocRun, listDocRuns, proposeEdit, revertDocRun, undoDocRun } from "../api/runs.js";
+import { decideChange, getChangeCard } from "../changes/routes.js";
 import { retrieve, search } from "../api/search.js";
 import { changeShareLinkRole, createShareLink, listDocShareLinks, redeemShareLink, revokeDocShareLink } from "../api/share-links.js";
 import { getUsage } from "../api/usage.js";
@@ -313,6 +314,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
 
   // Agent governance.
   api("GET", "/api/runs", listRunInbox, { humanOnly: "agents cannot read the review inbox" }),
+  api("GET", /^\/api\/changes\/([^/]+)$/, getChangeCard, { humanOnly: "agents cannot read the review inbox" }),
+  api("POST", /^\/api\/changes\/([^/]+)\/decision$/, decideChange, { humanOnly: "agents cannot review agent edits" }),
   api("GET", "/api/agents/stats", agentStats, { humanOnly: "agents cannot read agent statistics" }),
   api("GET", "/api/webhooks", listWebhooksRoute, WEBHOOKS),
   api("POST", "/api/webhooks", createWebhook, WEBHOOKS),

@@ -127,6 +127,7 @@ export class Database {
           status: run.status,
           doc_title: run.doc_title,
           kind: "database",
+          ...(run.change_id ? { change_id: run.change_id } : {}),
           ...event.payload,
         },
       })
@@ -149,6 +150,7 @@ export class Database {
         params: { agent: run.agent, doc: run.doc_title, count: pending, waits: run.review_mode === "colleague" ? "colleague" : "you" },
         actor: run.agent_alias,
         runId: run.run_id,
+        ...(run.change_id ? { changeId: run.change_id } : {}),
       });
     } catch (err) {
       console.warn("database-run notify enqueue failed", { databaseId: this.dbId, runId: run.run_id, err: String(err) });
@@ -174,6 +176,7 @@ export class Database {
         doc: run.doc_title,
         count: pending,
         askerTold,
+        ...(run.change_id ? { changeId: run.change_id } : {}),
       });
     } catch (err) {
       console.warn("database-run approvers notify enqueue failed", { databaseId: this.dbId, runId: run.run_id, err: String(err) });

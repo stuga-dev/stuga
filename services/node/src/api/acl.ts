@@ -22,6 +22,7 @@ import {
   revokeDocAccess,
 } from "../documents/access.js";
 import { error, json } from "../http/respond.js";
+import { releasedBySharing } from "../changes/held.js";
 import type { WorkspaceCall } from "../http/router.js";
 
 /**
@@ -216,6 +217,8 @@ export async function setAcl({ ctx, req, match }: WorkspaceCall): Promise<Respon
     // Searches filter on acl_principals live, so nothing is reindexed. Live
     // sockets of principals that lost access are dropped.
     await revokeDocAccess(ctx.env, id, eff.principals, (resource as DocRow).doc_type, eff.writers);
+    // A new page a change held is shared as its owner or an admin chose: it is held no longer.
+    await releasedBySharing(ctx, resource as DocRow);
     await enqueueGranteeNotifications(ctx, id, resource.title, newGrants);
   }
   // The principals that entered and left the direct grants; a save that changes nobody's access writes nothing.

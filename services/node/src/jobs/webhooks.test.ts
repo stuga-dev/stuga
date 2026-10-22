@@ -300,6 +300,7 @@ describe("a Slack review channel", () => {
         getWebhook: vi.fn(async () => CHANNEL),
         getWorkspaceEvent: vi.fn(async () => proposedEvent()),
         agentRunClosed: vi.fn(async () => false),
+        itemUnreleased: vi.fn(async () => false),
         getDoc: vi.fn(async () => ({ doc_id: "d1", title: "Leave <!channel> & pay", trashed: false })),
         displayNameOf: vi.fn(async () => "Liv"),
         uiLanguage: vi.fn(async () => ({ chosen: null, detected: null })),
@@ -348,6 +349,8 @@ describe("a Slack review channel", () => {
       { agentRunClosed: vi.fn(async () => true) },
       { getDoc: vi.fn(async () => ({ doc_id: "d1", title: "x", trashed: true })) },
       { webhookReaches: vi.fn(async () => false) },
+      // A new page a change holds is named to no channel by a run outside that change.
+      { itemUnreleased: vi.fn(async () => true) },
     ]) {
       const d = slackDeps(over, fetchImpl);
       await handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_slack", eventId: 42 });

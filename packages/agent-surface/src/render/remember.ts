@@ -8,7 +8,9 @@ export const REMEMBER_NEXT =
   "`markdown` action:read, then correct a sentence with `markdown_edit` str_replace (never leave the old one " +
   "standing; a likely_duplicate may say the point already), add under a section with `markdown_append` and " +
   "`heading`, or make a page with `docs_create` (in a `new_page` folder or the folder whose instructions say it " +
-  "belongs, else in `home`) and fill it. Write no name or date for what the user told you directly: version " +
+  "belongs, else in `home`) and fill it. The whole save is ONE change: give `change_title` (a few words naming " +
+  "what you save, never a page's title) to your first write and pass the `change_id` it returns to every other, so " +
+  "it is reviewed as one. Write no name or date for what the user told you directly: version " +
   "history records who changed what and when. Cite a point's `source` (a meeting, an email, a document) as the " +
   "place asks, never attributing it to the user, and never invent one. Then tell the user what you saved where, " +
   "what was already there, and what waits for approval; when you wrote nothing, say nothing was saved, never that " +

@@ -21,11 +21,11 @@ export async function upsertAgentRun(sql: Sql, e: RunIndexEntry): Promise<void> 
     INSERT INTO agent_runs
       (run_id, workspace_id, doc_id, doc_kind, doc_title, source, agent, agent_alias, reviewer, status,
        review_mode, approver_group, approved_by, auto_applied, reverted, acknowledged, pending, accepted, rejected,
-       conflicts, applied, client, model, created_at, updated_at)
+       conflicts, applied, client, model, queued_behind, created_at, updated_at)
     SELECT ${e.runId}, ${e.workspaceId}, ${e.docId}, ${e.docKind}, ${e.docTitle}, ${e.source}, ${e.agent},
            ${e.agentAlias}, ${e.reviewer}, ${e.status}, ${e.reviewMode}, ${e.approverGroup}, ${e.approvedBy}::text[],
            ${e.autoApplied}, ${e.reverted}, ${e.acknowledged}, ${e.pending}, ${e.accepted}, ${e.rejected},
-           ${e.conflicts}, ${e.applied}, ${e.client}, ${e.model}, ${createdAt}::timestamptz, ${updatedAt}::timestamptz
+           ${e.conflicts}, ${e.applied}, ${e.client}, ${e.model}, ${e.queuedBehind ?? null}, ${createdAt}::timestamptz, ${updatedAt}::timestamptz
     WHERE EXISTS (SELECT 1 FROM workspaces WHERE workspace_id = ${e.workspaceId})
     ON CONFLICT (run_id) DO UPDATE SET
       doc_title = EXCLUDED.doc_title,
@@ -43,8 +43,17 @@ export async function upsertAgentRun(sql: Sql, e: RunIndexEntry): Promise<void> 
       rejected = EXCLUDED.rejected,
       conflicts = EXCLUDED.conflicts,
       applied = EXCLUDED.applied,
+      queued_behind = EXCLUDED.queued_behind,
       updated_at = EXCLUDED.updated_at
     WHERE agent_runs.updated_at <= EXCLUDED.updated_at`;
+  // The proposal's answer linked it to its change already; this heals a link that write lost.
+  if (e.changeId) {
+    await sql`
+      INSERT INTO wiki_change_runs (change_id, doc_id, run_id, doc_kind)
+      SELECT ${e.changeId}, ${e.docId}, ${e.runId}, ${e.docKind}
+      WHERE EXISTS (SELECT 1 FROM wiki_changes WHERE change_id = ${e.changeId} AND workspace_id = ${e.workspaceId})
+      ON CONFLICT DO NOTHING`;
+  }
 }
 
 /**
@@ -65,6 +74,8 @@ export interface ListAgentRunsInput {
   /** Keyset cursor: rows strictly older than this (updated_at, run_id). */
   before?: { updatedAt: string; runId: string };
   limit?: number;
+  /** Only the runs of these changes, whatever the filter says of each. */
+  changeIds?: string[];
   /**
    * Who is asking, which splits `attention` from the rest: a run needs them only when they can act on it. Its
    * pending changes are decided at the stricter of the run's level and its document's now: below
@@ -112,9 +123,12 @@ export async function listAgentRuns(sql: Sql, input: ListAgentRunsInput): Promis
            r.source, r.agent, r.agent_alias, r.client, r.model, r.reviewer, r.status, r.review_mode,
            r.approver_group, r.approved_by, r.auto_applied, r.reverted, r.acknowledged,
            r.pending, r.accepted, r.rejected, r.conflicts, r.applied,
+           cr.change_id, r.queued_behind,
+           EXISTS (SELECT 1 FROM wiki_change_pages h WHERE h.doc_id = r.doc_id AND h.state = 'held') AS doc_held,
            r.created_at, r.updated_at
     FROM agent_runs r
     JOIN docs d ON d.doc_id = r.doc_id
+    LEFT JOIN wiki_change_runs cr ON cr.run_id = r.run_id
     -- Looked up once per folder and per database, not per run.
     LEFT JOIN LATERAL (
       SELECT folder_agent_mode(lf.folder_id) AS folder_mode, folder_approver_group(lf.folder_id) AS folder_group
@@ -138,6 +152,7 @@ export async function listAgentRuns(sql: Sql, input: ListAgentRunsInput): Promis
               : sql``
       }
       ${input.agentAlias ? sql`AND r.agent_alias = ${input.agentAlias}` : sql``}
+      ${input.changeIds ? sql`AND cr.change_id = ANY(${input.changeIds})` : sql``}
       ${
         input.before
           ? sql`AND (r.updated_at, r.run_id) < (${input.before.updatedAt}::timestamptz, ${input.before.runId})`
@@ -373,10 +388,35 @@ function creatorReads(sql: Sql, docId: string | null): Fragment {
 }
 
 /**
+ * A new page a change made, until it is approved: no generic hook hears of it before then, whoever
+ * created the hook, nor ever of one that was declined. Its `doc.created` is sent when it is approved.
+ */
+function notHeld(sql: Sql, docId: string | null): Fragment {
+  return docId === null ? sql`TRUE` : sql`NOT ${unreleased(sql, sql`${docId}::text`)}`;
+}
+
+/**
+ * Whether the document `docId` names is a new page a change made and has not released, or a row page
+ * of such a database: what no hook, export or review channel line names until it is approved.
+ */
+export function unreleased(sql: Queryable, docId: Fragment): Fragment {
+  return sql`EXISTS (
+    SELECT 1 FROM wiki_change_pages h
+    WHERE h.state <> 'released'
+      AND (h.doc_id = ${docId} OR h.doc_id = (SELECT p.page_of FROM docs p WHERE p.doc_id = ${docId})))`;
+}
+
+/** Whether a document is held by a change, or is a row page of a database that is (unreleased). */
+export async function itemUnreleased(sql: Queryable, docId: string): Promise<boolean> {
+  const rows = await sql<{ held: boolean }[]>`SELECT ${unreleased(sql, sql`${docId}::text`)} AS held`;
+  return rows[0]?.held === true;
+}
+
+/**
  * The active generic hooks an event reaches: the type matches (or the hook takes every type), the
  * hook is workspace-wide or rooted at a folder in `folderIds`, the event document's ancestry, and
  * its creator can read the document now (creatorReads). An event with no document reaches only
- * workspace-wide hooks.
+ * workspace-wide hooks, and one about a new page a change holds none (notHeld).
  */
 export async function matchingWebhooks(
   sql: Sql,
@@ -393,6 +433,7 @@ export async function matchingWebhooks(
       AND (cardinality(w.events) = 0 OR ${type} = ANY(w.events))
       AND (w.folder_id IS NULL OR w.folder_id = ANY(${folderIds}))
       AND ${creatorReads(sql, docId)}
+      AND ${notHeld(sql, docId)}
     ORDER BY w.created_at, w.webhook_id`;
 }
 
@@ -412,22 +453,32 @@ export async function matchingReviewChannels(sql: Sql, workspaceId: string, fold
 }
 
 /**
- * Claim a review channel's one post about a run: true the first time for this hook and run, false
- * ever after, so a run that grows, or an event delivered twice, is posted once.
+ * Claim a review channel's one post about a run, or about a change for the runs of one: true the
+ * first time for this hook and subject, false ever after, so a run or a change that grows, or an
+ * event delivered twice, is posted once.
  */
-export async function claimReviewPost(sql: Queryable, webhookId: string, runId: string): Promise<boolean> {
-  const rows = await sql<{ run_id: string }[]>`
-    INSERT INTO review_posts (webhook_id, run_id) VALUES (${webhookId}, ${runId})
+export async function claimReviewPost(sql: Queryable, webhookId: string, subjectId: string): Promise<boolean> {
+  const rows = await sql<{ subject_id: string }[]>`
+    INSERT INTO review_posts (webhook_id, subject_id) VALUES (${webhookId}, ${subjectId})
     ON CONFLICT DO NOTHING
-    RETURNING run_id`;
+    RETURNING subject_id`;
   return rows.length > 0;
 }
 
 /** Forget the posts claimed more than `days` ago; their runs are long decided or swept. */
 export async function purgeReviewPosts(sql: Sql, days: number): Promise<number> {
-  const rows = await sql<{ run_id: string }[]>`
-    DELETE FROM review_posts WHERE created_at < ${daysAgo(sql, days)} RETURNING run_id`;
+  const rows = await sql<{ subject_id: string }[]>`
+    DELETE FROM review_posts WHERE created_at < ${daysAgo(sql, days)} RETURNING subject_id`;
   return rows.length;
+}
+
+/** Whether every run of a change the mirror holds is closed: nothing in it waits any more. False while one is open, or none is mirrored yet. */
+export async function changeRunsClosed(sql: Sql, changeId: string): Promise<boolean> {
+  const rows = await sql<{ open: number; mirrored: number }[]>`
+    SELECT count(*) FILTER (WHERE a.status = 'open')::int AS open, count(a.run_id)::int AS mirrored
+    FROM wiki_change_runs r LEFT JOIN agent_runs a ON a.run_id = r.run_id
+    WHERE r.change_id = ${changeId}`;
+  return (rows[0]?.mirrored ?? 0) > 0 && rows[0]?.open === 0;
 }
 
 /**
@@ -444,8 +495,9 @@ export async function agentRunClosed(sql: Sql, runId: string): Promise<boolean> 
  * retry can come after its creator lost access to the document or left the workspace.
  */
 export async function webhookReaches(sql: Sql, webhookId: string, docId: string | null): Promise<boolean> {
+  // A review channel posts no page's title or text, so a held page reaches one whose creator may open it.
   const rows = await sql<{ ok: boolean }[]>`
-    SELECT ${creatorReads(sql, docId)} AS ok FROM webhooks w WHERE w.webhook_id = ${webhookId}`;
+    SELECT ${creatorReads(sql, docId)} AND (w.kind = 'slack' OR ${notHeld(sql, docId)}) AS ok FROM webhooks w WHERE w.webhook_id = ${webhookId}`;
   return rows[0]?.ok === true;
 }
 

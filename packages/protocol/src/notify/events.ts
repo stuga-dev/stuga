@@ -74,6 +74,12 @@ export interface NotificationParams {
    * nobody else can edit the item (`nobody`) or nobody in its approver group can (`group`).
    */
   APPROVER_NEEDED: { agent: string; author: string; doc: string; count: number; cause: "nobody" | "group" };
+  /** To whoever asked: `agent` proposed changes for the change titled `change`, once per change. */
+  CHANGE_PROPOSED: { agent: string; change: string };
+  /** To whoever asked: `agent`'s change titled `change` changed pages that let AI edits apply directly, once per change. */
+  CHANGE_APPLIED: { agent: string; change: string };
+  /** To each person who may approve a page of the change titled `change`, once per change. */
+  CHANGE_APPROVAL_WAITING: { agent: string; author: string; change: string };
   /**
    * To the workspace's other administrators who can read it: `actor` set how AI edits to `doc` (a
    * document, database or folder) are reviewed to `level`, looser than before, or `moved` it where

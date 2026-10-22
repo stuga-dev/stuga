@@ -18,6 +18,8 @@ import { applyInverse, getOp, isRevertible, listOps, loadInverse, recordOp, type
 import { runActor } from "./propose.js";
 import {
   acknowledgeRun,
+  aheadOf,
+  moveQueueUp,
   dismissFeedback,
   setOpFeedback,
   closeRun,
@@ -68,6 +70,9 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
   if (decision !== "accept" && decision !== "reject") throw new OpError(400, "bad_request", "decision must be accept or reject");
   const { run, by: decidedBy, level } = deciderOf(db, body, "decided_by", decision);
   db.requireUnlocked("this database is locked; unlock it to review changes");
+  // A queued run's ops were proposed on top of the run ahead's: it is accepted only once that one is decided.
+  const ahead = decision === "accept" ? aheadOf(db.sql, run) : null;
+  if (ahead) throw new OpError(409, "queued", "these changes wait behind earlier changes to this database; decide those first");
   const note = parseDecisionNote(decision, body.note);
   if (!note.ok) throw new OpError(400, "bad_request", note.message);
   // One decision, one feedback: the agent is told its rejected ops together, under the reviewer's note.
@@ -157,8 +162,10 @@ export async function handleRunDecide(db: Database, req: Request): Promise<Respo
 
   const now = Date.now();
   const remaining = pendingCountOf(db.sql, run.run_id);
-  if (remaining === 0 && run.status === "open") closeRun(db.sql, run.run_id, now);
-  else touchRun(db.sql, run.run_id, now);
+  if (remaining === 0 && run.status === "open") {
+    closeRun(db.sql, run.run_id, now);
+    for (const moved of moveQueueUp(db.sql, run)) db.publishRun(getRun(db.sql, moved)!);
+  } else touchRun(db.sql, run.run_id, now);
   const fresh = getRun(db.sql, run.run_id)!;
   const summary = await db.runSummary(fresh);
   db.sockets.sendToReviewer(
@@ -259,6 +266,7 @@ export async function handleRunRevert(db: Database, req: Request): Promise<Respo
   // A concurrent revert may have finished during the awaits above; only one reports it.
   if (getRun(db.sql, run.run_id)!.reverted) throw new OpError(409, "already_reverted", "this run was already reverted");
   markRunReverted(db.sql, run.run_id, Date.now());
+  for (const moved of moveQueueUp(db.sql, run)) db.publishRun(getRun(db.sql, moved)!);
   const fresh = getRun(db.sql, run.run_id)!;
   await db.sendRunUpdated(fresh);
   db.changed(null, "revert");

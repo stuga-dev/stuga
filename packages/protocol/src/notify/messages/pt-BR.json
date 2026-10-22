@@ -2,6 +2,7 @@
   "untitled": "Sem título",
   "action.open": "Abrir",
   "review.post": "“{doc}”: {agent} de {author} propôs {count, plural, one {# alteração} many {# alterações} other {# alterações}} · {level, select, colleague {Revisadas por um colega} review {Revisadas por quem pediu à IA} other {Edições da IA aplicadas diretamente}}",
+  "review.postChange": "“{change}”: {agent} de {author} propôs alterações · {level, select, colleague {Revisadas por um colega} review {Revisadas por quem pediu à IA} other {Edições da IA aplicadas diretamente}}",
   "review.open": "Revisar",
 
   "MENTIONED_IN_COMMENT.title": "{actor} mencionou você em um comentário em “{doc}”",
@@ -28,6 +29,12 @@
   "APPROVAL_WAITING.body": "{agent} de {author} propôs {count, plural, one {# alteração} many {# alterações} other {# alterações}}.",
   "APPROVER_NEEDED.title": "“{doc}”: alterações aguardam alguém que as aprove",
   "APPROVER_NEEDED.body": "{agent} de {author} propôs {count, plural, one {# alteração} many {# alterações} other {# alterações}}. {cause, select, group {Dê acesso de edição a alguém do grupo de aprovação para aprová-las.} other {Dê acesso de edição a um colega para aprová-las.}}",
+  "CHANGE_PROPOSED.title": "“{change}”: {agent} propôs alterações",
+  "CHANGE_PROPOSED.body": "Cada página diz quem a aprova.",
+  "CHANGE_APPLIED.title": "“{change}”: {agent} fez alterações",
+  "CHANGE_APPLIED.body": "{agent} alterou páginas configuradas para aplicar diretamente as edições da IA.",
+  "CHANGE_APPROVAL_WAITING.title": "“{change}”: aguardando sua aprovação",
+  "CHANGE_APPROVAL_WAITING.body": "{agent} de {author} propôs alterações.",
   "REVIEW_LEVEL_LOWERED.title": "“{doc}”: revisão de edições da IA flexibilizada",
   "REVIEW_LEVEL_LOWERED.body": "{moved, select, yes {{actor} moveu {kind, select, folder {esta pasta} database {este banco de dados} other {este documento}}; o nível agora é “{level, select, auto {Edições da IA aplicadas diretamente} review {Revisadas por quem pediu à IA} other {Revisadas por um colega}}”{floorKnown, select, yes {, mais flexível que na pasta anterior} other {}}.} other {{actor} definiu {kind, select, folder {esta pasta} database {este banco de dados} other {este documento}} como “{level, select, auto {Edições da IA aplicadas diretamente} review {Revisadas por quem pediu à IA} other {Revisadas por um colega}}”{floorKnown, select, yes {, nível mais flexível que o da pasta} other {}}.}}",
 

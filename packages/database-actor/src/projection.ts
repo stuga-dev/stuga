@@ -6,16 +6,19 @@
 import { sanitizeIdentifier } from "@stuga/protocol/databases/identifiers";
 import type { DatabaseRunOpPayload, DatabaseSchema, RowValue } from "@stuga/protocol/databases/types";
 import type { Database } from "./database.js";
-import { listPendingRunOps, openRunOf, pendingPayloads } from "./ledger/runs.js";
+import { listPendingRunOps, openChainOf, pendingPayloads } from "./ledger/runs.js";
 import type { ListedRow, RowPage } from "./query/row-query.js";
 import { getColumns } from "./schema-ops.js";
 
 /** Pending tables, columns and views flagged `pending`, and row counts moved by pending inserts and deletes. */
 export function projectSchema(db: Database, schema: DatabaseSchema, agentAlias: string | null): DatabaseSchema {
-  const run = agentAlias ? openRunOf(db.sql, agentAlias) : null;
-  if (!run) return schema;
+  // Every open run of the agent, the queued ones included, in the order they were proposed on top of each other.
+  const chain = agentAlias ? openChainOf(db.sql, agentAlias) : [];
+  if (chain.length === 0) return schema;
   // Inline payloads only: schema ops are small, and a spilled row op is not worth a blob read per schema read.
-  const payloads = listPendingRunOps(db.sql, run.run_id).flatMap((o) => (o.payload === null ? [] : [JSON.parse(o.payload) as DatabaseRunOpPayload]));
+  const payloads = chain.flatMap((run) =>
+    listPendingRunOps(db.sql, run.run_id).flatMap((o) => (o.payload === null ? [] : [JSON.parse(o.payload) as DatabaseRunOpPayload])),
+  );
   if (payloads.length === 0) return schema;
   const tables = schema.tables.map((t) => ({ ...t, columns: [...t.columns], views: [...t.views] }));
   for (const p of payloads) {
@@ -59,16 +62,19 @@ export async function projectRows(
   page: RowPage,
   window: { offset: number },
 ): Promise<{ rows: ListedRow[]; total: number; pending_ops: number } | null> {
-  const run = openRunOf(db.sql, agentAlias);
-  if (!run) return null;
-  const pending = (await pendingPayloads(db.sql, db.bucket, run.run_id)).filter((p) => p.payload.table_id === tableId);
+  const chain = openChainOf(db.sql, agentAlias);
+  if (chain.length === 0) return null;
+  const pending: Array<{ run: (typeof chain)[number]; payload: DatabaseRunOpPayload }> = [];
+  for (const run of chain) {
+    for (const p of await pendingPayloads(db.sql, db.bucket, run.run_id)) if (p.payload.table_id === tableId) pending.push({ run, payload: p.payload });
+  }
   if (pending.length === 0) return null;
   const live = new Set(getColumns(db.sql, tableId).map((c) => c.column_id));
 
   const deleted = new Set<string>();
   const updates = new Map<string, Record<string, RowValue>>();
   const inserts: ListedRow[] = [];
-  for (const { payload } of pending) {
+  for (const { run, payload } of pending) {
     if (payload.kind === "rows.delete") {
       for (const id of payload.row_ids) deleted.add(id);
     } else if (payload.kind === "rows.update") {

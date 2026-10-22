@@ -94,6 +94,10 @@ describe("approveBlock", () => {
     ...over,
   });
 
+  it("says a run waits behind earlier changes to the page, for whoever approves it once those are decided", () => {
+    expect(approveBlock({ ...base, you: { ...you({ reject: true }), queued: true } })).toEqual({ kind: "queued" });
+  });
+
   it("says nothing to whoever may approve, or when nothing waits", () => {
     expect(approveBlock({ ...base, you: you({ accept: true, reject: true }) })).toBeNull();
     expect(approveBlock({ ...base, you: you(), pending: 0 })).toBeNull();

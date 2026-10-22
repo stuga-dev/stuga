@@ -1,6 +1,7 @@
 export * from "./agents";
 export * from "./ask";
 export * from "./audit";
+export * from "./changes";
 export * from "./collections";
 export * from "./databases";
 export * from "./docs";

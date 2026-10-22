@@ -401,6 +401,12 @@ export interface DatabaseRunSummary {
   review_mode: ReviewMode;
   /** The approver group the run was proposed under, when its database named one. */
   approver_group?: string;
+  /** The change it belongs to: one piece of an agent's work across several pages, reviewed as one. */
+  change_id?: string;
+  /** The earlier run of the same agent on this database it waits behind, approved only once that one is decided. */
+  queued_behind?: string;
+  /** Every run it was proposed on top of: its ops may name what theirs mint, read only by whoever reads theirs. */
+  stacked_on?: string[];
   /** Added by the node for the person reading it; absent on a live frame. */
   you?: RunStanding;
   /** The ops' payloads were left out: only the run's reviewer, its approvers and the database's managers read them. */

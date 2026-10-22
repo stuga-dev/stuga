@@ -8,11 +8,14 @@ import type { Ctx } from "../auth/context.js";
 import { parseCitedEdits, proposeBody, proposeDocEdit } from "../agents/edits.js";
 import { recordAudit } from "../audit/record.js";
 import { canWriteDoc } from "../authz/authz.js";
-import { RunJudge, decisionRefusal, mayAct, runDeciders, vouched, type RunVerdict } from "../authz/review-mode.js";
+import { RunJudge, decisionRefusal, mayAct, narrowStacked, runDeciders, vouched, type RunVerdict } from "../authz/review-mode.js";
 import { authorizedDoc, lockedError, proseOnly } from "../documents/access.js";
 import { docInstructionLabelsOrNone } from "../documents/instructions.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
+import { settleHeldPage } from "../changes/held.js";
+import { changeArgsOf } from "../changes/resolve.js";
+import { completeRun } from "../changes/actor-runs.js";
 
 /**
  * A document actor's run refusal as the client sees it: its reviewer gate stays a 403, the
@@ -20,12 +23,23 @@ import type { WorkspaceCall } from "../http/router.js";
  * level rose after the node read the run.
  */
 async function runRefusal(res: Response, fallback: string): Promise<Response> {
+  const r = await actorRefusal(res, fallback);
+  return error(r.status, r.message);
+}
+
+/** Why a decision did not go through, as the change card reports each page: whose it is not, or what stands in the way. */
+export type DecisionBlock = "view_only" | "locked" | "refused" | "queued" | "gone";
+
+/** The actor's refusal of a decision, as a status, words and the block it is. */
+async function actorRefusal(res: Response, fallback: string): Promise<{ status: number; message: string; block: DecisionBlock }> {
+  const body = (await res.json().catch(() => null)) as { error?: string; message?: string } | null;
   if (res.status === 403) {
-    const body = (await res.json().catch(() => null)) as { error?: string } | null;
-    if (body?.error === "own_run") return error(403, "a colleague approves these changes, not the person who asked the AI");
-    return error(403, "only this agent run's reviewer (or the document's owner) can decide it");
+    if (body?.error === "own_run") return { status: 403, message: "a colleague approves these changes, not the person who asked the AI", block: "refused" };
+    return { status: 403, message: "only this agent run's reviewer (or the document's owner) can decide it", block: "refused" };
   }
-  return error(res.status === 404 ? 404 : 502, fallback);
+  // The run waits behind the agent's earlier changes here, which are decided first.
+  if (res.status === 409 && body?.error === "queued") return { status: 409, message: body.message ?? "these changes wait behind earlier ones", block: "queued" };
+  return { status: res.status === 404 ? 404 : 502, message: fallback, block: "gone" };
 }
 
 /** Hunks that landed: their text is in the document and its version history for any reader. */
@@ -38,7 +52,7 @@ const LANDED: ReadonlySet<string> = new Set(["accepted", "auto_applied"]);
  * exists, how it went, and the changes that landed, never what an agent proposed before a person
  * let it in.
  */
-function forPerson(run: AgentRunSummary, v: RunVerdict): AgentRunSummary {
+export function forPerson(run: AgentRunSummary, v: RunVerdict): AgentRunSummary {
   const out: AgentRunSummary = { ...run, you: v.standing };
   if (v.seesText) return out;
   const hunks = run.hunks.filter((h) => LANDED.has(h.status));
@@ -65,12 +79,104 @@ async function actorRun(ctx: Ctx, docId: string, runId: string): Promise<AgentRu
  * who manages it. A refusal, or the verdict to forward.
  */
 async function judgeAct(ctx: Ctx, doc: DocRow, runId: string, act: RunAct): Promise<Response | { run: AgentRunSummary; verdict: RunVerdict }> {
+  const judged = await judgeRunAct(ctx, doc, runId, act);
+  return "status" in judged ? error(judged.status, judged.message) : judged;
+}
+
+async function judgeRunAct(
+  ctx: Ctx,
+  doc: DocRow,
+  runId: string,
+  act: RunAct,
+): Promise<{ status: number; message: string; block: DecisionBlock } | { run: AgentRunSummary; verdict: RunVerdict }> {
   const run = await actorRun(ctx, doc.doc_id, runId);
-  if (run === "unavailable") return error(502, "run unavailable");
-  if (!run) return error(404, "not found");
-  const verdict = await new RunJudge(ctx, doc).judge(run);
-  if (!mayAct(ctx, run, verdict, act)) return error(403, decisionRefusal(ctx, run, verdict, act, "document"));
+  if (run === "unavailable") return { status: 502, message: "run unavailable", block: "gone" };
+  if (!run) return { status: 404, message: "not found", block: "gone" };
+  const verdict = await judgeRun(ctx, doc, run);
+  if (!mayAct(ctx, run, verdict, act)) return { status: 403, message: decisionRefusal(ctx, run, verdict, act, "document"), block: "refused" };
   return { run, verdict };
+}
+
+/** Where the caller stands on one run of `doc`, a queued run's text narrowed to whoever reads what it was stacked on. */
+async function judgeRun(ctx: Ctx, doc: DocRow, run: AgentRunSummary): Promise<RunVerdict> {
+  return (await judgeRuns(ctx, doc, [run]))[0]!;
+}
+
+/** judgeRun for every run of a document's list, with one approver lookup for all of them. */
+export async function judgeRuns(ctx: Ctx, doc: DocRow, runs: readonly AgentRunSummary[]): Promise<RunVerdict[]> {
+  const judge = new RunJudge(ctx, doc);
+  const verdicts = await judge.judgeAll(runs);
+  if (!runs.some((r) => r.stacked_on?.length)) return verdicts;
+  return narrowStacked(ctx, judge, runs, verdicts, (id) => completeRun(ctx, doc, id) as Promise<AgentRunSummary | null>);
+}
+
+/** What a decision on one run came to: the actor's answer as the caller now stands on it, or why it did not go through. */
+export type RunDecision =
+  | { ok: true; run: AgentRunSummary; verdict: RunVerdict; applied: number; conflicts: number; blocked: number; answer: Record<string, unknown> }
+  | { ok: false; status: number; message: string; block: DecisionBlock };
+
+/**
+ * Accept or reject a document run's waiting changes as `ctx`, through every gate the decision route
+ * runs: write access, the lock (an accept only), who may act on it at its level (RunJudge, which the
+ * actor checks again), and the queue (an accept of a run behind another waits). Recorded in the audit
+ * ledger as the route records it.
+ */
+export async function decideDocRunAs(
+  ctx: Ctx,
+  doc: DocRow,
+  runId: string,
+  decision: "accept" | "reject",
+  opts: { note?: string; hunkIds?: string[] } = {},
+): Promise<RunDecision> {
+  if (ctx.isAgent) return { ok: false, status: 403, message: "agents cannot review agent edits", block: "refused" };
+  if (!canWriteDoc(ctx, doc)) return { ok: false, status: 403, message: "view-only access", block: "view_only" };
+  // A lock holds the text as it is: accepting would change it, rejecting leaves it alone.
+  if (decision === "accept" && doc.locked) return { ok: false, status: 423, message: "this document is locked; unlock it to make changes", block: "locked" };
+  const judged = await judgeRunAct(ctx, doc, runId, decision);
+  if ("status" in judged) return { ok: false, ...judged };
+  const res = await ctx.env.docs.get(doc.doc_id).fetch(`http://actor/runs/decide?docId=${encodeURIComponent(doc.doc_id)}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      run_id: runId,
+      decision,
+      hunk_ids: opts.hunkIds,
+      decided_by: ctx.alias,
+      ...vouched(judged.verdict),
+      ...(opts.note ? { note: opts.note } : {}),
+    }),
+  });
+  if (!res.ok) return { ok: false, ...(await actorRefusal(res, "decision failed")) };
+  const decided = decidedFor((await res.json()) as { run?: AgentRunSummary; applied?: number; conflicts?: number; blocked?: number }, judged.verdict);
+  // Who let an agent's edit into the document.
+  recordAudit(ctx, {
+    action: "run.decide",
+    targetKind: "doc",
+    targetId: doc.doc_id,
+    targetLabel: doc.title,
+    detail: {
+      run_id: runId,
+      decision,
+      agent: decided.run?.agent ?? null,
+      hunks: opts.hunkIds ? opts.hunkIds.length : (decided.run?.hunks?.length ?? 0),
+      applied: decided.applied ?? 0,
+      conflicts: decided.conflicts ?? 0,
+      level: judged.verdict.level,
+      // On whose behalf the agent proposed: at `colleague`, never the one who decided.
+      asked_by: judged.run.reviewer,
+    },
+  });
+  // A new page of a change is released once its changes are approved, or removed once they are declined.
+  await settleHeldPage(ctx, doc, opts.note ?? null);
+  return {
+    ok: true,
+    run: decided.run ?? judged.run,
+    verdict: judged.verdict,
+    applied: decided.applied ?? 0,
+    conflicts: decided.conflicts ?? 0,
+    blocked: decided.blocked ?? 0,
+    answer: decided as Record<string, unknown>,
+  };
 }
 
 /** A decision's answer, its run as the caller now stands on it. */
@@ -94,7 +200,7 @@ export async function listDocRuns({ ctx, url, match }: WorkspaceCall): Promise<R
   // An agent sees only its own runs; a reader sees the whole ledger, like version
   // history, each change's text only where they review it. Deciding a run is gated separately.
   if (ctx.isAgent) return json({ runs: runs.filter((r) => r.agent_alias === ctx.alias) });
-  const verdicts = await new RunJudge(ctx, doc).judgeAll(runs);
+  const verdicts = await judgeRuns(ctx, doc, runs);
   return json({ runs: runs.map((r, i) => forPerson(r, verdicts[i]!)) });
 }
 
@@ -118,7 +224,7 @@ export async function getDocRun({ ctx, url, match }: WorkspaceCall): Promise<Res
   // The list route's rule by id: another agent's run is indistinguishable from no run.
   if (ctx.isAgent) return detail.run?.agent_alias === ctx.alias ? json(detail) : error(404, "not found");
   if (!detail.run) return error(502, "run unavailable");
-  const verdict = await new RunJudge(ctx, doc).judge(detail.run);
+  const verdict = await judgeRun(ctx, doc, detail.run);
   // Whoever reads its waiting text also reads who may decide it: the review card names them.
   if (verdict.seesText) return json({ ...detail, run: forPerson(detail.run, verdict), deciders: await runDeciders(ctx, doc, detail.run, verdict) });
   // The document before and after its run, and the sources it cites, go with the text that did not
@@ -143,41 +249,9 @@ export async function decideDocRun({ ctx, req, match }: WorkspaceCall): Promise<
   const note = parseDecisionNote(body.decision, body.note);
   if (!note.ok) return error(400, note.message);
   const hunkIds = Array.isArray(body.hunk_ids) ? body.hunk_ids.filter((h): h is string => typeof h === "string") : undefined;
-  const judged = await judgeAct(ctx, doc, match[2]!, body.decision);
-  if (judged instanceof Response) return judged;
-  const res = await ctx.env.docs.get(docId).fetch(`http://actor/runs/decide?docId=${encodeURIComponent(docId)}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      run_id: match[2]!,
-      decision: body.decision,
-      hunk_ids: hunkIds,
-      decided_by: ctx.alias,
-      ...vouched(judged.verdict),
-      ...(note.note ? { note: note.note } : {}),
-    }),
-  });
-  if (!res.ok) return await runRefusal(res, "decision failed");
-  const decided = decidedFor((await res.json()) as { run?: AgentRunSummary; applied?: number; conflicts?: number }, judged.verdict);
-  // Who let an agent's edit into the document.
-  recordAudit(ctx, {
-    action: "run.decide",
-    targetKind: "doc",
-    targetId: docId,
-    targetLabel: doc.title,
-    detail: {
-      run_id: match[2]!,
-      decision: body.decision,
-      agent: decided.run?.agent ?? null,
-      hunks: hunkIds ? hunkIds.length : (decided.run?.hunks?.length ?? 0),
-      applied: decided.applied ?? 0,
-      conflicts: decided.conflicts ?? 0,
-      level: judged.verdict.level,
-      // On whose behalf the agent proposed: at `colleague`, never the one who decided.
-      asked_by: judged.run.reviewer,
-    },
-  });
-  return json(decided);
+  const decided = await decideDocRunAs(ctx, doc, match[2]!, body.decision, { ...(note.note ? { note: note.note } : {}), ...(hunkIds ? { hunkIds } : {}) });
+  if (!decided.ok) return error(decided.status, decided.message);
+  return json(decided.answer);
 }
 
 export async function revertDocRun({ ctx, req, match }: WorkspaceCall): Promise<Response> {
@@ -208,6 +282,8 @@ export async function revertDocRun({ ctx, req, match }: WorkspaceCall): Promise<
   if (res.status === 409) return json(await res.json(), { status: 409 });
   if (!res.ok) return await runRefusal(res, "revert failed");
   const reverted = decidedFor((await res.json()) as { run?: AgentRunSummary; reverted?: number; rejected?: number }, judged.verdict);
+  // A revert rejects what still waited: a new page of a change with nothing landed goes.
+  await settleHeldPage(ctx, doc, note.note ?? null);
   recordAudit(ctx, {
     action: "run.revert",
     targetKind: "doc",
@@ -300,6 +376,9 @@ export async function proposeEdit({ ctx, req, match }: WorkspaceCall): Promise<R
     edits?: unknown;
     citations?: unknown;
     revises?: unknown;
+    change_id?: unknown;
+    change_title?: unknown;
+    change_summary?: unknown;
   };
   if (
     body.action !== "write" &&
@@ -328,6 +407,7 @@ export async function proposeEdit({ ctx, req, match }: WorkspaceCall): Promise<R
     citations: cited?.citations,
     revises: Array.isArray(body.revises) ? body.revises.filter((id): id is string => typeof id === "string").slice(0, RUN_FEEDBACK_REVISES_MAX) : undefined,
     source: "stdio",
+    change: changeArgsOf(body),
   });
   if (outcome.kind === "error") return error(outcome.retryable ? 409 : (outcome.status ?? 400), outcome.message);
   // The stdio client does not know the app's origin.
