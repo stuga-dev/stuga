@@ -6,6 +6,25 @@ export * from "./folders.js";
 export * from "./review.js";
 export * from "./instructions.js";
 export * from "./search.js";
+export * from "./authorship.js";
+export {
+  alikeSentences,
+  distinctWords,
+  headingsOnly,
+  holdsPoint,
+  namesTitle,
+  openingHeadingLevel,
+  possessiveNames,
+  properNouns,
+  readsAsName,
+  savedSentences,
+  sentencesOf,
+  sharedWords,
+  withoutAddresses,
+  wordsOfPoint,
+  type AlikeSentence,
+  type SketchCache,
+} from "./remember-text.js";
 export * from "./versions.js";
 export * from "./comments.js";
 export * from "./favorites.js";

@@ -77,6 +77,7 @@
   "claudeDesktop.buildFailed": "无法构建扩展。",
   "claudeDesktop.add": "添加到 Claude Desktop",
   "claudeDesktop.install": "打开 <code>{file}</code>，点击“<strong>Install</strong>”，然后完全重启 Claude。",
+  "claudeDesktop.allowSave": "Claude 第一次请求使用 <strong>Save to Stuga</strong> 时，选择 <strong>Always allow</strong>。",
   "claudeDesktop.savedTitle": "已保存 {file}——安装后重启 Claude",
   "claudeDesktop.savedDescription": "Claude 首次使用时，在浏览器中批准 Stuga。",
   "claudeDesktop.notBuilt": "本次开发运行未构建 MCP 服务器。",

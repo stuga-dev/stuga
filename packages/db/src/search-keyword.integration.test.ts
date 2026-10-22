@@ -78,6 +78,27 @@ describe.skipIf(!URL)("the keyword leg", () => {
     await seedWorkspaces(sql, WS);
   });
 
+  it("finds only documents holding every word, and with anyWord those holding some, the most first", async () => {
+    await seed("both", "Travel policy", "Expense reports are due within 30 days of the trip.");
+    await seed("one", "Booking", "Book travel through the portal.");
+    await seed("none", "Onboarding", "New hires get a laptop on day one.");
+    expect(await search("travel expense reimbursement")).toEqual([]);
+    const some = await searchDocs(sql, {
+      embeddingDims: EMBEDDING_DIMS,
+      maxDistance: 0.6,
+      workspaceId: WS,
+      principals: ALICE,
+      query: "travel expense reimbursement",
+      queryEmbedding: null,
+      searchLanguages: () => [],
+      anyWord: true,
+    });
+    expect(some.map((r) => r.doc_id)).toEqual(["both", "one"]);
+    expect(some.every((r) => r.kw_whole === false && r.kw_rank > 0)).toBe(true);
+    // A document holding every word says so.
+    expect((await search("expense reports")).map((r) => [r.doc_id, r.kw_whole])).toEqual([["both", true]]);
+  });
+
   it("writes a document's vectors with its text, its passages' with them, and every index on each write", async () => {
     await seed("fresh", "Ocean planet", "The ocean covers most of the planet surface.");
     const [doc] = await sql<{ title_dl: number; search_dl: number; title: string; search: string; search_format: string }[]>`

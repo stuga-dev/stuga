@@ -20,6 +20,7 @@ import {
   isMutating,
   toolDefinition,
 } from "./catalog.js";
+import { ASK_STUGA, SAVE_TO_STUGA } from "@stuga/protocol/domain/ui-languages";
 import { INSTRUCTIONS_MAX_WORKSPACES, buildInstructions } from "./instructions.js";
 import type { WorkspaceRoute } from "./register.js";
 
@@ -59,8 +60,8 @@ describe("the catalog", () => {
     for (const tool of TOOL_NAMES) expect(TOOL_SUMMARIES[tool], tool).toBeTruthy();
   });
 
-  it("has nineteen tools, and every one a title and an honest read or write hint", () => {
-    expect(TOOL_NAMES).toHaveLength(19);
+  it("has twenty tools, and every one a title and an honest read or write hint", () => {
+    expect(TOOL_NAMES).toHaveLength(20);
     for (const tool of TOOL_NAMES) {
       const { title, annotations } = toolDefinition(tool);
       expect(title, tool).toBeTruthy();
@@ -156,6 +157,64 @@ describe("the catalog", () => {
   });
 });
 
+describe("Save to Stuga and Ask Stuga", () => {
+  it("answers to the phrase in every interface language, and never to a bare remember", () => {
+    const remember = toolDefinition("remember").description;
+    expect(remember.startsWith("Save to Stuga.")).toBe(true);
+    for (const phrase of new Set(Object.values(SAVE_TO_STUGA))) expect(remember).toContain(`"${phrase}"`);
+    expect(remember).toContain('"remember this in Stuga"');
+    for (const tool of ["search", "retrieve"] as const) {
+      const text = toolDefinition(tool).description;
+      for (const phrase of new Set(Object.values(ASK_STUGA))) expect(text, tool).toContain(`"${phrase}"`);
+      expect(text, tool).toContain("decided, recorded or know");
+      expect(text, tool).toContain("`last_edited_by`");
+    }
+  });
+
+  it("tells the model the whole flow: no text written, then read, then write once, then report", () => {
+    const text = toolDefinition("remember").description;
+    expect(text).toContain("This tool writes no text");
+    expect(text).toContain("makes the user's My notes folder");
+    expect(text).toContain("`markdown` action:read");
+    expect(text).toContain("never leave the old and the new both standing");
+    expect(text).toContain("`markdown_append` with `heading`");
+    expect(text).toContain("the folder whose instructions say it belongs, else in");
+    expect(text).toContain('`kind: "new_page"`');
+    // A meeting, email or document goes in `source` and is cited; what the user says carries no name or date, which
+    // version history keeps; the user is named as Stuga knows them only where a point is about them, never guessed.
+    expect(text).toContain("`source` (the meeting, email or document it came from, and when, kept out of `text`; none for what the user told you)");
+    expect(text).toContain("write no name and no date with it");
+    expect(text).toContain("version history records who changed what and when");
+    expect(text).toContain("never attribute it to the user");
+    expect(text).toContain("by their Stuga name (`user.name`)");
+    expect(text).toContain("never a name taken from a file path, an email address or your own memory");
+    expect(text).toContain("when you wrote nothing, say that nothing was saved, never that it was saved or recorded");
+    // My notes is the user's own, shared or not as they choose: never promised private.
+    expect(text).not.toContain("only they can read");
+    expect(text).toContain("`home.shared`");
+    expect(text).toContain("names instead of pronouns");
+    expect(text).toContain("still matter in six months");
+    expect(text).toContain("never invent a point");
+    expect(text).toContain("AFTERWARDS tell the user what you saved and where");
+    const points = toolDefinition("remember").inputSchema.points as z.ZodType;
+    expect(points.safeParse([{ text: "Refunds need approval", topic: "Refunds" }]).success).toBe(true);
+    expect(points.safeParse([{ text: "Refunds need approval", source: "team meeting 2026-10-20" }]).success).toBe(true);
+    expect(points.safeParse([{ text: "Refunds need approval", source: "x".repeat(201) }]).success).toBe(false);
+    expect(points.safeParse([]).success).toBe(false);
+    expect(points.safeParse(Array.from({ length: 21 }, () => ({ text: "x" }))).success).toBe(false);
+    expect(isMutating("remember")).toBe(true);
+  });
+
+  it("says both phrases in the instructions a connection opens with, and a read-only one only asks", () => {
+    const text = buildInstructions({ node: NODE, workspaces: ONE });
+    expect(text).toContain('"Save to Stuga" (in any language, or "remember this in Stuga") means `remember`');
+    expect(text).toContain('"Ask Stuga"');
+    const readOnly = buildInstructions({ node: NODE, workspaces: ONE, readOnly: true });
+    expect(readOnly).not.toContain("`remember`");
+    expect(readOnly).toContain('"Ask Stuga"');
+  });
+});
+
 describe("buildInstructions", () => {
   it("opens with the routing rule, then names the node and how many workspaces the connection reaches", () => {
     const text = buildInstructions({ node: NODE, workspaces: ONE });
@@ -164,6 +223,15 @@ describe("buildInstructions", () => {
       '\n\nThis connection is to the Stuga node "Liv’s Mac" at http://localhost:8787 and reaches 1 workspace; every tool names the `workspace_id` it acts in.\n\n',
     );
     expect(buildInstructions({ node: NODE, workspaces: TWO })).toContain("and reaches 2 workspaces;");
+  });
+
+  it("names the person the connection acts for, by their Stuga name and username, when it is known", () => {
+    const text = buildInstructions({ node: NODE, workspaces: ONE, user: { name: 'Liv "LB" Berg', username: "liv" } });
+    expect(text).toContain('USER: this connection acts for "Liv \\"LB\\" Berg" (@liv) in Stuga.');
+    expect(text).toContain("never by a name taken from a file path, an email address or your own memory");
+    // What they say is saved without their name or a date: version history keeps both.
+    expect(text).toContain("What they tell you to save goes in without their name or a date");
+    expect(buildInstructions({ node: NODE, workspaces: ONE })).not.toContain("USER:");
   });
 
   it("quotes a name that carries quotes of its own unambiguously", () => {

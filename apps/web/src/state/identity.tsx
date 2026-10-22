@@ -8,7 +8,7 @@
 import { useEffect } from "react";
 import { SAMPLE_AGENT_ALIAS } from "@stuga/protocol/domain/workspaces";
 import { Users } from "../api";
-import { t } from "../i18n/i18n";
+import { formatParts, t } from "../i18n/i18n";
 import { aiCoauthorLabel, importedAuthor, principalHuman } from "../lib/format";
 import { createStore, useStore } from "../lib/store";
 
@@ -131,6 +131,16 @@ export function authorLabel(author: string): string {
   const human = principalHuman(author);
   if (human !== null) return `${aiCoauthorLabel()} · ${principalLabel(`user:${human}`)}`;
   return principalLabel(`user:${author}`);
+}
+
+/**
+ * An agent as people read it in plain text: "Liv's agent", by the person it acts for, or "Agent" when the node
+ * cannot say whom. Never by a name its client chose.
+ */
+export function agentOfLabel(person: string | null): string {
+  if (person === null) return t("ui.author.agent");
+  const parts = formatParts("ui.author.agentOf", { name: principalLabel(`user:${person}`), bdi: (chunks: unknown[]) => chunks.join("") });
+  return Array.isArray(parts) ? parts.join("") : String(parts);
 }
 
 /**

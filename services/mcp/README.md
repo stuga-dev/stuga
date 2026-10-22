@@ -1,10 +1,11 @@
 # @stuga/mcp
 
 Connects an MCP client that starts local servers, such as Claude Code, Codex or Cursor, to your
-[Stuga](https://stuga.dev) node. It forwards every call to the node's `/mcp`, so the tools, their
-instructions and every permission check are the node's own. It adds one thing only a process on your
-computer can do: reading a file at a local path, to import a CSV or JSONL file into a database or to
-upload any file into a document or database.
+[Stuga](https://stuga.dev) node. It forwards every call to the node's `/mcp`, so the tools, the
+prompts, their instructions and every permission check are the node's own. It adds what only a
+process on your computer can do: reading a file at a local path, to import a CSV or JSONL file into
+a database or to upload any file into a document or database, and listing the node's last tools and
+prompts while the node is out of reach.
 
 ```json
 {

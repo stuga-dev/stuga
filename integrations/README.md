@@ -4,8 +4,9 @@ Lets Claude search, read and edit the documents and databases in your own
 [Stuga](https://stuga.dev) workspaces. Claude's edits arrive in Stuga as suggestions, shown change by
 change, that you accept or reject.
 
-The plugin has two parts: the Stuga skill, which teaches Claude how to work with Stuga, and a
-connector that runs on your computer and talks to your Stuga node.
+The plugin has three parts: the Stuga skill, which teaches Claude how to work with Stuga, a
+connector that runs on your computer and talks to your Stuga node, and a hook that starts each
+Claude Code session with an index of your wiki.
 
 ## Use it
 
@@ -26,9 +27,12 @@ newer.
 
 Then ask, for example:
 
+- "Save to Stuga: refunds over 500 euros need finance approval."
+- "Ask Stuga what we decided about the pricing change."
 - "What does our onboarding doc in Stuga say about laptops?"
-- "Find everything we wrote about the pricing change and summarize it, with links."
 - "Add a row for Acme to the Leads table in Stuga."
+
+When Claude first asks to use **Save to Stuga**, choose **Always allow**.
 
 The connector runs in Claude Code and in Cowork sessions on your computer. Cowork uses the default
 address, `http://127.0.0.1:8787`. In Claude on the web, the plugin brings the skill only; add your
@@ -41,7 +45,9 @@ exact version in `.mcp.json`, which `npx` downloads from the npm registry the fi
 Its source is in [services/mcp](https://github.com/stuga-dev/stuga/tree/main/services/mcp).
 
 The connector sends Claude's requests to your Stuga node, at the address you entered, and nowhere
-else. It keeps your sign-in in `~/.config/stuga/oauth.json`, readable only by you. What Claude reads
+else. It keeps your sign-in in `~/.config/stuga/oauth.json`, readable only by you, which the session
+hook in `hooks/` reads to ask your node for the index, and the node's last list of tools beside it in
+`catalog.json`. What Claude reads
 and writes is processed by Anthropic, as with any conversation. Revoke Claude's access at any time
 under **Settings → Your AI agents → Connected agents** in Stuga. Privacy policy:
 [stuga.dev/privacy](https://stuga.dev/privacy).

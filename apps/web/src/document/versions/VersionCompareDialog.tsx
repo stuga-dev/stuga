@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type * as Y from "yjs";
 import { yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
-import { Docs, type Version } from "../../api";
+import { Docs, type CommentAgents, type Version } from "../../api";
 import { relativeTime, absoluteTime, versionLabel } from "../../lib/format";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
@@ -104,6 +104,7 @@ function useCurrentMarkdown(ydoc: Y.Doc | null, follow: boolean, target: string 
 export function VersionCompareDialog({
   docId,
   versions,
+  agents = {},
   seq,
   ydoc,
   busy,
@@ -115,6 +116,8 @@ export function VersionCompareDialog({
 }: {
   docId: string;
   versions: Version[];
+  /** Each agent among the authors → the person it acts for. */
+  agents?: CommentAgents;
   /** The version being viewed, the "after" side. */
   seq: number;
   /** The live document, the default baseline. */
@@ -138,7 +141,7 @@ export function VersionCompareDialog({
 
   const viewed = versions.find((v) => v.seq === seq);
   const viewedLabel = viewed ? versionLabel(viewed.ts) : t("document.versions.thisVersion");
-  const viewedAuthors = viewed ? authorsOf(viewed, versions) : null;
+  const viewedAuthors = viewed ? authorsOf(viewed, versions, agents) : null;
   // A baseline a refresh dropped from the listing falls back to the current document.
   const baseVersion = versions.find((v) => String(v.seq) === chosen);
   const baseline = baseVersion ? chosen : "current";

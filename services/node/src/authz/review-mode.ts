@@ -9,8 +9,12 @@
  * it was proposed under (actLevel). At `colleague`, someone other than the person who asked the AI,
  * who can edit the item and holds its approver groups, approves (mayActOnRun); when nobody else can,
  * the item's owner or a workspace administrator stands in.
+ *
+ * An item in a person's My notes that anyone else can read (`notes_shared`) is at `review` at least
+ * for every agent, theirs included (effectiveReviewLevel): once it is shared, it is no longer theirs
+ * alone, and no agent changes it unseen.
  */
-import { type Approvers, type DocRow, type Queryable, approversFor, getFolderAncestors } from "@stuga/db";
+import { type Approvers, type DocRow, type FolderRow, type Queryable, approversFor, getFolderAncestors } from "@stuga/db";
 import { docReviewLevel, looserReviewMode, reviewLevelOf, stricterReviewMode, type ReviewMode } from "@stuga/protocol/domain/events";
 import { actLevel, mayActOnRun, type RunAct, type RunStanding } from "@stuga/protocol/domain/runs";
 import type { Ctx } from "../auth/context.js";
@@ -108,7 +112,20 @@ const REASONS: Record<ReviewMode, string> = {
   colleague: "this document waits for a colleague's approval",
 };
 
-type LevelFields = Pick<DocRow, "agent_mode" | "folder_agent_mode" | "database_agent_mode">;
+/** Why an item set to apply AI edits directly waits for review all the same. */
+export const SHARED_NOTES_REASON = "this is in a person's My notes and shared with others, so AI edits to it wait for review";
+
+type LevelFields = Pick<DocRow, "agent_mode" | "folder_agent_mode" | "database_agent_mode" | "notes_shared">;
+
+/** `level`, raised to `review` for an item in a person's My notes that others can read. */
+function notesFloor(level: ReviewMode, notesShared: boolean | undefined): ReviewMode {
+  return notesShared ? stricterReviewMode(level, "review") : level;
+}
+
+/** The level an item is at for every agent: its own or its folders' (docReviewLevel), at `review` at least in a shared My notes. */
+export function effectiveReviewLevel(doc: LevelFields): ReviewMode {
+  return notesFloor(docReviewLevel(doc), doc.notes_shared);
+}
 
 /** Resolve the review mode for one proposal. */
 export function resolveReviewMode(ctx: Ctx, doc: LevelFields): ResolvedReview {
@@ -118,8 +135,14 @@ export function resolveReviewMode(ctx: Ctx, doc: LevelFields): ResolvedReview {
 
 /** The item's level for any agent, the in-app co-author included. */
 export function agentReviewMode(doc: LevelFields): ResolvedReview {
-  const mode = docReviewLevel(doc);
-  return { mode, reason: REASONS[mode] };
+  const set = docReviewLevel(doc);
+  const mode = notesFloor(set, doc.notes_shared);
+  return { mode, reason: mode === set ? REASONS[mode] : SHARED_NOTES_REASON };
+}
+
+/** The level a new page in a folder starts at for every agent: the folder's, at `review` at least in a shared My notes. */
+export function agentFolderReviewMode(folder: Pick<FolderRow, "agent_mode" | "parent_agent_mode" | "notes_shared">): ReviewMode {
+  return notesFloor(reviewLevelOf(folder.agent_mode, folder.parent_agent_mode), folder.notes_shared);
 }
 
 /** The approver group a proposal at `mode` is stamped with: the nearest one the item's folders name, at `colleague` only. */
@@ -174,7 +197,7 @@ export class RunJudge {
   /** judge for many runs of the document, with one approver lookup for all of them. */
   async judgeAll(runs: readonly RunPolicyFields[]): Promise<RunVerdict[]> {
     const { ctx, doc } = this;
-    const itemLevel = docReviewLevel(doc);
+    const itemLevel = effectiveReviewLevel(doc);
     const manager = manages(ctx, doc);
     const writer = !ctx.isAgent && canWriteDoc(ctx, doc);
     const me = ctx.alias;

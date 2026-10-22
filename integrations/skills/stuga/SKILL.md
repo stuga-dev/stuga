@@ -1,6 +1,6 @@
 ---
 name: stuga
-description: Use whenever the user mentions Stuga or a Stuga workspace, asks whether Stuga is accessible, or wants to find, search, read, summarize, create, or edit documents, notes, folders, databases, collections, or knowledge stored in Stuga. Do not use for a local coding workspace unless the user means Stuga.
+description: Use whenever the user mentions Stuga or a Stuga workspace, says "Save to Stuga" or "Ask Stuga", asks whether Stuga is accessible, or wants to find, search, read, summarize, create, or edit documents, notes, folders, databases, collections, or knowledge stored in Stuga. Do not use for a local coding workspace unless the user means Stuga.
 ---
 
 # Stuga
@@ -21,6 +21,11 @@ Only report that Stuga is unavailable after searching the available MCP tools an
 4. `workspaces` action:list, `search` and `retrieve` name under `unavailable` any workspace they could not cover just now. Tell the user which, and never present the rest as complete.
 5. For an access question, report the node and each workspace the list returns, with your access there.
 6. A change goes to the workspace of the item it changes. To create something new when the connection reaches several workspaces and the request names none, ask which one.
+
+## Save to Stuga and Ask Stuga
+
+- "Save to Stuga" (in any language), or "remember this in Stuga": call `remember` with the points, one fact each, in the language of what they came from or of the page they belong on, and the meeting, email or document each came from in `source` (none for what the user told you), then read the best place it names and write there with `markdown_edit`, `markdown_append` or `docs_create`, as its description says. A correction changes the old sentence; never leave the old and the new both standing. Write no name or date for what the user told you: version history records who and when. Cite a point's `source`, never attributing it to the user; where a point is about the user, name them by their Stuga name (`user` in the answer), never one guessed from a path or an email address. Tell the user what you saved where, what was already there, and what waits for approval; when you wrote nothing, say so.
+- "Ask Stuga", or a question about what the user or their team decided or recorded: `retrieve` or `search` first, and say who wrote each point and when, and when it holds AI text nobody has reviewed yet. Answer with the approved text; when `pending_changes` or a read's changes-not-approved block lists a change, say it waits and for whom, and what it changes when it is listed (`proposed`: `approved_now`, then `after_approval`); when its `note` says some are not listed, read the page before you say none of them touches the answer.
 
 ## Tools
 

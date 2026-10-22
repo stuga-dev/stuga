@@ -213,14 +213,23 @@ function termCtes(sql: Queryable, plan: KeywordPlan): Fragment {
 }
 
 /**
- * Document-level candidates `kw_candidates(doc_id, kw_rank)`, as CTEs after `q`. `visible` gates
- * `docs d` (tenant, trash, hidden, ACL and scope), inside every scan, ahead of any LIMIT. A document
- * must hold every group, in its title or its text; it scores its title's BM25 TITLE_WEIGHT times
- * beside its text's. A title one typo away (`typoIds`) is a candidate scored zero, so it is found but
- * never outranks a match; a title or body the unfinished last word begins is one scored just above
- * zero, holding the finished words as a whole query must.
+ * Document-level candidates `kw_candidates(doc_id, kw_rank, kw_whole)`, as CTEs after `q`. `visible`
+ * gates `docs d` (tenant, trash, hidden, ACL and scope), inside every scan, ahead of any LIMIT. A
+ * document must hold every group, in its title or its text (`kw_whole`), unless `anyWord`, when one
+ * holding any group is a candidate too, ranked by the BM25 of the terms it holds, so one holding more
+ * of them, or rarer ones, ranks first; it scores its title's BM25 TITLE_WEIGHT times beside its
+ * text's. A title one typo away (`typoIds`) is a candidate scored zero, so it is found but never
+ * outranks a match; a title or body the unfinished last word begins is one scored just above zero,
+ * holding the finished words as a whole query must.
  */
-export function keywordCtes(sql: Queryable, plan: KeywordPlan, visible: Fragment, candidates: number, typoIds: string[]): Fragment {
+export function keywordCtes(
+  sql: Queryable,
+  plan: KeywordPlan,
+  visible: Fragment,
+  candidates: number,
+  typoIds: string[],
+  anyWord = false,
+): Fragment {
   const none = sql`SELECT NULL::text AS doc_id, 0::float8 AS s WHERE FALSE`;
   const field = (name: "title" | "search") => sql.unsafe(`${name}_tsv`);
   const holding = (name: "title" | "search") =>
@@ -270,7 +279,7 @@ export function keywordCtes(sql: Queryable, plan: KeywordPlan, visible: Fragment
     kw_tf AS MATERIALIZED (
       SELECT h.doc_id, h.field, max(CASE h.field WHEN 'title' THEN d.title_dl ELSE d.search_dl END) AS dl, l.term,
              greatest(count(DISTINCT p.p), 1)::float8 AS tf
-      FROM (SELECT DISTINCT k.doc_id, k.field FROM kw_hold k JOIN kw_held w ON w.doc_id = k.doc_id AND w.whole) h
+      FROM (SELECT DISTINCT k.doc_id, k.field FROM kw_hold k JOIN kw_held w ON w.doc_id = k.doc_id AND (w.whole OR ${anyWord})) h
       JOIN docs d ON d.doc_id = h.doc_id
       CROSS JOIN LATERAL unnest(CASE h.field WHEN 'title' THEN d.title_tsv ELSE d.search_tsv END) AS u
       JOIN kw_lex l ON l.lexeme = u.lexeme
@@ -291,10 +300,11 @@ export function keywordCtes(sql: Queryable, plan: KeywordPlan, visible: Fragment
     kw_prefix AS (${prefix}),
     kw_typo AS (${typo}),
     kw_candidates AS (
-      SELECT doc_id, sum(s)::float8 AS kw_rank
+      SELECT x.doc_id, sum(x.s)::float8 AS kw_rank, coalesce(bool_or(w.whole), FALSE) AS kw_whole
       FROM (SELECT doc_id, s FROM kw_scored UNION ALL SELECT doc_id, s FROM kw_prefix UNION ALL SELECT doc_id, s FROM kw_typo) x
-      GROUP BY doc_id
-      ORDER BY kw_rank DESC, doc_id
+      LEFT JOIN kw_held w ON w.doc_id = x.doc_id
+      GROUP BY x.doc_id
+      ORDER BY kw_rank DESC, x.doc_id
       LIMIT ${candidates}
     )`;
 }

@@ -285,6 +285,11 @@ export interface SearchInput {
   exactScanMax?: number;
   /** The HNSW scan's tuple budget; tests lower it below a crowd to show where the index gives up. */
   scanTuples?: number;
+  /**
+   * The keyword leg finds a document holding any of the query's words, not only every one, ranked by
+   * those it holds: for an agent's search that found none holding them all.
+   */
+  anyWord?: boolean;
 }
 
 export interface AskInput {
@@ -315,7 +320,7 @@ function normalizeQueryLimit(value: number | undefined, fallback: number): numbe
 // rows the searcher may see, and nothing outside it can widen that set.
 
 /** The documents a searcher may see, over `docs d`. */
-function visibleDocs(sql: Queryable, input: SearchInput | AskInput, scopeFilter: Fragment): Fragment {
+function visibleDocs(sql: Queryable, input: Pick<AskInput, "workspaceId" | "principals">, scopeFilter: Fragment): Fragment {
   return sql`d.workspace_id = ${input.workspaceId}
         AND d.trashed = FALSE
         AND d.search_hidden = FALSE
@@ -581,7 +586,7 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
     WITH q AS (
       SELECT ${qvec}::vector AS qvec
     ),
-    ${keywordCtes(sql, plan, visible, candidates, typoIds)},
+    ${keywordCtes(sql, plan, visible, candidates, typoIds, input.anyWord === true)},
     kw_ranked AS (
       SELECT k.*, rank() OVER (ORDER BY k.kw_rank DESC) AS kw_pos
       FROM kw_candidates k
@@ -624,6 +629,7 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
              COALESCE(s.sem_score, 0)                    AS sem_score,
              s.chunk_index                               AS sem_chunk,
              k.doc_id IS NOT NULL                        AS keyword,
+             COALESCE(k.kw_whole, FALSE)                 AS kw_whole,
              COALESCE(1.0/(60 + k.kw_pos), 0)
                + COALESCE(1.0/(60 + s.sem_pos), 0)       AS score
       FROM kw_ranked k
@@ -636,7 +642,7 @@ export async function searchDocs(sql: Sql, input: SearchInput): Promise<SearchRe
       ORDER BY f.score DESC, d.doc_id
       LIMIT ${limit}
     )
-    SELECT t.doc_id, t.title, t.doc_type, t.page_of, t.page_row, t.updated_at, t.kw_rank, t.sem_score, t.score,
+    SELECT t.doc_id, t.title, t.doc_type, t.page_of, t.page_row, t.updated_at, t.kw_rank, t.kw_whole, t.sem_score, t.score,
            t.keyword, d.search_text AS text, ch.content AS passage,
            CASE WHEN t.keyword THEN (
              SELECT array_agg(DISTINCT p.p ORDER BY p.p)
@@ -703,12 +709,78 @@ export async function askDocs(sql: Sql, input: AskInput): Promise<AskChunk[]> {
     )
     SELECT f.doc_id, d.title, f.chunk_index,
            ch.content, ch.heading_path,
-           f.sem_score, f.score
+           f.sem_score, f.score, ${holdsEveryWord(tx, plan)} AS kw_whole
     FROM fused f
     JOIN docs d ON d.doc_id = f.doc_id
     JOIN doc_chunks ch ON ch.doc_id = f.doc_id AND ch.chunk_index = f.chunk_index
-    -- An empty passage would spend a citation on nothing.
+    -- An empty passage, or one of headings alone (an index written before they were left out), would
+    -- spend a citation on nothing.
     WHERE ch.content <> ''
+      AND btrim(regexp_replace(ch.content, ${HEADING_LINE}, '', 'gn'), ${BLANKS}) <> ''
     ORDER BY f.score DESC, f.doc_id, f.chunk_index
     LIMIT ${limit}`);
+}
+
+/** A Markdown heading line, as Postgres's newline-sensitive regular expressions match it. */
+const HEADING_LINE = "^[[:blank:]]{0,3}#{1,6}([[:blank:]].*)?$";
+const BLANKS = " \t\r\n";
+
+/**
+ * Whether a passage `ch`, with its document's title `d`, holds every word of the query, as a search
+ * result must: what tells an answer from the passages holding only some of the words.
+ */
+function holdsEveryWord(sql: Queryable, plan: KeywordPlan): Fragment {
+  if (plan.groupCount === 0 || plan.queries.length === 0 || plan.titleOnly) return sql`FALSE`;
+  return sql`(
+    SELECT count(DISTINCT g.grp)
+    FROM unnest(${plan.groups}::int[], ${plan.groupTerms}::int[]) AS g(grp, term)
+    JOIN unnest(${plan.queries.map((_, k) => k + 1)}::int[], ${plan.queries}::tsquery[]) AS q(term, tq) ON q.term = g.term
+    WHERE ch.tsv @@ q.tq OR d.title_tsv @@ q.tq
+  ) = ${plan.groupCount}`;
+}
+
+/** A document whose title holds a word of a query, and whether any of its text is indexed. */
+export interface TitledDoc {
+  doc_id: string;
+  title: string;
+  /** Some of its text is indexed: false for a page whose approved text is empty, as a new page's is while all of it waits. */
+  has_text: boolean;
+}
+
+/**
+ * The visible prose documents whose titles hold any word of `query`, the best-matching titles first:
+ * the pages a passage search never finds when nothing of their text is approved yet. Gated as a search
+ * is (tenant, trash, hidden, ACL and scope).
+ */
+export async function docsByTitle(
+  sql: Sql,
+  input: Pick<AskInput, "principals" | "workspaceId" | "query" | "scopeDocIds" | "scopeFolderIds" | "searchLanguages" | "limit">,
+): Promise<TitledDoc[]> {
+  if (input.scopeDocIds && input.scopeDocIds.length === 0) return [];
+  const plan = await planKeywords(sql, input.query, input.searchLanguages?.() ?? []);
+  if (plan.queries.length === 0) return [];
+  const scopeFilter = scopeFragment(sql, input.scopeDocIds ?? null, input.scopeFolderIds ?? null);
+  const any = plan.queries.map((q) => `(${q})`).join(" | ");
+  return sql<TitledDoc[]>`
+    SELECT d.doc_id, d.title, EXISTS (SELECT 1 FROM doc_chunks c WHERE c.doc_id = d.doc_id) AS has_text
+    FROM docs d
+    WHERE ${visibleDocs(sql, input, scopeFilter)}
+      AND d.doc_type = 'prose'
+      AND d.title_tsv @@ ${any}::tsquery
+    ORDER BY ts_rank(d.title_tsv, ${any}::tsquery) DESC, d.doc_id
+    LIMIT ${normalizeQueryLimit(input.limit, 20)}`;
+}
+
+/**
+ * The words of `words` that search leaves out as stopwords under any of the node's configurations
+ * (English and each search language): "with", "their", "über". A word search never matches on is no
+ * reason to name a place either.
+ */
+export async function stopwordsAmong(sql: Queryable, words: readonly string[], languages: readonly SearchLanguage[]): Promise<Set<string>> {
+  const latin = [...new Set(words)].filter((w) => /^[\p{L}\p{M}\p{N}]+$/u.test(w) && /\p{L}/u.test(w));
+  if (latin.length === 0) return new Set();
+  const rows = await sql<{ word: string }[]>`
+    SELECT w.word FROM unnest(${latin}::text[]) AS w(word)
+    WHERE EXISTS (SELECT 1 FROM unnest(${searchConfigs(languages)}::regconfig[]) AS c(cfg) WHERE to_tsvector(c.cfg, w.word) = ''::tsvector)`;
+  return new Set(rows.map((r) => r.word));
 }

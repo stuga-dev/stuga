@@ -15,7 +15,7 @@ import { buildInstructions } from "@stuga/agent-surface/instructions";
 import { registerAgentTools, type AgentSurface, type Reach, type ToolCall } from "@stuga/agent-surface/register";
 import type { AuditStatus } from "@stuga/protocol/domain/audit";
 import { hostLabel, MCP_SERVER_TITLE } from "@stuga/protocol/domain/node-name";
-import { getWorkspace, listWorkspacesForUser } from "@stuga/db";
+import { getDirectoryRow, getWorkspace, listWorkspacesForUser } from "@stuga/db";
 import { recordAudit } from "../audit/record.js";
 import { mcpPerson, workspaceContextFor, type McpCaller } from "../auth/context.js";
 import { READ_ONLY_MESSAGE } from "../authz/authz.js";
@@ -38,6 +38,7 @@ const DEFAULT_ACTION: Record<ToolName, string> = {
   retrieve: "retrieve",
   databases: "list",
   query: "select",
+  remember: "plan",
   docs_create: "create",
   markdown_append: "append",
   markdown_edit: "write",
@@ -71,12 +72,18 @@ function nodeName(caller: McpCaller): string {
  * Every workspace the credential reaches on this node: its person's memberships, narrowed to the ones it was
  * given, and for an agent never one where its person is only a guest (workspaceContextFor refuses those).
  */
-async function reachOf(caller: McpCaller): Promise<Reach> {
+export async function reachOf(caller: McpCaller): Promise<Reach> {
   const { env } = caller.account;
   const node = { id: env.nodeId, name: nodeName(caller), origin: caller.account.servedOrigin };
-  const rows = await listWorkspacesForUser(caller.account.sql, mcpPerson(caller));
+  const person = mcpPerson(caller);
+  const [rows, directory] = await Promise.all([
+    listWorkspacesForUser(caller.account.sql, person),
+    getDirectoryRow(caller.account.sql, person).catch(() => null),
+  ]);
   const allowed = caller.workspaces ? new Set(caller.workspaces) : null;
   return {
+    // Who "the user" is, so an agent names them as Stuga does and never by a guess.
+    ...(directory ? { user: { name: directory.display_name || directory.username, username: directory.username } } : {}),
     workspaces: rows
       .filter((w) => !allowed || allowed.has(w.workspace_id))
       .filter((w) => !caller.account.isAgent || w.role !== "guest")
@@ -111,18 +118,19 @@ export function nodeSurface(caller: McpCaller): AgentSurface {
 
 async function buildMcpServer(caller: McpCaller, surface: AgentSurface): Promise<McpServer> {
   const { sql } = caller.account;
-  const { workspaces } = await surface.reach();
+  const { workspaces, user } = await surface.reach();
   // One workspace's conventions travel with the connection; with several, each is read before writing there.
   const only = workspaces.length === 1 ? await getWorkspace(sql, workspaces[0]!.workspace_id).catch(() => null) : null;
   const instructions = buildInstructions({
     node: { name: nodeName(caller), origin: caller.account.servedOrigin },
     workspaces,
+    user,
     conventions: only?.agent_instructions ?? "",
     readOnly: caller.readOnly,
   });
   // One name for the product. Which node this is, and which workspaces it reaches, are in the instructions and in
   // `workspaces` action:list, where the model can act on them.
-  const server = new McpServer({ name: "stuga", title: MCP_SERVER_TITLE, version: VERSION }, { instructions, capabilities: { tools: {} } });
+  const server = new McpServer({ name: "stuga", title: MCP_SERVER_TITLE, version: VERSION }, { instructions, capabilities: { tools: {}, prompts: {} } });
   registerAgentTools(server, surface, { readOnly: caller.readOnly });
   return server;
 }

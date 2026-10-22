@@ -22,7 +22,7 @@ export const MIGRATIONS: readonly string[] = ["0001_initial.sql"];
  * recorded that checksum.
  */
 export const MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
-  "0001_initial.sql": "d82bb7d3e22bf9c5",
+  "0001_initial.sql": "a0b65d96038a282d",
 };
 
 /** `0007_foo.sql` → 7. Throws on a filename that is not numbered. */

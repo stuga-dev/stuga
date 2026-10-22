@@ -4,7 +4,7 @@ import { initSchema } from "./schema/migrate.js";
 import { addComment } from "./comments.js";
 import { createDoc } from "./docs.js";
 import { createFolder } from "./folders.js";
-import { provisionWorkspace } from "./workspaces.js";
+import { addWorkspaceMember, provisionWorkspace, removeWorkspaceMember, upsertGroup } from "./workspaces.js";
 import {
   agentRunStats,
   insertWebhook,
@@ -16,6 +16,7 @@ import {
   purgeAgentRuns,
   recordWebhookDelivery,
   upsertAgentRun,
+  webhookReaches,
 } from "./governance.js";
 import { RUN_IDLE_MS } from "@stuga/protocol/domain/limits";
 import type { RunIndexEntry } from "@stuga/protocol/internal/jobs";
@@ -253,9 +254,65 @@ describe.skipIf(!URL)("agent governance queries", () => {
       await sql`UPDATE webhooks SET active = FALSE WHERE webhook_id = 'w-off'`;
 
       const ids = (rows: Array<{ webhook_id: string }>) => rows.map((r) => r.webhook_id).sort();
-      expect(ids(await matchingWebhooks(sql, WS, "comment.added", ["f-root", "f-leaf"]))).toEqual(["w-all", "w-root"]);
-      expect(ids(await matchingWebhooks(sql, WS, "run.decided", ["f-root", "f-leaf"]))).toEqual(["w-all", "w-root", "w-typed"]);
-      expect(ids(await matchingWebhooks(sql, WS, "comment.added", []))).toEqual(["w-all"]);
+      expect(ids(await matchingWebhooks(sql, WS, "comment.added", ["f-root", "f-leaf"], "d-shared"))).toEqual(["w-all", "w-root"]);
+      expect(ids(await matchingWebhooks(sql, WS, "run.decided", ["f-root", "f-leaf"], "d-shared"))).toEqual(["w-all", "w-root", "w-typed"]);
+      expect(ids(await matchingWebhooks(sql, WS, "comment.added", [], null))).toEqual(["w-all"]);
+    });
+
+    describe("reach only what their creator can read", () => {
+      const ids = (rows: Array<{ webhook_id: string }>) => rows.map((r) => r.webhook_id).sort();
+      const hook = (webhookId: string, createdBy: string, folderId: string | null = null) =>
+        insertWebhook(sql, { webhookId, workspaceId: WS, url: `https://${webhookId}`, secret: "s", events: [], folderId, createdBy });
+
+      beforeEach(async () => {
+        await addWorkspaceMember(sql, WS, "bob");
+        await hook("w-alice", "alice");
+        await hook("w-bob", "bob");
+      });
+
+      it("a document shared with nobody but its owner reaches only that owner's hooks, a workspace owner's not", async () => {
+        expect(ids(await matchingWebhooks(sql, WS, "doc.created", [], "d-bob"))).toEqual(["w-bob"]);
+        expect(await webhookReaches(sql, "w-alice", "d-bob")).toBe(false);
+        expect(await webhookReaches(sql, "w-bob", "d-bob")).toBe(true);
+      });
+
+      it("a folder hook hears nothing of a document in its folder that its creator cannot read", async () => {
+        await createDoc(sql, { docId: "d-leaf-bob", workspaceId: WS, owner: "user:bob", title: "Bob's draft", parentId: "f-leaf", aclPrincipals: ["user:bob"], aclWriters: ["user:bob"] });
+        await hook("w-alice-root", "alice", "f-root");
+        expect(ids(await matchingWebhooks(sql, WS, "comment.added", ["f-root", "f-leaf"], "d-leaf-bob"))).toEqual(["w-bob"]);
+        expect(ids(await matchingWebhooks(sql, WS, "comment.added", ["f-root", "f-leaf"], "d-shared"))).toEqual(["w-alice", "w-alice-root", "w-bob"]);
+      });
+
+      it("a group the creator is in counts, as it does for their session", async () => {
+        await createDoc(sql, { docId: "d-ops", workspaceId: WS, owner: "user:alice", title: "Ops", parentId: null, aclPrincipals: ["user:alice", "group:ops"], aclWriters: ["user:alice"] });
+        expect(ids(await matchingWebhooks(sql, WS, "doc.created", [], "d-ops"))).toEqual(["w-alice"]);
+        await upsertGroup(sql, "group:ops", ["user:bob"], WS);
+        expect(ids(await matchingWebhooks(sql, WS, "doc.created", [], "d-ops"))).toEqual(["w-alice", "w-bob"]);
+      });
+
+      it("a creator who became a guest keeps only what is shared with them directly", async () => {
+        await sql`UPDATE workspace_members SET role = 'guest' WHERE workspace_id = ${WS} AND alias = 'bob'`;
+        await createDoc(sql, { docId: "d-guest", workspaceId: WS, owner: "user:alice", title: "For Bob", parentId: null, aclPrincipals: ["user:alice", "user:bob"], aclWriters: ["user:alice"] });
+        expect(ids(await matchingWebhooks(sql, WS, "doc.created", ["f-root", "f-leaf"], "d-shared"))).toEqual(["w-alice"]);
+        expect(ids(await matchingWebhooks(sql, WS, "doc.created", [], "d-guest"))).toEqual(["w-alice", "w-bob"]);
+      });
+
+      it("a creator who left the workspace reaches nothing, an event without a document included", async () => {
+        await removeWorkspaceMember(sql, WS, "bob");
+        expect(ids(await matchingWebhooks(sql, WS, "doc.created", [], "d-bob"))).toEqual([]);
+        expect(ids(await matchingWebhooks(sql, WS, "doc.created", ["f-root", "f-leaf"], "d-shared"))).toEqual(["w-alice"]);
+        expect(ids(await matchingWebhooks(sql, WS, "doc.created", [], null))).toEqual(["w-alice"]);
+        expect(await webhookReaches(sql, "w-bob", "d-shared")).toBe(false);
+        expect(await webhookReaches(sql, "w-bob", null)).toBe(false);
+      });
+
+      it("a delivery checks again: access lost after the event was matched stops it", async () => {
+        expect(await webhookReaches(sql, "w-bob", "d-shared")).toBe(true);
+        await sql`UPDATE docs SET acl_principals = ARRAY['user:alice'] WHERE doc_id = 'd-shared'`;
+        expect(await webhookReaches(sql, "w-bob", "d-shared")).toBe(false);
+        expect(await webhookReaches(sql, "w-alice", "d-shared")).toBe(true);
+        expect(await webhookReaches(sql, "w-missing", "d-shared")).toBe(false);
+      });
     });
     it("a delivery record resets or grows the failure streak", async () => {
       await insertWebhook(sql, { webhookId: "w", workspaceId: WS, url: "https://a", secret: "s", events: [], folderId: null, createdBy: "alice" });

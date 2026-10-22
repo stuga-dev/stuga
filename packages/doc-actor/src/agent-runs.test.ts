@@ -192,6 +192,15 @@ describe("propose under the default `review` policy", () => {
     expect(projected.markdown).toContain("Bravo revised.");
     expect(projected.pending).toBe(2);
     expect(projected.run_id).toBe(runOf(first.json).id);
+    // Each laid-over change with the text it replaces, so the node can say what is approved and what waits.
+    expect(projected.pending_hunks).toEqual([
+      { id: "h1", old_string: "Alpha paragraph.", new_string: "Alpha revised.", review: "review" },
+      { id: "h2", old_string: "Bravo paragraph.", new_string: "Bravo revised.", review: "review" },
+    ]);
+    expect(projected).toMatchObject({ run_created_at: runOf(first.json).created_at, run_review_mode: "review" });
+    // And the text they are laid over, read at the same moment: what everyone else reads.
+    expect(projected.approved_markdown).toContain("Alpha paragraph.");
+    expect(projected.approved_markdown).not.toContain("Alpha revised.");
 
     // Humans (and other agents) still read the untouched document.
     expect(await readMarkdown(dobj)).toMatchObject({ markdown: expect.stringContaining("Alpha paragraph.") });
@@ -261,6 +270,19 @@ describe("propose under an `auto` rule", () => {
     const runs = await listRuns(dobj);
     expect(runs).toHaveLength(1);
     expect(runs[0]!.id).toBe(run.id);
+  });
+
+  it("records the agent's principal as the author of what it applied, never the name its client gave", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    await proposeAuto(dobj, { action: "str_replace", find: "Alpha paragraph.", replace: "Alpha revised." });
+    await dobj.alarm();
+    const named = h.queued.flatMap((m) =>
+      m.kind !== "index_doc" ? [] : [...(m.authors ?? []), ...(m.recordVersion === true ? (m.versionAuthors ?? []) : [])],
+    );
+    expect(named).toContain("agent1");
+    expect(named).not.toContain("Claude (Connector)");
   });
 
   it("tells the reviewer's open page at once, so it shows the change landed", async () => {

@@ -85,6 +85,7 @@ const PINNED = [
   "POST /oauth/token: no credential",
   "POST /oauth/revoke: no credential",
   "* /mcp: each tool decides",
+  "GET /api/agent/session-index: each tool decides",
   "* /ws/:id: no credential",
   "PUT /api/databases/:id/imports/:id/upload: no credential",
   "PUT /api/docs/:id/media/uploads/:id: no credential",

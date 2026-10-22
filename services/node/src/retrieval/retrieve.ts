@@ -19,10 +19,14 @@ export interface RetrieveArgs {
   searchLanguages: () => readonly SearchLanguage[];
   topN: number;
   maxPerDoc?: number;
+  /** Embeddings are off: passages are found by their words alone, and no query is embedded. */
+  keywordOnly?: boolean;
 }
 
 export interface RetrieveResult {
   chunks: RerankCandidate[];
+  /** Some passage returned holds every word of the query, as a search result must; a passage matches on any. */
+  whole: boolean;
   /** The embedding failed, so only the keyword leg ran. */
   degraded: boolean;
   /** The reranker failed, so results are in fusion order. */
@@ -64,22 +68,24 @@ export async function retrieveAndRerank(args: RetrieveArgs): Promise<RetrieveRes
   const { sql, aiCfg, alias, principals, workspaceId, query, scopeDocIds, topN, embeddingDims, searchLanguages } = args;
 
   let queryEmbedding: number[] | null = null;
-  try {
-    const e = await embed(aiCfg, [query], "query");
-    queryEmbedding = e.embeddings[0] ?? null;
-    await insertAiUsage(sql, {
-      alias,
-      workspaceId,
-      docId: null,
-      kind: "embedding",
-      model: aiCfg.embed.model,
-      inputTokens: e.inputTokens,
-    }).catch(() => {});
-  } catch (e) {
-    console.warn("retrieve embed failed, degrading to keyword-only", {
-      workspaceId,
-      err: e instanceof Error ? e.message : String(e),
-    });
+  if (!args.keywordOnly) {
+    try {
+      const e = await embed(aiCfg, [query], "query");
+      queryEmbedding = e.embeddings[0] ?? null;
+      await insertAiUsage(sql, {
+        alias,
+        workspaceId,
+        docId: null,
+        kind: "embedding",
+        model: aiCfg.embed.model,
+        inputTokens: e.inputTokens,
+      }).catch(() => {});
+    } catch (e) {
+      console.warn("retrieve embed failed, degrading to keyword-only", {
+        workspaceId,
+        err: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   const candidates = await askDocs(sql, {
@@ -110,8 +116,11 @@ export async function retrieveAndRerank(args: RetrieveArgs): Promise<RetrieveRes
       outputTokens: reranked.usage.outputTokens,
     }).catch(() => {});
   }
+  const chunks = capPerDoc(reranked.chunks, topN, args.maxPerDoc ?? MAX_PER_DOC);
+  const holdingAll = new Set(candidates.filter((c) => c.kw_whole));
   return {
-    chunks: capPerDoc(reranked.chunks, topN, args.maxPerDoc ?? MAX_PER_DOC),
+    chunks,
+    whole: chunks.some((c) => holdingAll.has(c as (typeof candidates)[number])),
     degraded: queryEmbedding === null,
     rerankDegraded: reranked.degraded,
   };

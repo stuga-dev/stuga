@@ -59,6 +59,7 @@ import {
   trashPagesOf,
   updateWebhook,
   upsertAgentRun,
+  webhookReaches,
 } from "@stuga/db";
 import type { IndexMessage, NotifyDeliverMessage, RunIndexEntry } from "@stuga/protocol/internal/jobs";
 import { folderReviewChain } from "../authz/review-mode.js";
@@ -128,7 +129,9 @@ export function jobsDb(sql: Sql) {
     insertWorkspaceEvent: (e: WorkspaceEventInsert) => insertWorkspaceEvent(sql, e),
     getWorkspaceEvent: (id: number) => getWorkspaceEvent(sql, id),
     purgeWorkspaceEvents: (days: number) => purgeWorkspaceEvents(sql, days),
-    matchingWebhooks: (workspaceId: string, type: string, folderIds: string[]) => matchingWebhooks(sql, workspaceId, type, folderIds),
+    matchingWebhooks: (workspaceId: string, type: string, folderIds: string[], docId: string | null) =>
+      matchingWebhooks(sql, workspaceId, type, folderIds, docId),
+    webhookReaches: (webhookId: string, docId: string | null) => webhookReaches(sql, webhookId, docId),
     getWebhook: (webhookId: string) => getWebhook(sql, webhookId),
     recordWebhookDelivery: (webhookId: string, status: number | null, ok: boolean) => recordWebhookDelivery(sql, webhookId, status, ok),
     updateWebhook: (workspaceId: string, webhookId: string, patch: { active?: boolean }) =>

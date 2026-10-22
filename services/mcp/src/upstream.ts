@@ -7,7 +7,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { CallToolRequest, ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolRequest, GetPromptRequest, GetPromptResult, ListPromptsResult, ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
 import { AGENT_CLIENT_HEADER, AGENT_MODEL_HEADER } from "@stuga/protocol/api/headers";
 import type { ResolvedConfig } from "./config.js";
 import type { NodeSignIn } from "./sign-in.js";
@@ -18,6 +18,8 @@ export interface UpstreamClient {
   listTools(): Promise<ListToolsResult>;
   /** A CallToolResult, or the legacy `toolResult` shape an old server might send. */
   callTool(params: CallToolRequest["params"]): Promise<{ [key: string]: unknown }>;
+  listPrompts(): Promise<ListPromptsResult>;
+  getPrompt(params: GetPromptRequest["params"]): Promise<GetPromptResult>;
 }
 
 export type UpstreamState = "connecting" | "signing-in" | "ready" | "failed";

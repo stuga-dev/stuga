@@ -95,6 +95,8 @@ export interface VersionListing {
   head_seq: number;
   /** Whether the caller may restore and delete versions: they manage the doc and it is not locked. */
   can_manage: boolean;
+  /** Each agent among the versions' authors → the person it acts for, null when the node cannot say. */
+  agents?: CommentAgents;
 }
 
 /** Listing orders the server accepts; anything else falls back to its default. */

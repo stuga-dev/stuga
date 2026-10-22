@@ -110,19 +110,20 @@ describe("the /mcp contract", () => {
     expect(surface).toEqual({
       workspaces: { arguments: ["action", "workspace_id"], actions: ["list", "instructions"] },
       docs: { arguments: ["action", "doc_id", "parent_id", "workspace_id"], actions: ["list", "metadata"] },
-      search: { arguments: ["collection_id", "limit", "q", "workspace_ids"], actions: null },
+      search: { arguments: ["collection_id", "limit", "q", "query", "workspace_ids"], actions: null },
       markdown: { arguments: ["action", "doc_id", "workspace_id"], actions: ["read", "status", "provenance"] },
       comments: { arguments: ["doc_id", "workspace_id"], actions: null },
       folders: { arguments: ["workspace_id"], actions: null },
       events: { arguments: ["after", "limit", "mine", "types", "workspace_id"], actions: null },
       collections: { arguments: ["action", "collection_id", "workspace_id"], actions: ["list", "open"] },
-      retrieve: { arguments: ["collection_id", "limit", "q", "workspace_ids"], actions: null },
+      retrieve: { arguments: ["collection_id", "limit", "q", "query", "workspace_ids"], actions: null },
       databases: { arguments: ["action", "database_id", "row_id", "table", "workspace_id"], actions: ["list", "schema", "status", "page"] },
       query: { arguments: ["database_id", "params", "sql", "workspace_id"], actions: null },
+      remember: { arguments: ["points", "workspace_id"], actions: null },
       docs_create: { arguments: ["parent_id", "title", "workspace_id"], actions: null },
       markdown_append: { arguments: ["doc_id", "heading", "revises", "text", "workspace_id"], actions: null },
       markdown_edit: {
-        arguments: ["action", "citations", "doc_id", "edits", "find", "replace", "replace_all", "revises", "text", "workspace_id"],
+        arguments: ["action", "citations", "doc_id", "edits", "find", "new_string", "old_string", "replace", "replace_all", "revises", "text", "workspace_id"],
         actions: ["write", "str_replace", "cited_edits"],
       },
       comments_add: { arguments: ["body", "doc_id", "parent_num", "quote", "workspace_id"], actions: null },
@@ -193,15 +194,17 @@ describe("the /mcp contract", () => {
     expect(required).toEqual({
       workspaces: ["action"],
       docs: ["action", "workspace_id"],
-      search: ["q", "workspace_ids"],
+      // `q`, or `query` for a model that names it so: the tool asks for one of them.
+      search: ["workspace_ids"],
       markdown: ["action", "doc_id", "workspace_id"],
       comments: ["doc_id", "workspace_id"],
       folders: ["workspace_id"],
       events: ["workspace_id"],
       collections: ["action", "workspace_id"],
-      retrieve: ["q", "workspace_ids"],
+      retrieve: ["workspace_ids"],
       databases: ["action", "workspace_id"],
       query: ["database_id", "sql", "workspace_id"],
+      remember: ["points", "workspace_id"],
       docs_create: ["title", "workspace_id"],
       markdown_append: ["doc_id", "text", "workspace_id"],
       markdown_edit: ["action", "doc_id", "workspace_id"],
@@ -228,6 +231,8 @@ describe("the /mcp contract", () => {
     );
     expect(hints).toEqual({
       ...Object.fromEntries(READ_TOOLS.map((name) => [name, READ])),
+      // It writes no text; making My notes once is the same however often it is asked.
+      remember: { ...ADDS, idempotentHint: true },
       docs_create: ADDS,
       markdown_append: { ...ADDS, ...FETCHES },
       markdown_edit: { ...CHANGES, ...FETCHES },
@@ -314,7 +319,7 @@ describe("the /mcp contract", () => {
 
   it("answers a search with documents that name their workspace and link, without per-workspace scores", async () => {
     vi.mocked(searchDocs).mockResolvedValueOnce([
-      { doc_id: "d1", title: "Plan", doc_type: "prose", page_of: null, page_row: null, updated_at: "2026-10-01T09:00:00.000Z", snippet: "the plan", kw_rank: 3, sem_score: 0.4, score: 0.9 },
+      { doc_id: "d1", title: "Plan", doc_type: "prose", page_of: null, page_row: null, updated_at: "2026-10-01T09:00:00.000Z", snippet: "the plan", kw_rank: 3, kw_whole: true, sem_score: 0.4, score: 0.9 },
     ]);
     expect(JSON.parse(await callText("search", { q: "plan" }))).toEqual({
       query: "plan",
@@ -340,10 +345,16 @@ describe("the /mcp contract", () => {
     });
   });
 
-  it("refuses retrieval with fixed wording when semantic search is off, for one workspace or all", async () => {
-    const wording =
-      "error: Semantic search is off on this node — use `search` for keyword search instead";
-    expect(await callText("retrieve", { q: "anything" })).toBe(wording);
-    expect(await callText("retrieve", { q: "anything", workspace_ids: ["*"] })).toBe(wording);
+  it("answers retrieval by the question's words when semantic search is off, and says so", async () => {
+    vi.mocked(retrieveAndRerank).mockResolvedValue({
+      chunks: [{ doc_id: "d1", title: "Plan", chunk_index: 0, content: "Ship in May.", heading_path: null, score: 0.8 }],
+      degraded: true,
+    } as never);
+    for (const workspace_ids of [undefined, ["*"]]) {
+      const out = JSON.parse(await callText("retrieve", { q: "anything", ...(workspace_ids ? { workspace_ids } : {}) }));
+      expect(out).toMatchObject({ passages: [{ doc_id: "d1", content: "Ship in May." }], degraded: false, semantic: false });
+      expect(out.keyword_note).toMatch(/^Semantic search is off on this node, so these passages were found by the question's words/);
+    }
+    expect(vi.mocked(retrieveAndRerank).mock.calls.every(([args]) => args.keywordOnly === true)).toBe(true);
   });
 });

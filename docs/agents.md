@@ -184,6 +184,14 @@ sets it instead. The first time Claude uses a tool, the node's consent page open
 whatever the node's address, and the connection is listed as **Claude**. Its tools are named
 `mcp__plugin_stuga_stuga__<tool>`.
 
+Each new, cleared or compacted session starts with an index of the wiki pages Claude can read:
+their ids, titles, folders and dates, team pages first and your own [My notes](#my-notes) after
+them, in at most 9,000 characters. Your newest notes keep their place however many team pages there
+are, and the index says how many notes you have. A resumed session gets none. The plugin's hook asks the node's
+[`GET /api/agent/session-index`](api.md#the-session-index) with the connection's own sign-in,
+refreshing it when it has expired, and the session starts without the index when the node does not
+answer within two and a half seconds or nobody has signed in yet.
+
 In Cowork on your computer the plugin runs the same server against `http://127.0.0.1:8787`, since
 Cowork does not ask for plugin settings. Claude on the web loads only its skill.
 
@@ -255,7 +263,7 @@ downloaded `stuga.mcpb` and click **Install**. The extension asks for:
 
 Then quit Claude completely and open it again. Closing the window leaves it running. When Claude
 first starts the extension without a key, the node's consent page opens in your browser; approve it
-and the tools appear.
+and the tools appear. When Claude first asks to use **Save to Stuga**, choose **Always allow**.
 
 The file carries no key, so it is safe to pass around. It is one extension for every node:
 installing another node's replaces it, and changing **Stuga address** in Claude's extension settings
@@ -318,8 +326,8 @@ signs in like Claude Code. Any other client sends a key as `Authorization: Beare
 ## The stdio server
 
 `stuga-mcp.js`, which the Claude Desktop extension and the Stuga plugin run, forwards to the node's
-`/mcp`: the tools, their wording, the instructions and every check are the node's own, whatever its
-version. It adds one thing only a process on your machine can do: read a file there.
+`/mcp`: the tools, the prompts, their wording, the instructions and every check are the node's own,
+whatever its version. It adds one thing only a process on your machine can do: read a file there.
 `databases_add` action `import` takes `file`, a CSV or JSONL path on that machine; the server stages
 the import with `start_import`, uploads the file and commits it, and hands the agent the table's
 Import dialog link when the file is larger than the node accepts. `media_upload` action `upload`
@@ -336,8 +344,14 @@ readable only by you. When the node stops accepting them, the server opens a new
 
 At startup it waits up to three seconds for the node, so the instructions a client keeps are the
 node's. When the node has not answered by then, the server starts with instructions that say it is
-still connecting, and announces the tools once the node answers. A tool call waits up to 50 seconds
-for the node or the sign-in, then says what it is waiting for.
+still connecting, and announces the node's tools and prompts once the node answers. A list of tools
+or prompts waits two seconds for the node. While the node is out of reach or the sign-in waits, it
+answers with the lists the node last gave this connection, kept per node address and key in
+`~/.config/stuga/catalog.json`, readable only by you; before the node has ever answered, with every
+tool and prompt of the server's own version. A client that lists them once at launch still has them.
+An error the node answers with is passed on as the node gave it, and a node too old for prompts lists
+none. A tool call waits up to 50 seconds for the node or the sign-in, then says what it is waiting
+for, and nothing is sent.
 
 It reads these settings:
 
@@ -590,7 +604,8 @@ says so.
 Only the run's reviewer, the people who may approve it, and the item's owner and workspace admins
 see the text of a change that has not landed (waiting, rejected or in conflict), and the document
 before and after its run. Anyone else who can read the item sees that the run exists, how it went,
-and the changes that landed, which version history shows too.
+and the changes that landed, which version history shows too. Version history names an agent by the
+person it acts for ("Liv's agent"), as comments do.
 
 The propose reply carries `review` and `reason`, so an agent can explain what happened. `docs`
 action `metadata` (and `GET /api/docs/:id` for an agent) answers the same question before writing:
@@ -734,12 +749,121 @@ How agents get them:
   or a comment polls this instead of re-reading everything. The tool's `mine: true` keeps the
   decisions on the agent's own proposals and the replies in comment threads it started. Event types:
   [api.md](api.md#the-event-feed).
-- **Webhooks.** Workspace owners and admins can send the same events to a URL, signed and retried.
-  See [api.md](api.md#webhooks).
+- **Webhooks.** Workspace owners and admins can send the same events to a URL, signed and retried,
+  for the documents the hook's creator can read. See [api.md](api.md#webhooks).
+
+## Save to Stuga and Ask Stuga
+
+Say **Save to Stuga** to your AI, or the same in your language, and it files what you told it into
+your team's wiki or your own notes. Say **Ask Stuga**, or ask what you or your team decided, and it
+answers from Stuga, saying who wrote each point and when. The tool descriptions teach the model both
+phrases in every interface language, since a bare "remember this" is taken by an assistant's own
+memory.
+
+- **Saving.** `remember` takes 1 to 20 points, each a `text`, an optional `topic`, and an optional
+  `source` (the meeting, email or document it came from, and when; none for what you told the agent
+  yourself), and writes no text itself. It answers with whom the connection acts for (`user`: their
+  Stuga name and username), and for each point up to five places, best first: a page that says the
+  point already; pages about it, whose title its topic names or which it names (a page whose
+  approved text is empty, as a new page's is while all of it waits, is found by its title); folders
+  whose name or instructions for agents fit the point and hold no page about it, for a new page
+  (`kind: "new_page"`); then other pages that hold its words. Each page comes with the section it
+  fits under (never the page's title heading: null for the page's opening, or a page only its title
+  fits), why, and an excerpt. A page found by common words alone is left out (a word more than one
+  page found holds, or one search leaves out, such as "with"), and so is a page found by one rarer
+  word when the point names a page by its title or a page says it already; a word in an email or
+  web address is no reason, and a section names a topic by the same word, never another form of it.
+  A page of your My notes is offered only when nothing of the wiki is about the point. Each place
+  has the [review level](#agent-changes-wait-for-review-or-apply-at-once) the caller's own write
+  there gets: an agent's by the page, a person's at review. Beside them come the sentences that
+  already say the point (`already_saved`: a sentence that holds its words and states them, not a
+  question, a denial or struck-through text), and the sentences it may make untrue or that may say
+  it already in other words (`possibly_replaces`, hint `likely_duplicate`). Numbers or dates alone
+  never make a match. When the point names a page by a title that reads as a name (one never
+  written in lower case, as "Initech", not "Refunds"), the other pages in its folder are about
+  something else of the same kind: Acme's page is no place for Initech's terms, and none of its
+  sentences is one Initech's replaces. A sentence that names someone the point does not, by a
+  possessive or such a page's title ("Globex's refund window" for Acme's), is not one it replaces
+  either. It finds them with the same search as `retrieve`, by keywords and, when embeddings are
+  on, by meaning, among the documents you can read, and returns the instructions for agents of those
+  places and of up to 20 folders that have some, by title. A point keeps the language of what it
+  came from or of the page it belongs on. When only words were matched (semantic search is off) and
+  no page found is about a point, none saying it, holding a sentence it changes, named by it or
+  holding two of its words, the point carries a `note`: a page on it may be written in another
+  language, so the agent lists the folder it belongs in, or plans again with the point's key words
+  in that language, before it makes a new page. The agent then reads the best page and corrects the
+  sentence a point changes, adds the point under its section, or makes a new page in the folder
+  where it belongs, else in My notes. Each of these is an ordinary write: the page's
+  level decides whether it waits for you, for a colleague, or applies at once. Afterwards the agent
+  tells you what it saved where, what was already there, and what waits for approval, and when it
+  wrote nothing, says so.
+- **Who said it, and when.** What you tell the agent yourself is saved without your name or a date
+  ("per Liv", "noted on 2026-10-22"): Stuga's version history records who changed what and when. A
+  point from a meeting, an email or a document goes in with that as its `source`, cited in the text
+  as the place's instructions ask, else in a few words after it ("customer sync, 2026-10-21"), and is
+  never attributed to you. Your name goes in only where a point is about you ("Liv is on call on
+  Mondays").
+- **Asking.** `search` and `retrieve` give an agent, for each document, when it last changed
+  (`updated_at`), who made its latest version (`last_edited_by`: a person by name, an agent or an
+  AI co-author by the person it worked for, as "Liv's agent"; for a page with no version yet, who
+  created it), `ai_edits` (`none`, `reviewed`, or `unreviewed` while an AI change that applied
+  directly is waiting to be marked reviewed), and `pending_changes`: the AI changes proposed to it
+  that wait for approval and are not in its text, by who asked for them (`asked_by`: `user`, the
+  person the agent acts for, through it, another of their agents or their AI co-author; `others`),
+  whom they wait for (`waits_for`: `review`, the person who asked the AI; `colleague`, someone else)
+  and since when. The changes you asked for are listed in `proposed`, each as it would land: the
+  approved text it changes (`approved_now`, empty when it adds, as on a page with no approved text)
+  and what that text reads once approved (`after_approval`, empty when it removes it), cut at 200
+  characters. A change one of your agents made to another of its waiting changes is told as one
+  with it, from the approved text to where they end. Up to six per document are listed, those
+  holding the most words of the question first; with passages, each goes on the passage it lands
+  in, and one that lands in no passage found is listed on the document's first, with its `section`,
+  only when it holds a word of the question. When fewer are listed than wait, `note` says so ("1 of
+  4 listed here; read the page for the rest"). Other people's changes are counted only. So one call
+  can answer "the page says 14 days; a change to 30 days waits for a colleague". The agent answers
+  with the approved text and says what waits. A person's search and retrieval over REST answer as
+  before.
+- **What waits, in a read.** An agent's `markdown` read lays the changes made through its connection
+  over the text, so its next edits line up with them, and opens with a block that says the text is
+  not the approved text and lists each change as it would land ("Approved now: … → after approval:
+  …", or that the page has no approved text yet) and who approves it, saying they are the user's
+  own changes, from this conversation or an earlier one. Then it lists the waiting changes the user
+  asked for through another of their agents or their AI co-author, told the same way, and counts
+  other people's; none of those is in the text.
+- **Finding.** When no document holds every word of an agent's `search`, it lists those holding
+  some of them, the most and rarest first, and says `partial`; a person's search box still finds
+  only documents holding every word. With embeddings off, an agent's `retrieve` returns the passages
+  that hold the question's words (`semantic: false`) instead of refusing, and says `partial` when
+  none holds every word; both notes remind the agent that pages may be written in another language,
+  to try the words in it. A heading with no text of its own (a page's title heading, or a section
+  whose text is all in subsections) is never a passage. Both take `query` as another name for `q`.
+- **Whom it acts for.** The server instructions and `workspaces` action `list` (`user`) name the
+  person the connection acts for, by their Stuga name and username, so an agent never names you by a
+  name it guessed from a file path or an email address, and they tell it that what you say is saved
+  without your name or a date.
+- **Prompts.** The connection offers two MCP prompts, which a client lists in its prompt menu:
+  **Save to Stuga** (`save`, with `text`) and **Ask Stuga** (`ask`, with an optional `topic` of up
+  to 2,000 characters). Each sends one line in your own words. A read-only connection is offered Ask
+  Stuga only, and no `remember`.
+- **Claude.** When Claude first asks to use **Save to Stuga**, choose **Always allow**, or it asks
+  again every time.
+
+### My notes
+
+Each person has one folder of their own in each workspace, made the first time their AI plans a
+save there and named **My notes** in the language they read Stuga in. It sits at the top level,
+owned by them and shared with nobody, a workspace admin included, and AI edits in it apply directly.
+A point that fits no page of the wiki goes there, one page per topic. You can rename, move or share
+it like any folder you own, and it stays your My notes; `remember` says in `home.shared` whether
+anyone else can read it now. A key confined to some folders gets none unless its folders include it.
+
+A page or folder in My notes that anyone else can read, after you share it or a folder above it, is
+at `review` (**Reviewed by whoever asked the AI**) at least for every agent, yours included: no agent
+changes a shared note unseen. `docs` action:metadata says so in its `review` reason.
 
 ## The tools
 
-`/mcp` registers nineteen tools from `@stuga/agent-surface`, and runs them in-process over the
+`/mcp` registers twenty tools from `@stuga/agent-surface`, and runs them in-process over the
 node's own code, through the same permission checks and run ledger as the REST routes. The stdio
 server lists the node's tools as they are. Reads and writes are separate tools, and each carries MCP
 annotations: `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint`. A client shows
@@ -750,26 +874,27 @@ the item's `agent_mode` decide what a call does.
 
 | Tool | Actions and use |
 |---|---|
-| `workspaces` | `list` · `instructions`. The workspaces this connection reaches and the node each is on ([above](#one-connection-and-which-node-a-call-lands-on)), and one workspace's instructions for agents. |
+| `workspaces` | `list` · `instructions`. The workspaces this connection reaches and the node each is on ([above](#one-connection-and-which-node-a-call-lands-on)), whom the connection acts for (`user`), and one workspace's instructions for agents. |
 | `docs` | `list` · `metadata`. `list` takes an optional folder (`parent_id`, null for the root). `metadata` includes this agent's `review` answer for the document and its `instructions`. |
-| `search` | Hybrid keyword and semantic search that returns documents, across `workspace_ids`, optionally within a collection. |
-| `markdown` | `read` · `status` · `provenance`. `read` shows the document's instructions in a marked block, then the text with the agent's own pending edits. `status` reports what became of its edits. |
+| `search` | Hybrid keyword and semantic search that returns documents, across `workspace_ids`, optionally within a collection. Each result says who last changed it and when, and what waits for approval ([Asking](#save-to-stuga-and-ask-stuga)). |
+| `markdown` | `read` · `status` · `provenance`. `read` lists the changes that wait for approval, then shows the document's instructions in a marked block, then the text with the waiting changes made through the connection laid over it. `status` reports what became of its edits. |
 | `comments` | A document's comments. An `author` of `panel:<alias>` is that person's [in-app co-author](#questions-in-comments), and the agent's own comments carry `you: true`. |
 | `folders` | The folders the credential can read in the workspace. |
 | `events` | What changed in the workspace since `after`, optionally narrowed by `types`. Without `after` it starts from the newest event. |
 | `collections` | `list` · `open`. The saved document sets of the credential's person, which `search` and `retrieve` can be scoped to. `open` lists the members the credential can read ([collections.md](collections.md)). |
-| `retrieve` | The passages most relevant to a question across `workspace_ids`, with their sources, optionally within a collection ([rag-cross-doc-qa.md](rag-cross-doc-qa.md)). |
+| `retrieve` | The passages most relevant to a question across `workspace_ids`, with their sources, who last changed each and what waits for approval, optionally within a collection ([rag-cross-doc-qa.md](rag-cross-doc-qa.md)). With embeddings off, the passages that hold the question's words. |
 | `databases` | `list` · `schema` · `status` · `page`. `schema` returns tables, columns with their physical SQL names and `description` (what the column holds, written by the people here), saved views and the database's `instructions`. `page` returns the `doc_id` of a row's page, or null when it has none. |
 | `query` | One read-only `SELECT` (SQLite dialect) against one database, with `?` parameters. At most 8 KB of SQL, 1,000 rows, 1 MB per value and five seconds of work. `WITH RECURSIVE` is refused, because a recursive query that never ends cannot be stopped. |
 
-**Writes.** None is idempotent. *Destructive* ones may replace or remove what exists; *open-world*
-ones may make the node download an image or file from the web.
+**Writes.** None but `remember` is idempotent. *Destructive* ones may replace or remove what exists;
+*open-world* ones may make the node download an image or file from the web.
 
 | Tool | Actions and use | Destructive | Open-world |
 |---|---|---|---|
+| `remember` | Save to Stuga: where each of 1 to 20 points belongs ([above](#save-to-stuga-and-ask-stuga)). It writes no text, and makes the person's [My notes](#my-notes) the first time. | no | no |
 | `docs_create` | A document with a title, optionally in a folder. Returns its `instructions`. | no | no |
-| `markdown_append` | Adds text at the end of a document, or of the section under `heading`, and touches nothing else. | no | yes |
-| `markdown_edit` | `write` · `str_replace` · `cited_edits`. `write` replaces the whole document, `str_replace` swaps `find` for `replace` (one occurrence, or all with `replace_all`), and `cited_edits` makes several exact edits at once with citations that become footnotes. | yes | yes |
+| `markdown_append` | Adds text at the end of a document, or under `heading`, and touches nothing else. Under a heading it goes at the end of that heading's own text: before its first subsection when it has any (so under a page's title heading, in the page's opening), and the answer says where it went and names the subsections; else at the end of its section. A heading the page lacks is refused with the headings it has, or, on a page with none, a note to put the heading in the text. | no | yes |
+| `markdown_edit` | `write` · `str_replace` · `cited_edits`. `write` replaces the whole document, `str_replace` swaps `find` for `replace` (one occurrence, or all with `replace_all`; `old_string` and `new_string` are the same), and `cited_edits` makes several exact edits at once with citations that become footnotes. | yes | yes |
 | `comments_add` | A comment on a document, a reply in a thread (`parent_num`), or a comment on a passage (`quote`, its exact text). It may mention at most 5 people, and those who can read the document are notified, as are the document's owner and, for a reply, the thread's people ([Agents in comment threads](#agents-in-comment-threads)). | no | no |
 | `media_upload` | `upload` · `upload_from_url` · `start_upload`. Stores an image or any other file with a document, or a file with a database: from base64 of up to 3 MB with its `name`, from a public URL the node downloads, or, after `start_upload`, from the `upload_url` the caller sends it to itself, by `upload_id`. A document gets the Markdown that places it, an image shown and any other file a link that downloads; a database gets the link for a `files` cell. | no | yes |
 | `collections_edit` | `create` · `rename` · `delete` · `add_items` · `remove_items`. `add_items` skips ids the credential cannot read and says how many. | yes | no |
@@ -799,14 +924,13 @@ for `import` and `upload` ([above](#the-stdio-server)).
 - Each result names its `workspace_id` and carries a `url` that opens the document.
 - `collection_id` narrows a search of exactly one workspace.
 - `unavailable: [{ workspace_id, reason }]` lists each workspace the call could not cover: one the
-  connection cannot use, or, for `retrieve`, one where embeddings are off. The agent is told
-  to say so and never to present the rest as complete. When the only workspace named fails, its
-  reason is the tool's error.
+  connection cannot use. The agent is told to say so and never to present the rest as complete.
+  When the only workspace named fails, its reason is the tool's error.
 
 ### Read-only credentials
 
-A read-only key, or a connection given **Read only**, is offered the eleven reading tools and
-nothing else. The server instructions say that it may change nothing, and to tell the user what it
+A read-only key, or a connection given **Read only**, is offered the eleven reading tools and the
+Ask Stuga prompt, and nothing else. The server instructions say that it may change nothing, and to tell the user what it
 would change instead. `workspaces` action `list` reports `access: "read"`. A write tool it names
 anyway is unknown to it, and the node's own read-only check stands behind that. Ask over REST is a
 read too, and a read-only key keeps its own Ask threads ([api.md](api.md#read-only-keys)).

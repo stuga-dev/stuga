@@ -142,7 +142,17 @@ export class DocActor implements Actor<SessionMeta> {
     const feedback = await this.ledger.feedbackFor(agentAlias);
     return Response.json({
       markdown: view.markdown,
-      ...(view.runId && view.pending.length > 0 ? { run_id: view.runId, pending: view.pending.length } : {}),
+      // Each laid-over change with the text it replaces, so the agent's answer can tell what is approved from what waits.
+      ...(view.runId && view.pending.length > 0
+        ? {
+            run_id: view.runId,
+            pending: view.pending.length,
+            pending_hunks: view.pending.map(({ id, old_string, new_string, review }) => ({ id, old_string, new_string, review })),
+            // The text they are laid over, read at the same moment, so the node can say what each changes as it would land.
+            approved_markdown: view.approved,
+            ...(view.run ? { run_created_at: view.run.created_at, run_review_mode: view.run.review_mode } : {}),
+          }
+        : {}),
       ...(feedback.length > 0 ? { feedback } : {}),
     });
   }

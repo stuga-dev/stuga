@@ -302,6 +302,7 @@ TABLE folders
   approver_group text
   created_at timestamp with time zone NOT NULL DEFAULT now()
   folder_id text NOT NULL
+  home_of text
   inherits_perms boolean NOT NULL DEFAULT true
   own_grants jsonb NOT NULL DEFAULT '{"c": [], "p": [], "w": []}'::jsonb
   owner text NOT NULL
@@ -316,6 +317,7 @@ TABLE folders
   CONSTRAINT folders_workspace_id_approver_group_fkey FOREIGN KEY (workspace_id, approver_group) REFERENCES groups(workspace_id, group_id) ON DELETE SET NULL (approver_group)
   CONSTRAINT folders_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
   INDEX folders_acl_gin CREATE INDEX folders_acl_gin ON public.folders USING gin (acl_principals)
+  INDEX folders_home_idx CREATE UNIQUE INDEX folders_home_idx ON public.folders USING btree (workspace_id, home_of) WHERE (home_of IS NOT NULL)
   INDEX folders_parent_idx CREATE INDEX folders_parent_idx ON public.folders USING btree (parent_id)
   INDEX folders_pkey CREATE UNIQUE INDEX folders_pkey ON public.folders USING btree (folder_id)
   INDEX folders_writers_gin CREATE INDEX folders_writers_gin ON public.folders USING gin (acl_writers)
@@ -865,3 +867,5 @@ TABLE workspaces
 
 FUNCTION folder_agent_mode(start_id text) RETURNS text BODY md5:1991aaa5a8bd7c5394242ef5a42ce218
 FUNCTION folder_approver_group(start_id text) RETURNS text BODY md5:20949ec0bf0a9a3218dd84be207c2fe2
+FUNCTION folder_home_of(start_id text) RETURNS text BODY md5:e5faddb5be57fcdcdb4a2cb4a0755fc9
+FUNCTION notes_shared(home text, readers text[]) RETURNS boolean BODY md5:10ca7330a53faaa45e90fcc5b41d3184

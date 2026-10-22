@@ -66,6 +66,9 @@ export function ClaudeDesktopTab({
           <Text size="sm" color="secondary">
             {tRich("agents.claudeDesktop.install", { file: bundleFilename, code: (chunks) => <code>{chunks}</code>, strong: (chunks) => <strong>{chunks}</strong> })}
           </Text>
+          <Text size="sm" color="secondary">
+            {tRich("agents.claudeDesktop.allowSave", { strong: (chunks) => <strong>{chunks}</strong> })}
+          </Text>
           {downloaded && (
             <Banner
               status="success"

@@ -26,7 +26,9 @@ fixed-size windows. `headingAwareChunk` (`packages/ai/src/retrieval/chunk.ts`) s
 its headings:
 
 - each heading and the text beneath it, up to the next heading, is one chunk, and text before the
-  first heading is a preamble chunk;
+  first heading is a preamble chunk; a heading with no text of its own (a page's title heading, or a
+  section whose text is all in subsections) is none, since it holds nothing to cite, and a page of
+  headings alone has no chunk and is found by its title;
 - every chunk records its **heading path** ("Overview > Geophysics > Internal heat"), built from the
   headings above it, which is what a citation shows;
 - headings inside fenced code are ignored;

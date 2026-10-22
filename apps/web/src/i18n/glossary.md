@@ -46,6 +46,11 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
   ユーティリティ, ko 응용 프로그램 → 유틸리티, de Programme → Dienstprogramme, fr Applications →
   Utilitaires, es Aplicaciones → Utilidades, pt-BR Aplicativos → Utilitários). Stuga’s Mac menu-bar app is translated too: its items use
   the rows under “Mac menu bar” below, identically in the web app and the Mac app.
+- **Claude’s tool prompt.** Claude asks before it first uses a tool, naming the tool by its English
+  title: “Save to Stuga”, with “Always allow”. Both stay English, like other apps’ buttons, while the
+  phrase a person says to their AI is translated (see Terms). The model is taught that phrase in every
+  language from `SAVE_TO_STUGA` and `ASK_STUGA` in `@stuga/protocol/domain/ui-languages`, which must
+  match the Terms rows (`phrases.test.ts` checks them).
 - **Quoting a name.** English `“{name}”` becomes zh-Hans `“{name}”`, zh-Hant `「{name}」`,
   ja `「{name}」`, ko `“{name}”`, de `„{name}“`, fr `« {name} »`, es `“{name}”` and
   pt-BR `“{name}”`.
@@ -332,6 +337,9 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
 | provenance | 作者记录 | 作者紀錄 | 作成者の記録 | 작성자 기록 | Urheberschaft | provenance | procedencia | procedência | Which passages an agent wrote, and whether a person accepted them. |
 | MCP endpoint | MCP 端点 | MCP 端點 | MCPエンドポイント | MCP 엔드포인트 | MCP-Endpunkt | point de terminaison MCP | endpoint de MCP | endpoint MCP | |
 | config | 配置 | 設定檔 | 設定 | 구성 | Konfiguration | configuration | configuración | configuração | An agent’s config snippet. |
+| Save to Stuga | 存到 Stuga | 存到 Stuga | Stugaに保存 | Stuga에 저장 | In Stuga speichern | Enregistrer dans Stuga | Guardar en Stuga | Salvar no Stuga | What a person says to their AI. Keep “Stuga” as is. Claude’s own permission prompt shows the tool’s English title, which stays English (see Style). |
+| Ask Stuga | 问问 Stuga | 問問 Stuga | Stugaに聞く | Stuga에 물어보기 | Stuga fragen | Demander à Stuga | Preguntar a Stuga | Perguntar ao Stuga | What a person says to have their AI look in Stuga first. |
+| My notes | 我的笔记 | 我的筆記 | マイノート | 내 노트 | Meine Notizen | Mes notes | Mis notas | Minhas notas | A person’s own folder for what their AI saves, which only they read. Its title is written once, in the person’s language when it is made. |
 
 ### Search
 

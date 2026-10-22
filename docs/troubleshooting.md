@@ -179,7 +179,7 @@ give the node an https address as [Network access](network-access.md#https) desc
 | The log says `ai off`, or a request answers `AI chat is disabled on this node` | Chat is not set up, or its switch is off. Connect a provider under **Built-in AI** in **Settings → This node → AI providers**, or switch **Built-in AI** on there. |
 | **Connect** says the service didn't accept the key | The key is wrong, revoked or for another service. Paste it again. For a service that is not listed, choose **Something else…** and check its **Base URL**. |
 | The log says `a chat provider is saved but offers no model` | Chat stays off until the provider offers a model. Open its **Edit** and choose **Models offered**. |
-| An agent's `retrieve` answers `Semantic search is off on this node` | **Semantic search** is not set up, or its switch is off. Keyword search with `search` still works. |
+| An agent's `retrieve` answers with `semantic: false` | **Semantic search** is not set up, or its switch is off, so passages are found by the question's words alone. Set up **Semantic search** to find them by meaning too. |
 | **Connect** or **Test** cannot reach Ollama on Docker Desktop | Use **Ollama (local)**, which fills in `http://host.docker.internal:11434`, and check that Ollama is running on the host. |
 | **Connect** or **Test** cannot reach Ollama on Docker on Linux | Ollama listens on `127.0.0.1` by default, which the container cannot reach. Make it listen on an address the container can reach, such as `OLLAMA_HOST=0.0.0.0:11434`, and keep that port closed to the network in the host's firewall. |
 | Anthropic or Amazon Bedrock is not listed under **Semantic search** | Both serve chat only here. Use another service there, or leave search matching words. |

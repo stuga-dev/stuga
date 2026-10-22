@@ -15,6 +15,23 @@ export const EMPTY_SCOPE_NOTE =
 /** Agent skills match the leading "Semantic search is off on this node" verbatim to fall back to keyword search. */
 export const RETRIEVE_SEMANTIC_OFF_MESSAGE = "Semantic search is off on this node — use `search` for keyword search instead";
 
+/** Said when no document holds every word of a search, so the agent knows the list is the next best. */
+export const PARTIAL_SEARCH_NOTE =
+  "No document holds every word of this query, so these hold some of them, those holding the most and rarest " +
+  "first: check that a result is about the question before you rely on it, and try other words if none is, in " +
+  "another language too when pages may be written in one.";
+
+/** Said when a node's embeddings are off and its passages were found by their words. */
+export const KEYWORD_PASSAGES_NOTE =
+  "Semantic search is off on this node, so these passages were found by the question's words, not its meaning: if " +
+  "none answers it, try other words, or `search`. Pages may be written in another language than the question: try " +
+  "its words in that language too.";
+
+/** Said when no passage found by its words holds every word of the question. */
+export const PARTIAL_PASSAGES_NOTE =
+  "No passage holds every word of the question, so these hold some of them: check that one answers it before you " +
+  "rely on it. The answer may be on a page written in another language: ask again with the question's words in it.";
+
 /** A workspace a call named but could not cover just now, and why. */
 export interface UnavailableWorkspace {
   workspace_id: string;
@@ -53,6 +70,7 @@ export function renderSearch(
     degraded: parts.some((p) => p.body.degraded),
     semantic: parts.length > 0 && parts.every((p) => p.body.semantic),
     unavailable,
+    ...(parts.some((p) => p.body.partial) ? { partial: true, partial_note: PARTIAL_SEARCH_NOTE } : {}),
     ...(parts.length === 1 && parts[0]!.body.empty_scope ? { note: EMPTY_SCOPE_NOTE } : {}),
   });
 }
@@ -72,13 +90,24 @@ export function renderPassages(
         heading_path: c.heading_path,
         content: c.content,
         url: link(p.origin, c.doc_id),
+        // Who wrote it, when a backend says: an agent cites it.
+        ...(c.updated_at !== undefined ? { updated_at: c.updated_at } : {}),
+        ...(c.last_edited_by !== undefined ? { last_edited_by: c.last_edited_by } : {}),
+        ...(c.ai_edits !== undefined ? { ai_edits: c.ai_edits } : {}),
+        ...(c.pending_changes !== undefined ? { pending_changes: c.pending_changes } : {}),
       })),
     ),
     limit,
   );
+  const keywordOnly = parts.some((p) => p.body.keyword_only === true);
+  // Partial when every workspace that found something found only some of the words.
+  const found = parts.filter((p) => p.body.chunks.length > 0);
+  const partial = found.length > 0 && found.every((p) => p.body.partial === true);
   return JSON.stringify({
     passages,
     degraded: parts.some((p) => p.body.degraded === true),
+    ...(keywordOnly ? { semantic: false, keyword_note: KEYWORD_PASSAGES_NOTE } : {}),
+    ...(partial ? { partial: true, partial_note: PARTIAL_PASSAGES_NOTE } : {}),
     unavailable,
     ...(parts.length === 1 && parts[0]!.body.empty_scope ? { note: EMPTY_SCOPE_NOTE } : {}),
   });

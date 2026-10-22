@@ -346,19 +346,60 @@ export async function deleteWebhook(sql: Sql, workspaceId: string, webhookId: st
 }
 
 /**
- * The active hooks an event reaches: the type matches (or the hook takes every
- * type) and the hook is workspace-wide or rooted at a folder in `folderIds`,
- * the event document's ancestry. An event with no document reaches only
- * workspace-wide hooks.
+ * Whether the creator of hook `w` reads the event's document now, as the feed would show it to
+ * them: they are still a member of the hook's workspace, and the document's readers hold one of
+ * their principals, worked out as a session's are (`user:<alias>`, the workspace's `org:` principal
+ * for anyone but a guest, and their groups). An event with no document needs membership alone. A
+ * workspace admin is no exception: a document shared with nobody else never reaches their hooks.
  */
-export async function matchingWebhooks(sql: Sql, workspaceId: string, type: string, folderIds: string[]): Promise<WebhookRow[]> {
+function creatorReads(sql: Sql, docId: string | null): Fragment {
+  const reads =
+    docId === null
+      ? sql``
+      : sql`AND EXISTS (
+          SELECT 1 FROM docs d
+          WHERE d.doc_id = ${docId} AND d.workspace_id = w.workspace_id
+            AND d.acl_principals && (
+              array_remove(ARRAY['user:' || m.alias, CASE WHEN m.role <> 'guest' THEN 'org:' || m.workspace_id END], NULL)
+              || COALESCE((SELECT array_agg(g.group_id) FROM groups g
+                           WHERE g.workspace_id = m.workspace_id AND g.members @> ARRAY['user:' || m.alias]), ARRAY[]::text[])))`;
+  return sql`EXISTS (
+    SELECT 1 FROM workspace_members m
+    WHERE m.workspace_id = w.workspace_id AND m.alias = w.created_by
+    ${reads})`;
+}
+
+/**
+ * The active hooks an event reaches: the type matches (or the hook takes every
+ * type), the hook is workspace-wide or rooted at a folder in `folderIds`, the
+ * event document's ancestry, and its creator can read the document now
+ * (creatorReads). An event with no document reaches only workspace-wide hooks.
+ */
+export async function matchingWebhooks(
+  sql: Sql,
+  workspaceId: string,
+  type: string,
+  folderIds: string[],
+  docId: string | null,
+): Promise<WebhookRow[]> {
   return sql<WebhookRow[]>`
-    SELECT * FROM webhooks
-    WHERE workspace_id = ${workspaceId}
-      AND active = TRUE
-      AND (cardinality(events) = 0 OR ${type} = ANY(events))
-      AND (folder_id IS NULL OR folder_id = ANY(${folderIds}))
-    ORDER BY created_at, webhook_id`;
+    SELECT w.* FROM webhooks w
+    WHERE w.workspace_id = ${workspaceId}
+      AND w.active = TRUE
+      AND (cardinality(w.events) = 0 OR ${type} = ANY(w.events))
+      AND (w.folder_id IS NULL OR w.folder_id = ANY(${folderIds}))
+      AND ${creatorReads(sql, docId)}
+    ORDER BY w.created_at, w.webhook_id`;
+}
+
+/**
+ * Whether a hook may still be sent an event about `docId`: checked again at each delivery, since a
+ * retry can come after its creator lost access to the document or left the workspace.
+ */
+export async function webhookReaches(sql: Sql, webhookId: string, docId: string | null): Promise<boolean> {
+  const rows = await sql<{ ok: boolean }[]>`
+    SELECT ${creatorReads(sql, docId)} AS ok FROM webhooks w WHERE w.webhook_id = ${webhookId}`;
+  return rows[0]?.ok === true;
 }
 
 /** Record a delivery attempt; `failures` counts consecutive failures and a success resets it. */

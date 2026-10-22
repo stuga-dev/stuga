@@ -9,9 +9,10 @@ vi.mock("@stuga/db", () => ({
   getDoc: vi.fn(),
   deleteVersion: vi.fn(),
   listVersions: vi.fn(async () => []),
+  agentOwners: vi.fn(async () => new Map()),
 }));
 
-const { getDoc, deleteVersion, listVersions } = await import("@stuga/db");
+const { getDoc, deleteVersion, listVersions, agentOwners } = await import("@stuga/db");
 const { routeWorkspaceRequest } = await import("../http/dispatch.js");
 import type { Ctx } from "../auth/context.js";
 import { actorsAnswering, personCtx, type CtxOverrides } from "../testing/ctx.js";
@@ -156,8 +157,15 @@ describe("GET /api/docs/:id/versions", () => {
   });
 
   it("reports the head seq, which may be ahead of every recorded version", async () => {
-    mockListVersions.mockResolvedValueOnce([{ doc_id: "d1", seq: 40 }]);
-    expect(await list(member())).toMatchObject({ versions: [{ seq: 40 }], head_seq: 42 });
+    mockListVersions.mockResolvedValueOnce([{ doc_id: "d1", seq: 40, authors: ["owner-1"] }]);
+    expect(await list(member())).toMatchObject({ versions: [{ seq: 40 }], head_seq: 42, agents: {} });
+  });
+
+  it("names each agent among the authors by the person it acts for, and the sample agent by no one", async () => {
+    vi.mocked(agentOwners).mockResolvedValueOnce(new Map([["agent-k1", "owner-1"]]));
+    mockListVersions.mockResolvedValueOnce([{ doc_id: "d1", seq: 40, authors: ["owner-1", "agent-k1", "agent-gone", "agent-sample"] }]);
+    expect(await list(member())).toMatchObject({ agents: { "agent-k1": "owner-1", "agent-gone": null } });
+    expect(vi.mocked(agentOwners)).toHaveBeenLastCalledWith({}, ["agent-k1", "agent-gone"]);
   });
 
   it("offers restore and delete to the owner and a workspace admin only", async () => {

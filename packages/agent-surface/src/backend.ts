@@ -11,6 +11,7 @@ import type {
   DatabaseViewKind,
   RowInputValue,
 } from "@stuga/protocol/databases/types";
+import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { AgentInstructions } from "@stuga/protocol/domain/instructions";
 import type { AgentFeedback } from "@stuga/protocol/domain/runs";
 import type { AgentRunSummary, AiCitation, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
@@ -88,9 +89,79 @@ export interface SearchBody {
   semantic: boolean;
   /** The collection scope resolved to nothing this credential can read. */
   empty_scope?: boolean;
+  /** No document holds every word of the query: these hold some of them. */
+  partial?: boolean;
 }
 
-export interface RetrievedChunk {
+/**
+ * Who wrote a document, as an agent's recall answer cites it: what a person's REST answer leaves out.
+ * `ai_edits` is "unreviewed" while an AI change applied directly stands that no person has reviewed.
+ * A type alias, so a search hit that carries it keeps the hit's open shape.
+ */
+export type Authorship = {
+  updated_at?: string;
+  last_edited_by?: Array<{ kind: "person" | "agent"; name: string }>;
+  ai_edits?: "none" | "reviewed" | "unreviewed";
+  /**
+   * AI changes proposed to it that wait for approval, by who asked for them and the level they wait at; none of
+   * their text is in it. The user's own are listed in `proposed`, as they would land; others' are counted.
+   */
+  pending_changes?: WaitingChanges[];
+};
+
+/** Who approves a waiting AI change: the person who asked the AI (`review`), or someone else (`colleague`). */
+export type WaitsFor = "review" | "colleague";
+
+/**
+ * Who asked for a waiting AI change: the user the caller acts for (through this agent, another of theirs, or their
+ * AI co-author), or someone else.
+ */
+export type AskedBy = "user" | "others";
+
+/**
+ * One of the user's own waiting changes as it would land on the approved text, cut short: a change to another of
+ * their waiting changes is one with it.
+ */
+export interface ProposedChange {
+  /** The approved text it changes; "" when it adds, as it does on a page with no approved text. */
+  approved_now: string;
+  /** What that text reads once approved; "" when it removes it. */
+  after_approval: string;
+  /** Where it lands, by heading path, when it is listed on a passage of another section ("" before any heading). */
+  section?: string;
+}
+
+/** AI changes to a document that wait at one level, asked for by one side: not in its text until approved. */
+export interface WaitingChanges {
+  /** Absent from an answer that does not tell them apart. */
+  asked_by?: AskedBy;
+  waits_for: WaitsFor;
+  /** How many changes wait. */
+  changes: number;
+  /** When the oldest of them was proposed, at the latest. */
+  since: string;
+  /** The user's own, those about the question first, each as it would land. */
+  proposed?: ProposedChange[];
+  /** Said when `proposed` lists fewer than `changes`: "1 of 4 listed here; read the page for the rest." */
+  note?: string;
+}
+
+/**
+ * One of the reader's own changes that waits, laid over the text it read, as it would land on the approved text:
+ * a change to another of its waiting changes is one with it.
+ */
+export interface PendingChange {
+  /** The approved text it changes; "" when it adds, as it does on a page with no approved text. */
+  approved_now: string;
+  /** What that text reads once approved, as the read shows it; "" when it removes it. */
+  after_approval: string;
+  /** For an addition, the approved line it follows, or, when it goes first, the one it precedes: neither on an empty page. */
+  adds_after?: string;
+  adds_before?: string;
+  waits_for: WaitsFor;
+}
+
+export interface RetrievedChunk extends Authorship {
   doc_id: string;
   title: string;
   content: string;
@@ -102,6 +173,10 @@ export interface RetrieveBody {
   degraded?: boolean;
   /** Embeddings are off on this node; nothing was ranked. */
   ai_disabled?: boolean;
+  /** Embeddings are off on this node, so these passages were found by their words alone. */
+  keyword_only?: boolean;
+  /** Found by their words, and no passage holds every word of the question: these hold some of them. */
+  partial?: boolean;
   empty_scope?: boolean;
 }
 
@@ -110,6 +185,12 @@ export interface MarkdownBody extends Partial<AgentInstructions> {
   markdown: string;
   run_id?: string | null;
   pending?: number;
+  /** An agent's read: its own changes laid over `markdown`, each as it would land on the approved text. */
+  pending_changes?: PendingChange[];
+  /** When the run holding them began. */
+  pending_since?: string;
+  /** Other changes here that wait, by who asked and level: not in `markdown`. The user's other agents' are listed. */
+  others_waiting?: WaitingChanges[];
   /** The reader's rejections here it has not acted on; repeated until it proposes to the document again. */
   feedback?: AgentFeedback[];
 }
@@ -141,11 +222,18 @@ export interface ProposeFeedback {
   revised?: string[];
 }
 
+/** Where an append under a heading with subsections went: before the first of them. */
+export interface ProposePlacement {
+  placement_note?: string;
+}
+
 export type ProposeBody =
   | ({ mode: "proposed"; run: AgentRunSummary; pending: number; reason: string; media_note?: string } & ProposeInstructionLabels &
-      ProposeFeedback)
+      ProposeFeedback &
+      ProposePlacement)
   | ({ mode: "auto_applied"; run: AgentRunSummary; seq: number; reason: string; review_url: string; media_note?: string } & ProposeInstructionLabels &
-      ProposeFeedback)
+      ProposeFeedback &
+      ProposePlacement)
   | { mode: "noop"; message: string };
 
 export interface ProvenancePassage {
@@ -316,6 +404,122 @@ export interface ImportOptions {
 /** The commit's answer, or the data could not reach the node and the person must finish the import. */
 export type ImportOutcome = { status: number; body: Record<string, unknown> } | { hand_off: { page_url: string; why: string } };
 
+/** One point a `remember` places. */
+export interface RememberPoint {
+  text: string;
+  topic?: string;
+  /** Where it came from (a meeting, an email, a chat, and when), kept out of `text`. */
+  source?: string;
+}
+
+/** How a write to a place would be reviewed, and why, as `docs` action:metadata reports it. */
+export interface PlaceReview {
+  mode: ReviewMode;
+  reason: string;
+}
+
+/** A page a point could go in. */
+export interface RememberCandidate {
+  kind: "page";
+  doc_id: string;
+  title: string;
+  /** The folders it is in, from the top: a folder the user cannot read is "…". */
+  folder_path: string[];
+  /** The heading of the section it fits under, for `markdown_append`'s `heading`; null for the page's opening. */
+  section: string | null;
+  heading_path: string | null;
+  why: string;
+  excerpt: string;
+  review: PlaceReview;
+  /** Labels of the instructions for agents below the workspace that apply there; their text is in the plan's `instructions`. */
+  instructions_labels?: string[];
+  /** It is in the user's own My notes. */
+  in_my_notes?: true;
+  url?: string;
+}
+
+/** A folder a point could start a page in: its name or its instructions for agents fit the point, and no page there is about it. */
+export interface RememberNewPage {
+  kind: "new_page";
+  folder_id: string;
+  /** The folders from the top, the folder itself last. */
+  folder_path: string[];
+  why: string;
+  review: PlaceReview;
+  instructions_labels?: string[];
+}
+
+/** A passage that already says the point. */
+export interface AlreadySavedPassage {
+  doc_id: string;
+  title: string;
+  heading_path: string | null;
+  /** The sentence that says it, as written; several when the point has several. */
+  sentence: string;
+  excerpt: string;
+  in_my_notes?: true;
+  url?: string;
+}
+
+/** A sentence the point may make untrue (`possibly_replaces`), or that says it already in other words (`likely_duplicate`). */
+export interface ReplaceablePassage {
+  doc_id: string;
+  title: string;
+  heading_path: string | null;
+  sentence: string;
+  hint: "possibly_replaces" | "likely_duplicate";
+  /** Whether the user can edit it; when not, tell them instead of writing beside it. */
+  can_edit: boolean;
+  review: PlaceReview;
+  in_my_notes?: true;
+  url?: string;
+}
+
+export interface RememberPlanPoint {
+  /** Its place in the call, from 0. */
+  index: number;
+  text: string;
+  topic: string | null;
+  source: string | null;
+  candidates: Array<RememberCandidate | RememberNewPage>;
+  already_saved: AlreadySavedPassage[];
+  possibly_replaces: ReplaceablePassage[];
+  /**
+   * Said when the plan matched words only and no page found is about the point: a page on it may be written in
+   * another language, which a word search cannot reach.
+   */
+  note?: string;
+}
+
+/** The person's own "My notes" folder in the workspace. */
+export interface RememberHome {
+  folder_id: string;
+  title: string;
+  /** This call made it. */
+  created: boolean;
+  /** Someone besides the user can read it now: they shared it. */
+  shared: boolean;
+  review: PlaceReview;
+  /** The pages in it, by title, so a point joins the page on its topic. */
+  pages: Array<{ doc_id: string; title: string }>;
+  url?: string;
+}
+
+/** Where each point belongs: a plan, which writes nothing but My notes when it is first needed. */
+export interface RememberPlanBody extends Partial<AgentInstructions> {
+  /** Whom the connection acts for, by their Stuga name: who "the user" is in what you write. */
+  user: { name: string; username: string } | null;
+  points: RememberPlanPoint[];
+  home: RememberHome | null;
+  /** Why there is no `home`. */
+  home_note?: string;
+  /** Labels of the folders whose instructions say what belongs in them; their text is in `instructions`. */
+  folders_with_instructions?: Array<{ folder_id: string; path: string[]; instructions_label: string }>;
+  /** Meaning counted beside words, as `search` reports it. */
+  semantic: boolean;
+  degraded: boolean;
+}
+
 /** A comment an agent adds: a new thread, on a passage when `quote` names one, or a reply in a thread. */
 export interface CommentAddInput {
   body: string;
@@ -367,4 +571,6 @@ export interface AgentBackend {
   /** `tableId` is null only for an `import_id` retry, whose staging names its own table. */
   importRows(databaseId: string, tableId: string | null, source: ImportSource, options: ImportOptions): Answer<ImportOutcome>;
   query(databaseId: string, sql: string, params: Array<string | number | null>): Answer<Record<string, unknown>>;
+  /** Where each point belongs, in what the caller can read; makes the person's "My notes" when first needed. */
+  planRemember(points: RememberPoint[]): Answer<RememberPlanBody>;
 }

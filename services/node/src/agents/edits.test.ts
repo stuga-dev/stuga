@@ -204,6 +204,40 @@ describe("proposeDocEdit outcome mapping", () => {
     });
   });
 
+  it("answers an append whose heading is not there with the page's headings, or how to start a section on a page with none", async () => {
+    const append = (body: Record<string, unknown>) =>
+      proposeDocEdit(makeCtx(fakeActor(() => jsonRes({ error: "not_found", ...body }, 409)).fetch), {
+        docId: "d1",
+        action: "append",
+        text: "* x",
+        heading: "入职第一周",
+        source: "connector",
+      });
+    const listed = await append({ headings: ["# 新员工须知", "## 办公室", "## 报销"], empty: false });
+    expect(listed).toMatchObject({ kind: "error", status: 409 });
+    expect((listed as { message: string }).message).toBe(
+      '`heading` "入职第一周" not found. This page\'s headings: "# 新员工须知", "## 办公室", "## 报销". Name one of them as written, ' +
+        'or to start a new section, put the heading in `text` ("## Facts\\n\\n* …") and leave `heading` out: it goes at the end of the page.',
+    );
+    const empty = (await append({ headings: [], empty: true })) as { message: string };
+    expect(empty.message).toContain("this page is empty. To start a section, put the heading in `text`");
+    const plain = (await append({ headings: [], empty: false })) as { message: string };
+    expect(plain.message).toContain("this page has no headings.");
+  });
+
+  it("says where an append under a heading with subsections went", async () => {
+    const placed = { heading: "新员工须知", before: "办公室", subsections: ["办公室", "报销"] };
+    const actor = fakeActor(() => jsonRes({ mode: "proposed", run: RUN, pending: 1, placed }));
+    const out = await proposeDocEdit(makeCtx(actor.fetch), { docId: "d1", action: "append", text: "* x", heading: "新员工须知", source: "connector" });
+    expect(out).toMatchObject({
+      kind: "proposed",
+      placementNote:
+        'It went under "新员工须知" at the end of that heading\'s own text, before its first subsection "办公室". To put it in a ' +
+        'subsection instead, name that one as `heading`: "办公室", "报销".',
+    });
+    expect(proposeBody(out as Exclude<typeof out, { kind: "error" }>, "u")).toMatchObject({ placement_note: expect.stringContaining('before its first subsection "办公室"') });
+  });
+
   it("passes the actor's late lock and ledger refusals through instead of flattening them to 502", async () => {
     const locked = fakeActor(() => jsonRes({ error: "locked" }, 423));
     await expect(

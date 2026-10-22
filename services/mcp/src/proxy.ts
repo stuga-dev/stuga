@@ -1,16 +1,23 @@
 /**
  * The stdio server a desktop client launches: a proxy to the node's /mcp, so the
- * tools, their wording and every gate are the node's own, whatever its version.
- * It adds the one thing only a process on the person's machine can do: read a file
- * on that machine, for an import or an upload.
+ * tools, the prompts, their wording and every gate are the node's own, whatever
+ * its version. It adds what only a process on the person's machine can do: read a
+ * file on that machine, for an import or an upload, and list the node's last
+ * tools and prompts (offline.ts) while the node is out of reach.
  */
 import { readFile as fsReadFile } from "node:fs/promises";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
+  ErrorCode,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
   ListToolsRequestSchema,
+  McpError,
   type CallToolResult,
+  type GetPromptResult,
+  type ListPromptsResult,
   type ListToolsResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -19,10 +26,17 @@ import { DATABASE_IMPORT_FORMATS, type DatabaseImportFormat } from "@stuga/proto
 import { MCP_SERVER_TITLE } from "@stuga/protocol/domain/node-name";
 import type { ResolvedConfig } from "./config.js";
 import type { NodeIdentity } from "./node.js";
+import { KEEP_NOTHING, NO_CATALOG, type KeptLists, type OfflineCatalog } from "./offline.js";
 import type { Upstream, UpstreamClient } from "./upstream.js";
 
 /** A client gives up on a request after about a minute; answer before it does. */
 export const CLIENT_PATIENCE_MS = 50_000;
+/**
+ * How long a tools or prompts list waits for the node. Clients cancel a list well before a call
+ * (Claude Desktop at 30 s), and a list is no reason to hold up on a sign-in: the node's last list
+ * answers instead, and the list-changed notice brings its current one.
+ */
+export const LIST_PATIENCE_MS = 2_000;
 
 const FILE_PARAM = {
   type: "string",
@@ -55,9 +69,14 @@ export interface ProxyDeps {
   upstream: Pick<Upstream, "ready" | "reset" | "state">;
   /** Instructions from the node, when it answered before the client asked. */
   instructions?: string;
+  /** What this build offers: listed while the node is not there yet and has never listed its own. */
+  offline?: OfflineCatalog;
+  /** The node's last lists for this connection, listed while it is not there. */
+  kept?: KeptLists;
   fetch?: typeof globalThis.fetch;
   readFile?: (path: string) => Promise<Uint8Array>;
   patienceMs?: number;
+  listPatienceMs?: number;
 }
 
 /** What the client reads while this server has not reached the node yet. */
@@ -124,48 +143,81 @@ export async function within<T>(pending: Promise<T>, ms: number): Promise<T | nu
   }
 }
 
+/** Why the node gave no answer, in words for the model: it could not be reached, or the sign-in waits. */
+class Unreached {
+  constructor(readonly why: string) {}
+}
+
+/**
+ * Whether an error is the node's own answer, as opposed to a request that never reached it or got no
+ * answer in time: the SDK raises the last two as McpErrors of its own codes.
+ */
+function nodeAnswered(error: unknown): error is McpError {
+  return error instanceof McpError && error.code !== ErrorCode.RequestTimeout && error.code !== ErrorCode.ConnectionClosed;
+}
+
+/**
+ * An error the client reads with this code and these words. The SDK sends a thrown error's `message` as
+ * it is, and an McpError's carries "MCP error <code>:" already, which the client would add again.
+ */
+function answerError(code: number, message: string, data?: unknown): Error {
+  return Object.assign(new Error(message), { code, ...(data !== undefined ? { data } : {}) });
+}
+
+/** The node's error, raised to the client as the node gave it. */
+function relay(error: McpError): Error {
+  return answerError(error.code, error.message.replace(/^(?:MCP error -?\d+: )+/, ""), error.data);
+}
+
 export function buildProxy({
   config,
   node,
   upstream,
   instructions,
+  offline = NO_CATALOG,
+  kept = KEEP_NOTHING,
   fetch = globalThis.fetch,
   readFile = (p) => fsReadFile(p),
   patienceMs = CLIENT_PATIENCE_MS,
+  listPatienceMs = LIST_PATIENCE_MS,
 }: ProxyDeps): Server {
   const server = new Server(
     { name: "stuga", title: MCP_SERVER_TITLE, version: config.version },
-    { capabilities: { tools: { listChanged: true } }, instructions: instructions ?? waitingInstructions(node) },
+    { capabilities: { tools: { listChanged: true }, prompts: { listChanged: true } }, instructions: instructions ?? waitingInstructions(node) },
   );
 
   /** The node, or why it is not there yet, in words for the model. */
-  async function reach(): Promise<UpstreamClient | string> {
-    const client = await within(upstream.ready(), patienceMs).catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
+  async function reach(wait: number): Promise<UpstreamClient | Unreached> {
+    const client = await within(upstream.ready(), wait).catch((e: unknown) => new Unreached(e instanceof Error ? e.message : String(e)));
     if (client !== null) return client;
-    return upstream.state === "signing-in"
-      ? `Stuga is waiting for the person to approve the sign-in page for ${node.origin} in their browser; ask them to, then try again`
-      : `still connecting to the Stuga node at ${node.origin}; try again shortly`;
+    return new Unreached(
+      upstream.state === "signing-in"
+        ? `Stuga is waiting for the person to approve the sign-in page for ${node.origin} in their browser; ask them to, then try again`
+        : `still connecting to the Stuga node at ${node.origin}; try again shortly`,
+    );
   }
 
-  /** A call the node did not answer, in words for the model. */
-  function lost(error: unknown): string {
-    return `cannot reach the Stuga node at ${node.origin}: ${error instanceof Error ? error.message : String(error)}`;
+  /** A request the node did not answer, in words for the model; the node's own error answer as it gave it. */
+  function lost(error: unknown): Unreached | McpError {
+    if (nodeAnswered(error)) return error;
+    return new Unreached(`cannot reach the Stuga node at ${node.origin}: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   /**
-   * One call, and once more after a sign-in when the node stopped accepting the old one: the SDK has
+   * One request, and once more after a sign-in when the node stopped accepting the old one: the SDK has
    * already opened the consent page, and the reconnect waits for that answer within the client's patience.
+   * Unreached when the node could not be asked or did not answer; the node's McpError when it answered with one.
    */
-  async function once<T>(run: (client: UpstreamClient) => Promise<T>): Promise<T | string> {
-    const client = await reach();
-    if (typeof client === "string") return client;
+  async function once<T>(run: (client: UpstreamClient) => Promise<T>, wait = patienceMs): Promise<T | Unreached | McpError> {
+    const client = await reach(wait);
+    if (client instanceof Unreached) return client;
     try {
       return await run(client);
     } catch (error) {
       if (!(error instanceof UnauthorizedError)) return lost(error);
       upstream.reset();
-      const again = await reach();
-      if (typeof again === "string") return again;
+      const again = await reach(wait);
+      if (again instanceof Unreached) return again;
       try {
         return await run(again);
       } catch (retry) {
@@ -175,9 +227,33 @@ export function buildProxy({
   }
 
   server.setRequestHandler(ListToolsRequestSchema, async (): Promise<ListToolsResult> => {
-    const listed = await once((client) => client.listTools());
-    // No tools yet; the list-changed notice brings them once the node answers.
-    return typeof listed === "string" ? { tools: [] } : { tools: withLocalFiles(listed.tools) };
+    const listed = await once((client) => client.listTools(), listPatienceMs);
+    // Every node lists tools: an error is the node's own answer, passed on as it gave it.
+    if (listed instanceof McpError) throw relay(listed);
+    // The node's last list until it answers; the list-changed notice brings its current one.
+    if (listed instanceof Unreached) return { tools: withLocalFiles(kept.read().tools ?? offline.tools) };
+    kept.save({ tools: listed.tools });
+    return { tools: withLocalFiles(listed.tools) };
+  });
+
+  server.setRequestHandler(ListPromptsRequestSchema, async (): Promise<ListPromptsResult> => {
+    const listed = await once((client) => client.listPrompts(), listPatienceMs);
+    if (listed instanceof Unreached) return { prompts: kept.read().prompts ?? offline.prompts };
+    if (listed instanceof McpError) {
+      // A node older than prompts has none, and is offered none while out of reach either.
+      if (listed.code === ErrorCode.MethodNotFound) kept.save({ prompts: [] });
+      return { prompts: [] };
+    }
+    kept.save({ prompts: listed.prompts });
+    return { prompts: listed.prompts };
+  });
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request): Promise<GetPromptResult> => {
+    const got = await once((client) => client.getPrompt(request.params));
+    if (got instanceof McpError) throw relay(got);
+    // A prompt has no error result: the client shows this message instead.
+    if (got instanceof Unreached) throw answerError(ErrorCode.InternalError, got.why);
+    return got;
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
@@ -189,7 +265,8 @@ export function buildProxy({
           ? uploadFile(client, args)
           : ((await client.callTool({ name, arguments: args })) as CallToolResult),
     );
-    return typeof answered === "string" ? failure(answered) : answered;
+    if (answered instanceof McpError) throw relay(answered);
+    return answered instanceof Unreached ? failure(answered.why) : answered;
   });
 
   /** The bytes at `path` on this machine, or why they cannot be read, in words for the model. */

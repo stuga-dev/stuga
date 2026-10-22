@@ -8,13 +8,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DATABASE_STORE_VERSION, DatabaseActor } from "@stuga/database-actor";
-import { closeClients, createClient, getDoc, getFolder, initSchema, provisionWorkspace, upsertAgentRun, upsertGroup, type Sql } from "@stuga/db";
+import { closeClients, createClient, createHomeFolder, getDoc, getFolder, initSchema, provisionWorkspace, upsertAgentRun, upsertGroup, type Sql } from "@stuga/db";
 import { DOC_STORE_VERSION, DocActor } from "@stuga/doc-actor";
 import type { IndexMessage, NotifyApproversMessage, RunIndexEntry } from "@stuga/protocol/internal/jobs";
 import { Heartbeat } from "@stuga/protocol/wire/opcodes";
 import { createActorNamespace, fsBlobStore, type HostedNamespace } from "@stuga/runtime";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Ctx } from "../auth/context.js";
+import { SHARED_NOTES_REASON } from "../authz/review-mode.js";
 import { createNodeSettingsStore } from "../config/settings/node.js";
 import { tableToolRunner } from "../databases/coauthor.js";
 import { routeWorkspaceRequest } from "../http/dispatch.js";
@@ -789,6 +790,29 @@ describe.skipIf(!URL)("review levels with real actors", () => {
       jobs.length = 0;
       await ok(person("liv"), "PATCH", `/api/docs/${d}`, { parent_id: other });
       expect(jobs.find((j) => j.kind === "notify_approvers")).toMatchObject({ runId: run.id, groupBefore: "group:legal" });
+    });
+  });
+
+  describe("a page in My notes", () => {
+    it("takes its agent's edits at once until it is shared, then holds every agent's for review", async () => {
+      const { folder: home } = await createHomeFolder(sql, { folderId: "f_home_liv", workspaceId: WS, alias: "liv", title: "My notes" });
+      const d = await doc(home.folder_id);
+      expect((await getDoc(sql, d))?.notes_shared).toBe(false);
+      expect((await propose(d)).review).toBe("auto");
+      expect(await markdownOf(d)).toContain("Twelve days a year.");
+
+      // Shared with Bo: no agent changes it unseen, Liv's own included.
+      await sql`UPDATE docs SET acl_principals = ${["user:liv", "user:bo"]} WHERE doc_id = ${d}`;
+      const meta = await ok<{ review: { mode: string; reason: string } }>(agent(), "GET", `/api/docs/${d}`);
+      expect(meta.review).toEqual({ mode: "review", reason: SHARED_NOTES_REASON });
+      const held = await ok<{ review: string; run: { id: string } }>(agent(), "POST", `/api/docs/${d}/propose`, {
+        action: "str_replace",
+        find: "Twelve days",
+        replace: "Fifteen days",
+      });
+      expect(held.review).toBe("review");
+      expect(await markdownOf(d)).toContain("Twelve days a year.");
+      expect((await runsOf(person("liv"), d)).find((r) => r.id === held.run.id)?.you?.level).toBe("review");
     });
   });
 });

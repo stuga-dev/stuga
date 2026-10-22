@@ -16,7 +16,7 @@ import {
   markdownToDoc,
   type CitationInput,
 } from "@stuga/crdt-ops";
-import { appendMarkdown } from "../append.js";
+import { appendMarkdown, type AppendPlacement } from "../append.js";
 import { PENDING_RUN_MAX, pendingOf, runBlobKey, type RunBody, type RunLedger } from "./run-store.js";
 
 /**
@@ -58,9 +58,10 @@ export interface ProposeRunInput {
 
 export type ProposeRunResult =
   | { mode: "noop" }
-  | { mode: "proposed"; run: AgentRunSummary; pending: number; hunkIds: string[]; parkedBehindPending?: boolean }
-  | { mode: "auto_applied"; run: AgentRunSummary; seq: number; applied: number; hunkIds: string[] }
-  | { mode: "error"; status: number; error: string; message?: string; count?: number };
+  | { mode: "proposed"; run: AgentRunSummary; pending: number; hunkIds: string[]; parkedBehindPending?: boolean; placed?: AppendPlacement }
+  | { mode: "auto_applied"; run: AgentRunSummary; seq: number; applied: number; hunkIds: string[]; placed?: AppendPlacement }
+  /** `headings`: an append's heading was not there; these are, as the agent's view has them. `empty`: that view is empty. */
+  | { mode: "error"; status: number; error: string; message?: string; count?: number; headings?: string[]; empty?: boolean };
 
 function appendHunks(body: RunBody, hunks: Array<{ old_string: string; new_string: string }>, review: ReviewMode): AgentRunHunk[] {
   const added: AgentRunHunk[] = hunks.map((h, i) => ({
@@ -108,6 +109,7 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
 
   let next: string;
   let renumber = new Map<number, number>();
+  let placed: AppendPlacement | undefined;
   if (input.op.action === "write") {
     next = input.op.text;
   } else if (input.op.action === "append") {
@@ -122,9 +124,10 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
           message: "this text opens a code fence it never closes, which would pull the rest of the document into it — close the fence and send it again",
         };
       }
-      return { mode: "error", status: 409, error: "not_found" };
+      return { mode: "error", status: 409, error: "not_found", headings: out.headings, empty: out.empty };
     }
     next = out.markdown;
+    placed = out.placed;
   } else if (input.op.action === "cited_edits") {
     // Body only: markers renumbered past the document's footnotes; definitions are reconciled at commit.
     const out = applyRenumberedStrEdits(working, input.op.edits, input.op.citations);
@@ -194,7 +197,8 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
   // Before any further storage await, so the fragment cannot shift after `current` was read.
   // A cited edit staged only the body, so its definitions are written here, as on accept.
   if (commit) {
-    await store.commitMarkdown(ledger.commitTarget(plan!.markdown, { citations }), current, { agent: agentName }, "run-large");
+    // The agent's principal, which version history names by the person it acts for; its label is only a label.
+    await store.commitMarkdown(ledger.commitTarget(plan!.markdown, { citations }), current, { alias: agentAlias, agent: agentName }, "run-large");
     await store.flushIfVersionDue("run");
   }
 
@@ -258,6 +262,7 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
       hunkIds: added.map((h) => h.id),
       // Said only when it contradicts the `auto` the agent read.
       parkedBehindPending: parkedBehindPending && input.review === "auto",
+      ...(placed ? { placed } : {}),
     };
   }
 
@@ -279,7 +284,7 @@ export async function proposeRunEdit(ledger: RunLedger, input: ProposeRunInput):
     applied,
     conflicts: added.length - applied,
   });
-  return { mode: "auto_applied", run: ledger.summaryOf(stored, runBody), seq: store.seq, applied, hunkIds: added.map((h) => h.id) };
+  return { mode: "auto_applied", run: ledger.summaryOf(stored, runBody), seq: store.seq, applied, hunkIds: added.map((h) => h.id), ...(placed ? { placed } : {}) };
 }
 
 /** A run's citations with a proposal's added under the numbers its markers landed as. */

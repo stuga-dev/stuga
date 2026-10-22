@@ -1,4 +1,4 @@
-import { mkdtempSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -15,6 +15,19 @@ describe("CredentialFile", () => {
     expect(file.read("http://b")).toEqual({ client: { client_id: "cid_b" } });
     expect(file.read("http://c")).toEqual({});
     expect(statSync((file as unknown as { path: string }).path).mode & 0o777).toBe(0o600);
+  });
+
+  it("writes under the lock the session hook takes, and takes over one its holder abandoned", () => {
+    const file = store();
+    file.update("http://a", () => ({ client: { client_id: "cid_a" } }));
+    const lock = `${(file as unknown as { path: string }).path}.lock`;
+    expect(existsSync(lock)).toBe(false);
+    writeFileSync(lock, "999999 long ago\n");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lock, old, old);
+    file.update("http://a", (c) => ({ ...c, tokens: { access_token: "sto_a", token_type: "Bearer" } }));
+    expect(file.read("http://a").tokens?.access_token).toBe("sto_a");
+    expect(existsSync(lock)).toBe(false);
   });
 });
 

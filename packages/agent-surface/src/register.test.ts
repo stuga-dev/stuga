@@ -6,7 +6,8 @@ import type { DatabaseSchema } from "@stuga/protocol/databases/types";
 import type { AgentBackend } from "./backend.js";
 import { MCP_CONTRACT_VERSION, READ_TOOLS, TOOL_NAMES } from "./catalog.js";
 import { registerAgentTools, type AgentSurface, type Reach, type ToolCall, type WorkspaceRoute } from "./register.js";
-import { EMPTY_SCOPE_NOTE, RETRIEVE_SEMANTIC_OFF_MESSAGE } from "./render/search.js";
+import { REMEMBER_NEXT } from "./render/remember.js";
+import { EMPTY_SCOPE_NOTE, KEYWORD_PASSAGES_NOTE, PARTIAL_PASSAGES_NOTE, PARTIAL_SEARCH_NOTE, RETRIEVE_SEMANTIC_OFF_MESSAGE } from "./render/search.js";
 
 const SCHEMA: DatabaseSchema = {
   database_id: "db1",
@@ -56,6 +57,7 @@ const METHODS = [
   "startImport",
   "importRows",
   "query",
+  "planRemember",
 ] as const;
 
 /** A backend whose every method fails the test unless the case replaces it. */
@@ -125,6 +127,70 @@ describe("registerAgentTools", () => {
 
     const readOnly = await connect(surface({}).s, true);
     expect((await readOnly.client.listTools()).tools.map((t) => t.name)).toEqual([...READ_TOOLS]);
+    expect(tools.find((t) => t.name === "remember")!.annotations).toMatchObject({ title: "Save to Stuga", readOnlyHint: false, destructiveHint: false });
+  });
+
+  it("offers Save to Stuga and Ask Stuga as prompts, and a read-only credential only Ask Stuga", async () => {
+    const { client } = await connect(surface({}).s);
+    expect((await client.listPrompts()).prompts.map((p) => [p.name, p.title])).toEqual([
+      ["save", "Save to Stuga"],
+      ["ask", "Ask Stuga"],
+    ]);
+    const readOnly = await connect(surface({}).s, true);
+    expect((await readOnly.client.listPrompts()).prompts.map((p) => p.name)).toEqual(["ask"]);
+  });
+
+  it("gets each prompt as one line in the person's voice, naming Stuga", async () => {
+    const { client } = await connect(surface({}).s);
+    const text = async (name: string, args: Record<string, string> = {}) => {
+      const got = await client.getPrompt({ name, arguments: args });
+      expect(got.messages).toHaveLength(1);
+      expect(got.messages[0]!.role).toBe("user");
+      return (got.messages[0]!.content as { text: string }).text;
+    };
+    expect(await text("save", { text: "  Refunds over 500 euros need finance approval. " })).toBe(
+      "Save to Stuga: Refunds over 500 euros need finance approval.",
+    );
+    expect(await text("ask", { topic: " What is Acme's refund window? " })).toBe(
+      "Ask Stuga what my team and I have recorded: say who wrote each point and when, and what still waits for approval. What is Acme's refund window?",
+    );
+    expect(await text("ask")).toBe("Ask Stuga what my team and I have recorded: say who wrote each point and when, and what still waits for approval.");
+    expect(await text("ask", { topic: "x".repeat(2_000) })).toContain("x".repeat(2_000));
+    await expect(client.getPrompt({ name: "ask", arguments: { topic: "x".repeat(2_001) } })).rejects.toThrow();
+    await expect(client.getPrompt({ name: "save", arguments: {} })).rejects.toThrow();
+  });
+
+  it("plans a save with the points as given, trimmed, and says what comes next", async () => {
+    const user = { name: "Liv", username: "liv" };
+    const plan = { user, points: [], home: null, home_note: "none here", semantic: false, degraded: false, instructions: [] };
+    const planRemember = vi.fn(async () => plan);
+    const { call } = await single({ planRemember });
+    const out = JSON.parse(
+      (
+        await call("remember", {
+          ...W,
+          points: [
+            { text: " Refunds need approval ", topic: "  ", source: " " },
+            { text: "Sam owns billing", topic: "Billing", source: " Weekly sync, 2026-10-20 " },
+          ],
+        })
+      ).text,
+    );
+    expect(planRemember).toHaveBeenCalledWith([
+      { text: "Refunds need approval" },
+      { text: "Sam owns billing", topic: "Billing", source: "Weekly sync, 2026-10-20" },
+    ]);
+    expect(out).toEqual({ user, points: [], home: null, home_note: "none here", instructions: [], semantic: false, degraded: false, next: REMEMBER_NEXT });
+    expect((await call("remember", { ...W, points: [{ text: "   " }] })).text).toBe("error: point 1 has no `text`");
+    expect((await call("remember", { ...W, points: [] })).isError).toBe(true);
+    expect((await call("remember", { ...W, points: Array.from({ length: 21 }, () => ({ text: "x" })) })).isError).toBe(true);
+    expect(planRemember).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the person the connection acts for in the routing table, when the surface knows them", async () => {
+    const { s } = surface({ ws1: backend() }, { user: { name: "Liv Berg", username: "liv" } });
+    const { call } = await connect(s);
+    expect(JSON.parse((await call("workspaces", { action: "list" })).text)).toMatchObject({ user: { name: "Liv Berg", username: "liv" } });
   });
 
   it("lists the routing table with the contract version, without asking any workspace", async () => {
@@ -192,6 +258,22 @@ describe("registerAgentTools", () => {
     expect(propose).toHaveBeenLastCalledWith("d1", { action: "append", text: "note", heading: "Log" });
     await call("markdown_edit", { ...W, doc_id: "d1", action: "str_replace", find: "a", replace: "b" });
     expect(propose).toHaveBeenLastCalledWith("d1", expect.objectContaining({ action: "str_replace", find: "a", replace: "b" }));
+  });
+
+  it("takes cited_edits' names, old_string and new_string, for a str_replace's find and replace", async () => {
+    const propose = vi.fn(async () => ({ mode: "noop" as const, message: "Nothing to change." }));
+    const { call } = await single({ propose });
+    expect((await call("markdown_edit", { ...W, doc_id: "d1", action: "str_replace", old_string: "9 点", new_string: "8:30" })).isError).toBe(false);
+    expect(propose).toHaveBeenLastCalledWith("d1", expect.objectContaining({ action: "str_replace", find: "9 点", replace: "8:30" }));
+    // An empty replacement deletes, by either name.
+    await call("markdown_edit", { ...W, doc_id: "d1", action: "str_replace", old_string: "x", new_string: "" });
+    expect(propose).toHaveBeenLastCalledWith("d1", expect.objectContaining({ find: "x", replace: "" }));
+    // `find` and `replace` win when both are given.
+    await call("markdown_edit", { ...W, doc_id: "d1", action: "str_replace", find: "a", replace: "b", old_string: "c", new_string: "d" });
+    expect(propose).toHaveBeenLastCalledWith("d1", expect.objectContaining({ find: "a", replace: "b" }));
+    expect((await call("markdown_edit", { ...W, doc_id: "d1", action: "str_replace", new_string: "d" })).text).toBe(
+      "error: str_replace requires a non-empty `find` (or `old_string`)",
+    );
   });
 
   it("hands a comment's thread and quote to the backend only when the agent gave them", async () => {
@@ -418,6 +500,42 @@ describe("search and retrieval across workspaces", () => {
     expect(out.unavailable).toEqual([{ workspace_id: "ws9", reason: "workspace is not available to this connector" }]);
   });
 
+  it("takes `query` for `q`, and says when no document held every word", async () => {
+    const searchDocs = vi.fn(async () => ({ query: "travel expense reimbursement", results: [hit("a1")], degraded: false, semantic: false, partial: true }));
+    const { s } = surface({ ws1: backend({ searchDocs }) });
+    const { call } = await connect(s);
+    const out = JSON.parse((await call("search", { workspace_ids: ["ws1"], query: "travel expense reimbursement" })).text);
+    expect(searchDocs).toHaveBeenCalledWith({ q: "travel expense reimbursement", collection_id: undefined, limit: undefined });
+    expect(out).toMatchObject({ query: "travel expense reimbursement", partial: true, partial_note: PARTIAL_SEARCH_NOTE });
+    // `q` wins over `query`, and one of them is needed.
+    await call("search", { workspace_ids: ["ws1"], q: "refunds", query: "other" });
+    expect(searchDocs).toHaveBeenLastCalledWith({ q: "refunds", collection_id: undefined, limit: undefined });
+    expect(await call("search", { workspace_ids: ["ws1"] })).toEqual({ text: "error: search requires `q`", isError: true });
+    // A whole match says nothing more.
+    const whole = surface({ ws1: backend({ searchDocs: found("a1") }) });
+    expect(JSON.parse((await (await connect(whole.s)).call("search", { workspace_ids: ["ws1"], q: "q" })).text)).not.toHaveProperty("partial");
+  });
+
+  it("passes on, per document, the AI changes that wait and for whom, the user's own with what they change", async () => {
+    const waiting = [
+      {
+        asked_by: "user" as const,
+        waits_for: "colleague" as const,
+        changes: 2,
+        since: "2026-10-21T08:00:00.000Z",
+        proposed: [{ approved_now: "* The refund window is 14 days.", after_approval: "* The refund window is 30 days." }],
+        note: "1 of 2 listed here; read the page for the rest.",
+      },
+      { asked_by: "others" as const, waits_for: "review" as const, changes: 2, since: "2026-10-20T08:00:00.000Z" },
+    ];
+    const searchDocs = vi.fn(async () => ({ query: "q", results: [{ ...hit("a1"), pending_changes: waiting }], degraded: false, semantic: true }));
+    const retrieve = vi.fn(async () => ({ chunks: [{ doc_id: "a1", title: "a1", content: "14 days", heading_path: null, pending_changes: waiting }] }));
+    const { s } = surface({ ws1: backend({ searchDocs, retrieve }) });
+    const { call } = await connect(s);
+    expect(JSON.parse((await call("search", { workspace_ids: ["ws1"], q: "q" })).text).results[0].pending_changes).toEqual(waiting);
+    expect(JSON.parse((await call("retrieve", { workspace_ids: ["ws1"], q: "q" })).text).passages[0].pending_changes).toEqual(waiting);
+  });
+
   it("narrows one workspace to a collection, and refuses a collection across several", async () => {
     const searchDocs = vi.fn(async () => ({ query: "q", results: [], degraded: false, semantic: false, empty_scope: true }));
     const { s } = surface({ ws1: backend({ searchDocs }), ws2: backend() });
@@ -441,6 +559,35 @@ describe("search and retrieval across workspaces", () => {
       { workspace_id: "ws2", doc_id: "b1", title: "b1", heading_path: null, content: "about b1", url: "https://stuga.test/doc/b1" },
     ]);
     expect(out.degraded).toBe(true);
+
+    // Who wrote a passage rides along when the backend says.
+    const cited = surface({
+      ws1: backend({
+        retrieve: vi.fn(async () => ({
+          chunks: [{ ...chunk("a1"), updated_at: "2026-10-20T09:00:00.000Z", last_edited_by: [{ kind: "person" as const, name: "Liv" }], ai_edits: "unreviewed" as const }],
+        })),
+      }),
+    });
+    const [passage] = JSON.parse((await (await connect(cited.s)).call("retrieve", { workspace_ids: ["ws1"], q: "q" })).text).passages;
+    expect(passage).toMatchObject({ updated_at: "2026-10-20T09:00:00.000Z", last_edited_by: [{ kind: "person", name: "Liv" }], ai_edits: "unreviewed" });
+
+    // A node with embeddings off answers an agent with passages found by their words, and says so.
+    const words = surface({ ws1: backend({ retrieve: vi.fn(async () => ({ chunks: [chunk("a1")], keyword_only: true })) }) });
+    const byWords = JSON.parse((await (await connect(words.s)).call("retrieve", { workspace_ids: ["ws1"], query: "q" })).text);
+    expect(byWords).toMatchObject({ passages: [{ doc_id: "a1" }], semantic: false, keyword_note: KEYWORD_PASSAGES_NOTE });
+    expect(byWords).not.toHaveProperty("partial");
+    expect(KEYWORD_PASSAGES_NOTE).toContain("another language");
+    // Found by some of the question's words only: said, as a search says it, with the other-language hint.
+    const some = surface({ ws1: backend({ retrieve: vi.fn(async () => ({ chunks: [chunk("a1")], keyword_only: true, partial: true })) }) });
+    const bySome = JSON.parse((await (await connect(some.s)).call("retrieve", { workspace_ids: ["ws1"], q: "差旅报销" })).text);
+    expect(bySome).toMatchObject({ partial: true, partial_note: PARTIAL_PASSAGES_NOTE });
+    expect(PARTIAL_PASSAGES_NOTE).toContain("another language");
+    // A workspace that found every word keeps the merged answer whole.
+    const mixed = surface({
+      ws1: backend({ retrieve: vi.fn(async () => ({ chunks: [chunk("a1")], keyword_only: true, partial: true })) }),
+      ws2: backend({ retrieve: vi.fn(async () => ({ chunks: [chunk("b1")], keyword_only: true })) }),
+    });
+    expect(JSON.parse((await (await connect(mixed.s)).call("retrieve", { workspace_ids: ["ws1", "ws2"], q: "q" })).text)).not.toHaveProperty("partial");
 
     const off = surface({ ws1: backend({ retrieve: vi.fn(async () => ({ chunks: [], ai_disabled: true })) }) });
     const offCall = (await connect(off.s)).call;

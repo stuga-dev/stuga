@@ -376,12 +376,20 @@ export class RunLedger {
    * The document as `agentAlias`'s own pending hunks leave it. An agent reading
    * back a document it proposed to must see its own work, or it re-proposes it.
    */
-  async projectionFor(agentAlias: string): Promise<{ markdown: string; pending: AgentRunHunk[]; runId: string | null }> {
+  async projectionFor(agentAlias: string): Promise<{
+    markdown: string;
+    /** The live text the pending hunks are laid over: what everyone else reads. */
+    approved: string;
+    pending: AgentRunHunk[];
+    runId: string | null;
+    run: Pick<StoredRun, "created_at" | "review_mode"> | null;
+  }> {
     const live = this.store.markdown();
     const open = await this.openRunFor(agentAlias);
     const pending = open ? pendingOf(open.body) : [];
-    if (!open || pending.length === 0) return { markdown: live, pending: [], runId: open?.stored.id ?? null };
-    return { markdown: applyStrEditsStrict(live, pending).markdown, pending, runId: open.stored.id };
+    const run = open ? { created_at: open.stored.created_at, review_mode: open.stored.review_mode } : null;
+    if (!open || pending.length === 0) return { markdown: live, approved: live, pending: [], runId: open?.stored.id ?? null, run };
+    return { markdown: applyStrEditsStrict(live, pending).markdown, approved: live, pending, runId: open.stored.id, run };
   }
 
   /**

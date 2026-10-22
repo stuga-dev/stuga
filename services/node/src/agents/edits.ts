@@ -42,11 +42,13 @@ export type ProposeOutcome =
   // a failed download is a note on a completed edit, never a failure of it.
   // `doc` is the row the write was authorized against, so an answer can name what applies to it without a re-read.
   // `feedback` is an agent's own open feedback here, and `revised` the ids this proposal answered.
+  // `placementNote` says where an append under a heading with subsections went.
   | {
       kind: "proposed";
       run: AgentRunSummary;
       pending: number;
       mediaNote?: string;
+      placementNote?: string;
       review: ReviewMode;
       reason: string;
       doc: DocRow;
@@ -59,6 +61,7 @@ export type ProposeOutcome =
       seq: number;
       applied: number;
       mediaNote?: string;
+      placementNote?: string;
       review: ReviewMode;
       reason: string;
       doc: DocRow;
@@ -141,10 +144,42 @@ interface ProposeResponse {
   parked_behind_pending?: boolean;
   feedback?: AgentFeedback[];
   revised?: string[];
+  /** An append under a heading with subsections: it went before the first of them. */
+  placed?: { heading: string; before: string; subsections: string[] };
   error?: string;
   count?: number;
   message?: string;
+  /** An append's heading was not there: the headings there are, and whether the page is empty. */
+  headings?: string[];
+  empty?: boolean;
 }
+
+const quoted = (text: string): string => JSON.stringify(text);
+
+/** Where an append under a heading with subsections went, and how to put it in one of them instead. */
+export function placementNote(placed: NonNullable<ProposeResponse["placed"]>): string {
+  return (
+    `It went under ${quoted(placed.heading)} at the end of that heading's own text, before its first subsection ` +
+    `${quoted(placed.before)}. To put it in a subsection instead, name that one as \`heading\`: ` +
+    `${placed.subsections.map(quoted).join(", ")}.`
+  );
+}
+
+/** Why an append's heading was not found, with the headings the page has, or how to add one. */
+export function headingNotFoundMessage(heading: string, headings: readonly string[], empty: boolean): string {
+  const newSection = 'put the heading in `text` ("## Facts\\n\\n* …") and leave `heading` out: it goes at the end of the page';
+  if (empty) return `\`heading\` ${quoted(heading)} not found: this page is empty. To start a section, ${newSection}.`;
+  if (headings.length === 0) return `\`heading\` ${quoted(heading)} not found: this page has no headings. To start a section, ${newSection}.`;
+  const shown = headings.slice(0, HEADINGS_SHOWN);
+  const more = headings.length > shown.length ? ` (and ${headings.length - shown.length} more)` : "";
+  return (
+    `\`heading\` ${quoted(heading)} not found. This page's headings: ${shown.map(quoted).join(", ")}${more}. Name one of ` +
+    `them as written, or to start a new section, ${newSection}.`
+  );
+}
+
+/** Headings a not-found answer lists at most. */
+const HEADINGS_SHOWN = 40;
 
 /** Why an `auto` document parked this one anyway. */
 const HELD_REASON =
@@ -291,7 +326,17 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
         targetLabel: doc.title,
         detail: { run_id: body.run.id, mode: "proposed", edit: input.action, pending: body.pending ?? 0, review: mode },
       });
-      return { kind: "proposed", run: body.run, pending: body.pending ?? 0, mediaNote, review: mode, reason, doc, ...feedback };
+      return {
+        kind: "proposed",
+        run: body.run,
+        pending: body.pending ?? 0,
+        mediaNote,
+        ...(body.placed ? { placementNote: placementNote(body.placed) } : {}),
+        review: mode,
+        reason,
+        doc,
+        ...feedback,
+      };
     }
     if (body?.mode === "auto_applied" && body.run) {
       recordAudit(ctx, {
@@ -307,6 +352,7 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
         seq: body.seq ?? 0,
         applied: body.applied ?? 0,
         mediaNote,
+        ...(body.placed ? { placementNote: placementNote(body.placed) } : {}),
         review: review.mode,
         reason: review.reason,
         doc,
@@ -320,7 +366,7 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
   if (res.status === 409) {
     if (body?.error === "not_found") {
       return input.action === "append"
-        ? { kind: "error", message: "`heading` not found in the document", status: 409 }
+        ? { kind: "error", message: headingNotFoundMessage(input.heading ?? "", body.headings ?? [], body.empty === true), status: 409 }
         : { kind: "error", message: "`find` not found in the document", status: 409 };
     }
     if (body?.error === "ambiguous") {
@@ -353,6 +399,7 @@ export function proposeBody(
 ): ProposeBody & { review?: ReviewMode } {
   const note = {
     ...(outcome.kind !== "noop" && outcome.mediaNote ? { media_note: outcome.mediaNote } : {}),
+    ...(outcome.kind !== "noop" && outcome.placementNote ? { placement_note: outcome.placementNote } : {}),
     ...(outcome.kind !== "noop" && outcome.feedback ? { feedback: outcome.feedback } : {}),
     ...(outcome.kind !== "noop" && outcome.revised ? { revised: outcome.revised } : {}),
   };
@@ -381,6 +428,13 @@ export interface ProjectedMarkdown {
   /** Present when the caller is an agent with an open run carrying pending hunks. */
   runId?: string;
   pending?: number;
+  /** Those hunks, laid over `markdown`: each with the text it replaces and the level it was proposed at. */
+  pendingHunks?: Array<{ id: string; old_string: string; new_string: string; review: ReviewMode }>;
+  /** With them, the live text they are laid over, read at the same moment: what everyone else reads. */
+  approvedMarkdown?: string;
+  /** When that run began, and the strictest level it was proposed at. */
+  runCreatedAt?: string;
+  runReviewMode?: ReviewMode;
   /** An agent's rejections here it has not acted on yet; repeated on reads until it proposes again. */
   feedback?: AgentFeedback[];
 }
@@ -406,12 +460,20 @@ export async function readDocMarkdownWithProjection(
     markdown?: string;
     run_id?: string;
     pending?: number;
+    pending_hunks?: ProjectedMarkdown["pendingHunks"];
+    approved_markdown?: string;
+    run_created_at?: number;
+    run_review_mode?: ReviewMode;
     feedback?: AgentFeedback[];
   } | null;
   if (!data) return null;
   const out: ProjectedMarkdown = { markdown: data.markdown ?? "", doc };
   if (data.run_id) out.runId = data.run_id;
   if (data.pending) out.pending = data.pending;
+  if (data.pending_hunks?.length) out.pendingHunks = data.pending_hunks;
+  if (out.pendingHunks && typeof data.approved_markdown === "string") out.approvedMarkdown = data.approved_markdown;
+  if (typeof data.run_created_at === "number") out.runCreatedAt = new Date(data.run_created_at).toISOString();
+  if (data.run_review_mode) out.runReviewMode = data.run_review_mode;
   if (ctx.isAgent && data.feedback?.length) out.feedback = data.feedback;
   return out;
 }

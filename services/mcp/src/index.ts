@@ -6,6 +6,7 @@ import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { DEFAULT_CLIENT, readConfigFile, resolveConfig } from "./config.js";
 import { identifyNode } from "./node.js";
+import { CatalogFile, catalogKey, offlineCatalog } from "./offline.js";
 import { buildProxy, within } from "./proxy.js";
 import { CredentialFile, NodeSignIn } from "./sign-in.js";
 import { Upstream } from "./upstream.js";
@@ -39,16 +40,20 @@ async function main(): Promise<void> {
   let announce = false;
   // A connection that finished after the handshake brings its tools with a list-changed notice.
   const upstream = new Upstream(config, signIn, () => {
-    if (announce) void server?.sendToolListChanged().catch(() => undefined);
+    if (!announce || !server) return;
+    void server.sendToolListChanged().catch(() => undefined);
+    void server.sendPromptListChanged().catch(() => undefined);
   });
-  const node = await identifyNode(config);
+  const [node, offline] = await Promise.all([identifyNode(config), offlineCatalog()]);
   // Until stdio is connected nothing else holds the process open: the sign-in listener and every timer are unref'd.
   const hold = setTimeout(() => undefined, STARTUP_WAIT_MS);
   const early = await within(upstream.ready(), STARTUP_WAIT_MS).catch(() => null);
   clearTimeout(hold);
   // From here on every (re)connection may change the tools, and the client re-lists on the notice.
   announce = true;
-  server = buildProxy({ config, node, upstream, instructions: early?.getInstructions() });
+  // The node's last lists for this connection, beside its sign-in, stand in while it is out of reach.
+  const kept = new CatalogFile(join(CONFIG_DIR, "catalog.json")).forKey(catalogKey(config));
+  server = buildProxy({ config, node, upstream, instructions: early?.getInstructions(), offline, kept });
   await server.connect(new StdioServerTransport());
 }
 

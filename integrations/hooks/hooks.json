@@ -1,0 +1,17 @@
+{
+  "description": "Stuga: each session starts with an index of the wiki pages your AI can read.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/stuga.mjs\" session-start",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

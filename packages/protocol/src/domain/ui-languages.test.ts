@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { isUiLanguage, matchUiLanguage, negotiateUiLanguage, parseAcceptLanguage, UI_LANGUAGE_NAMES, UI_LANGUAGES } from "./ui-languages";
+import {
+  ASK_STUGA,
+  askStugaElsewhere,
+  isUiLanguage,
+  matchUiLanguage,
+  MY_NOTES,
+  negotiateUiLanguage,
+  parseAcceptLanguage,
+  SAVE_TO_STUGA,
+  saveToStugaElsewhere,
+  UI_LANGUAGE_NAMES,
+  UI_LANGUAGES,
+} from "./ui-languages";
 
 describe("matchUiLanguage", () => {
   it("reads Chinese by script", () => {
@@ -61,4 +73,22 @@ it("names every language", () => {
   for (const tag of UI_LANGUAGES) expect(UI_LANGUAGE_NAMES[tag]).toBeTruthy();
   expect(isUiLanguage("zh-Hans")).toBe(true);
   expect(isUiLanguage("zh")).toBe(false);
+});
+
+describe("the phrases a person says to their AI", () => {
+  it("has each in every language, naming Stuga", () => {
+    for (const tag of UI_LANGUAGES) {
+      expect(SAVE_TO_STUGA[tag]).toContain("Stuga");
+      expect(ASK_STUGA[tag]).toContain("Stuga");
+      expect(MY_NOTES[tag]).toBeTruthy();
+    }
+  });
+
+  it("lists every other language's once, quoted, without the English", () => {
+    expect(saveToStugaElsewhere()).toBe(
+      '"存到 Stuga", "Stugaに保存", "Stuga에 저장", "In Stuga speichern", "Enregistrer dans Stuga", "Guardar en Stuga", "Salvar no Stuga"',
+    );
+    expect(askStugaElsewhere()).not.toContain('"Ask Stuga"');
+    expect(askStugaElsewhere()).toContain('"問問 Stuga"');
+  });
 });

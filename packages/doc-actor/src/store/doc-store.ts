@@ -229,8 +229,9 @@ export class DocStore {
     this.updatesSinceFlush++;
     this.updatesSincePersist++;
     if (origin && typeof origin === "object") {
-      const o = origin as { alias?: string; agent?: string };
-      const author = o.agent || o.alias;
+      // The principal the node vouched for, never a label a client chose: an agent is named later by the person it acts for.
+      const o = origin as { alias?: string; agent?: string | null };
+      const author = o.alias || o.agent;
       if (author) {
         this.contributors.add(author);
         this.versionAuthors.add(author);

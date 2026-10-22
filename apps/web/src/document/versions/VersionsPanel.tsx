@@ -9,7 +9,7 @@ import { INDEX_ALLOWANCE_MS } from "../use-refresh-after-indexing";
 import { noteOwnRestore, rememberRestore, restoreSettled, restoreSettling } from "../restore-notice";
 import { useLandedRunsKey } from "../../review/agent-runs-context";
 import { VersionCompareDialog, currentMarkdown } from "./VersionCompareDialog";
-import { VersionHistory } from "./VersionHistory";
+import { VersionHistory, namedPerson } from "./VersionHistory";
 import { useToast } from "../../ui/use-toast";
 import { t } from "../../i18n/i18n";
 import { forceReload } from "../../sync/forced-reload";
@@ -23,6 +23,8 @@ const VERSION_JOB_ALLOWANCE_MS = 2_000;
 const SETTLE_POLL_MS = 2_000;
 
 const EMPTY: VersionListing = { versions: [], head_seq: 0, can_manage: false };
+/** One empty map, so a listing without agents keeps the names it asks for steady. */
+const NO_AGENTS: NonNullable<VersionListing["agents"]> = {};
 
 /**
  * The listing, re-read while mounted: once edits have settled long enough to be
@@ -119,11 +121,19 @@ function useVersionText(docId: string, seq: number | null): string | null {
 
 export function VersionsPanel({ docId, ydoc }: { docId: string; ydoc: Y.Doc | null }) {
   const toast = useToast();
-  const [{ versions, head_seq: headSeq, can_manage: canManage }, refreshVersions, settling] = useVersionListing(docId, ydoc);
+  const [{ versions, head_seq: headSeq, can_manage: canManage, agents = NO_AGENTS }, refreshVersions, settling] = useVersionListing(docId, ydoc);
   const [compareSeq, setCompareSeq] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useUserNames(versions.flatMap((v) => v.authors.filter((a) => !a.startsWith("restore:")).map((a) => `user:${a}`)));
+  // An agent's person, never the agent's own id, which the directory has no row for.
+  useUserNames(
+    versions.flatMap((v) =>
+      v.authors.flatMap((a) => {
+        const person = namedPerson(a, agents);
+        return person === null ? [] : [`user:${person}`];
+      }),
+    ),
+  );
 
   // At or past the head (a version is recorded before its snapshot is processed), the newest
   // version is current. Past it, the head may still hold the same text: an edit undone, or one
@@ -202,13 +212,14 @@ export function VersionsPanel({ docId, ydoc }: { docId: string; ydoc: Y.Doc | nu
   return (
     <>
       <div className="side-body">
-        <VersionHistory versions={versions} currentSeq={currentSeq} onOpen={setCompareSeq} />
+        <VersionHistory versions={versions} agents={agents} currentSeq={currentSeq} onOpen={setCompareSeq} />
       </div>
 
       {compareSeq !== null && (
         <VersionCompareDialog
           docId={docId}
           versions={versions}
+          agents={agents}
           seq={compareSeq}
           ydoc={ydoc}
           busy={busy}

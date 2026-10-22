@@ -15,7 +15,18 @@ export function markYours(ctx: Ctx, rows: CommentRow[]): Array<CommentRow & { yo
  * acts for no one.
  */
 export async function commentAgents(sql: Sql, rows: readonly CommentRow[]): Promise<Record<string, string | null>> {
-  const ids = [...new Set(rows.map((c) => c.author).filter((a) => a.startsWith("agent-") && a !== SAMPLE_AGENT_ALIAS))];
+  return agentsActingFor(
+    sql,
+    rows.map((c) => c.author),
+  );
+}
+
+/**
+ * Each agent among `authors` (comment or version authors) → the person it acts for, from its key or grant, or null
+ * when that is gone. The sample agent acts for no one and is left out.
+ */
+export async function agentsActingFor(sql: Sql, authors: readonly string[]): Promise<Record<string, string | null>> {
+  const ids = [...new Set(authors.filter((a) => a.startsWith("agent-") && a !== SAMPLE_AGENT_ALIAS))];
   if (ids.length === 0) return {};
   const owners = await agentOwners(sql, ids);
   return Object.fromEntries(ids.map((id) => [id, owners.get(id) ?? null]));

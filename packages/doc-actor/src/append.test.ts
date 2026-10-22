@@ -37,13 +37,26 @@ describe("appendMarkdown", () => {
     expect(out).toEqual({ markdown: "# Notes\n\nIntro line.\n\n## Log\n\n- first\n\n## Ideas\n\nSomething.\n\nMore.\n" });
   });
 
-  it("a top-level heading's section runs to the end when nothing outranks it", () => {
-    const out = appendMarkdown(DOC, "Tail.", "Notes");
-    expect((out as { markdown: string }).markdown.endsWith("Something.\n\nTail.\n")).toBe(true);
+  it("adds under a heading with subsections at the end of its own text, before the first of them, and says so", () => {
+    // A page's title heading holds the whole page: the end of its section is the end of the last subsection.
+    expect(appendMarkdown(DOC, "- Tail.", "Notes")).toEqual({
+      markdown: "# Notes\n\nIntro line.\n\n- Tail.\n\n## Log\n\n- first\n\n## Ideas\n\nSomething.\n",
+      placed: { heading: "Notes", before: "Log", subsections: ["Log", "Ideas"] },
+    });
+    // A title heading with no text of its own gets its first.
+    expect(appendMarkdown("# 新员工须知\n\n## 办公室\n\n- 前台 9 点开门。\n\n## 报销\n\n- 每月底报销。\n", "- 第一周不排夜班。", "新员工须知")).toEqual({
+      markdown: "# 新员工须知\n\n- 第一周不排夜班。\n\n## 办公室\n\n- 前台 9 点开门。\n\n## 报销\n\n- 每月底报销。\n",
+      placed: { heading: "新员工须知", before: "办公室", subsections: ["办公室", "报销"] },
+    });
+    // A section's subsections, the next level down only.
+    const rules = "## Rules\n\n### Hotels\n\n- At most 150.\n\n#### London\n\n- 200.\n\n### Trains\n\n- Under 4 hours.\n";
+    expect(appendMarkdown(rules, "- Book early.", "Rules")).toMatchObject({ placed: { before: "Hotels", subsections: ["Hotels", "Trains"] } });
   });
 
-  it("reports a missing heading rather than guessing", () => {
-    expect(appendMarkdown(DOC, "x", "Nope")).toEqual({ error: "heading_not_found" });
+  it("reports a missing heading rather than guessing, with the headings there are", () => {
+    expect(appendMarkdown(DOC, "x", "Nope")).toEqual({ error: "heading_not_found", headings: ["# Notes", "## Log", "## Ideas"], empty: false });
+    expect(appendMarkdown("", "x", "Facts")).toEqual({ error: "heading_not_found", headings: [], empty: true });
+    expect(appendMarkdown("Just text.\n", "x", "Facts")).toEqual({ error: "heading_not_found", headings: [], empty: false });
   });
 
   it("reports an ambiguous heading with the count", () => {
@@ -54,14 +67,14 @@ describe("appendMarkdown", () => {
   it("ignores headings inside fenced code blocks", () => {
     const doc = "## Real\n\n```\n## Fake\n```\n\ntext\n";
     const out = appendMarkdown(doc, "added", "Fake");
-    expect(out).toEqual({ error: "heading_not_found" });
+    expect(out).toEqual({ error: "heading_not_found", headings: ["## Real"], empty: false });
     const ok = appendMarkdown(doc, "added", "Real");
     expect(ok).toEqual({ markdown: "## Real\n\n```\n## Fake\n```\n\ntext\n\nadded\n" });
   });
 
   it("follows CommonMark fences: same character, a run at least as long, at most 3 spaces of indent", () => {
     const doc = "# Log\n\n````\n```\n# Not a heading\n```\n````\n\n    ```\n# Log2\n";
-    expect(appendMarkdown(doc, "- added", "Not a heading")).toEqual({ error: "heading_not_found" });
+    expect(appendMarkdown(doc, "- added", "Not a heading")).toMatchObject({ error: "heading_not_found" });
     // A 4-space-indented run is indented code, so the heading after it is real.
     expect("markdown" in appendMarkdown(doc, "- added", "Log2")).toBe(true);
     expect(appendMarkdown("# Log\n", "````\ncode\n```", "Log")).toEqual({ error: "unbalanced_fence" });

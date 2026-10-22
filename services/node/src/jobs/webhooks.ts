@@ -8,7 +8,10 @@ import type { JobDeps, JobsEnv } from "./deps.js";
 /**
  * Append one event to the feed and queue one delivery per matching hook, so each
  * retries on its own clock. The document's folder ancestry is resolved once
- * here for folder-scoped hooks.
+ * here for folder-scoped hooks. Every emitter's events pass here, so this is
+ * where a hook is held to what its creator can read: a hook never hears of a
+ * document its creator cannot open, whatever the event says of it (a title, a
+ * comment's opening, a database's summary).
  */
 export async function handleEvent(env: JobsEnv, deps: JobDeps, msg: Extract<IndexMessage, { kind: "event" }>): Promise<void> {
   const row = await deps.db.insertWorkspaceEvent({
@@ -23,7 +26,7 @@ export async function handleEvent(env: JobsEnv, deps: JobDeps, msg: Extract<Inde
   });
   if (!row) return;
   const ancestry = msg.docId ? await deps.db.docFolderAncestry(msg.docId) : [];
-  const hooks = await deps.db.matchingWebhooks(msg.workspaceId, msg.type, ancestry);
+  const hooks = await deps.db.matchingWebhooks(msg.workspaceId, msg.type, ancestry, msg.docId ?? null);
   for (const hook of hooks) {
     await env.jobs.send({ kind: "webhook_deliver", webhookId: hook.webhook_id, eventId: row.id });
   }
@@ -33,11 +36,13 @@ export async function handleEvent(env: JobsEnv, deps: JobDeps, msg: Extract<Inde
  * POST one event to one webhook, signed. A 5xx or network failure throws for a
  * retry; a 3xx or 4xx is terminal; a hook failing WEBHOOK_MAX_FAILURES times in
  * a row is switched off, and one at an address the node refuses is switched off
- * at once.
+ * at once. Each attempt first asks again whether the hook's creator can read the
+ * document, since a retry may come after they lost access or left.
  */
 export async function handleWebhookDeliver(deps: JobDeps, msg: Extract<IndexMessage, { kind: "webhook_deliver" }>): Promise<void> {
   const [hook, event] = await Promise.all([deps.db.getWebhook(msg.webhookId), deps.db.getWorkspaceEvent(msg.eventId)]);
   if (!hook || !hook.active || !event) return;
+  if (!(await deps.db.webhookReaches(hook.webhook_id, event.doc_id))) return;
   const body = JSON.stringify({
     id: String(event.id),
     at: event.at,

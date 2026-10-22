@@ -168,11 +168,50 @@ function parseSections(md: string): Section[] {
   return out;
 }
 
-/** Small sections are never merged: that would collapse distinct heading paths and blur citations. */
+/**
+ * The heading path of the section the character at `offset` sits in, as `headingAwareChunk` names a
+ * passage's ("Globex > Contract"): "" before the first heading, or for an offset below 0. A heading
+ * line belongs to its own section.
+ */
+export function headingPathAt(markdown: string, offset: number): string {
+  if (offset < 0) return "";
+  let fence: string | null = null;
+  const stack: { level: number; title: string }[] = [];
+  let start = 0;
+  for (const line of markdown.split("\n")) {
+    if (start > offset) break;
+    const marker = FENCE_OPEN.exec(line)?.[1];
+    if (fence === null) {
+      if (marker) fence = marker;
+    } else if (marker && marker[0] === fence[0] && marker.length >= fence.length && line.trim() === marker) {
+      fence = null;
+    }
+    const m = fence === null && !marker ? ATX_HEADING.exec(line) : null;
+    if (m) {
+      const level = m[1]!.length;
+      while (stack.length && stack[stack.length - 1]!.level >= level) stack.pop();
+      stack.push({ level, title: m[2]!.trim() });
+    }
+    start += line.length + 1;
+  }
+  return stack.map((s) => s.title).join(" > ");
+}
+
+/** Whether a section is its heading line and nothing else: a page's title heading, or one whose text is all in subsections. */
+function headingOnly(content: string): boolean {
+  const newline = content.indexOf("\n");
+  return ATX_HEADING.test(content.split("\n", 1)[0]!) && (newline < 0 || content.slice(newline + 1).trim() === "");
+}
+
+/**
+ * Small sections are never merged: that would collapse distinct heading paths and blur citations. A
+ * section with no text of its own is no passage: it says nothing to cite, and a search that found it
+ * by its heading alone would answer with a title.
+ */
 function normalizeSections(sections: Section[]): HeadingChunk[] {
   const out: HeadingChunk[] = [];
   for (const sec of sections) {
-    if (!sec.content.trim()) continue;
+    if (!sec.content.trim() || headingOnly(sec.content)) continue;
     if (sec.content.length <= SECTION_MAX) {
       out.push({ content: sec.content, headingPath: sec.headingPath });
     } else {

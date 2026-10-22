@@ -21,6 +21,12 @@ describe("the Claude plugin's source", () => {
     expect(manifest.userConfig.node_url.default).toBe(DEFAULT_URL);
   });
 
+  it("starts each new, cleared or compacted session with the wiki index, never a resumed one", () => {
+    const [start] = json("hooks/hooks.json").hooks.SessionStart;
+    expect(start.matcher).toBe("startup|clear|compact");
+    expect(start.hooks).toEqual([{ type: "command", command: 'node "${CLAUDE_PLUGIN_ROOT}/hooks/stuga.mjs" session-start', timeout: 5 }]);
+  });
+
   it("is its own marketplace's only plugin", () => {
     expect(json(".claude-plugin/marketplace.json").plugins).toEqual([expect.objectContaining({ name: manifest.name, source: "./" })]);
   });

@@ -1,7 +1,7 @@
 /** What an agent reads back from document reads, edits and the review ledger. */
 import { escapeInstructionText, instructionLevelLabel, type AgentInstructions } from "@stuga/protocol/domain/instructions";
 import type { AgentRunSummary, RunHunkStatus } from "@stuga/protocol/wire/doc-socket";
-import type { MarkdownBody, ProposeBody, ProvenanceBody } from "../backend.js";
+import type { MarkdownBody, PendingChange, ProposeBody, ProvenanceBody, WaitsFor } from "../backend.js";
 import { feedbackOfRun, hunkChange, renderFeedback, revisedNote, statusFeedbackLines, type FeedbackPlace } from "./feedback.js";
 import { instructionsPointer } from "./instructions.js";
 
@@ -53,20 +53,95 @@ export function instructionFields({ instructions, instructions_cut }: Partial<Ag
   };
 }
 
+const PENDING_OPEN = "=== CHANGES NOT APPROVED YET (from Stuga, not part of the document) ===";
+const PENDING_CLOSE = "=== END OF CHANGES NOT APPROVED YET ===";
+/** Characters of the text beside an addition that a read quotes to place it. */
+const ANCHOR_CHARS = 80;
+
+/** Who a change of the reader's own waits for. */
+const OWN_WAIT: Record<WaitsFor, string> = {
+  review: "Waits for the user's review",
+  colleague: "Waits for a colleague's approval (someone other than the user)",
+};
+/** Who other changes wait for, by who asked for them. */
+const OTHERS_WAIT: Record<"user" | "others", Record<WaitsFor, string>> = {
+  user: { review: "for the user's review", colleague: "for a colleague's approval (someone other than the user)" },
+  others: { review: "for the review of whoever asked for them", colleague: "for a colleague's approval" },
+};
+
+const day = (iso: string): string => iso.slice(0, 10);
+const quote = (text: string): string => JSON.stringify(text);
+const tail = (text: string): string => (text.length > ANCHOR_CHARS ? `…${text.slice(-ANCHOR_CHARS)}` : text);
+const head = (text: string): string => (text.length > ANCHOR_CHARS ? `${text.slice(0, ANCHOR_CHARS)}…` : text);
+
 /**
- * The document's instructions lead, and a read that includes the caller's own pending edits says so, or the agent
- * concludes they landed. Feedback on the caller's rejected proposals comes first of all: it is what its next edit
- * here answers, and the node writes it, so text planted in the document still never leads.
+ * One waiting change as it would land, told apart from the approved text: what that says now, and what it says
+ * after approval. An addition says where it goes; one with nowhere to go is on a page with no approved text yet.
+ */
+function changeLine(c: Pick<PendingChange, "approved_now" | "after_approval" | "adds_after" | "adds_before">, placed: boolean): string {
+  const after = c.after_approval === "" ? "removed" : quote(c.after_approval);
+  if (c.approved_now !== "") return `Approved now: ${quote(c.approved_now)} → after approval: ${after}`;
+  const where =
+    c.adds_after !== undefined
+      ? `it adds after ${quote(tail(c.adds_after))}`
+      : c.adds_before !== undefined
+        ? `it adds before ${quote(head(c.adds_before))}`
+        : placed
+          ? "the page has no approved text yet"
+          : "it adds";
+  return `Approved now: nothing (${where}) → after approval: ${after}`;
+}
+
+/**
+ * What waits in this document, where an agent reading it cannot miss it: its own changes are laid over the text so
+ * its edits line up with them, and none of them is approved; other changes are not in the text at all, those the
+ * user asked for through another of their agents listed, others' counted. Each listed change is told as it would
+ * land: the approved text now, and after approval. The user's own are said to be theirs: an agent with no memory
+ * of an earlier conversation must not take them for someone else's.
+ */
+function pendingBlock(res: MarkdownBody): string {
+  const own = res.pending_changes ?? [];
+  const others = res.others_waiting ?? [];
+  if (own.length === 0 && others.length === 0) {
+    // A node that sends no changes still says how many of the reader's own are in the text.
+    const pending = res.pending ?? 0;
+    if (pending <= 0 || !res.run_id) return "";
+    return `${PENDING_OPEN}\nThe text below includes ${pending} change(s) the user asked for through this connection (run ${res.run_id}) that are not approved yet. Use \`markdown\` action:status to check decisions.\n${PENDING_CLOSE}\n\n`;
+  }
+  const lines = [PENDING_OPEN];
+  if (own.length > 0) {
+    const since = res.pending_since ? `, since ${day(res.pending_since)}` : "";
+    lines.push(
+      `The text below is NOT the approved text: it reads as it will once ${own.length} change(s) the user asked for ` +
+        `are approved. They were proposed through this connection, the user's own agent, in this conversation or an ` +
+        `earlier one (run ${res.run_id ?? "?"}${since}): the user's own changes, not someone else's, laid over the ` +
+        "approved text so your next edits line up with them. They are NOT approved yet: everyone else reads the " +
+        "approved text until they are, and they may be rejected. When you answer from this document, say what is " +
+        "approved now, and name each change below as one of the user's that waits:",
+    );
+    own.forEach((change, i) => lines.push(`${i + 1}. ${OWN_WAIT[change.waits_for]}. ${changeLine(change, true)}`));
+  }
+  for (const w of others) {
+    const asked = w.asked_by === "user" ? "user" : "others";
+    const who = asked === "user" ? "the user asked for through another of their agents or their AI co-author" : "proposed by others";
+    const shown = w.proposed?.length ?? 0;
+    const listed = shown === 0 ? "." : shown < w.changes ? `; ${shown} of them:` : ":";
+    lines.push(`Also waiting, and NOT in the text below: ${w.changes} change(s) ${who}, ${OTHERS_WAIT[asked][w.waits_for]}, since ${day(w.since)}${listed}`);
+    for (const change of w.proposed ?? []) lines.push(`- ${changeLine(change, false)}`);
+  }
+  if (own.length > 0) lines.push("`markdown` action:status reports the decisions on the changes made through this connection.");
+  lines.push(PENDING_CLOSE);
+  return `${lines.join("\n")}\n\n`;
+}
+
+/**
+ * Feedback on the caller's rejected proposals comes first of all: it is what its next edit here answers. Then what
+ * waits in the document, so the agent never takes its own unapproved change for the page; then the document's
+ * instructions, and its text. The node writes the first three, so text planted in the document never leads.
  */
 export function renderRead(res: MarkdownBody): string {
   const feedback = renderFeedback(res.feedback);
-  const text = `${feedback ? `${feedback}\n\n` : ""}${instructionsBlock(res)}${res.markdown}`;
-  const pending = res.pending ?? 0;
-  if (pending <= 0 || !res.run_id) return text;
-  return (
-    `${text}\n\n[note] Includes your ${pending} pending edit(s) awaiting user review ` +
-    `(run ${res.run_id}). Use \`markdown\` action:status to check decisions.`
-  );
+  return `${feedback ? `${feedback}\n\n` : ""}${pendingBlock(res)}${instructionsBlock(res)}${res.markdown}`;
 }
 
 /**
@@ -80,7 +155,7 @@ export function renderPropose(res: ProposeBody): string {
         `Proposed — your edit is waiting for ${res.run.review_mode === "colleague" ? "a colleague of the user" : "the user"} to accept it (${res.reason}). ` +
         `Run ${res.run.id}, ${res.pending} pending. This is SUCCESS: do NOT retry, and do not ` +
         `rewrite the document because the change looks missing. The user has been notified. ` +
-        `Later reads include your pending edits; check \`markdown\` action:status for their decision.${mediaNote(res.media_note)}` +
+        `Later reads include your pending edits; check \`markdown\` action:status for their decision.${writeNote(res.media_note)}${writeNote(res.placement_note)}` +
         instructionsPointer(res.instructions_labels, "`docs` action:metadata") +
         revisedNote(res.revised) +
         feedbackAfter(res.feedback)
@@ -88,7 +163,7 @@ export function renderPropose(res: ProposeBody): string {
     case "auto_applied":
       return (
         `Applied (server seq ${res.seq}) — ${res.reason}, so the edit landed without waiting for review; ` +
-        `the user has been notified and can review or revert at ${res.review_url}.${mediaNote(res.media_note)}` +
+        `the user has been notified and can review or revert at ${res.review_url}.${writeNote(res.media_note)}${writeNote(res.placement_note)}` +
         instructionsPointer(res.instructions_labels, "`docs` action:metadata") +
         revisedNote(res.revised) +
         feedbackAfter(res.feedback)
@@ -104,8 +179,11 @@ export function feedbackAfter(feedback: Parameters<typeof renderFeedback>[0], pl
   return block ? `\n\n${block}` : "";
 }
 
-/** Images pulled into the workspace on the way in, said once so the agent does not "fix" the rewritten links. */
-function mediaNote(note: string | undefined): string {
+/**
+ * A note on a write that landed, said once: images pulled into the workspace on the way in, so the agent does not
+ * "fix" the rewritten links; where an append under a heading with subsections went.
+ */
+function writeNote(note: string | undefined): string {
   return note ? ` ${note}` : "";
 }
 

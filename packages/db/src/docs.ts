@@ -144,6 +144,10 @@ export async function listDocs(
     limit?: number;
     /** Only documents directly in these folders (subtrees already expanded). */
     scopeFolderIds?: string[] | null;
+    /** None directly in these folders: one person's My notes, listed apart. */
+    notInFolders?: string[];
+    /** Only documents search finds: none kept out of search. */
+    searchable?: boolean;
     /** Database row pages are left out by default; `only` with `pageOf` lists one database's. */
     pages?: "exclude" | "include" | "only";
     pageOf?: string;
@@ -160,6 +164,8 @@ export async function listDocs(
       ${pages === "exclude" ? sql`AND page_of IS NULL` : pages === "only" ? sql`AND page_of IS NOT NULL` : sql``}
       ${opts.pageOf ? sql`AND page_of = ${opts.pageOf}` : sql``}
       ${opts.scopeFolderIds ? sql`AND parent_id = ANY(${opts.scopeFolderIds})` : sql``}
+      ${opts.notInFolders?.length ? sql`AND (parent_id IS NULL OR NOT parent_id = ANY(${opts.notInFolders}))` : sql``}
+      ${opts.searchable ? sql`AND search_hidden = FALSE` : sql``}
       ${opts.owner ? sql`AND owner = ${opts.owner}` : sql``}
       ${opts.parentId !== undefined ? sql`AND parent_id ${opts.parentId === null ? sql`IS NULL` : sql`= ${opts.parentId}`}` : sql``}
       ${
@@ -169,6 +175,29 @@ export async function listDocs(
       }
     ORDER BY ${sql.unsafe(orderBy)}, doc_id
     LIMIT ${limit}`;
+}
+
+/**
+ * How many documents the principals may read, as listDocs finds them with no limit (live, row pages
+ * left out, only those search finds, within `scopeFolderIds` when given), and how many of those are
+ * directly in the folders of `split`.
+ */
+export async function countSearchableDocs(
+  sql: Sql,
+  principals: string[],
+  workspaceId: string,
+  opts: { scopeFolderIds?: string[] | null; split?: string[] } = {},
+): Promise<{ total: number; split: number }> {
+  const [row] = await sql<{ total: number; split: number }[]>`
+    SELECT count(*)::int AS total, count(*) FILTER (WHERE parent_id = ANY(${opts.split ?? []}::text[]))::int AS split
+    FROM docs
+    WHERE workspace_id = ${workspaceId}
+      AND acl_principals && ${principals}
+      AND trashed = FALSE
+      AND search_hidden = FALSE
+      AND page_of IS NULL
+      ${opts.scopeFolderIds ? sql`AND parent_id = ANY(${opts.scopeFolderIds})` : sql``}`;
+  return row ?? { total: 0, split: 0 };
 }
 
 /**

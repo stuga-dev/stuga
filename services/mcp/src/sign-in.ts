@@ -7,7 +7,7 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { dirname } from "node:path";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -19,7 +19,47 @@ interface NodeCredentials {
   tokens?: OAuthTokens;
 }
 
-/** A JSON file of credentials keyed by node URL, readable by this user alone. */
+/** A credential lock older than this was left by a process that died holding it. */
+export const CREDENTIAL_LOCK_STALE_MS = 10_000;
+/** How long a write waits for the lock before it goes ahead regardless: a sign-in is never lost to a lock. */
+const CREDENTIAL_LOCK_WAIT_MS = 2_000;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** How long ago a lock was taken; one gone since reads as stale, so the caller tries again at once. */
+function lockAge(lock: string): number {
+  try {
+    return Date.now() - statSync(lock).mtimeMs;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function removeLock(lock: string): void {
+  try {
+    unlinkSync(lock);
+  } catch {
+    // Already gone: another process took it over as stale.
+  }
+}
+
+/**
+ * A JSON file of credentials keyed by node URL, readable by this user alone.
+ *
+ * Each write is a read-modify-write of the whole file under `<file>.lock`, made exclusively, so a
+ * write here and one by the Claude Code plugin's session hook (integrations/hooks/stuga.mjs) never
+ * drop each other's entries. The lock covers that write and nothing more: the SDK reads the refresh
+ * token, asks the node for new tokens and only then saves them, with the lock taken for the save
+ * alone. The hook holds the lock across its whole refresh and re-reads the file first, so it never
+ * spends a token this server has already replaced; but this server may present the same refresh
+ * token while the hook's request is out. The node takes a refresh token presented again within
+ * REFRESH_ROTATION_GRACE_SECONDS (60 by default) of its use as one client refreshing twice and
+ * mints it a pair of its own: both pairs work, and the one written last is kept. With the grace at
+ * 0 that race ends the sign-in, and the person signs in again. A write waits CREDENTIAL_LOCK_WAIT_MS
+ * for the lock, then goes ahead without it, so a sign-in is never lost to a lock.
+ */
 export class CredentialFile {
   constructor(private readonly path: string) {}
 
@@ -28,14 +68,44 @@ export class CredentialFile {
   }
 
   update(nodeUrl: string, change: (current: NodeCredentials) => NodeCredentials): void {
-    const all = this.all();
-    all[nodeUrl] = change(all[nodeUrl] ?? {});
     mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-    // Written aside and renamed over, so a crash never leaves half a file, and created private.
-    const temp = `${this.path}.${process.pid}.tmp`;
-    writeFileSync(temp, `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
-    chmodSync(temp, 0o600);
-    renameSync(temp, this.path);
+    this.withLock(() => {
+      const all = this.all();
+      all[nodeUrl] = change(all[nodeUrl] ?? {});
+      // Written aside and renamed over, so a crash never leaves half a file, and created private.
+      const temp = `${this.path}.${process.pid}.tmp`;
+      writeFileSync(temp, `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
+      chmodSync(temp, 0o600);
+      renameSync(temp, this.path);
+    });
+  }
+
+  /** Run `fn` holding the file's lock, taking over one its holder abandoned. */
+  private withLock(fn: () => void): void {
+    const lock = `${this.path}.lock`;
+    const deadline = Date.now() + CREDENTIAL_LOCK_WAIT_MS;
+    let held = false;
+    while (!held) {
+      try {
+        const fd = openSync(lock, "wx", 0o600);
+        writeSync(fd, `${process.pid} ${new Date().toISOString()}\n`);
+        closeSync(fd);
+        held = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (lockAge(lock) > CREDENTIAL_LOCK_STALE_MS) {
+          removeLock(lock);
+          continue;
+        }
+        if (Date.now() >= deadline) break;
+        sleepSync(20);
+      }
+    }
+    try {
+      fn();
+    } finally {
+      if (held) removeLock(lock);
+    }
   }
 
   private all(): Record<string, NodeCredentials> {

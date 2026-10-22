@@ -2,15 +2,23 @@
 import type {
   AgentBackend,
   Answer,
+  AskedBy,
+  Authorship,
   DatabaseMutation,
   DatabaseProposeBody,
   ImportOutcome,
+  MarkdownBody,
+  PendingChange,
+  ProposedChange,
   ViewShape,
   ProposeInstructionLabels,
+  WaitingChanges,
+  WaitsFor,
 } from "@stuga/agent-surface/backend";
 import { MAX_INLINE_IMAGE_BYTES } from "@stuga/agent-surface/catalog";
 import {
   type DocRow,
+  docAuthorship,
   getDoc,
   getWorkspace,
   latestWorkspaceEventId,
@@ -18,12 +26,16 @@ import {
   listDocs,
   listFolders,
   listWorkspaceEvents,
+  type WaitingRun,
+  waitingRuns,
 } from "@stuga/db";
+import { stricterReviewMode, type ReviewMode } from "@stuga/protocol/domain/events";
 import { DATABASE_IMPORT_INLINE_MAX_CHARS } from "@stuga/protocol/databases/limits";
 import { RUN_FEEDBACK_LOOKBACK_DAYS } from "@stuga/protocol/domain/limits";
 import type { DatabaseRunSummary, DatabaseSchema } from "@stuga/protocol/databases/types";
 import {
   databaseDocMessage,
+  type ProjectedMarkdown,
   proposeBody,
   proposeDocEdit,
   readDocMarkdownWithProjection,
@@ -40,12 +52,13 @@ import {
   openCollection,
   renamePersonCollection,
 } from "../api/collections.js";
+import { planRemember } from "../agents/remember.js";
 import { retrievePassages, searchDocuments } from "../api/search.js";
 import { folderSummary } from "../api/summaries.js";
 import { eventActorOf } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
-import { canCommentDoc, canReadDoc, canWriteDoc, scopeFolderIds } from "../authz/authz.js";
-import { resolveReviewMode } from "../authz/review-mode.js";
+import { canCommentDoc, canReadDoc, canWriteDoc, personOf, scopeFolderIds } from "../authz/authz.js";
+import { effectiveReviewLevel, resolveReviewMode } from "../authz/review-mode.js";
 import { commentInput, isCommentRefusal, postComment } from "../comments/post.js";
 import { markYours } from "../comments/read.js";
 import { authorizedDatabase, callDatabaseActor } from "../databases/gate.js";
@@ -77,6 +90,7 @@ import {
   storeImage,
 } from "../media/media.js";
 import { createMediaUpload, takeMediaUpload } from "../media/uploads.js";
+import { landsIn, netChanges, relevance, type NetChange, type NetOfRun, type PassageOf } from "./waiting.js";
 
 /** Max page before the caller's own runs are picked out: a busy database's newest runs may all be someone else's. */
 const RUNS_PAGE = 50;
@@ -125,7 +139,11 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
       return docs.map((d) => ({ doc_id: d.doc_id, title: d.title, doc_type: d.doc_type, parent_id: d.parent_id, updated_at: d.updated_at }));
     },
 
-    searchDocs: async (query) => orCollectionNotFound(await searchDocuments(ctx, query)),
+    async searchDocs(query) {
+      // An agent's search falls back to the pages holding some of its words, said to be partial.
+      const answer = orCollectionNotFound(await searchDocuments(ctx, query, { anyWordFallback: true }));
+      return "error" in answer ? answer : { ...answer, results: await withAuthorship(ctx, answer.results, query.q, null) };
+    },
 
     async docMetadata(docId) {
       const doc = await getDoc(ctx.sql, docId);
@@ -164,6 +182,7 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
         markdown: md.markdown,
         run_id: md.runId ?? null,
         pending: md.pending ?? 0,
+        ...(await waitingInRead(ctx, md)),
         ...(md.feedback ? { feedback: md.feedback } : {}),
         ...(await docAgentInstructions(ctx, md.doc)),
       };
@@ -303,7 +322,11 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
     changeCollectionItems: async (collectionId, change, items) =>
       refusalText(await changePersonCollectionItems(ctx, collectionId, change, { docIds: items.doc_ids, folderIds: items.folder_ids })),
 
-    retrieve: async (query) => orCollectionNotFound(await retrievePassages(ctx, query)),
+    async retrieve(query) {
+      // With embeddings off, an agent still gets passages, found by their words.
+      const answer = orCollectionNotFound(await retrievePassages(ctx, query, { keywordWhenOff: true }));
+      return "error" in answer ? answer : { ...answer, chunks: await withAuthorship(ctx, answer.chunks, query.q, (c) => c) };
+    },
 
     async databaseSchema(databaseId, opts) {
       const doc = await authorizedDatabase(ctx, databaseId);
@@ -383,7 +406,242 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
       const res = await callDatabaseActor(ctx, databaseId, "query", { sql, params });
       return actorJson<Record<string, unknown>>(res, "query failed");
     },
+
+    planRemember: (points) => planRemember(ctx, points),
   };
+}
+
+/**
+ * Who approves a change proposed at `proposed` to an item at `itemNow`: a decision takes the stricter of the
+ * two. A change at `auto` waits only behind earlier ones, which the person who asked decides first.
+ */
+function waitsFor(proposed: ReviewMode, itemNow: ReviewMode): WaitsFor {
+  return stricterReviewMode(proposed, itemNow) === "colleague" ? "colleague" : "review";
+}
+
+/** One of the user's own waiting changes, as it would land, in its run's order. */
+interface OwnChange {
+  net: NetChange;
+  order: number;
+}
+
+/** Waiting changes at one level, asked for by one side; the user's own carry what they change, read from their runs. */
+type Group = WaitingChanges & { own?: OwnChange[] };
+
+/**
+ * Waiting runs by who asked for them and the level they wait at now: the user's own first, the colleague's level
+ * first within each. A run of the user's own that `read` holds counts its changes as they would land, a change to
+ * another of its changes one with it; any other run counts its pending hunks. A group nothing would change is left out.
+ */
+function waitingByLevel(runs: readonly WaitingRun[], itemNow: ReviewMode, person: string, read: ReadonlyMap<string, NetOfRun> = new Map()): Group[] {
+  const by = new Map<string, Group>();
+  let order = 0;
+  for (const run of runs) {
+    const asked: AskedBy = run.reviewer === person ? "user" : "others";
+    const net = asked === "user" ? read.get(run.run_id) : undefined;
+    const count = net ? net.changes.length + net.unread : run.pending;
+    const level = waitsFor(run.review_mode, itemNow);
+    const key = `${asked}:${level}`;
+    let kept = by.get(key);
+    if (kept) {
+      kept.changes += count;
+      if (run.created_at < kept.since) kept.since = run.created_at;
+    } else {
+      kept = { asked_by: asked, waits_for: level, changes: count, since: run.created_at };
+      by.set(key, kept);
+    }
+    if (net?.changes.length) kept.own = [...(kept.own ?? []), ...net.changes.map((c) => ({ net: c, order: order++ }))];
+  }
+  return (["user:colleague", "user:review", "others:colleague", "others:review"] as const).flatMap((key) => {
+    const kept = by.get(key);
+    return kept && kept.changes > 0 ? [kept] : [];
+  });
+}
+
+/** Characters of each side of a pending change an agent's read quotes; past it, the text is cut with "…". */
+const PENDING_TEXT_MAX = 1_000;
+/** Characters of each side of one of the user's waiting changes a recall answer or a read's tally lists. */
+const PROPOSED_TEXT_MAX = 200;
+/** The user's own waiting changes listed per document, at most, those about the question first; the rest are counted. */
+const OWN_CHANGES_MAX = 6;
+/** Documents per recall answer whose waiting changes by the user's agents are read and listed; the rest are counted. */
+const OWN_DOCS_MAX = 10;
+
+const quoteCut = (text: string, max = PENDING_TEXT_MAX): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
+/** One of the user's own waiting changes as an answer lists it. */
+function proposedOf(net: NetChange, section?: string): ProposedChange {
+  return {
+    approved_now: quoteCut(net.approvedNow, PROPOSED_TEXT_MAX),
+    after_approval: quoteCut(net.afterApproval, PROPOSED_TEXT_MAX),
+    ...(section !== undefined ? { section } : {}),
+  };
+}
+
+/**
+ * A group as an answer carries it: what it lists, and, in a recall answer, a note when that is not all of them
+ * (`where` "passage": listed by the passage they land in). A read's tally counts them itself.
+ */
+function shownGroup({ own: _own, ...group }: Group, proposed: ProposedChange[], where: "passage" | "document" | "read"): WaitingChanges {
+  if (group.asked_by !== "user") return group;
+  const listed = proposed.length > 0 ? { proposed } : {};
+  if (proposed.length >= group.changes || where === "read") return { ...group, ...listed };
+  return { ...group, ...listed, note: `${proposed.length} of ${group.changes} listed${where === "passage" ? " here" : ""}; read the page for the rest.` };
+}
+
+/** The document's text as everyone but an agent with pending hunks reads it, or null when it cannot be read. */
+async function approvedText(ctx: Ctx, docId: string): Promise<string | null> {
+  const res = await ctx.env.docs.get(docId).fetch(`http://actor/markdown?docId=${encodeURIComponent(docId)}`);
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as { markdown?: unknown } | null;
+  return typeof body?.markdown === "string" ? body.markdown : null;
+}
+
+/**
+ * The changes of the user's own waiting runs on a document, as each would land on `approved` (read from the
+ * document's actor when not given), by run. Best-effort: a run whose changes cannot be read is counted without them.
+ */
+async function listOwnChanges(ctx: Ctx, docId: string, runs: readonly WaitingRun[], approved?: string): Promise<Map<string, NetOfRun>> {
+  const out = new Map<string, NetOfRun>();
+  if (runs.length === 0) return out;
+  try {
+    const base = approved ?? (await approvedText(ctx, docId));
+    if (base === null) return out;
+    await Promise.all(
+      runs.map(async (run) => {
+        const res = await ctx.env.docs
+          .get(docId)
+          .fetch(`http://actor/runs/detail?docId=${encodeURIComponent(docId)}&runId=${encodeURIComponent(run.run_id)}&full=1`);
+        if (!res.ok) return;
+        const body = (await res.json().catch(() => null)) as { hunks?: Array<{ old_string?: string; new_string?: string; status?: string }> } | null;
+        const pending = (body?.hunks ?? []).flatMap((h) =>
+          h.status === "pending" && typeof h.old_string === "string" && typeof h.new_string === "string" ? [{ old_string: h.old_string, new_string: h.new_string }] : [],
+        );
+        out.set(run.run_id, netChanges(base, pending));
+      }),
+    );
+  } catch (e) {
+    console.warn("[node] a waiting run's changes are unavailable", { docId, err: e instanceof Error ? e.message : String(e) });
+  }
+  return out;
+}
+
+/**
+ * What waits in an agent's read: its own changes laid over the text, each as it would land on the approved text
+ * (an edit to another of them one with it) and who approves it; then the other changes waiting, which are not in
+ * the text at all: those the user asked for through another of their agents listed, others' counted. Best-effort:
+ * a read stands without it.
+ */
+async function waitingInRead(ctx: Ctx, md: ProjectedMarkdown): Promise<Pick<MarkdownBody, "pending_changes" | "pending_since" | "others_waiting">> {
+  const itemNow = effectiveReviewLevel(md.doc);
+  const hunks = md.pendingHunks ?? [];
+  let own: PendingChange[] = [];
+  let approved: string | null = hunks.length > 0 ? (md.approvedMarkdown ?? null) : md.markdown;
+  let others: WaitingChanges[] = [];
+  try {
+    if (approved === null) approved = await approvedText(ctx, md.doc.doc_id);
+    if (hunks.length > 0) {
+      const level = hunks
+        .map((h) => (h.review === "auto" ? (md.runReviewMode ?? "review") : h.review))
+        .reduce((a, b) => stricterReviewMode(a, b));
+      const waits = waitsFor(level, itemNow);
+      own =
+        approved === null
+          ? // Without the approved text, each hunk as it was proposed.
+            hunks.map((h) => ({ approved_now: quoteCut(h.old_string), after_approval: quoteCut(h.new_string), waits_for: waits }))
+          : netChanges(approved, hunks).changes.map((c) => ({
+              approved_now: quoteCut(c.approvedNow),
+              after_approval: quoteCut(c.afterApproval),
+              ...(c.addsAfter !== undefined ? { adds_after: c.addsAfter } : {}),
+              ...(c.addsBefore !== undefined ? { adds_before: c.addsBefore } : {}),
+              waits_for: waits,
+            }));
+    }
+    const person = personOf(ctx);
+    const runs = ((await waitingRuns(ctx.sql, ctx.workspaceId, [md.doc.doc_id])).get(md.doc.doc_id) ?? []).filter((r) => r.agent_alias !== ctx.alias);
+    const read = await listOwnChanges(ctx, md.doc.doc_id, runs.filter((r) => r.reviewer === person), approved ?? undefined);
+    // In the order their runs have them: a read answers no question.
+    others = waitingByLevel(runs, itemNow, person, read).map((g) =>
+      shownGroup(g, (g.own ?? []).slice(0, OWN_CHANGES_MAX).map((c) => proposedOf(c.net)), "read"),
+    );
+  } catch (e) {
+    console.warn("[node] the changes waiting in a document are unavailable", { err: e instanceof Error ? e.message : String(e) });
+  }
+  return {
+    ...(own.length > 0 ? { pending_changes: own, ...(md.runCreatedAt ? { pending_since: md.runCreatedAt } : {}) } : {}),
+    ...(others.length > 0 ? { others_waiting: others } : {}),
+  };
+}
+
+/**
+ * Search hits or passages with who wrote each document, and what AI changes to it wait for approval, which an
+ * agent cites and a person's REST answer leaves out: the changes the user asked for (through this agent or another
+ * of theirs) listed as they would land, the approved text each changes now beside what it reads after approval, so
+ * one answer can say "the page says 14 days; a change to 30 days waits for a colleague"; others' counted. Those
+ * holding the most words of `query` come first, at most OWN_CHANGES_MAX a document, and a note says when some are
+ * left out. With `passageOf`, passages: each listed change goes on the passage it lands in; one that lands in no
+ * passage found is listed on the document's first, naming its section, only when it holds a word of the query.
+ * Best-effort: without it the answer still stands, as it would have before.
+ */
+async function withAuthorship<T extends { doc_id: string }>(
+  ctx: Ctx,
+  items: T[],
+  query: string,
+  passageOf: ((item: T) => PassageOf) | null,
+): Promise<Array<T & Authorship>> {
+  if (items.length === 0) return items;
+  try {
+    const known = await docAuthorship(ctx.sql, ctx.workspaceId, [...new Set(items.map((i) => i.doc_id))]);
+    const person = personOf(ctx);
+    // The user's own waiting runs are read from their documents' actors, the first few documents only.
+    const ownDocs = [...known.values()].filter((a) => a.waiting.some((r) => r.reviewer === person)).slice(0, OWN_DOCS_MAX);
+    const read = new Map<string, NetOfRun>();
+    await Promise.all(
+      ownDocs.map(async (a) => {
+        for (const [runId, net] of await listOwnChanges(ctx, a.doc_id, a.waiting.filter((r) => r.reviewer === person))) read.set(runId, net);
+      }),
+    );
+    /** Per item, per group of its document, the changes listed on it. */
+    const listedOn = new Map<number, Map<Group, ProposedChange[]>>();
+    const groups = new Map<string, Group[]>();
+    for (const a of known.values()) {
+      const docGroups = waitingByLevel(a.waiting, effectiveReviewLevel(a.level), person, read);
+      groups.set(a.doc_id, docGroups);
+      const at = items.flatMap((x, i) => (x.doc_id === a.doc_id ? [i] : []));
+      const ranked = docGroups
+        .flatMap((group) => (group.own ?? []).map((own) => ({ group, own, score: relevance(query, own.net) })))
+        .sort((x, y) => y.score - x.score || x.own.order - y.own.order)
+        .slice(0, OWN_CHANGES_MAX);
+      const placed = ranked.flatMap(({ group, own, score }) => {
+        if (!passageOf) return [{ group, index: at[0]!, change: proposedOf(own.net), here: true }];
+        const lands = landsIn(own.net, at.map((i) => passageOf(items[i]!)));
+        if (lands >= 0) return [{ group, index: at[lands]!, change: proposedOf(own.net), here: true }];
+        return score > 0 ? [{ group, index: at[0]!, change: proposedOf(own.net, own.net.section), here: false }] : [];
+      });
+      // On each passage, the changes that land in it first.
+      for (const { group, index, change } of [...placed.filter((p) => p.here), ...placed.filter((p) => !p.here)]) {
+        const onItem = listedOn.get(index) ?? new Map<Group, ProposedChange[]>();
+        onItem.set(group, [...(onItem.get(group) ?? []), change]);
+        listedOn.set(index, onItem);
+      }
+    }
+    return items.map((item, index) => {
+      const a = known.get(item.doc_id);
+      if (!a) return item;
+      const ai_edits = a.ai_changes === 0 ? "none" : a.ai_unreviewed > 0 ? "unreviewed" : "reviewed";
+      const waiting = (groups.get(item.doc_id) ?? []).map((g) => shownGroup(g, listedOn.get(index)?.get(g) ?? [], passageOf ? "passage" : "document"));
+      return {
+        ...item,
+        updated_at: a.updated_at,
+        last_edited_by: a.last_edited_by,
+        ai_edits,
+        ...(waiting.length > 0 ? { pending_changes: waiting } : {}),
+      };
+    });
+  } catch (e) {
+    console.warn("[node] who wrote the documents a recall found is unavailable", { err: e instanceof Error ? e.message : String(e) });
+    return items;
+  }
 }
 
 /** The actor op one mutation proposes. */

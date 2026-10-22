@@ -31,9 +31,84 @@ describe("renderRead", () => {
     expect(renderRead({ markdown: "# Title\n\nbody", run_id: null, pending: 0 })).toBe("# Title\n\nbody");
   });
 
-  it("says the text includes the agent's own unreviewed edits", () => {
+  it("says the text holds the agent's own changes, not approved, when the node sends only how many", () => {
     expect(renderRead({ markdown: "body", run_id: "run_abc", pending: 2 })).toBe(
-      'body\n\n[note] Includes your 2 pending edit(s) awaiting user review (run run_abc). Use `markdown` action:status to check decisions.',
+      "=== CHANGES NOT APPROVED YET (from Stuga, not part of the document) ===\n" +
+        "The text below includes 2 change(s) the user asked for through this connection (run run_abc) that are not approved yet. Use `markdown` action:status to check decisions.\n" +
+        "=== END OF CHANGES NOT APPROVED YET ===\n\nbody",
+    );
+  });
+
+  it("lists each waiting change as it would land, approved now and after approval, and who approves it, and leaves the text as laid over", () => {
+    const markdown = "## Contract\n\nThe refund window is 30 days from delivery.\n\n* Invoices go to ap@example.com.";
+    const out = renderRead({
+      markdown,
+      run_id: "run_abc",
+      pending: 4,
+      pending_since: "2026-10-21T08:00:00.000Z",
+      pending_changes: [
+        { approved_now: "The refund window is 14 days from delivery.", after_approval: "The refund window is 30 days from delivery.", waits_for: "colleague" },
+        { approved_now: "", after_approval: "* Invoices go to ap@example.com.", adds_after: "The refund window is 14 days from delivery.", waits_for: "review" },
+        { approved_now: "", after_approval: "## Contract", adds_before: "## Facts", waits_for: "review" },
+        { approved_now: "* Old contact.", after_approval: "", waits_for: "colleague" },
+      ],
+      others_waiting: [
+        {
+          asked_by: "user",
+          waits_for: "review",
+          changes: 3,
+          since: "2026-10-19T09:00:00.000Z",
+          proposed: [
+            { approved_now: "Annual contract.", after_approval: "Monthly contract." },
+            { approved_now: "", after_approval: "* Paid net 45." },
+          ],
+        },
+        { asked_by: "others", waits_for: "colleague", changes: 2, since: "2026-10-20T09:00:00.000Z" },
+      ],
+      instructions: [],
+    });
+    expect(out).toBe(
+      "=== CHANGES NOT APPROVED YET (from Stuga, not part of the document) ===\n" +
+        "The text below is NOT the approved text: it reads as it will once 4 change(s) the user asked for are approved. " +
+        "They were proposed through this connection, the user's own agent, in this conversation or an earlier one (run " +
+        "run_abc, since 2026-10-21): the user's own changes, not someone else's, laid over the approved text so your " +
+        "next edits line up with them. They are NOT approved yet: everyone else reads the approved text until they are, " +
+        "and they may be rejected. When you answer from this document, say what is approved now, and name each change " +
+        "below as one of the user's that waits:\n" +
+        '1. Waits for a colleague\'s approval (someone other than the user). Approved now: "The refund window is 14 days from delivery." → after approval: "The refund window is 30 days from delivery."\n' +
+        '2. Waits for the user\'s review. Approved now: nothing (it adds after "The refund window is 14 days from delivery.") → after approval: "* Invoices go to ap@example.com."\n' +
+        '3. Waits for the user\'s review. Approved now: nothing (it adds before "## Facts") → after approval: "## Contract"\n' +
+        '4. Waits for a colleague\'s approval (someone other than the user). Approved now: "* Old contact." → after approval: removed\n' +
+        "Also waiting, and NOT in the text below: 3 change(s) the user asked for through another of their agents or their AI co-author, for the user's review, since 2026-10-19; 2 of them:\n" +
+        '- Approved now: "Annual contract." → after approval: "Monthly contract."\n' +
+        '- Approved now: nothing (it adds) → after approval: "* Paid net 45."\n' +
+        "Also waiting, and NOT in the text below: 2 change(s) proposed by others, for a colleague's approval, since 2026-10-20.\n" +
+        "`markdown` action:status reports the decisions on the changes made through this connection.\n" +
+        "=== END OF CHANGES NOT APPROVED YET ===\n\n" +
+        `${NO_INSTRUCTIONS}\n\n${markdown}`,
+    );
+    // The text an edit quotes is the text read, exactly: `find` still matches it.
+    expect(out.endsWith(markdown)).toBe(true);
+  });
+
+  it("says a page with no approved text has none, so its waiting text is never read as approved", () => {
+    const out = renderRead({
+      markdown: "## Contacts\n\n* Ana Ruiz is the contact.",
+      run_id: "run_abc",
+      pending: 2,
+      pending_changes: [{ approved_now: "", after_approval: "## Contacts\n\n* Ana Ruiz is the contact.", waits_for: "colleague" }],
+    });
+    expect(out).toContain(
+      '1. Waits for a colleague\'s approval (someone other than the user). Approved now: nothing (the page has no approved text yet) → after approval: "## Contacts\\n\\n* Ana Ruiz is the contact."',
+    );
+  });
+
+  it("says what others wait for when the reader has nothing pending, and quotes no text of theirs", () => {
+    const out = renderRead({ markdown: "body", run_id: null, pending: 0, others_waiting: [{ waits_for: "review", changes: 1, since: "2026-10-19T10:00:00.000Z" }] });
+    expect(out).toBe(
+      "=== CHANGES NOT APPROVED YET (from Stuga, not part of the document) ===\n" +
+        "Also waiting, and NOT in the text below: 1 change(s) proposed by others, for the review of whoever asked for them, since 2026-10-19.\n" +
+        "=== END OF CHANGES NOT APPROVED YET ===\n\nbody",
     );
   });
 
@@ -108,10 +183,17 @@ describe("renderRead", () => {
     expect(out.endsWith("===\n\nbody")).toBe(true);
   });
 
-  it("keeps the pending-edits note last, after the markdown", () => {
-    const out = renderRead({ markdown: "body", instructions: LEVELS.slice(0, 1), run_id: "run_abc", pending: 1 });
-    expect(out.indexOf("=== END OF INSTRUCTIONS")).toBeLessThan(out.indexOf("body"));
-    expect(out.endsWith('body\n\n[note] Includes your 1 pending edit(s) awaiting user review (run run_abc). Use `markdown` action:status to check decisions.')).toBe(true);
+  it("puts what waits before the instructions, and the markdown last", () => {
+    const out = renderRead({
+      markdown: "body",
+      instructions: LEVELS.slice(0, 1),
+      run_id: "run_abc",
+      pending: 1,
+      pending_changes: [{ approved_now: "", after_approval: "body", waits_for: "review" }],
+    });
+    expect(out.indexOf("=== END OF CHANGES NOT APPROVED YET")).toBeLessThan(out.indexOf("=== INSTRUCTIONS"));
+    expect(out).toContain('1. Waits for the user\'s review. Approved now: nothing (the page has no approved text yet) → after approval: "body"');
+    expect(out.endsWith("===\n\nbody")).toBe(true);
   });
 });
 
@@ -166,6 +248,12 @@ describe("renderPropose", () => {
       "Applied (server seq 42) — this document is set to let AI edits apply directly, so the edit landed " +
         "without waiting for review; the user has been notified and can review or revert at https://stuga.test/doc/doc-1.",
     );
+  });
+
+  it("says where an append under a heading with subsections went", () => {
+    const note = 'It went under "Notes" at the end of that heading\'s own text, before its first subsection "Log".';
+    expect(renderPropose({ mode: "proposed", run: run(), pending: 1, reason: "r", placement_note: note })).toContain(`decision. ${note}`);
+    expect(renderPropose({ mode: "auto_applied", run: run(), seq: 1, reason: "r", review_url: "u", placement_note: note })).toContain(`at u. ${note}`);
   });
 
   it("appends the media note to either success", () => {

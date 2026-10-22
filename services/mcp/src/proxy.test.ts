@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { ErrorCode, McpError, type Prompt, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { ResolvedConfig } from "./config.js";
+import type { KeptLists, OfflineCatalog } from "./offline.js";
 import { buildProxy, formatForFile, waitingInstructions, withLocalFiles } from "./proxy.js";
 import type { Upstream, UpstreamClient } from "./upstream.js";
 
@@ -14,6 +15,11 @@ const TOOLS: Tool[] = [
   { name: "databases_add", description: "Add to databases.", inputSchema: { type: "object", properties: { action: { type: "string" } } } },
   { name: "media_upload", description: "Upload.", inputSchema: { type: "object", properties: { action: { type: "string" } } } },
 ];
+const PROMPTS: Prompt[] = [
+  { name: "save", title: "Save to Stuga", arguments: [{ name: "text", required: true }] },
+  { name: "ask", title: "Ask Stuga", arguments: [{ name: "topic", required: false }] },
+];
+const OFFLINE = { tools: [TOOLS[0]!], prompts: PROMPTS };
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
 /** A node that answers every call from `answer`, recording the calls. */
@@ -26,9 +32,25 @@ function node(answer: (name: string, args: Record<string, unknown>) => unknown =
       calls.push(params as never);
       return answer(params.name, (params.arguments ?? {}) as Record<string, unknown>) as never;
     }),
+    listPrompts: vi.fn(async () => ({ prompts: PROMPTS })),
+    getPrompt: vi.fn(async (params) => ({
+      messages: [{ role: "user" as const, content: { type: "text" as const, text: `Save to Stuga: ${String(params.arguments?.text)}` } }],
+    })),
   };
   return { client, calls };
 }
+
+/** Kept lists in memory, as the catalog file keeps them on disk. */
+function memory(initial: Partial<OfflineCatalog> = {}): KeptLists & { lists: Partial<OfflineCatalog> } {
+  const kept = { lists: { ...initial } } as KeptLists & { lists: Partial<OfflineCatalog> };
+  kept.read = () => ({ ...kept.lists });
+  kept.save = (lists) => {
+    kept.lists = { ...kept.lists, ...lists };
+  };
+  return kept;
+}
+
+const down = () => upstreamOf(async () => Promise.reject(new Error("cannot reach the Stuga node at http://127.0.0.1:8787: fetch failed")), "failed");
 
 function upstreamOf(ready: () => Promise<UpstreamClient>, state: Upstream["state"] = "ready") {
   return { ready, reset: vi.fn(), state } as Pick<Upstream, "ready" | "reset" | "state"> & { reset: ReturnType<typeof vi.fn> };
@@ -125,13 +147,55 @@ describe("the proxy", () => {
     expect((await missing.call("databases_add", { workspace_id: "ws1", action: "insert_rows", file: "/x.csv" })).text).toContain("`file` goes with action:import");
   });
 
-  it("answers with no tools while the person has not approved the sign-in, and says so on a call", async () => {
-    const { client, call } = await connect({ upstream: upstreamOf(() => new Promise(() => {}), "signing-in"), patienceMs: 10 });
-    expect((await client.listTools()).tools).toEqual([]);
+  it("forwards the node's prompts, and gets one from it", async () => {
+    const up = node();
+    const { client } = await connect({ upstream: upstreamOf(async () => up.client) });
+    expect((await client.listPrompts()).prompts).toEqual(PROMPTS);
+    const got = await client.getPrompt({ name: "save", arguments: { text: "Refunds need approval" } });
+    expect(got.messages[0]!.content).toEqual({ type: "text", text: "Save to Stuga: Refunds need approval" });
+    expect(up.client.getPrompt).toHaveBeenCalledWith({ name: "save", arguments: { text: "Refunds need approval" } });
+  });
+
+  it("lists this build's own tools and prompts while the person has not approved the sign-in, and says so on a call", async () => {
+    const { client, call } = await connect({
+      upstream: upstreamOf(() => new Promise(() => {}), "signing-in"),
+      patienceMs: 10,
+      listPatienceMs: 10,
+      offline: OFFLINE,
+    });
+    expect((await client.listTools()).tools).toEqual([TOOLS[0]]);
+    expect((await client.listPrompts()).prompts).toEqual(PROMPTS);
     const res = await call("search", { q: "x" });
     expect(res.isError).toBe(true);
     expect(res.text).toContain("approve the sign-in page");
+    await expect(client.getPrompt({ name: "ask", arguments: {} })).rejects.toThrow("approve the sign-in page");
     expect(client.getInstructions()).toBe(waitingInstructions(NODE));
+  });
+
+  it("answers a list within its own short wait while a call keeps waiting for the sign-in", async () => {
+    // Claude Desktop cancels a list at 30 s; the first sign-in can take longer than that.
+    const { client, call } = await connect({
+      upstream: upstreamOf(() => new Promise(() => {}), "signing-in"),
+      patienceMs: 400,
+      listPatienceMs: 10,
+      offline: OFFLINE,
+    });
+    const listedAt = Date.now();
+    expect((await client.listTools()).tools).toEqual([TOOLS[0]]);
+    expect((await client.listPrompts()).prompts).toEqual(PROMPTS);
+    expect(Date.now() - listedAt).toBeLessThan(300);
+    const calledAt = Date.now();
+    expect((await call("search", { q: "x" })).text).toContain("approve the sign-in page");
+    expect(Date.now() - calledAt).toBeGreaterThanOrEqual(350);
+  });
+
+  it("keeps its tools listed while the node is down from the start, and says why on a call", async () => {
+    const { client, call } = await connect({
+      upstream: upstreamOf(async () => Promise.reject(new Error("cannot reach the Stuga node at http://127.0.0.1:8787: fetch failed")), "failed"),
+      offline: OFFLINE,
+    });
+    expect((await client.listTools()).tools).toEqual([TOOLS[0]]);
+    expect((await call("search", { q: "x" })).text).toContain("cannot reach the Stuga node");
   });
 
   it("reconnects through the new sign-in and answers the call, when the node stopped accepting the old one", async () => {
@@ -148,6 +212,71 @@ describe("the proxy", () => {
     expect(await call("search", { q: "x" })).toEqual({ text: "after sign-in", isError: false });
     expect(upstream.reset).toHaveBeenCalledTimes(1);
     expect(signedIn.calls).toEqual([{ name: "search", arguments: { q: "x" } }]);
+  });
+
+  it("keeps the node's lists, and lists those rather than this build's while the node is out of reach", async () => {
+    const kept = memory();
+    const online = await connect({ upstream: upstreamOf(async () => node().client), offline: OFFLINE, kept });
+    await online.client.listTools();
+    await online.client.listPrompts();
+    expect(kept.lists).toEqual({ tools: TOOLS, prompts: PROMPTS });
+    const offline = await connect({ upstream: down(), offline: OFFLINE, kept });
+    expect((await offline.client.listTools()).tools).toEqual(withLocalFiles(TOOLS));
+    expect((await offline.client.listPrompts()).prompts).toEqual(PROMPTS);
+  });
+
+  it("lists this build's lists while the node is out of reach and has never listed its own", async () => {
+    const { client } = await connect({ upstream: down(), offline: OFFLINE, kept: memory() });
+    expect((await client.listTools()).tools).toEqual([TOOLS[0]]);
+    expect((await client.listPrompts()).prompts).toEqual(PROMPTS);
+  });
+
+  it("answers an older node's missing prompts with none, and keeps none for when it is out of reach", async () => {
+    const older = node();
+    older.client.listPrompts = vi.fn(async () => {
+      throw new McpError(ErrorCode.MethodNotFound, "Method not found");
+    });
+    older.client.getPrompt = vi.fn(async () => {
+      throw new McpError(ErrorCode.MethodNotFound, "Method not found");
+    });
+    const kept = memory({ prompts: PROMPTS });
+    const { client } = await connect({ upstream: upstreamOf(async () => older.client), offline: OFFLINE, kept });
+    expect((await client.listPrompts()).prompts).toEqual([]);
+    expect(kept.lists.prompts).toEqual([]);
+    // The node's own error, as it gave it: never "cannot reach".
+    const refused = await client.getPrompt({ name: "ask", arguments: {} }).catch((e: unknown) => e as McpError);
+    expect(refused).toBeInstanceOf(McpError);
+    expect((refused as McpError).code).toBe(ErrorCode.MethodNotFound);
+    expect((refused as McpError).message).toBe("MCP error -32601: Method not found");
+    const offline = await connect({ upstream: down(), offline: OFFLINE, kept });
+    expect((await offline.client.listPrompts()).prompts).toEqual([]);
+  });
+
+  it("passes on the node's error answer to a call or a list as the node gave it", async () => {
+    const strict = node(() => {
+      throw new McpError(ErrorCode.InvalidParams, "Tool nope not found");
+    });
+    strict.client.listTools = vi.fn(async () => {
+      throw new McpError(ErrorCode.InternalError, "the node failed");
+    });
+    const kept = memory({ tools: TOOLS });
+    const { client } = await connect({ upstream: upstreamOf(async () => strict.client), offline: OFFLINE, kept });
+    await expect(client.callTool({ name: "nope", arguments: {} })).rejects.toThrow(/^MCP error -32602: Tool nope not found$/);
+    await expect(client.listTools()).rejects.toThrow(/^MCP error -32603: the node failed$/);
+    expect(kept.lists.tools).toEqual(TOOLS);
+  });
+
+  it("reads a request the node did not answer in time as out of reach", async () => {
+    const silent = node();
+    silent.client.listTools = vi.fn(async () => {
+      throw new McpError(ErrorCode.RequestTimeout, "Request timed out");
+    });
+    const { client, call } = await connect({ upstream: upstreamOf(async () => silent.client), offline: OFFLINE, kept: memory({ tools: TOOLS }) });
+    expect((await client.listTools()).tools).toEqual(withLocalFiles(TOOLS));
+    silent.client.callTool = vi.fn(async () => {
+      throw new McpError(ErrorCode.RequestTimeout, "Request timed out");
+    });
+    expect((await call("search", { q: "x" })).text).toContain("cannot reach the Stuga node");
   });
 
   it("says the node could not be reached when a call fails for another reason, and does not retry it", async () => {

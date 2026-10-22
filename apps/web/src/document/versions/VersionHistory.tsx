@@ -4,20 +4,35 @@
  * baseline was pruned has no counts and shows none, rather than a misleading zero.
  */
 import { Fragment } from "react";
-import type { Version } from "../../api";
-import { authorLabel, nameLoading } from "../../state/identity";
+import type { CommentAgents, Version } from "../../api";
+import { agentOfLabel, authorLabel, nameLoading } from "../../state/identity";
 import { absoluteTime, dayLabel, timeOfDay, versionLabel } from "../../lib/format";
 import { t } from "../../i18n/i18n";
 import { tRich } from "../../i18n/rich";
 import { nameList } from "../name-list";
 
+/** The person behind a version author whose name is shown: an agent's person (`agents`), else the author. */
+export function namedPerson(author: string, agents: CommentAgents = {}): string | null {
+  if (author.startsWith("restore:")) return null;
+  return Object.hasOwn(agents, author) ? (agents[author] ?? null) : author;
+}
+
 /**
- * Who made a version; null while a person's name is still loading, so no raw alias shows.
- * A restore's `restore:v<seq>` author is named by that version's time while it is still in the list.
+ * Who made a version; null while a person's name is still loading, so no raw alias shows. An agent is
+ * named by the person it acts for ("Liv's agent"), never by a name its client chose. A restore's
+ * `restore:v<seq>` author is named by that version's time while it is still in the list.
  */
-export function authorsOf(v: Version, versions: Version[]): string | null {
-  if (v.authors.some((a) => !a.startsWith("restore:") && nameLoading(`user:${a}`))) return null;
+export function authorsOf(v: Version, versions: Version[], agents: CommentAgents = {}): string | null {
+  if (
+    v.authors.some((a) => {
+      const person = namedPerson(a, agents);
+      return person !== null && nameLoading(`user:${person}`);
+    })
+  ) {
+    return null;
+  }
   const names = v.authors.map((a) => {
+    if (Object.hasOwn(agents, a)) return agentOfLabel(agents[a] ?? null);
     const restored = /^restore:v(\d+)$/.exec(a);
     if (!restored) return authorLabel(a);
     const source = versions.find((x) => x.seq === Number(restored[1]));
@@ -76,11 +91,14 @@ function ChangeCounts({ v }: { v: Version }) {
 
 export function VersionHistory({
   versions,
+  agents = {},
   currentSeq,
   onOpen,
 }: {
   /** Newest first. */
   versions: Version[];
+  /** Each agent among the authors → the person it acts for. */
+  agents?: CommentAgents;
   /** The version the document matches, labelled Current; null once edits moved past every one. */
   currentSeq: number | null;
   onOpen: (seq: number) => void;
@@ -105,7 +123,7 @@ export function VersionHistory({
                   </span>
                   <span className="version-open__sub">
                     {/* A blank keeps the row's height until the names arrive. */}
-                    <span className="vauthors">{authorsOf(v, versions) ?? "\u00a0"}</span>
+                    <span className="vauthors">{authorsOf(v, versions, agents) ?? "\u00a0"}</span>
                     {v.seq === currentSeq && <span className="vcurrent">{t("document.versions.current")}</span>}
                   </span>
                 </button>

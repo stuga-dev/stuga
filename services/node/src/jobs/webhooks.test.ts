@@ -25,6 +25,7 @@ function deps(overrides: Partial<JobsDb> = {}, fetchImpl?: JobDeps["webhookFetch
     })),
     docFolderAncestry: vi.fn(async () => ["root", "leaf"]),
     matchingWebhooks: vi.fn(async () => []),
+    webhookReaches: vi.fn(async () => true),
     getWebhook: vi.fn(async () => null),
     getWorkspaceEvent: vi.fn(async () => null),
     recordWebhookDelivery: vi.fn(async () => {}),
@@ -98,7 +99,8 @@ describe("event", () => {
       payload: { x: 1 },
     });
     expect(d.db.docFolderAncestry).toHaveBeenCalledWith("d1");
-    expect(d.db.matchingWebhooks).toHaveBeenCalledWith("ws1", "run.decided", ["root", "leaf"]);
+    // The document goes along, so a hook is matched only when its creator can read it.
+    expect(d.db.matchingWebhooks).toHaveBeenCalledWith("ws1", "run.decided", ["root", "leaf"], "d1");
     expect(e.sent).toEqual([
       { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 },
       { kind: "webhook_deliver", webhookId: "whk_b", eventId: 42 },
@@ -114,7 +116,7 @@ describe("event", () => {
     const d = deps();
     await handleEvent(env(), d, { kind: "event", workspaceId: "ws1", type: "doc.created", actor: "user:alice", actorKind: "human" });
     expect(d.db.docFolderAncestry).not.toHaveBeenCalled();
-    expect(d.db.matchingWebhooks).toHaveBeenCalledWith("ws1", "doc.created", []);
+    expect(d.db.matchingWebhooks).toHaveBeenCalledWith("ws1", "doc.created", [], null);
   });
 });
 
@@ -220,6 +222,18 @@ describe("webhook_deliver", () => {
     const d = deps({ getWebhook: vi.fn(async () => dark), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
     await expect(handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 })).rejects.toThrow();
     expect(d.db.updateWebhook).toHaveBeenCalledWith("ws1", "whk_a", { active: false });
+  });
+
+  it("sends nothing once the hook's creator can no longer read the document", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const d = deps(
+      { getWebhook: vi.fn(async () => HOOK), getWorkspaceEvent: vi.fn(async () => EVENT), webhookReaches: vi.fn(async () => false) } as unknown as Partial<JobsDb>,
+      fetchImpl,
+    );
+    await handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
+    expect(d.db.webhookReaches).toHaveBeenCalledWith("whk_a", "d1");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(d.db.recordWebhookDelivery).not.toHaveBeenCalled();
   });
 
   it("a paused or deleted hook, or a missing event, is a quiet no-op", async () => {

@@ -7,7 +7,7 @@ export { listModels, listSystemOneModels } from "./list-models.js";
 export { bedrockRegion, bedrockRuntimeUrl } from "./bedrock.js";
 export { EMBED_BATCH, embed, embedInputs, requestedDims, type EmbedResult } from "./retrieval/embed.js";
 export { embedProfile, type EmbedProfile, type EmbedRole } from "./retrieval/embed-profile.js";
-export { chunkEmbedInput, headingAwareChunk } from "./retrieval/chunk.js";
+export { chunkEmbedInput, headingAwareChunk, headingPathAt } from "./retrieval/chunk.js";
 export { cutoffFor, queryStyle, type QueryStyle, type SearchCutoff } from "./retrieval/cutoff.js";
 export {
   CALIBRATION_VERSION,

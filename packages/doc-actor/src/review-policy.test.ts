@@ -202,6 +202,24 @@ describe("review verdicts in the document actor", () => {
     const missing = await propose(dobj, { action: "append", text: "x", heading: "Nope", review: "auto" });
     expect(missing.status).toBe(409);
     expect(missing.json.error).toBe("not_found");
+    // The headings there are, as the agent's view has them, so the agent can name one.
+    expect(missing.json.headings).toEqual(["# Notes", "## Log", "## Ideas"]);
+    expect(missing.json.empty).toBe(false);
+  });
+
+  it("an append under the page's title heading goes in its opening, before the first section, and says so", async () => {
+    const h = harness();
+    const dobj = makeActor(h);
+    await seed(dobj);
+    const out = await propose(dobj, { action: "append", text: "Opening line.", heading: "Notes", review: "auto" });
+    expect(out.json.mode).toBe("auto_applied");
+    expect(out.json.placed).toEqual({ heading: "Notes", before: "Log", subsections: ["Log", "Ideas"] });
+    const md = await markdownOf(dobj);
+    expect(md.indexOf("Opening line.")).toBeGreaterThan(md.indexOf("# Notes"));
+    expect(md.indexOf("Opening line.")).toBeLessThan(md.indexOf("## Log"));
+    // A section without subsections says nothing more.
+    const plain = await propose(dobj, { action: "append", text: "- more", heading: "Ideas", review: "auto" });
+    expect(plain.json.placed).toBeUndefined();
   });
 
   it("every saved run is mirrored for the inbox, counts by status, latest state last", async () => {

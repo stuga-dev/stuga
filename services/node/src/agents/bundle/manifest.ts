@@ -5,6 +5,7 @@
  * without one the server signs in through the person's browser.
  */
 import { TOOL_NAMES, TOOL_SUMMARIES } from "@stuga/agent-surface/catalog";
+import { PROMPT_NAMES, promptDefinition } from "@stuga/agent-surface/prompts";
 import { MCP_SERVER_KEY, MCP_SERVER_TITLE } from "@stuga/protocol/domain/node-name";
 
 /** The installer finds the manifest by name at the archive root; the entry point must match the server path. */
@@ -53,6 +54,14 @@ interface UserConfigField {
   default?: string;
 }
 
+/** A prompt as the installer lists it: its words, with `${arguments.<name>}` where the person's go. */
+export interface BundlePrompt {
+  name: string;
+  description: string;
+  arguments: string[];
+  text: string;
+}
+
 export interface BundleManifest {
   manifest_version: string;
   name: string;
@@ -74,10 +83,25 @@ export interface BundleManifest {
   };
   user_config: Record<"node_url" | "access_key", UserConfigField>;
   tools: { name: string; description: string }[];
+  prompts: BundlePrompt[];
   compatibility: {
     platforms: string[];
     runtimes: { node: string };
   };
+}
+
+/**
+ * The prompts the server offers, as the installer lists them; the server's own prompts/get is what runs.
+ * Each text keeps one shape (prompts.ts), so a template whose optional argument the client fills with
+ * nothing reads as the server's prompt without it.
+ */
+function bundlePrompts(): BundlePrompt[] {
+  return PROMPT_NAMES.map((name) => {
+    const def = promptDefinition(name);
+    const args = Object.keys(def.argsSchema);
+    const placeholders = Object.fromEntries(args.map((arg) => [arg, `\${arguments.${arg}}`]));
+    return { name, description: def.description, arguments: args, text: def.text(placeholders) };
+  });
 }
 
 export function bundleManifest(cfg: BundleConfig): BundleManifest {
@@ -124,6 +148,7 @@ export function bundleManifest(cfg: BundleConfig): BundleManifest {
       },
     },
     tools: TOOL_NAMES.map((name) => ({ name, description: TOOL_SUMMARIES[name] })),
+    prompts: bundlePrompts(),
     // No client version floor: a guessed constraint can refuse an install that would have worked.
     compatibility: {
       platforms: ["darwin", "win32", "linux"],

@@ -15,6 +15,15 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ### Added
 
+- Say **Save to Stuga** to your AI, in any of Stuga's languages, and it files what you told it into the right page and section of your team's wiki, corrects the sentence it changes, starts a page in the folder where it belongs, or adds it to your own **My notes**, then tells you what it saved where, what was there already, and what waits for approval. The new `remember` tool finds the places, the sentences that say a point already and those it may make untrue, and takes the meeting, email or document a point came from as its `source`; each write follows the page's review level ([Save to Stuga and Ask Stuga](docs/agents.md#save-to-stuga-and-ask-stuga)). What you tell your AI yourself is saved without your name or a date, which version history keeps; a point from a meeting or an email cites it. Points keep the language they came in, and with semantic search off, a point no page is about says its page may be written in another language.
+- **My notes**: a folder of your own in each workspace, made the first time your AI saves there, shared with nobody until you share it. AI edits in it apply directly; once a page or folder in it is shared, every agent's edits there wait for review ([My notes](docs/agents.md#my-notes)).
+- Say **Ask Stuga**, or ask what your team decided, and your AI answers from Stuga first. `search` and `retrieve` tell an agent who last changed each document and when, and which AI changes to it still wait for approval and for whom, listing the ones you asked for as they would land, the approved text now beside what it reads after approval, those about the question first and on the passage they change, and saying when some are not listed; an agent's `markdown` read lists the same, as your own changes. So your AI answers in one go with what is approved and what waits: "the page says 14 days; a change to 30 days waits for a colleague".
+- Your AI is told whom it works for, by your Stuga name and username, so it never names you by a name guessed from a file path or an email address.
+- An agent's `search` that finds no document holding every word lists those holding some of them and says the answer is partial; with semantic search off, an agent's `retrieve` answers from the passages that hold the question's words, says so when they hold only some of them, and reminds the agent that pages may be written in another language. Your own search box still matches every word.
+- An agent's `markdown_edit` takes `old_string` and `new_string` for a `str_replace`'s `find` and `replace`.
+- **Save to Stuga** and **Ask Stuga** as MCP prompts in your AI app's prompt menu; a read-only connection gets Ask Stuga.
+- Each Claude Code session with the Stuga plugin starts with an index of the wiki pages Claude can read, with room kept for your own notes and a count of each ([The Stuga plugin](docs/agents.md#the-stuga-plugin), [`GET /api/agent/session-index`](docs/api.md#the-session-index)).
+- While the node is out of reach or the sign-in waits, the stdio server lists the tools and prompts the node last gave that connection, so Claude Desktop keeps them when it lists them once at launch.
 - When the AI co-author needs a fact or a choice only you can give, it asks in a comment on the passage and goes on with the rest. Reply with **Send to AI** ticked, and it edits the document as usual and answers in the thread ([Questions in comments](docs/agents.md#questions-in-comments)).
 - A reply in a comment thread notifies the people in it, so you hear when someone answers your AI co-author's or your agent's question.
 - Agents can reply in comment threads and attach a comment to a passage by quoting it, and hear of replies in threads they started ([Agents in comment threads](docs/agents.md#agents-in-comment-threads)).
@@ -25,12 +34,14 @@ Releases before 0.1.7 were previews. Their notes are on their
 - A release carries the Mac package as `Stuga-<version>.pkg` only, and [stuga.dev/download/mac](https://stuga.dev/download/mac) always downloads the newest. Links to `releases/latest/download/Stuga.pkg` stop working once this release is out.
 - **Reranking** lists the models the service offers to choose from: Jev's versions on TypeSafe, and every decision model on OpenRouter, such as Microsoft-Decision-1, Perplexity's decider and Liquid's d1.
 - AI setup forms no longer link to each service's key page.
-- Comments and their notifications name an agent by the person it works for, such as "Liv's agent", never by its own name.
+- Comments and their notifications name an agent by the person it works for, such as "Liv's agent", never by its own name. So does version history, for the changes an agent applies.
 - An agent's comment may mention at most 5 people: more is refused with `400` and nothing is saved, where REST used to keep the first 20. One person's agents send at most 60 comment notices an hour in a workspace; past that the comment is still saved, and the answer carries `notifications_held` ([Agents in comment threads](docs/agents.md#agents-in-comment-threads)).
 - Keyword search runs on Postgres's own full-text search, ranked by BM25 over the documents you can see, and matches Chinese, Japanese, Korean and Thai better, in any text and with no setting ([Search languages](docs/configuration.md#search-languages)).
 - **Languages in your documents** chooses the languages search matches by stem: Arabic, Danish, Dutch, Finnish, French, German, Greek, Hungarian, Italian, Norwegian, Portuguese, Romanian, Russian, Spanish, Swedish, Tamil and Turkish. English, Chinese, Japanese, Korean and Thai are always on. A change applies to searches at once, while the index is written again in the background.
 - The node's Postgres needs pgvector and the extensions Postgres ships with, so the Mac package is smaller and a Postgres you run yourself needs only pgvector added ([packaging/contract.md](packaging/contract.md#postgres)).
 - Deleting a folder puts every document in it in the trash. While one of them is locked, nothing is deleted and the confirmation says how many to unlock.
+- Appending under a heading that has subsections, such as a page's title heading, adds the text at the end of that heading's own text, before its first subsection, and the answer says so; it used to land at the end of the last subsection. A heading that is not there is refused with the headings the page has ([api.md](docs/api.md#proposing-an-edit)).
+- A heading with no text of its own, such as a page's title heading, is no longer a passage that search and retrieval answer with.
 
 ### Removed
 
@@ -39,6 +50,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 ### Security
 
 - The Mac package and the Docker image run Node.js 26.12.1, a security release.
+- A workspace or folder webhook receives events only for documents its creator can read, checked again at each delivery. A workspace admin's webhook used to receive the titles and comment excerpts of documents shared with others but not with them ([Webhooks](docs/api.md#webhooks)).
 
 ### Fixed
 

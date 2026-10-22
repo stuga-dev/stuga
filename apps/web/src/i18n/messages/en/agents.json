@@ -77,6 +77,7 @@
   "claudeDesktop.buildFailed": "Couldn’t build the extension.",
   "claudeDesktop.add": "Add to Claude Desktop",
   "claudeDesktop.install": "Open <code>{file}</code>, click <strong>Install</strong>, then fully restart Claude.",
+  "claudeDesktop.allowSave": "When Claude first asks to use <strong>Save to Stuga</strong>, choose <strong>Always allow</strong>.",
   "claudeDesktop.savedTitle": "{file} saved — install it, then restart Claude",
   "claudeDesktop.savedDescription": "The first time Claude uses it, approve Stuga in your browser.",
   "claudeDesktop.notBuilt": "The MCP server wasn’t built for this development run.",

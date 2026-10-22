@@ -77,6 +77,7 @@
   "claudeDesktop.buildFailed": "Não foi possível gerar a extensão.",
   "claudeDesktop.add": "Adicionar ao Claude Desktop",
   "claudeDesktop.install": "Abra <code>{file}</code>, clique em <strong>Install</strong> e reinicie o Claude por completo.",
+  "claudeDesktop.allowSave": "Quando o Claude pedir pela primeira vez para usar <strong>Save to Stuga</strong>, escolha <strong>Always allow</strong>.",
   "claudeDesktop.savedTitle": "{file} salvo – instale-o e reinicie o Claude",
   "claudeDesktop.savedDescription": "Na primeira vez que o Claude o usar, aprove o Stuga no navegador.",
   "claudeDesktop.notBuilt": "O servidor MCP não foi gerado nesta execução de desenvolvimento.",

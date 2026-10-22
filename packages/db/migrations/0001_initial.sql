@@ -88,11 +88,17 @@ CREATE TABLE folders (
     -- At 'colleague', only members of this group approve, beneath it unless a nearer folder names
     -- another. NULL: anyone else who can edit the item.
     approver_group  TEXT,
+    -- The person whose "My notes" this is: where Save to Stuga files what their AI saves for them,
+    -- made on first use, owned by them and shared with nobody else until they share it. NULL for any
+    -- other folder.
+    home_of         TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     FOREIGN KEY (workspace_id, approver_group) REFERENCES groups (workspace_id, group_id)
         ON DELETE SET NULL (approver_group)
 );
+-- One "My notes" per person per workspace, found by it.
+CREATE UNIQUE INDEX folders_home_idx ON folders (workspace_id, home_of) WHERE home_of IS NOT NULL;
 CREATE INDEX folders_acl_gin     ON folders USING GIN (acl_principals);
 CREATE INDEX folders_writers_gin ON folders USING GIN (acl_writers);
 CREATE INDEX folders_parent_idx  ON folders (parent_id);
@@ -639,6 +645,36 @@ CREATE TABLE oauth_grants (
 -- Signing in again from the same client renews its grant, so its agent keeps one identity.
 CREATE UNIQUE INDEX oauth_grants_live_uniq ON oauth_grants (owner, client_id) WHERE revoked_at IS NULL;
 CREATE INDEX oauth_grants_owner_idx ON oauth_grants (owner, created_at DESC);
+
+-- The person whose "My notes" holds the folder `start_id`, at it or above it; NULL outside every
+-- My notes. Walked at most 32 deep, as every folder chain is.
+CREATE FUNCTION folder_home_of(start_id TEXT) RETURNS TEXT
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    WITH RECURSIVE up(parent_id, home_of, depth) AS (
+        SELECT parent_id, home_of, 0 FROM folders WHERE folder_id = start_id
+        UNION ALL
+        SELECT f.parent_id, f.home_of, u.depth + 1
+        FROM folders f JOIN up u ON f.folder_id = u.parent_id
+        WHERE u.home_of IS NULL AND u.depth < 32
+    )
+    SELECT home_of FROM up WHERE home_of IS NOT NULL ORDER BY depth LIMIT 1
+$$;
+
+-- Whether an item in the My notes of `home` is shared beyond that person: its readers name someone
+-- else, a group, the workspace, or another person's agent. An agent is among the readers only as
+-- the one that made the item, so the agents acting for the person, and any the node holds no key
+-- or sign-in for, share nothing. Every agent's edits to such an item wait for review at least.
+-- FALSE when `home` is NULL.
+CREATE FUNCTION notes_shared(home TEXT, readers TEXT[]) RETURNS BOOLEAN
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT home IS NOT NULL AND EXISTS (
+        SELECT 1 FROM unnest(readers) AS r(principal)
+        WHERE r.principal <> 'user:' || home
+          AND (r.principal NOT LIKE 'agent:%'
+               OR EXISTS (SELECT 1 FROM api_keys k WHERE k.agent_id = substr(r.principal, 7) AND k.owner <> home)
+               OR EXISTS (SELECT 1 FROM oauth_grants g WHERE g.agent_id = substr(r.principal, 7) AND g.owner <> home))
+    )
+$$;
 
 -- Only the sha-256 of a token is stored.
 CREATE TABLE oauth_tokens (

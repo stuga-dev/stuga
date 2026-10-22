@@ -1,7 +1,8 @@
 /**
- * Registers the agent tools on an MCP server. A call names the workspace it acts
- * in, and the surface answers with that workspace's backend, so the same tools
- * run whether every workspace is on this node or some are on others.
+ * Registers the agent tools and prompts on an MCP server. A call names the
+ * workspace it acts in, and the surface answers with that workspace's backend,
+ * so the same tools run whether every workspace is on this node or some are on
+ * others.
  */
 import type { z } from "zod";
 import type {
@@ -22,6 +23,7 @@ import {
   type ImportSource,
   type ProposeInput,
   type Refusal,
+  type RememberPoint,
   type RetrieveBody,
   type SearchBody,
   type UploadSource,
@@ -37,6 +39,7 @@ import {
   type ToolAnnotations,
   type ToolName,
 } from "./catalog.js";
+import { PROMPT_NAMES, buildPrompt, promptDefinition, type PromptResult } from "./prompts.js";
 import { normalizeQueryParams, resolveTable, resolveView } from "./resolve.js";
 import {
   bulkSteer,
@@ -50,6 +53,7 @@ import {
 } from "./render/databases.js";
 import { instructionFields, renderPropose, renderProvenance, renderRead, renderStatus } from "./render/docs.js";
 import { renderUpload } from "./render/media.js";
+import { renderRememberPlan } from "./render/remember.js";
 import {
   RETRIEVE_SEMANTIC_OFF_MESSAGE,
   renderPassages,
@@ -75,6 +79,11 @@ export interface ToolServer {
     config: { title: string; description: string; inputSchema: z.ZodRawShape; annotations: ToolAnnotations & { title: string } },
     cb: (args: Record<string, unknown>) => Promise<ToolText>,
   ): unknown;
+  registerPrompt(
+    name: string,
+    config: { title: string; description: string; argsSchema: z.ZodRawShape },
+    cb: (args: Record<string, unknown>) => PromptResult,
+  ): unknown;
 }
 
 /** One row of the routing table: a workspace, and the node it is on. */
@@ -87,10 +96,18 @@ export interface WorkspaceRoute {
   node: { id: string; name: string; origin: string };
 }
 
+/** The person a connection acts for, as Stuga names them: who "the user" is in what an agent writes. */
+export interface ConnectionUser {
+  name: string;
+  username: string;
+}
+
 export interface Reach {
   workspaces: WorkspaceRoute[];
   /** Workspaces the connection has but could not reach just now; empty while every one is on this node. */
   unavailable: UnavailableWorkspace[];
+  /** Whom the connection acts for, when the node can say. */
+  user?: ConnectionUser;
 }
 
 /** One tool call in one workspace. */
@@ -116,7 +133,7 @@ export interface AgentSurface {
 }
 
 export interface RegisterOptions {
-  /** A read-only credential is offered the reading tools only. */
+  /** A read-only credential is offered the reading tools, and the prompt that asks, only. */
   readOnly: boolean;
 }
 
@@ -142,16 +159,30 @@ export function registerAgentTools(server: ToolServer, surface: AgentSurface, { 
       }
     });
   }
+  for (const name of PROMPT_NAMES) {
+    const def = promptDefinition(name);
+    if (def.saves && readOnly) continue;
+    server.registerPrompt(name, { title: def.title, description: def.description, argsSchema: def.argsSchema }, (args) =>
+      buildPrompt(name, promptArgs(args)),
+    );
+  }
+}
+
+/** Prompt arguments are strings on the wire; anything else a server hands over is left out. */
+function promptArgs(args: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(Object.entries(args).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 }
 
 async function listWorkspaces(surface: AgentSurface): Promise<ToolText> {
-  const { workspaces, unavailable } = await surface.reach();
-  return ok(JSON.stringify({ contract: MCP_CONTRACT_VERSION, workspaces, unavailable }));
+  const { workspaces, unavailable, user } = await surface.reach();
+  return ok(JSON.stringify({ contract: MCP_CONTRACT_VERSION, ...(user ? { user } : {}), workspaces, unavailable }));
 }
 
 interface AcrossArgs {
   workspace_ids: string[];
-  q: string;
+  q?: string;
+  /** What some models send for `q`. */
+  query?: string;
   collection_id?: string;
   limit?: number;
 }
@@ -163,7 +194,7 @@ interface AcrossArgs {
  */
 async function acrossWorkspaces(tool: "search" | "retrieve", raw: Record<string, unknown>, surface: AgentSurface): Promise<ToolText> {
   const args = raw as unknown as AcrossArgs;
-  const q = args.q.trim();
+  const q = (args.q ?? args.query ?? "").trim();
   if (!q) return err(`${tool} requires \`q\``);
   const everywhere = args.workspace_ids.includes(ALL_WORKSPACES);
   const reach = everywhere ? await surface.reach() : null;
@@ -226,6 +257,9 @@ const json = (value: unknown): string => JSON.stringify(value);
 interface MarkdownEditArgs extends Omit<ProposeInput, "action" | "citations"> {
   doc_id: string;
   action: "write" | "str_replace" | "cited_edits";
+  /** str_replace: `find` and `replace` by the names `cited_edits` uses. */
+  old_string?: string;
+  new_string?: string;
   citations?: Array<{ n: number; doc_id: string; title: string; heading_path?: string | null; content?: string }>;
 }
 
@@ -314,9 +348,13 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
   markdown_append: (async ({ doc_id, text, heading, revises }: { doc_id: string; text: string; heading?: string; revises?: string[] }, b: AgentBackend) =>
     answer(b.propose(doc_id, { action: "append", text, heading, revises }), renderPropose)),
 
-  markdown_edit: (async ({ doc_id, action, text, find, replace, replace_all, edits, citations, revises }: MarkdownEditArgs, b: AgentBackend) => {
+  markdown_edit: (async (args: MarkdownEditArgs, b: AgentBackend) => {
+    const { doc_id, action, text, replace_all, edits, citations, revises } = args;
+    // A model that writes cited_edits' names for a str_replace means the same edit.
+    const find = args.find || args.old_string;
+    const replace = args.replace ?? args.new_string;
     if (action === "write" && text == null) return err("write requires `text`");
-    if (action === "str_replace" && !find) return err("str_replace requires a non-empty `find`");
+    if (action === "str_replace" && !find) return err("str_replace requires a non-empty `find` (or `old_string`)");
     if (action === "cited_edits" && !edits?.length) return err("cited_edits requires a non-empty `edits` array");
     return answer(
       b.propose(doc_id, {
@@ -398,6 +436,17 @@ const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
   databases: databasesRead,
   databases_add: databasesAdd,
   databases_change: databasesChange,
+
+  remember: (async ({ points }: { points: RememberPoint[] }, b: AgentBackend) => {
+    const given = points.map((p) => ({
+      text: p.text.trim(),
+      ...(p.topic?.trim() ? { topic: p.topic.trim() } : {}),
+      ...(p.source?.trim() ? { source: p.source.trim() } : {}),
+    }));
+    const empty = given.findIndex((p) => p.text === "");
+    if (empty !== -1) return err(`point ${empty + 1} has no \`text\``);
+    return answer(b.planRemember(given), renderRememberPlan);
+  }),
 
   query: (async ({ database_id, sql, params }: { database_id: string; sql: string; params?: Array<string | number | boolean | null> }, b: AgentBackend) => {
     const violation = selectOnlyViolation(sql);

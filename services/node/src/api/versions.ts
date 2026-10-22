@@ -3,6 +3,7 @@ import { deleteVersion, getDocSearchText, listVersions } from "@stuga/db";
 import { snapshotKey } from "@stuga/protocol/domain/limits";
 import { recordAudit } from "../audit/record.js";
 import { manages } from "../authz/authz.js";
+import { agentsActingFor } from "../comments/read.js";
 import { authorizedDoc, lockedError, proseOnly } from "../documents/access.js";
 import { error, json } from "../http/respond.js";
 import type { WorkspaceCall } from "../http/router.js";
@@ -12,10 +13,16 @@ import type { WorkspaceCall } from "../http/router.js";
 export async function listDocVersions({ ctx, match }: WorkspaceCall): Promise<Response> {
   const doc = await authorizedDoc(ctx, match[1]!);
   if (!doc) return error(404, "not found");
+  const versions = await listVersions(ctx.sql, match[1]!);
   return json({
-    versions: await listVersions(ctx.sql, match[1]!),
+    versions,
     head_seq: doc.snapshot_seq,
     can_manage: proseOnly(doc) !== null && manages(ctx, doc) && !doc.locked,
+    // An agent among the authors is named by the person it acts for, never by a name its client chose.
+    agents: await agentsActingFor(
+      ctx.sql,
+      versions.flatMap((v) => v.authors),
+    ),
   });
 }
 

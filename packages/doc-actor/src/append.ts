@@ -31,9 +31,21 @@ function headingsOf(lines: string[]): HeadingLine[] {
   return out;
 }
 
+/** Where an append under a heading with subsections went: before the first of them, at the end of the heading's own text. */
+export interface AppendPlacement {
+  heading: string;
+  /** The subsection it went before. */
+  before: string;
+  /** The heading's subsections, the next level down, as written. */
+  subsections: string[];
+}
+
 export type AppendResult =
-  | { markdown: string }
-  | { error: "heading_not_found" | "heading_ambiguous" | "unbalanced_fence"; count?: number };
+  | { markdown: string; placed?: AppendPlacement }
+  /** `headings`: the document's headings as written, with their #s, so the caller can name one; none on a page without any. */
+  | { error: "heading_not_found"; headings: string[]; empty: boolean }
+  | { error: "heading_ambiguous"; count: number }
+  | { error: "unbalanced_fence" };
 
 const LIST_LINE_RE = /^\s*(?:[-*+]|\d+[.)])\s+/;
 
@@ -51,10 +63,13 @@ function glue(lastLine: string | undefined, firstAdded: string): string[] {
 /**
  * Append `text` to `current`. With no heading, it goes after the last
  * non-blank line of the document. With one, it goes at the end of that
- * heading's section — before the next heading of the same or a higher level,
- * or the end of the document. The heading must match exactly one heading
- * (case- and whitespace-insensitive, `#`s optional); zero or several is an
- * error the caller reports back to the agent, never a guess.
+ * heading's own text: before its first subsection when it has any (a page's
+ * title heading holds the whole page, and its end is the last section's), else
+ * before the next heading of the same or a higher level, or the end of the
+ * document; `placed` then names the subsections, so the caller can say where it
+ * went. The heading must match exactly one heading (case- and
+ * whitespace-insensitive, `#`s optional); zero or several is an error the caller
+ * reports back to the agent with the headings there are, never a guess.
  */
 export function appendMarkdown(current: string, text: string, heading?: string | null): AppendResult {
   // trimEnd, not /\s+$/, which is quadratic on agent text ending in a non-space.
@@ -72,11 +87,16 @@ export function appendMarkdown(current: string, text: string, heading?: string |
   const wanted = normalizeHeading(heading);
   const headings = headingsOf(lines);
   const matches = headings.filter((h) => normalizeHeading(h.title) === wanted);
-  if (matches.length === 0) return { error: "heading_not_found" };
+  if (matches.length === 0) {
+    return { error: "heading_not_found", headings: headings.map((h) => `${"#".repeat(h.level)} ${h.title}`), empty: current.trim() === "" };
+  }
   if (matches.length > 1) return { error: "heading_ambiguous", count: matches.length };
   const target = matches[0]!;
   const next = headings.find((h) => h.index > target.index && h.level <= target.level);
-  const end = next ? next.index : lines.length;
+  const sectionEnd = next ? next.index : lines.length;
+  // Its own text ends where its first subsection begins: text added after the last subsection would read as part of it.
+  const inner = headings.filter((h) => h.index > target.index && h.index < sectionEnd);
+  const end = inner.length > 0 ? inner[0]!.index : sectionEnd;
   const before = lines.slice(0, target.index + 1);
   const section = lines.slice(target.index + 1, end);
   const after = lines.slice(end);
@@ -86,5 +106,10 @@ export function appendMarkdown(current: string, text: string, heading?: string |
   if (after.length > 0) rebuilt.push("", ...after);
   let markdown = rebuilt.join("\n");
   if (!markdown.endsWith("\n")) markdown += "\n";
-  return { markdown };
+  if (inner.length === 0) return { markdown };
+  const top = Math.min(...inner.map((h) => h.level));
+  return {
+    markdown,
+    placed: { heading: target.title, before: inner[0]!.title, subsections: inner.filter((h) => h.level === top).map((h) => h.title) },
+  };
 }

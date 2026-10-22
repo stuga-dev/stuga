@@ -41,9 +41,9 @@ afterEach(() => {
 });
 
 /** `currentSeq` defaults to the newest version's seq. */
-function render(versions: Version[], currentSeq: number | null = versions[0]?.seq ?? null) {
+function render(versions: Version[], currentSeq: number | null = versions[0]?.seq ?? null, agents: Record<string, string | null> = {}) {
   act(() => {
-    root.render(<VersionHistory versions={versions} currentSeq={currentSeq} onOpen={(seq) => opened.push(seq)} />);
+    root.render(<VersionHistory versions={versions} agents={agents} currentSeq={currentSeq} onOpen={(seq) => opened.push(seq)} />);
   });
   return container;
 }
@@ -144,6 +144,19 @@ describe("VersionHistory", () => {
     rememberUsers([{ alias, username: "ada", display_name: "Ada", email: null }]);
     render(versions);
     expect(authors()).toBe("Ada, restored from v2");
+  });
+
+  it("names an agent by the person it acts for, never by its id or a name its client chose", () => {
+    const liv = "u_LivB3rgAlias0001";
+    const versions = [version({ seq: 7, ts: ago(HOUR), authors: ["agent-k1", "agent-gone"] })];
+    const authors = () => rows()[0]!.querySelector(".vauthors")!.textContent;
+    render(versions, 7, { "agent-k1": liv, "agent-gone": null });
+    // Blank while the person's name loads.
+    expect(authors()).toBe("\u00a0");
+    rememberUsers([{ alias: liv, username: "liv", display_name: "Liv", email: null }]);
+    render(versions, 7, { "agent-k1": liv, "agent-gone": null });
+    expect(authors()).toBe("Liv’s agent, Agent");
+    expect(text()).not.toContain("agent-k1");
   });
 
   it("opens the version that was clicked", () => {

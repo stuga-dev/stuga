@@ -76,8 +76,8 @@ async function notifyNewMentions(
 ): Promise<void> {
   const added = await deps.db.syncDocMentions(doc.doc_id, markdownMentionAliases(markdown));
   if (added.length === 0 || doc.trashed) return;
-  // The first person among the editors; an agent's edit names no one.
-  const human = editors.map((a) => (a.startsWith("user:") ? a.slice("user:".length) : a)).find((a) => !a.includes(":"));
+  // The first person among the editors; an agent's edit (its principal, `agent-…`) names no one.
+  const human = editors.map((a) => (a.startsWith("user:") ? a.slice("user:".length) : a)).find((a) => !a.includes(":") && !a.startsWith("agent-"));
   const actorName = human ? ((await deps.db.displayNameOf(human)) ?? human) : null;
   const recipients = await deps.db.mentionReaders(doc, added.slice(0, MAX_MENTIONS), human ?? null);
   for (const recipient of recipients) {
@@ -183,8 +183,8 @@ export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocM
 
   const chunks: ChunkInput[] = [];
   if (searchText.length > 0) {
+    // Headings alone make no passage: a page of nothing but its title has none, and is found by its title.
     const pieces = headingAwareChunk(searchText);
-    if (pieces.length === 0) pieces.push({ content: title, headingPath: "" });
 
     // The exact embed input per chunk, shared with the reconcile path, so the dedup hash covers what was embedded.
     const inputs = pieces.map((p, i) => chunkEmbedInput(title, p.headingPath, p.content, i === 0));

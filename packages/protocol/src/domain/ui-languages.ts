@@ -20,6 +20,66 @@ export const UI_LANGUAGE_NAMES: Record<UiLanguage, string> = {
   "pt-BR": "Português (Brasil)",
 };
 
+/**
+ * “Save to Stuga” as a person says it to their AI, in each interface language. The model is taught
+ * every one, so whichever a person says saves; the glossary's Terms row holds the same.
+ */
+export const SAVE_TO_STUGA: Record<UiLanguage, string> = {
+  en: "Save to Stuga",
+  "zh-Hans": "存到 Stuga",
+  "zh-Hant": "存到 Stuga",
+  ja: "Stugaに保存",
+  ko: "Stuga에 저장",
+  de: "In Stuga speichern",
+  fr: "Enregistrer dans Stuga",
+  es: "Guardar en Stuga",
+  "pt-BR": "Salvar no Stuga",
+};
+
+/** “Ask Stuga”, the same way: what a person says to have their AI look in Stuga first. */
+export const ASK_STUGA: Record<UiLanguage, string> = {
+  en: "Ask Stuga",
+  "zh-Hans": "问问 Stuga",
+  "zh-Hant": "問問 Stuga",
+  ja: "Stugaに聞く",
+  ko: "Stuga에 물어보기",
+  de: "Stuga fragen",
+  fr: "Demander à Stuga",
+  es: "Preguntar a Stuga",
+  "pt-BR": "Perguntar ao Stuga",
+};
+
+/** The title of a person's own folder for what their AI saves, in the language they read Stuga in when it is made. */
+export const MY_NOTES: Record<UiLanguage, string> = {
+  en: "My notes",
+  "zh-Hans": "我的笔记",
+  "zh-Hant": "我的筆記",
+  ja: "マイノート",
+  ko: "내 노트",
+  de: "Meine Notizen",
+  fr: "Mes notes",
+  es: "Mis notas",
+  "pt-BR": "Minhas notas",
+};
+
+/** A phrase in every language but English, each once and quoted: `"存到 Stuga", "Stugaに保存", …`. */
+export function phraseElsewhere(phrases: Record<UiLanguage, string>): string {
+  return [...new Set(Object.values(phrases))]
+    .filter((phrase) => phrase !== phrases.en)
+    .map((phrase) => `"${phrase}"`)
+    .join(", ");
+}
+
+/** “Save to Stuga” in every language but English. */
+export function saveToStugaElsewhere(): string {
+  return phraseElsewhere(SAVE_TO_STUGA);
+}
+
+/** “Ask Stuga” in every language but English. */
+export function askStugaElsewhere(): string {
+  return phraseElsewhere(ASK_STUGA);
+}
+
 export function isUiLanguage(value: unknown): value is UiLanguage {
   return typeof value === "string" && (UI_LANGUAGES as readonly string[]).includes(value);
 }

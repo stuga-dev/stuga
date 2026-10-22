@@ -270,3 +270,33 @@ export async function deleteFolderCascade(
     return { folderIds, trashedDocIds: trashed.map((r) => r.doc_id), trashedDocs: trashed.map(({ doc_id, doc_type }) => ({ doc_id, doc_type })), locked: 0 };
   });
 }
+
+/** The person's "My notes" in the workspace (`folders.home_of`), or null before their first save. */
+export async function getHomeFolder(sql: Queryable, workspaceId: string, alias: string): Promise<FolderRow | null> {
+  const rows = await sql<FolderRow[]>`
+    SELECT ${folderCols(sql)} FROM folders WHERE workspace_id = ${workspaceId} AND home_of = ${alias}`;
+  return rows[0] ?? null;
+}
+
+/**
+ * Make the person's "My notes" unless they have it: at the top level, owned by them and shared with
+ * nobody else, AI edits beneath it applying directly. Two first saves at once make one folder; the
+ * other finds it (`created: false`).
+ */
+export async function createHomeFolder(
+  sql: Queryable,
+  input: { folderId: string; workspaceId: string; alias: string; title: string },
+): Promise<{ folder: FolderRow; created: boolean }> {
+  const owner = `user:${input.alias}`;
+  const rows = await sql<FolderRow[]>`
+    INSERT INTO folders (folder_id, workspace_id, parent_id, owner, title, acl_principals, acl_writers, inherits_perms,
+                         own_grants, agent_mode, home_of)
+    VALUES (${input.folderId}, ${input.workspaceId}, NULL, ${owner}, ${input.title}, ${[owner]}, ${[owner]}, TRUE,
+            ${ownGrantsJson(sql, { p: [], w: [], c: [] })}, 'auto', ${input.alias})
+    ON CONFLICT (workspace_id, home_of) WHERE home_of IS NOT NULL DO NOTHING
+    RETURNING ${folderCols(sql)}`;
+  if (rows[0]) return { folder: rows[0], created: true };
+  const found = await getHomeFolder(sql, input.workspaceId, input.alias);
+  if (!found) throw new Error("My notes was neither made nor found");
+  return { folder: found, created: false };
+}

@@ -43,18 +43,20 @@ function databaseLevelOf(pageOf: string): string {
 
 /**
  * The DocRow projection. `search_text` stays out: it is unbounded. The levels its folders give it
- * (`folder_agent_mode`) and, for a row page, its database's (`database_agent_mode`) are read with
- * the row, after any update a RETURNING applies, so a moved document reads its new folder's level.
- * That walks the folders above it once per row: a query that reads many rows passes `joined` and
- * reads them through docLevelJoins instead.
+ * (`folder_agent_mode`), for a row page its database's (`database_agent_mode`), and whether it is in
+ * someone's My notes and shared beyond them (`notes_shared`) are read with the row, after any update
+ * a RETURNING applies, so a moved document reads its new folder's level. That walks the folders
+ * above it once per row: a query that reads many rows passes `joined` and reads them through
+ * docLevelJoins instead.
  */
 export function docCols(sql: Queryable, alias?: string, opts: { joined?: boolean } = {}): Fragment {
   const col = (c: string) => (alias ? `${alias}.${c}` : c);
   // Qualified, so the subquery's own `docs` cannot capture the outer row's columns.
   const ref = (c: string) => `${alias ?? "docs"}.${c}`;
   const levels = opts.joined
-    ? "lvl_folder.folder_agent_mode, lvl_database.database_agent_mode"
-    : `folder_agent_mode(${ref("parent_id")}) AS folder_agent_mode, ${databaseLevelOf(ref("page_of"))} AS database_agent_mode`;
+    ? `lvl_folder.folder_agent_mode, lvl_database.database_agent_mode, notes_shared(lvl_folder.home_of, ${col("acl_principals")}) AS notes_shared`
+    : `folder_agent_mode(${ref("parent_id")}) AS folder_agent_mode, ${databaseLevelOf(ref("page_of"))} AS database_agent_mode, ` +
+      `notes_shared(folder_home_of(${ref("parent_id")}), ${ref("acl_principals")}) AS notes_shared`;
   return sql.unsafe(`${DOC_COLUMNS.map(col).join(", ")}, ${levels}`);
 }
 
@@ -65,7 +67,8 @@ export function docCols(sql: Queryable, alias?: string, opts: { joined?: boolean
  */
 export function docLevelJoins(sql: Queryable, alias: string): Fragment {
   return sql.unsafe(
-    `LEFT JOIN LATERAL (SELECT folder_agent_mode(lvf.folder_id) AS folder_agent_mode FROM folders lvf WHERE lvf.folder_id = ${alias}.parent_id) lvl_folder ON TRUE ` +
+    `LEFT JOIN LATERAL (SELECT folder_agent_mode(lvf.folder_id) AS folder_agent_mode, folder_home_of(lvf.folder_id) AS home_of ` +
+      `FROM folders lvf WHERE lvf.folder_id = ${alias}.parent_id) lvl_folder ON TRUE ` +
       `LEFT JOIN LATERAL (SELECT coalesce(lvd.agent_mode, folder_agent_mode(lvd.parent_id), 'review') AS database_agent_mode ` +
       `FROM docs lvd WHERE lvd.doc_id = ${alias}.page_of) lvl_database ON TRUE`,
   );
@@ -90,19 +93,23 @@ export const FOLDER_COLUMNS = [
 ] as const;
 
 /**
- * The FolderRow projection, with the level the folders above give it (`parent_agent_mode`), read
- * once per row; a listing passes `joined` and reads it through folderLevelJoin.
+ * The FolderRow projection, with the level the folders above give it (`parent_agent_mode`) and
+ * whether it is in someone's My notes and shared beyond them (`notes_shared`), read once per row; a
+ * listing passes `joined` and reads them through folderLevelJoin.
  */
 export function folderCols(sql: Queryable, alias?: string, opts: { joined?: boolean } = {}): Fragment {
   const col = (c: string) => (alias ? `${alias}.${c}` : c);
-  const level = opts.joined ? "lvl_parent.parent_agent_mode" : `folder_agent_mode(${col("parent_id")}) AS parent_agent_mode`;
+  const level = opts.joined
+    ? `lvl_parent.parent_agent_mode, notes_shared(coalesce(${col("home_of")}, lvl_parent.home_of), ${col("acl_principals")}) AS notes_shared`
+    : `folder_agent_mode(${col("parent_id")}) AS parent_agent_mode, notes_shared(coalesce(${col("home_of")}, folder_home_of(${col("parent_id")})), ${col("acl_principals")}) AS notes_shared`;
   return sql.unsafe(`${FOLDER_COLUMNS.map(col).join(", ")}, ${level}`);
 }
 
 /** For a listing of folders as `alias`: the level folderCols(sql, alias, { joined: true }) reads, once per parent. */
 export function folderLevelJoin(sql: Queryable, alias: string): Fragment {
   return sql.unsafe(
-    `LEFT JOIN LATERAL (SELECT folder_agent_mode(lvp.folder_id) AS parent_agent_mode FROM folders lvp WHERE lvp.folder_id = ${alias}.parent_id) lvl_parent ON TRUE`,
+    `LEFT JOIN LATERAL (SELECT folder_agent_mode(lvp.folder_id) AS parent_agent_mode, folder_home_of(lvp.folder_id) AS home_of ` +
+      `FROM folders lvp WHERE lvp.folder_id = ${alias}.parent_id) lvl_parent ON TRUE`,
   );
 }
 

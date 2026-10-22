@@ -52,6 +52,7 @@
   "agents.claudeConnector.step1": "57711d71e940",
   "agents.claudeConnector.step2": "6601986e9b45",
   "agents.claudeDesktop.add": "82fa3ea25f33",
+  "agents.claudeDesktop.allowSave": "8e5ea519992f",
   "agents.claudeDesktop.buildFailed": "47dd728e9592",
   "agents.claudeDesktop.byHand": "35287290db5f",
   "agents.claudeDesktop.install": "7f5398ac78d6",

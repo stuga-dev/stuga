@@ -4,6 +4,7 @@ import {
   CHUNK_SIZE,
   CHUNK_OVERLAP,
   headingAwareChunk,
+  headingPathAt,
   chunkEmbedInput,
   SECTION_MAX,
   HEADINGLESS_TARGET,
@@ -100,6 +101,15 @@ describe("headingAwareChunk", () => {
     expect(geo.headingPath).toBe("Overview > Geophysics");
   });
 
+  it("makes no passage of a heading with no text of its own: a page's title, or a section whose text is all in subsections", () => {
+    const md = "# Refunds\n\n## Rules\n\n### Approval\n\nOver 500 euros needs approval.\n\n## Empty\n\n";
+    const out = headingAwareChunk(md);
+    expect(out.map((c) => c.headingPath)).toEqual(["Refunds > Rules > Approval"]);
+    expect(headingAwareChunk("# Initech\n")).toEqual([]);
+    // A heading line with text right under it is a passage, however short.
+    expect(headingAwareChunk("# Acme\nA customer.").map((c) => c.headingPath)).toEqual(["Acme"]);
+  });
+
   it("subdivides an oversize section, all sub-chunks sharing the heading_path", () => {
     const big = Array.from({ length: 800 }, (_, i) => `Sentence ${i} about the topic.`).join(" ");
     const md = `## Big\n\n${big}`;
@@ -171,6 +181,22 @@ describe("headingAwareChunk", () => {
     const out = headingAwareChunk(md);
     expect(out.map((c) => c.headingPath)).toEqual(["Real", "After"]);
     expect(out[0]!.content).toContain("# still inside");
+  });
+});
+
+describe("headingPathAt", () => {
+  it("names the section an offset sits in as headingAwareChunk names its passage", () => {
+    const md = "# Globex\n\nIntro.\n\n## Contacts\n\n* Priya.\n\n```\n## not a heading\n```\n\n## Contract\n\n* Refunds.";
+    const paths = headingAwareChunk(md).map((c) => c.headingPath);
+    expect(paths).toEqual(["Globex", "Globex > Contacts", "Globex > Contract"]);
+    expect(headingPathAt(md, md.indexOf("Intro."))).toBe("Globex");
+    expect(headingPathAt(md, md.indexOf("* Priya."))).toBe("Globex > Contacts");
+    // Inside a fence, a heading-like line is text; the heading line itself opens its section.
+    expect(headingPathAt(md, md.indexOf("## not a heading"))).toBe("Globex > Contacts");
+    expect(headingPathAt(md, md.indexOf("## Contract"))).toBe("Globex > Contract");
+    expect(headingPathAt(md, md.indexOf("## Contract") - 1)).toBe("Globex > Contacts");
+    expect(headingPathAt("before\n\n# A", 0)).toBe("");
+    expect(headingPathAt(md, -1)).toBe("");
   });
 });
 

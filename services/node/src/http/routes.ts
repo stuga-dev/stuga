@@ -158,6 +158,7 @@ import {
   updateWebhookRoute,
 } from "../governance/webhooks/routes.js";
 import { handleMcpRequest } from "../mcp/handler.js";
+import { getSessionIndex } from "../mcp/session-index.js";
 import {
   handleAuthorize,
   handleClientInfo,
@@ -255,6 +256,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: "POST", path: "/oauth/token", auth: "none", handler: ({ env, req }) => handleToken(env, req) },
   { method: "POST", path: "/oauth/revoke", auth: "none", handler: ({ env, req }) => handleRevoke(env, req) },
   { method: "*", path: "/mcp", auth: "mcp", handler: ({ caller, req }) => handleMcpRequest(caller, req) },
+  // What a Claude Code session starts with, behind the connection's own credential.
+  { method: "GET", path: "/api/agent/session-index", auth: "mcp", handler: getSessionIndex },
   // Upgrades are answered by the upgrade handler; this is a client that forgot the header.
   { method: "*", path: /^\/ws\/([^/]+)$/, auth: "none", handler: async () => error(426, "expected websocket") },
   // The signed, single-use URL a staged import hands out is the whole credential.

@@ -117,7 +117,12 @@ export async function handleRunPropose(ledger: RunLedger, req: Request): Promise
   });
 
   if (result.mode === "noop") return Response.json({ mode: "noop" });
-  if (result.mode === "error") return Response.json({ error: result.error, message: result.message, count: result.count }, { status: result.status });
+  if (result.mode === "error") {
+    return Response.json(
+      { error: result.error, message: result.message, count: result.count, headings: result.headings, empty: result.empty },
+      { status: result.status },
+    );
+  }
   // The proposal answers the feedback it names, and carries what is still open; nothing is answered by proposing alone.
   const revises = Array.isArray(body.revises) ? body.revises.filter((id): id is string => typeof id === "string").slice(0, RUN_FEEDBACK_REVISES_MAX) : [];
   const revised = await ledger.answerFeedback(agentAlias, revises);
@@ -129,11 +134,20 @@ export async function handleRunPropose(ledger: RunLedger, req: Request): Promise
         run: result.run,
         pending: result.pending,
         parked_behind_pending: result.parkedBehindPending,
+        ...(result.placed ? { placed: result.placed } : {}),
         feedback,
         revised,
       });
     case "auto_applied":
-      return Response.json({ mode: "auto_applied", run: result.run, seq: result.seq, applied: result.applied, feedback, revised });
+      return Response.json({
+        mode: "auto_applied",
+        run: result.run,
+        seq: result.seq,
+        applied: result.applied,
+        ...(result.placed ? { placed: result.placed } : {}),
+        feedback,
+        revised,
+      });
   }
 }
 

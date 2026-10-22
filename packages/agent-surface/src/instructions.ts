@@ -1,4 +1,4 @@
-import type { WorkspaceRoute } from "./register.js";
+import type { ConnectionUser, WorkspaceRoute } from "./register.js";
 
 export interface InstructionsInput {
   /** The node this connection is to: its name and origin. */
@@ -9,6 +9,8 @@ export interface InstructionsInput {
   conventions?: string;
   /** The credential may only read, so only the reading tools are offered. */
   readOnly?: boolean;
+  /** Whom the connection acts for, as Stuga names them. */
+  user?: ConnectionUser;
 }
 
 /** More rows than this and the table is cut, with a pointer to the full list. */
@@ -41,6 +43,37 @@ const ROUTING =
   "knowledge, look here before saying you lack access. For ‘can you see/find/read the doc in my workspace?’, start " +
   "with `search` or `docs` action:list; use `retrieve` for answers from content. They need not name MCP.\n\n";
 
+/**
+ * Right after the routing rule: the two phrases a person says to their AI, which a host's own memory
+ * would otherwise answer. A read-only connection is offered no save.
+ */
+function phrases(readOnly: boolean): string {
+  const ask =
+    '"Ask Stuga", or a question about what the user or their team decided, recorded or know, means `retrieve` or ' +
+    "`search` here first, citing who wrote it and when; answer with the approved text, and say what still waits for " +
+    "approval.";
+  return readOnly
+    ? `ASK: ${ask}\n\n`
+    : 'SAVE AND ASK: "Save to Stuga" (in any language, or "remember this in Stuga") means `remember`, then writing ' +
+        `where it says; ${ask}\n\n`;
+}
+
+/**
+ * Who "the user" is: the person the connection acts for, by the name and username Stuga knows them by,
+ * so what an agent writes about them never carries a name guessed from a file path, an email address
+ * or its own memory; and that what they say is saved without their name or a date, which version
+ * history keeps. Their own text, quoted.
+ */
+function userLine(user: ConnectionUser | undefined): string {
+  if (!user) return "";
+  return (
+    `USER: this connection acts for ${JSON.stringify(user.name)} (@${user.username}) in Stuga. What they tell you to ` +
+    "save goes in without their name or a date: Stuga's version history records who changed what and when. When " +
+    "what you write is about them, name them so, never by a name taken from a file path, an email address or your " +
+    "own memory.\n\n"
+  );
+}
+
 /** The routing table as the model first sees it; `workspaces` action:list is the live one. */
 function workspaceTable(workspaces: readonly WorkspaceRoute[]): string {
   if (workspaces.length === 0) {
@@ -57,7 +90,7 @@ function workspaceTable(workspaces: readonly WorkspaceRoute[]): string {
 }
 
 /** What a client puts in the model's context before it calls any tool. */
-export function buildInstructions({ node, workspaces, conventions = "", readOnly = false }: InstructionsInput): string {
+export function buildInstructions({ node, workspaces, conventions = "", readOnly = false, user }: InstructionsInput): string {
   const house = conventions.trim()
     ? `WORKSPACE CONVENTIONS (written by this workspace's people; follow them):\n${conventions.trim()}\n\n`
     : workspaces.length > 1
@@ -70,6 +103,8 @@ export function buildInstructions({ node, workspaces, conventions = "", readOnly
     : "";
   return (
     ROUTING +
+    phrases(readOnly) +
+    userLine(user) +
     nodeLine(node, workspaces.length) +
     workspaceTable(workspaces) +
     house +

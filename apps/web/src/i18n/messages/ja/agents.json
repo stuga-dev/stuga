@@ -77,6 +77,7 @@
   "claudeDesktop.buildFailed": "拡張機能をビルドできませんでした。",
   "claudeDesktop.add": "Claude Desktopに追加",
   "claudeDesktop.install": "<code>{file}</code>を開いて<strong>Install</strong>をクリックし、Claudeを完全に再起動します。",
+  "claudeDesktop.allowSave": "Claudeが初めて<strong>Save to Stuga</strong>を使う許可を求めたら、<strong>Always allow</strong>を選びます。",
   "claudeDesktop.savedTitle": "{file}を保存しました。インストールしてClaudeを再起動してください",
   "claudeDesktop.savedDescription": "Claudeが初めて使うときに、ブラウザーでStugaを承認します。",
   "claudeDesktop.notBuilt": "この開発実行ではMCPサーバーがビルドされていません。",

@@ -63,6 +63,11 @@ export interface DocRow {
   folder_agent_mode: ReviewMode | null;
   /** For a row page, its database's level now, which it is reviewed at least as strictly as; null for any other document. */
   database_agent_mode: ReviewMode | null;
+  /**
+   * In someone's My notes and readable by anyone but them and their agents: every agent's edits to
+   * it wait for review at least. Read with the row (docCols); absent from a row read without it.
+   */
+  notes_shared?: boolean;
   /** Instructions for agents on this item (a database's reach its row pages); '' when none. */
   agent_instructions: string;
   /** The database this document is a row page of. */
@@ -97,6 +102,8 @@ export interface FolderRow {
   approver_group: string | null;
   /** The level the folder above gives it (folder_agent_mode), read with the row; null when none sets one. */
   parent_agent_mode: ReviewMode | null;
+  /** As DocRow's: in someone's My notes and shared beyond them (folderCols); absent from a row read without it. */
+  notes_shared?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -324,6 +331,8 @@ export interface SearchResult {
   updated_at: string;
   snippet: string;
   kw_rank: number;
+  /** The keyword leg found it holding every word of the query (`anyWord` finds some holding fewer). */
+  kw_whole: boolean;
   sem_score: number;
   score: number;
 }
@@ -337,6 +346,8 @@ export interface AskChunk {
   heading_path: string | null;
   sem_score: number;
   score: number;
+  /** The passage, with its document's title, holds every word of the query; a passage matches on any of them. */
+  kw_whole: boolean;
 }
 
 export type ApiKeyAccess = "read" | "propose";

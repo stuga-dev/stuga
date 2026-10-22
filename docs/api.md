@@ -109,7 +109,7 @@ read-only key too. Over MCP a read-only key is offered only the reading tools
 | `POST /api/folders` | `{ title?, parent_id? }`. Guests are refused. |
 | `GET /api/folders/:id/instructions` | `{ own, inherited, can_edit }`, as for a document. |
 | `POST /api/search` | `{ q, collection_id?, limit? }` → `{ query, results, degraded, semantic }`. Documents ranked by keyword and semantic match, filtered by permissions inside the query. Each result has `doc_id`, `title`, `snippet`, `score` (from rank positions), `sem_score` (cosine similarity of the best passage, 0 for a keyword-only match), `page_of`, `page_row` and `updated_at`. `limit` defaults to 20. `degraded` means embeddings are on but failed, so only keywords matched. |
-| `POST /api/retrieve` | `{ q, collection_id?, limit? }` → `{ chunks, degraded }`. Passages to answer from, each with `doc_id`, `title`, `chunk_index`, `content` and `heading_path`. `limit` defaults to 8, at most 12. With embeddings off it answers `{ chunks: [], ai_disabled: true }`. |
+| `POST /api/retrieve` | `{ q, collection_id?, limit? }` → `{ chunks, degraded }`. Passages to answer from, each with `doc_id`, `title`, `chunk_index`, `content` and `heading_path`. A heading with no text of its own (a page's title heading, or a section whose text is all in subsections) is never a passage. `limit` defaults to 8, at most 12. With embeddings off it answers `{ chunks: [], ai_disabled: true }`. |
 
 With `collection_id`, search and retrieval return only documents in that collection
 ([collections.md](collections.md#the-scope-is-strict)). `empty_scope: true` on a search or retrieve
@@ -126,7 +126,7 @@ POST /api/docs/:id/propose
 |---|---|---|
 | `write` | `text` | Replace the whole document. |
 | `str_replace` | `find`, `replace`, `replace_all?` | Replace one occurrence of `find`, or every one. `find` must exist and, without `replace_all`, be unique. |
-| `append` | `text`, `heading?` | Add text at the end of the document, or at the end of the section under `heading`. Touches nothing else. |
+| `append` | `text`, `heading?` | Add text at the end of the document, or under `heading`: at the end of that heading's own text, before its first subsection when it has any (under a page's title heading, in its opening), else at the end of its section. Touches nothing else. |
 | `cited_edits` | `edits: [{ old_string, new_string }]`, `citations?: [{ n, doc_id, title, heading_path?, content? }]` | Up to 200 exact edits in one proposal, each `old_string` matching once, and up to 50 citations. A `[^n]` in a `new_string` becomes a footnote to citation `n` when the edit lands. For grounded edits drawn from `/api/retrieve`. |
 
 Every action takes `revises?`, the ids of the feedback this proposal answers
@@ -135,7 +135,8 @@ Every action takes `revises?`, the ids of the feedback this proposal answers
 
 Images in the new text (`![alt](https://…)` or a `data:` URI) are downloaded, stored in the
 workspace and relinked before the proposal is made. `media_note` in the reply says what was stored or
-could not be.
+could not be. An `append` under a heading that has subsections answers with `placement_note`, which
+says it went before the first of them and names them all.
 
 Two optional headers label the run in the review inbox: `x-stuga-client` (the client or harness,
 such as `claude-desktop`, `deepseek-harness`, `pi`, `stuga-mcp`) and `x-stuga-model` (the model that drove
@@ -166,7 +167,7 @@ Refusals:
 | `400` | A missing or malformed field, or the id names a database. |
 | `403` | A person's session (only agents propose), no write access, or a read-only key. |
 | `404` | The document does not exist or is out of reach. |
-| `409` | `find` or `heading` not found or ambiguous; or the document changed under the proposal, in which case re-read and retry. |
+| `409` | `find` or `heading` not found or ambiguous; or the document changed under the proposal, in which case re-read and retry. A `heading` not found is answered with the document's headings as written, or, on a page with none, how to start a section: the heading in `text`, and no `heading`. |
 | `413` | The result would be too large. |
 | `423` | The document is locked. |
 | `503` | The document's ledger is briefly unavailable; nothing changed. |
@@ -354,6 +355,12 @@ through these routes, which refuse agents:
 | `PATCH /api/webhooks/:id` | `{ url?, events?, folder_id?, active? }`. |
 | `DELETE /api/webhooks/:id` | Remove. |
 
+A hook receives an event only when the person who created it can read its document at the time, as
+the feed would show it to them: a workspace admin's hook hears nothing of a document shared with
+nobody else, such as another person's [My notes](agents.md#my-notes). Each delivery checks again,
+so a retry stops once its creator loses access, and a hook whose creator left the workspace
+receives nothing.
+
 Each delivery is:
 
 ```
@@ -426,7 +433,7 @@ what they may do.
 |---|---|
 | `PATCH` / `DELETE /api/docs/:id` | Rename, move, trash or restore; delete for good. People only. Deleting takes the owner or a workspace admin. A move must not let the mover alone review AI edits to the document more loosely than they could before, at once or by setting its level where it lands: such a move takes the document's owner, the owner of the folders it leaves, or a workspace admin (`403` otherwise). A folder's default `review`, which no folder sets, is no bar to leaving it. At `colleague`, a move out from under an approver group someone else names lands only where that group still applies. |
 | `GET` / `PUT /api/docs/:id/acl`, `/api/folders/:id/acl` | Sharing. `GET` answers the effective `acl_*` arrays, the direct `own_grants`, `inherits`, the `owner`, and `parent` (`{ folder_id, title }`, the title null when the caller cannot read that folder; null at the top level), and `can_manage`, whether the caller may change it. Changing it takes the owner or a workspace admin. |
-| `/api/docs/:id/versions`, `/versions/:seq`, `/restore`, `/recover` | Version history. Restoring, deleting a version and recovering take the owner or a workspace admin. A restore first keeps the document it replaces as a version, so it can be undone. The listing answers `versions`, `head_seq` (the document's newest processed snapshot, ahead of every version when the latest edits recorded none; no version at or past it can be deleted) and `can_manage` (whether the caller may restore and delete; false while the document is locked). |
+| `/api/docs/:id/versions`, `/versions/:seq`, `/restore`, `/recover` | Version history. Restoring, deleting a version and recovering take the owner or a workspace admin. A restore first keeps the document it replaces as a version, so it can be undone. The listing answers `versions`, `head_seq` (the document's newest processed snapshot, ahead of every version when the latest edits recorded none; no version at or past it can be deleted) `can_manage` (whether the caller may restore and delete; false while the document is locked) and `agents` (each agent among the versions' `authors` → the alias of the person it acts for, null when that is gone). |
 | `/api/docs/:id/share-links`, `POST /api/share-links/redeem` | Share links. `GET` lists the live ones, newest first, each with its `link_url`; owner or workspace admin. `PATCH /api/docs/:id/share-links/:hash` `{ role }` changes a live link's level at the same address; people who already opened it keep what it gave them. |
 | `PATCH` / `DELETE /api/docs/:id/comments/:n` | Resolve (`{ resolved }`) or delete a comment: its author, the person whose co-author wrote it (`panel:<alias>`), the document's owner or a workspace admin. Like adding one, it answers without waiting for open pages to hear of the change. |
 | `POST /api/docs/:id/request-access` | Ask a document's owner for access. |
@@ -497,6 +504,32 @@ consent page all use that origin ([network-access.md](network-access.md#agents-s
   the person, like a key, in the workspaces it names where the person is a member at the time of the
   call. When a person leaves a workspace or is removed from it, their connections that named it stop
   naming it, and one left naming none is revoked.
+
+### The session index
+
+`GET /api/agent/session-index` is what the [Stuga plugin](agents.md#the-stuga-plugin) starts a
+Claude Code session with. It takes the same credentials as `/mcp`, refused with the same `401`, and
+reaches what they reach: the workspaces a connection was given, and for a key confined to some folders
+only those. It answers with ids, titles and folders, never a document's text:
+
+```json
+{
+  "workspaces": [{ "workspace_id": "ws_1", "name": "Acme", "my_notes": "f_8k2", "counts": { "team": 31, "mine": 6 } }],
+  "docs": [{ "workspace_id": "ws_1", "doc_id": "d_4x9", "title": "Refund policy", "type": "page", "path": ["Support"], "date": "2026-10-20", "mine": false }],
+  "total": 37
+}
+```
+
+- `docs` holds at most 200, the pages and databases the credential can read that search would find,
+  newest first. The workspaces take turns. The person's own [My notes](agents.md#my-notes)
+  (`mine: true`) come after every other page, and keep up to 40 of the rows when there are that many.
+- `counts` is how many of each the credential can read in that workspace, listed or not: `team`, and
+  `mine` in the person's My notes. `total` is their sum over the workspaces listed. A connection that
+  reaches more than 50 workspaces is answered for the first 50, and `workspaces_left_out` says how
+  many more there are.
+- `my_notes` is the person's My notes folder in that workspace, or null before their first save.
+- Each workspace's read writes an audit row there, `mcp.session_index`, with the number of documents
+  read; repeats by the same connection within a minute write none.
 
 ### Connections
 
