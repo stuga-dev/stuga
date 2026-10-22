@@ -27,9 +27,12 @@ function git(...args: string[]): string | null {
   }
 }
 
+/** Every release tag the checkout has, whether or not its migrations are frozen; null outside a git checkout. */
+const releaseTags = git("tag", "--list", "v*.*.*")?.split("\n").filter(Boolean) ?? null;
+
 /** Each migration a release from FROZEN_FROM on shipped, with the first tag that did; null outside a git checkout. */
 function shippedMigrations(): Map<string, { tag: string; sum: string }> | null {
-  const list = git("tag", "--list", "v*.*.*");
+  const list = releaseTags?.join("\n") ?? null;
   if (list === null) return null;
   const tags = list
     .split("\n")
@@ -81,8 +84,9 @@ describe("the migration files", () => {
   });
 
   it.skipIf(shipped === null)("each migration a release shipped is still the file it shipped", () => {
-    // CI fetches the tags; without them nothing here would be checked.
-    if (process.env.CI) expect(shipped!.size, "no release tags: git fetch --depth=1 origin '+refs/tags/v*:refs/tags/v*'").toBeGreaterThan(0);
+    // CI fetches the tags; without them a frozen migration would go unchecked. Before the first release from
+    // FROZEN_FROM on, none is frozen yet, so the check is that tags arrived at all.
+    if (process.env.CI) expect(releaseTags!.length, "no release tags: git fetch --depth=1 origin '+refs/tags/v*:refs/tags/v*'").toBeGreaterThan(0);
     for (const [name, { tag, sum }] of shipped!) {
       expect(MIGRATIONS, `${tag} shipped ${name}, which is no longer in MIGRATIONS. Released migrations are frozen.`).toContain(name);
       expect(

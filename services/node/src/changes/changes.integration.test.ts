@@ -591,7 +591,8 @@ describe.skipIf(!URL)("changes", () => {
       const text = await sams.text();
       expect(text).not.toContain("Hidden line");
       expect(JSON.parse(text).run.hunks_withheld).toBe(true);
-    });
+      // A run over 256 KB is slow to propose and read on CI runners.
+    }, 60_000);
   });
 
   describe("a held page that is locked, or a held database's row pages", () => {
