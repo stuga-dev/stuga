@@ -119,6 +119,7 @@ const DOC: DocSummary = {
   search_hidden: false,
   agent_mode: "review",
   agent_mode_floor: null,
+  agent_mode_floors: { folder: null, database: null, notes: null },
   page_of: null,
   page_row: null,
 };
@@ -132,6 +133,7 @@ const FOLDER: Folder = {
   updated_at: "2026-09-01T00:00:00.000Z",
   agent_mode: "review",
   agent_mode_floor: null,
+  agent_mode_floors: { folder: null, database: null, notes: null },
   approver_group: null,
 };
 
@@ -358,8 +360,8 @@ describe("FileExplorer row actions", () => {
     const radio = (level: string) => document.querySelector<HTMLInputElement>(`dialog[open] input[type="radio"][value="${level}"]`) ?? undefined;
     // Under a folder the reader owns: they may set the level of what is in it, whoever owns the item.
     const parent = { ...FOLDER, folder_id: "f_parent", owner: "user:u_9" };
-    docs.list.mockResolvedValue({ docs: [{ ...DOC, parent_id: "f_parent", agent_mode_floor: "review" }] });
-    folders.list.mockResolvedValue({ folders: [{ ...FOLDER, parent_id: "f_parent", agent_mode_floor: "review" }] });
+    docs.list.mockResolvedValue({ docs: [{ ...DOC, parent_id: "f_parent", agent_mode_floor: "review", agent_mode_floors: { folder: "review", database: null, notes: null } }] });
+    folders.list.mockResolvedValue({ folders: [{ ...FOLDER, parent_id: "f_parent", agent_mode_floor: "review", agent_mode_floors: { folder: "review", database: null, notes: null } }] });
     groups.list.mockResolvedValue({ groups: [{ group_id: "group:legal", members: 2 }] });
     folders.ancestors.mockResolvedValue({ ancestors: [{ ...FOLDER, folder_id: "f_top", owner: "user:u_2" }, { ...parent, parent_id: "f_top" }] });
     await act(async () => root.unmount());

@@ -1,7 +1,20 @@
+import type { CitationInput } from "@stuga/crdt-ops";
 import type { AgentRunHunk, AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { RunStanding } from "@stuga/protocol/domain/runs";
 import { api } from "../lib/http/client";
+
+/** Who may decide a run's waiting changes now: given only to whoever may read them. */
+export interface RunDeciders {
+  /** At `colleague`, those who may approve, or the owner and admins standing in; below it, whoever asked the AI. */
+  aliases: string[];
+  /** The owner or admins stand in, since nobody else may approve. */
+  stand_in: boolean;
+  /** With nobody to approve: nobody else can edit the item, or nobody in its approver group can. */
+  cause: "nobody" | "group" | null;
+  /** Below `colleague`, who else may decide, each when they can edit it: the item's owner, and an admin other than those two. */
+  also: { owner: boolean; admin: boolean };
+}
 
 interface RunDetail {
   run: AgentRunSummary;
@@ -11,6 +24,9 @@ interface RunDetail {
   final_markdown?: string | null;
   /** `full` only: every hunk, untruncated. */
   hunks?: AgentRunHunk[];
+  /** `full` only: the sources its footnote markers cite. */
+  citations?: CitationInput[];
+  deciders?: RunDeciders;
 }
 
 /** One agent's editing session on one document: hunks awaiting review, or applied at once on an `auto` document. */
@@ -82,7 +98,8 @@ export interface InboxRun {
   [k: string]: unknown;
 }
 
-export type InboxFilter = "attention" | "open" | "closed" | "all";
+/** Needs you, Waiting on others, Done; `all` is every run. */
+export type InboxFilter = "attention" | "waiting" | "done" | "all";
 
 export interface AgentStats {
   agent_alias: string;

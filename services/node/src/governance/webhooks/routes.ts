@@ -1,7 +1,8 @@
-/** Workspace webhooks: owner/admin administration of outbound event subscriptions. */
+/** Workspace webhooks: owner/admin administration of outbound event subscriptions and review channels. */
 import { randomHex } from "@stuga/auth";
-import { type WebhookRow, deleteWebhook, getFolder, insertWebhook, listWebhooks, updateWebhook } from "@stuga/db";
+import { type WebhookRow, deleteWebhook, getFolder, getWebhook, insertWebhook, listWebhooks, updateWebhook } from "@stuga/db";
 import { WORKSPACE_EVENT_TYPES, isWorkspaceEventType } from "@stuga/protocol/domain/events";
+import { isWebhookKind, type WebhookKind } from "@stuga/protocol/domain/webhooks";
 import { recordAudit } from "../../audit/record.js";
 import type { Ctx } from "../../auth/context.js";
 import { canReadFolder } from "../../authz/authz.js";
@@ -9,12 +10,13 @@ import { fingerprintUrl } from "../../config/settings/node.js";
 import { error, json } from "../../http/respond.js";
 import type { WorkspaceCall } from "../../http/router.js";
 import { newId } from "../../ids.js";
-import { vetOutboundUrl } from "../../net/outbound.js";
+import { vetWebhookUrl } from "../../review/channel.js";
 
 /** A webhook as its manager sees it: everything but the secret, which is shown once at creation. */
 function webhookView(w: WebhookRow) {
   return {
     webhook_id: w.webhook_id,
+    kind: w.kind,
     url: w.url,
     events: w.events,
     folder_id: w.folder_id,
@@ -28,15 +30,15 @@ function webhookView(w: WebhookRow) {
 }
 
 /**
- * An absolute http(s) URL that does not resolve into the operator's network: a
- * workspace admin chooses the target of a signed outbound request. Resolving it
- * here gives a plain refusal early; each delivery's connection is checked again,
- * since a name can resolve elsewhere later.
+ * The target of a signed outbound request a workspace admin chooses: for a generic hook an absolute
+ * http(s) URL that does not resolve into the operator's network, for a Slack review channel only
+ * Slack's incoming-webhook host (vetWebhookUrl). Resolving it here gives a plain refusal early; each
+ * delivery's connection is checked again, since a name can resolve elsewhere later.
  */
-async function validWebhookUrl(raw: unknown): Promise<{ url: string } | { error: string }> {
+async function validWebhookUrl(kind: WebhookKind, raw: unknown): Promise<{ url: string } | { error: string }> {
   if (typeof raw !== "string" || raw.length > 2048) return { error: "url must be an absolute http(s) URL" };
-  const verdict = await vetOutboundUrl(raw);
-  return verdict.ok ? { url: verdict.url.toString() } : { error: verdict.reason };
+  const verdict = await vetWebhookUrl(kind, raw);
+  return verdict.ok ? { url: verdict.url } : { error: verdict.reason };
 }
 
 /** The folder a hook is scoped to, or null for the whole workspace; a folder the caller cannot read is not found. */
@@ -65,9 +67,15 @@ export async function listWebhooksRoute({ ctx }: WorkspaceCall): Promise<Respons
 }
 
 export async function createWebhook({ ctx, req }: WorkspaceCall): Promise<Response> {
-  const body = (await req.json().catch(() => ({}))) as { url?: unknown; events?: unknown; folder_id?: unknown };
-  const target = await validWebhookUrl(body.url);
+  const body = (await req.json().catch(() => ({}))) as { kind?: unknown; url?: unknown; events?: unknown; folder_id?: unknown };
+  const kind = body.kind === undefined ? "generic" : body.kind;
+  if (!isWebhookKind(kind)) return error(400, "kind must be generic or slack");
+  const target = await validWebhookUrl(kind, body.url);
   if ("error" in target) return error(400, target.error);
+  // A review channel posts what waits for a colleague, and nothing else.
+  if (kind === "slack" && body.events !== undefined && body.events !== null && !(Array.isArray(body.events) && body.events.length === 0)) {
+    return error(400, "a Slack review channel takes no events");
+  }
   const events = parseEventTypes(body.events);
   if (!events) return error(400, `events must be a list drawn from: ${WORKSPACE_EVENT_TYPES.join(", ")}`);
   const folder = await hookFolder(ctx, body.folder_id);
@@ -77,6 +85,7 @@ export async function createWebhook({ ctx, req }: WorkspaceCall): Promise<Respon
   const hook = await insertWebhook(ctx.sql, {
     webhookId: newId("whk_"),
     workspaceId: ctx.workspaceId,
+    kind,
     url: target.url,
     secret,
     events,
@@ -89,7 +98,7 @@ export async function createWebhook({ ctx, req }: WorkspaceCall): Promise<Respon
     targetId: hook.webhook_id,
     // A webhook URL authorises by possession (often its path), so the ledger only ever holds a fingerprint.
     targetLabel: fingerprintUrl(hook.url),
-    detail: { events, folder_id: folderId },
+    detail: { kind, events, folder_id: folderId },
   });
   return json({ webhook: webhookView(hook), secret }, { status: 201 });
 }
@@ -97,10 +106,15 @@ export async function createWebhook({ ctx, req }: WorkspaceCall): Promise<Respon
 export async function updateWebhookRoute({ ctx, req, match }: WorkspaceCall): Promise<Response> {
   const body = (await req.json().catch(() => ({}))) as { url?: unknown; events?: unknown; folder_id?: unknown; active?: unknown };
   const patch: { url?: string; events?: string[]; folderId?: string | null; active?: boolean } = {};
+  const existing = await getWebhook(ctx.sql, match[1]!);
+  if (!existing || existing.workspace_id !== ctx.workspaceId) return error(404, "not found");
   if (body.url !== undefined) {
-    const target = await validWebhookUrl(body.url);
+    const target = await validWebhookUrl(existing.kind, body.url);
     if ("error" in target) return error(400, target.error);
     patch.url = target.url;
+  }
+  if (existing.kind === "slack" && body.events !== undefined && body.events !== null && !(Array.isArray(body.events) && body.events.length === 0)) {
+    return error(400, "a Slack review channel takes no events");
   }
   if (body.events !== undefined) {
     const events = parseEventTypes(body.events);

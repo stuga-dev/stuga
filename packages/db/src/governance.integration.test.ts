@@ -18,7 +18,6 @@ import {
   upsertAgentRun,
   webhookReaches,
 } from "./governance.js";
-import { RUN_IDLE_MS } from "@stuga/protocol/domain/limits";
 import type { RunIndexEntry } from "@stuga/protocol/internal/jobs";
 
 const URL = process.env.TEST_DATABASE_URL;
@@ -128,16 +127,24 @@ describe.skipIf(!URL)("agent governance queries", () => {
       // Every other view still lists them, for reading.
       expect(await listAgentRuns(sql, { workspaceId: WS, principals: BOB, filter: "all", decider: { alias: "bob", admin: false } })).toHaveLength(2);
     });
-    it("`open` is what still collects changes, by the actors' idle rule; `closed` is the rest", async () => {
-      const now = Date.now();
-      await upsertAgentRun(sql, entry({ runId: "r-waiting", pending: 1, updatedAt: 2_000 }));
-      await upsertAgentRun(sql, entry({ runId: "r-active", pending: 0, applied: 1, autoApplied: true, acknowledged: true, updatedAt: now }));
-      await upsertAgentRun(sql, entry({ runId: "r-idle", pending: 0, applied: 1, autoApplied: true, acknowledged: true, updatedAt: now - RUN_IDLE_MS - 60_000 }));
+    it("splits every run into Needs you, Waiting on others and Done", async () => {
+      // Alice owns the document: she may decide Carol's run and her own, and look at Bob's; Bob can only read it.
+      await upsertAgentRun(sql, entry({ runId: "r-mine", pending: 1 }));
+      await upsertAgentRun(sql, entry({ runId: "r-carol", reviewer: "carol", pending: 2 }));
+      await upsertAgentRun(sql, entry({ runId: "r-auto", reviewer: "bob", pending: 0, applied: 1, autoApplied: true }));
+      await upsertAgentRun(sql, entry({ runId: "r-acked", pending: 0, applied: 1, autoApplied: true, acknowledged: true }));
       await upsertAgentRun(sql, entry({ runId: "r-done", pending: 0, accepted: 1, status: "applied" }));
-      const open = await listAgentRuns(sql, { workspaceId: WS, principals: ALICE, filter: "open" });
-      expect(open.map((r) => r.run_id).sort()).toEqual(["r-active", "r-waiting"]);
-      const closed = await listAgentRuns(sql, { workspaceId: WS, principals: ALICE, filter: "closed" });
-      expect(closed.map((r) => r.run_id).sort()).toEqual(["r-done", "r-idle"]);
+      const view = async (principals: string[], alias: string, filter: "attention" | "waiting" | "done") =>
+        (await listAgentRuns(sql, { workspaceId: WS, principals, filter, decider: { alias, admin: false } })).map((r) => r.run_id).sort();
+      expect(await view(ALICE, "alice", "attention")).toEqual(["r-auto", "r-carol", "r-mine"]);
+      expect(await view(ALICE, "alice", "waiting")).toEqual([]);
+      expect(await view(ALICE, "alice", "done")).toEqual(["r-acked", "r-done"]);
+      expect(await view(BOB, "bob", "attention")).toEqual(["r-auto"]);
+      expect(await view(BOB, "bob", "waiting")).toEqual(["r-carol", "r-mine"]);
+      expect(await view(BOB, "bob", "done")).toEqual(["r-acked", "r-done"]);
+      // Together they are every run Bob can read, each once.
+      const all = (await listAgentRuns(sql, { workspaceId: WS, principals: BOB, filter: "all" })).map((r) => r.run_id).sort();
+      expect([...(await view(BOB, "bob", "attention")), ...(await view(BOB, "bob", "waiting")), ...(await view(BOB, "bob", "done"))].sort()).toEqual(all);
     });
     it("stats aggregate per agent over visible runs only", async () => {
       await upsertAgentRun(sql, entry({ runId: "r1", accepted: 3, rejected: 1, pending: 0, status: "applied" }));

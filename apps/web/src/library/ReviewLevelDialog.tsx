@@ -2,7 +2,8 @@
  * How AI edits to a document, database or folder are reviewed: three levels, and for a folder the
  * group whose members approve at `colleague`. A folder gives its level to what is in it; an item's
  * owner (or an admin) may choose a stricter one, and only the folder's owner or an admin a looser
- * one, which the server decides. Agents never change it.
+ * one, which the server decides. A row page never goes below its database, nor a page shared out of
+ * My notes below `review`, so the dialog offers nothing looser there. Agents never change it.
  */
 import { useEffect, useState } from "react";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
@@ -13,8 +14,8 @@ import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
-import { REVIEW_MODES, looserReviewMode, type ReviewMode } from "@stuga/protocol/domain/events";
-import { Docs, Folders, Groups, groupName, type DocSummary, type Folder } from "../api";
+import { REVIEW_MODES, looserReviewMode, stricterReviewMode, type ReviewMode } from "@stuga/protocol/domain/events";
+import { Docs, Folders, Groups, groupName, type DocSummary, type Folder, type ReviewFloors } from "../api";
 import { errorMessage } from "../lib/http/client";
 import { useToast } from "../ui/use-toast";
 import { t, type MessageKey } from "../i18n/i18n";
@@ -39,6 +40,20 @@ const LEVEL_DESCRIPTION: Record<ReviewMode, MessageKey> = {
 /** The approver group selector's value for "anyone who can edit". */
 const ANYONE = "";
 
+/**
+ * What the dialog says of an item's floors, and the level nobody sets it below: a row page's
+ * database's, and `review` for an item shared out of My notes. Its folder's level is said too, and
+ * only warned about, since the folder's owner or an admin may go below it.
+ */
+export function floorsOf(floors: ReviewFloors | null | undefined): { lines: string[]; hard: ReviewMode | null } {
+  const lines: string[] = [];
+  if (floors?.folder) lines.push(t("library.review.floor", { level: floors.folder }));
+  if (floors?.database) lines.push(t("library.review.databaseFloor", { level: floors.database }));
+  if (floors?.notes) lines.push(t("library.review.notesFloor"));
+  const set = [floors?.database ?? null, floors?.notes ?? null].filter((f): f is ReviewMode => f !== null);
+  return { lines, hard: set.length > 0 ? set.reduce(stricterReviewMode) : null };
+}
+
 export function ReviewLevelDialog({
   isOpen,
   target,
@@ -57,7 +72,8 @@ export function ReviewLevelDialog({
   const toast = useToast();
   const item = target.kind === "folder" ? target.folder : target.doc;
   const current = item.agent_mode;
-  const floor = item.agent_mode_floor;
+  const floors = floorsOf(item.agent_mode_floors);
+  const floor = item.agent_mode_floors?.folder ?? null;
   const currentGroup = target.kind === "folder" ? target.folder.approver_group : null;
   const [level, setLevel] = useState<ReviewMode>(current);
   const [group, setGroup] = useState<string>(currentGroup ?? ANYONE);
@@ -117,7 +133,7 @@ export function ReviewLevelDialog({
             <VStack gap={4}>
               <RadioList
                 label={t("library.review.levelLabel", { kind: target.kind })}
-                description={floor === null ? undefined : t("library.review.floor", { level: floor })}
+                description={floors.lines.length > 0 ? floors.lines.join(" ") : undefined}
                 value={level}
                 onChange={(v) => setLevel(v as ReviewMode)}
                 isDisabled={!canEdit || saving}
@@ -125,7 +141,13 @@ export function ReviewLevelDialog({
                 status={belowFloor && level !== current ? { type: "warning", message: t("library.review.belowFloor") } : undefined}
               >
                 {[...REVIEW_MODES].reverse().map((mode) => (
-                  <RadioListItem key={mode} value={mode} label={t(LEVEL_LABEL[mode])} description={t(LEVEL_DESCRIPTION[mode], { kind: target.kind })} />
+                  <RadioListItem
+                    key={mode}
+                    value={mode}
+                    label={t(LEVEL_LABEL[mode])}
+                    description={t(LEVEL_DESCRIPTION[mode], { kind: target.kind })}
+                    isDisabled={floors.hard !== null && looserReviewMode(mode, floors.hard)}
+                  />
                 ))}
               </RadioList>
               {target.kind === "folder" && (

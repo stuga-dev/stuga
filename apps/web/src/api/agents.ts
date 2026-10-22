@@ -1,3 +1,4 @@
+import type { WebhookKind } from "@stuga/protocol/domain/webhooks";
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
 import { api, apiFailure, authedFetch } from "../lib/http/client";
 
@@ -81,6 +82,8 @@ export const Connections = {
 
 export interface WebhookInfo {
   webhook_id: string;
+  /** `generic` takes the event feed; `slack` is a review channel. */
+  kind: WebhookKind;
   url: string;
   events: string[];
   folder_id: string | null;
@@ -96,7 +99,7 @@ export interface WebhookInfo {
 export const Webhooks = {
   list: () => api<{ webhooks: WebhookInfo[]; event_types: readonly string[] }>("/api/webhooks"),
   /** The secret is returned once. */
-  create: (input: { url: string; events: string[]; folder_id: string | null }) =>
+  create: (input: { kind?: WebhookKind; url: string; events: string[]; folder_id: string | null }) =>
     api<{ webhook: WebhookInfo; secret: string }>("/api/webhooks", { method: "POST", body: JSON.stringify(input) }),
   update: (webhookId: string, patch: { url?: string; events?: string[]; folder_id?: string | null; active?: boolean }) =>
     api<{ webhook: WebhookInfo }>(`/api/webhooks/${webhookId}`, { method: "PATCH", body: JSON.stringify(patch) }),

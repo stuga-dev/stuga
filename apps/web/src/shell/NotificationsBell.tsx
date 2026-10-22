@@ -21,6 +21,7 @@ import type { Notification } from "../api";
 import { refreshNotifications, useNotifications } from "../state/notifications";
 import { SHARE_PARAM } from "../library/share-request";
 import { relativeTime } from "../lib/format";
+import { useIsNarrow } from "../ui/narrow";
 import { t, uiLanguage, type MessageKey } from "../i18n/i18n";
 
 /**
@@ -42,13 +43,28 @@ function notificationLanguage(): string {
   return lang === "en-XA" ? "en" : lang;
 }
 
-function present(n: Notification): { label: string; to: string | null } {
+/** Notifications whose card is where their reader decides: whoever may approve, or must find an approver. */
+const APPROVER_EVENTS: ReadonlySet<string> = new Set(["APPROVAL_WAITING", "APPROVER_NEEDED"]);
+
+/**
+ * The review card a notification about one run links to, where it opens: for whoever may approve it
+ * everywhere, and for the person who asked on a phone; on a wider screen they review in the item.
+ */
+export function reviewCardTarget(n: Pick<Notification, "event_type" | "resource_url">, narrow: boolean): string | null {
+  const path = n.resource_url ? safeInternalPath(n.resource_url) : null;
+  if (!path?.startsWith("/review/")) return null;
+  return narrow || APPROVER_EVENTS.has(n.event_type) ? path : null;
+}
+
+export function present(n: Notification, narrow = false): { label: string; to: string | null } {
   // Written from the event and its params in the reader's language; an event this build does not
   // know reads its resource's title, else its type.
   const label =
     renderNotification(n.event_type, n.payload ?? {}, notificationLanguage())?.title ??
     n.resource_title ??
     n.event_type; // i18n-exempt: an identifier, for an event no catalog knows
+  const card = reviewCardTarget(n, narrow);
+  if (card) return { label, to: card };
   // An access request is answered in the Share dialog, so it opens there.
   const to = n.resource_id
     ? `/doc/${n.resource_id}${n.event_type === "REQUEST_ACCESS" ? `?${SHARE_PARAM}=1` : commentQuery(n.resource_url)}`
@@ -130,6 +146,7 @@ function openTarget(n: Notification, to: string, nav: (to: string) => void): voi
 
 export function NotificationsBell() {
   const nav = useNavigate();
+  const narrow = useIsNarrow();
   const active = getActiveWorkspace();
   const { notifications, rowsFailed, unread, markAllRead, markRead, loadRows } = useNotifications();
   const [open, setOpen] = useState(false);
@@ -174,7 +191,7 @@ export function NotificationsBell() {
           }
         >
           {(notifications ?? []).map((n) => {
-            const { label, to } = present(n);
+            const { label, to } = present(n, narrow);
             return (
               <Item
                 as="li"

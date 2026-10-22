@@ -1,4 +1,4 @@
-/** The top bar of a full page outside the library: back to All documents, the brand, the page's name and the personal controls. */
+/** The top bar of a full page outside the library: back to All documents (or where the page says), the brand, the page's name and the personal controls. */
 import { useNavigate } from "react-router-dom";
 import { TopNav } from "@astryxdesign/core/TopNav";
 import { Heading } from "@astryxdesign/core/Text";
@@ -20,9 +20,11 @@ interface AppTopNavProps {
   pageTitle?: string;
   /** For pages whose content belongs to the active workspace. */
   hasWorkspaceSwitcher?: boolean;
+  /** Where the back arrow goes, and its name; All documents when omitted. */
+  back?: { to: string; label: string };
 }
 
-export function AppTopNav({ title, pageTitle, hasWorkspaceSwitcher = false }: AppTopNavProps) {
+export function AppTopNav({ title, pageTitle, hasWorkspaceSwitcher = false, back }: AppTopNavProps) {
   const nav = useNavigate();
   usePageTitle(pageTitle ?? title);
   return (
@@ -31,7 +33,7 @@ export function AppTopNav({ title, pageTitle, hasWorkspaceSwitcher = false }: Ap
       // The heading slot, unlike the start content, stays in a phone's bar.
       heading={
         <HStack gap={2} vAlign="center">
-          <IconButton label={t("common.allDocuments")} variant="ghost" icon={<ArrowLeft size={18} />} onClick={() => nav("/")} />
+          <IconButton label={back?.label ?? t("common.allDocuments")} variant="ghost" icon={<ArrowLeft size={18} />} onClick={() => nav(back?.to ?? "/")} />
           <div className="brand">
             <Brand />
             <Heading level={1}>{title}</Heading>

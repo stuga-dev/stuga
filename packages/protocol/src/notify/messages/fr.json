@@ -1,6 +1,8 @@
 {
   "untitled": "Sans titre",
   "action.open": "Ouvrir",
+  "review.post": "« {doc} » : {agent} de {author} a proposé {count, plural, one {# modification} many {# modifications} other {# modifications}} · {level, select, colleague {Vérifiées par un collègue} review {Vérifiées par la personne qui a sollicité l’IA} other {Modifications de l’IA appliquées directement}}",
+  "review.open": "Vérifier",
 
   "MENTIONED_IN_COMMENT.title": "{actor} vous a mentionné dans un commentaire sur « {doc} »",
   "MENTIONED_IN_COMMENT.body": "{excerpt}",

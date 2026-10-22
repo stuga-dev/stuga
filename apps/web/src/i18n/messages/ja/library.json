@@ -30,6 +30,8 @@
   "review.colleague": "同僚がレビュー",
   "review.colleagueDescription": "編集できる他の人が承認します。管理者も含みます。",
   "review.floor": "フォルダーは「{level, select, auto {AIの編集を直接適用} review {依頼した人がレビュー} other {同僚がレビュー}}」です。",
+  "review.databaseFloor": "データベースは「{level, select, auto {AIの編集を直接適用} review {依頼した人がレビュー} other {同僚がレビュー}}」で、そのページがこれより緩くなることはありません。",
+  "review.notesFloor": "マイノートから共有されているため、少なくとも「依頼した人がレビュー」です。",
   "review.belowFloor": "フォルダーより緩いレベルを設定できるのは、フォルダーのオーナーかワークスペースの管理者だけです。",
   "review.approvers": "承認者",
   "review.approversDescription": "「同僚がレビュー」のとき、ここでAIの編集を承認する人です。",

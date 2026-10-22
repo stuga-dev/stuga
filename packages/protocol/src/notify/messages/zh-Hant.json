@@ -1,6 +1,8 @@
 {
   "untitled": "未命名",
   "action.open": "開啟",
+  "review.post": "「{doc}」：{author} 的 {agent} 建議了 {count, plural, other {# 項變更}} · {level, select, colleague {由同事審閱} review {由發起人審閱} other {AI 編輯直接套用}}",
+  "review.open": "審閱",
 
   "MENTIONED_IN_COMMENT.title": "{actor} 在「{doc}」的留言中提及了你",
   "MENTIONED_IN_COMMENT.body": "{excerpt}",

@@ -20,6 +20,15 @@ export function agentActorOf(agentAlias: string): string {
   return agentAlias.startsWith("agent-") ? `agent:${agentAlias}` : agentAlias;
 }
 
+/**
+ * The web app's review card for one run of a document or database: what a notification or a review
+ * channel links to. `workspace` lets the card open in that workspace when another is active.
+ */
+export function reviewCardPath(docId: string, runId: string, workspace?: string | null): string {
+  const path = `/review/${encodeURIComponent(docId)}/${encodeURIComponent(runId)}`;
+  return workspace ? `${path}?workspace=${encodeURIComponent(workspace)}` : path;
+}
+
 /** A `?limit=` value clamped to 1..max; absent or non-numeric means `fallback` (a listing never errors on it). */
 export function clampRunLimit(raw: string | null | undefined, max: number, fallback: number): number {
   const n = Number(raw);

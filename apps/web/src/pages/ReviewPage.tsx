@@ -1,32 +1,40 @@
 /**
- * The workspace's review queue: runs still waiting on a person, across documents,
- * with a record per agent. Actions call the same routes the document page does.
- * Rows come from an inbox mirror the actors refresh through the job queue, so an
- * action patches its row from the reply and re-reads shortly after.
+ * The workspace's review queue, in three tabs: Needs you (what this person may decide, or should
+ * look at), Waiting on others (changes someone else decides) and Done, with a record per agent. The
+ * tab is in the address (?tab=), so a link can open Waiting on others or Done. A row opens the run's
+ * review card; its menu acts on the whole run through the same routes the document page uses. Rows
+ * come from an inbox mirror the actors refresh through the job queue, so an action patches its row
+ * from the reply and re-reads shortly after.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { AppShell } from "@astryxdesign/core/AppShell";
+import { Badge } from "@astryxdesign/core/Badge";
 import { Button } from "@astryxdesign/core/Button";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { Heading, Text } from "@astryxdesign/core/Text";
+import { IconButton } from "@astryxdesign/core/IconButton";
 import { HStack } from "@astryxdesign/core/HStack";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { MoreMenu } from "@astryxdesign/core/MoreMenu";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { Tab, TabList } from "@astryxdesign/core/TabList";
 import { Table, proportional, pixel } from "@astryxdesign/core/Table";
 import { VStack } from "@astryxdesign/core/VStack";
 import { useToast } from "../ui/use-toast";
-import { ListChecks } from "lucide-react";
+import { ChevronRight, ListChecks } from "lucide-react";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import type { DatabaseRunSummary } from "@stuga/protocol/databases/types";
+import { reviewCardPath } from "@stuga/protocol/domain/runs";
+import { clientName } from "../agents/client-configs";
 import { AppTopNav } from "../shell/AppTopNav";
 import { LoadFailed } from "../ui/LoadFailed";
 import { PageColumn } from "../ui/PageColumn";
+import { useIsNarrow } from "../ui/narrow";
 import { absoluteTime, fmtInt, relativeTime } from "../lib/format";
 import { DatabaseRuns, INBOX_PAGE_LIMIT, Inbox, Runs, type AgentStats, type InboxFilter, type InboxRun } from "../api";
 import { errorMessage } from "../lib/http/client";
@@ -35,13 +43,27 @@ import { summarizeHunk } from "../review/hunk-review";
 import { describeProposal } from "../database/op-lines";
 import { principalLabel, runAgentLabel, useUserNames } from "../state/identity";
 import { t, type MessageKey } from "../i18n/i18n";
+import "../styles/review.css";
 
-const FILTERS: Array<{ value: InboxFilter; label: MessageKey }> = [
-  { value: "attention", label: "review.inbox.filter.attention" },
-  { value: "open", label: "review.inbox.filter.open" },
-  { value: "closed", label: "review.inbox.filter.closed" },
-  { value: "all", label: "review.inbox.filter.all" },
+/** The tabs, each the inbox filter that lists it, as the address names them. */
+const TABS: Array<{ tab: string; filter: InboxFilter; label: MessageKey }> = [
+  { tab: "needs", filter: "attention", label: "review.inbox.tab.needs" },
+  { tab: "waiting", filter: "waiting", label: "review.inbox.tab.waiting" },
+  { tab: "done", filter: "done", label: "review.inbox.tab.done" },
 ];
+
+/** The tab the address names, Needs you when it names none. */
+export function tabOf(raw: string | null): (typeof TABS)[number] {
+  return TABS.find((x) => x.tab === raw) ?? TABS[0]!;
+}
+
+/** Each tab's empty state: a title and a line. */
+const EMPTY: Record<InboxFilter, [MessageKey, MessageKey]> = {
+  attention: ["review.inbox.caughtUp", "review.inbox.caughtUpNote"],
+  waiting: ["review.inbox.waitingEmpty", "review.inbox.waitingEmptyNote"],
+  done: ["review.inbox.doneEmpty", "review.inbox.doneEmptyNote"],
+  all: ["review.inbox.noMatch", "review.inbox.noMatchNote"],
+};
 
 /** Accepting takes seeing the change where it lands, so the list offers no blind Accept all. */
 type RunAction = "reject" | "revert" | "dismiss";
@@ -141,13 +163,33 @@ export function runStatus(run: InboxRun): string {
   }
 }
 
-/** Who made a run: its agent, plus the client label when the name does not already say it. */
-export function madeBy(run: InboxRun): string {
+/** Who made a run: its agent, then the app it came through when the name does not already say it. */
+export function madeBy(run: InboxRun): string[] {
   const name = runAgentLabel(run);
   // The co-author's name already says how it was made.
-  const via = run.source === "panel" ? null : run.client;
+  const via = run.source === "panel" || !run.client ? null : clientName(run.client);
   const key = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
-  return via && !key(name).includes(key(via)) ? `${name} · ${via}` : name;
+  return via && !key(name).includes(key(via)) ? [name, via] : [name];
+}
+
+/**
+ * A row's facts in one line on a wide screen. On a narrow one it breaks only between facts, each kept
+ * whole unless it is wider than the line, and a separator ends its line rather than start the next.
+ */
+function RowFacts({ facts }: { facts: ReactNode[] }) {
+  return (
+    <Text type="supporting" color="secondary">
+      {facts.map((fact, i) => (
+        <Fragment key={i}>
+          {i > 0 && " "}
+          <Text type="inherit" color="inherit" className="review-row-fact">
+            {fact}
+            {i < facts.length - 1 && "\u00A0·"}
+          </Text>
+        </Fragment>
+      ))}
+    </Text>
+  );
 }
 
 /**
@@ -189,9 +231,13 @@ export function ReviewPage() {
   const nav = useNavigate();
   const toast = useToast();
   const { ask: askNote, dialog: noteDialog } = useRejectNote();
-  const [filter, setFilter] = useState<InboxFilter>("attention");
+  const [params, setParams] = useSearchParams();
+  const { tab, filter } = tabOf(params.get("tab"));
+  const narrow = useIsNarrow();
   const [agent, setAgent] = useState("");
   const [runs, setRuns] = useState<InboxRun[] | null>(null);
+  /** How many runs need this person, for the badge on Needs you whichever tab is open. */
+  const [needsCount, setNeedsCount] = useState<number | null>(null);
   /** The last load filled a page, so the count is a floor until the next load. */
   const [capped, setCapped] = useState(false);
   const [stats, setStats] = useState<AgentStats[]>([]);
@@ -205,10 +251,18 @@ export function ReviewPage() {
   const load = useCallback(async () => {
     setFailed(false);
     try {
-      const [inbox, agents] = await Promise.all([Inbox.list(filter, agent || undefined), Inbox.stats()]);
+      // The badge counts every agent's, whichever tab or agent is shown.
+      const whole = filter === "attention" && !agent;
+      const [inbox, agents, needs] = await Promise.all([
+        Inbox.list(filter, agent || undefined),
+        Inbox.stats(),
+        whole ? null : Inbox.list("attention").catch(() => null),
+      ]);
       setRuns(inbox.runs);
       setCapped(inbox.runs.length >= INBOX_PAGE_LIMIT);
       setStats(agents.agents);
+      const counted = whole ? inbox.runs : needs?.runs;
+      if (counted) setNeedsCount(counted.length);
     } catch {
       setFailed(true);
       setRuns(null);
@@ -228,9 +282,12 @@ export function ReviewPage() {
   );
 
   const shown = runs?.length ?? 0;
-  const listHeading = filter === "attention"
-    ? capped ? t("review.inbox.headingAttentionCapped", { count: shown }) : t("review.inbox.headingAttention", { count: shown })
-    : capped ? t("review.inbox.headingAllCapped", { count: shown }) : t("review.inbox.headingAll", { count: shown });
+  const listHeading =
+    filter === "attention"
+      ? capped ? t("review.inbox.headingAttentionCapped", { count: shown }) : t("review.inbox.headingAttention", { count: shown })
+      : filter === "waiting"
+        ? capped ? t("review.inbox.headingWaitingCapped", { count: shown }) : t("review.inbox.headingWaiting", { count: shown })
+        : capped ? t("review.inbox.headingAllCapped", { count: shown }) : t("review.inbox.headingAll", { count: shown });
 
   function markBusy(runId: string, on: boolean) {
     setBusy((prev) => {
@@ -266,7 +323,8 @@ export function ReviewPage() {
         });
         return filter === "attention" ? updated?.filter(needsAttention) ?? null : updated ?? null;
       });
-      toast({ body: t(DONE[what], { title: row.doc_title || t("common.untitled") }), type: "info" });
+      if (filter === "attention") setNeedsCount((n) => (n === null ? n : Math.max(0, n - 1)));
+      toast({ body: t(what === "reject" && note ? "review.inbox.done.asked" : DONE[what], { title: row.doc_title || t("common.untitled") }), type: "info" });
       window.setTimeout(() => void load(), MIRROR_SETTLE_MS);
       return true;
     } catch (e) {
@@ -311,19 +369,20 @@ export function ReviewPage() {
               <VStack gap={1}>
                 <Text color="secondary">{t("review.inbox.intro")}</Text>
               </VStack>
-              <HStack gap={2} vAlign="end" wrap="wrap">
-                <Selector
-                  label={t("review.inbox.show")}
-                  size="sm"
-                  width={150}
-                  presentation="adaptive"
-                  value={filter}
-                  onChange={(v) => setFilter(v as InboxFilter)}
-                  options={FILTERS.map((f) => ({ value: f.value, label: t(f.label) }))}
-                />
-                <Selector label={t("review.inbox.agent")} size="sm" width={190} presentation="adaptive" value={agent} onChange={setAgent} options={agentOptions} />
-              </HStack>
+              <Selector label={t("review.inbox.agent")} size="sm" width={190} presentation="adaptive" value={agent} onChange={setAgent} options={agentOptions} />
             </HStack>
+            <TabList value={tab} onChange={(next) => setParams(next === "needs" ? {} : { tab: next }, { replace: true })} hasDivider>
+              {TABS.map((x) => (
+                <Tab
+                  key={x.tab}
+                  value={x.tab}
+                  label={t(x.label)}
+                  {...(x.filter === "attention" && needsCount
+                    ? { endContent: <Badge label={needsCount >= INBOX_PAGE_LIMIT ? t("review.inbox.countCapped", { count: needsCount }) : fmtInt(needsCount)} variant="info" /> }
+                    : {})}
+                />
+              ))}
+            </TabList>
             {failed ? (
               <LoadFailed icon={<ListChecks size={24} />} title={t("review.inbox.loadFailed")} onRetry={() => void load()} />
             ) : runs === null ? (
@@ -333,8 +392,8 @@ export function ReviewPage() {
             ) : runs.length === 0 ? (
               <EmptyState
                 icon={<ListChecks size={28} />}
-                title={filter === "attention" ? t("review.inbox.caughtUp") : t("review.inbox.noMatch")}
-                description={filter === "attention" ? t("review.inbox.caughtUpNote") : t("review.inbox.noMatchNote")}
+                title={agent ? t("review.inbox.noMatch") : t(EMPTY[filter][0])}
+                description={agent ? t("review.inbox.noMatchNote") : t(EMPTY[filter][1])}
               />
             ) : (
               <List
@@ -350,19 +409,21 @@ export function ReviewPage() {
                     (runState(row) === "waiting" && row.can_decide !== false && !row.you?.waits_for) || actions.dismiss;
                   const status = runStatus(row);
                   const title = row.doc_title || t("common.untitled");
+                  const card = reviewCardPath(row.doc_id, row.run_id);
                   const items = [
+                    { label: row.doc_kind === "database" ? t("review.card.openDatabase") : t("review.card.openDocument"), onClick: () => nav(`/doc/${row.doc_id}`) },
                     ...(actions.decide ? [
-                      { label: t("review.inbox.rejectAll"), onClick: () => void act(row, "reject"), isDisabled: isBusy },
                       {
-                        label: t("review.note.rejectAllEllipsis"),
+                        label: t("review.card.askChanges"),
                         onClick: () =>
                           askNote({
-                            title: t("review.note.rejectAll"),
-                            submitLabel: t("review.note.rejectAll"),
+                            title: t("review.card.note.askTitle"),
+                            submitLabel: t("review.card.note.askSend"),
                             onSubmit: (note) => void act(row, "reject", note),
                           }),
                         isDisabled: isBusy,
                       },
+                      { label: t("review.inbox.decline"), onClick: () => void act(row, "reject"), isDisabled: isBusy },
                     ] : []),
                     ...(actions.revert ? [
                       { label: t("review.diff.revert"), variant: "destructive" as const, onClick: () => openRevert(row), isDisabled: isBusy },
@@ -392,20 +453,36 @@ export function ReviewPage() {
                         <VStack gap={1}>
                           <Text color="secondary">{status}</Text>
                           {row.pending > 0 && row.status === "open" && <WaitingPreview row={row} />}
-                          <Text type="supporting" color="secondary">
-                            {row.doc_kind === "database" ? t("common.database") : t("common.document")} · {madeBy(row)} ·{" "}
-                            <span title={absoluteTime(row.updated_at)}>{relativeTime(row.updated_at)}</span>
-                          </Text>
+                          <RowFacts
+                            facts={[
+                              row.doc_kind === "database" ? t("common.database") : t("common.document"),
+                              ...madeBy(row),
+                              <time key="when" dateTime={row.updated_at} title={absoluteTime(row.updated_at)}>
+                                {relativeTime(row.updated_at)}
+                              </time>,
+                            ]}
+                          />
                         </VStack>
                       }
                       endContent={
                         <HStack gap={1} vAlign="center">
-                          <Button
-                            label={attention ? t("review.inbox.reviewChanges") : t("common.open")}
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => nav(`/doc/${row.doc_id}`)}
-                          />
+                          {/* On a phone the row's words keep the width, and the card opens from an arrow. */}
+                          {narrow ? (
+                            <IconButton
+                              label={attention ? t("review.inbox.reviewChanges") : t("common.open")}
+                              variant="secondary"
+                              size="sm"
+                              icon={<ChevronRight size={16} />}
+                              onClick={() => nav(card)}
+                            />
+                          ) : (
+                            <Button
+                              label={attention ? t("review.inbox.reviewChanges") : t("common.open")}
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => nav(card)}
+                            />
+                          )}
                           {items.length > 0 && (
                             <MoreMenu
                               label={t("common.actionsFor", { name: title })}

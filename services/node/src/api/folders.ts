@@ -127,6 +127,7 @@ function redactedAncestor(row: FolderRow) {
     updated_at: null,
     agent_mode: null,
     agent_mode_floor: null,
+    agent_mode_floors: null,
     approver_group: null,
   };
 }

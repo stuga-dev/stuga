@@ -44,7 +44,7 @@ function deps(overrides: Partial<JobsDb> = {}, fetchImpl?: JobDeps["webhookFetch
 
 function env(): JobsEnv & { sent: IndexMessage[] } {
   const sent: IndexMessage[] = [];
-  return { sent, jobs: { send: async (m: IndexMessage) => void sent.push(m) } } as unknown as JobsEnv & { sent: IndexMessage[] };
+  return { sent, publicOrigin: "https://node.test", jobs: { send: async (m: IndexMessage) => void sent.push(m) } } as unknown as JobsEnv & { sent: IndexMessage[] };
 }
 
 const RUN = {
@@ -120,7 +120,7 @@ describe("event", () => {
   });
 });
 
-const HOOK = { webhook_id: "whk_a", workspace_id: "ws1", url: "https://hooks.example/stuga", secret: "s3cret", active: true, failures: 0 };
+const HOOK = { webhook_id: "whk_a", workspace_id: "ws1", kind: "generic", url: "https://hooks.example/stuga", secret: "s3cret", active: true, failures: 0, created_by: "alice" };
 const EVENT = { id: 42, at: "2026-09-01T00:00:00Z", workspace_id: "ws1", type: "run.decided", doc_id: "d1", actor: "user:alice", actor_kind: "human", payload: { x: 1 } };
 
 describe("webhook_deliver", () => {
@@ -131,7 +131,7 @@ describe("webhook_deliver", () => {
       return new Response(null, { status: 204 });
     }) as unknown as typeof fetch;
     const d = deps({ getWebhook: vi.fn(async () => HOOK), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
-    await handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
+    await handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
     expect(seen).not.toBeNull();
     const { url, init } = seen!;
     expect(url).toBe(HOOK.url);
@@ -153,7 +153,7 @@ describe("webhook_deliver", () => {
       throw new OutboundRefusedError("private", "hooks.example", "169.254.169.254");
     });
     const d = deps({ getWebhook: vi.fn(async () => HOOK), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
-    const thrown = await handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 }).catch((e: unknown) => e);
+    const thrown = await handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 }).catch((e: unknown) => e);
     expect(String(thrown)).toMatch(/refused address: refusing to reach a private or loopback address/);
     expect(String(thrown)).not.toMatch(/169\.254/);
     expect(isTerminal(thrown)).toBe(true);
@@ -169,7 +169,7 @@ describe("webhook_deliver", () => {
       const { port } = server.address() as AddressInfo;
       const hook = { ...HOOK, url: `http://127.0.0.1:${port}/hook` };
       const d = deps({ getWebhook: vi.fn(async () => hook), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, outboundFetch);
-      const thrown = await handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 }).catch((e: unknown) => e);
+      const thrown = await handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 }).catch((e: unknown) => e);
       expect(isTerminal(thrown)).toBe(true);
       expect(d.db.updateWebhook).toHaveBeenCalledWith("ws1", "whk_a", { active: false });
       expect(connections).toBe(0);
@@ -178,19 +178,28 @@ describe("webhook_deliver", () => {
     }
   });
 
+  it("tries a 429 again later without counting it as a failure", async () => {
+    const fetchImpl = vi.fn(async () => new Response("", { status: 429 })) as unknown as typeof fetch;
+    const d = deps({ getWebhook: vi.fn(async () => ({ ...HOOK, failures: WEBHOOK_MAX_FAILURES - 1 })), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
+    const thrown = await handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 }).catch((e: unknown) => e);
+    expect(isTerminal(thrown)).toBe(false);
+    expect(d.db.recordWebhookDelivery).not.toHaveBeenCalled();
+    expect(d.db.updateWebhook).not.toHaveBeenCalled();
+  });
+
   it("lets go of the answer's body once it has the status", async () => {
     let cancelled = false;
     const body = new ReadableStream({ cancel: () => void (cancelled = true) });
     const fetchImpl = vi.fn(async () => new Response(body, { status: 200 }));
     const d = deps({ getWebhook: vi.fn(async () => HOOK), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
-    await handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
+    await handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
     expect(cancelled).toBe(true);
   });
 
   it("a 5xx records the failure and throws so the queue retries", async () => {
     const fetchImpl = vi.fn(async () => new Response("", { status: 503 })) as unknown as typeof fetch;
     const d = deps({ getWebhook: vi.fn(async () => HOOK), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
-    await expect(handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 })).rejects.toThrow(/503/);
+    await expect(handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 })).rejects.toThrow(/503/);
     expect(d.db.recordWebhookDelivery).toHaveBeenCalledWith("whk_a", 503, false);
   });
 
@@ -199,7 +208,7 @@ describe("webhook_deliver", () => {
     const d = deps({ getWebhook: vi.fn(async () => HOOK), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
     let thrown: unknown;
     try {
-      await handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
+      await handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
     } catch (e) {
       thrown = e;
     }
@@ -212,7 +221,7 @@ describe("webhook_deliver", () => {
       throw new Error("ECONNREFUSED");
     }) as unknown as typeof fetch;
     const d = deps({ getWebhook: vi.fn(async () => HOOK), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
-    await expect(handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 })).rejects.toThrow(/unreachable/);
+    await expect(handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 })).rejects.toThrow(/unreachable/);
     expect(d.db.recordWebhookDelivery).toHaveBeenCalledWith("whk_a", null, false);
   });
 
@@ -220,7 +229,7 @@ describe("webhook_deliver", () => {
     const fetchImpl = vi.fn(async () => new Response("", { status: 500 })) as unknown as typeof fetch;
     const dark = { ...HOOK, failures: WEBHOOK_MAX_FAILURES - 1 };
     const d = deps({ getWebhook: vi.fn(async () => dark), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
-    await expect(handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 })).rejects.toThrow();
+    await expect(handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 })).rejects.toThrow();
     expect(d.db.updateWebhook).toHaveBeenCalledWith("ws1", "whk_a", { active: false });
   });
 
@@ -230,7 +239,7 @@ describe("webhook_deliver", () => {
       { getWebhook: vi.fn(async () => HOOK), getWorkspaceEvent: vi.fn(async () => EVENT), webhookReaches: vi.fn(async () => false) } as unknown as Partial<JobsDb>,
       fetchImpl,
     );
-    await handleWebhookDeliver(d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
+    await handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
     expect(d.db.webhookReaches).toHaveBeenCalledWith("whk_a", "d1");
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(d.db.recordWebhookDelivery).not.toHaveBeenCalled();
@@ -239,13 +248,111 @@ describe("webhook_deliver", () => {
   it("a paused or deleted hook, or a missing event, is a quiet no-op", async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
     const paused = deps({ getWebhook: vi.fn(async () => ({ ...HOOK, active: false })), getWorkspaceEvent: vi.fn(async () => EVENT) } as unknown as Partial<JobsDb>, fetchImpl);
-    await handleWebhookDeliver(paused, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
+    await handleWebhookDeliver(env(), paused, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
     const gone = deps({ getWebhook: vi.fn(async () => HOOK), getWorkspaceEvent: vi.fn(async () => null) } as unknown as Partial<JobsDb>, fetchImpl);
-    await handleWebhookDeliver(gone, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
+    await handleWebhookDeliver(env(), gone, { kind: "webhook_deliver", webhookId: "whk_a", eventId: 42 });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("signWebhookBody is HMAC-SHA256 over the body, hex, prefixed", () => {
     expect(signWebhookBody("k", "body")).toBe(`sha256=${createHmac("sha256", "k").update("body").digest("hex")}`);
+  });
+});
+
+describe("a Slack review channel", () => {
+  const PROPOSED = {
+    run_id: "run_7",
+    agent: "Scout",
+    agent_alias: "agent-1",
+    reviewer: "liv",
+    status: "open",
+    doc_title: "Leave policy",
+    review: "colleague",
+    added: 2,
+    pending: 2,
+  };
+  const CHANNEL = { ...HOOK, webhook_id: "whk_slack", kind: "slack", url: "https://hooks.slack.com/services/T/B/x", created_by: "dee" };
+  const proposedEvent = (payload: Record<string, unknown> = PROPOSED) => ({ ...EVENT, type: "run.proposed", payload });
+
+  it("claims one post per channel for a run that waits for a colleague, and none for anything else", async () => {
+    const claim = vi.fn(async () => true);
+    const d = deps({
+      insertWorkspaceEvent: vi.fn(async (e: { payload: unknown; type: string }) => ({ ...proposedEvent(e.payload as Record<string, unknown>), type: e.type })),
+      matchingReviewChannels: vi.fn(async () => [CHANNEL]),
+      claimReviewPost: claim,
+    } as unknown as Partial<JobsDb>);
+    const e = env();
+    await handleEvent(e, d, { kind: "event", workspaceId: "ws1", type: "run.proposed", docId: "d1", actor: "agent:agent-1", actorKind: "agent", payload: PROPOSED });
+    expect(d.db.matchingReviewChannels).toHaveBeenCalledWith("ws1", ["root", "leaf"], "d1");
+    expect(claim).toHaveBeenCalledWith("whk_slack", "run_7", { kind: "webhook_deliver", webhookId: "whk_slack", eventId: 42 });
+    // The claim queues the post with itself; the event's own fan-out sends nothing to a channel.
+    expect(e.sent).toEqual([]);
+
+    claim.mockClear();
+    await handleEvent(env(), d, { kind: "event", workspaceId: "ws1", type: "run.proposed", docId: "d1", actor: "agent:agent-1", actorKind: "agent", payload: { ...PROPOSED, review: "review" } });
+    await handleEvent(env(), d, { kind: "event", workspaceId: "ws1", type: "run.decided", docId: "d1", actor: "user:bo", actorKind: "human", payload: PROPOSED });
+    expect(claim).not.toHaveBeenCalled();
+  });
+
+  function slackDeps(over: Partial<Record<keyof JobsDb, unknown>> = {}, fetchImpl?: JobDeps["webhookFetch"]) {
+    return deps(
+      {
+        getWebhook: vi.fn(async () => CHANNEL),
+        getWorkspaceEvent: vi.fn(async () => proposedEvent()),
+        agentRunClosed: vi.fn(async () => false),
+        getDoc: vi.fn(async () => ({ doc_id: "d1", title: "Leave <!channel> & pay", trashed: false })),
+        displayNameOf: vi.fn(async () => "Liv"),
+        uiLanguage: vi.fn(async () => ({ chosen: null, detected: null })),
+        ...over,
+      } as unknown as Partial<JobsDb>,
+      fetchImpl,
+    );
+  }
+
+  it("posts the title, who asked, the level and the card's link, signed, and never the change's text", async () => {
+    let seen: RequestInit | null = null;
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      seen = init;
+      return new Response("ok", { status: 200 });
+    }) as unknown as typeof fetch;
+    const d = slackDeps({}, fetchImpl);
+    await handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_slack", eventId: 42 });
+    const body = String(seen!.body);
+    expect(JSON.parse(body)).toEqual({
+      text: "“Leave &lt;!channel&gt; &amp; pay”: Liv’s Scout proposed 2 changes · Reviewed by a colleague · <https://node.test/review/d1/run_7?workspace=ws1|Review>",
+      unfurl_links: false,
+      unfurl_media: false,
+    });
+    const headers = seen!.headers as Record<string, string>;
+    expect(headers["x-stuga-signature"]).toBe(signWebhookBody(CHANNEL.secret, body));
+    expect(d.db.webhookReaches).toHaveBeenCalledWith("whk_slack", "d1");
+    expect(d.db.recordWebhookDelivery).toHaveBeenCalledWith("whk_slack", 200, true);
+  });
+
+  it("writes in the language of the person who set the channel up", async () => {
+    let body = "";
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      body = String(init.body);
+      return new Response("ok", { status: 200 });
+    }) as unknown as typeof fetch;
+    const d = slackDeps({ uiLanguage: vi.fn(async () => ({ chosen: "de", detected: "en" })) }, fetchImpl);
+    await handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_slack", eventId: 42 });
+    expect(d.db.uiLanguage).toHaveBeenCalledWith("dee");
+    expect(JSON.parse(body).text).toContain("Prüfung durch Kollegen");
+    expect(JSON.parse(body).text).toContain("|Prüfen>");
+  });
+
+  it("posts nothing once the run is decided, the item trashed, or its creator cannot read it", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    for (const over of [
+      { agentRunClosed: vi.fn(async () => true) },
+      { getDoc: vi.fn(async () => ({ doc_id: "d1", title: "x", trashed: true })) },
+      { webhookReaches: vi.fn(async () => false) },
+    ]) {
+      const d = slackDeps(over, fetchImpl);
+      await handleWebhookDeliver(env(), d, { kind: "webhook_deliver", webhookId: "whk_slack", eventId: 42 });
+      expect(d.db.recordWebhookDelivery).not.toHaveBeenCalled();
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

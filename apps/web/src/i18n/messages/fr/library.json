@@ -30,6 +30,8 @@
   "review.colleague": "Vérifiées par un collègue",
   "review.colleagueDescription": "Une autre personne pouvant modifier les approuve, administrateurs compris.",
   "review.floor": "Son dossier est au niveau « {level, select, auto {Modifications de l’IA appliquées directement} review {Vérifiées par la personne qui a sollicité l’IA} other {Vérifiées par un collègue}} ».",
+  "review.databaseFloor": "Sa base de données est au niveau « {level, select, auto {Modifications de l’IA appliquées directement} review {Vérifiées par la personne qui a sollicité l’IA} other {Vérifiées par un collègue}} », et ses pages ne sont jamais plus souples.",
+  "review.notesFloor": "Partagé depuis Mes notes, donc au moins « Vérifiées par la personne qui a sollicité l’IA ».",
   "review.belowFloor": "Seul le propriétaire du dossier ou un administrateur de l’espace de travail peut choisir un niveau plus souple que celui du dossier.",
   "review.approvers": "Approuvées par",
   "review.approversDescription": "Qui approuve les modifications de l’IA ici au niveau « Vérifiées par un collègue ».",

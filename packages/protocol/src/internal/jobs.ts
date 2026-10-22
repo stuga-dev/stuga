@@ -118,6 +118,8 @@ export type NotifyMessage = {
   thread?: string;
   /** `docId` names a folder: the link opens it in the library. */
   folder?: true;
+  /** The run it is about: the link opens its review card. */
+  runId?: string;
 } & DocNotification;
 
 /**

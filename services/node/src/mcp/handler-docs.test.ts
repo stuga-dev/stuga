@@ -754,6 +754,7 @@ describe("folders", () => {
           // How AI edits beneath it are reviewed, which an agent may read like anyone who can see the folder.
           agent_mode: "review",
           agent_mode_floor: null,
+          agent_mode_floors: { folder: null, database: null, notes: null },
           approver_group: null,
         },
       ],

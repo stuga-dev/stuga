@@ -148,6 +148,7 @@ export class Database {
         docId: this.dbId,
         params: { agent: run.agent, doc: run.doc_title, count: pending, waits: run.review_mode === "colleague" ? "colleague" : "you" },
         actor: run.agent_alias,
+        runId: run.run_id,
       });
     } catch (err) {
       console.warn("database-run notify enqueue failed", { databaseId: this.dbId, runId: run.run_id, err: String(err) });

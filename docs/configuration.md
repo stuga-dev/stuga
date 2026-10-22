@@ -115,7 +115,7 @@ and node administrators also see **This node**.
 | This node → **Backups** | The scheduled backup, on unless turned off: every day or once a week, at an hour in the node's time zone, which first-run setup takes from the browser; how many backups are kept; **Back up now**; and the backups the node keeps ([Operations](operations.md#the-nodes-own-backups)). |
 | This node → **Branding** | The node's name and the colour that marks the selected item. |
 | This node → **About** | The address, listen address, data directory, database, the node's [name](#the-nodes-name-and-id) as agents know it, node ID, and the version with the day it was released. Under **Updates**: a newer version when the node knows of one, with **Update now** on a Mac, and **Check for new versions** ([Operations](operations.md#learning-of-a-new-version)). |
-| This workspace → **General**, **Members**, **Agents** | The workspace, its members and invite links, and the workspace's instructions for agents and its webhooks. Folders, documents and databases keep their own instructions in their ⋯ menu ([agents.md](agents.md#instructions-for-agents)). |
+| This workspace → **General**, **Members**, **Agents** | The workspace, its members and invite links, and the workspace's instructions for agents, its [Slack review channels](agents.md#the-slack-review-channel) and its webhooks. Folders, documents and databases keep their own instructions in their ⋯ menu ([agents.md](agents.md#instructions-for-agents)). |
 | This workspace → **Audit log**, **AI usage** | The workspace's audit history and AI use. |
 
 Provider API keys, the identity provider's client secret, the notification webhook URL and the SMTP

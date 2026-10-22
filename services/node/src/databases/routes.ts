@@ -9,7 +9,7 @@ import { recordAudit } from "../audit/record.js";
 import { docInstructionLabelsOrNone } from "../documents/instructions.js";
 import type { Ctx } from "../auth/context.js";
 import { canWriteDoc } from "../authz/authz.js";
-import { RunJudge, decisionRefusal, mayAct, vouched, type RunVerdict } from "../authz/review-mode.js";
+import { RunJudge, decisionRefusal, mayAct, runDeciders, vouched, type RunVerdict } from "../authz/review-mode.js";
 import { lockedError } from "../documents/access.js";
 import { docAgentInstructions } from "../documents/instructions.js";
 import { afterDatabaseMutation, authorizedDatabase, callDatabaseActor, databaseActor, projectedSchema, proxyActor } from "./gate.js";
@@ -396,7 +396,8 @@ function forPerson(run: DatabaseRunSummary, v: RunVerdict): DatabaseRunSummary {
   if (v.seesText) return out;
   const ops = run.ops.filter((op) => LANDED.has(op.status));
   if (ops.length === run.ops.length) return out;
-  return { ...out, ops, ops_withheld: true };
+  // How many wait, which the inbox shows every reader too, so the card can say whether any do.
+  return { ...out, ops, ops_withheld: true, ops_pending: run.ops.filter((op) => op.status === "pending").length };
 }
 
 /**
@@ -451,7 +452,10 @@ export async function getDatabaseRun({ ctx, url, match, doc, docId }: DatabaseCa
   const detail = (await res.json()) as { run?: DatabaseRunSummary };
   if (ctx.isAgent) return detail.run?.agent_alias === ctx.alias ? json(detail) : error(404, "not found");
   if (!detail.run) return error(502, "run unavailable");
-  return json({ ...detail, run: forPerson(detail.run, await new RunJudge(ctx, doc).judge(detail.run)) });
+  const verdict = await new RunJudge(ctx, doc).judge(detail.run);
+  const run = forPerson(detail.run, verdict);
+  // Whoever reads its waiting ops also reads who may decide them: the review card names them.
+  return json(verdict.seesText ? { ...detail, run, deciders: await runDeciders(ctx, doc, detail.run, verdict) } : { ...detail, run });
 }
 
 export async function decideDatabaseRun({ ctx, match, doc, docId, canWrite, body }: DatabaseCall): Promise<Response> {

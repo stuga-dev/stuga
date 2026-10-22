@@ -49,6 +49,7 @@ const SENT_OTHERWISE = new Set<string>([
   "That code has expired.",
   "Remote access is off for this address.",
   // helpers that return the reason a route then refuses with
+  "a Slack review channel posts to https://hooks.slack.com/ only",
   "the node is waiting to back up; try again once it has",
   "a backup is already under way",
   "the name must contain a visible character",

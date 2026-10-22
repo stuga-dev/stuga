@@ -1,10 +1,10 @@
 /** Agent governance: the run inbox mirror, the workspace event feed, and outbound webhooks. */
 import type { Fragment } from "postgres";
-import { RUN_IDLE_MS } from "@stuga/protocol/domain/limits";
 import { agentActorOf } from "@stuga/protocol/domain/runs";
 import type { RunIndexEntry } from "@stuga/protocol/internal/jobs";
+import type { WebhookKind } from "@stuga/protocol/domain/webhooks";
 import type { AgentRunRow, AgentStatsRow, WebhookRow, WorkspaceEventRow } from "./types.js";
-import { daysAgo, isoOrNull, jsonb } from "./sql.js";
+import { daysAgo, isoOrNull, jsonb, type Queryable } from "./sql.js";
 import type { Sql } from "./client.js";
 
 // ---- The run inbox --------------------------------------------------------------
@@ -48,13 +48,13 @@ export async function upsertAgentRun(sql: Sql, e: RunIndexEntry): Promise<void> 
 }
 
 /**
- * attention: open with pending hunks, or auto-applied and not yet acknowledged.
- * open: still collecting changes, by the actors' rollover rule (runIsIdle): pending
- * hunks, or touched within RUN_IDLE_MS. An idle run stays `open` in storage until
- * the agent's next change starts a new one, but nothing more will join it.
- * closed: everything else, so open and closed split `all` between them.
+ * How the review inbox groups runs, which split `all` between them:
+ * attention (Needs you): changes waiting that the caller may decide, or changes applied at once
+ * that the caller may mark reviewed and nobody has;
+ * waiting (Waiting on others): changes waiting for someone else's decision;
+ * done: nothing waits, and nothing asks the caller to look.
  */
-export type RunInboxFilter = "attention" | "open" | "closed" | "all";
+export type RunInboxFilter = "attention" | "waiting" | "done" | "all";
 
 export interface ListAgentRunsInput {
   workspaceId: string;
@@ -66,7 +66,7 @@ export interface ListAgentRunsInput {
   before?: { updatedAt: string; runId: string };
   limit?: number;
   /**
-   * Who is asking, for `attention`: a run needs their attention only when they can act on it. Its
+   * Who is asking, which splits `attention` from the rest: a run needs them only when they can act on it. Its
    * pending changes are decided at the stricter of the run's level and its document's now: below
    * `colleague` by its reviewer, the document's owner or a workspace admin (`admin`), with write
    * access to it; at `colleague` by anyone else who can write the document in its approver groups,
@@ -86,7 +86,6 @@ function stricterSql(sql: Sql, a: Fragment, b: Fragment): Fragment {
 export async function listAgentRuns(sql: Sql, input: ListAgentRunsInput): Promise<AgentRunRow[]> {
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
   const filter = input.filter ?? "attention";
-  const collecting = sql`(r.status = 'open' AND (r.pending > 0 OR r.updated_at > now() - make_interval(secs => ${RUN_IDLE_MS / 1000})))`;
   const writable = sql`d.acl_writers && ${input.principals}`;
   // The document's level now: its own, else its folders', at least its database's for a row page.
   const docLevel = stricterSql(sql, sql`coalesce(d.agent_mode, lvl.folder_mode, 'review')`, sql`lvl_db.database_mode`);
@@ -100,6 +99,11 @@ export async function listAgentRuns(sql: Sql, input: ListAgentRunsInput): Promis
       ? sql`CASE WHEN ${level} = 'colleague' THEN r.reviewer <> ${me.alias} AND (${colleague})
                  ELSE r.reviewer = ${me.alias} OR ${manager} END`
       : sql`TRUE`;
+  const waits = sql`(r.status = 'open' AND r.pending > 0)`;
+  const needsCaller = sql`coalesce((${waits} AND ${writable}
+                      AND ${actsAt(stricterSql(sql, sql`r.review_mode`, docLevel), sql`${writable} AND (${inGroups} OR ${manager})`)})
+                     OR (r.auto_applied AND NOT r.acknowledged AND NOT r.reverted
+                         AND ${actsAt(sql`r.review_mode`, sql`(${writable} AND ${inGroups}) OR ${manager}`)}), FALSE)`;
   return sql<AgentRunRow[]>`
     SELECT r.run_id, r.workspace_id, r.doc_id, r.doc_kind,
            coalesce(nullif(d.title, ''), r.doc_title) AS doc_title, d.owner AS doc_owner,
@@ -126,14 +130,11 @@ export async function listAgentRuns(sql: Sql, input: ListAgentRunsInput): Promis
       AND d.acl_principals && ${input.principals}
       ${
         filter === "attention"
-          ? sql`AND ((r.status = 'open' AND r.pending > 0 AND ${writable}
-                      AND ${actsAt(stricterSql(sql, sql`r.review_mode`, docLevel), sql`${writable} AND (${inGroups} OR ${manager})`)})
-                     OR (r.auto_applied AND NOT r.acknowledged AND NOT r.reverted
-                         AND ${actsAt(sql`r.review_mode`, sql`(${writable} AND ${inGroups}) OR ${manager}`)}))`
-          : filter === "open"
-            ? sql`AND ${collecting}`
-            : filter === "closed"
-              ? sql`AND NOT ${collecting}`
+          ? sql`AND ${needsCaller}`
+          : filter === "waiting"
+            ? sql`AND ${waits} AND NOT ${needsCaller}`
+            : filter === "done"
+              ? sql`AND NOT ${waits} AND NOT ${needsCaller}`
               : sql``
       }
       ${input.agentAlias ? sql`AND r.agent_alias = ${input.agentAlias}` : sql``}
@@ -290,6 +291,8 @@ export async function insertWebhook(
   input: {
     webhookId: string;
     workspaceId: string;
+    /** `generic` when absent. */
+    kind?: WebhookKind;
     url: string;
     secret: string;
     events: string[];
@@ -298,8 +301,8 @@ export async function insertWebhook(
   },
 ): Promise<WebhookRow> {
   const rows = await sql<WebhookRow[]>`
-    INSERT INTO webhooks (webhook_id, workspace_id, url, secret, events, folder_id, created_by)
-    VALUES (${input.webhookId}, ${input.workspaceId}, ${input.url}, ${input.secret}, ${input.events},
+    INSERT INTO webhooks (webhook_id, workspace_id, kind, url, secret, events, folder_id, created_by)
+    VALUES (${input.webhookId}, ${input.workspaceId}, ${input.kind ?? "generic"}, ${input.url}, ${input.secret}, ${input.events},
             ${input.folderId}, ${input.createdBy})
     RETURNING *`;
   return rows[0]!;
@@ -370,10 +373,10 @@ function creatorReads(sql: Sql, docId: string | null): Fragment {
 }
 
 /**
- * The active hooks an event reaches: the type matches (or the hook takes every
- * type), the hook is workspace-wide or rooted at a folder in `folderIds`, the
- * event document's ancestry, and its creator can read the document now
- * (creatorReads). An event with no document reaches only workspace-wide hooks.
+ * The active generic hooks an event reaches: the type matches (or the hook takes every type), the
+ * hook is workspace-wide or rooted at a folder in `folderIds`, the event document's ancestry, and
+ * its creator can read the document now (creatorReads). An event with no document reaches only
+ * workspace-wide hooks.
  */
 export async function matchingWebhooks(
   sql: Sql,
@@ -385,11 +388,55 @@ export async function matchingWebhooks(
   return sql<WebhookRow[]>`
     SELECT w.* FROM webhooks w
     WHERE w.workspace_id = ${workspaceId}
+      AND w.kind = 'generic'
       AND w.active = TRUE
       AND (cardinality(w.events) = 0 OR ${type} = ANY(w.events))
       AND (w.folder_id IS NULL OR w.folder_id = ANY(${folderIds}))
       AND ${creatorReads(sql, docId)}
     ORDER BY w.created_at, w.webhook_id`;
+}
+
+/**
+ * The active review channels (`slack` hooks) a run on `docId` reaches: workspace-wide or rooted at a
+ * folder in `folderIds`, its ancestry, and only where the hook's creator can read the document now.
+ */
+export async function matchingReviewChannels(sql: Sql, workspaceId: string, folderIds: string[], docId: string): Promise<WebhookRow[]> {
+  return sql<WebhookRow[]>`
+    SELECT w.* FROM webhooks w
+    WHERE w.workspace_id = ${workspaceId}
+      AND w.kind = 'slack'
+      AND w.active = TRUE
+      AND (w.folder_id IS NULL OR w.folder_id = ANY(${folderIds}))
+      AND ${creatorReads(sql, docId)}
+    ORDER BY w.created_at, w.webhook_id`;
+}
+
+/**
+ * Claim a review channel's one post about a run: true the first time for this hook and run, false
+ * ever after, so a run that grows, or an event delivered twice, is posted once.
+ */
+export async function claimReviewPost(sql: Queryable, webhookId: string, runId: string): Promise<boolean> {
+  const rows = await sql<{ run_id: string }[]>`
+    INSERT INTO review_posts (webhook_id, run_id) VALUES (${webhookId}, ${runId})
+    ON CONFLICT DO NOTHING
+    RETURNING run_id`;
+  return rows.length > 0;
+}
+
+/** Forget the posts claimed more than `days` ago; their runs are long decided or swept. */
+export async function purgeReviewPosts(sql: Sql, days: number): Promise<number> {
+  const rows = await sql<{ run_id: string }[]>`
+    DELETE FROM review_posts WHERE created_at < ${daysAgo(sql, days)} RETURNING run_id`;
+  return rows.length;
+}
+
+/**
+ * Whether a run's mirror row says it is closed: every change decided, or reverted. False while it is
+ * open or not mirrored yet; its waiting count is not read, since the mirror may lag the proposal.
+ */
+export async function agentRunClosed(sql: Sql, runId: string): Promise<boolean> {
+  const rows = await sql<{ closed: boolean }[]>`SELECT status <> 'open' AS closed FROM agent_runs WHERE run_id = ${runId}`;
+  return rows[0]?.closed === true;
 }
 
 /**

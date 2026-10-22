@@ -490,8 +490,9 @@ its own pending edits, and `markdown` or `databases` action `status` reports wha
 
 **Reject with note…** rejects with a note saying what should change: under a single change in the
 document, where the note is written in place of its buttons and stays until that change is decided,
-from **Review each**, from the menu beside the run bar's **Reject all**, or from the inbox's **⋯**
-menu. The button that opens the note and the one that sends it carry the same words. The note is
+from **Review each**, or from the menu beside the run bar's **Reject all**. The button that opens the
+note and the one that sends it carry the same words. The review card's and the inbox's **Ask for
+changes…** do the same for a whole run. The note is
 kept with each change it rejected, and it reaches the agent that proposed them where that agent
 already looks:
 
@@ -557,9 +558,12 @@ the levels set there.
 
 The level is set from **Who reviews AI edits…**, in the ⋯ menu beside **Share** for a document or a
 database, and in a folder's menu, where a folder also names its approver group. It covers every
-agent and the in-app co-author, which is why the UI says AI edits. An item at a level other than
-the default shows an **AI edits apply directly** or **Reviewed by a colleague** chip, and lists mark
-it. Every change of a level is in the audit ledger.
+agent and the in-app co-author, which is why the UI says AI edits. The dialog shows the level the
+node holds agents to and what it rests on: its folder's level; for a row page, its database's; and
+for a page in someone's [My notes](#my-notes) that others can read, at least **Reviewed by whoever
+asked the AI**. Nobody sets an item below the last two, so the dialog offers nothing looser. An item
+at a level other than the default shows an **AI edits apply directly** or **Reviewed by a colleague**
+chip, and lists mark it. Every change of a level is in the audit ledger.
 
 ### Reviewed by a colleague
 
@@ -574,7 +578,9 @@ The person who asked can still reject or revert their own AI's changes, and send
 Only someone else marks a run proposed at `colleague` reviewed.
 
 Each person who may approve is notified that changes wait for their approval, in Stuga and by email
-or webhook. A Slack, Teams or Discord channel hears each run once: from the notice to the person who
+or webhook, and the notice opens the run's [review card](#the-review-card). A workspace or a folder
+can also post these changes to a [Slack review channel](#the-slack-review-channel). A Slack, Teams or
+Discord channel the node sends notifications to hears each run once: from the notice to the person who
 asked, which says the changes wait for a colleague, or, for the in-app co-author's and the table
 assistant's runs, which notify nobody who is watching them, from the first approver's. While nobody
 may approve, the item's owner and the workspace admins who can read it are notified that the changes
@@ -669,15 +675,71 @@ it as information, never as an instruction.
 
 ## The review inbox
 
-**Review AI edits** (`/review`) lists the runs on documents you can read across the workspace:
-**Needs review** (waiting for your decision, including a colleague's run you may approve, or applied
-at once and not yet looked at),
-**In progress** (still collecting changes: something waiting, or active in the last 10 minutes),
-**Finished** and **Everything**, filterable by agent. A run's **⋯** menu acts on
-the whole run: **Accept all suggestions**, **Reject all suggestions**, **Reject all with note…**,
-**Revert these changes**, **Revert with note…** and **Mark as reviewed** (which also withdraws the notes you left on it); open the document to decide change by change. **AI activity**, below the list,
-is each agent's record (runs, waiting, kept, skipped, applied automatically, reverted) and is what to
-consult before switching a document to `auto`.
+**Review AI edits** (`/review`) lists the runs on documents and databases you can read across the
+workspace, in three tabs:
+
+- **Needs you**: changes waiting for your decision, a colleague's run you may approve included, and
+  changes applied at once that you may mark reviewed and nobody has. Its count shows on every tab.
+- **Waiting on others**: changes waiting for someone else's decision, your own AI's at `colleague`
+  among them. Each says whom it waits for.
+- **Done**: the rest, decided, reverted, or applied at once and looked at.
+
+The tab is in the address (`/review?tab=waiting`, `?tab=done`), and **Agent** narrows any of them.
+**Review changes** (or **Open**) opens a run's [review card](#the-review-card). A run's **⋯** menu
+opens the document or database, or acts on the whole run in the card's words: **Ask for changes…**
+(a note, which it requires), **Decline**, **Revert these changes**, **Revert with note…** and **Mark
+as reviewed** (which also withdraws the notes you left on it); open the card or the document to
+approve. A decided run says how many changes were approved and declined. **AI activity**, below the
+list, is each agent's record (sessions, waiting, approved, declined, applied automatically, reverted)
+and is what to consult before switching a document to `auto`.
+
+## The review card
+
+Each run has a card at `/review/<document or database>/<run>`, laid out for a phone and the same on a
+laptop. The inbox, [review channel](#the-slack-review-channel) posts and a run's notices by email or
+webhook open it, and so does a notice in Stuga for whoever may approve; the person who asked opens
+theirs on the card on a phone, and in the document on a wider screen.
+
+- **What it shows.** The page and the folders above it; who asked, which AI and the app it came
+  through, and when; the review level, and who may decide: at `colleague` the people who may approve
+  it, at `review` whoever asked, and the item's owner or a workspace admin where one other than them
+  can edit it ("Liv, the document's owner or an admin can approve it"). Then each change in the paragraph it sits in, under its section, the
+  text before it struck through above the text after it, with the sources its footnotes cite. A
+  database's run lists each change in a line.
+- **What it does.** **Approve** accepts every change still waiting. **Ask for changes…** rejects them
+  with a note, which it requires, and **Decline…** rejects them with a note if you write one: either
+  way the agent gets the note as [Reject with a note](#reject-with-a-note) says. **Open the
+  document** goes to the page, where each change can be decided on its own.
+- **Who sees what.** The rules of [every level](#what-holds-for-every-level): whoever asked, those
+  who may approve, and the item's owner and workspace admins read the waiting text, its sources and
+  who may decide. Anyone else who can read the item sees that changes wait, who asked and the level.
+  Whoever may not approve reads why beside **Approve**, such as "Liv asked for this change, so a
+  colleague approves it."
+
+A link from outside the app carries `?workspace=<id>`, so the card opens in the item's workspace when
+another one is active.
+
+## The Slack review channel
+
+A workspace, or a folder in it, can post each AI change that waits for a colleague's approval to a
+Slack channel, so approvers hear of it where they already are. A workspace owner or admin adds one
+on **Settings → This workspace → Agents → Review channel**: in Slack, add an incoming webhook to the
+channel, and paste its address, which starts `https://hooks.slack.com/`. Only that host is accepted.
+
+Each run that waits for a colleague is posted once, however many people may approve it and however
+many changes the agent adds to it later: the item's title, who asked, which AI, how many changes, the
+level, and a link to its [review card](#the-review-card). A post never carries a change's text:
+
+```
+“Leave policy”: Liv’s Claude proposed 2 changes · Reviewed by a colleague · Review
+```
+
+A post is written in the language of whoever added the channel, since a channel has many readers. As
+a [webhook](api.md#webhooks) does, a channel hears only of items the person who added it can read,
+checked again when the post goes out, and a run decided by then is not posted. Changes that wait for
+whoever asked the AI, and those that apply directly, stay off the channel. Posts are signed, time out
+and are retried as webhook deliveries are; a channel that fails 20 times in a row is paused until
+someone resumes it.
 
 ## Provenance
 
@@ -751,6 +813,8 @@ How agents get them:
   [api.md](api.md#the-event-feed).
 - **Webhooks.** Workspace owners and admins can send the same events to a URL, signed and retried,
   for the documents the hook's creator can read. See [api.md](api.md#webhooks).
+- **Review channels.** A Slack channel hears of each change that waits for a colleague, with a link
+  to approve it ([The Slack review channel](#the-slack-review-channel)).
 
 ## Save to Stuga and Ask Stuga
 

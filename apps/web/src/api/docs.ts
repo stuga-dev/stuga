@@ -4,6 +4,17 @@ import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
 import { t } from "../i18n/i18n";
 import { api } from "../lib/http/client";
 
+/**
+ * What an item is never reviewed more loosely than, from where: its folder's level, which the
+ * folder's owner or an admin may set it below; a row page's database's, and `review` for an item
+ * shared out of My notes, which nobody sets it below.
+ */
+export interface ReviewFloors {
+  folder: ReviewMode | null;
+  database: ReviewMode | null;
+  notes: ReviewMode | null;
+}
+
 export interface DocSummary {
   doc_id: string;
   title: string;
@@ -23,10 +34,15 @@ export interface DocSummary {
   locked: boolean;
   /** Left out of every search surface. */
   search_hidden: boolean;
-  /** How AI edits to it are reviewed now: its own level, else its folder's, else `review`. */
+  /**
+   * How AI edits to it are reviewed now, as the node holds every agent to it: its own level, else
+   * its folder's, else `review`; a row page's at least its database's, and an item shared out of My
+   * notes at least `review`.
+   */
   agent_mode: ReviewMode;
-  /** The level its folder gives it, which only the folder's owner or an admin sets it below; null when none does. */
+  /** The strictest of its floors; null when none applies. */
   agent_mode_floor: ReviewMode | null;
+  agent_mode_floors: ReviewFloors;
   /** For a database row's page: the database, and the row as `<table_id>.<row_id>`. Pages stay out of library lists. */
   page_of: string | null;
   page_row: string | null;

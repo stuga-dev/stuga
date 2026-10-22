@@ -193,9 +193,9 @@ describe("the inbox and statistics", () => {
     expect((await call(agentCtx(), "GET", "/api/agents/stats")).status).toBe(403);
   });
   it("answer members", async () => {
-    const out = await call(humanCtx(), "GET", "/api/runs?filter=open");
+    const out = await call(humanCtx(), "GET", "/api/runs?filter=waiting");
     expect(out.status).toBe(200);
-    expect(out.json).toMatchObject({ runs: [], filter: "open" });
+    expect(out.json).toMatchObject({ runs: [], filter: "waiting" });
     expect((await call(humanCtx(), "GET", "/api/agents/stats")).status).toBe(200);
   });
   it("says which runs the caller may decide: their own, or any on a document they manage", async () => {
@@ -215,7 +215,7 @@ describe("the inbox and statistics", () => {
       // Deciding needs write access, as the decision routes ask.
       row("view-only", "human-1", "user:someone", false),
     ] as never);
-    const out = await call(humanCtx(), "GET", "/api/runs");
+    const out = await call(humanCtx(), "GET", "/api/runs?filter=all");
     const runs = (out.json as { runs: Array<Record<string, unknown>> }).runs;
     expect(runs.map((r) => [r.run_id, r.can_decide])).toEqual([
       ["mine", true],

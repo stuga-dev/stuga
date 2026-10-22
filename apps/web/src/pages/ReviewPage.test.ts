@@ -2,12 +2,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import type { AgentRunSummary } from "@stuga/protocol/wire/doc-socket";
 import type { InboxRun } from "../api";
-import { ReviewPage, madeBy, needsAttention, runActions, runStatus } from "./ReviewPage";
+import { ReviewPage, madeBy, needsAttention, runActions, runStatus, tabOf } from "./ReviewPage";
 import { toasts } from "../test/toast";
-import { mountInto } from "../test/form-input";
+import { mountInto, typeInto } from "../test/form-input";
 
 const inbox = vi.hoisted(() => ({ list: vi.fn(), stats: vi.fn() }));
 const docRuns = vi.hoisted(() => ({ decide: vi.fn(), revert: vi.fn(), ack: vi.fn(), detail: vi.fn() }));
@@ -78,14 +78,14 @@ describe("review inbox status", () => {
     expect(runStatus(run({ auto_applied: true, applied: 2, conflicts: 1 }))).toBe(
       "2 applied automatically · 1 couldn’t be applied · Check the result",
     );
-    expect(runStatus(run({ status: "applied", accepted: 1, conflicts: 2 }))).toBe("1 accepted · 2 couldn’t be applied");
+    expect(runStatus(run({ status: "applied", accepted: 1, conflicts: 2 }))).toBe("1 approved · 2 couldn’t be applied");
     // A database marks a run auto-applied only when something landed.
     expect(runStatus(run({ conflicts: 1 }))).toBe("1 couldn’t be applied");
   });
 
   it("summarizes decided runs in plain language", () => {
-    expect(runStatus(decided)).toBe("2 accepted · 1 rejected");
-    expect(runStatus(allSkipped)).toBe("3 rejected");
+    expect(runStatus(decided)).toBe("2 approved · 1 declined");
+    expect(runStatus(allSkipped)).toBe("3 declined");
   });
 
   it("names who decides a run the reader cannot", () => {
@@ -153,19 +153,28 @@ describe("review inbox actions", () => {
 
 describe("who made a run", () => {
   it("names the co-author once", () => {
-    expect(madeBy(run({ source: "panel", agent: "stored", agent_alias: "panel:u_ada", agent_name: "stored" }))).toBe("AI co-author");
+    expect(madeBy(run({ source: "panel", agent: "stored", agent_alias: "panel:u_ada", agent_name: "stored" }))).toEqual(["AI co-author"]);
   });
 
   it("names the sample agent from the catalog", () => {
-    expect(madeBy(run({ agent: "stored", agent_alias: "agent-sample", agent_name: "stored" }))).toBe("Sample agent");
+    expect(madeBy(run({ agent: "stored", agent_alias: "agent-sample", agent_name: "stored" }))).toEqual(["Sample agent"]);
   });
 
-  it("adds the client label only when the agent's name does not already say it", () => {
-    expect(madeBy(run({ client: "claude-desktop" }))).toBe("Research bot · claude-desktop");
-    expect(madeBy(run({ agent_name: "Claude Desktop", client: "claude-desktop" }))).toBe("Claude Desktop");
-    expect(madeBy(run())).toBe("Research bot");
+  it("adds the app it came through, by its name, only when the agent's name does not already say it", () => {
+    expect(madeBy(run({ client: "claude-desktop" }))).toEqual(["Research bot", "Claude Desktop"]);
+    expect(madeBy(run({ agent_name: "Claude", client: "claude-code" }))).toEqual(["Claude", "Claude Code"]);
+    expect(madeBy(run({ agent_name: "Claude Desktop", client: "claude-desktop" }))).toEqual(["Claude Desktop"]);
+    expect(madeBy(run({ client: "my-script" }))).toEqual(["Research bot", "my-script"]);
+    expect(madeBy(run())).toEqual(["Research bot"]);
   });
 });
+
+/** What the node answers a decision on the inbox's run with. */
+const RUN_REPLY = {
+  id: "run_1", doc_id: "d_1", source: "connector", agent: "Research bot", agent_alias: "agent-1", reviewer: "liv",
+  status: "rejected", acknowledged: false, auto_applied: false, review_mode: "review",
+  created_at: 0, updated_at: Date.parse("2026-09-02T00:00:00.000Z"), hunks: [],
+};
 
 describe("the inbox page", () => {
   let host: HTMLDivElement;
@@ -214,13 +223,87 @@ describe("the inbox page", () => {
     await render(false);
     expect(host.textContent).toContain("7. → 6. · and 1 more change");
     expect(host.textContent).not.toContain("Accept all");
-    expect(host.textContent).toContain("Reject all suggestions");
+    expect(host.textContent).toContain("Ask for changes…");
+    expect(host.textContent).toContain("Decline");
+  });
+
+  describe("a waiting run's menu, in the review card's words", () => {
+    const button = (label: string) => [...document.body.querySelectorAll("button")].find((b) => b.textContent === label)!;
+    const click = (label: string) => act(async () => button(label).dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    beforeEach(() => {
+      toasts.shown.length = 0;
+      const reply = { ...RUN_REPLY, hunks: [{ id: "h1", old_string: "a", new_string: "b", status: "rejected", review: "review" }] } as AgentRunSummary;
+      docRuns.decide.mockResolvedValue({ run: reply, applied: 0, conflicts: 0, blocked: 0 });
+    });
+
+    it("declines the whole run", async () => {
+      await render(false);
+      await click("Decline");
+      expect(docRuns.decide).toHaveBeenLastCalledWith("d_1", "run_1", "reject", undefined, undefined);
+      expect(toasts.shown.at(-1)).toEqual({ body: "Declined the changes in “Q3 plan”.", type: "info" });
+    });
+
+    it("asks for changes with the note the agent revises from", async () => {
+      await render(false);
+      await click("Ask for changes…");
+      await typeInto(document.body.querySelector("dialog[open] textarea"), "Say which quarter.");
+      await click("Ask for changes");
+      expect(docRuns.decide).toHaveBeenLastCalledWith("d_1", "run_1", "reject", undefined, "Say which quarter.");
+      expect(toasts.shown.at(-1)).toEqual({ body: "Asked for changes in “Q3 plan”.", type: "info" });
+    });
+  });
+
+  it("keeps each fact under a row whole, so a narrow row breaks only between them, after a separator", async () => {
+    await render(true);
+    const facts = [...host.querySelectorAll(".review-row-fact")].map((f) => f.textContent);
+    expect(facts).toEqual(["Document\u00A0·", "Research bot\u00A0·", expect.any(String)]);
+    expect(host.querySelector(".review-row-fact time")?.getAttribute("dateTime")).toBe("2026-09-01T00:00:00.000Z");
   });
 
   it("gives the status dot a short label, since the status line beside it is read out too", async () => {
     await render(false);
-    expect(host.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("Needs review");
+    expect(host.querySelector('li [role="img"]')?.getAttribute("aria-label")).toBe("Needs review");
     expect(host.textContent).toContain("2 changes waiting for your decision");
+  });
+});
+
+describe("the tabs", () => {
+  it("name the inbox views as the address does, Needs you by default", () => {
+    expect(tabOf(null).filter).toBe("attention");
+    expect(tabOf("waiting").filter).toBe("waiting");
+    expect(tabOf("done").filter).toBe("done");
+    expect(tabOf("everything").filter).toBe("attention");
+  });
+
+  it("list Needs you, Waiting on others and Done, each from its own view, and a row opens its review card", async () => {
+    const { host, root } = mountInto();
+    const row = run({ ...parked, run_id: "run_1", doc_id: "d_1", doc_kind: "prose", doc_title: "Q3 plan", updated_at: "2026-09-01T00:00:00.000Z" });
+    inbox.list.mockImplementation(async (filter: string) => ({ runs: filter === "attention" ? [row, row] : [], filter }));
+    inbox.stats.mockResolvedValue({ agents: [] });
+    docRuns.detail.mockResolvedValue({ run: { hunks: [] } });
+    let path = "";
+    const Where = () => {
+      path = useLocation().pathname + useLocation().search;
+      return null;
+    };
+    await act(async () =>
+      root.render(createElement(MemoryRouter, { initialEntries: ["/review?tab=waiting"] }, createElement(ReviewPage), createElement(Where))),
+    );
+    expect(inbox.list).toHaveBeenCalledWith("waiting", undefined);
+    // Needs you keeps its count whichever tab is open.
+    const tab = (label: string) => [...host.querySelectorAll("a, button")].find((el) => el.textContent?.startsWith(label));
+    expect(tab("Needs you")?.textContent).toMatch(/2$/);
+    expect(tab("Waiting on others")).toBeTruthy();
+    expect(tab("Done")).toBeTruthy();
+    expect(host.textContent).toContain("Nothing waiting on others");
+
+    const needs = tab("Needs you")!;
+    await act(async () => needs.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(inbox.list).toHaveBeenLastCalledWith("attention", undefined);
+    const review = [...host.querySelectorAll("button")].find((b) => b.textContent === "Review changes")!;
+    await act(async () => review.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(path).toBe("/review/d_1/run_1");
   });
 });
 

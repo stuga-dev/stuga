@@ -242,3 +242,25 @@ ol > .ai-preview-ghost { list-style: none; margin-left: 0; }
 
 /* A library row whose item has AI edits waiting for this person. */
 .doc-state-mark--waiting { color: var(--color-icon-green); }
+
+/* --- the review card ---------------------------------------------------------------------------- */
+/* One change's paragraph before (struck, red) and after (green), as version compare marks them. */
+.review-card-block {
+  display: block; text-decoration: none; border-radius: var(--radius-element);
+  padding: var(--spacing-1) var(--spacing-2); border-inline-start: 3px solid transparent;
+  overflow-wrap: anywhere; unicode-bidi: plaintext;
+}
+.review-card-block--eq { color: var(--color-text-secondary); }
+.review-card-block--del {
+  background: color-mix(in srgb, var(--color-background-red) 50%, transparent); border-inline-start-color: var(--color-border-red);
+  text-decoration: line-through; text-decoration-color: var(--color-text-red);
+}
+.review-card-block--ins { background: color-mix(in srgb, var(--color-background-green) 65%, transparent); border-inline-start-color: var(--color-border-green); }
+.review-card-block img { max-width: 100%; height: auto; }
+.review-card-block pre { overflow-x: auto; }
+/* A footnote marker in a change, and the same number before its source. */
+.review-card-cite { font-size: 0.75em; font-weight: 600; color: var(--color-accent); padding-inline: 0.1em; }
+/* The footer's Decline and Ask for changes share a row in equal widths, and wrap rather than cut a long label. */
+.review-card-actions > * { flex: 1 1 0; min-width: max-content; }
+/* A fact under an inbox row moves to the next line whole, and wraps inside only when wider than the line. */
+.review-row-fact { display: inline-block; max-width: 100%; }

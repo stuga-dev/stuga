@@ -1,6 +1,8 @@
 {
   "untitled": "Unbenannt",
   "action.open": "Öffnen",
+  "review.post": "„{doc}“: {agent} von {author} hat {count, plural, one {# Änderung} other {# Änderungen}} vorgeschlagen · {level, select, colleague {Prüfung durch Kollegen} review {Prüfung durch die Person, die die KI beauftragt hat} other {KI-Änderungen direkt übernommen}}",
+  "review.open": "Prüfen",
 
   "MENTIONED_IN_COMMENT.title": "{actor} hat dich in einem Kommentar zu „{doc}“ erwähnt",
   "MENTIONED_IN_COMMENT.body": "{excerpt}",

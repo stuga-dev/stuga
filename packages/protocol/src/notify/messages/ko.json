@@ -1,6 +1,8 @@
 {
   "untitled": "제목 없음",
   "action.open": "열기",
+  "review.post": "“{doc}”: {author}의 {agent}에서 {count, plural, other {변경 #개}}를 제안했어요 · {level, select, colleague {동료가 검토} review {요청한 사람이 검토} other {AI 편집 바로 적용됨}}",
+  "review.open": "검토",
 
   "MENTIONED_IN_COMMENT.title": "{actor} 님이 “{doc}”의 댓글에서 나를 멘션했어요",
   "MENTIONED_IN_COMMENT.body": "{excerpt}",

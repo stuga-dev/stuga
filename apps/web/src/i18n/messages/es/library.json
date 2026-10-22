@@ -30,6 +30,8 @@
   "review.colleague": "Revisadas por un compañero",
   "review.colleagueDescription": "Otra persona que puede editar las aprueba, administradores incluidos.",
   "review.floor": "Su carpeta está en “{level, select, auto {Ediciones de IA aplicadas directamente} review {Revisadas por quien pidió a la IA} other {Revisadas por un compañero}}”.",
+  "review.databaseFloor": "Su base de datos está en “{level, select, auto {Ediciones de IA aplicadas directamente} review {Revisadas por quien pidió a la IA} other {Revisadas por un compañero}}”, y sus páginas nunca son más laxas.",
+  "review.notesFloor": "Compartido desde Mis notas, así que como mínimo “Revisadas por quien pidió a la IA”.",
   "review.belowFloor": "Solo el propietario de la carpeta o un administrador del espacio de trabajo puede elegir un nivel más laxo que el de la carpeta.",
   "review.approvers": "Aprobadas por",
   "review.approversDescription": "Quién aprueba aquí las ediciones de IA con “Revisadas por un compañero”.",

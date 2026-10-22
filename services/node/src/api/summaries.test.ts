@@ -30,4 +30,25 @@ describe("summaries", () => {
     expect(summary).toMatchObject({ folder_id: "f1", title: "Plans" });
     expect(summary).not.toHaveProperty("acl_writers");
   });
+
+  it("says the level the node holds every agent to, and each floor under it", () => {
+    const row = (over: Partial<DocRow>) =>
+      ({ doc_id: "d1", title: "x", parent_id: "f1", agent_mode: null, folder_agent_mode: null, database_agent_mode: null, notes_shared: false, ...over }) as unknown as DocRow;
+    expect(docSummary(row({}))).toMatchObject({ agent_mode: "review", agent_mode_floor: "review", agent_mode_floors: { folder: "review", database: null, notes: null } });
+    // A row page is never looser than its database, whatever its folder gives it.
+    expect(docSummary(row({ folder_agent_mode: "auto", database_agent_mode: "colleague" }))).toMatchObject({
+      agent_mode: "colleague",
+      agent_mode_floor: "colleague",
+      agent_mode_floors: { folder: "auto", database: "colleague", notes: null },
+    });
+    // My notes applies directly until a page there is shared; then every agent's edits wait.
+    expect(docSummary(row({ folder_agent_mode: "auto" }))).toMatchObject({ agent_mode: "auto", agent_mode_floor: "auto" });
+    expect(docSummary(row({ folder_agent_mode: "auto", notes_shared: true }))).toMatchObject({
+      agent_mode: "review",
+      agent_mode_floor: "review",
+      agent_mode_floors: { folder: "auto", database: null, notes: "review" },
+    });
+    expect(docSummary(row({ parent_id: null, agent_mode: "colleague", notes_shared: true }))).toMatchObject({ agent_mode: "colleague", agent_mode_floor: "review" });
+    expect(docSummary(row({ parent_id: null }))).toMatchObject({ agent_mode: "review", agent_mode_floor: null });
+  });
 });

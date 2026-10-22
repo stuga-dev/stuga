@@ -1,9 +1,28 @@
 /** The workspace event feed's jobs: store an event and fan it out, then deliver it to each subscribed webhook. */
 import { AiError } from "@stuga/ai";
+import type { WebhookRow, WorkspaceEventRow } from "@stuga/db";
+import { isReviewMode } from "@stuga/protocol/domain/events";
+import { reviewCardPath } from "@stuga/protocol/domain/runs";
 import type { IndexMessage } from "@stuga/protocol/internal/jobs";
+import { recipientLanguage } from "@stuga/protocol/notify/render";
 import { WEBHOOK_MAX_FAILURES, WEBHOOK_TIMEOUT_MS, signWebhookBody } from "../governance/webhooks/sign.js";
 import { OutboundRefusedError } from "../net/outbound.js";
+import { slackPostBody } from "../review/channel.js";
 import type { JobDeps, JobsEnv } from "./deps.js";
+
+/** What an event names that a review channel's post needs, read from a run event's payload. */
+function runOf(event: Pick<WorkspaceEventRow, "payload">): { runId: string; reviewer: string; agent: string; title: string; review: string; pending: number } | null {
+  const p = event.payload as Record<string, unknown>;
+  if (typeof p.run_id !== "string" || typeof p.reviewer !== "string") return null;
+  return {
+    runId: p.run_id,
+    reviewer: p.reviewer,
+    agent: typeof p.agent === "string" ? p.agent : "",
+    title: typeof p.doc_title === "string" ? p.doc_title : "",
+    review: typeof p.review === "string" ? p.review : "",
+    pending: typeof p.pending === "number" ? p.pending : 0,
+  };
+}
 
 /**
  * Append one event to the feed and queue one delivery per matching hook, so each
@@ -30,29 +49,67 @@ export async function handleEvent(env: JobsEnv, deps: JobDeps, msg: Extract<Inde
   for (const hook of hooks) {
     await env.jobs.send({ kind: "webhook_deliver", webhookId: hook.webhook_id, eventId: row.id });
   }
+  // A review channel hears of a run once, when it first waits for a colleague, however many approvers it has.
+  const run = runOf(row);
+  if (msg.type !== "run.proposed" || !msg.docId || !run || run.review !== "colleague") return;
+  for (const channel of await deps.db.matchingReviewChannels(msg.workspaceId, ancestry, msg.docId)) {
+    await deps.db.claimReviewPost(channel.webhook_id, run.runId, { kind: "webhook_deliver", webhookId: channel.webhook_id, eventId: row.id });
+  }
 }
 
 /**
- * POST one event to one webhook, signed. A 5xx or network failure throws for a
- * retry; a 3xx or 4xx is terminal; a hook failing WEBHOOK_MAX_FAILURES times in
- * a row is switched off, and one at an address the node refuses is switched off
- * at once. Each attempt first asks again whether the hook's creator can read the
+ * The body a Slack review channel is sent about a run waiting for a colleague: the item's title now,
+ * who asked, which AI, how many changes and the level, with the link to its review card, in the
+ * language of the channel's creator. Null when there is nothing to post: the event names no run, or
+ * the run was decided meanwhile.
+ */
+async function reviewPost(env: JobsEnv, deps: JobDeps, hook: WebhookRow, event: WorkspaceEventRow): Promise<string | null> {
+  const run = runOf(event);
+  if (event.type !== "run.proposed" || !event.doc_id || !run) return null;
+  if (await deps.db.agentRunClosed(run.runId)) return null;
+  const [doc, author, language] = await Promise.all([
+    deps.db.getDoc(event.doc_id),
+    deps.db.displayNameOf(run.reviewer),
+    deps.db.uiLanguage(hook.created_by),
+  ]);
+  if (doc?.trashed) return null;
+  const card = `${env.publicOrigin}${reviewCardPath(event.doc_id, run.runId, event.workspace_id)}`;
+  const words = {
+    doc: doc?.title ?? run.title,
+    author: author || run.reviewer,
+    agent: run.agent,
+    count: run.pending,
+    level: isReviewMode(run.review) ? run.review : "colleague",
+  };
+  return slackPostBody(words, card, recipientLanguage(language));
+}
+
+/**
+ * POST one event to one webhook, signed. A 5xx, a 429 or a network failure throws for a
+ * retry; any other 3xx or 4xx is terminal; a hook failing WEBHOOK_MAX_FAILURES times in
+ * a row is switched off (a 429 is not a failure), and one at an address the node refuses
+ * is switched off at once. Each attempt first asks again whether the hook's creator can read the
  * document, since a retry may come after they lost access or left.
  */
-export async function handleWebhookDeliver(deps: JobDeps, msg: Extract<IndexMessage, { kind: "webhook_deliver" }>): Promise<void> {
+export async function handleWebhookDeliver(env: JobsEnv, deps: JobDeps, msg: Extract<IndexMessage, { kind: "webhook_deliver" }>): Promise<void> {
   const [hook, event] = await Promise.all([deps.db.getWebhook(msg.webhookId), deps.db.getWorkspaceEvent(msg.eventId)]);
   if (!hook || !hook.active || !event) return;
   if (!(await deps.db.webhookReaches(hook.webhook_id, event.doc_id))) return;
-  const body = JSON.stringify({
-    id: String(event.id),
-    at: event.at,
-    workspace_id: event.workspace_id,
-    type: event.type,
-    doc_id: event.doc_id,
-    actor: event.actor,
-    actor_kind: event.actor_kind,
-    payload: event.payload,
-  });
+  // A review channel gets a line and a link, signed like any delivery; every other hook the event itself.
+  const body =
+    hook.kind === "slack"
+      ? await reviewPost(env, deps, hook, event)
+      : JSON.stringify({
+          id: String(event.id),
+          at: event.at,
+          workspace_id: event.workspace_id,
+          type: event.type,
+          doc_id: event.doc_id,
+          actor: event.actor,
+          actor_kind: event.actor_kind,
+          payload: event.payload,
+        });
+  if (body === null) return;
   let status: number | null = null;
   try {
     // Checked on the connection itself: the name may resolve elsewhere than at registration.
@@ -72,7 +129,10 @@ export async function handleWebhookDeliver(deps: JobDeps, msg: Extract<IndexMess
     });
     status = res.status;
     await res.body?.cancel().catch(() => {});
+    // Asked to slow down, as Slack asks past about a post a second: tried again later, counted as no failure.
+    if (status === 429) throw new Error(`webhook ${hook.webhook_id} asked to slow down (429)`);
   } catch (err) {
+    if (status === 429) throw err;
     await deps.db.recordWebhookDelivery(hook.webhook_id, null, false);
     if (err instanceof OutboundRefusedError) {
       await deps.db.updateWebhook(hook.workspace_id, hook.webhook_id, { active: false });

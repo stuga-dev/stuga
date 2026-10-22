@@ -13,6 +13,8 @@ import {
   renderGatePage,
   renderNotification,
   renderOpenAction,
+  renderReviewOpen,
+  renderReviewPost,
 } from "./render";
 
 const AT = "2026-09-30T14:02:00.000Z";
@@ -236,6 +238,18 @@ describe("renderNotification", () => {
     expect(renderChannel({ sink: "slack", host: "hooks.slack.test", from: null, another: true }, "en")).toBe("another Slack webhook (hooks.slack.test)");
     expect(renderChannel({ sink: "email", host: null, from: "n@x.test", another: true }, "en")).toBe("email from n@x.test, through another mail server");
     expect(renderOpenAction("fr")).toBe("Ouvrir");
+  });
+});
+
+describe("renderReviewPost", () => {
+  const post = { doc: "Leave policy", author: "Liv", agent: "Scout", count: 2, level: "colleague" as const };
+  it("says the title, who asked, which AI, how many changes and the level, in the channel's language", () => {
+    expect(renderReviewPost(post, "en")).toBe("“Leave policy”: Liv’s Scout proposed 2 changes · Reviewed by a colleague");
+    expect(renderReviewPost(post, "zh-Hans")).toBe("“Leave policy”：Liv 的 Scout 建议了 2 处更改 · 由同事审阅");
+    expect(renderReviewOpen("de")).toBe("Prüfen");
+  });
+  it("reads an empty title as Untitled", () => {
+    expect(renderReviewPost({ ...post, doc: "", count: 1 }, "en")).toBe("“Untitled”: Liv’s Scout proposed 1 change · Reviewed by a colleague");
   });
 });
 

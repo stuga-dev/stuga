@@ -1024,6 +1024,9 @@ CREATE INDEX workspace_events_at_idx    ON workspace_events (at);
 CREATE TABLE webhooks (
     webhook_id       TEXT PRIMARY KEY,
     workspace_id     TEXT NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    -- generic: the event feed as JSON. slack: a review channel, one link-only post per run that
+    -- waits for a colleague, to a Slack incoming webhook.
+    kind             TEXT NOT NULL DEFAULT 'generic' CHECK (kind IN ('generic', 'slack')),
     url              TEXT NOT NULL,
     secret           TEXT NOT NULL,
     -- Event types; empty = all. folder_id NULL = the whole workspace.
@@ -1037,3 +1040,12 @@ CREATE TABLE webhooks (
     failures         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX webhooks_ws_idx ON webhooks (workspace_id);
+
+-- The runs a review channel has posted: one post per hook and run, however often the run grows.
+CREATE TABLE review_posts (
+    webhook_id TEXT NOT NULL REFERENCES webhooks(webhook_id) ON DELETE CASCADE,
+    run_id     TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (webhook_id, run_id)
+);
+CREATE INDEX review_posts_created_idx ON review_posts (created_at);

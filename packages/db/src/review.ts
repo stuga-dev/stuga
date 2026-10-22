@@ -1,7 +1,9 @@
 /**
  * How AI edits to an item are reviewed: its level, from its own setting or its folders', the
- * folder that sets it, the approver group that applies, and who may approve at `colleague`.
+ * folder that sets it, the approver group that applies, who may approve at `colleague`, and who
+ * besides whoever asked may decide below it.
  */
+import type { Fragment } from "postgres";
 import { looserReviewMode, reviewLevelOf, type ReviewMode } from "@stuga/protocol/domain/events";
 import type { Queryable } from "./sql.js";
 import { folderCols, folderSubtreeCte } from "./sql.js";
@@ -36,16 +38,12 @@ export interface Approvers {
 }
 
 /**
- * approversFor answers for many runs in one query: what an inbox page or a document's run list
- * asks, keyed by `key`. A member's principals are worked out as a session's are: `user:<alias>`,
- * the workspace's `org:` principal for anyone but a guest, and their groups.
+ * The CTE `mp(alias, role, principals)`: each member of the workspace, with their principals worked
+ * out as a session's are: `user:<alias>`, the workspace's `org:` principal for anyone but a guest,
+ * and their groups.
  */
-export async function approversFor(sql: Queryable, workspaceId: string, queries: ApproverQuery[]): Promise<Map<string, Approvers>> {
-  const out = new Map<string, Approvers>();
-  const unique = [...new Map(queries.map((q) => [q.key, q])).values()];
-  if (unique.length === 0) return out;
-  const rows = await sql<{ key: string; colleagues: string[]; managers: string[]; writers: number }[]>`
-    WITH mp AS (
+function memberPrincipalsCte(sql: Queryable, workspaceId: string): Fragment {
+  return sql`mp AS (
       SELECT m.alias, m.role,
              array_remove(ARRAY['user:' || m.alias, CASE WHEN m.role <> 'guest' THEN 'org:' || m.workspace_id END], NULL)
              || COALESCE((SELECT array_agg(g.group_id) FROM groups g
@@ -53,7 +51,19 @@ export async function approversFor(sql: Queryable, workspaceId: string, queries:
              AS principals
       FROM workspace_members m
       WHERE m.workspace_id = ${workspaceId}
-    ),
+    )`;
+}
+
+/**
+ * approversFor answers for many runs in one query: what an inbox page or a document's run list
+ * asks, keyed by `key`.
+ */
+export async function approversFor(sql: Queryable, workspaceId: string, queries: ApproverQuery[]): Promise<Map<string, Approvers>> {
+  const out = new Map<string, Approvers>();
+  const unique = [...new Map(queries.map((q) => [q.key, q])).values()];
+  if (unique.length === 0) return out;
+  const rows = await sql<{ key: string; colleagues: string[]; managers: string[]; writers: number }[]>`
+    WITH ${memberPrincipalsCte(sql, workspaceId)},
     q AS (
       SELECT * FROM jsonb_to_recordset(${sql.json(
         unique.map((x) => ({
@@ -97,6 +107,21 @@ export async function colleagueApprovers(
 }
 
 /**
+ * Who may decide a run below `colleague` besides `reviewer`, who asked the AI: the item's owner, and a
+ * workspace owner or admin other than those two, each only when they can edit the item, as deciding
+ * takes. At `colleague`, approversFor answers instead.
+ */
+export async function otherDeciders(sql: Queryable, item: ApprovalItem & { workspace_id: string }, reviewer: string): Promise<{ owner: boolean; admin: boolean }> {
+  const rows = await sql<{ owner: boolean; admin: boolean }[]>`
+    WITH ${memberPrincipalsCte(sql, item.workspace_id)}
+    SELECT coalesce(bool_or('user:' || alias = ${item.owner}), FALSE) AS owner,
+           coalesce(bool_or(role IN ('owner', 'admin') AND 'user:' || alias <> ${item.owner}), FALSE) AS admin
+    FROM mp
+    WHERE alias <> ${reviewer} AND principals && ${item.acl_principals}::text[] AND principals && ${item.acl_writers}::text[]`;
+  return { owner: rows[0]?.owner ?? false, admin: rows[0]?.admin ?? false };
+}
+
+/**
  * The workspace's owners and admins who can read an item with these readers, other than `exclude`:
  * who hears that its level was loosened, or that its changes wait for an approver. With `owner`,
  * the item's owner too, when they can read it.
@@ -108,17 +133,9 @@ export async function managersWhoCanRead(
   exclude: string,
 ): Promise<string[]> {
   const rows = await sql<{ alias: string }[]>`
-    WITH mp AS (
-      SELECT m.alias, m.role,
-             array_remove(ARRAY['user:' || m.alias, CASE WHEN m.role <> 'guest' THEN 'org:' || m.workspace_id END], NULL)
-             || COALESCE((SELECT array_agg(g.group_id) FROM groups g
-                          WHERE g.workspace_id = m.workspace_id AND g.members @> ARRAY['user:' || m.alias]), ARRAY[]::text[])
-             AS principals
-      FROM workspace_members m
-      WHERE m.workspace_id = ${workspaceId} AND m.alias <> ${exclude}
-    )
+    WITH ${memberPrincipalsCte(sql, workspaceId)}
     SELECT alias FROM mp
-    WHERE principals && ${item.acl_principals}::text[]
+    WHERE alias <> ${exclude} AND principals && ${item.acl_principals}::text[]
       AND (role IN ('owner', 'admin') ${item.owner ? sql`OR 'user:' || alias = ${item.owner}` : sql``})
     ORDER BY alias`;
   return rows.map((r) => r.alias);

@@ -71,6 +71,7 @@ build step. A checkout runs the node's source through tsx; a release bundles it
 | `mentions/` | Who an @mention may notify. |
 | `comments/` | Posting a comment from the app, REST, MCP and the co-author: what each writer may mention, who hears of it, the hourly allowance on an agent's notices, and how a caller reads comments. |
 | `governance/` | The event feed, the review inbox, webhooks. |
+| `review/` | The Slack review channel: which address it takes, and the line and link it posts. |
 | `retrieval/` | Collection scope, the retrieval pipeline, the Ask tool runner. |
 | `search/` | The search languages, and the background pass that writes the keyword index again, while the node serves, when they or its format change. |
 | `media/`, `audit/` | Media storage and serving; writing and reading the audit ledger. |
@@ -324,14 +325,14 @@ is at least once, so every handler tolerates a repeat. The message kinds
 | `ai_usage` | Records token usage for the AI usage page. |
 | `audit` | Appends to the audit ledger; a batch's audit rows are inserted together. |
 | `run_index` | Mirrors a run into the review inbox. |
-| `event` | Appends to the workspace event feed and queues one delivery per matching webhook. |
-| `webhook_deliver` | Posts one signed event to one webhook. |
+| `event` | Appends to the workspace event feed and queues one delivery per matching webhook; for a run that waits for a colleague, claims one post per matching review channel and queues it with the claim. |
+| `webhook_deliver` | Posts one signed event to one webhook, or a review channel's line and link to its Slack channel. |
 
 The maintenance tick embeds chunks left without a vector, re-embeds every workspace after the
 embedding model changes, takes the scheduled backup when it is due, purges expired trash, import
 stagings and unfinished sign-ins through the identity provider, and applies retention to revoked
-keys, notifications, sessions, OAuth clients, expired OAuth tokens, closed inbox runs, the event
-feed, and the ledgers whose retention the Settings page controls (audit, AI usage, Ask threads).
+keys, notifications, sessions, OAuth clients, expired OAuth tokens, closed inbox runs, review channel
+posts, the event feed, and the ledgers whose retention the Settings page controls (audit, AI usage, Ask threads).
 
 ## Identity
 

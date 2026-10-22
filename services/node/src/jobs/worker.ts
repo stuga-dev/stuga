@@ -74,7 +74,7 @@ export async function dispatchJob(env: JobsEnv, msg: IndexMessage, deps: Partial
     case "event":
       return handleEvent(env, d, msg);
     case "webhook_deliver":
-      return handleWebhookDeliver(d, msg);
+      return handleWebhookDeliver(env, d, msg);
     default:
       throw new AiError(`unknown job kind ${String((msg as { kind?: unknown }).kind)}`, 0, false);
   }

@@ -2,6 +2,7 @@
 import type { SearchStrictness } from "@stuga/protocol/domain/search-strictness";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { WorkspaceRole } from "@stuga/protocol/domain/roles";
+import type { WebhookKind } from "@stuga/protocol/domain/webhooks";
 
 export interface WorkspaceRow {
   workspace_id: string;
@@ -487,6 +488,8 @@ export interface WorkspaceEventRow {
 export interface WebhookRow {
   webhook_id: string;
   workspace_id: string;
+  /** `generic` takes the event feed; `slack` is a review channel. */
+  kind: WebhookKind;
   url: string;
   secret: string;
   /** Event types delivered; empty = every type. */

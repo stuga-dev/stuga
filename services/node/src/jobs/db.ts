@@ -6,6 +6,8 @@ import {
   type WorkspaceEventInsert,
   advanceEmbeddingBackfill,
   advanceSnapshotSeq,
+  agentRunClosed,
+  claimReviewPost,
   bumpChunkEmbedAttempt,
   clearDocChunks,
   colleagueApprovers,
@@ -33,6 +35,7 @@ import {
   listDocsNeedingEmbeddingBackfill,
   listNodeAdmins,
   listWorkspacesAwaitingBackfill,
+  matchingReviewChannels,
   matchingWebhooks,
   pgJobQueue,
   previousVersionSeq,
@@ -45,6 +48,7 @@ import {
   purgeOldNotifications,
   purgeOidcSignIns,
   purgePasswordResets,
+  purgeReviewPosts,
   purgeRefreshSessions,
   purgeRevokedApiKeys,
   purgeUnusedOauthClients,
@@ -132,6 +136,20 @@ export function jobsDb(sql: Sql) {
     matchingWebhooks: (workspaceId: string, type: string, folderIds: string[], docId: string | null) =>
       matchingWebhooks(sql, workspaceId, type, folderIds, docId),
     webhookReaches: (webhookId: string, docId: string | null) => webhookReaches(sql, webhookId, docId),
+    matchingReviewChannels: (workspaceId: string, folderIds: string[], docId: string) => matchingReviewChannels(sql, workspaceId, folderIds, docId),
+    /**
+     * Claim a review channel's one post about a run and queue its delivery in the same transaction:
+     * false, and nothing queued, when the channel has posted about the run already.
+     */
+    claimReviewPost: (webhookId: string, runId: string, delivery: IndexMessage): Promise<boolean> =>
+      sql.begin(async (tx) => {
+        const claimed = await claimReviewPost(tx, webhookId, runId);
+        if (claimed) await pgJobQueue<IndexMessage>(tx).send(delivery);
+        return claimed;
+      }) as Promise<boolean>,
+    purgeReviewPosts: (days: number) => purgeReviewPosts(sql, days),
+    /** Whether a run's mirror says it is closed: decided or reverted. */
+    agentRunClosed: (runId: string) => agentRunClosed(sql, runId),
     getWebhook: (webhookId: string) => getWebhook(sql, webhookId),
     recordWebhookDelivery: (webhookId: string, status: number | null, ok: boolean) => recordWebhookDelivery(sql, webhookId, status, ok),
     updateWebhook: (workspaceId: string, webhookId: string, patch: { active?: boolean }) =>

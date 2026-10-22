@@ -661,7 +661,12 @@ describe.skipIf(!URL)("review levels with real actors", () => {
       const table = (await ok<{ tables: Array<{ table_id: string }> }>(person("liv"), "GET", `/api/databases/${db.doc_id}/schema`)).tables[0]!.table_id;
       const inserted = await ok<{ row_ids: string[] }>(person("liv"), "POST", `/api/databases/${db.doc_id}/tables/${table}/rows`, { rows: [{ Name: "Ada" }] });
       const page = (await ok<{ doc_id: string }>(person("liv"), "POST", `/api/databases/${db.doc_id}/tables/${table}/rows/${inserted.row_ids[0]}/page`, {})).doc_id;
-      expect(await ok(person("liv"), "GET", `/api/docs/${page}`)).toMatchObject({ agent_mode: "colleague", agent_mode_floor: "colleague" });
+      expect(await ok(person("liv"), "GET", `/api/docs/${page}`)).toMatchObject({
+        agent_mode: "colleague",
+        agent_mode_floor: "colleague",
+        // What the level dialog says and holds it to: its folder's level, and its database's, which nobody goes below.
+        agent_mode_floors: { folder: "review", database: "colleague", notes: null },
+      });
 
       const proposed = await ok<{ run: { id: string }; review: string }>(agent(), "POST", `/api/docs/${page}/propose`, { action: "append", text: "Raise to 500." });
       expect(proposed.review).toBe("colleague");
@@ -798,11 +803,18 @@ describe.skipIf(!URL)("review levels with real actors", () => {
       const { folder: home } = await createHomeFolder(sql, { folderId: "f_home_liv", workspaceId: WS, alias: "liv", title: "My notes" });
       const d = await doc(home.folder_id);
       expect((await getDoc(sql, d))?.notes_shared).toBe(false);
+      expect(await ok(person("liv"), "GET", `/api/docs/${d}`)).toMatchObject({ agent_mode: "auto", agent_mode_floors: { folder: "auto", database: null, notes: null } });
       expect((await propose(d)).review).toBe("auto");
       expect(await markdownOf(d)).toContain("Twelve days a year.");
 
       // Shared with Bo: no agent changes it unseen, Liv's own included.
       await sql`UPDATE docs SET acl_principals = ${["user:liv", "user:bo"]} WHERE doc_id = ${d}`;
+      // The level dialog says so, and shows the level the node holds every agent to.
+      expect(await ok(person("liv"), "GET", `/api/docs/${d}`)).toMatchObject({
+        agent_mode: "review",
+        agent_mode_floor: "review",
+        agent_mode_floors: { folder: "auto", database: null, notes: "review" },
+      });
       const meta = await ok<{ review: { mode: string; reason: string } }>(agent(), "GET", `/api/docs/${d}`);
       expect(meta.review).toEqual({ mode: "review", reason: SHARED_NOTES_REASON });
       const held = await ok<{ review: string; run: { id: string } }>(agent(), "POST", `/api/docs/${d}/propose`, {

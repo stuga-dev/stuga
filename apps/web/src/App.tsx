@@ -54,6 +54,7 @@ import "./styles/shell.css";
 // Lazy so the editor, the grid and markdown-it stay out of the login and library bundles.
 const ItemPage = lazy(() => import("./pages/ItemPage").then(({ ItemPage }) => ({ default: ItemPage })));
 const AskPage = lazy(() => import("./pages/AskPage"));
+const ReviewCardPage = lazy(() => import("./pages/ReviewCardPage"));
 
 /** Holds the whole shell until the caller's workspaces are known. */
 function WorkspaceLayout() {
@@ -160,6 +161,7 @@ function AppRoutes() {
           <Route path="/doc/:docId" element={<ItemPage />} />
           <Route path="/ask/:threadId?" element={<AskPage />} />
           <Route path="/review" element={<ReviewPage />} />
+          <Route path="/review/:docId/:runId" element={<ReviewCardPage />} />
           <Route path="/oauth/consent" element={<OAuthAuthorize />} />
         </Route>
         {/* Not under WorkspaceLayout: node settings need no workspace, and

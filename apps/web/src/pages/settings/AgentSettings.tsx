@@ -1,6 +1,7 @@
 /**
- * The workspace's side of the agent contract: the instructions every agent reads,
- * and webhooks for the event feed. Review mode is set per document.
+ * The workspace's side of the agent contract: the instructions every agent reads, the Slack review
+ * channels that hear of each change waiting for a colleague, and webhooks for the event feed.
+ * Review mode is set per document.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -12,7 +13,9 @@ import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Divider } from "@astryxdesign/core/Divider";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { HStack } from "@astryxdesign/core/HStack";
+import { Item } from "@astryxdesign/core/Item";
 import { Link } from "@astryxdesign/core/Link";
+import { List } from "@astryxdesign/core/List";
 import { MultiSelector } from "@astryxdesign/core/MultiSelector";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Spinner } from "@astryxdesign/core/Spinner";
@@ -66,6 +69,9 @@ export function AgentSettings() {
   const [hookFolder, setHookFolder] = useState(WHOLE_WORKSPACE);
   const [savingHook, setSavingHook] = useState(false);
   const [newSecret, setNewSecret] = useState<{ url: string; secret: string } | null>(null);
+  const [channelUrl, setChannelUrl] = useState("");
+  const [channelFolder, setChannelFolder] = useState(WHOLE_WORKSPACE);
+  const [savingChannel, setSavingChannel] = useState(false);
 
   const load = useCallback(async () => {
     // Webhooks are admin-only on the server; a member has no section, and asking would only be refused (and ledgered).
@@ -135,6 +141,31 @@ export function AgentSettings() {
     }
   }
 
+  async function addChannel() {
+    setSavingChannel(true);
+    try {
+      // A review channel's signing secret means nothing to Slack, so it is not shown.
+      await Webhooks.create({ kind: "slack", url: channelUrl.trim(), events: [], folder_id: channelFolder || null });
+      setChannelUrl("");
+      setChannelFolder(WHOLE_WORKSPACE);
+      toast({ body: t("settings.agents.channel.added"), type: "info" });
+      await load();
+    } catch (e) {
+      toast({ body: errorMessage(e, t("settings.agents.channel.addFailed")), type: "error" });
+    } finally {
+      setSavingChannel(false);
+    }
+  }
+
+  async function removeChannel(h: WebhookInfo) {
+    try {
+      await Webhooks.remove(h.webhook_id);
+      setHooks((prev) => prev?.filter((x) => x.webhook_id !== h.webhook_id) ?? prev);
+    } catch (e) {
+      toast({ body: errorMessage(e, t("settings.agents.channel.removeFailed")), type: "error" });
+    }
+  }
+
   async function setHookActive(h: WebhookInfo, active: boolean) {
     try {
       const { webhook } = await Webhooks.update(h.webhook_id, { active });
@@ -158,6 +189,28 @@ export function AgentSettings() {
     ...folders.map((f) => ({ value: f.folder_id, label: f.title || t("common.untitledFolder") })),
   ];
 
+  const channels = hooks?.filter((h) => h.kind === "slack") ?? [];
+  const feedHooks = hooks?.filter((h) => h.kind !== "slack") ?? [];
+
+  /** Where a hook's deliveries stand: paused, failing, and its last attempt. */
+  const deliveryState = (h: WebhookInfo) => (
+    <HStack gap={2} vAlign="center" wrap="wrap">
+      {!h.active && <Badge variant="neutral" label={t("settings.agents.webhooks.paused")} />}
+      {h.failures > 0 && <Badge variant="red" label={t("settings.agents.webhooks.failing", { count: h.failures })} />}
+      <Text type="supporting" color="secondary" as="span">
+        {h.last_delivery_at ? (
+          <span title={absoluteTime(h.last_delivery_at)}>
+            {h.last_status !== null
+              ? t("settings.agents.webhooks.lastStatus", { time: relativeTime(h.last_delivery_at), status: h.last_status })
+              : t("settings.agents.webhooks.lastUnreachable", { time: relativeTime(h.last_delivery_at) })}
+          </span>
+        ) : (
+          t("settings.agents.webhooks.nothingDelivered")
+        )}
+      </Text>
+    </HStack>
+  );
+
   const hookColumns = [
     {
       key: "url",
@@ -176,23 +229,7 @@ export function AgentSettings() {
       key: "state",
       header: t("settings.agents.webhooks.deliveries"),
       width: proportional(1),
-      renderCell: (h: WebhookInfo) => (
-        <HStack gap={2} vAlign="center">
-          {!h.active && <Badge variant="neutral" label={t("settings.agents.webhooks.paused")} />}
-          {h.failures > 0 && <Badge variant="red" label={t("settings.agents.webhooks.failing", { count: h.failures })} />}
-          <Text type="supporting" color="secondary" as="span">
-            {h.last_delivery_at ? (
-              <span title={absoluteTime(h.last_delivery_at)}>
-                {h.last_status !== null
-                  ? t("settings.agents.webhooks.lastStatus", { time: relativeTime(h.last_delivery_at), status: h.last_status })
-                  : t("settings.agents.webhooks.lastUnreachable", { time: relativeTime(h.last_delivery_at) })}
-              </span>
-            ) : (
-              t("settings.agents.webhooks.nothingDelivered")
-            )}
-          </Text>
-        </HStack>
-      ),
+      renderCell: deliveryState,
     },
     {
       key: "actions",
@@ -258,6 +295,44 @@ export function AgentSettings() {
           <>
             <Divider />
             <VStack gap={3}>
+              <Heading level={2}>{t("settings.agents.channel.heading")}</Heading>
+              <Text color="secondary">{t("settings.agents.channel.about")}</Text>
+              {channels.length > 0 && (
+                <List hasDividers>
+                  {channels.map((h) => (
+                    <Item
+                      as="li"
+                      key={h.webhook_id}
+                      label={t("settings.agents.channel.row", { where: folderName(h.folder_id) })}
+                      description={deliveryState(h)}
+                      endContent={
+                        <HStack gap={1}>
+                          <Button label={h.active ? t("settings.agents.webhooks.pause") : t("settings.agents.webhooks.resume")} variant="ghost" size="sm" onClick={() => void setHookActive(h, !h.active)} />
+                          <Button label={t("common.remove")} variant="ghost" size="sm" onClick={() => void removeChannel(h)} />
+                        </HStack>
+                      }
+                    />
+                  ))}
+                </List>
+              )}
+              <VStack gap={2}>
+                <HStack gap={2} vAlign="end" wrap="wrap">
+                  <TextInput
+                    label={t("settings.agents.channel.url")}
+                    size="sm"
+                    width={300}
+                    value={channelUrl}
+                    onChange={setChannelUrl}
+                    placeholder="https://hooks.slack.com/services/…" // i18n-exempt: an address's shape
+                  />
+                  <Selector label={t("settings.agents.webhooks.where")} size="sm" width={200} value={channelFolder} onChange={setChannelFolder} options={folderOptions} />
+                  <Button label={t("settings.agents.channel.add")} variant="secondary" size="sm" onClick={() => void addChannel()} isDisabled={!channelUrl.trim()} isLoading={savingChannel} />
+                </HStack>
+                <Text type="supporting" color="secondary">{t("settings.agents.channel.help")}</Text>
+              </VStack>
+            </VStack>
+            <Divider />
+            <VStack gap={3}>
               <Heading level={2}>{t("settings.agents.webhooks.heading")}</Heading>
               <Text color="secondary">{t("settings.agents.webhooks.about")}</Text>
               {newSecret && (
@@ -273,10 +348,10 @@ export function AgentSettings() {
                   </HStack>
                 </VStack>
               )}
-              {hooks.length === 0 ? (
+              {feedHooks.length === 0 ? (
                 <Text type="supporting" color="secondary">{t("settings.agents.webhooks.none")}</Text>
               ) : (
-                <Table data={hooks} columns={hookColumns} dividers="rows" density="compact" />
+                <Table data={feedHooks} columns={hookColumns} dividers="rows" density="compact" />
               )}
               <VStack gap={2}>
                 <Text type="supporting" color="secondary">{t("settings.agents.webhooks.addHeading")}</Text>

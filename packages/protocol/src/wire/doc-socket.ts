@@ -203,6 +203,8 @@ export interface AgentRunSummary {
   you?: RunStanding;
   /** The hunks' text was left out: only the run's reviewer, its approvers and the document's managers read it. */
   hunks_withheld?: true;
+  /** With `hunks_withheld`: how many of its changes wait for a decision. */
+  hunks_pending?: number;
   /** epoch ms */
   created_at: number;
   updated_at: number;

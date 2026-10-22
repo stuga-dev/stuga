@@ -180,6 +180,8 @@ export async function handleRunDetail(ledger: RunLedger, url: URL): Promise<Resp
     baseline_markdown: body.baseline_markdown,
     final_markdown: body.final_markdown ?? null,
     hunks: body.hunks,
+    // The sources its footnote markers cite, which a commit writes as the definitions.
+    citations: body.citations ?? [],
   });
 }
 

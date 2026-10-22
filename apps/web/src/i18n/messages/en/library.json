@@ -30,6 +30,8 @@
   "review.colleague": "Reviewed by a colleague",
   "review.colleagueDescription": "Someone else who can edit approves them, admins included.",
   "review.floor": "Its folder is at “{level, select, auto {AI edits apply directly} review {Reviewed by whoever asked the AI} other {Reviewed by a colleague}}”.",
+  "review.databaseFloor": "Its database is at “{level, select, auto {AI edits apply directly} review {Reviewed by whoever asked the AI} other {Reviewed by a colleague}}”, and its pages are never looser.",
+  "review.notesFloor": "Shared from My notes, so at least “Reviewed by whoever asked the AI”.",
   "review.belowFloor": "Only the folder’s owner or a workspace admin can set a looser level than the folder’s.",
   "review.approvers": "Approved by",
   "review.approversDescription": "Who approves AI edits here at “Reviewed by a colleague”.",

@@ -181,6 +181,28 @@ export function renderOpenAction(language: string): string {
   return format(notifyLanguage(language), "action.open");
 }
 
+/** What a review channel says of a run waiting for a decision: names, a count and the level, never the change's text. */
+export interface ReviewPostWords {
+  /** The item's title; empty reads as Untitled. */
+  doc: string;
+  /** The person who asked the AI. */
+  author: string;
+  agent: string;
+  count: number;
+  level: "auto" | "review" | "colleague";
+}
+
+/** A review channel's post, in `language`: the channel's creator's, since a channel has many readers. */
+export function renderReviewPost(post: ReviewPostWords, language: string): string {
+  const lang = notifyLanguage(language);
+  return format(lang, "review.post", { ...post, doc: post.doc || format(lang, "untitled") });
+}
+
+/** The label of the link a review channel's post carries to the run's review card. */
+export function renderReviewOpen(language: string): string {
+  return format(notifyLanguage(language), "review.open");
+}
+
 /** Why a node does not serve for now. */
 export type GateWaiting = "starting" | "backing_up" | "upgrading" | "maintenance";
 

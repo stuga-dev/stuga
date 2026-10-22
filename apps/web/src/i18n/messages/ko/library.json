@@ -30,6 +30,8 @@
   "review.colleague": "동료가 검토",
   "review.colleagueDescription": "편집할 수 있는 다른 사람이 승인해요. 관리자도 포함돼요.",
   "review.floor": "폴더 수준: “{level, select, auto {AI 편집 바로 적용됨} review {요청한 사람이 검토} other {동료가 검토}}”",
+  "review.databaseFloor": "데이터베이스 수준: “{level, select, auto {AI 편집 바로 적용됨} review {요청한 사람이 검토} other {동료가 검토}}”. 페이지는 이보다 느슨해지지 않아요.",
+  "review.notesFloor": "내 노트에서 공유되어 최소 “요청한 사람이 검토” 수준이에요.",
   "review.belowFloor": "폴더보다 느슨한 수준은 폴더 소유자나 워크스페이스 관리자만 설정할 수 있어요.",
   "review.approvers": "승인하는 사람",
   "review.approversDescription": "“동료가 검토”일 때 여기서 AI 편집을 승인하는 사람이에요.",

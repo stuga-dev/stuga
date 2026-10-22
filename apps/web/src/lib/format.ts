@@ -106,6 +106,11 @@ export function listOf(items: readonly string[]): string {
   return new Intl.ListFormat(formatLocale(), { type: "conjunction", style: "narrow" }).format(items);
 }
 
+/** "Ana or Ben", "Ana, Ben or Liv", in the reader's language. */
+export function orList(items: readonly string[]): string {
+  return new Intl.ListFormat(formatLocale(), { type: "disjunction" }).format(items);
+}
+
 /** A full local timestamp for tooltips. */
 export function absoluteTime(iso: string): string {
   const d = new Date(iso);

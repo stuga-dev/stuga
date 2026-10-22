@@ -405,6 +405,8 @@ export interface DatabaseRunSummary {
   you?: RunStanding;
   /** The ops' payloads were left out: only the run's reviewer, its approvers and the database's managers read them. */
   ops_withheld?: true;
+  /** With `ops_withheld`: how many of its ops wait for a decision. */
+  ops_pending?: number;
   /** epoch ms */
   created_at: number;
   updated_at: number;

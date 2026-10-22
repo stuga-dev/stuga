@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "@stuga/protocol/api/agent-setup";
-import { CLIENT_GROUPS, CLIENT_NAME, clientConfigs, clientTabs, TOKEN_PLACEHOLDER } from "./client-configs";
+import { CLIENT_GROUPS, CLIENT_NAME, clientConfigs, clientName, clientTabs, TOKEN_PLACEHOLDER } from "./client-configs";
 
 const PUBLIC: AgentSetup = {
   url: "https://stuga.example.com",
@@ -37,6 +37,17 @@ const LAN_WITH_REMOTE: AgentSetup = { ...LAN, remote: { url: REMOTE, mcp_url: `$
 
 /** The one server entry a JSON config holds, under its key. */
 const servers = (json: string) => JSON.parse(json).mcpServers as Record<string, Record<string, unknown> & { env: Record<string, string> }>;
+
+describe("clientName", () => {
+  it("names a known client as Connect your AI does, and keeps any other label as it was sent", () => {
+    expect(clientName("claude-code")).toBe("Claude Code");
+    expect(clientName("Claude-Desktop")).toBe("Claude Desktop");
+    expect(clientName("deepseek-harness")).toBe("DeepSeek Harness");
+    expect(clientName("pi")).toBe("Pi");
+    expect(clientName("stuga-mcp")).toBe("stuga-mcp");
+    expect(clientName("constructor")).toBe("constructor");
+  });
+});
 
 describe("clientTabs", () => {
   it("offers the hosted connector only on a node the internet can reach", () => {

@@ -78,6 +78,7 @@ const DOC: DocSummary = {
   search_hidden: false,
   agent_mode: "review",
   agent_mode_floor: null,
+  agent_mode_floors: { folder: null, database: null, notes: null },
   page_of: null,
   page_row: null,
 };

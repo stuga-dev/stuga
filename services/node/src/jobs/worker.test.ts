@@ -276,6 +276,15 @@ describe("notify", () => {
     url: "http://localhost:8787/doc/d1",
   };
 
+  it("links a notice about a run to its review card", async () => {
+    const db = fakeDb();
+    await dispatchJob(fakeEnv(), { ...notifyMsg, eventType: "AGENT_EDITS_PROPOSED", params: { agent: "Scout", doc: "Q3 plan", count: 1, waits: "you" }, runId: "run_9" } as IndexMessage, {
+      db,
+      log: silentLog,
+    });
+    expect(vi.mocked(db.insertNotification).mock.calls[0]![0].resource_url).toBe("http://localhost:8787/review/d1/run_9?workspace=w1");
+  });
+
   it("stores the notification with its sink delivery queued beside it, delivering nothing itself", async () => {
     const db = fakeDb();
     const deliver = vi.fn(async () => null);
@@ -331,6 +340,13 @@ describe("notify", () => {
     const email = () => fakeEnv({ settings: nodeSettings({ notify: { sink: "email", smtpUrl: "smtp://x", emailFrom: "a@b" } }) });
     const slack = () => fakeEnv({ settings: nodeSettings({ notify: { sink: "slack", webhookUrl: "https://hooks.slack.test/x" } }) });
     const sent = (d: ReturnType<typeof deps>) => vi.mocked(d.db.insertNotification).mock.calls;
+
+    it("links each notice to the run's review card, in the item's workspace", async () => {
+      const d = deps(() => ({ aliases: ["bo"], standIn: false, cause: null }));
+      await dispatchJob(email(), fanout(), d);
+      expect(sent(d)[0]![0].resource_url).toBe("http://localhost:8787/review/d1/run_1?workspace=w1");
+      expect(sent(d)[0]![1]?.url).toBe("http://localhost:8787/review/d1/run_1?workspace=w1");
+    });
 
     it("tells each, by email, once per run: a second run on the same item is told too", async () => {
       const d = deps(() => ({ aliases: ["bo", "cy"], standIn: false, cause: null }));

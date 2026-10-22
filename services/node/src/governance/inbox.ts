@@ -68,22 +68,41 @@ export async function listRunInbox({ ctx, url }: WorkspaceCall): Promise<Respons
   const p = url.searchParams;
   const filterRaw = p.get("filter") ?? "attention";
   const filter: RunInboxFilter =
-    filterRaw === "open" || filterRaw === "closed" || filterRaw === "all" ? filterRaw : "attention";
+    filterRaw === "waiting" || filterRaw === "done" || filterRaw === "all" ? filterRaw : "attention";
   const limitRaw = Number(p.get("limit") ?? "");
   const beforeId = p.get("before_id");
   const beforeAt = instant("before_at", p.get("before_at"));
   if (!beforeAt.ok) return error(400, beforeAt.message);
   if (Boolean(beforeAt.value) !== Boolean(beforeId)) return error(400, "before_at and before_id go together");
-  const runs = await listAgentRuns(ctx.sql, {
-    workspaceId: ctx.workspaceId,
-    principals: ctx.principals,
-    filter,
-    agentAlias: p.get("agent") ?? undefined,
-    before: beforeAt.value && beforeId ? { updatedAt: beforeAt.value, runId: beforeId } : undefined,
-    limit: Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : undefined,
-    decider: { alias: ctx.alias, admin: isWorkspaceAdmin(ctx) },
-  });
-  return json({ runs: await withAgentNames(ctx, runs), filter });
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : undefined;
+  const list = (f: RunInboxFilter) =>
+    listAgentRuns(ctx.sql, {
+      workspaceId: ctx.workspaceId,
+      principals: ctx.principals,
+      filter: f,
+      agentAlias: p.get("agent") ?? undefined,
+      before: beforeAt.value && beforeId ? { updatedAt: beforeAt.value, runId: beforeId } : undefined,
+      limit,
+      decider: { alias: ctx.alias, admin: isWorkspaceAdmin(ctx) },
+    });
+  if (filter !== "attention" && filter !== "waiting") return json({ runs: await withAgentNames(ctx, await list(filter)), filter });
+  // The query counts an owner or admin outside a run's approver groups among those who may approve
+  // it; they stand in only while nobody else may, which withAgentNames works out. Such a run waits on others.
+  const needs = await withAgentNames(ctx, await list("attention"));
+  if (filter === "attention") return json({ runs: needs.filter(asksCaller), filter });
+  const others = [...(await withAgentNames(ctx, await list("waiting"))), ...needs.filter((r) => !asksCaller(r) && waits(r))];
+  const at = (r: InboxRow) => new Date(r.updated_at).getTime();
+  others.sort((a, b) => at(b) - at(a) || b.run_id.localeCompare(a.run_id));
+  return json({ runs: others.slice(0, limit ?? others.length), filter });
+}
+
+type InboxRow = Awaited<ReturnType<typeof withAgentNames>>[number];
+
+const waits = (r: InboxRow) => r.status === "open" && r.pending > 0;
+
+/** What Needs you holds: changes waiting that the caller may accept, or applied at once that the caller may mark reviewed. */
+function asksCaller(r: InboxRow): boolean {
+  return (waits(r) && r.you.accept) || (r.auto_applied && !r.acknowledged && !r.reverted && r.you.ack);
 }
 
 export async function agentStats({ ctx }: WorkspaceCall): Promise<Response> {

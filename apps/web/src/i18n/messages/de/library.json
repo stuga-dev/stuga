@@ -30,6 +30,8 @@
   "review.colleague": "Prüfung durch Kollegen",
   "review.colleagueDescription": "Eine andere Person mit Bearbeitungsrechten genehmigt sie, Admins eingeschlossen.",
   "review.floor": "Der Ordner steht auf „{level, select, auto {KI-Änderungen direkt übernommen} review {Prüfung durch die Person, die die KI beauftragt hat} other {Prüfung durch Kollegen}}“.",
+  "review.databaseFloor": "Die Datenbank steht auf „{level, select, auto {KI-Änderungen direkt übernommen} review {Prüfung durch die Person, die die KI beauftragt hat} other {Prüfung durch Kollegen}}“, und ihre Seiten sind nie lockerer.",
+  "review.notesFloor": "Aus „Meine Notizen“ geteilt, daher mindestens „Prüfung durch die Person, die die KI beauftragt hat“.",
   "review.belowFloor": "Nur der Eigentümer des Ordners oder ein Workspace-Admin kann eine lockerere Stufe als die des Ordners festlegen.",
   "review.approvers": "Genehmigt von",
   "review.approversDescription": "Wer KI-Änderungen hier bei „Prüfung durch Kollegen“ genehmigt.",

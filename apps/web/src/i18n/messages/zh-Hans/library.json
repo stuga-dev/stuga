@@ -30,6 +30,8 @@
   "review.colleague": "由同事审阅",
   "review.colleagueDescription": "由其他有编辑权的人批准，管理员也包括在内。",
   "review.floor": "其文件夹为“{level, select, auto {AI 编辑直接应用} review {由发起人审阅} other {由同事审阅}}”。",
+  "review.databaseFloor": "其数据库为“{level, select, auto {AI 编辑直接应用} review {由发起人审阅} other {由同事审阅}}”，其页面不会更宽松。",
+  "review.notesFloor": "从“我的笔记”共享，因此至少为“由发起人审阅”。",
   "review.belowFloor": "只有文件夹所有者或工作空间管理员可以设置比文件夹更宽松的级别。",
   "review.approvers": "批准人",
   "review.approversDescription": "在“由同事审阅”时，在此批准 AI 编辑的人。",

@@ -28,6 +28,9 @@ Releases before 0.1.7 were previews. Their notes are on their
 - A reply in a comment thread notifies the people in it, so you hear when someone answers your AI co-author's or your agent's question.
 - Agents can reply in comment threads and attach a comment to a passage by quoting it, and hear of replies in threads they started ([Agents in comment threads](docs/agents.md#agents-in-comment-threads)).
 - Amazon Bedrock as an AI chat provider: a Bedrock API key and a region; models such as Claude through the account's inference profiles ([Amazon Bedrock](docs/configuration.md#amazon-bedrock)).
+- A review card for each AI change, laid out for a phone: who asked through which AI, the review level and who may decide, each change in its paragraph before and after with the sources it cites, and **Approve**, **Ask for changes…** and **Decline…**. Whoever may not approve reads why beside the button. Notifications, the inbox and review channel posts open it ([The review card](docs/agents.md#the-review-card)).
+- A Slack review channel for a workspace or a folder: each AI change that waits for a colleague is posted there once, with its title, who asked, the level and a link to its card, never its text, in the language of whoever added the channel ([The Slack review channel](docs/agents.md#the-slack-review-channel)).
+- A run's detail tells whoever reads its waiting text who may decide it (`deciders`), and `?full=1` carries the sources its footnotes cite (`citations`) ([API](docs/api.md#documents)).
 
 ### Changed
 
@@ -42,6 +45,8 @@ Releases before 0.1.7 were previews. Their notes are on their
 - Deleting a folder puts every document in it in the trash. While one of them is locked, nothing is deleted and the confirmation says how many to unlock.
 - Appending under a heading that has subsections, such as a page's title heading, adds the text at the end of that heading's own text, before its first subsection, and the answer says so; it used to land at the end of the last subsection. A heading that is not there is refused with the headings the page has ([api.md](docs/api.md#proposing-an-edit)).
 - A heading with no text of its own, such as a page's title heading, is no longer a passage that search and retrieval answer with.
+- **Review AI edits** has three tabs, **Needs you**, **Waiting on others** and **Done**, in place of its **Show** filter, and a run opens its review card. A run's **⋯** menu offers **Ask for changes…** and **Decline** as the card does, and a decided run counts what was approved and declined. `GET /api/runs` takes `filter=waiting` and `filter=done` in place of `open` and `closed` ([The review inbox](docs/agents.md#the-review-inbox)).
+- **Who reviews AI edits…** shows every floor under an item: its folder's level, a row page's database's, and at least **Reviewed by whoever asked the AI** for a page shared out of My notes, offering nothing below the last two. Such a page now shows the level the node holds agents to, where it showed its folder's **AI edits apply directly**; summaries carry `agent_mode_floors` ([API](docs/api.md#documents)).
 
 ### Removed
 

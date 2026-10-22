@@ -1,6 +1,8 @@
 {
   "untitled": "Untitled",
   "action.open": "Open",
+  "review.post": "“{doc}”: {author}’s {agent} proposed {count, plural, one {# change} other {# changes}} · {level, select, colleague {Reviewed by a colleague} review {Reviewed by whoever asked the AI} other {AI edits apply directly}}",
+  "review.open": "Review",
 
   "MENTIONED_IN_COMMENT.title": "{actor} mentioned you in a comment on “{doc}”",
   "MENTIONED_IN_COMMENT.body": "{excerpt}",

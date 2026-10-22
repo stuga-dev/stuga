@@ -1,6 +1,8 @@
 {
   "untitled": "無題",
   "action.open": "開く",
+  "review.post": "「{doc}」：{author}の{agent}が{count, plural, other {#件の変更}}を提案しました · {level, select, colleague {同僚がレビュー} review {依頼した人がレビュー} other {AIの編集を直接適用}}",
+  "review.open": "レビュー",
 
   "MENTIONED_IN_COMMENT.title": "{actor}が「{doc}」のコメントであなたをメンションしました",
   "MENTIONED_IN_COMMENT.body": "{excerpt}",

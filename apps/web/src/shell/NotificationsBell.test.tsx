@@ -397,3 +397,19 @@ describe("in the reader’s language", () => {
     expect(deliveryLine({ delivery_channel: "slack", delivered_at: "2026-09-30T10:00:00Z", delivery_error: null })).toBe("Slackでも送信しました。");
   });
 });
+
+describe("reviewCardTarget", () => {
+  const card = "https://node.example/review/d1/run_1?workspace=ws1";
+  it("opens an approver's notice on the run's review card, on any screen", async () => {
+    const { reviewCardTarget } = await import("./NotificationsBell");
+    expect(reviewCardTarget({ event_type: "APPROVAL_WAITING", resource_url: card }, false)).toBe("/review/d1/run_1?workspace=ws1");
+    expect(reviewCardTarget({ event_type: "APPROVER_NEEDED", resource_url: card }, false)).toBe("/review/d1/run_1?workspace=ws1");
+  });
+  it("opens the card for the person who asked on a phone, and the item on a wider screen", async () => {
+    const { reviewCardTarget } = await import("./NotificationsBell");
+    expect(reviewCardTarget({ event_type: "AGENT_EDITS_PROPOSED", resource_url: card }, true)).toBe("/review/d1/run_1?workspace=ws1");
+    expect(reviewCardTarget({ event_type: "AGENT_EDITS_PROPOSED", resource_url: card }, false)).toBeNull();
+    expect(reviewCardTarget({ event_type: "APPROVAL_WAITING", resource_url: "https://node.example/doc/d1" }, true)).toBeNull();
+  });
+});
+

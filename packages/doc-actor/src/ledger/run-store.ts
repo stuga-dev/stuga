@@ -590,7 +590,7 @@ export class RunLedger {
         docId: this.store.docId,
         actor: stored.agent,
         ...(n.eventType === "AGENT_EDITS_PROPOSED"
-          ? { eventType: n.eventType, params: { agent, doc, count: n.count, waits } }
+          ? { eventType: n.eventType, params: { agent, doc, count: n.count, waits }, runId: stored.id }
           : { eventType: n.eventType, params: { agent, doc } }),
       });
     } catch (err) {

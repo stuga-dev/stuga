@@ -30,6 +30,8 @@
   "review.colleague": "由同事審閱",
   "review.colleagueDescription": "由其他有編輯權的人核准，管理員也包括在內。",
   "review.floor": "其資料夾為「{level, select, auto {AI 編輯直接套用} review {由發起人審閱} other {由同事審閱}}」。",
+  "review.databaseFloor": "其資料庫為「{level, select, auto {AI 編輯直接套用} review {由發起人審閱} other {由同事審閱}}」，其頁面不會更寬鬆。",
+  "review.notesFloor": "從「我的筆記」共用，因此至少為「由發起人審閱」。",
   "review.belowFloor": "只有資料夾擁有者或工作空間管理員可以設定比資料夾更寬鬆的層級。",
   "review.approvers": "核准人",
   "review.approversDescription": "在「由同事審閱」時，在此核准 AI 編輯的人。",

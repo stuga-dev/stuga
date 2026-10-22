@@ -41,6 +41,19 @@ export const CLIENT_NAME: Record<Exclude<ClientTab, "other">, string> = {
   dsh: "DeepSeek Harness",
 };
 
+/** The `x-stuga-client` labels a client sends that are not its tab's id. */
+const LABEL_TABS: Readonly<Record<string, Exclude<ClientTab, "other">>> = { "deepseek-harness": "dsh" };
+
+/**
+ * The app a run came through, from the `x-stuga-client` label it sent: a known client by its name, as
+ * Connect your AI and the agents it connects are named; any other label as it was sent.
+ */
+export function clientName(label: string): string {
+  const key = label.trim().toLowerCase();
+  const tab = Object.hasOwn(CLIENT_NAME, key) ? (key as Exclude<ClientTab, "other">) : Object.hasOwn(LABEL_TABS, key) ? LABEL_TABS[key] : undefined;
+  return tab ? CLIENT_NAME[tab] : label;
+}
+
 /** What the picker calls a client: its name, or "Other clients" in the reader's language. */
 export function tabLabel(tab: ClientTab): string {
   return tab === "other" ? t("agents.picker.otherClients") : CLIENT_NAME[tab];

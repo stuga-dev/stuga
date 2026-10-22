@@ -1,7 +1,7 @@
 import { api } from "../lib/http/client";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { InstructionLevel } from "@stuga/protocol/domain/instructions";
-import type { AclModel, DocSort, ItemInstructions, SortOrder } from "./docs";
+import type { AclModel, DocSort, ItemInstructions, ReviewFloors, SortOrder } from "./docs";
 
 export interface Folder {
   folder_id: string;
@@ -15,6 +15,7 @@ export interface Folder {
   agent_mode: ReviewMode;
   /** The level the folder above gives it; null when none does. */
   agent_mode_floor: ReviewMode | null;
+  agent_mode_floors: ReviewFloors;
   /** At `colleague`, the group whose members approve beneath it; null for anyone else who can edit. */
   approver_group: string | null;
 }
@@ -29,6 +30,7 @@ export interface HiddenFolder {
   updated_at: null;
   agent_mode: null;
   agent_mode_floor: null;
+  agent_mode_floors: null;
   approver_group: null;
 }
 

@@ -14,7 +14,7 @@
  * for every agent, theirs included (effectiveReviewLevel): once it is shared, it is no longer theirs
  * alone, and no agent changes it unseen.
  */
-import { type Approvers, type DocRow, type FolderRow, type Queryable, approversFor, getFolderAncestors } from "@stuga/db";
+import { type Approvers, type DocRow, type FolderRow, type Queryable, approversFor, colleagueApprovers, getFolderAncestors, otherDeciders } from "@stuga/db";
 import { docReviewLevel, looserReviewMode, reviewLevelOf, stricterReviewMode, type ReviewMode } from "@stuga/protocol/domain/events";
 import { actLevel, mayActOnRun, type RunAct, type RunStanding } from "@stuga/protocol/domain/runs";
 import type { Ctx } from "../auth/context.js";
@@ -245,6 +245,32 @@ export class RunJudge {
       return { level, itemLevel, approver, manager, seesText: me === run.reviewer || approver || manager, standing };
     });
   }
+}
+
+/** Who may decide a run's waiting changes now, as its review card names them to whoever reads them. */
+export interface RunDeciders {
+  /** At `colleague`, those who may approve, or the owner and admins standing in; below it, whoever asked the AI. */
+  aliases: string[];
+  /** The owner or admins stand in, since nobody else may approve. */
+  stand_in: boolean;
+  /** With nobody to approve: nobody else can edit the item, or nobody in its approver group can. */
+  cause: "nobody" | "group" | null;
+  /**
+   * Below `colleague`, who else may decide, each only when they can edit the item: its owner, and a
+   * workspace owner or admin other than those two. Both false at `colleague`, where `aliases` names everyone.
+   */
+  also: { owner: boolean; admin: boolean };
+}
+
+/** runDeciders for one run of `doc`, judged by `v`: one lookup either way. */
+export async function runDeciders(ctx: Pick<Ctx, "sql">, doc: DocRow, run: RunPolicyFields, v: Pick<RunVerdict, "level">): Promise<RunDeciders> {
+  if (v.level !== "colleague") {
+    return { aliases: [run.reviewer], stand_in: false, cause: null, also: await otherDeciders(ctx.sql, doc, run.reviewer) };
+  }
+  const current = (await folderReviewChain(ctx.sql, doc.parent_id, doc.workspace_id)).approverGroup;
+  const groups = [...new Set([run.approver_group, current].filter((g): g is string => !!g))];
+  const found = await colleagueApprovers(ctx.sql, doc, run.reviewer, groups);
+  return { aliases: found.aliases, stand_in: found.standIn, cause: found.cause, also: { owner: false, admin: false } };
 }
 
 /** The body fields a decision forwards to the actor, which re-checks them against the run it holds. */

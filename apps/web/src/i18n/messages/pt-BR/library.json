@@ -30,6 +30,8 @@
   "review.colleague": "Revisadas por um colega",
   "review.colleagueDescription": "Outra pessoa que pode editar as aprova, administradores incluídos.",
   "review.floor": "A pasta está em “{level, select, auto {Edições da IA aplicadas diretamente} review {Revisadas por quem pediu à IA} other {Revisadas por um colega}}”.",
+  "review.databaseFloor": "O banco de dados está em “{level, select, auto {Edições da IA aplicadas diretamente} review {Revisadas por quem pediu à IA} other {Revisadas por um colega}}”, e as páginas dele nunca ficam mais flexíveis.",
+  "review.notesFloor": "Compartilhado de Minhas notas, então no mínimo “Revisadas por quem pediu à IA”.",
   "review.belowFloor": "Somente o proprietário da pasta ou um administrador do espaço de trabalho pode escolher um nível mais flexível que o da pasta.",
   "review.approvers": "Aprovadas por",
   "review.approversDescription": "Quem aprova aqui as edições da IA em “Revisadas por um colega”.",

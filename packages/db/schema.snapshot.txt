@@ -715,6 +715,15 @@ TABLE refresh_sessions
   INDEX refresh_sessions_session_idx CREATE INDEX refresh_sessions_session_idx ON public.refresh_sessions USING btree (session_id)
   INDEX refresh_sessions_token_hash_key CREATE UNIQUE INDEX refresh_sessions_token_hash_key ON public.refresh_sessions USING btree (token_hash)
 
+TABLE review_posts
+  created_at timestamp with time zone NOT NULL DEFAULT now()
+  run_id text NOT NULL
+  webhook_id text NOT NULL
+  CONSTRAINT review_posts_pkey PRIMARY KEY (webhook_id, run_id)
+  CONSTRAINT review_posts_webhook_id_fkey FOREIGN KEY (webhook_id) REFERENCES webhooks(webhook_id) ON DELETE CASCADE
+  INDEX review_posts_created_idx CREATE INDEX review_posts_created_idx ON public.review_posts USING btree (created_at)
+  INDEX review_posts_pkey CREATE UNIQUE INDEX review_posts_pkey ON public.review_posts USING btree (webhook_id, run_id)
+
 TABLE schema_migrations
   applied_at timestamp with time zone NOT NULL DEFAULT now()
   checksum text NOT NULL
@@ -794,6 +803,7 @@ TABLE webhooks
   events ARRAY NOT NULL DEFAULT '{}'::text[]
   failures integer NOT NULL DEFAULT 0
   folder_id text
+  kind text NOT NULL DEFAULT 'generic'::text
   last_delivery_at timestamp with time zone
   last_status integer
   secret text NOT NULL
@@ -801,6 +811,7 @@ TABLE webhooks
   webhook_id text NOT NULL
   workspace_id text NOT NULL
   CONSTRAINT webhooks_folder_id_fkey FOREIGN KEY (folder_id) REFERENCES folders(folder_id) ON DELETE CASCADE
+  CONSTRAINT webhooks_kind_check CHECK ((kind = ANY (ARRAY['generic'::text, 'slack'::text])))
   CONSTRAINT webhooks_pkey PRIMARY KEY (webhook_id)
   CONSTRAINT webhooks_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
   INDEX webhooks_pkey CREATE UNIQUE INDEX webhooks_pkey ON public.webhooks USING btree (webhook_id)

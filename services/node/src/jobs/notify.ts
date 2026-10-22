@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { NotifyApproversMessage, NotifyDeliverMessage, NotifyMessage } from "@stuga/protocol/internal/jobs";
 import type { DeliveryErrorCode } from "@stuga/protocol/notify/events";
+import { reviewCardPath } from "@stuga/protocol/domain/runs";
 import { recipientLanguage } from "@stuga/protocol/notify/render";
 import type { NotifyConfig } from "../env.js";
 import type { JobDeps, JobsEnv } from "./deps.js";
@@ -61,10 +62,12 @@ export async function payloadFor(
 /**
  * What a notification is about, which its hour's bucket is keyed on: a flurry of shares or comments
  * on a document within the hour is one notification and one ping, whose link opens the first
- * comment. Each mention is its own, and replies are one per thread.
+ * comment. Each mention is its own, replies are one per thread, and an AI run's notice one per run.
  */
 function aboutOf(msg: NotifyMessage): string {
   if (msg.eventType === "MENTIONED_IN_COMMENT" && msg.commentNum !== undefined) return `${msg.docId}#${msg.commentNum}`;
+  // A run's own notice, whose link opens that run's card.
+  if (msg.runId !== undefined) return `${msg.docId}#r${msg.runId}`;
   if (msg.eventType === "COMMENT_REPLY" && msg.thread !== undefined) return `${msg.docId}#t${msg.thread}`;
   return msg.docId;
 }
@@ -78,9 +81,11 @@ export async function handleNotify(env: JobsEnv, deps: JobDeps, msg: NotifyMessa
   const id = `${eventType}:${about}:${recipient}:${from}${Math.floor(Date.now() / HOUR_MS)}`;
   const url = msg.folder
     ? `${env.publicOrigin}/?folder=${encodeURIComponent(docId)}`
-    : commentNum === undefined
-      ? `${env.publicOrigin}/doc/${docId}`
-      : `${env.publicOrigin}/doc/${docId}?comment=${commentNum}`;
+    : msg.runId
+      ? `${env.publicOrigin}${reviewCardPath(docId, msg.runId, msg.workspaceId)}`
+      : commentNum === undefined
+        ? `${env.publicOrigin}/doc/${docId}`
+        : `${env.publicOrigin}/doc/${docId}?comment=${commentNum}`;
   const delivery = sinkDelivery(env.settings.current().notify, { recipient, eventType, params, url });
 
   await deps.db.insertNotification(
@@ -123,7 +128,8 @@ export async function handleNotifyApprovers(env: JobsEnv, deps: JobDeps, msg: No
   const before = msg.groupBefore !== undefined ? new Set((await deps.db.colleagueApprovers(doc, msg.reviewer, groupsWith(msg.groupBefore))).aliases) : null;
   const author = (await deps.db.displayNameOf(msg.reviewer)) || msg.reviewer;
   const base = { agent: msg.agent, author, doc: msg.doc || doc.title, count: msg.count };
-  const url = `${env.publicOrigin}/doc/${msg.docId}`;
+  // The run's review card, where an approver decides it on any screen.
+  const url = `${env.publicOrigin}${reviewCardPath(msg.docId, msg.runId, msg.workspaceId)}`;
   const cfg = env.settings.current().notify;
   const hour = Math.floor(Date.now() / HOUR_MS);
   const chat = CHAT_SINKS.has(cfg.sink);

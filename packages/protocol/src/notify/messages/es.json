@@ -1,6 +1,8 @@
 {
   "untitled": "Sin título",
   "action.open": "Abrir",
+  "review.post": "“{doc}”: {agent} de {author} propuso {count, plural, one {# cambio} many {# cambios} other {# cambios}} · {level, select, colleague {Revisadas por un compañero} review {Revisadas por quien pidió a la IA} other {Ediciones de IA aplicadas directamente}}",
+  "review.open": "Revisar",
 
   "MENTIONED_IN_COMMENT.title": "{actor} te mencionó en un comentario en “{doc}”",
   "MENTIONED_IN_COMMENT.body": "{excerpt}",

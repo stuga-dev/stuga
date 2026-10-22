@@ -8,7 +8,7 @@ import type { Ctx } from "../auth/context.js";
 import { parseCitedEdits, proposeBody, proposeDocEdit } from "../agents/edits.js";
 import { recordAudit } from "../audit/record.js";
 import { canWriteDoc } from "../authz/authz.js";
-import { RunJudge, decisionRefusal, mayAct, vouched, type RunVerdict } from "../authz/review-mode.js";
+import { RunJudge, decisionRefusal, mayAct, runDeciders, vouched, type RunVerdict } from "../authz/review-mode.js";
 import { authorizedDoc, lockedError, proseOnly } from "../documents/access.js";
 import { docInstructionLabelsOrNone } from "../documents/instructions.js";
 import { error, json } from "../http/respond.js";
@@ -44,7 +44,8 @@ function forPerson(run: AgentRunSummary, v: RunVerdict): AgentRunSummary {
   const hunks = run.hunks.filter((h) => LANDED.has(h.status));
   if (hunks.length === run.hunks.length && !run.hunks_truncated) return out;
   delete out.hunks_truncated;
-  return { ...out, hunks, hunks_withheld: true };
+  // How many wait, which the inbox shows every reader too, so the card can say whether any do.
+  return { ...out, hunks, hunks_withheld: true, hunks_pending: run.hunks.filter((h) => h.status === "pending").length };
 }
 
 /** The run as the document's actor holds it, for a decision to read its reviewer and level from; null when there is none. */
@@ -112,13 +113,16 @@ export async function getDocRun({ ctx, url, match }: WorkspaceCall): Promise<Res
     baseline_markdown?: string;
     final_markdown?: string | null;
     hunks?: AgentRunSummary["hunks"];
+    citations?: unknown[];
   };
   // The list route's rule by id: another agent's run is indistinguishable from no run.
   if (ctx.isAgent) return detail.run?.agent_alias === ctx.alias ? json(detail) : error(404, "not found");
   if (!detail.run) return error(502, "run unavailable");
   const verdict = await new RunJudge(ctx, doc).judge(detail.run);
-  if (verdict.seesText) return json({ ...detail, run: forPerson(detail.run, verdict) });
-  // The document before and after its run goes with the text that did not land; the hunks that did are anyone's.
+  // Whoever reads its waiting text also reads who may decide it: the review card names them.
+  if (verdict.seesText) return json({ ...detail, run: forPerson(detail.run, verdict), deciders: await runDeciders(ctx, doc, detail.run, verdict) });
+  // The document before and after its run, and the sources it cites, go with the text that did not
+  // land; the hunks that did are anyone's.
   const run = forPerson(detail.hunks ? { ...detail.run, hunks: detail.hunks, hunks_truncated: undefined } : detail.run, verdict);
   return json(detail.hunks ? { run, hunks: run.hunks } : { run });
 }

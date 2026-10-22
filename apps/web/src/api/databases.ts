@@ -21,6 +21,7 @@ import type {
   ViewInput,
   ViewSpec,
 } from "@stuga/protocol/databases/types";
+import type { RunDeciders } from "./runs";
 import { t } from "../i18n/i18n";
 import { api, apiFailure, authedFetch, networkFailure, UPLOAD_TIMEOUT_MS, type ApiError } from "../lib/http/client";
 import { openSse } from "../lib/http/sse";
@@ -233,7 +234,7 @@ export const DatabaseRuns = {
     api<{ runs: DatabaseRunSummary[] }>(`/api/databases/${id}/runs${limit ? `?limit=${limit}` : ""}`),
   /** `full` ships every payload whole; `sample` cuts a rows.insert to its first N rows. */
   detail: (id: string, runId: string, opts: { full?: boolean; sample?: number } = {}) =>
-    api<{ run: DatabaseRunSummary }>(
+    api<{ run: DatabaseRunSummary; deciders?: RunDeciders }>(
       `/api/databases/${id}/runs/${runId}${opts.full ? "?full=1" : opts.sample !== undefined ? `?sample=${opts.sample}` : ""}`,
     ),
   /** A rejection may carry a `note` the agent revises from. */
