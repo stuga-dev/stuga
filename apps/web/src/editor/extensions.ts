@@ -23,6 +23,7 @@ import { MermaidCodeBlock } from "./mermaid-code-block";
 import { GuardedTable } from "./guarded-table";
 import { FootnoteReferenceView } from "./footnote-node-view";
 import { FootnoteHide } from "./footnote-hide";
+import { CitationGlue } from "./citation-glue";
 import { ImageCaption } from "./image-caption";
 import { withImageSizeSync } from "./image-resize-sync";
 import { RunPreview } from "./run-preview/extension";
@@ -117,6 +118,7 @@ export function stugaEditorExtensions(deps: {
     FootnoteDefinition,
     MentionView,
     FootnoteHide,
+    CitationGlue,
     ImageCaption,
     RunPreview.configure({ ydoc: deps.ydoc }),
     // The block a citation or search hit landed on (see CitationJump).

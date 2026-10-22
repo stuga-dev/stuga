@@ -7,6 +7,7 @@ import MarkdownIt from "markdown-it";
 import { renderImageCaptions } from "../editor/image-caption-markdown";
 import { renderTextDirection } from "../editor/text-direction-markdown";
 import { renderTaskBoxes } from "../editor/task-list-markdown";
+import { glueCitations, type GluePiece } from "../editor/citation-glue-markdown";
 
 const md = new MarkdownIt({ html: false, linkify: true });
 renderImageCaptions(md);
@@ -18,14 +19,14 @@ const MARKER = /\[\^(\d+)\](?!:)/g;
 md.renderer.rules.text = (tokens, idx) => {
   const content = tokens[idx]!.content;
   if (!content.includes("[^")) return md.utils.escapeHtml(content);
-  let out = "";
+  const pieces: GluePiece[] = [];
   let last = 0;
   for (const m of content.matchAll(MARKER)) {
-    out += md.utils.escapeHtml(content.slice(last, m.index));
-    out += `<sup class="review-card-cite">${m[1]}</sup>`;
+    pieces.push(content.slice(last, m.index), { marker: `<sup class="review-card-cite">${m[1]}</sup>` });
     last = m.index + m[0].length;
   }
-  return out + md.utils.escapeHtml(content.slice(last));
+  pieces.push(content.slice(last));
+  return glueCitations(pieces, md.utils.escapeHtml);
 };
 
 export function renderCardMarkdown(markdown: string): string {

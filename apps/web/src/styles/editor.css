@@ -610,6 +610,12 @@ span.presence-badge { cursor: default; }
 
 /* Footnote definitions are hidden from the body and listed in Sources. */
 .stuga-editor .footnote-hidden { display: none; }
+/* A citation marker stays on the line of the word before it (citation-glue.ts): the spaces before it
+   keep their width but never wrap, and word joiners hold its edges to the text and punctuation around it. */
+.stuga-editor .citation-glue { white-space: pre; }
+.stuga-editor .citation-ref::before, .stuga-editor .citation-ref::after { content: "\2060"; content: "\2060" / ""; }
+/* The empty <img> ProseMirror puts between two inline atoms is a place a line may break; out of the flow it is not. */
+.stuga-editor img.ProseMirror-separator:not(:first-child):has(+ .citation-ref) { position: absolute; }
 /* Citation markers off: only the document's superscripts hide. */
 .doc-page[data-show-citations="false"] .stuga-editor .citation-ref { display: none; }
 .sources-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }

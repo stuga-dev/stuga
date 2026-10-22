@@ -183,6 +183,8 @@
 .ask-source-card__excerpt { font-size: var(--text-body-size); color: var(--color-text-secondary); font-style: italic; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .citation-ref { color: var(--color-accent); cursor: pointer; font-size: 0.7em; vertical-align: super; line-height: 0; padding: 0 0.05rem; user-select: none; }
 .citation-ref:hover { text-decoration: underline; }
+/* Rendered markdown's citation markers, held to the characters around them (citation-glue-markdown.ts). */
+.citation-glue { white-space: nowrap; }
 /* CitationPopover.tsx clamps the fixed card to the window with this width's half; change both together. */
 .citation-popover { position: fixed; transform: translateX(-50%); z-index: 200; width: 320px; max-width: 90vw; background: var(--color-background-surface); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: var(--shadow-med); padding: 0.7rem 0.8rem; font-size: 0.85rem; }
 .citation-popover__excerpt { margin: 0 0 0.5rem; padding: 0; padding-inline-start: 0.6rem; border-inline-start: 3px solid var(--color-accent); color: var(--color-text-primary); font-style: italic; max-height: 8rem; overflow-y: auto; }

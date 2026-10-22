@@ -7,6 +7,7 @@
 import MarkdownIt from "markdown-it";
 import { renderImageCaptions } from "../editor/image-caption-markdown";
 import { renderTextDirection } from "../editor/text-direction-markdown";
+import { glueCitations, type GluePiece } from "../editor/citation-glue-markdown";
 import { denseFootnoteMap } from "@stuga/crdt-ops";
 import type { AiCitation } from "@stuga/protocol/wire/doc-socket";
 import { t } from "../i18n/i18n";
@@ -47,7 +48,7 @@ function renderTextWithCitations(
   renumber?: Map<number, number>,
   pending?: boolean,
 ): string {
-  let out = "";
+  const pieces: GluePiece[] = [];
   let last = 0;
   CITE_MARKER.lastIndex = 0;
   let m: RegExpExecArray | null;
@@ -58,25 +59,25 @@ function renderTextWithCitations(
     const pendingHere = !cite && pending && footnote;
     if (!cite && !pendingHere) {
       if (footnote) {
-        out += md.utils.escapeHtml(content.slice(last, m.index).replace(/[ \t]+$/, ""));
+        pieces.push(content.slice(last, m.index).replace(/[ \t]+$/, ""));
         last = m.index + m[0].length;
       }
       continue;
     }
-    out += md.utils.escapeHtml(content.slice(last, m.index));
+    pieces.push(content.slice(last, m.index));
     const display = renumber?.get(raw) ?? raw;
     if (cite) {
       const title = escapeAttr(t("ai.citation.chipTitle", { title: cite.title }));
-      out += `<button class="citation-ref" data-cite-raw="${raw}" data-cite-display="${display}" title="${title}">[${display}]</button>`;
+      pieces.push({ marker: `<button class="citation-ref" data-cite-raw="${raw}" data-cite-display="${display}" title="${title}">[${display}]</button>` });
     } else {
       // No data-cite-raw, so the delegated click handler ignores it.
       const title = escapeAttr(t("ai.citation.pendingTitle"));
-      out += `<span class="citation-ref citation-ref--pending" title="${title}">[${display}]</span>`;
+      pieces.push({ marker: `<span class="citation-ref citation-ref--pending" title="${title}">[${display}]</span>` });
     }
     last = m.index + m[0].length;
   }
-  out += md.utils.escapeHtml(content.slice(last));
-  return out;
+  pieces.push(content.slice(last));
+  return glueCitations(pieces, md.utils.escapeHtml);
 }
 
 md.renderer.rules.text = (tokens, idx, _options, env) => {

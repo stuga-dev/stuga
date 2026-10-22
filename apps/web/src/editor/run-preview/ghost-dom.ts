@@ -13,6 +13,7 @@ import {
 import { RUN_FEEDBACK_NOTE_MAX_CHARS } from "@stuga/protocol/domain/limits";
 import { noteLabels } from "../../review/note-mode";
 import { isComposingKey } from "../../lib/ime";
+import { glueCitationSpaces } from "../citation-glue";
 import { t, type MessageKey } from "../../i18n/i18n";
 
 /** What a decision button, or a note's send button, does: each names its change in a sentence of its own. */
@@ -368,6 +369,7 @@ function appendBlocks(target: HTMLElement, replacement: PMNode[], colWidths: num
   if (shown.length === 0) return;
   const serializer = DOMSerializer.fromSchema(shown[0]!.type.schema);
   const fragment = serializer.serializeFragment(Fragment.fromArray(shown));
+  glueCitationSpaces(fragment);
   if (shown.every((n) => n.type.spec.tableRole === "row")) {
     const { host, mount } = tableShell(colWidths);
     mount.appendChild(fragment);
