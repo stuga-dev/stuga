@@ -132,5 +132,16 @@
   "versions.deleteHint": "Remove this version from the history",
   "versions.restore": "Restore this version",
   "versions.restoreHint": "Roll the document back to this version",
-  "versions.restoreNote": "Everyone editing sees this version. The current text is kept in Versions first."
+  "versions.restoreNote": "Everyone editing sees this version. The current text is kept in Versions first.",
+
+  "wiki.linkedFrom": "Linked from",
+  "wiki.linkedFromFirst": "The first {count, number} pages.",
+  "wiki.kind.link": "Links here",
+  "wiki.kind.citation": "Cites this page",
+  "wiki.kind.both": "Links here and cites this page",
+  "wiki.needsChecking": "Needs checking",
+  "wiki.changedSince": "{count, plural, one {A page it cites changed after it was approved:} other {# pages it cites changed after it was approved:}}",
+  "wiki.markChecked": "Mark as checked",
+  "wiki.markedChecked": "Marked as checked.",
+  "wiki.markFailed": "Couldn’t mark it as checked. Please try again."
 }

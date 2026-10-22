@@ -438,5 +438,7 @@
   "audit.agentTool.collectionsEdit": "コレクションを変更",
   "audit.agentTool.databasesAdd": "データベースに追加",
   "audit.agentTool.databasesChange": "データベースを変更",
-  "audit.agentTool.other": "エージェントツールを使用"
+  "audit.agentTool.other": "エージェントツールを使用",
+
+  "audit.action.docCheck": "ページを確認済みにしました"
 }

@@ -49,7 +49,7 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
 - **Claude’s tool prompt.** Claude asks before it first uses a tool, naming the tool by its English
   title: “Save to Stuga”, with “Always allow”. Both stay English, like other apps’ buttons, while the
   phrase a person says to their AI is translated (see Terms). The model is taught that phrase in every
-  language from `SAVE_TO_STUGA` and `ASK_STUGA` in `@stuga/protocol/domain/ui-languages`, which must
+  language from `SAVE_TO_STUGA`, `ASK_STUGA` and `CHECK_STUGA` in `@stuga/protocol/domain/ui-languages`, which must
   match the Terms rows (`phrases.test.ts` checks them).
 - **Quoting a name.** English `“{name}”` becomes zh-Hans `“{name}”`, zh-Hant `「{name}」`,
   ja `「{name}」`, ko `“{name}”`, de `„{name}“`, fr `« {name} »`, es `“{name}”` and
@@ -347,7 +347,19 @@ Languages: `zh-Hans` 简体中文 · `zh-Hant` 繁體中文 (Taiwan) · `ja` 日
 | config | 配置 | 設定檔 | 設定 | 구성 | Konfiguration | configuration | configuración | configuração | An agent’s config snippet. |
 | Save to Stuga | 存到 Stuga | 存到 Stuga | Stugaに保存 | Stuga에 저장 | In Stuga speichern | Enregistrer dans Stuga | Guardar en Stuga | Salvar no Stuga | What a person says to their AI. Keep “Stuga” as is. Claude’s own permission prompt shows the tool’s English title, which stays English (see Style). |
 | Ask Stuga | 问问 Stuga | 問問 Stuga | Stugaに聞く | Stuga에 물어보기 | Stuga fragen | Demander à Stuga | Preguntar a Stuga | Perguntar ao Stuga | What a person says to have their AI look in Stuga first. |
+| Check Stuga | 检查 Stuga | 檢查 Stuga | Stugaをチェック | Stuga 점검 | Stuga prüfen | Vérifier Stuga | Revisar Stuga | Verificar o Stuga | What a person says to have their AI look over the wiki for pages to fix. |
 | My notes | 我的笔记 | 我的筆記 | マイノート | 내 노트 | Meine Notizen | Mes notes | Mis notas | Minhas notas | A person’s own folder for what their AI saves, which only they read. Its title is written once, in the person’s language when it is made. |
+
+### Wiki
+
+| English | zh-Hans | zh-Hant | ja | ko | de | fr | es | pt-BR | Note |
+|---|---|---|---|---|---|---|---|---|---|
+| Wiki | Wiki | Wiki | Wiki | 위키 | Wiki | Wiki | Wiki | Wiki | The library's section for the generated pages below. |
+| Index | 目录 | 目錄 | 目次 | 목차 | Verzeichnis | Sommaire | Índice | Índice | Every page a reader can open, by folder. Not a search index. |
+| Log | 日志 | 日誌 | 履歴 | 기록 | Protokoll | Journal | Registro | Registro | The AI changes people approved and declined, newest first. |
+| Linked from | 链接到此页的页面 | 連結到此頁的頁面 | このページへのリンク元 | 이 페이지를 링크한 페이지 | Verlinkt von | Liens vers cette page | Enlazada desde | Links para esta página | The pages that link to or cite the one open. |
+| Needs checking | 需要核对 | 需要核對 | 要確認 | 확인 필요 | Zu prüfen | À vérifier | Por revisar | Precisa de verificação | A page it cites changed after it was approved. Not review of AI edits. |
+| Mark as checked | 标记为已核对 | 標示為已核對 | 確認済みにする | 확인 완료로 표시 | Als aktuell markieren | Marquer comme à jour | Marcar como al día | Marcar como em dia | Kept apart from Mark as reviewed, which is about AI edits. |
 
 ### Search
 

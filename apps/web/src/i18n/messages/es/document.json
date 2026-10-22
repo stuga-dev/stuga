@@ -132,5 +132,16 @@
   "versions.deleteHint": "Quitar esta versión del historial",
   "versions.restore": "Restaurar esta versión",
   "versions.restoreHint": "Devolver el documento a esta versión",
-  "versions.restoreNote": "Todos los que editan ven esta versión. Antes, el texto actual se guarda en Versiones."
+  "versions.restoreNote": "Todos los que editan ven esta versión. Antes, el texto actual se guarda en Versiones.",
+
+  "wiki.linkedFrom": "Enlazada desde",
+  "wiki.linkedFromFirst": "Las primeras {count, number} páginas.",
+  "wiki.kind.link": "Enlaza aquí",
+  "wiki.kind.citation": "Cita esta página",
+  "wiki.kind.both": "Enlaza aquí y cita esta página",
+  "wiki.needsChecking": "Por revisar",
+  "wiki.changedSince": "{count, plural, one {Una página que cita cambió después de aprobarse:} many {# páginas que cita cambiaron después de aprobarse:} other {# páginas que cita cambiaron después de aprobarse:}}",
+  "wiki.markChecked": "Marcar como al día",
+  "wiki.markedChecked": "Marcada como al día.",
+  "wiki.markFailed": "No se pudo marcar como al día. Inténtalo de nuevo."
 }

@@ -56,6 +56,8 @@ const ItemPage = lazy(() => import("./pages/ItemPage").then(({ ItemPage }) => ({
 const AskPage = lazy(() => import("./pages/AskPage"));
 const ReviewCardPage = lazy(() => import("./pages/ReviewCardPage"));
 const ChangeCardPage = lazy(() => import("./pages/ChangeCardPage"));
+const WikiIndexPage = lazy(() => import("./pages/WikiIndexPage"));
+const WikiLogPage = lazy(() => import("./pages/WikiLogPage"));
 
 /** Holds the whole shell until the caller's workspaces are known. */
 function WorkspaceLayout() {
@@ -164,6 +166,8 @@ function AppRoutes() {
           <Route path="/review" element={<ReviewPage />} />
           <Route path="/review/change/:changeId" element={<ChangeCardPage />} />
           <Route path="/review/:docId/:runId" element={<ReviewCardPage />} />
+          <Route path="/wiki" element={<WikiIndexPage />} />
+          <Route path="/wiki/log" element={<WikiLogPage />} />
           <Route path="/oauth/consent" element={<OAuthAuthorize />} />
         </Route>
         {/* Not under WorkspaceLayout: node settings need no workspace, and

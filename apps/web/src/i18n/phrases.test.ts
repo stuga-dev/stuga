@@ -1,7 +1,7 @@
 /** The phrases a person says to their AI, and the title of their own notes, as the glossary gives them. */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ASK_STUGA, MY_NOTES, SAVE_TO_STUGA, UI_LANGUAGES, type UiLanguage } from "@stuga/protocol/domain/ui-languages";
+import { ASK_STUGA, CHECK_STUGA, MY_NOTES, SAVE_TO_STUGA, UI_LANGUAGES, type UiLanguage } from "@stuga/protocol/domain/ui-languages";
 
 const glossary = readFileSync(new URL("./glossary.md", import.meta.url), "utf8");
 
@@ -17,6 +17,7 @@ describe("the glossary's Terms", () => {
   it.each([
     ["Save to Stuga", SAVE_TO_STUGA],
     ["Ask Stuga", ASK_STUGA],
+    ["Check Stuga", CHECK_STUGA],
     ["My notes", MY_NOTES],
   ] as const)("gives “%s” as the model is taught it", (english, phrases) => {
     expect(termRow(english)).toEqual(phrases);

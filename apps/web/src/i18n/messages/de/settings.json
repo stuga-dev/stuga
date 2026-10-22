@@ -438,5 +438,7 @@
   "audit.agentTool.collectionsEdit": "Eine Sammlung geändert",
   "audit.agentTool.databasesAdd": "Etwas zu einer Datenbank hinzugefügt",
   "audit.agentTool.databasesChange": "Eine Datenbank geändert",
-  "audit.agentTool.other": "Ein Agent-Werkzeug verwendet"
+  "audit.agentTool.other": "Ein Agent-Werkzeug verwendet",
+
+  "audit.action.docCheck": "Seite als aktuell markiert"
 }

@@ -132,5 +132,16 @@
   "versions.deleteHint": "從記錄中移除此版本",
   "versions.restore": "還原此版本",
   "versions.restoreHint": "將文件回復到此版本",
-  "versions.restoreNote": "所有正在編輯的人都會看到此版本。目前的文字會先保存在「版本」中。"
+  "versions.restoreNote": "所有正在編輯的人都會看到此版本。目前的文字會先保存在「版本」中。",
+
+  "wiki.linkedFrom": "連結到此頁的頁面",
+  "wiki.linkedFromFirst": "前 {count, number} 個頁面。",
+  "wiki.kind.link": "連結到此頁",
+  "wiki.kind.citation": "引用此頁",
+  "wiki.kind.both": "連結到並引用此頁",
+  "wiki.needsChecking": "需要核對",
+  "wiki.changedSince": "{count, plural, other {此頁引用的 # 個頁面在核准後有變更：}}",
+  "wiki.markChecked": "標示為已核對",
+  "wiki.markedChecked": "已標示為已核對。",
+  "wiki.markFailed": "無法標示為已核對。請再試一次。"
 }

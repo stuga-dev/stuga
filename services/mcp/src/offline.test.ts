@@ -12,6 +12,15 @@ describe("the offline catalog", () => {
     const { tools, prompts } = await offlineCatalog();
     expect(tools.map((t) => t.name)).toEqual([...TOOL_NAMES]);
     expect(prompts.map((p) => p.name)).toEqual([...PROMPT_NAMES]);
+    expect(prompts.map((p) => [p.name, p.title])).toEqual([
+      ["save", "Save to Stuga"],
+      ["ask", "Ask Stuga"],
+      ["check", "Check Stuga"],
+    ]);
+    // The check's actions come with the docs tool, which a node of this version offers.
+    const docs = tools.find((t) => t.name === "docs");
+    const docsActions = (docs?.inputSchema.properties ?? {}) as { action?: { enum?: string[] } };
+    expect(docsActions.action?.enum).toEqual(["list", "metadata", "index", "log", "lint"]);
     const remember = tools.find((t) => t.name === "remember");
     expect(remember?.title).toBe("Save to Stuga");
     expect(remember?.inputSchema.type).toBe("object");

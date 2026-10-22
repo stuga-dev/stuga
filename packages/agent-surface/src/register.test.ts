@@ -58,6 +58,9 @@ const METHODS = [
   "importRows",
   "query",
   "planRemember",
+  "wikiIndex",
+  "wikiLog",
+  "wikiLint",
 ] as const;
 
 /** A backend whose every method fails the test unless the case replaces it. */
@@ -130,14 +133,15 @@ describe("registerAgentTools", () => {
     expect(tools.find((t) => t.name === "remember")!.annotations).toMatchObject({ title: "Save to Stuga", readOnlyHint: false, destructiveHint: false });
   });
 
-  it("offers Save to Stuga and Ask Stuga as prompts, and a read-only credential only Ask Stuga", async () => {
+  it("offers Save to Stuga, Ask Stuga and Check Stuga as prompts, and a read-only credential the two that only read", async () => {
     const { client } = await connect(surface({}).s);
     expect((await client.listPrompts()).prompts.map((p) => [p.name, p.title])).toEqual([
       ["save", "Save to Stuga"],
       ["ask", "Ask Stuga"],
+      ["check", "Check Stuga"],
     ]);
     const readOnly = await connect(surface({}).s, true);
-    expect((await readOnly.client.listPrompts()).prompts.map((p) => p.name)).toEqual(["ask"]);
+    expect((await readOnly.client.listPrompts()).prompts.map((p) => p.name)).toEqual(["ask", "check"]);
   });
 
   it("gets each prompt as one line in the person's voice, naming Stuga", async () => {
@@ -155,6 +159,13 @@ describe("registerAgentTools", () => {
       "Ask Stuga what my team and I have recorded: say who wrote each point and when, and what still waits for approval. What is Acme's refund window?",
     );
     expect(await text("ask")).toBe("Ask Stuga what my team and I have recorded: say who wrote each point and when, and what still waits for approval.");
+    expect(await text("check")).toBe(
+      "Check Stuga: find the pages that need checking, the pages nothing links to and the broken links, and propose fixes for my approval.",
+    );
+    expect(await text("check", { scope: " the Policies folder " })).toBe(
+      "Check Stuga: find the pages that need checking, the pages nothing links to and the broken links, and propose fixes for my approval. the Policies folder",
+    );
+    await expect(client.getPrompt({ name: "check", arguments: { scope: "x".repeat(501) } })).rejects.toThrow();
     expect(await text("ask", { topic: "x".repeat(2_000) })).toContain("x".repeat(2_000));
     await expect(client.getPrompt({ name: "ask", arguments: { topic: "x".repeat(2_001) } })).rejects.toThrow();
     await expect(client.getPrompt({ name: "save", arguments: {} })).rejects.toThrow();
@@ -594,5 +605,100 @@ describe("search and retrieval across workspaces", () => {
     expect(await offCall("retrieve", { workspace_ids: ["ws1"], q: "x" })).toEqual({ text: `error: ${RETRIEVE_SEMANTIC_OFF_MESSAGE}`, isError: true });
     // Agent skills fall back to keyword search on this exact sentence.
     expect(RETRIEVE_SEMANTIC_OFF_MESSAGE).toMatch(/^Semantic search is off on this node\b/);
+  });
+});
+
+describe("the wiki through `docs`", () => {
+  const ref = (kind: "person" | "agent" | "coauthor", name: string) => ({ kind, name });
+
+  it("reads the Index by folder, naming agents by the person they worked for, and passes the folder on", async () => {
+    const wikiIndex = vi.fn(async () => ({
+      sections: [
+        {
+          folder_id: "f1",
+          path: ["Policies"],
+          pages: [
+            { doc_id: "d1", title: "Refunds", doc_type: "prose" as const, summary: "Refunds take 14 days.", changed_at: "2026-10-20T10:00:00.000Z", changed_by: [ref("agent", "Liv"), ref("person", "Sam")], needs_checking: true },
+          ],
+        },
+        { folder_id: null, path: [], elsewhere: true as const, pages: [] },
+      ],
+      truncated: true,
+    }));
+    const { call } = await single({ wikiIndex });
+    const out = JSON.parse((await call("docs", { ...W, action: "index", parent_id: "f1" })).text);
+    expect(wikiIndex).toHaveBeenCalledWith("f1");
+    expect(out.sections[0].pages[0]).toEqual({
+      doc_id: "d1",
+      title: "Refunds",
+      summary: "Refunds take 14 days.",
+      changed_at: "2026-10-20T10:00:00.000Z",
+      changed_by: ["Liv's agent", "Sam"],
+      needs_checking: true,
+      url: "https://stuga.test/doc/d1",
+    });
+    expect(out.sections[1]).toMatchObject({ elsewhere: true, note: expect.any(String) });
+    expect(out.truncated).toBe(true);
+    expect(out.note).toContain("parent_id");
+  });
+
+  it("reads the Log a page at a time, with a change's title only as the node gave it", async () => {
+    const wikiLog = vi.fn(async () => ({
+      entries: [
+        {
+          kind: "change" as const,
+          id: "chg_1",
+          title: null,
+          at: "2026-10-21T09:00:00.000Z",
+          outcome: "partly" as const,
+          asked_by: ref("person", "Liv"),
+          agent: { name: "Claude", alias: "agent-1", client: "claude-code", source: "connector" },
+          decided_by: [ref("person", "Sam")],
+          pages: [{ doc_id: "d1", title: "Refunds", doc_kind: "prose" as const, run_id: "run_1", approved: 2, declined: 1, applied: 0, reverted: false }],
+        },
+      ],
+      next: "1760000000000:chg_1",
+    }));
+    const { call } = await single({ wikiLog });
+    const out = JSON.parse((await call("docs", { ...W, action: "log", before: "1760000000001:run_9", limit: 5 })).text);
+    expect(wikiLog).toHaveBeenCalledWith("1760000000001:run_9", 5);
+    expect(out.entries[0]).toEqual({
+      kind: "change",
+      id: "chg_1",
+      at: "2026-10-21T09:00:00.000Z",
+      outcome: "partly",
+      asked_by: "Liv",
+      agent: "Claude",
+      decided_by: ["Sam"],
+      pages: [{ doc_id: "d1", title: "Refunds", approved: 2, declined: 1 }],
+    });
+    expect(out.next).toBe("1760000000000:chg_1");
+    await call("docs", { ...W, action: "log" });
+    expect(wikiLog).toHaveBeenLastCalledWith(undefined, 20);
+  });
+
+  it("checks the wiki and says to propose the fixes as one change, never to rewrite or mark anything", async () => {
+    const lint = {
+      needs_checking: [{ doc_id: "d1", title: "Support", path: [], sources: [{ doc_id: "d2", title: "Refunds", changed_at: "2026-10-21T00:00:00.000Z" }] }],
+      orphans: [{ doc_id: "d3", title: "Old notes", path: ["Team"] }],
+      broken_links: [{ doc_id: "d1", title: "Support", path: [], links: [{ href: "/doc/zz", kind: "link" as const, reason: "not_found" as const }] }],
+      truncated: false,
+    };
+    const wikiLint = vi.fn(async () => lint);
+    const { call } = await single({ wikiLint });
+    const out = JSON.parse((await call("docs", { ...W, action: "lint" })).text);
+    expect(wikiLint).toHaveBeenCalledWith(undefined);
+    expect(out).toMatchObject({ needs_checking: lint.needs_checking, orphans: lint.orphans, broken_links: lint.broken_links });
+    expect(out.next).toContain("ONE change");
+    expect(out.next).toContain("marks it checked");
+    // A link to a page the user cannot open reads as not_found: the agent asks before it changes one.
+    expect(out.next).toContain("`not_found` may name a page that is there and the user cannot open");
+    const quiet = await single({ wikiLint: vi.fn(async () => ({ needs_checking: [], orphans: [], broken_links: [], truncated: false })) });
+    expect(JSON.parse((await quiet.call("docs", { ...W, action: "lint" })).text).next).toBe("Nothing to fix in the pages the user can read.");
+  });
+
+  it("passes the node's refusal of a folder on as it is", async () => {
+    const { call } = await single({ wikiLint: vi.fn(async () => ({ error: "folder not found" })) });
+    expect((await call("docs", { ...W, action: "lint", parent_id: "nope" })).text).toBe("error: folder not found");
   });
 });

@@ -42,6 +42,7 @@ import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { readStored, writeStored } from "../lib/storage";
 import { DocStateChips } from "../library/DocStateChips";
 import { EndedBanner, TrashedBanner } from "../document/ItemStateBanner";
+import { LinkedFrom, NeedsCheckingBanner, useDocWikiLinks } from "../document/WikiLinks";
 import { useLockedTypingHint } from "../document/use-locked-typing-hint";
 import type { SyncEnding } from "../sync/stuga-provider";
 import { yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
@@ -223,6 +224,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
   }, [docId]);
 
   useRefreshAfterIndexing(docId, provider?.doc ?? null, applyRow);
+  const wiki = useDocWikiLinks(docId);
 
   /** Why syncing stopped for good, or null while it goes on. */
   const ended: SyncEnding | null =
@@ -369,6 +371,7 @@ export function DocPage({ doc }: { doc: DocSummary }) {
             />
           )
         )}
+        {!ended && wiki.links && <NeedsCheckingBanner docId={docId} links={wiki.links} onChange={wiki.set} />}
         <div className="doc-body">
           {showOutline && !isCompact && (
             <>
@@ -379,7 +382,10 @@ export function DocPage({ doc }: { doc: DocSummary }) {
           <div className="doc-main-wrap">
             <main className="doc-main" ref={mainRef}>
               {provider ? (
-                <Editor provider={provider} alias={alias} label={rawName} docId={docId} readOnly={editorReadOnly} hasSynced={hasSynced} autoFocus={autoFocus} />
+                <>
+                  <Editor provider={provider} alias={alias} label={rawName} docId={docId} readOnly={editorReadOnly} hasSynced={hasSynced} autoFocus={autoFocus} />
+                  {hasSynced && wiki.links && <LinkedFrom links={wiki.links} />}
+                </>
               ) : (
                 <VStack gap={2} hAlign="center" style={{ paddingTop: "18vh" }}>
                   <Spinner label={t("pages.doc.loading")} />

@@ -59,6 +59,7 @@ const ACTION_LABEL: Record<string, MessageKey> = {
   "database.propose": "settings.audit.action.databasePropose",
   "doc.agent_instructions": "settings.audit.action.docAgentInstructions",
   "doc.agent_mode": "settings.audit.action.docAgentMode",
+  "doc.check": "settings.audit.action.docCheck",
   "doc.create": "settings.audit.action.docCreate",
   "doc.delete": "settings.audit.action.docDelete",
   "doc.propose": "settings.audit.action.docPropose",

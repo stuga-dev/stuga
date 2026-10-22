@@ -335,5 +335,9 @@
   "collectionEditor.wholeFolder": "ganzer Ordner",
   "collectionEditor.folderCheckbox": "{name} (ganzer Ordner)",
   "collectionEditor.collapse": "Einklappen",
-  "collectionEditor.expand": "Ausklappen"
+  "collectionEditor.expand": "Ausklappen",
+
+  "nav.wiki": "Wiki",
+  "nav.index": "Verzeichnis",
+  "nav.log": "Protokoll"
 }

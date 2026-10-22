@@ -148,6 +148,15 @@ CREATE TABLE docs (
     search_format   TEXT,
     -- sha-256 of the last embedded text, so an unchanged flush skips the model call.
     embedding_hash  TEXT,
+    -- What the wiki reads of its approved text, as of the snapshot links_seq names (doc_links holds
+    -- its links then): the opening paragraph, plain and cut short, for the Index; the sha-256 of its
+    -- Markdown; and when that text last changed and who changed it, the editors of the snapshot that
+    -- changed it. A page citing it needs checking once text_changed_at passes the citation's checked_at.
+    summary         TEXT NOT NULL DEFAULT '',
+    text_hash       TEXT,
+    text_changed_at TIMESTAMPTZ,
+    text_changed_by TEXT[] NOT NULL DEFAULT '{}',
+    links_seq       BIGINT NOT NULL DEFAULT 0,
     -- Oldest snapshot seq still in the version ring. Only ever rises, so a
     -- retried job cannot reopen a pruned version. NULL = no ring published.
     version_floor   BIGINT,
@@ -274,6 +283,22 @@ CREATE TABLE doc_mentions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (doc_id, alias)
 );
+
+-- The pages a document's approved text links to, as of its last indexed snapshot: 'link' for a
+-- /doc/<id> link, 'citation' for a footnote that cites one. Never read past the reader's own access to
+-- both ends; a target may be gone, which makes the link broken. checked_at is when the passages
+-- holding it were last approved: when they last changed, or a person marked the page checked.
+CREATE TABLE doc_links (
+    doc_id        TEXT NOT NULL REFERENCES docs(doc_id) ON DELETE CASCADE,
+    workspace_id  TEXT NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+    target_doc_id TEXT NOT NULL,
+    kind          TEXT NOT NULL CHECK (kind IN ('link', 'citation')),
+    -- sha-256 of the passages holding it, so an edit elsewhere on the page leaves checked_at alone.
+    context_hash  TEXT NOT NULL,
+    checked_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (doc_id, target_doc_id, kind)
+);
+CREATE INDEX doc_links_target_idx ON doc_links (workspace_id, target_doc_id);
 
 CREATE TABLE favorites (
     user_alias TEXT NOT NULL,
@@ -991,6 +1016,8 @@ CREATE TABLE agent_runs (
     -- included: the actor refuses it, and so does this row.
     approved_by  TEXT[] NOT NULL DEFAULT '{}'
                  CONSTRAINT agent_runs_approved_by_check CHECK (NOT (reviewer = ANY (approved_by))),
+    -- Everyone who approved or declined any of its changes, at any level, in the order they first did.
+    decided_by   TEXT[] NOT NULL DEFAULT '{}',
     auto_applied BOOLEAN NOT NULL DEFAULT FALSE,
     reverted     BOOLEAN NOT NULL DEFAULT FALSE,
     acknowledged BOOLEAN NOT NULL DEFAULT FALSE,

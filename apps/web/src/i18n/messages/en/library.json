@@ -335,5 +335,9 @@
   "collectionEditor.wholeFolder": "whole folder",
   "collectionEditor.folderCheckbox": "{name} (whole folder)",
   "collectionEditor.collapse": "Collapse",
-  "collectionEditor.expand": "Expand"
+  "collectionEditor.expand": "Expand",
+
+  "nav.wiki": "Wiki",
+  "nav.index": "Index",
+  "nav.log": "Log"
 }

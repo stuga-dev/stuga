@@ -51,3 +51,4 @@ export { initSchema, readSchemaVersion, SCHEMA_VERSION, type MigrationOutcome } 
 export { SEARCH_LANGUAGES, type SearchLanguage } from "@stuga/protocol/domain/search-languages";
 export { listDocsToReindex, reindexDocVectors, searchFormat } from "./search-vectors.js";
 export { pgJobQueue, startJobWorker, type JobBatch, type JobMessage } from "./jobs.js";
+export * from "./wiki.js";

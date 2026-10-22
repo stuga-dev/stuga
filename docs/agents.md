@@ -974,10 +974,11 @@ memory.
   person the connection acts for, by their Stuga name and username, so an agent never names you by a
   name it guessed from a file path or an email address, and they tell it that what you say is saved
   without your name or a date.
-- **Prompts.** The connection offers two MCP prompts, which a client lists in its prompt menu:
-  **Save to Stuga** (`save`, with `text`) and **Ask Stuga** (`ask`, with an optional `topic` of up
-  to 2,000 characters). Each sends one line in your own words. A read-only connection is offered Ask
-  Stuga only, and no `remember`.
+- **Prompts.** The connection offers three MCP prompts, which a client lists in its prompt menu:
+  **Save to Stuga** (`save`, with `text`), **Ask Stuga** (`ask`, with an optional `topic` of up
+  to 2,000 characters) and **Check Stuga** (`check`, with an optional `scope` of up to 500
+  characters, [below](#check-the-wiki)). Each sends one line in your own words. A read-only
+  connection is offered Ask Stuga and Check Stuga, and no `remember`.
 - **Claude.** When Claude first asks to use **Save to Stuga**, choose **Always allow**, or it asks
   again every time.
 
@@ -994,6 +995,70 @@ A page or folder in My notes that anyone else can read, after you share it or a 
 at `review` (**Reviewed by whoever asked the AI**) at least for every agent, yours included: no agent
 changes a shared note unseen. `docs` action:metadata says so in its `review` reason.
 
+## The wiki
+
+Pages link to each other, and Stuga keeps track of it from what is approved.
+
+- **Links.** A link to a page (`[text](/doc/<id>)`, or the page's address at the node's own or
+  remote address, as copied from the browser) and a footnote that cites a page (what `cited_edits`
+  makes) are read from each page's approved text whenever it is saved: a change waiting for review
+  links nothing until it is approved. A link written in code is no link.
+- **Linked from.** Under its text, a page lists the pages you can open that link to it or cite it,
+  and `docs` action `metadata` names them as `linked_from`. A page you cannot open is neither named
+  nor counted, and neither is a [page a change holds](#new-pages-in-a-change) until it is approved.
+- **Needs checking.** A citation keeps when the passage citing the page was last approved: when it
+  last changed, or when someone marked the page checked. Once the cited page's approved text changes
+  after that, the citing page needs checking: it says so above its text, naming the pages that
+  changed, and so do the Index and `docs` action `metadata` (`needs_checking`). Someone who can edit
+  it marks it checked with **Mark as checked**, which no agent can do; an approved edit to the
+  passage that cites the page counts as well. Only the pages you can open count: a change to one you
+  cannot open marks nothing for you, and your mark covers only the pages you can open.
+
+### The Index and the Log
+
+Both are generated from what you can open; nothing writes to them, an agent included.
+
+- **The Index** (`/wiki`, **Wiki → Index** in the library) lists every page and database you can
+  open, by folder: the top level first, then each folder by its path, the pages shared with you
+  from a folder you cannot open under **Shared with you**, and your own My notes last. Each shows
+  its opening paragraph, when its approved text last changed and who changed it (a person by name,
+  an agent or the AI co-author by the person it worked for, an AI change approved by a person under
+  that person's name), and **Needs checking**. A row page is listed by its database. One Index lists
+  up to 1,000 pages; `?folder=<id>` shows one folder and what is under it. `docs` action `index`
+  answers the same, up to 300 pages, `parent_id` narrowing it to a folder, and leaves out pages
+  kept out of search, as an agent's search does.
+- **The Log** (`/wiki/log`, **Wiki → Log**) lists the AI changes people approved or declined, and
+  those applied directly, newest first, over the year the review inbox keeps them: each
+  [change](#changes-one-piece-of-work-reviewed-as-one) once, with the pages of it you can open, who
+  asked and through which AI, who approved or declined it, and when. A change's title shows to
+  whoever asked for it or decided some of it, as on its card. While a page of it you can open still
+  waits, it is in the review inbox instead. `docs` action `log` answers the same, a page at a time
+  (pass its `next` as `before`), with the title only of a change that agent made itself.
+
+### Check the wiki
+
+Say **Check Stuga** to your AI, or pick it from the prompt menu, and it looks over the wiki with
+`docs` action `lint`, for the workspace or one folder (`parent_id`). It finds:
+
+- **Pages that need checking**, each with the pages it cites that changed since.
+- **Orphans**: pages in a folder that no other page you can open links to or cites. A page at the
+  top level is where a reader starts, a row page is listed by its database, and My notes are yours,
+  so none of them counts.
+- **Broken links**: links and citations to a page in the trash (named, when you can open it), or to
+  one that is gone or that you cannot open, which it tells apart from nothing (`not_found`, no
+  title).
+
+The agent proposes each fix as a small edit, all of them in one change for your approval: it
+corrects the sentences a changed source makes untrue, citing the source again, links an orphan from
+the page a reader would look in, and repoints a link to a page in the trash. A link `not_found` may
+name a page someone else can open, so the agent asks you before it changes one. It never rewrites a
+page to fix it, and leaves marking a page checked to you. A read-only connection tells you what it
+would change.
+
+A citation names a page the caller can read in the workspace. `cited_edits` naming any other is
+refused whole with `citation_not_found`, the same answer for a page that is missing as for one out
+of reach, and nothing is proposed.
+
 ## The tools
 
 `/mcp` registers twenty tools from `@stuga/agent-surface`, and runs them in-process over the
@@ -1008,7 +1073,7 @@ the item's `agent_mode` decide what a call does.
 | Tool | Actions and use |
 |---|---|
 | `workspaces` | `list` · `instructions`. The workspaces this connection reaches and the node each is on ([above](#one-connection-and-which-node-a-call-lands-on)), whom the connection acts for (`user`), and one workspace's instructions for agents. |
-| `docs` | `list` · `metadata`. `list` takes an optional folder (`parent_id`, null for the root). `metadata` includes this agent's `review` answer for the document and its `instructions`. |
+| `docs` | `list` · `metadata` · `index` · `log` · `lint`. `list` takes an optional folder (`parent_id`, null for the root). `metadata` includes this agent's `review` answer for the document, its `instructions`, `linked_from` and `needs_checking`. `index`, `log` and `lint` read [the wiki](#the-wiki). |
 | `search` | Hybrid keyword and semantic search that returns documents, across `workspace_ids`, optionally within a collection. Each result says who last changed it and when, and what waits for approval ([Asking](#save-to-stuga-and-ask-stuga)). |
 | `markdown` | `read` · `status` · `provenance`. `read` lists the changes that wait for approval, then shows the document's instructions in a marked block, then the text with the waiting changes made through the connection laid over it. `status` reports what became of its edits. |
 | `comments` | A document's comments. An `author` of `panel:<alias>` is that person's [in-app co-author](#questions-in-comments), and the agent's own comments carry `you: true`. |
@@ -1027,7 +1092,7 @@ the item's `agent_mode` decide what a call does.
 | `remember` | Save to Stuga: where each of 1 to 20 points belongs ([above](#save-to-stuga-and-ask-stuga)). It writes no text, and makes the person's [My notes](#my-notes) the first time. | no | no |
 | `docs_create` | A document with a title, optionally in a folder. Returns its `instructions`, and its `change_id` when it is in a [change](#changes-one-piece-of-work-reviewed-as-one). | no | no |
 | `markdown_append` | Adds text at the end of a document, or under `heading`, and touches nothing else. Under a heading it goes at the end of that heading's own text: before its first subsection when it has any (so under a page's title heading, in the page's opening), and the answer says where it went and names the subsections; else at the end of its section. A heading the page lacks is refused with the headings it has, or, on a page with none, a note to put the heading in the text. | no | yes |
-| `markdown_edit` | `write` · `str_replace` · `cited_edits`. `write` replaces the whole document, `str_replace` swaps `find` for `replace` (one occurrence, or all with `replace_all`; `old_string` and `new_string` are the same), and `cited_edits` makes several exact edits at once with citations that become footnotes. | yes | yes |
+| `markdown_edit` | `write` · `str_replace` · `cited_edits`. `write` replaces the whole document, `str_replace` swaps `find` for `replace` (one occurrence, or all with `replace_all`; `old_string` and `new_string` are the same), and `cited_edits` makes several exact edits at once with citations that become footnotes, each of a page the caller can read (`citation_not_found` otherwise). | yes | yes |
 | `comments_add` | A comment on a document, a reply in a thread (`parent_num`), or a comment on a passage (`quote`, its exact text). It may mention at most 5 people, and those who can read the document are notified, as are the document's owner and, for a reply, the thread's people ([Agents in comment threads](#agents-in-comment-threads)). | no | no |
 | `media_upload` | `upload` · `upload_from_url` · `start_upload`. Stores an image or any other file with a document, or a file with a database: from base64 of up to 3 MB with its `name`, from a public URL the node downloads, or, after `start_upload`, from the `upload_url` the caller sends it to itself, by `upload_id`. A document gets the Markdown that places it, an image shown and any other file a link that downloads; a database gets the link for a `files` cell. | no | yes |
 | `collections_edit` | `create` · `rename` · `delete` · `add_items` · `remove_items`. `add_items` skips ids the credential cannot read and says how many. | yes | no |
@@ -1065,7 +1130,7 @@ for `import` and `upload` ([above](#the-stdio-server)).
 ### Read-only credentials
 
 A read-only key, or a connection given **Read only**, is offered the eleven reading tools and the
-Ask Stuga prompt, and nothing else. The server instructions say that it may change nothing, and to tell the user what it
+Ask Stuga and Check Stuga prompts, and nothing else. The server instructions say that it may change nothing, and to tell the user what it
 would change instead. `workspaces` action `list` reports `access: "read"`. A write tool it names
 anyway is unknown to it, and the node's own read-only check stands behind that. Ask over REST is a
 read too, and a read-only key keeps its own Ask threads ([api.md](api.md#read-only-keys)).

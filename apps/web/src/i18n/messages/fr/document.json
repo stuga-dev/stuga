@@ -132,5 +132,16 @@
   "versions.deleteHint": "Retirer cette version de l’historique",
   "versions.restore": "Restaurer cette version",
   "versions.restoreHint": "Ramener le document à cette version",
-  "versions.restoreNote": "Tous ceux qui modifient le document voient cette version. Le texte actuel est d’abord conservé dans Versions."
+  "versions.restoreNote": "Tous ceux qui modifient le document voient cette version. Le texte actuel est d’abord conservé dans Versions.",
+
+  "wiki.linkedFrom": "Liens vers cette page",
+  "wiki.linkedFromFirst": "Les {count, number} premières pages.",
+  "wiki.kind.link": "Renvoie ici",
+  "wiki.kind.citation": "Cite cette page",
+  "wiki.kind.both": "Renvoie ici et cite cette page",
+  "wiki.needsChecking": "À vérifier",
+  "wiki.changedSince": "{count, plural, one {Une page qu’elle cite a changé après son approbation :} many {# pages qu’elle cite ont changé après son approbation :} other {# pages qu’elle cite ont changé après son approbation :}}",
+  "wiki.markChecked": "Marquer comme à jour",
+  "wiki.markedChecked": "Marquée comme à jour.",
+  "wiki.markFailed": "Impossible de la marquer comme à jour. Veuillez réessayer."
 }

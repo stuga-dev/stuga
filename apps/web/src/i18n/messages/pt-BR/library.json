@@ -335,5 +335,9 @@
   "collectionEditor.wholeFolder": "pasta inteira",
   "collectionEditor.folderCheckbox": "{name} (pasta inteira)",
   "collectionEditor.collapse": "Recolher",
-  "collectionEditor.expand": "Expandir"
+  "collectionEditor.expand": "Expandir",
+
+  "nav.wiki": "Wiki",
+  "nav.index": "Índice",
+  "nav.log": "Registro"
 }

@@ -109,7 +109,7 @@ describe("the /mcp contract", () => {
     );
     expect(surface).toEqual({
       workspaces: { arguments: ["action", "workspace_id"], actions: ["list", "instructions"] },
-      docs: { arguments: ["action", "doc_id", "parent_id", "workspace_id"], actions: ["list", "metadata"] },
+      docs: { arguments: ["action", "before", "doc_id", "limit", "parent_id", "workspace_id"], actions: ["list", "metadata", "index", "log", "lint"] },
       search: { arguments: ["collection_id", "limit", "q", "query", "workspace_ids"], actions: null },
       markdown: { arguments: ["action", "doc_id", "workspace_id"], actions: ["read", "status", "provenance"] },
       comments: { arguments: ["doc_id", "workspace_id"], actions: null },

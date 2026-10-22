@@ -8,7 +8,8 @@ import { type NotificationPayload, type SinkIo, deliver } from "./sinks.js";
 export type JobsEnv = Pick<
   NodeEnv,
   "sql" | "snapshots" | "media" | "jobs" | "docs" | "databases" | "aiSettings" | "settings" | "searchLanguages" | "publicOrigin" | "embeddingDims"
->;
+> &
+  Partial<Pick<NodeEnv, "remote">>;
 
 export interface JobDeps {
   db: JobsDb;

@@ -44,18 +44,19 @@ const ROUTING =
   "with `search` or `docs` action:list; use `retrieve` for answers from content. They need not name MCP.\n\n";
 
 /**
- * Right after the routing rule: the two phrases a person says to their AI, which a host's own memory
- * would otherwise answer. A read-only connection is offered no save.
+ * Right after the routing rule: the phrases a person says to their AI, which a host's own memory
+ * would otherwise answer. A read-only connection is offered no save, and proposes no fix.
  */
 function phrases(readOnly: boolean): string {
   const ask =
     '"Ask Stuga", or a question about what the user or their team decided, recorded or know, means `retrieve` or ' +
     "`search` here first, citing who wrote it and when; answer with the approved text, and say what still waits for " +
     "approval.";
+  const check = '"Check Stuga" means `docs` action:lint, then ';
   return readOnly
-    ? `ASK: ${ask}\n\n`
-    : 'SAVE AND ASK: "Save to Stuga" (in any language, or "remember this in Stuga") means `remember`, then writing ' +
-        `where it says; ${ask}\n\n`;
+    ? `ASK: ${ask} ${check}telling the user what each fix would be.\n\n`
+    : 'SAVE, ASK AND CHECK: "Save to Stuga" (in any language, or "remember this in Stuga") means `remember`, then writing ' +
+        `where it says; ${ask} ${check}proposing its fixes as one change for approval.\n\n`;
 }
 
 /**

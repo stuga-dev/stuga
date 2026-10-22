@@ -132,5 +132,16 @@
   "versions.deleteHint": "기록에서 이 버전 제거",
   "versions.restore": "이 버전 복원",
   "versions.restoreHint": "문서를 이 버전으로 되돌리기",
-  "versions.restoreNote": "편집 중인 모든 사람에게 이 버전이 표시돼요. 현재 텍스트는 먼저 버전에 보관돼요."
+  "versions.restoreNote": "편집 중인 모든 사람에게 이 버전이 표시돼요. 현재 텍스트는 먼저 버전에 보관돼요.",
+
+  "wiki.linkedFrom": "이 페이지를 링크한 페이지",
+  "wiki.linkedFromFirst": "처음 {count, number}개 페이지예요.",
+  "wiki.kind.link": "여기로 링크함",
+  "wiki.kind.citation": "이 페이지를 인용함",
+  "wiki.kind.both": "여기로 링크하고 이 페이지를 인용함",
+  "wiki.needsChecking": "확인 필요",
+  "wiki.changedSince": "{count, plural, other {인용한 페이지 #개가 승인 뒤에 바뀌었어요:}}",
+  "wiki.markChecked": "확인 완료로 표시",
+  "wiki.markedChecked": "확인 완료로 표시했어요.",
+  "wiki.markFailed": "확인 완료로 표시하지 못했어요. 다시 시도해 주세요."
 }

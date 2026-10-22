@@ -335,5 +335,9 @@
   "collectionEditor.wholeFolder": "폴더 전체",
   "collectionEditor.folderCheckbox": "{name} (폴더 전체)",
   "collectionEditor.collapse": "접기",
-  "collectionEditor.expand": "펼치기"
+  "collectionEditor.expand": "펼치기",
+
+  "nav.wiki": "위키",
+  "nav.index": "목차",
+  "nav.log": "기록"
 }

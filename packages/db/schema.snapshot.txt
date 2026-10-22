@@ -16,6 +16,7 @@ TABLE agent_runs
   client text
   conflicts integer NOT NULL DEFAULT 0
   created_at timestamp with time zone NOT NULL
+  decided_by ARRAY NOT NULL DEFAULT '{}'::text[]
   doc_id text NOT NULL
   doc_kind text NOT NULL
   doc_title text NOT NULL DEFAULT ''::text
@@ -203,6 +204,20 @@ TABLE doc_chunks
   INDEX doc_chunks_vec_hnsw CREATE INDEX doc_chunks_vec_hnsw ON public.doc_chunks USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='200')
   INDEX doc_chunks_ws_idx CREATE INDEX doc_chunks_ws_idx ON public.doc_chunks USING btree (workspace_id)
 
+TABLE doc_links
+  checked_at timestamp with time zone NOT NULL DEFAULT now()
+  context_hash text NOT NULL
+  doc_id text NOT NULL
+  kind text NOT NULL
+  target_doc_id text NOT NULL
+  workspace_id text NOT NULL
+  CONSTRAINT doc_links_doc_id_fkey FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
+  CONSTRAINT doc_links_kind_check CHECK ((kind = ANY (ARRAY['link'::text, 'citation'::text])))
+  CONSTRAINT doc_links_pkey PRIMARY KEY (doc_id, target_doc_id, kind)
+  CONSTRAINT doc_links_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id) ON DELETE CASCADE
+  INDEX doc_links_pkey CREATE UNIQUE INDEX doc_links_pkey ON public.doc_links USING btree (doc_id, target_doc_id, kind)
+  INDEX doc_links_target_idx CREATE INDEX doc_links_target_idx ON public.doc_links USING btree (workspace_id, target_doc_id)
+
 TABLE doc_mentions
   alias text NOT NULL
   created_at timestamp with time zone NOT NULL DEFAULT now()
@@ -223,6 +238,7 @@ TABLE docs
   doc_type text NOT NULL DEFAULT 'prose'::text
   embedding_hash text
   inherits_perms boolean NOT NULL DEFAULT true
+  links_seq bigint NOT NULL DEFAULT 0
   locked boolean NOT NULL DEFAULT false
   locked_at timestamp with time zone
   locked_by text
@@ -237,6 +253,10 @@ TABLE docs
   search_text text NOT NULL DEFAULT ''::text
   search_tsv tsvector NOT NULL DEFAULT ''::tsvector
   snapshot_seq bigint NOT NULL DEFAULT 0
+  summary text NOT NULL DEFAULT ''::text
+  text_changed_at timestamp with time zone
+  text_changed_by ARRAY NOT NULL DEFAULT '{}'::text[]
+  text_hash text
   title text NOT NULL DEFAULT ''::text
   title_dl integer NOT NULL DEFAULT 0
   title_source text NOT NULL DEFAULT 'heading'::text

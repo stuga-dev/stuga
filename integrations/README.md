@@ -29,6 +29,7 @@ Then ask, for example:
 
 - "Save to Stuga: refunds over 500 euros need finance approval."
 - "Ask Stuga what we decided about the pricing change."
+- "Check Stuga for pages that need updating."
 - "What does our onboarding doc in Stuga say about laptops?"
 - "Add a row for Acme to the Leads table in Stuga."
 

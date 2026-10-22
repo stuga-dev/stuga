@@ -438,5 +438,7 @@
   "audit.agentTool.collectionsEdit": "Changed a collection",
   "audit.agentTool.databasesAdd": "Added to a database",
   "audit.agentTool.databasesChange": "Changed a database",
-  "audit.agentTool.other": "Used an agent tool"
+  "audit.agentTool.other": "Used an agent tool",
+
+  "audit.action.docCheck": "Page marked as checked"
 }

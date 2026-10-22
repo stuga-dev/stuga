@@ -7,6 +7,7 @@
  */
 import { SAMPLE_AGENT_ALIAS, SAMPLE_AGENT_NAME } from "@stuga/protocol/domain/workspaces";
 import type { ReviewMode } from "@stuga/protocol/domain/events";
+import type { AuthorRef } from "@stuga/protocol/domain/wiki";
 import { docCols, docLevelJoins } from "./sql.js";
 import type { Queryable } from "./sql.js";
 import type { DocRow } from "./types.js";
@@ -49,12 +50,12 @@ const cut = (name: string): string => ([...name].length > NAME_MAX ? `${[...name
 const COAUTHOR_PREFIX = "panel:";
 
 /**
- * Each author alias a version records, as an agent's answer names it: a person by name; an agent's
- * principal, or a co-author, by the person it worked for. An alias it cannot name (a former member,
- * an agent's own label from before versions recorded its principal) is left out.
+ * Each author alias a version or a run records, named as AuthorRef says. An alias it cannot name (a
+ * former member, an agent's own label from before versions recorded its principal, a restore's or an
+ * import's marker) is left out.
  */
-async function authorNames(sql: Queryable, aliases: readonly string[]): Promise<Map<string, { kind: "person" | "agent"; name: string }>> {
-  const out = new Map<string, { kind: "person" | "agent"; name: string }>();
+export async function authorRefs(sql: Queryable, aliases: readonly string[]): Promise<Map<string, AuthorRef>> {
+  const out = new Map<string, AuthorRef>();
   if (aliases.length === 0) return out;
   const agents = aliases.filter((a) => a.startsWith("agent-") && a !== SAMPLE_AGENT_ALIAS);
   // An agent acts for the person who made its key or signed it in, whatever name its client gave it.
@@ -82,21 +83,31 @@ async function authorNames(sql: Queryable, aliases: readonly string[]): Promise<
   }
   for (const alias of aliases) {
     if (alias === SAMPLE_AGENT_ALIAS) {
-      out.set(alias, { kind: "agent", name: SAMPLE_AGENT_NAME });
+      out.set(alias, { kind: "sample", name: SAMPLE_AGENT_NAME });
       continue;
     }
-    const person = alias.startsWith(COAUTHOR_PREFIX)
-      ? names.get(alias.slice(COAUTHOR_PREFIX.length))
-      : alias.startsWith("agent-")
-        ? names.get(owners.get(alias) ?? "")
-        : names.get(alias);
-    if (person === undefined) continue;
-    if (alias.startsWith(COAUTHOR_PREFIX)) out.set(alias, { kind: "agent", name: `${person}'s AI co-author` });
-    else if (alias.startsWith("agent-")) out.set(alias, { kind: "agent", name: `${person}'s agent` });
-    else out.set(alias, { kind: "person", name: person });
+    const kind: Exclude<AuthorRef["kind"], "sample"> = alias.startsWith(COAUTHOR_PREFIX) ? "coauthor" : alias.startsWith("agent-") ? "agent" : "person";
+    const person =
+      kind === "coauthor" ? names.get(alias.slice(COAUTHOR_PREFIX.length)) : kind === "agent" ? names.get(owners.get(alias) ?? "") : names.get(alias);
+    if (person !== undefined) out.set(alias, { kind, name: person });
   }
   return out;
 }
+
+/** An author as an agent's answer names one: a person by name, an agent as "Liv's agent". */
+export function authorLabel(ref: AuthorRef): { kind: "person" | "agent"; name: string } {
+  if (ref.kind === "person") return { kind: "person", name: ref.name };
+  if (ref.kind === "sample") return { kind: "agent", name: ref.name };
+  return { kind: "agent", name: ref.kind === "coauthor" ? `${ref.name}'s AI co-author` : `${ref.name}'s agent` };
+}
+
+/** Each author alias a version records, as an agent's answer names it. */
+async function authorNames(sql: Queryable, aliases: readonly string[]): Promise<Map<string, { kind: "person" | "agent"; name: string }>> {
+  const refs = await authorRefs(sql, aliases);
+  return new Map([...refs].map(([alias, ref]) => [alias, authorLabel(ref)]));
+}
+
+export type { AuthorRef };
 
 /** The runs of each of `docIds` whose changes wait for a decision, oldest first. */
 export async function waitingRuns(sql: Queryable, workspaceId: string, docIds: readonly string[]): Promise<Map<string, WaitingRun[]>> {

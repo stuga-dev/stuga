@@ -32,6 +32,7 @@ function fakeDb(overrides: Partial<JobsDb> = {}): JobsDb {
     uiLanguage: vi.fn(async () => ({ chosen: null, detected: null }) as { chosen: string | null; detected: string | null } | null),
     displayNameOf: vi.fn(async () => null),
     syncDocMentions: vi.fn(async () => []),
+    syncDocWiki: vi.fn(async () => true),
     mentionReaders: vi.fn(async (_doc: unknown, aliases: string[]) => aliases),
     findChunksMissingEmbeddings: vi.fn(async () => []),
     setChunkEmbedding: vi.fn(async () => {}),
@@ -937,5 +938,51 @@ describe("index_doc: mentions", () => {
     vi.mocked(db.syncDocMentions).mockRejectedValueOnce(new Error("db down"));
     await dispatchJob(env, msg(["alice"]), { db, log: silentLog });
     expect(db.clearDocChunks).toHaveBeenCalled();
+  });
+});
+
+describe("index_doc: the wiki's links and summary", () => {
+  function snapshotStore(key: string, markdown: string): BlobStore {
+    const doc = new Y.Doc();
+    applyMarkdownToYXmlFragment(doc.getXmlFragment("default"), markdown);
+    const bytes = Y.encodeStateAsUpdate(doc);
+    return {
+      get: async (k: string) => (k === key ? ({ arrayBuffer: async () => bytes.buffer } as unknown as Blob) : null),
+      head: async () => null,
+      put: async () => {},
+      delete: async () => {},
+      list: async () => ({ objects: [], truncated: false }),
+    } as unknown as BlobStore;
+  }
+
+  const BODY =
+    "# Support\n\nRefunds follow [the policy](/doc/policy) and take 14 days [^1].\n\nSee [Support](/doc/d1) too, and [the desk](http://localhost:8787/doc/desk).\n\n" +
+    "[^1]: [Refund policy](/doc/policy) \"14 days\"\n";
+  const doc = (over: Record<string, unknown> = {}) =>
+    ({ doc_id: "d1", workspace_id: "ws1", title: "Support", title_source: "heading", search_hidden: true, trashed: false, snapshot_seq: 2, acl_principals: ["org:ws1"], ...over }) as never;
+
+  it("keeps each link and citation with its passages' hash, the summary and the people who made the snapshot, a search-hidden page too", async () => {
+    const db = fakeDb({ getDoc: vi.fn(async () => doc()) });
+    const env = fakeEnv({ snapshots: snapshotStore("d1/3.bin", BODY) });
+    await dispatchJob(env, { kind: "index_doc", docId: "d1", snapshotSeq: 3, title: "Support", authors: ["u_liv", "restore:v2", "agent-x", "u_liv"] }, { db, log: silentLog });
+    const sync = vi.mocked(db.syncDocWiki).mock.calls[0]![0];
+    expect(sync).toMatchObject({ docId: "d1", seq: 3, summary: "Refunds follow the policy and take 14 days.", editors: ["u_liv", "agent-x"] });
+    expect(sync.textHash).toMatch(/^[0-9a-f]{64}$/);
+    // The page's link to itself is the store's to drop; both kinds of the policy stay apart.
+    // A page's address at the node's own origin names it as an in-app link does.
+    expect(sync.links.map((l) => [l.target, l.kind])).toEqual([
+      ["policy", "link"],
+      ["d1", "link"],
+      ["desk", "link"],
+      ["policy", "citation"],
+    ]);
+    for (const l of sync.links) expect(l.contextHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("leaves the links of a later snapshot alone", async () => {
+    const db = fakeDb({ getDoc: vi.fn(async () => doc({ snapshot_seq: 4 })) });
+    const env = fakeEnv({ snapshots: snapshotStore("d1/3.bin", BODY) });
+    await dispatchJob(env, { kind: "index_doc", docId: "d1", snapshotSeq: 3, title: "Support", authors: ["u_liv"] }, { db, log: silentLog });
+    expect(db.syncDocWiki).not.toHaveBeenCalled();
   });
 });

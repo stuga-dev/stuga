@@ -169,7 +169,22 @@ describe("review policy in the database actor", () => {
     await doJson(actor, "/runs/decide", { actor: HUMAN, run_id: out.run.id, decision: "accept", decided_by: "user:bo", level: "colleague", approver: true });
     expect(await total(actor, starter.table_id)).toBe(1);
     const mirror = sent.filter((m) => m.kind === "run_index").at(-1) as Extract<IndexMessage, { kind: "run_index" }>;
-    expect(mirror.run).toMatchObject({ reviewMode: "colleague", approvedBy: ["user:bo"] });
+    expect(mirror.run).toMatchObject({ reviewMode: "colleague", approvedBy: ["user:bo"], decidedBy: ["user:bo"] });
+  });
+
+  it("names in its mirror who decided its ops at any level, and nobody for what applied at once", async () => {
+    const h = makeState();
+    const sent = h.jobs.sent;
+    const { actor } = makeActor(h);
+    const starter = await initStarter(actor);
+    const mirror = (runId: string) =>
+      (sent.filter((m) => m.kind === "run_index") as Array<Extract<IndexMessage, { kind: "run_index" }>>).filter((m) => m.run.runId === runId).at(-1)!.run;
+    const reviewed = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "x" }] }, { review: "review" });
+    await doJson(actor, "/runs/decide", { actor: HUMAN, run_id: reviewed.run.id, decision: "reject", decided_by: HUMAN.alias, level: "review" });
+    expect(mirror(reviewed.run.id)).toMatchObject({ decidedBy: [HUMAN.alias], approvedBy: [] });
+    const auto = await propose(actor, { kind: "rows.insert", table: starter.table_id, rows: [{ Name: "y" }] }, { review: "auto" });
+    expect(auto.mode).toBe("applied");
+    expect(mirror(auto.run.id).decidedBy).toEqual([]);
   });
 
   it("decides at the stricter of the run's level and the database's now", async () => {

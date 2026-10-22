@@ -225,6 +225,15 @@ export function runIndexEntry(sql: SqlHandle, run: RunRow, databaseId: string): 
     .exec(`SELECT DISTINCT decided_by FROM _run_ops WHERE run_id = ? AND status = 'accepted' AND decided_level = 'colleague' ORDER BY decided_by`, run.run_id)
     .toArray()
     .map((r) => String(r.decided_by));
+  // Whoever approved or declined an op, at any level, in the order they first did; an op applied at once names no one.
+  const decidedBy = sql
+    .exec(
+      `SELECT decided_by FROM _run_ops WHERE run_id = ? AND status IN ('accepted', 'rejected', 'conflict') AND decided_by IS NOT NULL
+       AND decided_by NOT LIKE 'policy:%' GROUP BY decided_by ORDER BY min(rowid)`,
+      run.run_id,
+    )
+    .toArray()
+    .map((r) => String(r.decided_by));
   return {
     runId: run.run_id,
     workspaceId: run.workspace_id,
@@ -241,6 +250,7 @@ export function runIndexEntry(sql: SqlHandle, run: RunRow, databaseId: string): 
     reviewMode: run.review_mode,
     approverGroup: run.approver_group,
     approvedBy,
+    decidedBy,
     changeId: run.change_id,
     queuedBehind: run.queued_behind,
     autoApplied: run.auto_applied,

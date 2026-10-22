@@ -319,5 +319,9 @@
   "collectionEditor.wholeFolder": "carpeta entera",
   "collectionEditor.folderCheckbox": "{name} (carpeta entera)",
   "collectionEditor.collapse": "Contraer",
-  "collectionEditor.expand": "Expandir"
+  "collectionEditor.expand": "Expandir",
+
+  "nav.wiki": "Wiki",
+  "nav.index": "Índice",
+  "nav.log": "Registro"
 }

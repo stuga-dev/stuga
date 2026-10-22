@@ -319,5 +319,9 @@
   "collectionEditor.wholeFolder": "フォルダー全体",
   "collectionEditor.folderCheckbox": "{name}（フォルダー全体）",
   "collectionEditor.collapse": "折りたたむ",
-  "collectionEditor.expand": "展開"
+  "collectionEditor.expand": "展開",
+
+  "nav.wiki": "Wiki",
+  "nav.index": "目次",
+  "nav.log": "履歴"
 }

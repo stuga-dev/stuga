@@ -438,5 +438,7 @@
   "audit.agentTool.collectionsEdit": "A modifié une collection",
   "audit.agentTool.databasesAdd": "A ajouté du contenu à une base de données",
   "audit.agentTool.databasesChange": "A modifié une base de données",
-  "audit.agentTool.other": "A utilisé un outil d’agent"
+  "audit.agentTool.other": "A utilisé un outil d’agent",
+
+  "audit.action.docCheck": "Page marquée comme à jour"
 }

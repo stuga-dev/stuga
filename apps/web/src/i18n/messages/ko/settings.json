@@ -438,5 +438,7 @@
   "audit.agentTool.collectionsEdit": "컬렉션 변경",
   "audit.agentTool.databasesAdd": "데이터베이스에 추가",
   "audit.agentTool.databasesChange": "데이터베이스 변경",
-  "audit.agentTool.other": "에이전트 도구 사용"
+  "audit.agentTool.other": "에이전트 도구 사용",
+
+  "audit.action.docCheck": "페이지를 확인 완료로 표시함"
 }

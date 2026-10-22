@@ -335,5 +335,9 @@
   "collectionEditor.wholeFolder": "整個資料夾",
   "collectionEditor.folderCheckbox": "{name}（整個資料夾）",
   "collectionEditor.collapse": "收合",
-  "collectionEditor.expand": "展開"
+  "collectionEditor.expand": "展開",
+
+  "nav.wiki": "Wiki",
+  "nav.index": "目錄",
+  "nav.log": "日誌"
 }

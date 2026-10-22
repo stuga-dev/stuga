@@ -1,7 +1,7 @@
 /** Indexing a document after its actor flushed. */
 import { EMBED_BATCH, chunkEmbedInput, headingAwareChunk } from "@stuga/ai";
 import { sha256Hex, principalId } from "@stuga/auth";
-import { charChangeCounts, yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
+import { charChangeCounts, wikiText, yXmlFragmentToMarkdown } from "@stuga/crdt-ops";
 import type { ChunkInput } from "@stuga/db";
 import { snapshotKey } from "@stuga/protocol/domain/limits";
 import { MAX_MENTIONS, markdownMentionAliases, mentionHref } from "@stuga/protocol/domain/mentions";
@@ -93,6 +93,27 @@ async function notifyNewMentions(
   }
 }
 
+/** Who made a snapshot, as the wiki names them: a restore's, a recovery's or an import's marker names no one. */
+const EDITOR_MARKER = /^(restore|system|imported):/;
+
+/**
+ * Bring the page's summary and links in step with this snapshot of its approved text: each link with
+ * the passages that hold it, so an edit elsewhere on the page leaves when it was approved alone.
+ */
+async function syncWiki(env: JobsEnv, deps: JobDeps, docId: string, seq: number, markdown: string, editors: string[]): Promise<void> {
+  // A page's address copied from the browser names it too: at the node's own address, or its remote one.
+  const remote = env.remote?.current().origin;
+  const { links, summary } = wikiText(markdown, { origins: remote ? [env.publicOrigin, remote] : [env.publicOrigin] });
+  await deps.db.syncDocWiki({
+    docId,
+    seq,
+    textHash: sha256Hex(markdown),
+    summary,
+    editors: [...new Set(editors.filter((a) => !EDITOR_MARKER.test(a)))],
+    links: links.map((l) => ({ target: l.target, kind: l.kind, contextHash: sha256Hex(l.passages.join("\n")) })),
+  });
+}
+
 /**
  * A database's search text: what its cells say, read from its actor, so the
  * workspace search finds a table by an order number or a product name. Kept to
@@ -152,11 +173,13 @@ export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocM
   // carries no `authors` (its flush took them): when it overtakes that flush's job, the version's stand in.
   const editors = msg.authors?.length ? msg.authors : ((msg.recordVersion && msg.versionAuthors) || []);
 
-  // Before the search-hidden and unchanged-text exits: neither says anything about who is mentioned.
+  // Before the search-hidden and unchanged-text exits: neither says anything about who is mentioned,
+  // nor about what the page links to.
   if (snapshotMarkdown !== null) {
     await notifyNewMentions(env, deps, doc, editors, snapshotMarkdown, title).catch((err: unknown) =>
       log.warn("mention notifications failed", { docId: msg.docId, err: String(err) }),
     );
+    await syncWiki(env, deps, msg.docId, snapshotSeq, snapshotMarkdown, editors);
   }
 
   // Both exits below skip indexDoc, yet the row's seq must keep up with the actor's head (the

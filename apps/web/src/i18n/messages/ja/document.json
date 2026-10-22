@@ -132,5 +132,16 @@
   "versions.deleteHint": "このバージョンを履歴から削除",
   "versions.restore": "このバージョンを復元",
   "versions.restoreHint": "ドキュメントをこのバージョンに戻す",
-  "versions.restoreNote": "編集中の全員にこのバージョンが表示されます。現在のテキストは先にバージョンに保存されます。"
+  "versions.restoreNote": "編集中の全員にこのバージョンが表示されます。現在のテキストは先にバージョンに保存されます。",
+
+  "wiki.linkedFrom": "このページへのリンク元",
+  "wiki.linkedFromFirst": "最初の{count, number}ページです。",
+  "wiki.kind.link": "ここにリンク",
+  "wiki.kind.citation": "このページを引用",
+  "wiki.kind.both": "ここにリンクし、このページを引用",
+  "wiki.needsChecking": "要確認",
+  "wiki.changedSince": "{count, plural, other {引用している#件のページが、承認後に変更されました：}}",
+  "wiki.markChecked": "確認済みにする",
+  "wiki.markedChecked": "確認済みにしました。",
+  "wiki.markFailed": "確認済みにできませんでした。もう一度お試しください。"
 }

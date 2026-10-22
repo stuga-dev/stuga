@@ -47,7 +47,7 @@ describe("bundleManifest", () => {
     for (const tool of tools) expect(tool.description, tool.name).toBeTruthy();
   });
 
-  it("lists Save to Stuga and Ask Stuga as prompts, each its words with the person's in their place", () => {
+  it("lists Save to Stuga, Ask Stuga and Check Stuga as prompts, each its words with the person's in their place", () => {
     expect(bundleManifest(CFG).prompts).toEqual([
       { name: "save", description: expect.any(String), arguments: ["text"], text: "Save to Stuga: ${arguments.text}" },
       {
@@ -56,17 +56,25 @@ describe("bundleManifest", () => {
         arguments: ["topic"],
         text: "Ask Stuga what my team and I have recorded: say who wrote each point and when, and what still waits for approval. ${arguments.topic}",
       },
+      {
+        name: "check",
+        description: expect.any(String),
+        arguments: ["scope"],
+        text: "Check Stuga: find the pages that need checking, the pages nothing links to and the broken links, and propose fixes for my approval. ${arguments.scope}",
+      },
     ]);
   });
 
   it("declares templates that read as the server's own prompts, filled or left empty", () => {
     const fill = (text: string, args: Record<string, string>) => text.replace(/\$\{arguments\.(\w+)\}/g, (_, name: string) => args[name] ?? "").trim();
-    const said = (name: "save" | "ask", args: Record<string, string>) => buildPrompt(name, args).messages[0]!.content.text;
-    const [save, ask] = bundleManifest(CFG).prompts;
+    const said = (name: "save" | "ask" | "check", args: Record<string, string>) => buildPrompt(name, args).messages[0]!.content.text;
+    const [save, ask, check] = bundleManifest(CFG).prompts;
     expect(fill(save!.text, { text: "Sam owns billing." })).toBe(said("save", { text: "Sam owns billing." }));
     expect(fill(ask!.text, { topic: "What is Acme's refund window?" })).toBe(said("ask", { topic: "What is Acme's refund window?" }));
     // A client that substitutes nothing for the optional topic sends a whole request, as the server would.
     expect(fill(ask!.text, { topic: "" })).toBe(said("ask", {}));
+    expect(fill(check!.text, { scope: "the Policies folder" })).toBe(said("check", { scope: "the Policies folder" }));
+    expect(fill(check!.text, { scope: "" })).toBe(said("check", {}));
     expect(said("ask", {})).toBe("Ask Stuga what my team and I have recorded: say who wrote each point and when, and what still waits for approval.");
   });
 

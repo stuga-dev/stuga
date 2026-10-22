@@ -127,7 +127,7 @@ POST /api/docs/:id/propose
 | `write` | `text` | Replace the whole document. |
 | `str_replace` | `find`, `replace`, `replace_all?` | Replace one occurrence of `find`, or every one. `find` must exist and, without `replace_all`, be unique. |
 | `append` | `text`, `heading?` | Add text at the end of the document, or under `heading`: at the end of that heading's own text, before its first subsection when it has any (under a page's title heading, in its opening), else at the end of its section. Touches nothing else. |
-| `cited_edits` | `edits: [{ old_string, new_string }]`, `citations?: [{ n, doc_id, title, heading_path?, content? }]` | Up to 200 exact edits in one proposal, each `old_string` matching once, and up to 50 citations. A `[^n]` in a `new_string` becomes a footnote to citation `n` when the edit lands. For grounded edits drawn from `/api/retrieve`. |
+| `cited_edits` | `edits: [{ old_string, new_string }]`, `citations?: [{ n, doc_id, title, heading_path?, content? }]` | Up to 200 exact edits in one proposal, each `old_string` matching once, and up to 50 citations. A `[^n]` in a `new_string` becomes a footnote to citation `n` when the edit lands. For grounded edits drawn from `/api/retrieve`. Each citation's `doc_id` names a document of this workspace the caller can read; any other refuses the whole proposal with a `400` whose message starts `citation_not_found`, the same for a document that is missing as for one out of reach. |
 
 Every action takes `revises?`, the ids of the feedback this proposal answers
 ([Reject with a note](agents.md#reject-with-a-note)); the reply's `revised` lists the ones it did, and
@@ -173,7 +173,7 @@ Refusals:
 
 | Status | When |
 |---|---|
-| `400` | A missing or malformed field, or the id names a database. |
+| `400` | A missing or malformed field, the id names a database, or a citation names a document the caller cannot read (`citation_not_found`). |
 | `403` | A person's session (only agents propose), no write access, or a read-only key. |
 | `404` | The document does not exist or is out of reach. |
 | `409` | `find` or `heading` not found or ambiguous; or the document changed under the proposal, in which case re-read and retry. A `heading` not found is answered with the document's headings as written, or, on a page with none, how to start a section: the heading in `text`, and no `heading`. |
@@ -215,6 +215,21 @@ answers carry neither field.
 `{ own, inherited, can_edit }`: `own` as stored, `inherited` the same stack without the item's own
 level, uncut. `404` when the caller cannot read the item. The text is advice to the model; permissions
 and `agent_mode` decide what a write does ([agents.md](agents.md#instructions-for-agents)).
+
+## The wiki
+
+What links where, the Index, the Log and the check, each as the caller reads the workspace: a page,
+folder or change the caller cannot open is neither named nor counted, and a new page a change holds
+is in none of them until it is approved ([The wiki](agents.md#the-wiki)). Links are read from each
+page's approved text as it is saved.
+
+| Route | |
+|---|---|
+| `GET /api/docs/:id/links` | `{ linked_from, linked_from_truncated, needs_checking, can_mark_checked }`. `linked_from`: the pages the caller can open that link to it or cite it, by title, at most 200, each `{ doc_id, title, doc_type, kinds, path }` (`kinds`: `link`, `citation` or both; `path`: its folders, root first, `[]` at the top level, null in a folder the caller cannot open). `needs_checking`: the pages it cites, which the caller can open, whose text changed after the citing passages were approved, each `{ doc_id, title, changed_at }`. `can_mark_checked`: the caller is a person who can edit it, and something needs checking. |
+| `POST /api/docs/:id/links/checked` | A person who can edit the page looked at it again: its citations of pages they can open that changed count as approved now. → `{ marked, ...links }`, the page's links as they then stand. Agents and read-only keys are refused. In the audit ledger as `doc.check`. |
+| `GET /api/wiki/index[?folder_id=]` | `{ sections, truncated }`: every page and database the caller can open, row pages left out, by folder: the top level first, then folders by path, `elsewhere: true` for pages shared from a folder the caller cannot open, `my_notes: true` for their own My notes, last. Each page is `{ doc_id, title, doc_type, summary, changed_at, changed_by, needs_checking }`: `summary` is its opening paragraph, plain and at most 160 characters; `changed_at` and `changed_by` say when its approved text last changed and who changed it, each `{ kind, name }` (`person`; `agent` or `coauthor`, named by the person it worked for; `sample`). At most 1,000 pages; `folder_id` narrows it to a folder and everything under it (`404` for one the caller cannot open). An agent's leaves out pages kept out of search. |
+| `GET /api/wiki/log[?before=&limit=]` | `{ entries, next }`: the AI changes people approved or declined, and those applied directly, newest first: each change once, and each run in no change. An entry is `{ kind, id, title, at, outcome, asked_by, agent, decided_by, pages }`: `kind` `change` or `run`; `title`, the change's, only for the person who asked for it or someone who decided some of it (for an agent, only a change it made), else null; `outcome` `approved`, `declined`, `partly`, `applied` (directly) or `reverted`; `pages`, the ones the caller can open, each `{ doc_id, title, doc_kind, run_id, approved, declined, applied, reverted }`. One with a page the caller can open still waiting is left out. `limit` is 50 by default, at most 100; pass `next` as `before` for older entries (`400` for anything else). |
+| `GET /api/wiki/lint[?folder_id=]` | `{ needs_checking, orphans, broken_links, truncated }`, for the workspace or a folder and everything under it. `needs_checking`: pages each with the `sources` it cites that changed since. `orphans`: pages in a folder no other page the caller can open links to or cites; the top level, row pages and My notes count as none. `broken_links`: pages each with `links: [{ href, kind, reason, title? }]`, `reason` `in_trash` (with the page's `title`, which the caller can open) or `not_found` (gone, or not one the caller can open). At most 200 pages a list. |
 
 ## Collections
 

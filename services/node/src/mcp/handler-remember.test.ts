@@ -1,7 +1,7 @@
 /**
- * Save to Stuga and Ask Stuga on /mcp: the `remember` tool runs the planner in the workspace a call
- * names, audited as a plan; the node offers both prompts, and a read-only connection only the one
- * that asks.
+ * Save to Stuga, Ask Stuga and Check Stuga on /mcp: the `remember` tool runs the planner in the
+ * workspace a call names, audited as a plan; the node offers the three prompts, and a read-only
+ * connection the two that only read.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -77,12 +77,13 @@ describe("remember on /mcp", () => {
 });
 
 describe("the prompts on /mcp", () => {
-  it("offers Save to Stuga and Ask Stuga, each in the person's voice", async () => {
+  it("offers Save to Stuga, Ask Stuga and Check Stuga, each in the person's voice", async () => {
     const caller = callerFor(agentCtx(mcpEnv()));
     const listed = (await mcpRequest(caller, "prompts/list")).result as { prompts: Array<{ name: string; title: string }> };
     expect(listed.prompts.map((p) => [p.name, p.title])).toEqual([
       ["save", "Save to Stuga"],
       ["ask", "Ask Stuga"],
+      ["check", "Check Stuga"],
     ]);
     const got = (await mcpRequest(caller, "prompts/get", { name: "save", arguments: { text: "Sam owns billing." } })).result as {
       messages: Array<{ role: string; content: { text: string } }>;
@@ -90,9 +91,9 @@ describe("the prompts on /mcp", () => {
     expect(got.messages).toEqual([{ role: "user", content: { type: "text", text: "Save to Stuga: Sam owns billing." } }]);
   });
 
-  it("offers a read-only connection only the prompt that asks", async () => {
+  it("offers a read-only connection the prompts that only read: asking, and checking", async () => {
     const caller = callerFor(readOnlyKeyCtx(mcpEnv()));
     const listed = (await mcpRequest(caller, "prompts/list")).result as { prompts: Array<{ name: string }> };
-    expect(listed.prompts.map((p) => p.name)).toEqual(["ask"]);
+    expect(listed.prompts.map((p) => p.name)).toEqual(["ask", "check"]);
   });
 });

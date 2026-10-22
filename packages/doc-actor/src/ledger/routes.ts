@@ -279,6 +279,7 @@ export async function handleRunDecide(ledger: RunLedger, req: Request): Promise<
     await store.flush("run");
   }
 
+  if (decided.length > 0 && !(stored.decided_by ?? []).includes(decidedBy)) stored.decided_by = [...(stored.decided_by ?? []), decidedBy];
   stored.updated_at = Date.now();
   // Listed before it is saved: a listed run with nothing open is pruned, a saved note on an unlisted run is never shown.
   if (feedback) await ledger.noteFeedback(stored);

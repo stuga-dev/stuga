@@ -207,6 +207,8 @@ export interface RunIndexEntry {
   approverGroup: string | null;
   /** Who accepted its changes at `colleague`; never its reviewer. */
   approvedBy: string[];
+  /** Everyone who approved or declined any of its changes, at any level, in the order they first did. */
+  decidedBy?: string[];
   /** The change it belongs to, or null; the node also links it when the proposal returns. */
   changeId?: string | null;
   /** The earlier run of the same agent on the item it waits behind, or null. */

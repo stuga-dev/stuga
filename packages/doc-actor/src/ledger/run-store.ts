@@ -71,6 +71,8 @@ export interface StoredRun {
   approver_group?: string;
   /** Hunk id → who accepted it at `colleague`, never its reviewer; an undo takes the entry back out. */
   approvals?: Record<string, string>;
+  /** Everyone who approved or declined any of its hunks, at any level, in the order they first did; for the wiki's Log. */
+  decided_by?: string[];
   /** The change it belongs to; a run belongs to one change, and a proposal for another starts a run of its own. */
   change_id?: string;
   /**
@@ -171,6 +173,7 @@ function runIndexEntry(stored: StoredRun): RunIndexEntry {
     reviewMode: stored.review_mode,
     approverGroup: stored.approver_group ?? null,
     approvedBy: approvedBy(stored),
+    decidedBy: stored.decided_by ?? [],
     changeId: stored.change_id ?? null,
     queuedBehind: stored.queued_behind ?? null,
     autoApplied: stored.auto_applied,

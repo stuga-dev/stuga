@@ -438,5 +438,7 @@
   "audit.agentTool.collectionsEdit": "更改了文档集",
   "audit.agentTool.databasesAdd": "向数据库添加了内容",
   "audit.agentTool.databasesChange": "更改了数据库",
-  "audit.agentTool.other": "使用了智能体工具"
+  "audit.agentTool.other": "使用了智能体工具",
+
+  "audit.action.docCheck": "页面已标记为已核对"
 }

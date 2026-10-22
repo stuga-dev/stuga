@@ -160,6 +160,7 @@ import {
 } from "../governance/webhooks/routes.js";
 import { handleMcpRequest } from "../mcp/handler.js";
 import { getSessionIndex } from "../mcp/session-index.js";
+import { getDocLinks, getWikiIndex, getWikiLint, getWikiLog, markDocLinksChecked } from "../wiki/routes.js";
 import {
   handleAuthorize,
   handleClientInfo,
@@ -325,6 +326,13 @@ export const APP_ROUTES: readonly AppRoute[] = [
   api("GET", "/api/events", listEvents),
   api("GET", "/api/instructions", getInstructions),
   api("GET", re(`${DOC}/provenance`), getProvenance),
+
+  // The wiki: what links where, the Index, the Log and the check, each as the caller reads it.
+  api("GET", "/api/wiki/index", getWikiIndex),
+  api("GET", "/api/wiki/log", getWikiLog),
+  api("GET", "/api/wiki/lint", getWikiLint),
+  api("GET", re(`${DOC}/links`), getDocLinks),
+  api("POST", re(`${DOC}/links/checked`), markDocLinksChecked, { humanOnly: "agents cannot mark a page checked" }),
   api("GET", "/api/audit/export", exportAudit),
 
   // Structured databases: the data plane; lifecycle stays on /api/docs.

@@ -27,7 +27,7 @@ import {
 import { WORKSPACE_EVENT_TYPES } from "@stuga/protocol/domain/events";
 import { RUN_FEEDBACK_LOOKBACK_DAYS, RUN_FEEDBACK_REVISES_MAX } from "@stuga/protocol/domain/limits";
 import { CHANGE_SUMMARY_MAX, CHANGE_TITLE_MAX } from "@stuga/protocol/domain/changes";
-import { askStugaElsewhere, saveToStugaElsewhere } from "@stuga/protocol/domain/ui-languages";
+import { askStugaElsewhere, checkStugaElsewhere, saveToStugaElsewhere } from "@stuga/protocol/domain/ui-languages";
 import { MAX_IMPORT_MARKDOWN_BYTES } from "@stuga/protocol/text/markdown-import";
 
 /**
@@ -70,7 +70,7 @@ export type ToolName = (typeof TOOL_NAMES)[number];
 /** One line per tool, for the Desktop extension's installer list. */
 export const TOOL_SUMMARIES: Record<ToolName, string> = {
   workspaces: "List the workspaces this connection reaches, and read one's conventions for agents.",
-  docs: "List and inspect documents.",
+  docs: "List and inspect documents, read the wiki's Index and Log, and check it for pages to fix.",
   search: "Find documents across one or more workspaces.",
   markdown: "Read a document as Markdown, check what became of an edit, or see who wrote what.",
   comments: "List the comments on a document.",
@@ -92,7 +92,7 @@ export const TOOL_SUMMARIES: Record<ToolName, string> = {
 };
 
 export const WORKSPACES_ACTIONS = ["list", "instructions"] as const;
-export const DOCS_ACTIONS = ["list", "metadata"] as const;
+export const DOCS_ACTIONS = ["list", "metadata", "index", "log", "lint"] as const;
 export const MARKDOWN_ACTIONS = ["read", "status", "provenance"] as const;
 export const MARKDOWN_EDIT_ACTIONS = ["write", "str_replace", "cited_edits"] as const;
 export const COLLECTIONS_ACTIONS = ["list", "open"] as const;
@@ -273,21 +273,38 @@ const workspacesTool: ToolDefinition = {
   annotations: READ,
 };
 
+/** Entries one `docs` action:log answers with by default, and at most. */
+export const WIKI_LOG_PAGE = 20;
+export const WIKI_LOG_PAGE_MAX = 50;
+
 const docsTool: ToolDefinition = {
   title: "Documents",
   description:
     "Use when the user wants to list or inspect documents in Stuga, including indirect requests about “the doc” or " +
     "“my workspace”; they do not need to name this tool or MCP. action: list (documents you can reach in the " +
-    "workspace; `parent_id` lists one folder, null the root) | metadata (one document, `doc_id`). metadata reports " +
-    "`review`: whether a write to THIS document would wait for the user or apply at once, and why — read it before " +
-    "writing when the answer would change your plan. metadata and `docs_create` return the standing `instructions` " +
-    "people set for that document, outermost first — follow them when writing there. To find documents by what they " +
-    "say, use `search`.",
+    "workspace; `parent_id` lists one folder, null the root) | metadata (one document, `doc_id`) | index | log | " +
+    "lint. metadata reports `review`: whether a write to THIS document would wait for the user or apply at once, and " +
+    "why — read it before writing when the answer would change your plan; `linked_from`, the pages that link to or " +
+    "cite it; and `needs_checking`, pages it cites that changed after it was approved. metadata and `docs_create` " +
+    "return the standing `instructions` people set for that document, outermost first — follow them when writing " +
+    "there. To find documents by what they say, use `search`. " +
+    "index: the wiki's table of contents, by folder (`parent_id` narrows it to one): each page's title, `summary` " +
+    "(its opening paragraph), when its approved text last changed and who changed it, and `needs_checking`. log: the " +
+    "AI changes people approved or declined, newest first: what changed where, who asked, who decided, when; pass " +
+    "`next` back as `before` for older ones. Both are generated; neither is a page to write to. " +
+    `lint: check the wiki, when the user says "Check Stuga" or the same in their language (${checkStugaElsewhere()}), ` +
+    "or asks what in it is out of date or broken (`parent_id` checks one folder): pages that need checking because a " +
+    "page they cite changed since, orphans no other page links to, and broken links. Fix NOTHING by rewriting a page: " +
+    "propose each fix as a small edit, all of them in ONE change for the user's approval, and tell the user what you " +
+    "proposed and what you left for them to decide; a `not_found` link may name a page the user cannot open, so " +
+    "never take one out unasked; marking a page checked is a person's, never yours.",
   inputSchema: {
     workspace_id: workspaceId,
     action: z.enum(DOCS_ACTIONS),
     doc_id: z.string().optional(),
     parent_id: z.string().nullable().optional(),
+    before: z.string().max(100).optional().describe("log: the `next` an earlier page of the log gave, for the entries before it."),
+    limit: z.number().int().min(1).max(WIKI_LOG_PAGE_MAX).optional().describe(`log: entries to return, ${WIKI_LOG_PAGE} by default.`),
   },
   annotations: READ,
 };
@@ -418,7 +435,8 @@ const markdownEditTool: ToolDefinition = {
     "proposes several surgical edits at once (`edits`: [{old_string, " +
     "new_string}], each old_string matching exactly once) with optional `citations` ([{n, doc_id, title, " +
     "heading_path?, content?}]) that become footnotes when the edits land — the shape for grounded edits drawn from " +
-    `\`retrieve\`. ${PROPOSED} Never rewrite the document because your change looks missing: your reads include it, ` +
+    "`retrieve`; a citation's `doc_id` must be a document of this workspace you can read, else the whole edit is " +
+    `refused with \`citation_not_found\`. ${PROPOSED} Never rewrite the document because your change looks missing: your reads include it, ` +
     "and `markdown` action:status reports what the user decided. Edits 3-way merge with concurrent human edits. " +
     `${REVISES} ${CHANGES} ${IMAGES_IN_MARKDOWN}`,
   inputSchema: {
@@ -795,7 +813,10 @@ const rememberTool: ToolDefinition = {
     "WHO AND WHEN: for what the user tells you directly, write no name and no date with it (no \"per …\", \"noted by " +
     "…\"): Stuga's version history records who changed what and when. For a point from a meeting, an email or a " +
     "document, give that as its `source` and cite it in the text as the place's instructions ask, else in a few words " +
-    "after the fact (\"(customer sync, 2026-10-21)\"); never attribute it to the user, and never invent one. " +
+    "after the fact (\"(customer sync, 2026-10-21)\"); never attribute it to the user, and never invent one. A point " +
+    "from a page in Stuga is cited as that page: `markdown_edit` action:cited_edits with a citation naming its " +
+    "`doc_id`, only a page you read here (any other is refused, `citation_not_found`), so the wiki can tell when that " +
+    "page changes and this one needs checking. " +
     "WRITING: keep each point in the language of what it came from (a chat in Chinese gives points in Chinese) or " +
     "of the page it belongs on, never translated; one point is one fact; names instead of pronouns, and the user, " +
     "when a point is about them (\"I'm on call on Mondays\"), by their Stuga name (`user.name`), never a name taken " +

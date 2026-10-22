@@ -64,6 +64,7 @@ import {
   setChunkEmbedding,
   setDatabaseSearchText,
   syncDocMentions,
+  syncDocWiki,
   trashPagesOf,
   updateWebhook,
   upsertAgentRun,
@@ -107,6 +108,8 @@ export function jobsDb(sql: Sql) {
     displayNameOf: (alias: string) => getUserDisplayName(sql, alias),
     /** Replace the document's mention set; the people not in it before. */
     syncDocMentions: (docId: string, aliases: string[]) => syncDocMentions(sql, docId, aliases),
+    /** Bring a page's summary and links in step with a snapshot of its approved text. */
+    syncDocWiki: (input: Parameters<typeof syncDocWiki>[1]) => syncDocWiki(sql, input),
     mentionReaders: (doc: Parameters<typeof mentionReaders>[1], aliases: string[], author: string | null) =>
       mentionReaders(sql, doc, aliases, author),
     findChunksMissingEmbeddings: (limit: number, maxAttempts: number) => findChunksMissingEmbeddings(sql, limit, maxAttempts),

@@ -335,5 +335,9 @@
   "collectionEditor.wholeFolder": "dossier entier",
   "collectionEditor.folderCheckbox": "{name} (dossier entier)",
   "collectionEditor.collapse": "Réduire",
-  "collectionEditor.expand": "Développer"
+  "collectionEditor.expand": "Développer",
+
+  "nav.wiki": "Wiki",
+  "nav.index": "Sommaire",
+  "nav.log": "Journal"
 }

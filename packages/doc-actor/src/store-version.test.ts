@@ -55,6 +55,11 @@ const PINNED: Record<number, { keys: string[]; schema: string }> = {
     keys: ["coauthor-clean:*", "coauthor-threads:*", "feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"],
     schema: "8a5f1aba9e0e7676",
   },
+  // Who approved or declined a run's changes, at any level.
+  7: {
+    keys: ["coauthor-clean:*", "coauthor-threads:*", "feedback-pending:*", "locked", "meta", "pending", "run-active:*", "run-order", "run:*"],
+    schema: "d9dbe12025976bd4",
+  },
 };
 
 /** Per version from 3 on: the node and mark types the text may hold. A released version's entry never changes. */
@@ -91,6 +96,14 @@ const TEXT_TYPES: Record<number, { nodes: string[]; marks: string[] }> = {
     ],
     marks: ["bold", "code", "italic", "link", "strike", "underline"],
   },
+  7: {
+    nodes: [
+      "blockquote", "bulletList", "codeBlock", "doc", "footnoteDefinition", "footnoteReference", "hardBreak", "heading",
+      "horizontalRule", "image", "listItem", "mention", "orderedList", "paragraph", "table", "tableCell", "tableHeader",
+      "tableRow", "taskItem", "taskList", "text",
+    ],
+    marks: ["bold", "code", "italic", "link", "strike", "underline"],
+  },
 };
 
 const RAISE =
@@ -118,6 +131,7 @@ describe("a document's store", () => {
       review_mode: "auto" | "review" | "colleague";
       approver_group?: string;
       approvals?: Record<string, string>;
+      decided_by?: string[];
       change_id?: string;
       queued_behind?: string;
       stacked_on?: string[];

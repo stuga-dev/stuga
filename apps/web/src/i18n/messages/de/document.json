@@ -132,5 +132,16 @@
   "versions.deleteHint": "Diese Version aus dem Verlauf entfernen",
   "versions.restore": "Diese Version wiederherstellen",
   "versions.restoreHint": "Das Dokument auf diese Version zurücksetzen",
-  "versions.restoreNote": "Alle, die gerade bearbeiten, sehen diese Version. Der aktuelle Text wird vorher unter Versionen gesichert."
+  "versions.restoreNote": "Alle, die gerade bearbeiten, sehen diese Version. Der aktuelle Text wird vorher unter Versionen gesichert.",
+
+  "wiki.linkedFrom": "Verlinkt von",
+  "wiki.linkedFromFirst": "Die ersten {count, number} Seiten.",
+  "wiki.kind.link": "Verlinkt hierher",
+  "wiki.kind.citation": "Zitiert diese Seite",
+  "wiki.kind.both": "Verlinkt hierher und zitiert diese Seite",
+  "wiki.needsChecking": "Zu prüfen",
+  "wiki.changedSince": "{count, plural, one {Eine Seite, die sie zitiert, hat sich nach der Genehmigung geändert:} other {# Seiten, die sie zitiert, haben sich nach der Genehmigung geändert:}}",
+  "wiki.markChecked": "Als aktuell markieren",
+  "wiki.markedChecked": "Als aktuell markiert.",
+  "wiki.markFailed": "Konnte nicht als aktuell markiert werden. Bitte versuche es erneut."
 }

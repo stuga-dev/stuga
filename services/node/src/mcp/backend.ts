@@ -92,9 +92,15 @@ import {
 } from "../media/media.js";
 import { createMediaUpload, takeMediaUpload } from "../media/uploads.js";
 import { landsIn, netChanges, relevance, type NetChange, type NetOfRun, type PassageOf } from "./waiting.js";
+import { docWikiLinks, wikiIndex, wikiLint, wikiLog } from "../wiki/wiki.js";
+import { WIKI_LOG_PAGE_MAX } from "@stuga/agent-surface/catalog";
 
 /** Max page before the caller's own runs are picked out: a busy database's newest runs may all be someone else's. */
 const RUNS_PAGE = 50;
+/** Pages an agent's index or check lists, and pages linking to a document its metadata names. */
+const AGENT_INDEX_PAGES = 300;
+const AGENT_LINT_PAGES = 100;
+const AGENT_LINKED_FROM = 50;
 
 const NOT_FOUND = { error: "not found or no access" };
 
@@ -127,6 +133,10 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
   return {
     origin: ctx.servedOrigin,
 
+    wikiIndex: (parentId) => wikiIndex(ctx, { folderId: parentId, limit: AGENT_INDEX_PAGES }),
+    wikiLog: (before, limit) => wikiLog(ctx, { before, limit: Math.min(Math.max(limit, 1), WIKI_LOG_PAGE_MAX) }),
+    wikiLint: (parentId) => wikiLint(ctx, { folderId: parentId, limit: AGENT_LINT_PAGES }),
+
     async workspaceInstructions() {
       const ws = await getWorkspace(ctx.sql, ctx.workspaceId);
       return { workspace_id: ctx.workspaceId, name: ws?.name ?? "", instructions: ws?.agent_instructions ?? "" };
@@ -150,6 +160,7 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
       const doc = await getDoc(ctx.sql, docId);
       if (!doc || !canReadDoc(ctx, doc)) return { error: "not found" };
       const review = resolveReviewMode(ctx, doc);
+      const links = await docWikiLinks(ctx, doc, { limit: AGENT_LINKED_FROM, paths: false });
       return {
         doc_id: doc.doc_id,
         title: doc.title,
@@ -158,6 +169,10 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
         locked: doc.locked,
         search_hidden: doc.search_hidden,
         review: { mode: review.mode, reason: review.reason },
+        // Only pages the caller can read; the others are neither named nor counted.
+        linked_from: links.linked_from.map((p) => ({ doc_id: p.doc_id, title: p.title, kinds: p.kinds })),
+        ...(links.linked_from_truncated ? { linked_from_truncated: true } : {}),
+        needs_checking: links.needs_checking,
         ...(await docAgentInstructions(ctx, doc)),
       };
     },

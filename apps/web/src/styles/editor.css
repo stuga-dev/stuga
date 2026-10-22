@@ -111,6 +111,11 @@ span.presence-badge { cursor: default; }
 }
 
 .editor-shell { max-width: var(--doc-width, 740px); margin: 0 auto; }
+/* The pages linking here, under the text and as wide as it. */
+.doc-backlinks {
+  margin-top: var(--spacing-8); padding-top: var(--spacing-4); border-top: 1px solid var(--color-border);
+  display: flex; flex-direction: column; gap: var(--spacing-2);
+}
 
 /* Sticky over the scrolling page, below the floating popovers (50+). One row: EditorToolbar
    moves what does not fit into More, and the row never wraps onto the page. */

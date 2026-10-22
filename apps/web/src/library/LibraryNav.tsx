@@ -1,6 +1,6 @@
 /**
- * The library sidebar: New, the library views, the AI destinations (pages of
- * their own, so never shown as selected), and Trash and Settings pinned to the bottom.
+ * The library sidebar: New, the library views, the wiki's Index and Log and the AI destinations (pages
+ * of their own, so never shown as selected), and Trash and Settings pinned to the bottom.
  */
 import { SideNav, useSideNavCollapse } from "@astryxdesign/core/SideNav";
 import { SideNavItem } from "@astryxdesign/core/SideNav";
@@ -8,7 +8,7 @@ import { SideNavSection } from "@astryxdesign/core/SideNav";
 import { Badge } from "@astryxdesign/core/Badge";
 import { HStack } from "@astryxdesign/core/HStack";
 import { StackItem } from "@astryxdesign/core/Stack";
-import { Files, Library, Settings, Sparkles, Star, Trash2, Users as UsersIcon, ListChecks } from "lucide-react";
+import { BookOpen, Files, History, Library, Settings, Sparkles, Star, Trash2, Users as UsersIcon, ListChecks } from "lucide-react";
 import { LibraryCreateMenu, type LibraryCreateActions } from "./LibraryCreateMenu";
 import { t } from "../i18n/i18n";
 import { fmtInt } from "../lib/format";
@@ -25,6 +25,9 @@ interface LibraryNavProps {
   createActions: LibraryCreateActions | null;
   onAsk: () => void;
   onReview: () => void;
+  /** The wiki's generated pages: the Index of every page by folder, and the Log of decided AI changes. */
+  onIndex: () => void;
+  onLog: () => void;
   onSettings: () => void;
   sharedCount?: number | null;
   favoriteCount?: number | null;
@@ -36,6 +39,8 @@ export function LibraryNav({
   createActions,
   onAsk,
   onReview,
+  onIndex,
+  onLog,
   onSettings,
   sharedCount,
   favoriteCount,
@@ -78,6 +83,11 @@ export function LibraryNav({
             onClick={() => onViewChange("collections")}
           />
         )}
+      </SideNavSection>
+
+      <SideNavSection title={t("library.nav.wiki")}>
+        <SideNavItem label={t("library.nav.index")} icon={<BookOpen size={16} />} onClick={onIndex} />
+        <SideNavItem label={t("library.nav.log")} icon={<History size={16} />} onClick={onLog} />
       </SideNavSection>
 
       <SideNavSection title={t("library.nav.ai")}>

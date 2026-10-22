@@ -145,6 +145,9 @@ describe.skipIf(!URL)("the review card, the inbox and the review channel", () =>
     for (const [alias, , name] of PEOPLE) await sql`INSERT INTO users (alias, username, display_name) VALUES (${alias}, ${alias}, ${name})`;
     await provisionWorkspace(sql, { workspaceId: WS, name: "Team", owner: "cardliv", defaultDocAccess: "workspace_view" });
     for (const [alias, role] of PEOPLE.slice(1)) await sql`INSERT INTO workspace_members (workspace_id, alias, role) VALUES (${WS}, ${alias}, ${role})`;
+    // The handbook the agent cites: a citation names a page whoever asked can read.
+    await sql`INSERT INTO docs (doc_id, workspace_id, owner, title, acl_principals, acl_writers)
+              VALUES ('d_handbook', ${WS}, 'user:cardliv', 'HR handbook', ${[ORG, "user:cardliv"]}, ${["user:cardliv"]})`;
 
     dir = mkdtempSync(join(tmpdir(), "stuga-card-"));
     const snapshots = fsBlobStore(join(dir, "snapshots"));

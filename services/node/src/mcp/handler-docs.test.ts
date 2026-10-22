@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@stuga/db", async (orig) => ({
   ...(await orig<typeof import("@stuga/db")>()),
+  pagesLinkingTo: vi.fn(async () => []),
+  staleCitations: vi.fn(async () => []),
+  readableFolders: vi.fn(async () => []),
   createDoc: vi.fn(),
   addComment: vi.fn(),
   getComment: vi.fn(async () => null),

@@ -469,6 +469,8 @@ export function DocList() {
           }
           onAsk={() => nav("/ask")}
           onReview={() => nav("/review")}
+          onIndex={() => nav("/wiki")}
+          onLog={() => nav("/wiki/log")}
           // The library is always inside a workspace, so its Settings opens that workspace's settings.
           onSettings={() => nav("/settings/workspace")}
           sharedCount={sharedDocs?.length ?? null}

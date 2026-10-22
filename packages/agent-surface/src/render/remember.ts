@@ -12,7 +12,8 @@ export const REMEMBER_NEXT =
   "what you save, never a page's title) to your first write and pass the `change_id` it returns to every other, so " +
   "it is reviewed as one. Write no name or date for what the user told you directly: version " +
   "history records who changed what and when. Cite a point's `source` (a meeting, an email, a document) as the " +
-  "place asks, never attributing it to the user, and never invent one. Then tell the user what you saved where, " +
+  "place asks, never attributing it to the user, and never invent one; a page in Stuga is cited with " +
+  "`markdown_edit` action:cited_edits naming it. Then tell the user what you saved where, " +
   "what was already there, and what waits for approval; when you wrote nothing, say nothing was saved, never that " +
   "it was saved or recorded.";
 

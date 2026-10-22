@@ -36,6 +36,7 @@ import {
   SEARCH_MAX_WORKSPACES,
   READ_TOOLS,
   TOOL_NAMES,
+  WIKI_LOG_PAGE,
   toolDefinition,
   type ToolAnnotations,
   type ToolName,
@@ -55,6 +56,7 @@ import {
 import { instructionFields, renderPropose, renderProvenance, renderRead, renderStatus } from "./render/docs.js";
 import { renderUpload } from "./render/media.js";
 import { renderRememberPlan } from "./render/remember.js";
+import { renderIndex, renderLint, renderLog } from "./render/wiki.js";
 import {
   RETRIEVE_SEMANTIC_OFF_MESSAGE,
   renderPassages,
@@ -335,7 +337,13 @@ type Handler = (args: never, backend: AgentBackend) => Promise<ToolText>;
 const HANDLERS: Record<Exclude<ToolName, "search" | "retrieve">, Handler> = {
   workspaces: (async (_args: { action: "instructions" }, b: AgentBackend) => answer(b.workspaceInstructions(), json)),
 
-  docs: (async ({ action, doc_id, parent_id }: { action: "list" | "metadata"; doc_id?: string; parent_id?: string | null }, b: AgentBackend) => {
+  docs: (async (
+    { action, doc_id, parent_id, before, limit }: { action: "list" | "metadata" | "index" | "log" | "lint"; doc_id?: string; parent_id?: string | null; before?: string; limit?: number },
+    b: AgentBackend,
+  ) => {
+    if (action === "index") return answer(b.wikiIndex(parent_id), (index) => renderIndex(index, b.origin));
+    if (action === "log") return answer(b.wikiLog(before, limit ?? WIKI_LOG_PAGE), renderLog);
+    if (action === "lint") return answer(b.wikiLint(parent_id), renderLint);
     if (action === "list") {
       return answer(b.listDocs(parent_id), (docs) =>
         // doc_type sends the agent to `markdown` or to `databases`; a database read as prose dead-ends the loop.

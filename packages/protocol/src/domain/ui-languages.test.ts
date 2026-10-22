@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   ASK_STUGA,
   askStugaElsewhere,
+  CHECK_STUGA,
+  checkStugaElsewhere,
   isUiLanguage,
   matchUiLanguage,
   MY_NOTES,
@@ -80,6 +82,7 @@ describe("the phrases a person says to their AI", () => {
     for (const tag of UI_LANGUAGES) {
       expect(SAVE_TO_STUGA[tag]).toContain("Stuga");
       expect(ASK_STUGA[tag]).toContain("Stuga");
+      expect(CHECK_STUGA[tag]).toContain("Stuga");
       expect(MY_NOTES[tag]).toBeTruthy();
     }
   });
@@ -90,5 +93,6 @@ describe("the phrases a person says to their AI", () => {
     );
     expect(askStugaElsewhere()).not.toContain('"Ask Stuga"');
     expect(askStugaElsewhere()).toContain('"問問 Stuga"');
+    expect(checkStugaElsewhere()).toBe('"检查 Stuga", "檢查 Stuga", "Stugaをチェック", "Stuga 점검", "Stuga prüfen", "Vérifier Stuga", "Revisar Stuga", "Verificar o Stuga"');
   });
 });

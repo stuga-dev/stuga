@@ -38,7 +38,7 @@ interface Hashed {
  * higher. A change to a stored shape raises it, together with the step in the host that brings an
  * older store forward.
  */
-export const DOC_STORE_VERSION = 6;
+export const DOC_STORE_VERSION = 7;
 
 /** The steps that bring an older store forward, keyed by the version each reaches. */
 export const DOC_STORE_UPGRADES: Record<number, StoreUpgrade> = {
@@ -62,6 +62,10 @@ export const DOC_STORE_UPGRADES: Record<number, StoreUpgrade> = {
   // let a queued run be accepted ahead of the run it was proposed on top of, so it must not open the
   // store. The fields are new and optional, so a version 5 store is read as it is.
   6: () => {},
+  // 7: who approved or declined a run's changes at any level (`decided_by`), for the wiki's Log. An older
+  // build would decide a run without recording who did, so it must not open the store. The field is new
+  // and optional, so a version 6 store is read as it is.
+  7: () => {},
 };
 
 const FLUSH_THRESHOLD = 100; // updates

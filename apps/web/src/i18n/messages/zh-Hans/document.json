@@ -132,5 +132,16 @@
   "versions.deleteHint": "从历史记录中移除此版本",
   "versions.restore": "恢复此版本",
   "versions.restoreHint": "将文档回滚到此版本",
-  "versions.restoreNote": "所有正在编辑的人都会看到此版本。当前文本会先保存在“版本”中。"
+  "versions.restoreNote": "所有正在编辑的人都会看到此版本。当前文本会先保存在“版本”中。",
+
+  "wiki.linkedFrom": "链接到此页的页面",
+  "wiki.linkedFromFirst": "前 {count, number} 个页面。",
+  "wiki.kind.link": "链接到此页",
+  "wiki.kind.citation": "引用此页",
+  "wiki.kind.both": "链接到并引用此页",
+  "wiki.needsChecking": "需要核对",
+  "wiki.changedSince": "{count, plural, other {此页引用的 # 个页面在批准后有更改：}}",
+  "wiki.markChecked": "标记为已核对",
+  "wiki.markedChecked": "已标记为已核对。",
+  "wiki.markFailed": "无法标记为已核对。请重试。"
 }

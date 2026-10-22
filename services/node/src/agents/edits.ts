@@ -301,6 +301,34 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
   return proposeChecked(ctx, input, doc, review, approverGroup, { text, replace, edits, mediaNote });
 }
 
+/**
+ * The first citation naming a document the caller cannot read in this workspace, gone, in the trash or
+ * elsewhere, or null. A footnote links its source for every reader of the page and the wiki checks the
+ * page against it, so a citation stands only for a page the caller could have read it in.
+ */
+async function unreadableCitation(ctx: Ctx, citations: readonly AiCitation[]): Promise<AiCitation | null> {
+  const seen = new Map<string, boolean>();
+  for (const c of citations) {
+    let ok = seen.get(c.doc_id);
+    if (ok === undefined) {
+      const doc = await getDoc(ctx.sql, c.doc_id);
+      ok = doc !== null && !doc.trashed && doc.workspace_id === ctx.workspaceId && canReadDoc(ctx, doc);
+      seen.set(c.doc_id, ok);
+    }
+    if (!ok) return c;
+  }
+  return null;
+}
+
+/** One answer whether the document is missing or only unreadable, so a citation cannot probe which ids exist. */
+export function citationNotFound(c: Pick<AiCitation, "n" | "doc_id">): string {
+  return (
+    `citation_not_found: citation ${c.n} names ${JSON.stringify(c.doc_id)}, which is not a document you can read in ` +
+    "this workspace. Cite only documents you read here (`retrieve`, `search` or `markdown`), or leave the citation out; " +
+    "nothing was proposed."
+  );
+}
+
 /** The proposal after the gates: its change, the size checks and the actor's answer. */
 async function proposeChecked(
   ctx: Ctx,
@@ -320,6 +348,8 @@ async function proposeChecked(
     // The actor caps the result; this refuses an edit set that cannot fit.
     const added = edits.reduce((n, e) => n + markdownByteLength(e.new_string), 0);
     if (added > MAX_IMPORT_MARKDOWN_BYTES) return tooLarge();
+    const unreadable = await unreadableCitation(ctx, input.citations ?? []);
+    if (unreadable) return { kind: "error", message: citationNotFound(unreadable), status: 400 };
   } else {
     if (!input.find) return { kind: "error", message: "str_replace requires a non-empty `find`", status: 400 };
     if (replace != null && markdownByteLength(replace) > MAX_IMPORT_MARKDOWN_BYTES) return tooLarge();

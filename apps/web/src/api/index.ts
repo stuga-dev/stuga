@@ -16,3 +16,4 @@ export * from "./runs";
 export * from "./usage";
 export * from "./users";
 export * from "./workspaces";
+export * from "./wiki";

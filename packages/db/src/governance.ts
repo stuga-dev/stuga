@@ -20,10 +20,11 @@ export async function upsertAgentRun(sql: Sql, e: RunIndexEntry): Promise<void> 
   await sql`
     INSERT INTO agent_runs
       (run_id, workspace_id, doc_id, doc_kind, doc_title, source, agent, agent_alias, reviewer, status,
-       review_mode, approver_group, approved_by, auto_applied, reverted, acknowledged, pending, accepted, rejected,
+       review_mode, approver_group, approved_by, decided_by, auto_applied, reverted, acknowledged, pending, accepted, rejected,
        conflicts, applied, client, model, queued_behind, created_at, updated_at)
     SELECT ${e.runId}, ${e.workspaceId}, ${e.docId}, ${e.docKind}, ${e.docTitle}, ${e.source}, ${e.agent},
            ${e.agentAlias}, ${e.reviewer}, ${e.status}, ${e.reviewMode}, ${e.approverGroup}, ${e.approvedBy}::text[],
+           ${e.decidedBy ?? []}::text[],
            ${e.autoApplied}, ${e.reverted}, ${e.acknowledged}, ${e.pending}, ${e.accepted}, ${e.rejected},
            ${e.conflicts}, ${e.applied}, ${e.client}, ${e.model}, ${e.queuedBehind ?? null}, ${createdAt}::timestamptz, ${updatedAt}::timestamptz
     WHERE EXISTS (SELECT 1 FROM workspaces WHERE workspace_id = ${e.workspaceId})
@@ -35,6 +36,7 @@ export async function upsertAgentRun(sql: Sql, e: RunIndexEntry): Promise<void> 
       review_mode = EXCLUDED.review_mode,
       approver_group = EXCLUDED.approver_group,
       approved_by = EXCLUDED.approved_by,
+      decided_by = EXCLUDED.decided_by,
       auto_applied = EXCLUDED.auto_applied,
       reverted = EXCLUDED.reverted,
       acknowledged = EXCLUDED.acknowledged,

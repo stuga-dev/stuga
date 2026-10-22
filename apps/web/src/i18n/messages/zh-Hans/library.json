@@ -335,5 +335,9 @@
   "collectionEditor.wholeFolder": "整个文件夹",
   "collectionEditor.folderCheckbox": "{name}（整个文件夹）",
   "collectionEditor.collapse": "收起",
-  "collectionEditor.expand": "展开"
+  "collectionEditor.expand": "展开",
+
+  "nav.wiki": "Wiki",
+  "nav.index": "目录",
+  "nav.log": "日志"
 }

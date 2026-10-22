@@ -50,6 +50,15 @@ const db = vi.hoisted(() => ({
   addCollectionItems: vi.fn(),
   removeCollectionItems: vi.fn(),
   resolveDocInstructions: vi.fn(),
+  pagesLinkingTo: vi.fn(),
+  staleCitations: vi.fn(),
+  readableFolders: vi.fn(),
+  indexPages: vi.fn(),
+  logEntries: vi.fn(),
+  stalePages: vi.fn(),
+  orphanPages: vi.fn(),
+  brokenLinks: vi.fn(),
+  authorRefs: vi.fn(),
 }));
 const edits = vi.hoisted(() => ({
   readDocMarkdownWithProjection: vi.fn(),
@@ -133,6 +142,9 @@ const CALLS: Array<[tool: string, args: Record<string, unknown>, verdict: "reads
   ["workspaces", { action: "instructions" }, "reads"],
   ["docs", { action: "list" }, "reads"],
   ["docs", { action: "metadata", doc_id: "d1" }, "reads"],
+  ["docs", { action: "index" }, "reads"],
+  ["docs", { action: "log" }, "reads"],
+  ["docs", { action: "lint" }, "reads"],
   ["search", { q: "launch" }, "reads"],
   ["markdown", { action: "read", doc_id: "d1" }, "reads"],
   ["markdown", { action: "status", doc_id: "d1" }, "reads"],
@@ -221,6 +233,15 @@ beforeEach(() => {
   db.getCollection.mockResolvedValue(COLLECTION);
   db.listCollectionItems.mockResolvedValue([]);
   db.resolveDocInstructions.mockResolvedValue([]);
+  db.pagesLinkingTo.mockResolvedValue([]);
+  db.staleCitations.mockResolvedValue([]);
+  db.readableFolders.mockResolvedValue([]);
+  db.indexPages.mockResolvedValue({ pages: [], truncated: false });
+  db.logEntries.mockResolvedValue({ entries: [], next: null });
+  db.stalePages.mockResolvedValue({ pages: [], citations: [], truncated: false });
+  db.orphanPages.mockResolvedValue({ pages: [], truncated: false });
+  db.brokenLinks.mockResolvedValue({ links: [], truncated: false });
+  db.authorRefs.mockResolvedValue(new Map());
   edits.readDocMarkdownWithProjection.mockResolvedValue({ markdown: "body", doc: DOC });
   edits.readDocRuns.mockResolvedValue([]);
   edits.readDocProvenance.mockResolvedValue({ passages: [], pending_runs: 0 });

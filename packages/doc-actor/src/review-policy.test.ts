@@ -356,6 +356,28 @@ describe("review verdicts in the document actor", () => {
       expect(res.status).toBe(200);
     });
 
+    it("names in its mirror everyone who approved or declined its changes, at any level, in the order they first did", async () => {
+      const h = harness();
+      const dobj = makeActor(h);
+      await seed(dobj);
+      const mirror = (runId: string) =>
+        (ofKind(h, "run_index") as Array<Extract<IndexMessage, { kind: "run_index" }>>).filter((m) => m.run.runId === runId).at(-1)!.run;
+      // At `review`, whoever asked decides: named as the one who did, as no colleague approval names them.
+      const own = runOf((await propose(dobj, { action: "str_replace", find: "Alpha", replace: "Alpha!", review: "review" })).json);
+      expect((await decide(dobj, { run_id: own.id, decision: "accept", decided_by: "alice", level: "review" })).status).toBe(200);
+      expect(mirror(own.id)).toMatchObject({ decidedBy: ["alice"], approvedBy: [] });
+      // At `colleague`, one approves part and another declines the rest.
+      const both = runOf(
+        (await propose(dobj, { action: "str_replace", find: "Bravo", replace: "Bravo!", review: "colleague", agent_alias: "agent-2" })).json,
+      );
+      const more = await propose(dobj, { action: "append", text: "- second", heading: "Log", review: "colleague", agent_alias: "agent-2" });
+      const hunks = (await detail(dobj, runOf(more.json).id)).hunks;
+      expect(hunks).toHaveLength(2);
+      expect((await decide(dobj, { run_id: both.id, decision: "accept", hunk_ids: [hunks[0]!.id], decided_by: "bo", level: "colleague", approver: true })).status).toBe(200);
+      expect((await decide(dobj, { run_id: both.id, decision: "reject", decided_by: "cy", level: "colleague", approver: true })).status).toBe(200);
+      expect(mirror(both.id)).toMatchObject({ decidedBy: ["bo", "cy"], approvedBy: ["bo"] });
+    });
+
     it("names in its mirror only who approved what stands accepted: an undo takes them back out", async () => {
       const h = harness();
       const dobj = makeActor(h);

@@ -14,6 +14,7 @@ import type {
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import type { AgentInstructions } from "@stuga/protocol/domain/instructions";
 import type { AgentFeedback } from "@stuga/protocol/domain/runs";
+import type { WikiIndex, WikiLint, WikiLog } from "@stuga/protocol/domain/wiki";
 import type { AgentRunSummary, AiCitation, AiStrEdit } from "@stuga/protocol/wire/doc-socket";
 
 /** A refusal, in words the agent can act on. */
@@ -601,4 +602,10 @@ export interface AgentBackend {
   query(databaseId: string, sql: string, params: Array<string | number | null>): Answer<Record<string, unknown>>;
   /** Where each point belongs, in what the caller can read; makes the person's "My notes" when first needed. */
   planRemember(points: RememberPoint[]): Answer<RememberPlanBody>;
+  /** The wiki's Index as the caller reads it, the whole workspace or one folder (`parentId`) and what is under it. */
+  wikiIndex(parentId: string | null | undefined): Answer<WikiIndex>;
+  /** The AI changes people decided, newest first, from before the cursor an earlier page gave. */
+  wikiLog(before: string | undefined, limit: number): Answer<WikiLog>;
+  /** What in the wiki to look at again, as the caller reads it: the whole workspace or one folder. */
+  wikiLint(parentId: string | null | undefined): Answer<WikiLint>;
 }

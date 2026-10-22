@@ -38,3 +38,4 @@ export {
   denseFootnoteMap,
   type CitationInput,
 } from "./footnotes.js";
+export { wikiText, wikiLinkTarget, WIKI_SUMMARY_MAX, type WikiText, type WikiLink, type WikiLinkKind } from "./wiki-links.js";

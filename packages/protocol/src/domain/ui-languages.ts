@@ -49,6 +49,19 @@ export const ASK_STUGA: Record<UiLanguage, string> = {
   "pt-BR": "Perguntar ao Stuga",
 };
 
+/** “Check Stuga”, the same way: what a person says to have their AI look over the wiki for pages to fix. */
+export const CHECK_STUGA: Record<UiLanguage, string> = {
+  en: "Check Stuga",
+  "zh-Hans": "检查 Stuga",
+  "zh-Hant": "檢查 Stuga",
+  ja: "Stugaをチェック",
+  ko: "Stuga 점검",
+  de: "Stuga prüfen",
+  fr: "Vérifier Stuga",
+  es: "Revisar Stuga",
+  "pt-BR": "Verificar o Stuga",
+};
+
 /** The title of a person's own folder for what their AI saves, in the language they read Stuga in when it is made. */
 export const MY_NOTES: Record<UiLanguage, string> = {
   en: "My notes",
@@ -78,6 +91,11 @@ export function saveToStugaElsewhere(): string {
 /** “Ask Stuga” in every language but English. */
 export function askStugaElsewhere(): string {
   return phraseElsewhere(ASK_STUGA);
+}
+
+/** “Check Stuga” in every language but English. */
+export function checkStugaElsewhere(): string {
+  return phraseElsewhere(CHECK_STUGA);
 }
 
 export function isUiLanguage(value: unknown): value is UiLanguage {
