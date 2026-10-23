@@ -841,9 +841,8 @@ describe("where the packaging runs the connector", () => {
       fake.setMinVersion("0.2.31");
       const heard = fake.requests.length;
       s.kick();
-      await until("off", () => request() === "off");
-      expect(sock()).toBe(false);
-      expect(existsSync(join(remoteDir, "relay-1.jwt"))).toBe(false);
+      // The listener closes and the credential goes as the connector is asked off, not before it: wait for all three.
+      await until("off and closed", () => request() === "off" && !sock() && !existsSync(join(remoteDir, "relay-1.jwt")));
       expect(memory.row()).toMatchObject({ enabled: true, min_version: "0.2.31", credential_expires_at: null });
       expect(await s.status()).toMatchObject({ state: "error", last_error: { code: "outdated", min_version: "0.2.31" } });
       await until("the administrators told", () => notices.some((n) => n.event === "REMOTE_UPDATE_REQUIRED"));
