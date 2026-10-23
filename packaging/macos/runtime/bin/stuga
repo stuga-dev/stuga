@@ -34,9 +34,9 @@ here="$(cd "$(dirname "$0")" && pwd -P)"
 # shellcheck source=timemachine.sh
 . "$here/timemachine.sh"
 
-# The oldest release a restore goes back to: 0.2.0 started the schema over, and no 0.1 release takes
-# a later one's data. build-pkg.sh builds no release before it.
-GO_BACK_FLOOR=0.2.0
+# The oldest release a restore goes back to: 0.2 started the schema over, no 0.1 release takes a
+# later one's data, and 0.2.0 was never published. build-pkg.sh builds no release before it.
+GO_BACK_FLOOR=0.2.1
 
 root="${STUGA_ROOT:-/Library/Application Support/Stuga}"
 node_plist="${STUGA_NODE_PLIST:-/Library/LaunchDaemons/dev.stuga.node.plist}"

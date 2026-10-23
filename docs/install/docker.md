@@ -226,7 +226,7 @@ images until you are satisfied with the new one: a roll back starts the stack on
 
 ### From Stuga 0.1
 
-Stuga 0.1 releases were previews, and 0.2.0 starts with new data. On a node that runs 0.1,
+Stuga 0.1 releases were previews, and 0.2 starts with new data. On a node that runs 0.1,
 `./stuga upgrade` puts 0.1's files back and changes nothing. To move:
 
 1. In Stuga 0.1, export each workspace: **Settings → This workspace → General → Export workspace**.

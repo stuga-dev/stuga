@@ -103,7 +103,7 @@ replaced is kept, and the command ends with how to remove it. If it stops after 
 earlier version, Stuga stays stopped with the data unchanged, and the message says how to finish or
 go forward.
 
-Going back reaches 0.2.0 and later releases that run the same Postgres major and pgvector as the
+Going back reaches 0.2.1 and later releases that run the same Postgres major and pgvector as the
 version running; a release that changes one says so in its upgrade notes. To restore a backup of a
 newer version's data, update first. Opening an earlier `Stuga-<version>.pkg` instead changes no
 data: an earlier Stuga refuses data a newer one served, and the menu says `Stuga is older than its
@@ -111,7 +111,7 @@ data`.
 
 ### From Stuga 0.1
 
-Stuga 0.1 releases were previews, and 0.2.0 starts with new data. On a Mac that runs 0.1, **Update
+Stuga 0.1 releases were previews, and 0.2 starts with new data. On a Mac that runs 0.1, **Update
 now** and a later package stop before they change anything, and 0.1 keeps running. To move:
 
 1. In Stuga 0.1, export each workspace: **Settings → This workspace → General → Export workspace**.

@@ -5,7 +5,9 @@
 ARG NODE_VERSION=26.12.1
 ARG DEBIAN_SUITE=trixie
 
-FROM node:${NODE_VERSION}-${DEBIAN_SUITE}-slim AS build
+# The app tree is JavaScript alone, so it is built once, on the builder's own platform: an emulated
+# build of another platform's bundler can stall for hours.
+FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-${DEBIAN_SUITE}-slim AS build
 ARG PNPM_VERSION=12.14.0
 RUN npm install -g "pnpm@${PNPM_VERSION}"
 ENV npm_config_update_notifier=false

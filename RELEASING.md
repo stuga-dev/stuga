@@ -25,8 +25,8 @@ A version is a plain `1.2.3`. There are no pre-releases: the workflow refuses a 
 `v1.2.3-rc.1`, and a running node compares itself only with plain versions.
 
 `GO_BACK_FLOOR` in `packaging/macos/runtime/bin/stuga` is the earliest release a Mac goes back to:
-0.2.0, the first whose data an earlier release can take back. If that changes, set it before
-tagging, and every 0.2.0 that names the floor in `docs/` with it. `build-pkg.sh` refuses to build a
+0.2.1, the first published since the schema started over. If that changes, set it before
+tagging, and every 0.2.1 that names the floor in `docs/` with it. `build-pkg.sh` refuses to build a
 release below it.
 
 ## The changelog

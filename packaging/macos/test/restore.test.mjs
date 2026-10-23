@@ -384,7 +384,7 @@ test("not root: refused before anything", { skip }, () => {
 
 for (const [backup, why] of [
   ["0.2.3", /holds Stuga 0\.2\.3's data, newer than this Stuga 0\.2\.2\. Update first, then run this again\. Nothing was changed\./],
-  ["0.1.16", /going back is possible to Stuga 0\.2\.0 and later; .* holds Stuga 0\.1\.16's data\. Nothing was changed\./],
+  ["0.1.16", /going back is possible to Stuga 0\.2\.1 and later; .* holds Stuga 0\.1\.16's data\. Nothing was changed\./],
   ["0.0.0-dev", /holds Stuga 0\.0\.0-dev's data and this is Stuga 0\.2\.2: only a release goes back to another/],
 ]) {
   test(`a backup of Stuga ${backup}'s data is refused before anything stops`, { skip }, () => {
