@@ -86,6 +86,8 @@ export const ARCHIVE_MAX_ROW_KEY_CHARS = 64;
 export const COMMENT_MAX_BODY_CHARS = 20_000;
 export const COMMENT_MAX_QUOTE_CHARS = 2_000;
 export const COMMENT_MAX_AUTHOR_CHARS = 200;
+/** A group's name, which a node keeps as `group:<name>` in at most 200 characters. */
+export const ARCHIVE_MAX_GROUP_NAME_CHARS = 200 - "group:".length;
 /** A view's opaque `config`, as JSON in UTF-8 bytes; the actor's cap. */
 export const VIEW_CONFIG_MAX_BYTES = 16 * 1024;
 /** A sample's cited edit, capped as the propose route caps an agent's. */
@@ -142,6 +144,10 @@ export interface ArchiveFolder {
   parent: string | null;
   title: string;
   agent_instructions: string;
+  /** The level it gives what is in it, its folders' above included; absent, it follows the folder above. */
+  agent_mode?: ArchiveAgentMode;
+  /** The name of the group that approves beneath it at `colleague`, its folders' above included; null or absent, it follows the folder above. */
+  approver_group?: string | null;
 }
 
 export interface ArchiveDoc extends ArchiveDocSettings {
@@ -447,6 +453,17 @@ export function archiveTitle(title: string): string {
 }
 
 const text = (o: Obj, key: string, at: string, rule: TextRule): string => textValue(o[key], field(at, key), rule);
+
+/** The name an archive gives the group `principal` (`group:<name>`), or null for a name it cannot carry, such as one holding a line break. */
+export function archiveGroupName(principal: string): string | null {
+  const name = principal.startsWith("group:") ? principal.slice("group:".length) : principal;
+  try {
+    return textValue(name, "", { max: ARCHIVE_MAX_GROUP_NAME_CHARS });
+  } catch (err) {
+    if (err instanceof ArchiveError) return null;
+    throw err;
+  }
+}
 
 function flag(o: Obj, key: string, at: string): boolean {
   const value = o[key];
@@ -798,6 +815,10 @@ function parseItem(raw: unknown, at: string, folders: Map<string, ArchiveFolder>
     if (path.split("/").length > ARCHIVE_MAX_FOLDER_DEPTH) fail(`${at}.path`, `folders nest at most ${ARCHIVE_MAX_FOLDER_DEPTH} deep`);
     state.claims.claim(path, `${at}.path`, false);
     const folder: ArchiveFolder = { kind, path, parent, title: title(o, at), agent_instructions: instructions(o, at) };
+    if (o.agent_mode !== undefined) folder.agent_mode = member(o, "agent_mode", at, AGENT_MODES);
+    if (o.approver_group !== undefined) {
+      folder.approver_group = o.approver_group === null ? null : text(o, "approver_group", at, { max: ARCHIVE_MAX_GROUP_NAME_CHARS });
+    }
     folders.set(path, folder);
     return folder;
   }

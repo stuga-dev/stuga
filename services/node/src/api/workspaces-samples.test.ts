@@ -108,7 +108,7 @@ beforeEach(() => {
   }));
   mockCascade.mockResolvedValue({ docs: [] });
   vi.mocked(getWorkspace).mockResolvedValue(null);
-  mockImport.mockResolvedValue({ ids: {}, startDocId: "d_start", counts: { folders: 1, docs: 2, databases: 1, pages: 1, rows: 2, images: 1, comments: 3 } });
+  mockImport.mockResolvedValue({ ids: {}, startDocId: "d_start", counts: { folders: 1, docs: 2, databases: 1, pages: 1, rows: 2, images: 1, comments: 3 }, changed: [] });
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -205,7 +205,7 @@ describe("POST /api/workspaces with a sample", () => {
 
   it("counts as the person's one import, so it waits for their archive upload", async () => {
     let finish!: () => void;
-    mockImport.mockImplementationOnce(() => new Promise((resolve) => (finish = () => resolve({ ids: {}, startDocId: null, counts: {} }))));
+    mockImport.mockImplementationOnce(() => new Promise((resolve) => (finish = () => resolve({ ids: {}, startDocId: null, counts: {}, changed: [] }))));
     const req = new Request("https://node.test/api/workspaces/import", { method: "POST", body: build() as Uint8Array<ArrayBuffer> });
     const upload = importWorkspace({ ctx: ctxOf(), req, url: new URL(req.url), match: ["/api/workspaces/import"] });
     await vi.waitFor(() => expect(mockImport).toHaveBeenCalledTimes(1));

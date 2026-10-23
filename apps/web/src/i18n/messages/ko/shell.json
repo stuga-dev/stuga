@@ -48,6 +48,7 @@
   "importSummary.change.highlight": "강조 표시를 굵게 표시",
   "importSummary.change.math": "수식은 일반 텍스트로 유지",
   "importSummary.change.textColumn": "셀에 값이 여러 개 있는 열은 텍스트로 유지",
+  "importSummary.change.approverGroup": "이 워크스페이스에 없는 승인 그룹은 제외",
   "importSummary.whereMore": "{names} 외 {count, plural, other {#개}}",
   "importSummary.open": "워크스페이스 열기",
   "startWith.mayFinish": "가져오기가 아직 완료될 수도 있어요. 다시 시도하기 전에 워크스페이스 목록을 확인해 보세요.",

@@ -2,7 +2,8 @@
  * The wiki end to end, through the route table with real actors and a real Postgres: links read from
  * each page's approved text as the index job reads it, kept in step through an edit, a rename, the
  * trash and a held page; what links to a page, the Index, the Log and the check, as each reader
- * reads them; marking a page checked; and a citation of a page the caller cannot read, refused.
+ * reads them; marking a page checked; a citation of a page the caller cannot read, refused; and an
+ * imported page's citations, checked as of the import whichever page is indexed first.
  * Needs TEST_DATABASE_URL; skips without it.
  */
 import { mkdtempSync, rmSync } from "node:fs";
@@ -17,9 +18,11 @@ import type { IndexMessage, RunIndexEntry } from "@stuga/protocol/internal/jobs"
 import { Heartbeat } from "@stuga/protocol/wire/opcodes";
 import { createActorNamespace, fsBlobStore, type HostedNamespace } from "@stuga/runtime";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { Ctx } from "../auth/context.js";
+import { importWorkspaceArchive, readArchive } from "../archive/import.js";
+import type { AccountCtx, Ctx } from "../auth/context.js";
 import { createNodeSettingsStore } from "../config/settings/node.js";
 import { routeWorkspaceRequest } from "../http/dispatch.js";
+import { zipFiles } from "../lib/zip.js";
 import { dispatchJob } from "../jobs/worker.js";
 import { nodeBackend } from "../mcp/backend.js";
 import { createInternalApi } from "../platform/internal-api.js";
@@ -364,6 +367,64 @@ describe.skipIf(!URL)("the wiki, end to end", () => {
     const meta = (await nodeBackend(agent("wkesam", "agent-wks")).docMetadata(policy)) as Record<string, unknown>;
     expect(meta.linked_from).toEqual([{ doc_id: support, title: "Support desk", kinds: ["citation", "link"] }]);
     expect(meta.needs_checking).toEqual([]);
+  });
+
+  it("takes an imported page's citations as checked, though it is indexed before the page it cites, until that page changes", async () => {
+    const imported = "ws-wiki-import";
+    await provisionWorkspace(sql, { workspaceId: imported, name: "Imported", owner: "wkeliv" });
+    const doc = (path: string, parent: string | null, title: string) => ({
+      kind: "doc",
+      path,
+      parent,
+      title,
+      title_source: "heading",
+      agent_mode: "review",
+      locked: false,
+      search_hidden: false,
+      agent_instructions: "",
+    });
+    const manifest = {
+      format: "stuga-workspace",
+      version: 1,
+      generator: "stuga test",
+      exported_at: "2026-10-22T10:00:00Z",
+      workspace: { name: "Imported", agent_instructions: "" },
+      items: [
+        { kind: "folder", path: "Sources", parent: null, title: "Sources", agent_instructions: "" },
+        doc("Sources/Meeting.md", "Sources", "Meeting"),
+        doc("Refunds.md", null, "Refunds"),
+      ],
+    };
+    const files: Record<string, string> = {
+      "stuga.json": JSON.stringify(manifest),
+      "Sources/Meeting.md": "# Meeting\n\n## Decisions\n\nRefunds take 30 days.\n",
+      "Refunds.md": '# Refunds\n\nRefunds take 30 days[^1].\n\n[^1]: [Meeting — Decisions](Sources/Meeting.md) "Refunds take 30 days."\n',
+    };
+    const bytes = zipFiles(Object.entries(files).map(([name, data]) => ({ name, data: new TextEncoder().encode(data) })), "deflate");
+    const account = { sql, surface: "web", alias: "wkeliv", displayName: "Liv", isAgent: false, env } as unknown as AccountCtx;
+    const out = await importWorkspaceArchive(account, imported, await readArchive(bytes, { maxImageBytes: 10 * 1024 * 1024 }));
+    const meeting = out.ids.docs.get("Sources/Meeting.md")!;
+    const refunds = out.ids.docs.get("Refunds.md")!;
+
+    // The page citing the meeting is indexed first, the meeting last.
+    const rank = (m: IndexMessage) => (m.kind !== "index_doc" ? 1 : m.docId === refunds ? 0 : m.docId === meeting ? 2 : 1);
+    jobs.push(...jobs.splice(0, jobs.length).sort((a, b) => rank(a) - rank(b)));
+    await work();
+    const [cited, citing] = await sql<{ text_changed_at: Date }[]>`
+      SELECT text_changed_at FROM docs WHERE doc_id IN (${meeting}, ${refunds}) ORDER BY doc_id = ${refunds}`;
+    expect(citing!.text_changed_at.getTime()).toBeLessThanOrEqual(cited!.text_changed_at.getTime());
+
+    const liv = { ...person("wkeliv"), workspaceId: imported, principals: ["user:wkeliv", `org:${imported}`] } as Ctx;
+    expect((await ok<DocWikiLinks>(liv, "GET", `/api/docs/${meeting}/links`)).linked_from.map((p) => [p.doc_id, p.kinds])).toEqual([[refunds, ["citation"]]]);
+    expect((await ok<DocWikiLinks>(liv, "GET", `/api/docs/${refunds}/links`)).needs_checking).toEqual([]);
+    expect((await ok<WikiLint>(liv, "GET", "/api/wiki/lint")).needs_checking).toEqual([]);
+
+    // A change to the meeting after the import is one to check.
+    await edit(meeting, "30 days", "45 days");
+    await work();
+    expect((await ok<DocWikiLinks>(liv, "GET", `/api/docs/${refunds}/links`)).needs_checking).toEqual([
+      { doc_id: meeting, title: "Meeting", changed_at: expect.any(String) },
+    ]);
   });
 
   it("leaves a page a change holds out of the wiki until it is approved", async () => {

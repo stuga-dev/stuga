@@ -61,7 +61,7 @@ export interface ImportedCounts {
   comments: number;
 }
 
-/** What converting a Notion export or folder of Markdown spelled differently. */
+/** What converting a Notion export or folder of Markdown spelled differently, and what an import left out. */
 export type ImportChangeKind =
   | "front_matter"
   | "title_differs"
@@ -71,11 +71,12 @@ export type ImportChangeKind =
   | "heading_link"
   | "highlight"
   | "math"
-  | "text_column";
+  | "text_column"
+  | "approver_group";
 
 export interface ImportChange {
   kind: ImportChangeKind;
-  /** In how many documents, or columns. */
+  /** In how many documents, columns or folders. */
   count: number;
   /** The first of them, by title. */
   where: string[];

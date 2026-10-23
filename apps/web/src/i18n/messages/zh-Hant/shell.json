@@ -48,6 +48,7 @@
   "importSummary.change.highlight": "醒目標示以粗體顯示",
   "importSummary.change.math": "數學式保留為純文字",
   "importSummary.change.textColumn": "儲存格中含多個值的欄保留為文字",
+  "importSummary.change.approverGroup": "此工作空間中沒有的核准群組，已略過",
   "importSummary.whereMore": "{names} 及另外 {count, plural, other {# 個}}",
   "importSummary.open": "開啟工作空間",
   "startWith.mayFinish": "匯入可能仍會完成。重試前先查看你的工作空間。",

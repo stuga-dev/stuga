@@ -225,7 +225,7 @@ function leftOutView(leftOut: readonly LeftOut[]): { left_out?: { count: number;
   return leftOut.length ? { left_out: { count: leftOut.length, files: leftOut.slice(0, LEFT_OUT_LISTED) } } : {};
 }
 
-/** What converting an export spelled differently: each kind, in how many places, and the first of them. */
+/** What converting an export spelled differently, and what the import left out: each kind, in how many places, and the first of them. */
 function changedView(changed: readonly Changed[]): { changed?: Array<{ kind: Changed["kind"]; count: number; where: string[] }> } {
   return changed.length ? { changed: changed.map(({ kind, where }) => ({ kind, count: where.length, where: where.slice(0, LEFT_OUT_LISTED) })) } : {};
 }
@@ -304,7 +304,7 @@ async function workspaceFromArchive(
       ...(imported.startDocId ? { start_doc_id: imported.startDocId } : {}),
       imported: imported.counts,
       ...leftOutView(contents.leftOut),
-      ...changedView(contents.changed),
+      ...changedView([...contents.changed, ...imported.changed]),
     },
     { status: 201 },
   );

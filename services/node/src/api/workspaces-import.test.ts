@@ -123,7 +123,7 @@ beforeEach(() => {
   }));
   mockCascade.mockResolvedValue({ docs: [{ doc_id: "d1", doc_type: "prose" }] });
   mockGetWorkspace.mockResolvedValue(null);
-  mockImport.mockResolvedValue({ ids: {}, startDocId: "d1", counts: { folders: 0, docs: 1, databases: 0, pages: 0, rows: 0, images: 0, comments: 0 } });
+  mockImport.mockResolvedValue({ ids: {}, startDocId: "d1", counts: { folders: 0, docs: 1, databases: 0, pages: 0, rows: 0, images: 0, comments: 0 }, changed: [] });
   mockFinish.mockResolvedValue(true);
 });
 
@@ -161,8 +161,15 @@ describe("POST /api/workspaces/import", () => {
     expect(mockCascade).not.toHaveBeenCalled();
   });
 
+  it("names the folders whose approver group the new workspace has none of", async () => {
+    mockImport.mockResolvedValue({ ids: {}, startDocId: null, counts: {}, changed: [{ kind: "approver_group", where: ["Policies"] }] });
+    const res = await post(archive());
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as Record<string, unknown>).changed).toEqual([{ kind: "approver_group", count: 1, where: ["Policies"] }]);
+  });
+
   it("takes the archive's name when none is given, and names no document to open when the archive names none", async () => {
-    mockImport.mockResolvedValue({ ids: {}, startDocId: null, counts: {} });
+    mockImport.mockResolvedValue({ ids: {}, startDocId: null, counts: {}, changed: [] });
     const res = await post(archive(false));
     expect(res.status).toBe(201);
     const body = (await res.json()) as Record<string, unknown>;
@@ -229,7 +236,7 @@ describe("POST /api/workspaces/import", () => {
 
   it("runs one import per person and three on the node, and takes the next once one is done", async () => {
     const finish: Array<() => void> = [];
-    mockImport.mockImplementation(() => new Promise((resolve) => finish.push(() => resolve({ ids: {}, startDocId: null, counts: {} }))));
+    mockImport.mockImplementation(() => new Promise((resolve) => finish.push(() => resolve({ ids: {}, startDocId: null, counts: {}, changed: [] }))));
     const errorOf = async (res: Response) => ((await res.json()) as { error: string }).error;
     const first = post(archive());
     await vi.waitFor(() => expect(mockImport).toHaveBeenCalledTimes(1));
@@ -292,7 +299,7 @@ describe("POST /api/workspaces/import", () => {
     expect(mockCascade).toHaveBeenCalledWith(expect.anything(), mockProvision.mock.calls[0]![1].workspaceId);
     expect(mockFinish).not.toHaveBeenCalled();
     // Its place is free again.
-    mockImport.mockResolvedValue({ ids: {}, startDocId: null, counts: {} });
+    mockImport.mockResolvedValue({ ids: {}, startDocId: null, counts: {}, changed: [] });
     expect((await post(archive())).status).toBe(201);
   });
 

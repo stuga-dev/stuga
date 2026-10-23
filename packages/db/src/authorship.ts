@@ -1,5 +1,5 @@
 /**
- * Who wrote a document, as an agent's answer cites it: when it last changed, who made its latest
+ * Who last changed a document, as an agent's answer cites it: when it last changed, who made its latest
  * version (people by name, an agent or AI co-author by the person it worked for, "Liv's agent"),
  * whether AI changes in it stand that no person has reviewed, and which AI changes wait to be
  * approved and are not in its text yet. Read for documents the caller has already been shown, so it

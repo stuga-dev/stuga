@@ -4,6 +4,7 @@
  * that need checking, the Index, orphans, broken links and the Log. Nothing names or counts a page,
  * a folder or a change the reader cannot open, and a page a change holds is not the wiki's yet.
  */
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { closeClients, createClient, type Sql } from "./client.js";
 import { createDoc, updateDoc } from "./docs.js";
@@ -121,6 +122,33 @@ describe.skipIf(!URL)("the wiki", () => {
       // A snapshot older than the one the row holds changes nothing.
       expect(await syncDocWiki(sql, { docId: "d_policy", seq: 1, textHash: "old", summary: "old", editors: [], links: [] })).toBe(false);
       expect((await read()).summary).toBe("About d_policy");
+    });
+
+    it("takes a page's first words as what the pages already citing it cite, whichever is indexed first", async () => {
+      // The citing page first, as an import, or a change of several pages approved at once, can index it.
+      await sync("d_support", [["d_policy", "citation"]]);
+      await checkedAgo("d_support", 1);
+      await sync("d_policy", []);
+      expect(await staleCitations(sql, liv, ["d_support"])).toEqual([]);
+      // Its next words are a change.
+      await checkedAgo("d_support", 1);
+      await sync("d_policy", []);
+      expect((await staleCitations(sql, liv, ["d_support"])).map((c) => c.source_id)).toEqual(["d_policy"]);
+    });
+
+    it("keeps a citation of the words an emptied page lost to check once it gets new ones", async () => {
+      const EMPTY = createHash("sha256").update("").digest("hex");
+      await sync("d_policy", []);
+      await changedAgo("d_policy", 30);
+      await sync("d_support", [["d_policy", "citation"]]);
+      await checkedAgo("d_support", 20);
+      // Emptied ten minutes ago; a page cited it since, as a page cites an empty one.
+      await sync("d_policy", [], { textHash: EMPTY });
+      await changedAgo("d_policy", 10);
+      await sync("d_top", [["d_policy", "citation"]]);
+      await checkedAgo("d_top", 5);
+      await sync("d_policy", []);
+      expect((await staleCitations(sql, liv, ["d_support", "d_top"])).map((c) => c.doc_id)).toEqual(["d_support"]);
     });
 
     it("approves a link again when the passages holding it change, and only then", async () => {

@@ -48,6 +48,7 @@
   "importSummary.change.highlight": "高亮显示为粗体",
   "importSummary.change.math": "数学公式保留为纯文本",
   "importSummary.change.textColumn": "单元格中含多个值的列保留为文本",
+  "importSummary.change.approverGroup": "此工作空间中没有的审批群组，已略去",
   "importSummary.whereMore": "{names} 和另外 {count, plural, other {# 个}}",
   "importSummary.open": "打开工作空间",
   "startWith.mayFinish": "导入可能仍会完成。重试前先查看你的工作空间。",

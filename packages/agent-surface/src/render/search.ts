@@ -136,7 +136,7 @@ export function renderPassages(
         heading_path: c.heading_path,
         content: c.content,
         url: link(p.origin, c.doc_id),
-        // Who wrote it, when a backend says: an agent cites it.
+        // Who last changed it, when a backend says: an agent cites it.
         ...(c.updated_at !== undefined ? { updated_at: c.updated_at } : {}),
         ...(c.last_edited_by !== undefined ? { last_edited_by: c.last_edited_by } : {}),
         ...(c.ai_edits !== undefined ? { ai_edits: c.ai_edits } : {}),

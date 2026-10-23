@@ -48,6 +48,7 @@
   "importSummary.change.highlight": "Hervorhebungen fett angezeigt",
   "importSummary.change.math": "Formeln als einfacher Text behalten",
   "importSummary.change.textColumn": "Spalten mit mehreren Werten pro Zelle als Text behalten",
+  "importSummary.change.approverGroup": "Genehmigungsgruppen, die es in diesem Workspace nicht gibt, ausgelassen",
   "importSummary.whereMore": "{names} und {count, plural, one {# weitere} other {# weitere}}",
   "importSummary.open": "Workspace öffnen",
   "startWith.mayFinish": "Der Import kann noch abgeschlossen werden. Prüfe deine Workspaces, bevor du es erneut versuchst.",

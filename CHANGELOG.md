@@ -9,12 +9,20 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+Stuga becomes a team wiki that your AI writes and your team approves. Say **Save to Stuga** and your
+AI files each point on the right page or table row; **Ask Stuga** answers with what is approved and
+what waits. **Reviewed by a colleague** joins the review levels, so someone other than whoever asked
+approves; each change gets a review card laid out for a phone, and a Slack channel can hear of those
+that wait for a colleague. The wiki gets an Index, a Log, **Linked from** and **Needs checking**.
+Search runs on Postgres's own full-text search.
+
 ### Upgrade notes
 
 - A node set up by a 0.1 release starts over with a new data directory: 0.1 releases were previews, and the database schema starts again here. Export each workspace from 0.1 first (**Settings → This workspace → General → Export workspace**) and import it into the new node ([Workspace archives](docs/workspace-archive.md)).
 
 ### Added
 
+- **Reviewed by a colleague**, a third review level beside **AI edits apply directly** and **Reviewed by whoever asked the AI**: someone else who can edit the item approves an AI's changes, never the person who asked, a workspace admin included. **Who reviews AI edits…** sets the level of a document, database or folder; a folder's level is the floor for everything in it, a folder can name an approver group, and making an item looser than its folder takes that folder's owner or a workspace admin and tells the other admins. A change keeps the level it was proposed under, so moving a page or loosening a level later releases nothing that waits ([Agent changes](docs/agents.md#agent-changes-wait-for-review-or-apply-at-once)).
 - Say **Save to Stuga** to your AI, in any of Stuga's languages, and it files what you told it into the right page and section of your team's wiki, corrects the sentence it changes, starts a page in the folder where it belongs, or adds it to your own **My notes**, then tells you what it saved where, what was there already, and what waits for approval. The new `remember` tool finds the places, the sentences that say a point already and those it may make untrue, and takes the meeting, email or document a point came from as its `source`; each write follows the page's review level ([Save to Stuga and Ask Stuga](docs/agents.md#save-to-stuga-and-ask-stuga)). What you tell your AI yourself is saved without your name or a date, which version history keeps; a point from a meeting or an email cites it. Points keep the language they came in, and with semantic search off, a point no page is about says its page may be written in another language.
 - **Save to Stuga** fills tables too: a fact a table's columns name, such as a customer's contact or plan, goes in the row it names or a new row, with each cell as it reads now, what already says it and what it would change; prose still goes in a page ([Save to Stuga and Ask Stuga](docs/agents.md#save-to-stuga-and-ask-stuga)).
 - **Ask Stuga** answers from tables too: an agent's `search` and `retrieve` carry the rows whose cells hold the question's words, with who last changed each row, when, and what waits for approval; `query` answers a precise question over a table. A citation can name a row, by `table_id` and `row_id`.
@@ -37,7 +45,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 - A page an AI makes in a folder where a colleague approves AI edits stays visible only to whoever asked and whoever may approve it until it is approved, then takes its folder's access; declined, it goes to the trash ([New pages in a change](docs/agents.md#new-pages-in-a-change)).
 - An AI's later change to a page that still has its earlier change waiting queues behind it, so one hub page, such as a customer list, takes every ingest; the card and the agent's answer say what it waits behind ([A queue on a page](docs/agents.md#a-queue-on-a-page)).
 - **Linked from** under each page: the pages you can open that link to it or cite it, kept in step with what is approved ([The wiki](docs/agents.md#the-wiki)).
-- **Needs checking**: a page whose cited page changed after it was approved says so, naming what changed, and someone who can edit it marks it checked once they have looked ([The wiki](docs/agents.md#the-wiki)).
+- **Needs checking**: a page whose cited page changed after it was approved says so, naming what changed, and someone who can edit it marks it checked once they have looked. A page's first words are no change, so a page imported from an archive, or approved with the page it cites, does not open needing checking ([The wiki](docs/agents.md#the-wiki)).
 - **Wiki → Index** lists every page and database you can open by folder, with its opening line or its rows, when it last changed and who changed it, and whether it needs checking. **Wiki → Log** lists the AI changes people approved and declined, newest first, with who asked, who decided, and the tables and rows each touched ([The Index and the Log](docs/agents.md#the-index-and-the-log), [API](docs/api.md#the-wiki)).
 - Say **Check Stuga** to your AI, or pick it from the prompt menu, and it finds the pages that need checking, the pages nothing links to and the broken links, a link to a deleted row among them, and proposes the fixes as one change for your approval. Agents read the Index, the Log and the check through `docs` actions `index`, `log` and `lint`, and what links to a page through `docs` action `metadata` ([Check the wiki](docs/agents.md#check-the-wiki)).
 
@@ -57,6 +65,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 - Appending under a heading that has subsections, such as a page's title heading, adds the text at the end of that heading's own text, before its first subsection, and the answer says so; it used to land at the end of the last subsection. A heading that is not there is refused with the headings the page has ([api.md](docs/api.md#proposing-an-edit)).
 - A heading with no text of its own, such as a page's title heading, is no longer a passage that search and retrieval answer with.
 - **Review AI edits** has three tabs, **Needs you**, **Waiting on others** and **Done**, in place of its **Show** filter, and a run opens its review card. A run's **⋯** menu offers **Ask for changes…** and **Decline** as the card does, and a decided run counts what was approved and declined. `GET /api/runs` takes `filter=waiting` and `filter=done` in place of `open` and `closed` ([The review inbox](docs/agents.md#the-review-inbox)).
+- A workspace archive carries each folder's review level and approver group. An import sets them and gives an item a level of its own only where it differs from its folder's, so what an AI writes later into a **Reviewed by a colleague** folder waits for a colleague; an approver group stays only where the new workspace has a group of that name, and the import names the folders that lost theirs ([Workspace archives](docs/workspace-archive.md#the-manifest)). An item in a person's My notes shared with others is exported at **Reviewed by whoever asked the AI** at least, as agents are held to it.
 - **Who reviews AI edits…** shows every floor under an item: its folder's level, a row page's database's, and at least **Reviewed by whoever asked the AI** for a page shared out of My notes, offering nothing below the last two. Such a page now shows the level the node holds agents to, where it showed its folder's **AI edits apply directly**; summaries carry `agent_mode_floors` ([API](docs/api.md#documents)).
 
 ### Removed
@@ -65,6 +74,7 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ### Security
 
+- The text of an AI change that has not landed (waiting, rejected or in conflict) reaches only whoever asked, those who may approve it, and the item's owner and workspace admins. Anyone else who could read the item used to see it in the run's summary and details ([What holds for every level](docs/agents.md#what-holds-for-every-level)).
 - The Mac package and the Docker image run Node.js 26.12.1, a security release.
 - A workspace or folder webhook receives events only for documents its creator can read, checked again at each delivery. A workspace admin's webhook used to receive the titles and comment excerpts of documents shared with others but not with them ([Webhooks](docs/api.md#webhooks)).
 

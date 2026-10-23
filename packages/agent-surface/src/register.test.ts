@@ -156,9 +156,9 @@ describe("registerAgentTools", () => {
       "Save to Stuga: Refunds over 500 euros need finance approval.",
     );
     expect(await text("ask", { topic: " What is Acme's refund window? " })).toBe(
-      "Ask Stuga what my team and I have recorded: say who wrote each point and when, and what still waits for approval. What is Acme's refund window?",
+      "Ask Stuga what my team and I have recorded: for each point, say who last changed its page or row and when, and what still waits for approval. What is Acme's refund window?",
     );
-    expect(await text("ask")).toBe("Ask Stuga what my team and I have recorded: say who wrote each point and when, and what still waits for approval.");
+    expect(await text("ask")).toBe("Ask Stuga what my team and I have recorded: for each point, say who last changed its page or row and when, and what still waits for approval.");
     expect(await text("check")).toBe(
       "Check Stuga: find the pages that need checking, the pages nothing links to and the broken links, and propose fixes for my approval.",
     );

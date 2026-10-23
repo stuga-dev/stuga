@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { principalsFrom, userPrincipal } from "@stuga/auth";
 import { docToMarkdown, getStugaSchema, markdownToDoc } from "@stuga/crdt-ops";
 import {
+  folderApproverGroups,
   getDoc,
   getFolderAncestors,
   getUsers,
@@ -35,13 +36,13 @@ import {
   DATABASE_ROWS_PAGE_MAX,
 } from "@stuga/protocol/databases/limits";
 import type { RowFilterNode, RowValue, TableSchema, ViewSpec } from "@stuga/protocol/databases/types";
-import { docReviewLevel } from "@stuga/protocol/domain/events";
 import { MAX_AGENT_INSTRUCTIONS_CHARS } from "@stuga/protocol/domain/limits";
 import { UNSAFE_TEXT, hasVisibleText } from "@stuga/protocol/domain/node-name";
 import { SAMPLE_AGENT_ALIAS, SAMPLE_AGENT_NAME } from "@stuga/protocol/domain/workspaces";
 import { readDocMarkdownWithProjection } from "../agents/edits.js";
 import type { Ctx } from "../auth/context.js";
 import { canReadDoc } from "../authz/authz.js";
+import { agentFolderReviewMode, effectiveReviewLevel } from "../authz/review-mode.js";
 import { callDatabaseActor, projectedSchema } from "../databases/gate.js";
 import { releaseActor } from "../documents/access.js";
 import { ownOrigins } from "../http/arrival.js";
@@ -72,6 +73,7 @@ import {
   ROW_FIELDS,
   VIEW_CONFIG_MAX_BYTES,
   ArchiveError,
+  archiveGroupName,
   archiveHref,
   archiveName,
   archiveNameRoom,
@@ -118,6 +120,8 @@ interface PlannedFolder {
   /** The nearest folder the exporter can read above it, or null at the top level. */
   parent: string | null;
   path: string;
+  /** The approver group it gives what is in it, its folders' above included, by the group's name; null for none. */
+  approverGroup: string | null;
 }
 
 interface PlannedTable {
@@ -310,6 +314,7 @@ export async function planWorkspaceExport(ctx: Ctx): Promise<ExportPlan> {
   for (const db of databaseRows) deepen(plan.placement.get(db.doc_id) ?? null, DATABASE_LEVELS);
 
   // Folders top-down, so each parent's path is known before its children are named.
+  const groups = await folderApproverGroups(ctx.sql, ctx.workspaceId, [...readable.keys()]);
   const children = new Map<string | null, FolderRow[]>();
   for (const folder of readable.values()) listIn(children, folderParent.get(folder.folder_id) ?? null).push(folder);
   const nameFolders = (parent: string | null, dir: string): void => {
@@ -317,7 +322,8 @@ export async function planWorkspaceExport(ctx: Ctx): Promise<ExportPlan> {
     for (const { row } of kids) {
       const room = archiveNameRoom(dir, levels.get(row.folder_id) ?? 1);
       const path = joinPath(dir, archiveName(archiveTitle(row.title), takenIn(plan, dir), "", room));
-      plan.folders.push({ row, parent, path });
+      const group = groups.get(row.folder_id);
+      plan.folders.push({ row, parent, path, approverGroup: group === undefined ? null : archiveGroupName(group) });
       plan.folderPaths.set(row.folder_id, path);
       nameFolders(row.folder_id, path);
     }
@@ -533,7 +539,16 @@ export async function writeWorkspaceExport(ctx: Ctx, plan: ExportPlan, sink: Zip
     const at = parent === null ? null : plan.folderPaths.get(parent)!;
     for (const folder of foldersIn.get(parent) ?? []) {
       const { title, agent_instructions } = folder.row;
-      items.push({ kind: "folder", path: folder.path, parent: at, title: archiveTitle(title), agent_instructions: instructionsOf(agent_instructions) });
+      items.push({
+        kind: "folder",
+        path: folder.path,
+        parent: at,
+        title: archiveTitle(title),
+        agent_instructions: instructionsOf(agent_instructions),
+        // As a document's: the level it gives what is in it for every agent, the folders' above included, read or not.
+        agent_mode: agentFolderReviewMode(folder.row),
+        approver_group: folder.approverGroup,
+      });
       await list(folder.row.folder_id);
     }
     for (const body of docsIn.get(parent) ?? []) items.push({ kind: "doc", path: body.path, parent: at, ...settings.get(body.path)! });
@@ -810,8 +825,9 @@ async function docSettings(state: WriteState, doc: DocRow, title: string): Promi
   const settings: ArchiveDocSettings = {
     title,
     title_source: doc.title_source === "user" ? "user" : "heading",
-    // The level it is at, its folders' (and a row page's database's) included: an archive carries no folder's level.
-    agent_mode: docReviewLevel(doc),
+    // The level it is at for every agent, its folders' (and a row page's database's) included, so an import
+    // that reads no folder's level still holds it there.
+    agent_mode: effectiveReviewLevel(doc),
     locked: doc.locked,
     search_hidden: doc.search_hidden,
     agent_instructions: instructionsOf(doc.agent_instructions),

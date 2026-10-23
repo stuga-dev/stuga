@@ -1,7 +1,7 @@
 /**
- * How a workspace import ended: what came in, the files it left out and why, and what the
- * conversion of a Notion export or folder of Markdown spelled differently, each with the documents
- * or columns it happened in.
+ * How a workspace import ended: what came in, the files it left out and why, what the conversion
+ * of a Notion export or folder of Markdown spelled differently, and the approver groups the new
+ * workspace has none of, each with the documents, columns or folders it happened in.
  */
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Text } from "@astryxdesign/core/Text";
@@ -21,6 +21,7 @@ const CHANGE_LABEL: Record<ImportChangeKind, MessageKey> = {
   highlight: "shell.importSummary.change.highlight",
   math: "shell.importSummary.change.math",
   text_column: "shell.importSummary.change.textColumn",
+  approver_group: "shell.importSummary.change.approverGroup",
 };
 
 /** How many names a change lists before it counts the rest. */

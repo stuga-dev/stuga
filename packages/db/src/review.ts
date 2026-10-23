@@ -301,6 +301,18 @@ export async function waitingRunsIn(
     LIMIT 500`;
 }
 
+/**
+ * The approver group each folder gives what is in it (folder_approver_group): its own, else the nearest one a
+ * folder above it names, by folder_id. A folder under no group is left out.
+ */
+export async function folderApproverGroups(sql: Queryable, workspaceId: string, folderIds: readonly string[]): Promise<Map<string, string>> {
+  if (folderIds.length === 0) return new Map();
+  const rows = await sql<{ folder_id: string; approver_group: string | null }[]>`
+    SELECT folder_id, folder_approver_group(folder_id) AS approver_group FROM folders
+    WHERE workspace_id = ${workspaceId} AND folder_id = ANY(${[...folderIds]})`;
+  return new Map(rows.flatMap((r) => (r.approver_group ? [[r.folder_id, r.approver_group] as const] : [])));
+}
+
 /** A folder's own review level (null follows the folder above) and approver group (null for none). */
 export async function setFolderReview(
   sql: Sql,

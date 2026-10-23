@@ -617,7 +617,7 @@ async function waitingInRead(ctx: Ctx, md: ProjectedMarkdown): Promise<Pick<Mark
 }
 
 /**
- * Search hits or passages with who wrote each document, and what AI changes to it wait for approval, which an
+ * Search hits or passages with who last changed each document, and what AI changes to it wait for approval, which an
  * agent cites and a person's REST answer leaves out: the changes the user asked for (through this agent or another
  * of theirs) listed as they would land, the approved text each changes now beside what it reads after approval, so
  * one answer can say "the page says 14 days; a change to 30 days waits for a colleague"; others' counted. Those

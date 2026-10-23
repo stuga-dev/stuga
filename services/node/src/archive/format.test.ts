@@ -15,6 +15,7 @@ import {
   SAMPLE_MAX_CITATIONS,
   SAMPLE_MAX_EDITS,
   archiveCellValue,
+  archiveGroupName,
   archiveHref,
   archiveIndex,
   archiveName,
@@ -167,6 +168,28 @@ describe("parseManifest", () => {
     expect(db.kind === "database" && db.tables[0]!.columns[0]).toEqual({ name: "Law", type: "text" });
   });
 
+  it("reads a folder's level and approver group, and a folder without them as one that follows the folder above", () => {
+    const m = parseManifest(
+      changed((m) => {
+        m.items.splice(2, 0, { kind: "folder", path: "Laws/EU", parent: "Laws", title: "EU", agent_instructions: "", agent_mode: "colleague", approver_group: "Legal" });
+        m.items[1].agent_mode = "auto";
+        m.items[1].approver_group = null;
+      }),
+    );
+    expect(m.items.slice(1, 3)).toEqual([
+      { kind: "folder", path: "Laws", parent: null, title: "Laws", agent_instructions: "Quote the official text.", agent_mode: "auto", approver_group: null },
+      { kind: "folder", path: "Laws/EU", parent: "Laws", title: "EU", agent_instructions: "", agent_mode: "colleague", approver_group: "Legal" },
+    ]);
+    expect(parseManifest(sample()).items[1]).toEqual({ kind: "folder", path: "Laws", parent: null, title: "Laws", agent_instructions: "Quote the official text." });
+  });
+
+  it("names a group as an archive carries it, and none it cannot", () => {
+    expect(archiveGroupName("group:Legal team")).toBe("Legal team");
+    expect(archiveGroupName("group:x".padEnd(200, "x"))).toBe("x".repeat(194));
+    expect(archiveGroupName("group:Legal\nteam")).toBeNull();
+    expect(archiveGroupName("group:")).toBeNull();
+  });
+
   it("refuses a newer version before reading anything else", () => {
     const err = refusal({ format: "stuga-workspace", version: ARCHIVE_VERSION + 1 });
     expect(err.at).toBe("version");
@@ -293,6 +316,11 @@ describe("parseManifest", () => {
     ["a row step that changes nothing", (m) => (m.sample.steps[1].values = {}), "sample.steps[1].values", "at least one cell"],
     ["a placeholder it does not know", (m) => (m.sample.steps[2].body = "{{you}}, look"), "sample.steps[2].body", "only one"],
     ["a step kind it does not know", (m) => (m.sample.steps[0].kind = "delete"), "sample.steps[0].kind", "edit, row, comment"],
+    ["a folder level it does not know", (m) => (m.items[1].agent_mode = "strict"), "items[1].agent_mode", "review, auto, colleague"],
+    ["a folder level of none", (m) => (m.items[1].agent_mode = null), "items[1].agent_mode", "review, auto, colleague"],
+    ["an empty approver group", (m) => (m.items[1].approver_group = ""), "items[1].approver_group", "must not be empty"],
+    ["an approver group on two lines", (m) => (m.items[1].approver_group = "Legal\nteam"), "items[1].approver_group", "line break"],
+    ["an approver group longer than a group's name", (m) => (m.items[1].approver_group = "x".repeat(195)), "items[1].approver_group", "longer than 194"],
   ];
 
   it.each(refusals)("refuses %s", (_name, edit, at, reason) => {

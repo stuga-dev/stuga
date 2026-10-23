@@ -54,7 +54,7 @@ describe("bundleManifest", () => {
         name: "ask",
         description: expect.any(String),
         arguments: ["topic"],
-        text: "Ask Stuga what my team and I have recorded: say who wrote each point and when, and what still waits for approval. ${arguments.topic}",
+        text: "Ask Stuga what my team and I have recorded: for each point, say who last changed its page or row and when, and what still waits for approval. ${arguments.topic}",
       },
       {
         name: "check",
@@ -75,7 +75,7 @@ describe("bundleManifest", () => {
     expect(fill(ask!.text, { topic: "" })).toBe(said("ask", {}));
     expect(fill(check!.text, { scope: "the Policies folder" })).toBe(said("check", { scope: "the Policies folder" }));
     expect(fill(check!.text, { scope: "" })).toBe(said("check", {}));
-    expect(said("ask", {})).toBe("Ask Stuga what my team and I have recorded: say who wrote each point and when, and what still waits for approval.");
+    expect(said("ask", {})).toBe("Ask Stuga what my team and I have recorded: for each point, say who last changed its page or row and when, and what still waits for approval.");
   });
 
   it("claims no client version floor", () => {

@@ -97,7 +97,8 @@ export type LeftOut = { path: string } & LeftOutReason;
  * `front_matter` shown as a list under the title, a note's `title_differs` from its first heading,
  * which titles it, an `unresolved_link` kept as its text, a `missing_image` left out, an
  * `embedded_note` made a link, a `heading_link` that opens the note at its top, a `highlight` made
- * bold, `math` kept as text, and a `text_column` whose cells hold several values each.
+ * bold, `math` kept as text, and a `text_column` whose cells hold several values each; and what an
+ * import itself leaves out: a folder's `approver_group` the workspace has no group of.
  */
 export const CHANGE_KINDS = [
   "front_matter",
@@ -109,6 +110,7 @@ export const CHANGE_KINDS = [
   "highlight",
   "math",
   "text_column",
+  "approver_group",
 ] as const;
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
 
@@ -133,7 +135,7 @@ export class Changes {
 
 export interface Changed {
   kind: ChangeKind;
-  /** The documents, or columns, it happened in, by title. */
+  /** The documents, columns or folders it happened in, by title. */
   where: string[];
 }
 

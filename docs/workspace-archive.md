@@ -8,9 +8,10 @@ is `<name>.stuga.zip`.
 This page is format version 1. `services/node/src/archive/format.ts` is its code.
 
 An archive carries folders, documents, databases (tables, columns, rows, views and row pages),
-images, the files documents link to, comments, agent instructions, and each document's review mode, lock and search setting. It
-does not carry version history, the review and Activity history, sharing, members, collections,
-favorites, or when rows were created and updated.
+images, the files documents link to, comments, agent instructions, each folder's and document's
+review level, each folder's approver group by name, and each document's lock and search setting.
+It does not carry version history, the review and Activity history, sharing, members, groups,
+collections, favorites, or when rows were created and updated.
 
 A workspace owner or admin exports one with **Settings → This workspace → General → Export
 workspace**. **Create a workspace** with **Start with → Import** imports one into a new
@@ -82,7 +83,20 @@ or an offset from `-15:59` to `+15:59`, from year 1: `2026-09-25T10:00:00Z`.
 Every item has `kind`, `path` and `parent`. `parent` is the path of a folder listed earlier, or
 `null` at the top level, and `path` lies directly in it.
 
-A **folder** (`kind: "folder"`) has `title`, as a document's, and `agent_instructions`.
+A **folder** (`kind: "folder"`) has `title`, as a document's, and `agent_instructions`, and may
+have these, which Stuga's export writes:
+
+| Field | Value |
+|---|---|
+| `agent_mode` | `review`, `auto` or `colleague`: the level the folder gives what is in it, its folders' included. Without it, the folder follows the folder above it, and a top-level one is at `review`. |
+| `approver_group` | The name of the group whose members approve AI edits in it at `colleague`, its folders' included: 1 to 194 characters, one line. `null`, or none, follows the folder above. |
+
+An import gives each folder, document and database a level of its own only where it differs from
+the one its folder, and a row page's database, gives it, so what is in a folder follows the
+folder's level as before. It keeps an approver group only when the new workspace has a group of
+that name, and otherwise lists the folder in its answer's `changed`
+([API](api.md#for-people-only)): the folder keeps its level, and anyone else who can edit approves
+there.
 
 A **document** (`kind: "doc"`) has a `.md` path, and these settings, which databases and row pages
 share:
@@ -91,7 +105,7 @@ share:
 |---|---|
 | `title` | 1 to 200 characters, one line. A line break or other control character in a title is written as a space. |
 | `title_source` | `heading`: the body's first line gives the title. `user`: someone named it. |
-| `agent_mode` | `review`, `auto` or `colleague`: the level the item was at when it was exported, its folder's included. |
+| `agent_mode` | `review`, `auto` or `colleague`: the level the item was at when it was exported, its folder's included, and `review` at least in a person's My notes shared with others. |
 | `locked` | `true` or `false`. |
 | `search_hidden` | `true` or `false`. |
 | `agent_instructions` | Up to 20,000 characters; `""` for none. |
@@ -204,8 +218,8 @@ A document holds at most 5,000 comments.
 run only for a sample from [the samples index](#the-samples-index), never for an archive from a
 file. Sample agent is an agent with no key, acting for the person importing the sample through the
 routes an agent's key calls, so each change waits for that person's review. The steps run after the
-comments are written and before any document's review mode and lock are set. A step that does not
-land, or a change that would not wait for review, fails the import.
+comments are written and before any folder's or document's review level, or any lock, is set. A
+step that does not land, or a change that would not wait for review, fails the import.
 
 A step names a document or row page (`doc`, and a citation's `doc`) or a database (`database`)
 by its path in `items`.
@@ -254,6 +268,9 @@ who sent it.
 ## Compatibility
 
 Stuga reads version 1, ignores fields it does not know, and refuses an archive of a newer version.
+A field added to version 1 is optional, as a folder's `agent_mode` and `approver_group` are: a Stuga
+that does not know them still holds each document to the level it was at, which every document
+carries.
 
 ## Checking an archive
 

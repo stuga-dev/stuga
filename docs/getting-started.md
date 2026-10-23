@@ -1,7 +1,7 @@
 # Getting started
 
-The first hour with a new node, in order. At the end, people can reach it, an agent can work in it,
-and you have restored a backup once.
+The first hour with a new node, in order. At the end, people can reach it, your AI can write to the
+wiki, and you have restored a backup once.
 
 ## 1. Install
 
@@ -60,7 +60,7 @@ another Stuga node ([Several nodes](network-access.md#several-nodes)).
   workspace. When its last look for the list failed, as it does without internet access, it says
   **Samples need an internet connection**; [SAMPLES_URL](configuration.md#network) points the node at
   a mirror. The new workspace opens at the sample's **Start here** document. **Sample agent**'s
-  changes, written in advance, wait for your review in **Review AI edits**, and its comment mentions
+  changes, written in advance, wait in **Review AI edits**, and its comment mentions
   you.
 - **Import**: a `.stuga.zip` exported from Stuga ([Workspace archive](workspace-archive.md)),
   a Notion export, or a zipped Obsidian vault or other folder of Markdown
@@ -128,7 +128,8 @@ database apply directly, or have a colleague approve them, open it and choose **
 edits…** from the **⋯** menu beside **Share**; a folder's menu sets it for everything in the
 folder. Changes that apply directly are still recorded, attributed and revertible.
 
-**Check:** ask the agent to propose an edit, and accept it in the document.
+**Check:** ask your AI to add a sentence to the document you created in step 3, and approve it from
+**Review AI edits**.
 
 ## 6. Invite people
 

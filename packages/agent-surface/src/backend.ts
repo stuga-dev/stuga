@@ -125,7 +125,7 @@ export interface SearchBody {
 }
 
 /**
- * A row of a table an agent's recall found, cited as a passage is: who last wrote it and when, and what waits
+ * A row of a table an agent's recall found, cited as a passage is: who last changed it and when, and what waits
  * for it. Its cells are the approved table's.
  */
 export interface RecalledRow extends Authorship {
@@ -176,7 +176,7 @@ export interface RowsMore {
 }
 
 /**
- * Who wrote a document, as an agent's recall answer cites it: what a person's REST answer leaves out.
+ * Who last changed a document, as an agent's recall answer cites it: what a person's REST answer leaves out.
  * `ai_edits` is "unreviewed" while an AI change applied directly stands that no person has reviewed.
  * A type alias, so a search hit that carries it keeps the hit's open shape.
  */

@@ -7,6 +7,7 @@ import type { DatabaseSchema, RowRecord } from "@stuga/protocol/databases/types"
 vi.mock("@stuga/db", async (orig) => ({
   ...(await orig<typeof import("@stuga/db")>()),
   getWorkspace: vi.fn(),
+  folderApproverGroups: vi.fn(),
   listFolders: vi.fn(),
   getFolderAncestors: vi.fn(),
   listExportDocs: vi.fn(),
@@ -310,6 +311,7 @@ beforeEach(() => {
     ws === "ws1" && aliases.includes("u_liv") ? [{ alias: "u_liv", display_name: "Liv", username: "liv", email: null } as never] : [],
   );
   vi.mocked(db.listDocsWithCommentsOver).mockResolvedValue([]);
+  vi.mocked(db.folderApproverGroups).mockResolvedValue(new Map());
   reach({ role: "owner", groups: [] });
 });
 
@@ -368,6 +370,28 @@ describe("workspace export", () => {
     // What the listing leaves out is never read: no body for the secret, no folder for Hidden.
     expect(actorCalls.some((u) => u.includes("d-secret"))).toBe(false);
     expect(vi.mocked(db.listExportDocs).mock.calls[0]![1]).toEqual(["user:u_liv", "org:ws1"]);
+  });
+
+  it("gives each folder the level and approver group it gives what is in it, the folders' above included, read or not", async () => {
+    // Plans names Legal and asks a colleague; Hidden, which Liv cannot open, lets AI edits apply directly beneath it.
+    vi.mocked(db.listFolders).mockResolvedValue([
+      { ...PLANS, agent_mode: "colleague", approver_group: "group:Legal" },
+      { ...INNER, parent_agent_mode: "auto" },
+    ]);
+    vi.mocked(db.folderApproverGroups).mockResolvedValue(new Map([["f1", "group:Legal"], ["f3", "group:Legal\nteam"]]));
+    const { manifest } = await exportArchive();
+    expect(vi.mocked(db.folderApproverGroups).mock.calls[0]!.slice(1)).toEqual(["ws1", ["f1", "f3"]]);
+    expect(item(manifest, "Plans")).toMatchObject({ agent_mode: "colleague", approver_group: "Legal" });
+    // A name an archive cannot carry is none.
+    expect(item(manifest, "Plans/Inner")).toMatchObject({ agent_mode: "auto", approver_group: null });
+  });
+
+  it("writes a folder in a person's My notes shared with others, and what is in it, at review at least", async () => {
+    vi.mocked(db.listFolders).mockResolvedValue([{ ...PLANS, agent_mode: "auto", notes_shared: true }, INNER]);
+    docs = docs.map((d) => (d.doc_id === "d1-plan" ? { ...d, agent_mode: null, folder_agent_mode: "auto", notes_shared: true } : d));
+    const { manifest } = await exportArchive();
+    expect(item(manifest, "Plans")).toMatchObject({ agent_mode: "review" });
+    expect(item(manifest, "Plans/Plan.md")).toMatchObject({ agent_mode: "review" });
   });
 
   it("points links into the archive, or at this node's public origin when their target is not exported", async () => {

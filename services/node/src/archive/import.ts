@@ -2,11 +2,11 @@
  * Import a workspace archive into a new workspace. The whole archive is read
  * and checked before anything is written; then every item lands as the
  * importing person through an ImportClient: containers before what they hold,
- * bodies once every link has somewhere to point, and each document's settings
- * last, so a lock or `auto` review never stands in the way of the import's own
- * writes or a sample's proposals. Past the manifest, only the zip is held
- * throughout: each body, rows file and image is read from it again when it is
- * written. Each document's and database's actor is released once a pass or its
+ * bodies once every link has somewhere to point, and each folder's review level
+ * and each document's settings last, so a lock or `auto` review never stands in
+ * the way of the import's own writes or a sample's proposals. Past the manifest,
+ * only the zip is held throughout: each body, rows file and image is read from
+ * it again when it is written. Each document's and database's actor is released once a pass or its
  * settings are done with it, and each body is saved as it is written, so a large
  * archive holds one store open at a time.
  */
@@ -17,11 +17,12 @@ import type { SafeImageMime } from "@stuga/protocol/api/media";
 import { filesCell } from "@stuga/protocol/databases/cells";
 import { DATABASE_MAX_ROWS_PER_WRITE } from "@stuga/protocol/databases/limits";
 import type { RowFilterNode, RowValue, TableSchema } from "@stuga/protocol/databases/types";
+import { stricterReviewMode } from "@stuga/protocol/domain/events";
 import { type AccountCtx, workspaceContextFor } from "../auth/context.js";
 import { openZip, ZipError, type ZipArchive, type ZipEntryInfo } from "../lib/zip.js";
 import { MediaValidationError, mediaUrl, validateImageBytes } from "../media/media.js";
-import { type ColumnInput, type DocState, type ImportClient, type ViewInput, workspaceImportClient } from "./client.js";
-import type { Changed, LeftOut } from "./convert/build.js";
+import { type ColumnInput, type DocState, type FolderReview, type ImportClient, type ViewInput, workspaceImportClient } from "./client.js";
+import { type Changed, Changes, type LeftOut } from "./convert/build.js";
 import { convertExport, type ExportKind } from "./convert/index.js";
 import {
   ARCHIVE_MAX_BODY_BYTES,
@@ -43,6 +44,7 @@ import {
   parseMediaPath,
   parseTableRows,
   resolveArchiveHref,
+  type ArchiveAgentMode,
   type ArchiveColumn,
   type ArchiveComment,
   type ArchiveDatabase,
@@ -392,6 +394,8 @@ export interface ImportResult {
   ids: ImportedIds;
   startDocId: string | null;
   counts: { folders: number; docs: number; databases: number; pages: number; rows: number; images: number; files: number; comments: number };
+  /** What the import left out of the archive's settings: an approver group the workspace has none of, by folder title. */
+  changed: Changed[];
 }
 
 /** An import that stopped at `step`, which names the item it was writing. */
@@ -453,12 +457,21 @@ const importedComment = (c: ArchiveComment): ImportedComment => ({
   createdAt: c.created_at,
 });
 
-/** The settings an item carries that a new document does not already have. */
-function stateOf(item: ArchiveDocSettings): DocState {
+/** The level and approver group, by name, a folder gives what is in it: its own, else the folder's above. */
+interface FolderGives {
+  level: ArchiveAgentMode;
+  group: string | null;
+}
+
+/**
+ * The settings an item carries that a new document does not already have: a level of its own only where
+ * it is at another than `inherited`, the one its folder (and a row page's database) gives it.
+ */
+function stateOf(item: ArchiveDocSettings, inherited: ArchiveAgentMode): DocState {
   return {
     ...(item.agent_instructions ? { agent_instructions: item.agent_instructions } : {}),
     ...(item.search_hidden ? { search_hidden: true } : {}),
-    ...(item.agent_mode !== "review" ? { agent_mode: item.agent_mode } : {}),
+    ...(item.agent_mode !== inherited ? { agent_mode: item.agent_mode } : {}),
     ...(item.locked ? { locked: true } : {}),
   };
 }
@@ -668,14 +681,41 @@ export async function importArchive(client: ImportClient, contents: ArchiveConte
   const steps = manifest.sample?.steps ?? [];
   if (opts.trusted && opts.sampleSteps && steps.length > 0) await step("sample steps", () => opts.sampleSteps!(steps, ids));
 
+  // Each folder's level and approver group, parents first, set only where it differs from the one the
+  // folder above gives it, so the levels follow their folders as they did.
+  const changes = new Changes();
+  const top: FolderGives = { level: "review", group: null };
+  const gives = new Map<string, FolderGives>();
+  const named = manifest.items.some((item) => item.kind === "folder" && item.approver_group);
+  const groups = named ? new Set(await step("approver groups", () => client.groupNames())) : new Set<string>();
+  for (const item of manifest.items) {
+    if (item.kind !== "folder") continue;
+    const above = item.parent === null ? top : gives.get(item.parent)!;
+    const here = { level: item.agent_mode ?? above.level, group: item.approver_group ?? above.group };
+    gives.set(item.path, here);
+    const review: FolderReview = {};
+    if (here.level !== above.level) review.agent_mode = here.level;
+    // A group is a group of this workspace, found by its name; one it has none of is left out, and said so.
+    if (here.group !== null && here.group !== above.group) {
+      if (groups.has(here.group)) review.approver_group = here.group;
+      else changes.note("approver_group", item.title);
+    }
+    if (Object.keys(review).length > 0) await step(`${item.path}: settings`, () => client.setFolderReview(ids.folders.get(item.path)!, review));
+  }
+  const folderLevel = (parent: string | null): ArchiveAgentMode => (parent === null ? top : gives.get(parent)!).level;
+
   // Pages and documents before databases, so no database is locked while anything of it is still being written.
-  type Settled = [string, string, "prose" | "database", ArchiveDocSettings];
+  type Settled = [string, string, "prose" | "database", ArchiveDocSettings, ArchiveAgentMode];
   const settled: Settled[] = [
-    ...[...index.bodies].map(([path, body]): Settled => [path, ids.docs.get(path)!, "prose", body.item]),
-    ...databases.map((db): Settled => [db.path, ids.databases.get(db.path)!.docId, "database", db]),
+    ...[...index.bodies].map(([path, body]): Settled => {
+      // A row page is in its database's folder, and at its database's level at least.
+      const inherited = body.kind === "page" ? stricterReviewMode(folderLevel(body.database.parent), body.database.agent_mode) : folderLevel(body.item.parent);
+      return [path, ids.docs.get(path)!, "prose", body.item, inherited];
+    }),
+    ...databases.map((db): Settled => [db.path, ids.databases.get(db.path)!.docId, "database", db, folderLevel(db.parent)]),
   ];
-  for (const [path, docId, docType, item] of settled) {
-    const state = stateOf(item);
+  for (const [path, docId, docType, item, inherited] of settled) {
+    const state = stateOf(item, inherited);
     if (Object.keys(state).length === 0) continue;
     await step(`${path}: settings`, () => client.setDocState(docId, state));
     // A lock reaches the actor, which opens it anew.
@@ -686,7 +726,7 @@ export async function importArchive(client: ImportClient, contents: ArchiveConte
   for (const docId of ids.docs.values()) await client.release(docId, "prose");
   for (const { docId } of ids.databases.values()) await client.release(docId, "database");
 
-  return { ids, startDocId: manifest.start ? ids.docs.get(manifest.start)! : null, counts };
+  return { ids, startDocId: manifest.start ? ids.docs.get(manifest.start)! : null, counts, changed: changes.list((title) => title) };
 }
 
 /**

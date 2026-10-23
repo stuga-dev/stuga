@@ -44,7 +44,7 @@ const savePrompt: PromptDefinition = {
 };
 
 /** The ask's words before the person's: a whole request on its own, so it reads the same when they add none. */
-const ASK_LEAD = "Ask Stuga what my team and I have recorded: say who wrote each point and when, and what still waits for approval.";
+const ASK_LEAD = "Ask Stuga what my team and I have recorded: for each point, say who last changed its page or row and when, and what still waits for approval.";
 
 const askPrompt: PromptDefinition = {
   title: "Ask Stuga",

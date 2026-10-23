@@ -48,6 +48,7 @@
   "importSummary.change.highlight": "Highlights shown in bold",
   "importSummary.change.math": "Math kept as plain text",
   "importSummary.change.textColumn": "Columns with several values in a cell kept as text",
+  "importSummary.change.approverGroup": "Approver groups this workspace doesn’t have, left out",
   "importSummary.whereMore": "{names} and {count, plural, one {# more} other {# more}}",
   "importSummary.open": "Open workspace",
   "startWith.mayFinish": "The import may still finish. Check your workspaces before trying again.",

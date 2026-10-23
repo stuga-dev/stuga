@@ -5,6 +5,7 @@
  * changes, and the check that finds pages to look at again. Nothing here names, or counts, a page, a
  * folder or a change its reader cannot open, and a new page a change holds is not the wiki's yet.
  */
+import { createHash } from "node:crypto";
 import type { Fragment } from "postgres";
 import type { WikiLinkKind } from "@stuga/protocol/domain/wiki";
 import type { Sql } from "./client.js";
@@ -55,10 +56,18 @@ export interface DocWikiSync {
   links: Array<{ target: string; kind: WikiLinkKind; contextHash: string; rows?: string[] }>;
 }
 
+/** The sha-256 of no text: a page whose approved text is empty. */
+const EMPTY_TEXT_HASH = createHash("sha256").update("").digest("hex");
+
 /**
  * Bring a page's summary and links in step with a snapshot of its approved text, unless they already
  * hold a later one. Only a change of text moves `text_changed_at`; a link whose passages changed is
  * approved again then, and one whose passages stayed keeps when it was. True when the text changed.
+ *
+ * A page's first words are no change to the pages already citing it: they cite what it says as it
+ * was written, which an import, or a change of several pages approved at once, can index after them.
+ * So when a page that had no text gets some, each citation of it that did not need checking yet is
+ * approved again now. Index jobs run one at a time, so no citation is written while this runs.
  */
 export async function syncDocWiki(sql: Sql, s: DocWikiSync): Promise<boolean> {
   return sql.begin(async (tx) => {
@@ -69,6 +78,14 @@ export async function syncDocWiki(sql: Sql, s: DocWikiSync): Promise<boolean> {
     if (row.text_hash === s.textHash) {
       await tx`UPDATE docs SET links_seq = ${s.seq} WHERE doc_id = ${s.docId} AND links_seq < ${s.seq}`;
       return false;
+    }
+    if (row.text_hash === null || row.text_hash === EMPTY_TEXT_HASH) {
+      // Against when its text last changed, before this moves it: a citation of words it no longer has stays to check.
+      await tx`
+        UPDATE doc_links l SET checked_at = now()
+        FROM docs t
+        WHERE t.doc_id = ${s.docId} AND l.workspace_id = t.workspace_id AND l.target_doc_id = t.doc_id AND l.kind = 'citation'
+          AND l.checked_at >= coalesce(t.text_changed_at, '-infinity') AND l.checked_at < now()`;
     }
     await tx`
       UPDATE docs SET summary = ${s.summary}, text_hash = ${s.textHash}, text_changed_at = now(),

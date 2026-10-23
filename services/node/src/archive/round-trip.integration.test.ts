@@ -1,10 +1,10 @@
 /**
  * A workspace exported and imported again, end to end, on real document and database actors and a
- * real Postgres: every block type, folders two deep, a database of two tables with views and 150
- * row pages, threaded comments and every document setting, made through the routes a person's
- * writes take. The export passes `stuga-node archive check` unzipped, and the new workspace reads
- * as the old one did, ids aside, and keeps its titles once its bodies flush. Needs
- * TEST_DATABASE_URL; skips without it.
+ * real Postgres: every block type, folders two deep with their review levels, a database of two
+ * tables with views and 150 row pages, threaded comments and every document setting, made through
+ * the routes a person's writes take. The export passes `stuga-node archive check` unzipped, and the
+ * new workspace reads as the old one did, ids and an approver group it has none of aside, and keeps
+ * its titles once its bodies flush. Needs TEST_DATABASE_URL; skips without it.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -71,7 +71,7 @@ async function call<T = Record<string, unknown>>(ctx: Ctx, method: string, path:
 interface Snapshot {
   workspace: { name: string; agent_instructions: string };
   /** By folder path. */
-  folders: Record<string, { agent_instructions: string }>;
+  folders: Record<string, { agent_instructions: string; agent_mode: string | null; approver_group: string | null }>;
   /** Documents and databases by folder path and title, row pages by `page:<table>#<row name>`. */
   docs: Record<string, Record<string, unknown>>;
   /** Each key's id, and each id's key. */
@@ -88,8 +88,9 @@ type Rows = Array<Record<string, unknown>>;
 async function snapshot(ctx: Ctx): Promise<Snapshot> {
   const [workspace] = await sql<Array<{ name: string; agent_instructions: string }>>`
     SELECT name, agent_instructions FROM workspaces WHERE workspace_id = ${ctx.workspaceId}`;
-  const folderRows = await sql<Array<{ folder_id: string; parent_id: string | null; title: string; agent_instructions: string }>>`
-    SELECT folder_id, parent_id, title, agent_instructions FROM folders WHERE workspace_id = ${ctx.workspaceId}`;
+  const folderRows = await sql<
+    Array<{ folder_id: string; parent_id: string | null; title: string; agent_instructions: string; agent_mode: string | null; approver_group: string | null }>
+  >`SELECT folder_id, parent_id, title, agent_instructions, agent_mode, approver_group FROM folders WHERE workspace_id = ${ctx.workspaceId}`;
   const within = (dir: string, title: string): string => (dir ? `${dir}/${title}` : title);
   const folderPath = (id: string | null): string => {
     if (id === null) return "";
@@ -112,7 +113,7 @@ async function snapshot(ctx: Ctx): Promise<Snapshot> {
     out.keyOf.set(id, key);
   };
   for (const f of folderRows) {
-    out.folders[folderPath(f.folder_id)] = { agent_instructions: f.agent_instructions };
+    out.folders[folderPath(f.folder_id)] = { agent_instructions: f.agent_instructions, agent_mode: f.agent_mode, approver_group: f.approver_group };
     name(`folder:${folderPath(f.folder_id)}`, f.folder_id);
   }
 
@@ -518,7 +519,11 @@ describe.skipIf(!URL)("a workspace exported and imported again", () => {
     await comment(tracker, { body: "Two tables are enough." });
     await sql`UPDATE comments SET created_at = '2026-03-01T09:30:00Z' WHERE doc_id = ${blocks} AND num = ${thread.num}`;
 
-    // Settings last, as a person would set them once the writing is done.
+    // Settings last, as a person would set them once the writing is done: a colleague approves in Plans, an
+    // editor of its group, and AI edits apply directly in Q4, beneath it.
+    await call(ctx, "PUT", "/api/groups/editors", { members: ["u_liv"] });
+    await patch(`/api/folders/${plans}`, { agent_mode: "colleague", approver_group: "editors" });
+    await patch(`/api/folders/${q4}`, { agent_mode: "auto" });
     await patch(`/api/docs/${launch}/state`, { agent_instructions: "Keep the dates." });
     await patch(`/api/docs/${notes}/state`, { agent_mode: "auto", search_hidden: true, agent_instructions: "Short lines." });
     await patch(`/api/docs/${notes}`, { title: "Notes, renamed" });
@@ -553,8 +558,10 @@ describe.skipIf(!URL)("a workspace exported and imported again", () => {
     });
     const importMs = performance.now() - t;
     expect(imported.status).toBe(201);
-    const created = (await imported.json()) as { workspace_id: string; name: string };
+    const created = (await imported.json()) as { workspace_id: string; name: string; changed?: unknown };
     expect(created.name).toBe("Liv's team");
+    // The new workspace has no group named editors.
+    expect(created.changed).toEqual([{ kind: "approver_group", count: 1, where: ["Plans"] }]);
 
     // Once flushed and indexed, each source document is named by its first line; the imported ones are named so already.
     await flushBodies([WS, created.workspace_id]);
@@ -568,7 +575,8 @@ describe.skipIf(!URL)("a workspace exported and imported again", () => {
     const after = await snapshot(target);
 
     expect(after.workspace).toEqual(before.workspace);
-    expect(after.folders).toEqual(before.folders);
+    expect(before.folders).toMatchObject({ Plans: { agent_mode: "colleague", approver_group: "group:editors" }, "Plans/Q4": { agent_mode: "auto" } });
+    expect(after.folders).toEqual({ ...before.folders, Plans: { ...before.folders.Plans!, approver_group: null } });
     expect(Object.keys(after.docs).sort()).toEqual(Object.keys(before.docs).sort());
     expect(Object.keys(before.docs).filter((k) => k.startsWith("page:"))).toHaveLength(PAGES + 1);
     expect(check.counts).toMatchObject({ items: Object.keys(before.folders).length + Object.keys(before.docs).length - PAGES - 1, bodies: before.markdown.size });

@@ -48,6 +48,7 @@
   "importSummary.change.highlight": "Destaques exibidos em negrito",
   "importSummary.change.math": "Fórmulas matemáticas mantidas como texto simples",
   "importSummary.change.textColumn": "Colunas com vários valores em uma célula mantidas como texto",
+  "importSummary.change.approverGroup": "Grupos de aprovação que este espaço de trabalho não tem, deixados de fora",
   "importSummary.whereMore": "{names} e mais {count, plural, one {#} many {#} other {#}}",
   "importSummary.open": "Abrir espaço de trabalho",
   "startWith.mayFinish": "A importação ainda pode terminar. Verifique seus espaços de trabalho antes de tentar novamente.",

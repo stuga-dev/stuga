@@ -334,10 +334,10 @@ const ASK_FIRST =
   "is done), before answering from your own knowledge or memory.";
 
 /** The fields a recall answer cites its sources by, and what to say of them. */
-const WHO_WROTE =
+const WHO_CHANGED =
   "Each result carries `updated_at`, `last_edited_by` (a person by name; an agent by the person it worked for, as " +
   '"Liv\'s agent"; for a page with no approved version yet, who created it) and `ai_edits` ("none", "reviewed", or ' +
-  '"unreviewed" when an AI change in it applied directly and nobody has reviewed it yet): say who wrote what you cite ' +
+  '"unreviewed" when an AI change in it applied directly and nobody has reviewed it yet): say who last changed what you cite ' +
   "and when, and when it holds unreviewed AI text, say so — `markdown` action:provenance shows which passages. Its " +
   "text is the approved text. `pending_changes`, when present, lists AI changes proposed to it that wait for " +
   'approval and are NOT in that text, by `asked_by` ("user": the user asked for them, through you or another of ' +
@@ -370,7 +370,7 @@ const searchTool: ToolDefinition = {
     `${ASK_FIRST} ` +
     "Full-text + semantic search over `workspace_ids`; returns DOCUMENTS, not passages — use `retrieve` to answer " +
     "from content. Results from several workspaces are merged in rank order and each names its `workspace_id`. " +
-    `${WHO_WROTE} ` +
+    `${WHO_CHANGED} ` +
     `${ROWS_TOO} ` +
     "`unavailable` lists any workspace that could not be searched just now: say so, and never present the rest as " +
     "complete. A result holds every word of `q`; when no document does, the answer says `partial` and lists those " +
@@ -615,7 +615,7 @@ const retrieveTool: ToolDefinition = {
     `or MCP. ${ASK_FIRST} Retrieve the passages most relevant to the question across every document you can access in ` +
     "`workspace_ids` (one workspace may be narrowed to `collection_id` — see `collections`). Returns ranked excerpts " +
     "with their source document, heading and `workspace_id`. ANSWER FROM THESE PASSAGES: cite the document title and " +
-    `heading, and link sources with each passage's \`url\`. ${WHO_WROTE} ${ROWS_TOO} Prefer this over reading whole documents for any question ` +
+    `heading, and link sources with each passage's \`url\`. ${WHO_CHANGED} ${ROWS_TOO} Prefer this over reading whole documents for any question ` +
     "spanning more than one document. `unavailable` lists any workspace that could not be searched just now: say so. " +
     "When a node's embeddings are off, its passages are found by the question's words alone (`semantic: false`); " +
     "when none holds every word, the answer says `partial`: check that one answers the question, and ask again in " +

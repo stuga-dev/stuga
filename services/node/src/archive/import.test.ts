@@ -46,6 +46,8 @@ function fakeClient(overrides: Partial<ImportClient> = {}): { client: ImportClie
     setTitle: async (...args) => void calls.push(["setTitle", ...args]),
     importComments: async (...args) => void calls.push(["importComments", ...args]),
     setDocState: async (...args) => void calls.push(["setDocState", ...args]),
+    groupNames: async () => (calls.push(["groupNames"]), ["Legal"]),
+    setFolderReview: async (...args) => void calls.push(["setFolderReview", ...args]),
     release: async (...args) => void calls.push(["release", ...args]),
     ...overrides,
   };
@@ -309,6 +311,56 @@ describe("importing an archive", () => {
     await importArchive(client, await readArchive(archive, LIMITS));
     expect(callsOf(calls, "createFolder")[1]).toEqual([{ title: "EU", parentId: "folder1", agentInstructions: "" }]);
     expect(new Map(callsOf(calls, "seedBody") as Array<[string, string]>).get("doc1")).toBe("# Start here\n\nSee [EU law](/?folder=folder1/folder2).");
+  });
+
+  it("sets each folder's level and approver group where it differs from the folder above, and each item's own level only where it differs from its folder's", async () => {
+    const { client, calls, ops } = fakeClient();
+    const archive = build((m, f) => {
+      f["Laws/Drafts/Notes.md"] = "# Notes\n";
+      f["Laws/Drafts/Board/Minutes.md"] = "# Minutes\n";
+      const laws = m.items[1];
+      Object.assign(laws, { agent_mode: "colleague", approver_group: "Legal" });
+      // Beneath Laws: one that follows it, written as an export writes it, one looser, and one naming a group this workspace lacks.
+      m.items.splice(
+        2,
+        0,
+        { kind: "folder", path: "Laws/EU", parent: "Laws", title: "EU", agent_instructions: "", agent_mode: "colleague", approver_group: "Legal" },
+        { kind: "folder", path: "Laws/Drafts", parent: "Laws", title: "Drafts", agent_instructions: "", agent_mode: "auto" },
+        { kind: "folder", path: "Laws/Drafts/Board", parent: "Laws/Drafts", title: "Board", agent_instructions: "", approver_group: "Board" },
+        { kind: "doc", path: "Laws/Drafts/Notes.md", parent: "Laws/Drafts", ...settings("Notes", { agent_mode: "auto" }) },
+        { kind: "doc", path: "Laws/Drafts/Board/Minutes.md", parent: "Laws/Drafts/Board", ...settings("Minutes", { agent_mode: "review" }) },
+      );
+      // GDPR is at its folder's level; the database and its page in a folder at review, the page at the database's.
+      m.items.find((i: Json) => i.path === "Laws/GDPR.md").agent_mode = "colleague";
+      const db = m.items.find((i: Json) => i.kind === "database");
+      db.agent_mode = "colleague";
+      db.tables[0].pages[0].agent_mode = "colleague";
+    });
+    const out = await importArchive(client, await readArchive(archive, LIMITS));
+    expect(callsOf(calls, "setFolderReview")).toEqual([
+      ["folder1", { agent_mode: "colleague", approver_group: "Legal" }],
+      ["folder3", { agent_mode: "auto" }],
+    ]);
+    expect(out.changed).toEqual([{ kind: "approver_group", where: ["Board"] }]);
+    // After the comments and before any document's settings.
+    const order = ops();
+    expect(order.indexOf("groupNames")).toBeGreaterThan(order.lastIndexOf("importComments"));
+    expect(order.lastIndexOf("setFolderReview")).toBeLessThan(order.indexOf("setDocState"));
+    const states = new Map(callsOf(calls, "setDocState") as Array<[string, Record<string, unknown>]>);
+    const idOf = (path: string) => out.ids.docs.get(path)!;
+    expect(states.get(idOf("Laws/GDPR.md"))).toEqual({ agent_instructions: "Quote articles.", search_hidden: true, locked: true });
+    expect(states.has(idOf("Laws/Drafts/Notes.md"))).toBe(false);
+    expect(states.get(idOf("Laws/Drafts/Board/Minutes.md"))).toEqual({ agent_mode: "review" });
+    expect(states.get("db1")).toEqual({ agent_instructions: "One row per law and topic.", agent_mode: "colleague", locked: true });
+    expect(states.has("page1")).toBe(false);
+  });
+
+  it("asks for the workspace's groups only when a folder names one", async () => {
+    const { client, ops } = fakeClient();
+    const out = await importArchive(client, await readArchive(build((m) => (m.items[1].agent_mode = "auto")), LIMITS));
+    expect(ops()).not.toContain("groupNames");
+    expect(ops()).toContain("setFolderReview");
+    expect(out.changed).toEqual([]);
   });
 
   it("keeps a user title, carries comments with their authors, threads and times, and settles each document last", async () => {

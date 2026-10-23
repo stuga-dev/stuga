@@ -888,9 +888,9 @@ How agents get them:
 
 Say **Save to Stuga** to your AI, or the same in your language, and it files what you told it into
 your team's wiki or your own notes. Say **Ask Stuga**, or ask what you or your team decided, and it
-answers from Stuga, saying who wrote each point and when. The tool descriptions teach the model both
-phrases in every interface language, since a bare "remember this" is taken by an assistant's own
-memory.
+answers from Stuga, saying who last changed the page or row each point comes from, and when. The
+tool descriptions teach the model both phrases in every interface language, since a bare "remember
+this" is taken by an assistant's own memory.
 
 - **Saving.** `remember` takes 1 to 20 points, each a `text`, an optional `topic`, and an optional
   `source` (the meeting, email or document it came from, and when; none for what you told the agent
@@ -1048,7 +1048,9 @@ Pages link to each other, and Stuga keeps track of it from what is approved.
   changed, and so do the Index and `docs` action `metadata` (`needs_checking`). Someone who can edit
   it marks it checked with **Mark as checked**, which no agent can do; an approved edit to the
   passage that cites the page counts as well. Only the pages you can open count: a change to one you
-  cannot open marks nothing for you, and your mark covers only the pages you can open.
+  cannot open marks nothing for you, and your mark covers only the pages you can open. A page's
+  first words are no change: a page imported from an archive, or made in the same change as a page
+  citing it, cites what it says as it was written, whichever of the two is saved first.
 
 ### The Index and the Log
 

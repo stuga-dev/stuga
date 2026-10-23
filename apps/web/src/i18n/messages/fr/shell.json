@@ -48,6 +48,7 @@
   "importSummary.change.highlight": "Surlignages affichés en gras",
   "importSummary.change.math": "Formules mathématiques conservées en texte brut",
   "importSummary.change.textColumn": "Colonnes contenant plusieurs valeurs par cellule conservées en texte",
+  "importSummary.change.approverGroup": "Groupes d’approbation absents de cet espace de travail, écartés",
   "importSummary.whereMore": "{names} et {count, plural, one {# autre} many {# autres} other {# autres}}",
   "importSummary.open": "Ouvrir l’espace de travail",
   "startWith.mayFinish": "L’importation peut encore aboutir. Vérifiez vos espaces de travail avant de réessayer.",

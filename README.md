@@ -2,60 +2,65 @@
 
 # Stuga
 
-**AI suggests. You decide.**
+**Your AI writes the team wiki. A colleague approves.**
 
-Self-hosted documents and databases where edits from Claude Code, Codex or any MCP client arrive as
-tracked changes and, by default, land only when a person accepts them. Use it on your own or with
-your team.
+A team wiki of pages and tables, on a Mac or server you run. Say **Save to Stuga** to Claude, Codex
+or any MCP client, and it files each point on the right page or in the right table row. By default
+a change to the wiki waits for whoever asked the AI; set a folder to **Reviewed by a colleague** and
+someone else approves it. **Ask Stuga** answers from what is approved, and says what still waits.
 
 [Download for Mac](https://stuga.dev/download/mac) (Apple silicon, macOS 15+) ·
 [Install with Docker](docs/install/docker.md)
 
 Install, then [create your account and workspace](https://stuga.dev/docs/install/create-your-account-and-first-workspace)
-and [connect an agent](docs/agents.md). Help for people using Stuga: [stuga.dev/docs](https://stuga.dev/docs).
+and [connect your AI](docs/agents.md). Help for people using Stuga: [stuga.dev/docs](https://stuga.dev/docs).
 
 ![Claude Code's edits to a document arriving as tracked changes, accepted and rejected one by one](docs/images/review-demo.gif)
 
-## How agent edits work
+## How the wiki stays right
 
-- **Review by default.** An agent's changes wait for a person, who is notified and accepts or
-  rejects each one in the document or table. Nothing lands on a timer.
-- **Nobody is blocked.** Collaborators never see pending agent text and keep editing. The agent
-  carries on, and its later reads include its own pending edits.
-- **Or apply at once, or ask a colleague.** In **Who reviews AI edits…**, the owner of a document,
-  database or folder, or a workspace admin, can choose **AI edits apply directly**: changes land at
-  once, recorded, attributed and revertible. Or **Reviewed by a colleague**: someone other than
-  whoever asked the AI approves them.
-- **A run per session.** Each run records the agent, the person it acts for, the client and model it
-  reported, and every change. **Review AI edits** lists the runs that need someone.
-- **Who wrote this?** An agent can ask a document which passages agents wrote and whether a person
-  accepted them.
-- **Instructions that stack.** The workspace, folders, documents and databases can each carry
-  instructions for agents. They advise the model; permissions and review decide what a write does.
+- **Save to Stuga.** Your AI finds the page and section a point belongs in, or the row a fact fills,
+  and corrects the sentence it changes rather than adding another. It cites the meeting or email a
+  point came from, and tells you what it saved where and what waits. A point no page is about starts
+  a page in the folder it belongs in, or goes in your own **My notes**.
+- **Three review levels.** In **Who reviews AI edits…**, a folder, page or database is **Reviewed by
+  whoever asked the AI** (the default), **Reviewed by a colleague** (someone else who can edit it,
+  from the folder's approver group if it names one, never the person who asked), or **AI edits apply
+  directly** (recorded, attributed and revertible).
+  People's own edits go straight in.
+- **One card per change.** Filing a meeting across several pages is one change, reviewed on one card
+  laid out for a phone: each edit in its paragraph, with the sources it cites. **Approve all**,
+  **Ask for changes…** or **Decline…** with a note the AI reads. A folder can post each change that
+  waits for a colleague to a Slack channel.
+- **Ask Stuga.** Your AI answers from the pages and tables, with who last changed each one and when,
+  and what waits: "the page says 14 days; a change to 30 days waits for a colleague".
+- **Check Stuga.** **Linked from** under each page, **Needs checking** when a page it cites changes,
+  and **Wiki → Index** and **Wiki → Log**. Say **Check Stuga** and your AI finds stale pages,
+  orphans and broken links, and proposes the fixes as one change.
+- **Instructions that stack.** The workspace, folders, pages and databases can each tell agents what
+  goes where. They advise the model; permissions and review decide what a write does.
 
 ![Claude Code's changes to a table waiting as proposals, then accepted](docs/images/database-demo.gif)
 
 ## What's in it
 
-- **Documents written together.** Real-time editing (Tiptap over a Yjs CRDT) with presence,
-  comments, @mentions and version history.
-- **Databases with SQL.** Typed tables beside your documents, each database its own SQLite file,
-  with saved views, row pages and CSV import. Agents, Ask and the REST API run read-only SQL on them.
-- **Pages and tables.** Say **Save to Stuga** and your AI files each fact where it fits: prose in a
-  page, a contact or a plan in its table's row. **Ask Stuga** answers from both, with who wrote it.
+- **Pages written together.** Real-time editing (Tiptap over a Yjs CRDT) with presence, comments,
+  @mentions and version history.
+- **Tables beside the pages.** Typed tables, each database its own SQLite file, with saved views,
+  row pages and CSV import. Agents, Ask and the REST API run read-only SQL on them.
 - **Search that follows permissions.** Keyword (BM25 over Postgres full-text search) and semantic
   (pgvector) search in one SQL statement, with access checked inside it. Chinese, Japanese, Korean
   and Thai work without setup.
 - **Built-in AI, off until set up.** A co-author and a table assistant, whose edits are reviewed like
   an agent's, and **Ask**, which cites sources. OpenAI, Anthropic, Gemini, DeepSeek and more, or Ollama.
-- **Sharing and sign-in.** Workspaces, folders, per-document sharing, groups and guests. People join
+- **Sharing and sign-in.** Workspaces, folders, per-page sharing, groups and guests. People join
   by invite link and sign in with a password or your OpenID Connect provider.
 - **Import and export.** A Notion export, or a zipped Obsidian vault or folder of Markdown, becomes a
   workspace; a workspace exports as one `.stuga.zip` of Markdown, JSON Lines and its files.
 
 ![The built-in co-author's edits arriving as suggestions, accepted and rejected one by one](docs/images/coauthor-demo.gif)
 
-## Connect your agents
+## Connect your AI
 
 Agents connect over MCP. **Settings → Your AI agents** gives the setup for Claude Code,
 Claude Desktop, Codex, Antigravity, Cursor, VS Code, Kiro, Goose, LM Studio, DeepSeek Harness and Pi,

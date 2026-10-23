@@ -50,7 +50,7 @@ const ROUTING =
 function phrases(readOnly: boolean): string {
   const ask =
     '"Ask Stuga", or a question about what the user or their team decided, recorded or know, means `retrieve` or ' +
-    "`search` here first, citing who wrote it and when; their `rows` cover tables, and `query` answers a precise " +
+    "`search` here first, citing who last changed each page or row and when; their `rows` cover tables, and `query` answers a precise " +
     "question over one. Answer with the approved text, and say what still waits for approval.";
   const check = '"Check Stuga" means `docs` action:lint, then ';
   return readOnly

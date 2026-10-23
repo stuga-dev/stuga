@@ -1,8 +1,11 @@
 # Documentation
 
+Stuga is a team wiki of pages and tables that your AI writes and your team approves.
+
 - [Getting started](getting-started.md): the first hour with a new node.
 - Installing [with Docker](install/docker.md) or [on a Mac](install/macos.md).
-- [Agents](agents.md): connecting agents, API keys, the MCP tools and the run ledger.
+- [Agents](agents.md): connecting your AI, Save to Stuga and Ask Stuga, review levels, review cards,
+  the wiki's Index and Log, API keys, the MCP tools and the run ledger.
 - [REST API](api.md).
 - [Configuration](configuration.md): environment variables and node settings.
 - [Network access](network-access.md): reaching a node from other devices, HTTPS, and using several nodes.

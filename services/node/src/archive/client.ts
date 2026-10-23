@@ -37,6 +37,12 @@ export interface DocState {
   agent_instructions?: string;
 }
 
+/** A folder's own review level and approver group, by the group's name, as `PATCH /api/folders/:id` takes them. */
+export interface FolderReview {
+  agent_mode?: ReviewMode;
+  approver_group?: string;
+}
+
 export interface ImportClient {
   setWorkspaceInstructions(text: string): Promise<void>;
   /** The new folder's id. */
@@ -65,6 +71,9 @@ export interface ImportClient {
   setTitle(docId: string, title: string): Promise<void>;
   importComments(docId: string, comments: ImportedComment[]): Promise<void>;
   setDocState(docId: string, state: DocState): Promise<void>;
+  /** The names of the workspace's groups. */
+  groupNames(): Promise<string[]>;
+  setFolderReview(folderId: string, review: FolderReview): Promise<void>;
   /** The import is done with this document or database for now: its actor may close. */
   release(docId: string, docType: "prose" | "database"): Promise<void>;
 }
@@ -221,6 +230,14 @@ export function workspaceImportClient(ctx: Ctx, opts: WriteOptions = {}): Import
     },
     async setDocState(docId, state) {
       await call("PATCH", `/api/docs/${enc(docId)}/state`, state);
+    },
+    async groupNames() {
+      const { groups } = await call<{ groups: Array<{ group_id: string }> }>("GET", "/api/groups");
+      return groups.map((g) => (g.group_id.startsWith("group:") ? g.group_id.slice("group:".length) : g.group_id));
+    },
+    async setFolderReview(folderId, review) {
+      const body = { ...review, ...(review.approver_group !== undefined ? { approver_group: `group:${review.approver_group}` } : {}) };
+      await call("PATCH", `/api/folders/${enc(folderId)}`, body);
     },
     async release(docId, docType) {
       await releaseActor(ctx.env, docId, docType);

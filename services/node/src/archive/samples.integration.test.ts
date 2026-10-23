@@ -2,11 +2,11 @@
  * Every sample in a checkout of stuga-dev/samples, built as a release publishes it, served as a
  * release list is, and created through POST /api/workspaces on real document and database
  * actors and a real Postgres: the rows land, Sample agent's steps wait in review for the person
- * who created it, its comment mentions them, and the start document opens first. Needs
- * TEST_DATABASE_URL and SAMPLES_DIR, the checkout; skips without either.
+ * who created it, its comment mentions them, its folders take their levels, and the start document
+ * opens first. Needs TEST_DATABASE_URL and SAMPLES_DIR, the checkout; skips without either.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -120,7 +120,10 @@ describe.skipIf(!URL || !BUILD || !existsSync(BUILD))("creating a workspace from
     const res = await listWorkspaceSamples({ ctx: liv(), req, url: new globalThis.URL(req.url), match: [] });
     const { samples } = (await res.json()) as { samples: Array<{ id: string; name: string }> };
     expect(samples.map((s) => [s.id, s.name])).toEqual(index.samples.map((s) => [s.id, s.name]));
-    expect(samples).toHaveLength(4);
+    // One for each sample's folder in the checkout.
+    const folders = readdirSync(join(SAMPLES_DIR!, "samples"), { withFileTypes: true }).filter((e) => e.isDirectory());
+    expect(samples.length).toBeGreaterThan(0);
+    expect(samples).toHaveLength(folders.length);
   });
 
   it("creates each sample with its rows, Sample agent's proposals and comment for the person, and the start document", { timeout: 300_000 }, async () => {
@@ -182,10 +185,17 @@ describe.skipIf(!URL || !BUILD || !existsSync(BUILD))("creating a workspace from
       }
       expect(steps.some((s) => s.kind === "comment"), listed.id).toBe(true);
 
-      // Settings land after the steps: a document the sample locks is locked, its proposals still waiting.
+      // Settings land after the steps: a document the sample locks is locked, its proposals still waiting,
+      // and each folder is at the level the sample gives it.
       for (const item of manifest.items) {
         if (item.kind === "folder" || !item.locked) continue;
         expect((await getDoc(sql, docIdOf(item.title)))?.locked, `${listed.id}: ${item.path}`).toBe(true);
+      }
+      for (const item of manifest.items) {
+        if (item.kind !== "folder" || item.agent_mode === undefined) continue;
+        const [folder] = await sql<Array<{ level: string | null }>>`
+          SELECT coalesce(folder_agent_mode(folder_id), 'review') AS level FROM folders WHERE workspace_id = ${body.workspace_id} AND title = ${item.title}`;
+        expect(folder?.level, `${listed.id}: ${item.path}`).toBe(item.agent_mode);
       }
     }
   });

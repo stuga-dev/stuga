@@ -153,10 +153,12 @@ A backup moves a whole node. One workspace moves as a [workspace archive](worksp
    administrator raises it in **Settings → This node → Storage**, up to 50 MB.
 
 The new workspace has the folders, documents, databases with their rows, views and row pages,
-images, comments, agent instructions, and each document's review mode, lock and search setting.
-Whoever imports it owns everything in it, under the new workspace's default access. It does not
-have the version history, the review and Activity history, sharing, members, collections,
-favorites, or when rows were created and updated: invite the members and share again. A comment
+images, comments, agent instructions, each folder's and document's review level, and each
+document's lock and search setting. Whoever imports it owns everything in it, under the new
+workspace's default access. It does not have the version history, the review and Activity history,
+sharing, members, groups, collections, favorites, or when rows were created and updated: invite the
+members, set up the groups and share again. A folder's approver group stays only where the new
+workspace has a group of that name, and the import says which folders lost theirs. A comment
 shows its author's name marked as imported, and a mention is plain text. The old workspace stays
 as it was until someone deletes it.
 
