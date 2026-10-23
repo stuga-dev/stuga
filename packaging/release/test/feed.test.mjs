@@ -101,6 +101,15 @@ test("an entry with a summary carries it and a link to the whole entry, not ever
   );
 });
 
+test("a link relative to the changelog points at the file in the version's tag", () => {
+  const changelog =
+    "## [1.4.0] - 2026-12-08\n\n### Upgrade notes\n\n- Export first ([on a Mac](docs/install/macos.md#from-stuga-01)).\n\n" +
+    "### Added\n\n- [Releases](https://github.com/stuga-dev/stuga/releases), [below](#fixed), [root](/README.md), [mail](mailto:a@b.c).\n";
+  const notes = releaseNotes(parseChangelog(changelog), "1.4.0");
+  assert.match(notes, /\(\[on a Mac\]\(https:\/\/github\.com\/stuga-dev\/stuga\/blob\/v1\.4\.0\/docs\/install\/macos\.md#from-stuga-01\)\)/);
+  assert.match(notes, /\[Releases\]\(https:\/\/github\.com\/stuga-dev\/stuga\/releases\), \[below\]\(#fixed\), \[root\]\(\/README\.md\), \[mail\]\(mailto:a@b\.c\)/);
+});
+
 test("a malformed entry is an error, not a release nobody hears about", () => {
   assert.throws(() => parseChangelog("## 1.0.0 - 2026-10-01\n"), /not a release heading/);
   assert.throws(() => parseChangelog("## [1.0] - 2026-10-01\n"), /not a version/);

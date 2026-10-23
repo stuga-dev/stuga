@@ -9,6 +9,8 @@ Releases before 0.1.7 were previews. Their notes are on their
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-22
+
 Stuga becomes a team wiki that your AI writes and your team approves. Say **Save to Stuga** and your
 AI files each point on the right page or table row; **Ask Stuga** answers with what is approved and
 what waits. **Reviewed by a colleague** joins the review levels, so someone other than whoever asked

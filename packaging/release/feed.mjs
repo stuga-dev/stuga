@@ -105,6 +105,14 @@ function anchorFor(entry) {
 }
 
 /**
+ * A Release's notes sit beside no files: a link CHANGELOG.md gives relative to itself, such as
+ * `(docs/operations.md#going-back)`, points at the file in the version's tag.
+ */
+function linksAtTag(body, version) {
+  return body.replace(/\]\((?![a-z][a-z0-9+.-]*:|#|\/)([^)\s]+)\)/gi, (_, path) => `](${REPOSITORY}/blob/v${version}/${path})`);
+}
+
+/**
  * Upgrade notes lead, because they are what someone running a node has to act on. An entry's text
  * under no heading is its summary: the notes carry it and a link to the whole entry. An entry
  * without one is carried whole.
@@ -124,7 +132,7 @@ export function releaseNotes(entries, version) {
     out.push("", "## What changed");
     for (const s of rest) out.push("", `### ${s.title}`, "", s.body);
   }
-  return `${out.join("\n")}\n`;
+  return linksAtTag(`${out.join("\n")}\n`, version);
 }
 
 /** Refuses a tag whose entry was never written, or was written under an older one. */

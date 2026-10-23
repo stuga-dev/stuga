@@ -36,7 +36,8 @@ with `packaging/release/feed.mjs`:
 
 - The version's entry becomes its GitHub Release notes. An **Upgrade notes** section leads them. It
   says what someone running a node has to decide or do; without one the notes say there is nothing
-  to do. Build and development changes don't belong in it.
+  to do. Build and development changes don't belong in it. A link relative to CHANGELOG.md points
+  at that file in the version's tag.
 - A few lines under the version heading, before its first section, are the entry's summary. The
   notes carry the summary and a link to the whole entry instead of every section. Write one for any
   release with more than a handful of changes.
