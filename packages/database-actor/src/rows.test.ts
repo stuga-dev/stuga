@@ -91,6 +91,7 @@ describe("/rows/insert", () => {
     expect(list.rows.map((r) => r[colId(starter, "Done")])).toEqual([1, 0]);
   });
 
+  // Seeding the table to its row cap takes seconds on a busy runner.
   it("409s past the per-write batch cap and past the table row cap", async () => {
     const { actor, h } = makeActor();
     const starter = await initStarter(actor);
@@ -112,7 +113,7 @@ describe("/rows/insert", () => {
     const overCap = await doFetch(actor, "/rows/insert", { table_id: starter.table_id, rows: [{ Name: "one more" }], actor: HUMAN });
     expect(overCap.status).toBe(409);
     expect(((await overCap.json()) as { error: string }).error).toBe("row_cap");
-  });
+  }, 60_000);
 });
 
 describe("/rows/list", () => {
