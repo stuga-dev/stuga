@@ -65,6 +65,12 @@ Stuga.app built from a checkout says in its status line why it could not start:
 | `Could not start: setting up the database failed` | Read `init-cluster.log` in the logs folder. |
 | `Could not start: Stuga did not answer within 5 minutes — see the logs` | Read the node's log. |
 
+Data from Stuga 0.1, a preview, is not read by later releases. On a Mac, **Update now** on 0.1 says
+`the installer stopped`, and 0.1 keeps running. On Docker, `./stuga upgrade` says `this data is from
+stuga 0.1.…, a preview`, and a later Postgres started on it stops with `could not access file
+"pg_search"`. Either way nothing was changed: [From Stuga 0.1](install/macos.md#from-stuga-01) on a
+Mac, [on Docker](install/docker.md#from-stuga-01).
+
 On Docker, when port 8787 on the host is taken, set `HOST_PORT` in `.env` and change the port in
 `PUBLIC_ORIGIN` to match. The first `docker compose up` pulls two images and can print little for
 several minutes.

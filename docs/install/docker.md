@@ -224,6 +224,18 @@ images until you are satisfied with the new one: a roll back starts the stack on
 `docker image prune -a` would remove them. A first install works the same way, with
 `./stuga db-password` and `docker compose up -d` in place of `./stuga upgrade`.
 
+### From Stuga 0.1
+
+Stuga 0.1 releases were previews, and 0.2.0 starts with new data. On a node that runs 0.1,
+`./stuga upgrade` puts 0.1's files back and changes nothing. To move:
+
+1. In Stuga 0.1, export each workspace: **Settings → This workspace → General → Export workspace**.
+2. In the Stuga directory, remove the stack and its database: `docker compose down -v`. The
+   directory's `data/` and `backups/` are 0.1's; remove the directory once you no longer need them.
+3. [Install](#install) the new release into a new directory, set it up, invite your colleagues, and
+   import each archive with **Create a workspace → Start with → Import**
+   ([Workspace archive](../workspace-archive.md)).
+
 ## Roll back
 
 Restore the backup the new version took before it upgraded, which `./stuga upgrade` names and

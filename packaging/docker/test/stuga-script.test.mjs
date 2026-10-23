@@ -340,7 +340,7 @@ function stack({ pin, containers, served, list = listing(), manifests = {}, pres
   chmodSync(join(bin, "docker"), 0o755);
   chmodSync(join(bin, "curl"), 0o755);
   // The releases ./stuga upgrade <version> downloads.
-  for (const v of ["8.0.0", "9.0.0", "9.1.0"]) {
+  for (const v of ["0.1.15", "8.0.0", "9.0.0", "9.1.0"]) {
     mkdirSync(join(base, "releases", v), { recursive: true });
     writeFileSync(join(base, "releases", v, "compose.yml"), composeFor(v));
     writeFileSync(join(base, "releases", v, "env.example"), "");
@@ -355,7 +355,7 @@ function stack({ pin, containers, served, list = listing(), manifests = {}, pres
       }),
     ),
     ids,
-    versions: Object.fromEntries(["8.0.0", "9.0.0", "9.0.2", "9.1.0"].map((v) => [`${REGISTRY}/stuga-node:${v}`, v])),
+    versions: Object.fromEntries(["0.1.15", "8.0.0", "9.0.0", "9.0.2", "9.1.0"].map((v) => [`${REGISTRY}/stuga-node:${v}`, v])),
     images: [...new Set([...images(pin), ...Object.entries(containers).map(([svc, c]) => `${REGISTRY}/stuga-${svc}:${typeof c === "string" ? c : c.version}`), ...present])],
     pullable,
     served,
@@ -380,6 +380,7 @@ function stack({ pin, containers, served, list = listing(), manifests = {}, pres
   };
   const s = {
     dir,
+    releases: join(base, "releases"),
     run: (...args) => s.answering("", ...args),
     /** ./stuga with `input` piped in. */
     answering: (input, ...args) => {
@@ -527,6 +528,31 @@ describe("upgrade", () => {
       for (const sub of ["stop", "up", "pull"]) assert.ok(!did(s.calls(), sub), `ran compose ${sub}`);
     });
   }
+
+  // 0.1.15's ./stuga upgrade downloaded the newest release's files and ran its stuga with --fetched.
+  const preview = () => stack({ pin: "9.0.0", containers: { postgres: "0.1.15", node: "0.1.15", remote: "0.1.15" }, served: "0.1.15" });
+
+  test("refuses data a 0.1 release served, and puts that release's files back", () => {
+    const s = preview();
+    const r = s.run("upgrade", "--fetched");
+    assert.equal(r.code, 2, r.out);
+    assert.match(r.out, /this data is from stuga 0\.1\.15, a preview; later releases start with new data\. Nothing was changed, and stuga 0\.1\.15 still runs\./);
+    assert.match(r.out, /From Stuga 0\.1 in docs\/install\/docker\.md/);
+    assert.equal(s.read("compose.yml"), composeFor("0.1.15"));
+    for (const sub of ["stop", "up", "pull"]) assert.ok(!did(s.calls(), sub), `ran compose ${sub}`);
+    assert.equal(s.state().containers.node.running, true);
+  });
+
+  test("data a 0.1 release served stays refused when that release's files cannot be downloaded", () => {
+    const s = preview();
+    rmSync(join(s.releases, "0.1.15"), { recursive: true });
+    const r = s.run("upgrade", "--fetched");
+    assert.equal(r.code, 3, r.out);
+    assert.match(r.out, /The stack still runs stuga 0\.1\.15: leave it running, and run \.\/stuga upgrade again once GitHub is reachable\./);
+    assert.equal(s.read("compose.yml"), composeFor("9.0.0"));
+    assert.ok(!readdirSync(s.dir).some((f) => f.startsWith(".upgrade.")), "the download's directory was left behind");
+    for (const sub of ["stop", "up", "pull"]) assert.ok(!did(s.calls(), sub), `ran compose ${sub}`);
+  });
 
   test("naming the release that served the data puts its files back", () => {
     const s = stack({

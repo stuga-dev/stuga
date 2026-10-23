@@ -18,7 +18,7 @@ Search runs on Postgres's own full-text search.
 
 ### Upgrade notes
 
-- A node set up by a 0.1 release starts over with a new data directory: 0.1 releases were previews, and the database schema starts again here. Export each workspace from 0.1 first (**Settings → This workspace → General → Export workspace**) and import it into the new node ([Workspace archives](docs/workspace-archive.md)).
+- A node set up by a 0.1 release starts over with new data: 0.1 releases were previews, and the database schema starts again here. **Update now** on a 0.1 Mac and `./stuga upgrade` on 0.1 Docker stop before they change anything, and 0.1 keeps running. Export each workspace from 0.1 first (**Settings → This workspace → General → Export workspace**), then set up the new release and import each one ([on a Mac](docs/install/macos.md#from-stuga-01), [on Docker](docs/install/docker.md#from-stuga-01)).
 
 ### Added
 

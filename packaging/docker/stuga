@@ -845,6 +845,26 @@ fetch_release() {
   exec "$ROOT/stuga" upgrade --fetched
 }
 
+# from_preview <version>: refuse data a 0.1 release served, putting that release's files back. No
+# later release reads it: its cluster loads pg_search, which they do not carry, and the schema
+# started again at 0.2.0. Nothing has stopped yet, so the stack keeps serving it.
+from_preview() {
+  local base="$RELEASES/download/v$1" tmp f
+  if ! buildable; then
+    tmp="$(mktemp -d "$ROOT/.upgrade.XXXXXX")"
+    for f in compose.yml env.example stuga; do
+      if ! curl -fsSL -o "$tmp/$f" "$base/$f"; then
+        rm -rf "$tmp"
+        fail 3 "this data is from stuga $1, a preview, which later releases do not read, and $1's files could not be downloaded to put back.
+       The stack still runs stuga $1: leave it running, and run $SELF upgrade again once GitHub is reachable."
+      fi
+    done
+    install_release "$tmp"
+  fi
+  fail 2 "this data is from stuga $1, a preview; later releases start with new data. Nothing was changed, and stuga $1 still runs.
+       To move to the newest release, export each workspace first: see From Stuga 0.1 in docs/install/docker.md."
+}
+
 # ./stuga upgrade [<version>]: to the newest release, or the one named. A compose.yml already
 # naming another version than the one that served the data (put there by hand, as for an upgrade
 # without a connection) is used as it is, unless it names an older release. A release's node backs
@@ -864,6 +884,7 @@ cmd_upgrade() {
   before="$(served_version)"
   [ -n "$before" ] || before="$(node_version_raw)"
   before="${before:-0.0.0-dev}"
+  if older_release "$before" 0.2.0; then from_preview "$before"; fi
 
   pin="$(pinned_node_tag)"
   if ! buildable && [ "$fetched" = no ] && { [ -n "$wanted" ] || [ "$pin" = "$before" ]; }; then

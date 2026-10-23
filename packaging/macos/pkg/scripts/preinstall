@@ -18,6 +18,13 @@ trap unmark_unless_finished EXIT
 
 main() {
   local root="${STUGA_ROOT:-/Library/Application Support/Stuga}" label
+  # A cluster a 0.1 release set up loads pg_search, which later releases do not carry, and its schema
+  # started again at 0.2.0: their Postgres would not start on it. Stopped before anything, 0.1 runs on.
+  if grep -qs "^shared_preload_libraries.*pg_search" "$root/data/pgdata/postgresql.conf"; then
+    echo "error: this Mac holds data from Stuga 0.1, a preview; later releases start with new data. Nothing was changed, and Stuga 0.1 still runs." >&2
+    echo "To move to this release, export each workspace first: see From Stuga 0.1 in docs/install/macos.md." >&2
+    exit 1
+  fi
   # A first install has nothing running to mark.
   if [ -d "$root" ]; then
     install -d -m 0755 "$root/status"

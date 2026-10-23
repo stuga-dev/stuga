@@ -77,6 +77,25 @@ test("preinstall marks nothing on a first install", () => {
   assert.ok(!existsSync(root), "nothing is created before the package installs");
 });
 
+test("preinstall refuses a Mac that holds Stuga 0.1's data, before it stops anything", () => {
+  const root = join(scratch(), "Stuga");
+  mkdirSync(join(root, "data/pgdata"), { recursive: true });
+  writeFileSync(join(root, "data/pgdata/postgresql.conf"), "listen_addresses = ''\nshared_preload_libraries = 'pg_search'\n");
+  // The jobs are loaded: a stop would wait for them.
+  const run = spawnSync("bash", [preinstall], { env: { STUGA_ROOT: root, PATH: fakeLaunchctl(), FAKE_PRINT_STATUS: "0" }, encoding: "utf8" });
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /this Mac holds data from Stuga 0\.1, a preview; later releases start with new data\. Nothing was changed/);
+  assert.ok(!existsSync(join(root, "status")), "nothing is marked");
+});
+
+test("preinstall upgrades a cluster that loads no pg_search", () => {
+  const root = join(scratch(), "Stuga");
+  mkdirSync(join(root, "data/pgdata"), { recursive: true });
+  writeFileSync(join(root, "data/pgdata/postgresql.conf"), "# shared_preload_libraries = 'pg_search'\nlisten_addresses = ''\n");
+  const run = spawnSync("bash", [preinstall], { env: { STUGA_ROOT: root, PATH: fakeLaunchctl() }, encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+});
+
 test("preinstall stopped short takes its mark with it", async () => {
   const root = join(scratch(), "Stuga");
   mkdirSync(root);
