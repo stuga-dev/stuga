@@ -103,15 +103,16 @@
 
   "wiki.nav": "Wiki",
   "wiki.index.title": "目錄",
-  "wiki.index.intro": "你能開啟的所有頁面，依資料夾排列。",
+  "wiki.index.intro": "你能開啟的所有頁面和資料庫，依資料夾排列。",
   "wiki.index.topLevel": "最上層",
   "wiki.index.elsewhere": "與你共用",
   "wiki.index.changed": "<time>{when}</time>變更",
   "wiki.index.changedBy": "{names} 於 <time>{when}</time>變更",
+  "wiki.index.rows": "{count, plural, other {# 列}}",
   "wiki.index.checkingOnly": "僅看需要核對的",
   "wiki.index.checkingCount": "{count, plural, other {# 個頁面需要核對。}}",
   "wiki.index.emptyTitle": "你的 Wiki 從這裡開始",
-  "wiki.index.emptyNote": "你能開啟的頁面會依資料夾顯示在這裡。",
+  "wiki.index.emptyNote": "你能開啟的頁面和資料庫會依資料夾顯示在這裡。",
   "wiki.index.allCheckedTitle": "所有頁面都是最新的",
   "wiki.index.allCheckedNote": "頁面所引用的頁面有變更時，它會顯示在這裡。",
   "wiki.index.truncated": "前 {count, number} 個頁面。開啟一個資料夾即可看到其中全部頁面。",
@@ -137,5 +138,8 @@
   "wiki.log.by.partly": "部分核准 · {names}",
   "wiki.log.askedBy": "{name} 透過 {agent} 提出",
   "wiki.log.through": "透過 {agent}",
-  "wiki.log.changes": "{count, plural, other {# 處變更}}"
+  "wiki.log.changes": "{count, plural, other {# 處變更}}",
+  "wiki.log.tableRows": "{table}：{names}",
+  "wiki.log.tableRowsMore": "{table}：{names} 等，另有 {more, plural, other {# 列}}",
+  "wiki.log.tableCount": "{table}：{count, plural, other {# 列}}"
 }

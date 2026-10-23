@@ -8,7 +8,10 @@ export const REMEMBER_NEXT =
   "`markdown` action:read, then correct a sentence with `markdown_edit` str_replace (never leave the old one " +
   "standing; a likely_duplicate may say the point already), add under a section with `markdown_append` and " +
   "`heading`, or make a page with `docs_create` (in a `new_page` folder or the folder whose instructions say it " +
-  "belongs, else in `home`) and fill it. The whole save is ONE change: give `change_title` (a few words naming " +
+  "belongs, else in `home`) and fill it. A fact a table's columns name goes in its row, prose in a page: for a " +
+  '`kind: "row"` candidate, `databases_change` action:update_rows on its `row_id` (a cell `possibly_replaces` ' +
+  "changed in place), or for `row: null` `databases_add` action:insert_rows; a `waiting` cell or `waiting_row` is " +
+  "proposed already, so say it waits. The whole save is ONE change: give `change_title` (a few words naming " +
   "what you save, never a page's title) to your first write and pass the `change_id` it returns to every other, so " +
   "it is reviewed as one. Write no name or date for what the user told you directly: version " +
   "history records who changed what and when. Cite a point's `source` (a meeting, an email, a document) as the " +

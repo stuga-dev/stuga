@@ -23,7 +23,7 @@ import type {
 import type { ReviewMode } from "@stuga/protocol/domain/events";
 import { closedStatus, feedbackExcerpt, type AgentFeedback, type RunFeedback } from "@stuga/protocol/domain/runs";
 import { RUN_FEEDBACK_LOOKBACK_DAYS, RUN_FEEDBACK_MAX_CHANGES } from "@stuga/protocol/domain/limits";
-import type { RunIndexEntry } from "@stuga/protocol/internal/jobs";
+import { RUN_TOUCHED_ROWS_MAX, type RunIndexEntry, type RunTouchedTable } from "@stuga/protocol/internal/jobs";
 import type { BlobStore } from "@stuga/runtime";
 import type { SchemaView } from "../ops/schema-view.js";
 import { OpError } from "../request.js";
@@ -215,6 +215,37 @@ export function outstandingRunsFor(sql: SqlHandle, reviewer: string): RunRow[] {
 }
 
 /** The run as the workspace inbox mirrors it: counts by op status. */
+/**
+ * The rows a run's landed ops wrote, inserted or deleted, by table, read from the payloads the ledger holds
+ * inline; a payload large enough to be stored apart counts its rows by its detail alone.
+ */
+function touchedRows(sql: SqlHandle, runId: string): RunTouchedTable[] {
+  const byTable = new Map<string, { ids: Set<string>; rows: number }>();
+  const ops = sql.exec(
+    `SELECT kind, table_id, payload, detail FROM _run_ops
+     WHERE run_id = ? AND status IN ('accepted', 'auto_applied') AND kind IN ('rows.insert', 'rows.update', 'rows.delete')
+     ORDER BY position`,
+    runId,
+  );
+  for (const op of ops) {
+    const table = byTable.get(String(op.table_id)) ?? { ids: new Set<string>(), rows: 0 };
+    byTable.set(String(op.table_id), table);
+    if (op.payload == null) {
+      const detail = op.detail == null ? null : (JSON.parse(String(op.detail)) as { rows?: unknown });
+      table.rows += typeof detail?.rows === "number" ? detail.rows : 0;
+      continue;
+    }
+    const p = JSON.parse(String(op.payload)) as DatabaseRunOpPayload;
+    const ids = p.kind === "rows.update" ? p.updates.map((u) => u._id) : p.kind === "rows.insert" || p.kind === "rows.delete" ? p.row_ids : [];
+    for (const id of ids) {
+      if (table.ids.has(id)) continue;
+      table.ids.add(id);
+      table.rows += 1;
+    }
+  }
+  return [...byTable].map(([table_id, t]) => ({ table_id, row_ids: [...t.ids].slice(0, RUN_TOUCHED_ROWS_MAX), rows: t.rows }));
+}
+
 export function runIndexEntry(sql: SqlHandle, run: RunRow, databaseId: string): RunIndexEntry {
   const counts = new Map<string, number>();
   for (const r of sql.exec(`SELECT status, COUNT(*) AS n FROM _run_ops WHERE run_id = ? GROUP BY status`, run.run_id)) {
@@ -261,6 +292,7 @@ export function runIndexEntry(sql: SqlHandle, run: RunRow, databaseId: string): 
     rejected: count("rejected"),
     conflicts: count("conflict"),
     applied: count("auto_applied"),
+    touched: touchedRows(sql, run.run_id),
     createdAt: run.created_at,
     updatedAt: run.updated_at,
   };

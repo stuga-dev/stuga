@@ -25,6 +25,9 @@ export interface CitationInput {
   heading_path?: string | null;
   /** Frozen excerpt of the cited passage. */
   content?: string | null;
+  /** A row of the cited database: its footnote opens the row in its table. */
+  table_id?: string | null;
+  row_id?: string | null;
 }
 
 const FOOTNOTE_REF = /\[\^(\d+)\](?!:)/g; // a [^n] marker NOT starting a definition
@@ -45,7 +48,8 @@ function escInline(s: string): string {
 /** The text after "[^n]: " for a synthesized definition: link + optional excerpt. */
 function synthDef(c: CitationInput): string {
   const label = c.heading_path ? `${c.title || "Untitled"} — ${c.heading_path}` : c.title || "Untitled";
-  const link = `[${escInline(label)}](/doc/${c.doc_id})`;
+  const row = c.table_id && c.row_id ? `?table=${encodeURIComponent(c.table_id)}&row=${encodeURIComponent(c.row_id)}` : "";
+  const link = `[${escInline(label)}](/doc/${c.doc_id}${row})`;
   const excerpt = escInline(c.content ?? "");
   return excerpt ? `${link} "${excerpt}"` : link;
 }

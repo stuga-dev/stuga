@@ -1,7 +1,7 @@
 import type { DocWikiLinks, WikiIndex, WikiLint, WikiLog } from "@stuga/protocol/domain/wiki";
 import { api } from "../lib/http/client";
 
-export type { AuthorRef, DocWikiLinks, IndexEntry, IndexSection, LogOutcome, WikiIndex, WikiLint, WikiLog, WikiLogEntry } from "@stuga/protocol/domain/wiki";
+export type { AuthorRef, DocWikiLinks, IndexEntry, IndexSection, LogOutcome, LogTable, WikiIndex, WikiLint, WikiLog, WikiLogEntry } from "@stuga/protocol/domain/wiki";
 
 /** The wiki as the signed-in person reads it: nothing in it names a page, folder or change they cannot open. */
 export const Wiki = {

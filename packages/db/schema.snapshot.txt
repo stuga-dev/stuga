@@ -30,6 +30,7 @@ TABLE agent_runs
   run_id text NOT NULL
   source text NOT NULL
   status text NOT NULL
+  touched jsonb
   updated_at timestamp with time zone NOT NULL
   workspace_id text NOT NULL
   CONSTRAINT agent_runs_approved_by_check CHECK ((NOT (reviewer = ANY (approved_by))))
@@ -210,6 +211,7 @@ TABLE doc_links
   doc_id text NOT NULL
   kind text NOT NULL
   target_doc_id text NOT NULL
+  target_rows ARRAY NOT NULL DEFAULT '{}'::text[]
   workspace_id text NOT NULL
   CONSTRAINT doc_links_doc_id_fkey FOREIGN KEY (doc_id) REFERENCES docs(doc_id) ON DELETE CASCADE
   CONSTRAINT doc_links_kind_check CHECK ((kind = ANY (ARRAY['link'::text, 'citation'::text])))
@@ -247,6 +249,7 @@ TABLE docs
   page_of text
   page_row text
   parent_id text
+  row_count integer
   search_dl integer NOT NULL DEFAULT 0
   search_format text
   search_hidden boolean NOT NULL DEFAULT false

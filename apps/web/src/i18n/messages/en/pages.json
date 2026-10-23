@@ -103,15 +103,16 @@
 
   "wiki.nav": "Wiki",
   "wiki.index.title": "Index",
-  "wiki.index.intro": "Every page you can open, by folder.",
+  "wiki.index.intro": "Every page and database you can open, by folder.",
   "wiki.index.topLevel": "Top level",
   "wiki.index.elsewhere": "Shared with you",
   "wiki.index.changed": "Changed <time>{when}</time>",
   "wiki.index.changedBy": "Changed <time>{when}</time> by {names}",
+  "wiki.index.rows": "{count, plural, one {# row} other {# rows}}",
   "wiki.index.checkingOnly": "Needs checking only",
   "wiki.index.checkingCount": "{count, plural, one {# page needs checking.} other {# pages need checking.}}",
   "wiki.index.emptyTitle": "Your wiki starts here",
-  "wiki.index.emptyNote": "Pages you can open show here, by folder.",
+  "wiki.index.emptyNote": "Pages and databases you can open show here, by folder.",
   "wiki.index.allCheckedTitle": "Every page is up to date",
   "wiki.index.allCheckedNote": "A page shows here when a page it cites changes.",
   "wiki.index.truncated": "The first {count, number} pages. Open a folder to see all of it.",
@@ -137,5 +138,8 @@
   "wiki.log.by.partly": "Partly approved by {names}",
   "wiki.log.askedBy": "Asked by {name} through {agent}",
   "wiki.log.through": "Through {agent}",
-  "wiki.log.changes": "{count, plural, one {# change} other {# changes}}"
+  "wiki.log.changes": "{count, plural, one {# change} other {# changes}}",
+  "wiki.log.tableRows": "{table}: {names}",
+  "wiki.log.tableRowsMore": "{table}: {names} and {more, plural, one {# more row} other {# more rows}}",
+  "wiki.log.tableCount": "{table}: {count, plural, one {# row} other {# rows}}"
 }

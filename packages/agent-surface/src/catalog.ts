@@ -289,12 +289,14 @@ const docsTool: ToolDefinition = {
     "return the standing `instructions` people set for that document, outermost first — follow them when writing " +
     "there. To find documents by what they say, use `search`. " +
     "index: the wiki's table of contents, by folder (`parent_id` narrows it to one): each page's title, `summary` " +
-    "(its opening paragraph), when its approved text last changed and who changed it, and `needs_checking`. log: the " +
-    "AI changes people approved or declined, newest first: what changed where, who asked, who decided, when; pass " +
-    "`next` back as `before` for older ones. Both are generated; neither is a page to write to. " +
+    "(its opening paragraph), when its approved text last changed and who changed it, and `needs_checking`; each " +
+    "database's `rows` and its last change. log: the AI changes people approved or declined, newest first: what " +
+    "changed where (a database's `tables` and the rows touched), who asked, who decided, when; pass `next` back as " +
+    "`before` for older ones. Both are generated; neither is a page to write to. " +
     `lint: check the wiki, when the user says "Check Stuga" or the same in their language (${checkStugaElsewhere()}), ` +
     "or asks what in it is out of date or broken (`parent_id` checks one folder): pages that need checking because a " +
-    "page they cite changed since, orphans no other page links to, and broken links. Fix NOTHING by rewriting a page: " +
+    "page they cite changed since, orphans no other page links to, and broken links, a link to a deleted row of a " +
+    "table among them (`row_deleted`). Fix NOTHING by rewriting a page: " +
     "propose each fix as a small edit, all of them in ONE change for the user's approval, and tell the user what you " +
     "proposed and what you left for them to decide; a `not_found` link may name a page the user cannot open, so " +
     "never take one out unasked; marking a page checked is a person's, never yours.",
@@ -347,6 +349,16 @@ const WHO_WROTE =
   '`since`: answer with the approved text, and name what waits and for whom ("the page says 14 days; a change to ' +
   "30 days waits for a colleague's approval\"); never present a waiting change as what the document says.";
 
+/** Said by both recall tools: rows of tables come with documents and passages, and `query` answers over a table. */
+const ROWS_TOO =
+  "The answer also carries `rows`: rows of tables whose cells hold the question's words (database, table, the row's " +
+  "title, its cells, `matched` columns), each with `updated_at`, `last_edited_by` and the user's own " +
+  "`pending_changes` as above, a waiting change to a cell naming its `column`, and a row the user asked for that " +
+  "waits to be added marked `waiting_row`; `tables_waiting` counts other people's waiting changes per table. For a " +
+  "precise question over a table (which rows match, how many, a total), run `query` on it: its `database_id`, and " +
+  "the SQL names `tables` gives (`table_name`, and each column's in `columns`); `rows_more` names the tables with " +
+  "more matching rows than are listed.";
+
 /** What a recall looks for; `query` is the same, for a model that names it so. */
 const recallQuery = z.string().min(1).max(4000).optional().describe("What to look for. Required, as `q` or `query`.");
 const recallQueryAlias = z.string().min(1).max(4000).optional().describe("The same as `q`.");
@@ -359,6 +371,7 @@ const searchTool: ToolDefinition = {
     "Full-text + semantic search over `workspace_ids`; returns DOCUMENTS, not passages — use `retrieve` to answer " +
     "from content. Results from several workspaces are merged in rank order and each names its `workspace_id`. " +
     `${WHO_WROTE} ` +
+    `${ROWS_TOO} ` +
     "`unavailable` lists any workspace that could not be searched just now: say so, and never present the rest as " +
     "complete. A result holds every word of `q`; when no document does, the answer says `partial` and lists those " +
     "holding some of them. `collection_id` narrows the search of a single workspace to that saved set — see " +
@@ -434,8 +447,9 @@ const markdownEditTool: ToolDefinition = {
     "str_replace over a whole rewrite (`old_string`/`new_string` are the same as `find`/`replace`); cited_edits " +
     "proposes several surgical edits at once (`edits`: [{old_string, " +
     "new_string}], each old_string matching exactly once) with optional `citations` ([{n, doc_id, title, " +
-    "heading_path?, content?}]) that become footnotes when the edits land — the shape for grounded edits drawn from " +
-    "`retrieve`; a citation's `doc_id` must be a document of this workspace you can read, else the whole edit is " +
+    "heading_path?, content?, table_id?, row_id?}]) that become footnotes when the edits land — the shape for " +
+    "grounded edits drawn from `retrieve`; a row is cited by its database's `doc_id` with its `table_id` and " +
+    "`row_id`; a citation's `doc_id` must be a document of this workspace you can read, else the whole edit is " +
     `refused with \`citation_not_found\`. ${PROPOSED} Never rewrite the document because your change looks missing: your reads include it, ` +
     "and `markdown` action:status reports what the user decided. Edits 3-way merge with concurrent human edits. " +
     `${REVISES} ${CHANGES} ${IMAGES_IN_MARKDOWN}`,
@@ -463,6 +477,8 @@ const markdownEditTool: ToolDefinition = {
           title: z.string().max(200),
           heading_path: z.string().max(500).nullable().optional(),
           content: z.string().max(1000).optional(),
+          table_id: z.string().max(100).optional().describe("Citing a row of a database (`doc_id`): its table's id."),
+          row_id: z.string().max(100).optional().describe("Citing a row of a database: the row's id, as `retrieve` or `query` gave it."),
         }),
       )
       .max(CITATIONS_MAX)
@@ -599,7 +615,7 @@ const retrieveTool: ToolDefinition = {
     `or MCP. ${ASK_FIRST} Retrieve the passages most relevant to the question across every document you can access in ` +
     "`workspace_ids` (one workspace may be narrowed to `collection_id` — see `collections`). Returns ranked excerpts " +
     "with their source document, heading and `workspace_id`. ANSWER FROM THESE PASSAGES: cite the document title and " +
-    `heading, and link sources with each passage's \`url\`. ${WHO_WROTE} Prefer this over reading whole documents for any question ` +
+    `heading, and link sources with each passage's \`url\`. ${WHO_WROTE} ${ROWS_TOO} Prefer this over reading whole documents for any question ` +
     "spanning more than one document. `unavailable` lists any workspace that could not be searched just now: say so. " +
     "When a node's embeddings are off, its passages are found by the question's words alone (`semantic: false`); " +
     "when none holds every word, the answer says `partial`: check that one answers the question, and ask again in " +
@@ -743,8 +759,9 @@ const databasesChangeTool: ToolDefinition = {
 const queryTool: ToolDefinition = {
   title: "Query a database",
   description:
-    "Run ONE read-only SELECT against a structured database (SQLite dialect). Get physical table/column names from " +
-    "`databases` action:schema first. Every table has a `_id` primary key — select it when you plan to update or " +
+    "Run ONE read-only SELECT against a structured database (SQLite dialect): the way to answer a precise question " +
+    "over a table (which rows, how many, a total). Get physical table/column names from `databases` action:schema " +
+    "first, or from a recall's `tables`. Every table has a `_id` primary key — select it when you plan to update or " +
     "delete rows, or to find a row's page with `databases` action:page. JOINs between tables in the same database " +
     `are supported. Writes are rejected — use \`databases_add\` or \`databases_change\`. ${SQL_VALUE_CONVENTIONS} ` +
     `Results cap at ${DATABASE_QUERY_MAX_ROWS} rows (\`truncated: true\`); aggregate or filter rather than paginating ` +
@@ -796,7 +813,10 @@ const rememberTool: ToolDefinition = {
     "document it came from, and when, kept out of `text`; none for what the user told you). `user` is whom you act " +
     "for, by their Stuga name. For each point it returns `candidates`, best first: pages the user can edit " +
     '(`kind: "page"`: doc_id, title, folder path, the `section` heading it fits under — null for the page\'s opening, ' +
-    'or a page whose title alone fits — why, an excerpt) and folders a new page on it belongs in (`kind: "new_page"`), each with ' +
+    'or a page whose title alone fits — why, an excerpt), rows of tables the user can edit (`kind: "row"`: the ' +
+    "database, `table`, the `row` the point names by its title cell — null for a new row — and `fills`, the " +
+    "columns it fills, each cell as it reads now with `already_saved`, `possibly_replaces` or `waiting`) and " +
+    'folders a new page on it belongs in (`kind: "new_page"`), each with ' +
     "`review`: whether a write there applies at once or waits for the user's or a colleague's approval; " +
     "`already_saved` (sentences that already say it), `possibly_replaces` (sentences it may make untrue, or, " +
     'with hint "likely_duplicate", that may say it already: compare before writing), and a `note` when only words ' +
@@ -810,6 +830,12 @@ const rememberTool: ToolDefinition = {
     "old and the new both standing), `markdown_append` with `heading` to add a new fact under the right section, or " +
     "`docs_create` for a new page (in the `new_page` folder, or the folder whose instructions say it belongs, else in " +
     "My notes: `home.folder_id`, reusing a page of `home.pages` on the same topic), then `markdown_append` to fill it. " +
+    "TABLES: a fact a table's columns name (a contact, a plan, a date, an amount) goes in its row, prose (a decision, " +
+    "a reason, how something is done) in a page. For a `row` candidate write `databases_change` action:update_rows " +
+    "(`updates`: [{_id: the row's `row_id`, values: {column: value}}]) to fill or correct its cells, a cell that " +
+    "holds another value changed in place, never a second row; for `row: null`, `databases_add` action:insert_rows " +
+    "with its title column named; both in the same change. A `waiting` cell or a `waiting_row` is proposed already: " +
+    "tell the user it waits instead of writing it again. " +
     "WHO AND WHEN: for what the user tells you directly, write no name and no date with it (no \"per …\", \"noted by " +
     "…\"): Stuga's version history records who changed what and when. For a point from a meeting, an email or a " +
     "document, give that as its `source` and cite it in the text as the place's instructions ask, else in a few words " +

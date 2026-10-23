@@ -26,27 +26,48 @@ export async function getDocSearchText(sql: Sql, docId: string): Promise<string 
   return rows[0]?.search_text ?? null;
 }
 
+/** What a database's indexing reads beside its text: how many rows it holds, and its ledger's newest op. */
+export interface DatabaseFacts {
+  rows: number;
+  /** Epoch milliseconds; null before any change. */
+  changedAt: number | null;
+  /** The alias that op names: a person, an agent (`agent-…`), or the AI co-author (`panel:<alias>`). */
+  changedBy: string | null;
+}
+
 /**
  * A database's cell text, which the workspace search reads as a document's
  * body. A database has no snapshots and no passages: only `search_text` moves,
  * with the keyword vectors, which are then all a database has, stemmed under
- * the node's search languages.
+ * the node's search languages. With `facts`, its row count and its last change
+ * too, which the wiki's Index shows and a page citing it is checked against.
  */
 export async function setDatabaseSearchText(
   sql: Sql,
   docId: string,
   text: string,
   languages: readonly SearchLanguage[] = [],
+  facts?: DatabaseFacts,
 ): Promise<void> {
   await sql.begin(async (tx) => {
-    const [row] = await tx<{ title: string }[]>`
-      SELECT title FROM docs
-      WHERE doc_id = ${docId} AND doc_type = 'database' AND search_text IS DISTINCT FROM ${text}
-      FOR UPDATE`;
+    const [row] = await tx<{ title: string; search_text: string }[]>`
+      SELECT title, search_text FROM docs WHERE doc_id = ${docId} AND doc_type = 'database' FOR UPDATE`;
     if (!row) return;
+    if (row.search_text !== text) {
+      await tx`
+        UPDATE docs SET search_text = ${text}, ${docVectorsSet(tx, { title: row.title, text, languages, whole: true })}
+        WHERE doc_id = ${docId}`;
+    }
+    if (!facts) return;
+    const changedAt = facts.changedAt === null ? null : new Date(facts.changedAt).toISOString();
+    const changedBy = facts.changedBy === null ? [] : [facts.changedBy];
+    // Only what moved: an unchanged database keeps its row as it is.
     await tx`
-      UPDATE docs SET search_text = ${text}, ${docVectorsSet(tx, { title: row.title, text, languages, whole: true })}
-      WHERE doc_id = ${docId}`;
+      UPDATE docs SET row_count = ${facts.rows}, text_changed_at = coalesce(${changedAt}::timestamptz, text_changed_at),
+                      text_changed_by = CASE WHEN ${changedAt}::timestamptz IS NULL THEN text_changed_by ELSE ${changedBy}::text[] END
+      WHERE doc_id = ${docId}
+        AND (row_count IS DISTINCT FROM ${facts.rows}
+             OR (${changedAt}::timestamptz IS NOT NULL AND text_changed_at IS DISTINCT FROM ${changedAt}::timestamptz))`;
   });
 }
 

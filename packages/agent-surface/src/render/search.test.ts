@@ -84,3 +84,33 @@ describe("renderSearch", () => {
     expect(JSON.parse(renderSearch("x", [], [{ workspace_id: "ws1", reason: "gone" }])).semantic).toBe(false);
   });
 });
+
+describe("rows beside passages and documents", () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    database_id: "db1",
+    title: "Customers",
+    table_id: "tbl_1",
+    table: "Customers",
+    table_name: "customers",
+    row_id: "row_1",
+    row_title: "Globex",
+    cells: { Name: "Globex", Contact: "Ana Ruiz" },
+    matched: ["Name", "Contact"],
+    ...over,
+  });
+
+  it("lists rows merged across workspaces, each linked open at its row, with what to do with them", () => {
+    const out = JSON.parse(
+      renderPassages([part({ chunks: [], rows: [row()], rows_more: [{ database_id: "db1", table: "Customers", table_name: "customers", rows: 9 }] }), part({ chunks: [], rows: [row({ row_id: "row_2", waiting_row: true })] }, "", "ws2")], []),
+    );
+    expect(out.rows).toEqual([
+      { workspace_id: "ws1", ...row(), url: "http://localhost:8787/doc/db1?table=tbl_1&row=row_1" },
+      { workspace_id: "ws2", ...row({ row_id: "row_2", waiting_row: true }) },
+    ]);
+    expect(out.rows_more).toEqual([{ workspace_id: "ws1", database_id: "db1", table: "Customers", table_name: "customers", rows: 9 }]);
+    expect(out.rows_note).toContain("`query`");
+    // A search carries them too; an answer with none says nothing of them.
+    expect(JSON.parse(renderSearch("globex", [part({ query: "globex", results: [], degraded: false, semantic: false, rows: [row()] })], [])).rows).toHaveLength(1);
+    expect(passages({ chunks: [chunk()] })).not.toHaveProperty("rows_note");
+  });
+});

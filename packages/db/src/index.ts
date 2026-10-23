@@ -25,6 +25,7 @@ export {
   type AlikeSentence,
   type SketchCache,
 } from "./remember-text.js";
+export { cellSaid, holdsValue, longestNames, namedChoice, namedChoices, namesColumn, namesRow, questionWords, saysCell, wordsInCell } from "./table-text.js";
 export * from "./versions.js";
 export * from "./comments.js";
 export * from "./favorites.js";

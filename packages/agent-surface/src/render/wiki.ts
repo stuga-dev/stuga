@@ -16,8 +16,9 @@ export function authorName(ref: AuthorRef): string {
 
 /** Said with an index: what it is, and what it is not. */
 export const INDEX_NOTE =
-  "Generated from the pages you can read; nothing writes to it. `needs_checking`: a page it cites changed after it " +
-  "was approved (`docs` action:lint lists which).";
+  "Generated from the pages and databases you can read; nothing writes to it. A database's `rows`: how many it " +
+  "holds; read them with `query`. `needs_checking`: a page it cites changed after it was approved (`docs` " +
+  "action:lint lists which).";
 
 /** Said when an index or a check lists less than there is. */
 export const NARROW_NOTE = "Not everything is listed: pass a folder's id as `parent_id` to read one folder at a time.";
@@ -33,6 +34,7 @@ export function renderIndex(index: WikiIndex, origin: string): string {
         doc_id: p.doc_id,
         title: p.title,
         ...(p.doc_type === "database" ? { doc_type: p.doc_type } : {}),
+        ...(p.row_count !== undefined ? { rows: p.row_count } : {}),
         summary: p.summary,
         changed_at: p.changed_at,
         changed_by: p.changed_by.map(authorName),
@@ -54,6 +56,7 @@ function pageLine(p: LogPage): Record<string, unknown> {
     declined: p.declined,
     ...(p.applied > 0 ? { applied_directly: p.applied } : {}),
     ...(p.reverted ? { reverted: true } : {}),
+    ...(p.tables?.length ? { tables: p.tables.map((t) => ({ table: t.table, rows: t.rows, rows_touched: t.count })) } : {}),
   };
 }
 
@@ -82,6 +85,8 @@ export const LINT_NEXT =
   "(`markdown_edit` action:cited_edits); when nothing it says is untrue, leave it and tell the user, who marks it " +
   "checked on the page. For an orphan, add a link to it (`[title](/doc/<id>)`) from the page a reader would look " +
   "in. For a link `in_trash`, point it at the page meant, or tell the user, who may restore that page. A link " +
+  "`row_deleted` names a row gone from its table: find the row meant with `query` and point the link or citation " +
+  "at it, else take out the link and keep its text. A link " +
   "`not_found` may name a page that is there and the user cannot open: never take it out on your own; tell the user " +
   "which page holds it, and change it only once they say the page it names is gone. Propose all of it as " +
   'ONE change: `change_title` such as "Wiki check, 2026-10-22" on your first write and its `change_id` on every ' +

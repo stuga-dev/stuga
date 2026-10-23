@@ -11,7 +11,7 @@ vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()),
 
 const { LinkedFrom, NeedsCheckingBanner } = await import("./WikiLinks");
 const { authorRefLabel } = await import("../wiki/names");
-const { askedLine, outcomeLine } = await import("../pages/WikiLogPage");
+const { askedLine, outcomeLine, tableLine } = await import("../pages/WikiLogPage");
 
 let host: HTMLDivElement;
 let root: Root;
@@ -91,5 +91,11 @@ describe("the wiki's names", () => {
     expect(
       askedLine({ asked_by: { kind: "person", name: "Liv" }, agent: { name: "Claude", alias: "agent-1", client: "claude-code", source: "connector" } }),
     ).toBe("Asked by Liv through Claude");
+  });
+
+  it("names the rows a change touched in a table, and counts the rest", () => {
+    expect(tableLine({ table: "Customers", rows: ["Initech", "Hooli"], count: 2 })).toBe("Customers: Initech, Hooli");
+    expect(tableLine({ table: "Customers", rows: ["Initech"], count: 4 })).toBe("Customers: Initech and 3 more rows");
+    expect(tableLine({ table: "Customers", rows: [], count: 1 })).toBe("Customers: 1 row");
   });
 });

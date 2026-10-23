@@ -58,6 +58,7 @@ const db = vi.hoisted(() => ({
   stalePages: vi.fn(),
   orphanPages: vi.fn(),
   brokenLinks: vi.fn(),
+  rowLinks: vi.fn(),
   authorRefs: vi.fn(),
 }));
 const edits = vi.hoisted(() => ({
@@ -241,6 +242,7 @@ beforeEach(() => {
   db.stalePages.mockResolvedValue({ pages: [], citations: [], truncated: false });
   db.orphanPages.mockResolvedValue({ pages: [], truncated: false });
   db.brokenLinks.mockResolvedValue({ links: [], truncated: false });
+  db.rowLinks.mockResolvedValue({ links: [], truncated: false });
   db.authorRefs.mockResolvedValue(new Map());
   edits.readDocMarkdownWithProjection.mockResolvedValue({ markdown: "body", doc: DOC });
   edits.readDocRuns.mockResolvedValue([]);

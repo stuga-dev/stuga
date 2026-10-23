@@ -22,6 +22,7 @@ import { SchemaView } from "./ops/schema-view.js";
 import { followTitle, isInitialized, schemaInit, tablesRename, titleTable } from "./ops/tables.js";
 import { projectRows, projectSchema } from "./projection.js";
 import { listRowPage } from "./query/row-query.js";
+import { lastChange, readRows, totalRows } from "./query/rows-read.js";
 import { databaseSearchText } from "./query/search-text.js";
 import { runReadOnly } from "./query/sql-guard.js";
 import { OpError, errorResponse, parseActor, parseOpsKeep, readJson } from "./request.js";
@@ -57,7 +58,8 @@ export class DatabaseActor implements Actor<SessionMeta> {
       "POST /views/delete": mutation("views.delete"),
       "POST /rows/list": (req) => this.listRows(req),
       "POST /rows/export": (req) => this.exportRows(req),
-      "GET /search-text": () => Response.json({ text: databaseSearchText(this.db.storage) }),
+      "GET /search-text": () => this.searchText(),
+      "POST /rows/read": async (req) => Response.json(readRows(this.db.storage, await readJson(req))),
       "POST /rows/insert": mutation("rows.insert"),
       "POST /rows/update": mutation("rows.update"),
       "POST /rows/delete": mutation("rows.delete"),
@@ -115,6 +117,20 @@ export class DatabaseActor implements Actor<SessionMeta> {
     const unchanged = def.unchanged?.(this.db.sql, payload);
     if (unchanged) return Response.json(unchanged);
     return Response.json(await commitOp(this.db, def, payload, { actor, keep }));
+  }
+
+  /**
+   * What the workspace search and the wiki's Index read of the database: its text, how many rows it holds, and
+   * its last change, when and by whom.
+   */
+  private searchText(): Response {
+    const last = lastChange(this.db.sql);
+    return Response.json({
+      text: databaseSearchText(this.db.storage),
+      rows: totalRows(this.db.sql),
+      changed_at: last?.at ?? null,
+      changed_by: last?.by ?? null,
+    });
   }
 
   /** Idempotent: a second init adds nothing, whatever it names. */

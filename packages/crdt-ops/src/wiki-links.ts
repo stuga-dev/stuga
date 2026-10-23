@@ -16,6 +16,8 @@ export interface WikiLink {
   kind: WikiLinkKind;
   /** The passages holding it, as plain text in document order: for a citation, its footnote too. */
   passages: string[];
+  /** The rows of a database it names, `<table_id>.<row_id>`, in order: a link to a row opens it in its table. */
+  rows: string[];
 }
 
 export interface WikiText {
@@ -50,6 +52,29 @@ export function wikiLinkTarget(href: string, origins: readonly string[] = []): s
   }
 }
 
+/** An id as an address carries it: no dot, no slash, no space, as the node's ids are. */
+const ROW_PART = /^[A-Za-z0-9_-]{1,100}$/;
+
+/**
+ * The page a link opens, and the row of a database it opens there: `/doc/<database>?table=<t>&row=<r>`, as a
+ * row is linked from its table (or the same at one of `origins`). Null for a link that opens no page.
+ */
+export function wikiLinkRef(href: string, origins: readonly string[] = []): { target: string; row: string | null } | null {
+  const target = wikiLinkTarget(href, origins);
+  if (!target) return null;
+  const query = /\?([^#]*)/.exec(href)?.[1] ?? "";
+  let row: string | null = null;
+  try {
+    const params = new URLSearchParams(query);
+    const table = params.get("table");
+    const rowId = params.get("row");
+    if (table && rowId && ROW_PART.test(table) && ROW_PART.test(rowId)) row = `${table}.${rowId}`;
+  } catch {
+    row = null;
+  }
+  return { target, row };
+}
+
 /** A node's text as a reader reads it: a mention by its label, a line break as a space, no footnote markers. */
 function plainText(node: PMNode): string {
   let out = "";
@@ -63,15 +88,27 @@ function plainText(node: PMNode): string {
   return out.replace(/\s+/g, " ").replace(/ ([.,;:!?)])/g, "$1").trim();
 }
 
-/** Each page a node's links name, once, in order. */
-function linkTargets(node: PMNode, origins: readonly string[]): string[] {
-  const out: string[] = [];
+/** A page a node's links name, and the rows of it they open. */
+interface Named {
+  target: string;
+  rows: string[];
+}
+
+/** Each page a node's links name, once, in order, with the rows of it they open. */
+function linkTargets(node: PMNode, origins: readonly string[]): Named[] {
+  const out: Named[] = [];
   node.descendants((child) => {
     if (!child.isText) return true;
     for (const mark of child.marks) {
       if (mark.type.name !== "link") continue;
-      const target = wikiLinkTarget(String(mark.attrs.href ?? ""), origins);
-      if (target && !out.includes(target)) out.push(target);
+      const ref = wikiLinkRef(String(mark.attrs.href ?? ""), origins);
+      if (!ref) continue;
+      let named = out.find((n) => n.target === ref.target);
+      if (!named) {
+        named = { target: ref.target, rows: [] };
+        out.push(named);
+      }
+      if (ref.row && !named.rows.includes(ref.row)) named.rows.push(ref.row);
     }
     return true;
   });
@@ -99,7 +136,7 @@ function cutSummary(text: string): string {
 
 interface Passage {
   text: string;
-  links: string[];
+  links: Named[];
   refs: number[];
 }
 
@@ -107,7 +144,7 @@ export function wikiText(markdown: string, opts: { origins?: readonly string[] }
   const origins = opts.origins ?? [];
   const doc = markdownToDoc(markdown, getStugaSchema());
   const passages: Passage[] = [];
-  const footnotes = new Map<number, { targets: string[]; text: string }>();
+  const footnotes = new Map<number, { targets: Named[]; text: string }>();
   let opening = "";
   let fallback = "";
   doc.descendants((node, _pos, parent) => {
@@ -131,17 +168,18 @@ export function wikiText(markdown: string, opts: { origins?: readonly string[] }
   });
 
   const byKey = new Map<string, WikiLink>();
-  const add = (target: string, kind: WikiLinkKind, text: string) => {
+  const add = ({ target, rows }: Named, kind: WikiLinkKind, text: string) => {
     const key = `${kind}\u0000${target}`;
-    const link = byKey.get(key) ?? { target, kind, passages: [] };
+    const link = byKey.get(key) ?? { target, kind, passages: [], rows: [] };
     if (text && !link.passages.includes(text)) link.passages.push(text);
+    for (const row of rows) if (!link.rows.includes(row)) link.rows.push(row);
     byKey.set(key, link);
   };
-  for (const p of passages) for (const target of p.links) add(target, "link", p.text);
+  for (const p of passages) for (const named of p.links) add(named, "link", p.text);
   for (const [n, footnote] of footnotes) {
-    for (const target of footnote.targets) {
-      add(target, "citation", footnote.text);
-      for (const p of passages) if (p.refs.includes(n)) add(target, "citation", p.text);
+    for (const named of footnote.targets) {
+      add(named, "citation", footnote.text);
+      for (const p of passages) if (p.refs.includes(n)) add(named, "citation", p.text);
     }
   }
   const summary = opening || fallback;

@@ -15,6 +15,7 @@ import {
   orphanPages,
   pagesLinkingTo,
   readableFolders,
+  rowLinks,
   staleCitations,
   stalePages,
   type AuthorRef,
@@ -22,6 +23,7 @@ import {
   type IndexFolder,
   type LogCursor,
   type LogRun,
+  type RowLink,
   type WikiReader,
 } from "@stuga/db";
 import type {
@@ -31,6 +33,7 @@ import type {
   LintBrokenLink,
   LintPage,
   LogOutcome,
+  LogTable,
   WikiIndex,
   WikiLint,
   WikiLog,
@@ -38,6 +41,8 @@ import type {
 import { recordAudit } from "../audit/record.js";
 import type { Ctx } from "../auth/context.js";
 import { canWriteDoc, personOf, scopeFolderIds } from "../authz/authz.js";
+import { ROWS_READ_IDS_MAX } from "@stuga/protocol/databases/rows-read";
+import { existingRows, readDatabaseRows } from "../databases/rows.js";
 import { authorizedFolder } from "../documents/access.js";
 
 /** Stands in a folder path for a folder above that the reader cannot open. */
@@ -155,6 +160,7 @@ export async function wikiIndex(ctx: Ctx, opts: { folderId?: string | null; limi
         return ref ? [ref] : [];
       }),
       needs_checking: p.needs_checking,
+      ...(p.doc_type === "database" && p.row_count !== null ? { row_count: p.row_count } : {}),
     });
   }
   // Top level, folders by path, pages shared from folders the reader cannot open, their own notes.
@@ -189,11 +195,55 @@ function outcomeOf(runs: readonly LogRun[]): LogOutcome {
   return "partly";
 }
 
+/** Row titles the Log names per table of a run; the rest are counted. */
+const LOG_ROWS_NAMED = 5;
+
+/**
+ * The tables and rows each database run touched, named as each table reads now, by run id: per database, a read
+ * of its tables' names and reads of the rows the runs name. A row since deleted, with no name, or of a change
+ * too large to keep its ids, is counted alone; a table since deleted is left out; a database whose actor cannot
+ * answer, all of its runs.
+ */
+async function touchedTables(ctx: Ctx, runs: readonly LogRun[]): Promise<Map<string, LogTable[]>> {
+  const out = new Map<string, LogTable[]>();
+  const byDb = new Map<string, LogRun[]>();
+  for (const r of runs) if (r.doc_kind === "database" && r.touched?.length) byDb.set(r.doc_id, [...(byDb.get(r.doc_id) ?? []), r]);
+  await Promise.all(
+    [...byDb].map(async ([docId, dbRuns]) => {
+      // Every table's name, so a table a large change touched (its row ids kept apart) is still named.
+      const names = await readDatabaseRows(ctx, { doc_id: docId }, { titles_only: true, max_rows: 1 });
+      if (!names) return;
+      const tables = new Map(names.tables.map((t) => [t.table_id, t.display]));
+      const refs = dbRuns.flatMap((r) => r.touched!.flatMap((t) => t.row_ids.map((row_id) => ({ table_id: t.table_id, row_id }))));
+      const titles = new Map<string, string>();
+      for (let i = 0; i < refs.length; i += ROWS_READ_IDS_MAX) {
+        const read = await readDatabaseRows(ctx, { doc_id: docId }, { rows: refs.slice(i, i + ROWS_READ_IDS_MAX), titles_only: true });
+        if (!read) return;
+        for (const t of read.tables) for (const row of t.rows) if (row.title) titles.set(`${t.table_id}.${row.row_id}`, row.title);
+      }
+      for (const r of dbRuns) {
+        out.set(
+          r.run_id,
+          r.touched!.flatMap((t) => {
+            const table = tables.get(t.table_id);
+            if (table === undefined) return [];
+            // In the order the change touched them.
+            const named = t.row_ids.flatMap((id) => titles.get(`${t.table_id}.${id}`) ?? []);
+            return [{ table, rows: named.slice(0, LOG_ROWS_NAMED), count: t.rows }];
+          }),
+        );
+      }
+    }),
+  );
+  return out;
+}
+
 /** The workspace's decided AI changes the caller can read, newest first. */
 export async function wikiLog(ctx: Ctx, opts: { before?: string | null; limit: number }): Promise<WikiLog | { error: string }> {
   const before = decodeLogCursor(opts.before);
   if (before === "bad") return { error: "`before` is not a cursor this log gave" };
   const { entries, next } = await logEntries(ctx.sql, wikiReader(ctx), { before, limit: opts.limit });
+  const tables = await touchedTables(ctx, entries.flatMap((e) => e.runs));
   const people = unique(entries.flatMap((e) => e.runs.flatMap((r) => [r.reviewer, ...r.decided_by])));
   const refs = await authorRefs(ctx.sql, people);
   const me = personOf(ctx);
@@ -227,6 +277,7 @@ export async function wikiLog(ctx: Ctx, opts: { before?: string | null; limit: n
           declined: r.rejected + r.conflicts,
           applied: r.applied,
           reverted: r.reverted,
+          ...(tables.get(r.run_id)?.length ? { tables: tables.get(r.run_id) } : {}),
         })),
       };
     }),
@@ -242,11 +293,12 @@ export async function wikiLint(ctx: Ctx, opts: { folderId?: string | null; limit
   if ("error" in scope) return NOT_FOUND;
   const r = wikiReader(ctx);
   const within = { folderIds: scope.folderIds, limit: opts.limit };
-  const [folders, stale, orphans, broken] = await Promise.all([
+  const [folders, stale, orphans, broken, rowsNamed] = await Promise.all([
     readableFolders(ctx.sql, r),
     stalePages(ctx.sql, r, within),
     orphanPages(ctx.sql, r, within),
     brokenLinks(ctx.sql, r, within),
+    rowLinks(ctx.sql, r, within),
   ]);
   const paths = folderPaths(folders);
   const needs = new Map<string, ChangedSource[]>();
@@ -266,10 +318,49 @@ export async function wikiLint(ctx: Ctx, opts: { folderId?: string | null; limit
     });
     brokenBy.set(b.doc_id, page);
   }
+  // A link to a row, or a citation of one, in a database the reader opens: broken once the row is gone.
+  for (const b of await deletedRows(ctx, rowsNamed.links)) {
+    const page = brokenBy.get(b.link.doc_id) ?? { doc_id: b.link.doc_id, title: b.link.title, path: pathOf(paths, b.link.parent_id), links: [] };
+    page.links.push({ href: b.href, kind: b.link.kind, reason: "row_deleted", title: b.link.target_title });
+    brokenBy.set(b.link.doc_id, page);
+  }
   return {
     needs_checking: stale.pages.map((p) => ({ doc_id: p.doc_id, title: p.title, path: pathOf(paths, p.parent_id), sources: needs.get(p.doc_id) ?? [] })),
     orphans: orphans.pages.map((p) => ({ doc_id: p.doc_id, title: p.title, path: pathOf(paths, p.parent_id) })),
     broken_links: [...brokenBy.values()],
-    truncated: stale.truncated || orphans.truncated || broken.truncated,
+    truncated: stale.truncated || orphans.truncated || broken.truncated || rowsNamed.truncated,
   };
+}
+
+/**
+ * The rows `links` name that are gone from their tables, each with the address a page writes it by: one read
+ * per database. A database whose actor cannot answer says nothing is gone, rather than everything.
+ */
+async function deletedRows(ctx: Ctx, links: readonly RowLink[]): Promise<Array<{ link: RowLink; href: string }>> {
+  const byDb = new Map<string, RowLink[]>();
+  for (const l of links) byDb.set(l.target_doc_id, [...(byDb.get(l.target_doc_id) ?? []), l]);
+  const out: Array<{ link: RowLink; href: string }> = [];
+  await Promise.all(
+    [...byDb].map(async ([docId, named]) => {
+      const refs = [...new Set(named.flatMap((l) => l.target_rows))].flatMap((ref) => {
+        const [table_id, row_id] = ref.split(".");
+        return table_id && row_id ? [{ table_id, row_id }] : [];
+      });
+      // A read names at most ROWS_READ_IDS_MAX rows: the rest go in further reads.
+      const there = new Map<string, unknown>();
+      for (let i = 0; i < refs.length; i += ROWS_READ_IDS_MAX) {
+        const found = await existingRows(ctx, docId, refs.slice(i, i + ROWS_READ_IDS_MAX));
+        if (!found) return;
+        for (const [ref, row] of found) there.set(ref, row);
+      }
+      for (const l of named) {
+        for (const ref of l.target_rows) {
+          if (there.has(ref)) continue;
+          const [table, row] = ref.split(".");
+          out.push({ link: l, href: `/doc/${docId}?table=${table}&row=${row}` });
+        }
+      }
+    }),
+  );
+  return out.sort((a, b) => a.link.title.localeCompare(b.link.title) || a.link.doc_id.localeCompare(b.link.doc_id) || a.href.localeCompare(b.href));
 }

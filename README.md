@@ -41,6 +41,8 @@ and [connect an agent](docs/agents.md). Help for people using Stuga: [stuga.dev/
   comments, @mentions and version history.
 - **Databases with SQL.** Typed tables beside your documents, each database its own SQLite file,
   with saved views, row pages and CSV import. Agents, Ask and the REST API run read-only SQL on them.
+- **Pages and tables.** Say **Save to Stuga** and your AI files each fact where it fits: prose in a
+  page, a contact or a plan in its table's row. **Ask Stuga** answers from both, with who wrote it.
 - **Search that follows permissions.** Keyword (BM25 over Postgres full-text search) and semantic
   (pgvector) search in one SQL statement, with access checked inside it. Chinese, Japanese, Korean
   and Thai work without setup.

@@ -7,9 +7,11 @@
  * what it finds:
  *
  * - candidates: the pages the caller can edit where the point fits, best first. A page that says the
- *   point already comes first; then the pages about it: its title names the topic, or the point names
- *   its title; then a folder whose name or instructions for agents fit the point, and holds no page
- *   about it, as a place for a new page; then the rest. Within each, a page holding a sentence the
+ *   point already comes first, then a table's row that does; then a row it fills a column of (a table
+ *   records a fact its columns name, a page holds prose: remember-tables.ts); then the pages about it:
+ *   its title names the topic, or the point names its title; then a row it names and fills no column of;
+ *   then a folder whose name or instructions for agents fit the point, and holds no page about it, as a
+ *   place for a new page; then the rest. Within each, a page holding a sentence the
  *   point may change comes first, then by its passages' fused scores, its best first and each further
  *   one counting half the one before, a title naming the topic adding to them. A passage counts only
  *   when it shares a word with the point or its topic, a word search does not leave out as a stopword
@@ -27,9 +29,10 @@
  *   one the point says or replaces. A sentence that names, by a possessive or such a page's title,
  *   someone the point does not ("Globex's refund window" for Acme's) is not one it replaces either.
  * - already_saved: sentences that say the point, word for word, as search normalises text, and
- *   state it: no question, no denial, nothing struck through (remember-text.ts).
+ *   state it: no question, no denial, nothing struck through (remember-text.ts); and cells of a row it
+ *   names that hold what it says.
  * - possibly_replaces: other sentences of the best passages the point may make untrue, or that say
- *   it already in other words (likeness.ts).
+ *   it already in other words (likeness.ts); and cells of a row it names that hold another value.
  * - note: when only words were matched (semantic search off) and no page offered is about the point
  *   (none says it, holds a sentence it changes, is named by it, or holds two of its words), a page on
  *   it may be written in another language, which no word of it reaches: the plan says where to look.
@@ -48,6 +51,7 @@ import type {
   RememberPlanBody,
   RememberPlanPoint,
   RememberPoint,
+  RememberRowCandidate,
   ReplaceablePassage,
 } from "@stuga/agent-surface/backend";
 import {
@@ -86,6 +90,8 @@ import { canReadDoc, canReadFolder, canWriteDoc, canWriteFolder, personOf, scope
 import { resolveReviewMode } from "../authz/review-mode.js";
 import { docInstructionStack, folderInstructionStack } from "../documents/instructions.js";
 import { myNotes } from "../documents/my-notes.js";
+import { planTables, type PlacesOf, type RowTier } from "./remember-tables.js";
+import { tableCache, type TableCache } from "./tables.js";
 
 /** Passages one point's search returns: enough for five pages and the sentences beside them. */
 const PASSAGES = 30;
@@ -144,6 +150,8 @@ interface PlanCache {
   folderPages: Map<string, Promise<Array<{ doc_id: string; title: string }>>>;
   /** The folders of the person's My notes, itself included; empty when they have none. */
   mine: ReadonlySet<string>;
+  /** The tables read, and what waits for their rows. */
+  tables: TableCache;
 }
 
 const linkOf = (ctx: Ctx, docId: string): string => `${ctx.servedOrigin}/doc/${docId}`;
@@ -351,6 +359,9 @@ async function planPoint(
   const stop = await stopwordsAmong(ctx.sql, [...wordsOfPoint(said), ...wordsOfPoint(topic ?? "")], ctx.env.searchLanguages.current());
   const evidence = (words: string[]) => words.filter((w) => !stop.has(w));
 
+  // The rows of tables the point names, or a new row of one it fits: read beside the pages.
+  const tables = await planTables(ctx, cache.tables, point, placesOf(ctx, cache, levels), stop);
+
   const hits = new Map<string, DocHit>();
   const kept: Array<{ passage: AskChunk; doc: DocRow }> = [];
   /** Every page the search reached, by id: the pages a point may name by title. */
@@ -513,11 +524,13 @@ async function planPoint(
   };
   // A page found by words alone, and only by common ones ("contract", "days": more than one page found holds
   // them), rests on a coincidence, and is left out; one found by a single rare word ("buddy") is a reason to
-  // look there, unless the point or its topic names a page by its title, or a page says the point already.
+  // look there, unless the point or its topic names a page by its title, a page says the point already, or a
+  // table's row takes it (it names the row and a column, or the table and a column).
+  const rowTakes = tables.candidates.some((c) => c.tier !== "weak");
   const weak = (h: RankedHit): boolean => {
     if (h.titled || h.about || h.semantic || holders.has(h.doc.doc_id) || replacing.has(h.doc.doc_id)) return false;
     const rare = distinctWords([...h.words, ...h.topicWords]).filter((w) => pagesHolding(w) < 2);
-    return rare.length === 0 || (rare.length < 2 && (namedFully.length > 0 || holders.size > 0));
+    return rare.length === 0 || (rare.length < 2 && (namedFully.length > 0 || holders.size > 0 || rowTakes));
   };
 
   // A page holding the point first; then a page of the wiki about it; else a folder a new page on it belongs in; then the rest.
@@ -525,14 +538,15 @@ async function planPoint(
   const aboutIt = ranked.filter((h) => !holders.has(h.doc.doc_id) && !h.mine && h.about);
   const taken = new Set([...holdersFirst, ...aboutIt].map((h) => h.doc.parent_id ?? ""));
   const newPages = await newPagesFor(ctx, cache, point, levels, taken, stop);
-  // The person's own notes only when nothing of the wiki is about the point.
-  const fits = holdersFirst.length > 0 || aboutIt.length > 0 || newPages.length > 0;
+  // The person's own notes only when nothing of the wiki is about the point: a page, a folder or a table.
+  const fits = holdersFirst.length > 0 || aboutIt.length > 0 || newPages.length > 0 || tables.candidates.length > 0;
   const rest = ranked
     .filter((h) => !holders.has(h.doc.doc_id) && (!h.about || h.mine))
     .filter((h) => !fits || !h.mine)
     .filter((h) => !weak(h));
 
-  const candidates: Array<RememberCandidate | RememberNewPage> = [];
+  const candidates: Array<RememberCandidate | RememberRowCandidate | RememberNewPage> = [];
+  const rowsOf = (tier: RowTier) => tables.candidates.filter((c) => c.tier === tier).map((c) => c.candidate);
   // A page is about the point when it says it, holds a sentence it changes, is named by it or its topic, was found
   // by meaning, or holds two of its words; one found by a single word may be a coincidence.
   let about = false;
@@ -574,9 +588,18 @@ async function planPoint(
       url: linkOf(ctx, h.doc.doc_id),
     };
   };
-  for (const h of [...holdersFirst, ...aboutIt]) if (candidates.length < CANDIDATES_MAX) candidates.push(await pageOf(h));
-  for (const n of newPages) if (candidates.length < CANDIDATES_MAX) candidates.push(n);
-  for (const h of rest) if (candidates.length < CANDIDATES_MAX) candidates.push(await pageOf(h));
+  // Pages that say it, then a row that does; a row it fills before the pages about it, as a table records a
+  // fact its columns name; then a row it names but fills no column of, before a folder for a new page.
+  const add = (c: RememberCandidate | RememberRowCandidate | RememberNewPage) => {
+    if (candidates.length < CANDIDATES_MAX) candidates.push(c);
+  };
+  for (const h of holdersFirst) add(await pageOf(h));
+  for (const r of [...rowsOf("holds"), ...rowsOf("fits")]) add(r);
+  for (const h of aboutIt) add(await pageOf(h));
+  for (const r of rowsOf("weak")) add(r);
+  for (const n of newPages) add(n);
+  for (const h of rest) add(await pageOf(h));
+  if (tables.candidates.length > 0 || tables.alreadySaved.length > 0 || tables.replaces.length > 0) about = true;
 
   return {
     plan: {
@@ -585,12 +608,26 @@ async function planPoint(
       topic,
       source: point.source ?? null,
       candidates,
-      already_saved: alreadySaved,
-      possibly_replaces: possiblyReplaces,
+      already_saved: [...alreadySaved, ...tables.alreadySaved.slice(0, ALREADY_SAVED_MAX)],
+      possibly_replaces: [...possiblyReplaces, ...tables.replaces.slice(0, REPLACES_MAX)],
       // Meaning crosses languages; words do not.
       ...(!about && vector === null ? { note: OTHER_LANGUAGE_NOTE } : {}),
     },
     degraded: semantic && vector === null,
+  };
+}
+
+/** What a table's place reads once per plan: its folder path, its instructions' labels, how a write there is reviewed. */
+function placesOf(ctx: Ctx, cache: PlanCache, levels: Map<string, InstructionLevel>): PlacesOf {
+  return {
+    folderPath: (folderId) => folderPath(ctx, cache, folderId),
+    async instructionLabels(doc) {
+      const stack = await once(cache.stacks, `doc:${doc.doc_id}`, () => docInstructionStack(ctx, doc));
+      for (const level of stack) levels.set(`${level.kind}:${level.id}`, level);
+      return stack.filter((l) => l.kind !== "workspace").map(instructionLevelLabel);
+    },
+    review: (doc) => docReview(ctx, doc),
+    origin: ctx.servedOrigin,
   };
 }
 
@@ -676,6 +713,7 @@ export async function planRemember(ctx: Ctx, points: readonly RememberPoint[]): 
     sketches: new Map(),
     folders: null,
     folderPages: new Map(),
+    tables: tableCache(),
   };
   const levels = new Map<string, InstructionLevel>();
   const semantic = ctx.env.aiSettings.current().embed.enabled;

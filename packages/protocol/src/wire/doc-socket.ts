@@ -132,6 +132,9 @@ export interface AiCitation {
   heading_path?: string | null;
   /** Excerpt of the passage frozen at answer time; empty when the agent cited none. */
   content: string;
+  /** A row of the cited database, by its table and id: the footnote opens that row. */
+  table_id?: string;
+  row_id?: string;
 }
 
 /** Max chars of referenced text carried in a citation. */

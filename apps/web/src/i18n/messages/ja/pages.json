@@ -103,15 +103,16 @@
 
   "wiki.nav": "Wiki",
   "wiki.index.title": "目次",
-  "wiki.index.intro": "開けるすべてのページを、フォルダーごとに表示します。",
+  "wiki.index.intro": "開けるすべてのページとデータベースを、フォルダーごとに表示します。",
   "wiki.index.topLevel": "最上位",
   "wiki.index.elsewhere": "自分と共有",
   "wiki.index.changed": "<time>{when}</time>に変更",
   "wiki.index.changedBy": "<time>{when}</time>に{names}が変更",
+  "wiki.index.rows": "{count, plural, other {#行}}",
   "wiki.index.checkingOnly": "要確認のみ",
   "wiki.index.checkingCount": "{count, plural, other {#件のページが要確認です。}}",
   "wiki.index.emptyTitle": "Wikiはここから始まります",
-  "wiki.index.emptyNote": "開けるページが、フォルダーごとにここに表示されます。",
+  "wiki.index.emptyNote": "開けるページとデータベースが、フォルダーごとにここに表示されます。",
   "wiki.index.allCheckedTitle": "すべてのページが最新です",
   "wiki.index.allCheckedNote": "引用しているページが変わると、そのページがここに表示されます。",
   "wiki.index.truncated": "最初の{count, number}ページです。フォルダーを開くと、その中がすべて表示されます。",
@@ -137,5 +138,8 @@
   "wiki.log.by.partly": "一部承認 · {names}",
   "wiki.log.askedBy": "{name}が{agent}で依頼",
   "wiki.log.through": "{agent}から",
-  "wiki.log.changes": "{count, plural, other {#件の変更}}"
+  "wiki.log.changes": "{count, plural, other {#件の変更}}",
+  "wiki.log.tableRows": "{table}：{names}",
+  "wiki.log.tableRowsMore": "{table}：{names}、ほか{more, plural, other {#行}}",
+  "wiki.log.tableCount": "{table}：{count, plural, other {#行}}"
 }

@@ -14,6 +14,7 @@ import type { ProposeBody } from "@stuga/agent-surface/backend";
 import { CITATIONS_MAX, CITED_EDITS_MAX } from "@stuga/agent-surface/catalog";
 import { hostExternalImages, ingestNote, type HostedImage } from "../media/media-ingest.js";
 import { recordAudit } from "../audit/record.js";
+import { existingRows } from "../databases/rows.js";
 import type { Ctx } from "../auth/context.js";
 import { canReadDoc, canWriteDoc, READ_ONLY_MESSAGE } from "../authz/authz.js";
 import { proposalApproverGroup, resolveReviewMode } from "../authz/review-mode.js";
@@ -98,6 +99,8 @@ const CITED_OLD_STRING_MAX = 1_000_000;
 const CITATION_TITLE_MAX = 200;
 const CITATION_HEADING_MAX = 500;
 const CITATION_CONTENT_MAX = 1000;
+/** A table's or a row's id, as the node mints them. */
+const ROW_REF_PART = /^[A-Za-z0-9_-]{1,100}$/;
 
 /**
  * Validate a REST caller's cited_edits. The actor trusts the node, so this is
@@ -126,18 +129,24 @@ export function parseCitedEdits(
     if (citations.length > CITATIONS_MAX) return { error: `cited_edits accepts at most ${CITATIONS_MAX} citations` };
     for (const c of citations) {
       if (!c || typeof c !== "object") return { error: "each citation must be an object" };
-      const { n, doc_id, title, heading_path, content } = c as Record<string, unknown>;
+      const { n, doc_id, title, heading_path, content, table_id, row_id } = c as Record<string, unknown>;
       if (!Number.isInteger(n) || (n as number) < 1) return { error: "each citation needs a positive integer `n`" };
       if (typeof doc_id !== "string" || !doc_id) return { error: "each citation needs a `doc_id`" };
       if (typeof title !== "string") return { error: "each citation needs a string `title`" };
       if (heading_path != null && typeof heading_path !== "string") return { error: "`heading_path` must be a string" };
       if (content !== undefined && typeof content !== "string") return { error: "`content` must be a string" };
+      // A row is named by both, as ids are written: the footnote opens it in its table.
+      const row = table_id != null || row_id != null;
+      if (row && (typeof table_id !== "string" || typeof row_id !== "string" || !ROW_REF_PART.test(table_id) || !ROW_REF_PART.test(row_id))) {
+        return { error: "a citation of a row needs both its `table_id` and its `row_id`, as `retrieve` or `query` gave them" };
+      }
       cleanCitations.push({
         n: n as number,
         doc_id,
         title: title.slice(0, CITATION_TITLE_MAX),
         heading_path: typeof heading_path === "string" ? heading_path.slice(0, CITATION_HEADING_MAX) : null,
         content: typeof content === "string" ? content.slice(0, CITATION_CONTENT_MAX) : "",
+        ...(row ? { table_id: table_id as string, row_id: row_id as string } : {}),
       });
     }
   }
@@ -307,21 +316,38 @@ export async function proposeDocEdit(ctx: Ctx, input: ProposeInput): Promise<Pro
  * page against it, so a citation stands only for a page the caller could have read it in.
  */
 async function unreadableCitation(ctx: Ctx, citations: readonly AiCitation[]): Promise<AiCitation | null> {
-  const seen = new Map<string, boolean>();
+  const seen = new Map<string, DocRow | null>();
   for (const c of citations) {
-    let ok = seen.get(c.doc_id);
-    if (ok === undefined) {
-      const doc = await getDoc(ctx.sql, c.doc_id);
-      ok = doc !== null && !doc.trashed && doc.workspace_id === ctx.workspaceId && canReadDoc(ctx, doc);
-      seen.set(c.doc_id, ok);
+    let doc = seen.get(c.doc_id);
+    if (doc === undefined) {
+      const found = await getDoc(ctx.sql, c.doc_id);
+      doc = found !== null && !found.trashed && found.workspace_id === ctx.workspaceId && canReadDoc(ctx, found) ? found : null;
+      seen.set(c.doc_id, doc);
     }
-    if (!ok) return c;
+    if (!doc) return c;
+  }
+  // A row is cited only in a database the caller reads, and only while it is there.
+  const rows = citations.filter((c) => c.table_id && c.row_id);
+  for (const docId of new Set(rows.map((c) => c.doc_id))) {
+    const doc = seen.get(docId)!;
+    const named = rows.filter((c) => c.doc_id === docId);
+    if (doc.doc_type !== "database") return named[0]!;
+    const there = await existingRows(ctx, docId, named.map((c) => ({ table_id: c.table_id!, row_id: c.row_id! })));
+    const missing = named.find((c) => !there?.has(`${c.table_id}.${c.row_id}`));
+    if (missing) return missing;
   }
   return null;
 }
 
 /** One answer whether the document is missing or only unreadable, so a citation cannot probe which ids exist. */
-export function citationNotFound(c: Pick<AiCitation, "n" | "doc_id">): string {
+export function citationNotFound(c: Pick<AiCitation, "n" | "doc_id" | "row_id">): string {
+  if (c.row_id) {
+    return (
+      `citation_not_found: citation ${c.n} names the row ${JSON.stringify(c.row_id)} of ${JSON.stringify(c.doc_id)}, which is not ` +
+      "a row of a database you can read in this workspace. Cite only rows you read here (`retrieve`, `search` or " +
+      "`query`), or leave the citation out; nothing was proposed."
+    );
+  }
   return (
     `citation_not_found: citation ${c.n} names ${JSON.stringify(c.doc_id)}, which is not a document you can read in ` +
     "this workspace. Cite only documents you read here (`retrieve`, `search` or `markdown`), or leave the citation out; " +

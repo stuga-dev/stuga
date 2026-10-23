@@ -53,7 +53,8 @@ export function holdsPoint(text: string, point: string): boolean {
   return savedSentences(text, point) !== null;
 }
 
-function holdsComparable(haystack: string, wanted: string): boolean {
+/** Whether a comparable text holds another, standing as words: at a space, or anywhere in a script without spaces. */
+export function holdsComparable(haystack: string, wanted: string): boolean {
   const first = wanted[0]!;
   const last = wanted[wanted.length - 1]!;
   for (let at = haystack.indexOf(wanted); at !== -1; at = haystack.indexOf(wanted, at + 1)) {
@@ -214,7 +215,7 @@ function commonStart(a: string, b: string): number {
  * "refunds"), or they part only at the shorter's last letter ("policy", "policies"), with at least
  * SHARED_STEM_CHARS in common.
  */
-function sameStem(a: string, b: string): boolean {
+export function sameStem(a: string, b: string): boolean {
   const shorter = Math.min(a.length, b.length);
   const common = commonStart(a, b);
   return common >= SHARED_STEM_CHARS && common >= shorter - 1;

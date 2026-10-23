@@ -1,6 +1,6 @@
 /**
  * The wiki's Log: the AI changes people approved and declined, newest first, by day. Each is one
- * change across pages, or one page's run in none: which pages it touched, who asked and through which
+ * change across pages, or one page's run in none: which pages it touched (a table's rows by name), who asked and through which
  * AI, who decided, and when. Generated from the run records of pages the reader can open; a change's
  * title shows to whoever asked for it or decided it, as its card gives it.
  */
@@ -18,7 +18,8 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { History } from "lucide-react";
 import { changeCardPath } from "@stuga/protocol/domain/changes";
 import { reviewCardPath } from "@stuga/protocol/domain/runs";
-import { Wiki, type LogOutcome, type WikiLogEntry } from "../api";
+import { Wiki, type LogOutcome, type LogTable, type WikiLogEntry } from "../api";
+import { nameList } from "../document/name-list";
 import { AppTopNav } from "../shell/AppTopNav";
 import { LoadFailed } from "../ui/LoadFailed";
 import { PageColumn } from "../ui/PageColumn";
@@ -63,6 +64,15 @@ export function outcomeLine(e: Pick<WikiLogEntry, "outcome" | "decided_by">): st
 export function askedLine(e: Pick<WikiLogEntry, "asked_by" | "agent">): string {
   const agent = runAgentLabel({ source: e.agent.source, agent: e.agent.name, agent_alias: e.agent.alias });
   return e.asked_by ? t("pages.wiki.log.askedBy", { name: authorRefLabel(e.asked_by), agent }) : t("pages.wiki.log.through", { agent });
+}
+
+/** "Customers: Initech, Hooli", "Customers: Initech and 3 more rows", or "Customers: 2 rows" when none is named. */
+export function tableLine(table: LogTable): string {
+  if (table.rows.length === 0) return t("pages.wiki.log.tableCount", { table: table.table, count: table.count });
+  const more = table.count - table.rows.length;
+  return more > 0
+    ? t("pages.wiki.log.tableRowsMore", { table: table.table, names: nameList(table.rows), more })
+    : t("pages.wiki.log.tableRows", { table: table.table, names: nameList(table.rows) });
 }
 
 /** How many changes it decided, landed or not, over the pages the reader opens. */
@@ -143,6 +153,9 @@ export default function WikiLogPage() {
                 <List key={group.day} hasDividers density="balanced" header={<Heading level={2}>{group.day}</Heading>}>
                   {group.entries.map((e) => {
                     const titles = e.pages.map((p) => p.title || t("common.untitled"));
+                    const tables = e.pages.flatMap((p) => p.tables ?? []);
+                    // A database whose rows are named below is named by its tables there.
+                    const pageTitles = e.pages.filter((p) => !p.tables?.length).map((p) => p.title || t("common.untitled"));
                     return (
                       <ListItem
                         key={e.id}
@@ -153,11 +166,16 @@ export default function WikiLogPage() {
                             <HStack>
                               <Token size="sm" color={TOKEN_COLOR[e.outcome]} label={outcomeLine(e)} />
                             </HStack>
-                            {e.title && (
+                            {e.title && pageTitles.length > 0 && (
                               <Text color="secondary" maxLines={1}>
-                                {titles.join(" · ")}
+                                {pageTitles.join(" · ")}
                               </Text>
                             )}
+                            {tables.map((table, i) => (
+                              <Text key={`${table.table}-${i}`} color="secondary" maxLines={1}>
+                                {tableLine(table)}
+                              </Text>
+                            ))}
                             <Text type="supporting" color="secondary">
                               {askedLine(e)} · {t("pages.wiki.log.changes", { count: changeCount(e) })} ·{" "}
                               <time dateTime={e.at} title={absoluteTime(e.at)}>

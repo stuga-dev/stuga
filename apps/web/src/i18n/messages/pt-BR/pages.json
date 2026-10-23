@@ -103,15 +103,16 @@
 
   "wiki.nav": "Wiki",
   "wiki.index.title": "Índice",
-  "wiki.index.intro": "Todas as páginas que você pode abrir, por pasta.",
+  "wiki.index.intro": "Todas as páginas e bancos de dados que você pode abrir, por pasta.",
   "wiki.index.topLevel": "Nível superior",
   "wiki.index.elsewhere": "Compartilhadas com você",
   "wiki.index.changed": "Alterada <time>{when}</time>",
   "wiki.index.changedBy": "Alterada <time>{when}</time> por {names}",
+  "wiki.index.rows": "{count, plural, one {# linha} many {# linhas} other {# linhas}}",
   "wiki.index.checkingOnly": "Só as que precisam de verificação",
   "wiki.index.checkingCount": "{count, plural, one {# página precisa de verificação.} many {# páginas precisam de verificação.} other {# páginas precisam de verificação.}}",
   "wiki.index.emptyTitle": "Sua wiki começa aqui",
-  "wiki.index.emptyNote": "As páginas que você pode abrir aparecem aqui, por pasta.",
+  "wiki.index.emptyNote": "As páginas e bancos de dados que você pode abrir aparecem aqui, por pasta.",
   "wiki.index.allCheckedTitle": "Todas as páginas estão em dia",
   "wiki.index.allCheckedNote": "Uma página aparece aqui quando muda uma página que ela cita.",
   "wiki.index.truncated": "As primeiras {count, number} páginas. Abra uma pasta para ver tudo o que há nela.",
@@ -137,5 +138,8 @@
   "wiki.log.by.partly": "Aprovada em parte por {names}",
   "wiki.log.askedBy": "Pedida por {name} via {agent}",
   "wiki.log.through": "Via {agent}",
-  "wiki.log.changes": "{count, plural, one {# alteração} many {# alterações} other {# alterações}}"
+  "wiki.log.changes": "{count, plural, one {# alteração} many {# alterações} other {# alterações}}",
+  "wiki.log.tableRows": "{table}: {names}",
+  "wiki.log.tableRowsMore": "{table}: {names} e mais {more, plural, one {# linha} many {# linhas} other {# linhas}}",
+  "wiki.log.tableCount": "{table}: {count, plural, one {# linha} many {# linhas} other {# linhas}}"
 }

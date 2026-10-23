@@ -103,15 +103,16 @@
 
   "wiki.nav": "Wiki",
   "wiki.index.title": "Índice",
-  "wiki.index.intro": "Todas las páginas que puedes abrir, por carpeta.",
+  "wiki.index.intro": "Todas las páginas y bases de datos que puedes abrir, por carpeta.",
   "wiki.index.topLevel": "Nivel superior",
   "wiki.index.elsewhere": "Compartido contigo",
   "wiki.index.changed": "Modificada <time>{when}</time>",
   "wiki.index.changedBy": "Modificada <time>{when}</time> por {names}",
+  "wiki.index.rows": "{count, plural, one {# fila} many {# filas} other {# filas}}",
   "wiki.index.checkingOnly": "Solo por revisar",
   "wiki.index.checkingCount": "{count, plural, one {# página por revisar.} many {# páginas por revisar.} other {# páginas por revisar.}}",
   "wiki.index.emptyTitle": "Tu wiki empieza aquí",
-  "wiki.index.emptyNote": "Las páginas que puedes abrir aparecen aquí, por carpeta.",
+  "wiki.index.emptyNote": "Las páginas y bases de datos que puedes abrir aparecen aquí, por carpeta.",
   "wiki.index.allCheckedTitle": "Todas las páginas están al día",
   "wiki.index.allCheckedNote": "Una página aparece aquí cuando cambia una página que cita.",
   "wiki.index.truncated": "Las primeras {count, number} páginas. Abre una carpeta para ver todo lo que contiene.",
@@ -137,5 +138,8 @@
   "wiki.log.by.partly": "Aprobado en parte por {names}",
   "wiki.log.askedBy": "Pedido por {name} desde {agent}",
   "wiki.log.through": "Desde {agent}",
-  "wiki.log.changes": "{count, plural, one {# cambio} many {# cambios} other {# cambios}}"
+  "wiki.log.changes": "{count, plural, one {# cambio} many {# cambios} other {# cambios}}",
+  "wiki.log.tableRows": "{table}: {names}",
+  "wiki.log.tableRowsMore": "{table}: {names} y {more, plural, one {# fila más} many {# filas más} other {# filas más}}",
+  "wiki.log.tableCount": "{table}: {count, plural, one {# fila} many {# filas} other {# filas}}"
 }

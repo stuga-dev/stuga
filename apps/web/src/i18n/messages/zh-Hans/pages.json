@@ -103,15 +103,16 @@
 
   "wiki.nav": "Wiki",
   "wiki.index.title": "目录",
-  "wiki.index.intro": "你能打开的所有页面，按文件夹排列。",
+  "wiki.index.intro": "你能打开的所有页面和数据库，按文件夹排列。",
   "wiki.index.topLevel": "顶层",
   "wiki.index.elsewhere": "与你共享",
   "wiki.index.changed": "<time>{when}</time>更改",
   "wiki.index.changedBy": "{names} 于 <time>{when}</time>更改",
+  "wiki.index.rows": "{count, plural, other {# 行}}",
   "wiki.index.checkingOnly": "仅看需要核对的",
   "wiki.index.checkingCount": "{count, plural, other {# 个页面需要核对。}}",
   "wiki.index.emptyTitle": "你的 Wiki 从这里开始",
-  "wiki.index.emptyNote": "你能打开的页面会按文件夹显示在这里。",
+  "wiki.index.emptyNote": "你能打开的页面和数据库会按文件夹显示在这里。",
   "wiki.index.allCheckedTitle": "所有页面都是最新的",
   "wiki.index.allCheckedNote": "页面所引用的页面有更改时，它会显示在这里。",
   "wiki.index.truncated": "前 {count, number} 个页面。打开一个文件夹即可看到其中全部页面。",
@@ -137,5 +138,8 @@
   "wiki.log.by.partly": "部分批准 · {names}",
   "wiki.log.askedBy": "{name} 通过 {agent} 提出",
   "wiki.log.through": "通过 {agent}",
-  "wiki.log.changes": "{count, plural, other {# 处更改}}"
+  "wiki.log.changes": "{count, plural, other {# 处更改}}",
+  "wiki.log.tableRows": "{table}：{names}",
+  "wiki.log.tableRowsMore": "{table}：{names} 等，另有 {more, plural, other {# 行}}",
+  "wiki.log.tableCount": "{table}：{count, plural, other {# 行}}"
 }

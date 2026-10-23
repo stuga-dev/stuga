@@ -114,6 +114,65 @@ export interface SearchBody {
   empty_scope?: boolean;
   /** No document holds every word of the query: these hold some of them. */
   partial?: boolean;
+  /** An agent's: rows of tables whose cells hold words of the query. */
+  rows?: RecalledRow[];
+  /** Said with `rows` when more rows hold them than are listed. */
+  rows_more?: RowsMore[];
+  /** Other people's waiting changes in the databases `rows` come from, counted. */
+  tables_waiting?: TablesWaiting[];
+  /** The tables `rows` come from, with their SQL names. */
+  tables?: RowTable[];
+}
+
+/**
+ * A row of a table an agent's recall found, cited as a passage is: who last wrote it and when, and what waits
+ * for it. Its cells are the approved table's.
+ */
+export interface RecalledRow extends Authorship {
+  database_id: string;
+  /** The database's title. */
+  title: string;
+  table_id: string;
+  table: string;
+  /** The physical name `query` reads the table by. */
+  table_name: string;
+  row_id: string;
+  /** Its title cell's value; "" when it has none. */
+  row_title: string;
+  /** Its non-empty cells by column name, cut short; none for a row that waits to be added. */
+  cells: Record<string, string>;
+  /** The columns whose cells hold words of the question, or that the question names. */
+  matched: string[];
+  /** A row the user asked for that waits to be added: none of it is in the table yet. */
+  waiting_row?: true;
+}
+
+/**
+ * Changes other people asked for that wait in a database a recall listed rows of, counted for the whole
+ * database: which rows they touch is for whoever asked and whoever decides.
+ */
+export type TablesWaiting = WaitingChanges & { database_id: string; title: string };
+
+/** A table a recall listed rows of, with the names `query` reads it and its columns by. */
+export interface RowTable {
+  database_id: string;
+  /** The database's title. */
+  title: string;
+  table_id: string;
+  table: string;
+  /** The physical name of the table, for SQL. */
+  table_name: string;
+  /** Each column's physical name, for SQL, by its name. */
+  columns: Record<string, string>;
+}
+
+/** More rows of one table hold the question's words than a recall lists: `query` reads every one. */
+export interface RowsMore {
+  database_id: string;
+  table: string;
+  table_name: string;
+  /** How many hold them, those listed included; at least, when the table was read in part. */
+  rows: number;
 }
 
 /**
@@ -152,6 +211,8 @@ export interface ProposedChange {
   after_approval: string;
   /** Where it lands, by heading path, when it is listed on a passage of another section ("" before any heading). */
   section?: string;
+  /** A row's: the column whose cell it changes; none when it adds or deletes the whole row. */
+  column?: string;
 }
 
 /** AI changes to a document that wait at one level, asked for by one side: not in its text until approved. */
@@ -201,6 +262,11 @@ export interface RetrieveBody {
   /** Found by their words, and no passage holds every word of the question: these hold some of them. */
   partial?: boolean;
   empty_scope?: boolean;
+  /** An agent's: rows of tables whose cells hold words of the question. */
+  rows?: RecalledRow[];
+  rows_more?: RowsMore[];
+  tables_waiting?: TablesWaiting[];
+  tables?: RowTable[];
 }
 
 /** A read, with the instructions stack that applies to the document. */
@@ -467,6 +533,61 @@ export interface RememberCandidate {
   url?: string;
 }
 
+/** A cell of a row a point fills, as it reads now. */
+export interface RememberRowFill {
+  column_id: string;
+  column: string;
+  type: DatabaseColumnType;
+  /** What the cell holds now, as a person reads it; null when it is empty, and for a new row. */
+  now: string | null;
+  /** The choices of a single-select column, and the one the point names. */
+  choices?: string[];
+  choice?: string;
+  /** It holds what the point says already. */
+  already_saved?: true;
+  /** It holds another value, which the point may make untrue: change it, never add a second. */
+  possibly_replaces?: true;
+  /** A change the user asked for waits to write it: what it would hold once approved, and whom it waits for. */
+  waiting?: { after_approval: string; waits_for: WaitsFor };
+}
+
+/** A row of a table a point could go in: the row it names by its title cell, or a new one. */
+export interface RememberRowCandidate {
+  kind: "row";
+  database_id: string;
+  /** The database's title. */
+  title: string;
+  folder_path: string[];
+  table_id: string;
+  table: string;
+  /** The physical name `query` reads the table by. */
+  table_name: string;
+  /** The row the point names; null for a new row. */
+  row: { row_id: string; title: string } | null;
+  /** The column a row's title is read from, and a new row is named by. */
+  title_column: string | null;
+  /** The columns the point fills, as each cell reads now; for a new row its title column first. */
+  fills: RememberRowFill[];
+  /** Every column of the table, for a fact the point names none of. */
+  columns: Array<{ column_id: string; name: string; type: DatabaseColumnType; choices?: string[] }>;
+  /** A new row the user asked for already waits to add this: never add it again. */
+  waiting_row?: { title: string; waits_for: WaitsFor };
+  why: string;
+  review: PlaceReview;
+  instructions_labels?: string[];
+  url?: string;
+}
+
+/** A cell an `already_saved` or `possibly_replaces` entry names: the row and column it is in. */
+export interface CellRef {
+  table_id?: string;
+  table?: string;
+  row_id?: string;
+  row?: string;
+  column_id?: string;
+  column?: string;
+}
+
 /** A folder a point could start a page in: its name or its instructions for agents fit the point, and no page there is about it. */
 export interface RememberNewPage {
   kind: "new_page";
@@ -478,8 +599,8 @@ export interface RememberNewPage {
   instructions_labels?: string[];
 }
 
-/** A passage that already says the point. */
-export interface AlreadySavedPassage {
+/** A passage that already says the point, or, with a row and a column, a cell that holds it. */
+export interface AlreadySavedPassage extends CellRef {
   doc_id: string;
   title: string;
   heading_path: string | null;
@@ -490,8 +611,11 @@ export interface AlreadySavedPassage {
   url?: string;
 }
 
-/** A sentence the point may make untrue (`possibly_replaces`), or that says it already in other words (`likely_duplicate`). */
-export interface ReplaceablePassage {
+/**
+ * A sentence the point may make untrue (`possibly_replaces`), or that says it already in other words
+ * (`likely_duplicate`); with a row and a column, a cell holding another value.
+ */
+export interface ReplaceablePassage extends CellRef {
   doc_id: string;
   title: string;
   heading_path: string | null;
@@ -510,7 +634,7 @@ export interface RememberPlanPoint {
   text: string;
   topic: string | null;
   source: string | null;
-  candidates: Array<RememberCandidate | RememberNewPage>;
+  candidates: Array<RememberCandidate | RememberRowCandidate | RememberNewPage>;
   already_saved: AlreadySavedPassage[];
   possibly_replaces: ReplaceablePassage[];
   /**

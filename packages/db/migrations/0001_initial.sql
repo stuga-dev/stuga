@@ -157,6 +157,9 @@ CREATE TABLE docs (
     text_changed_at TIMESTAMPTZ,
     text_changed_by TEXT[] NOT NULL DEFAULT '{}',
     links_seq       BIGINT NOT NULL DEFAULT 0,
+    -- A database's rows, as its last indexing counted them, when text_changed_at and text_changed_by
+    -- name its last change (its ledger's newest op); NULL for a page.
+    row_count       INTEGER,
     -- Oldest snapshot seq still in the version ring. Only ever rises, so a
     -- retried job cannot reopen a pruned version. NULL = no ring published.
     version_floor   BIGINT,
@@ -295,6 +298,8 @@ CREATE TABLE doc_links (
     kind          TEXT NOT NULL CHECK (kind IN ('link', 'citation')),
     -- sha-256 of the passages holding it, so an edit elsewhere on the page leaves checked_at alone.
     context_hash  TEXT NOT NULL,
+    -- The rows of a database it names (`<table_id>.<row_id>`): a link to a row, or a citation of one.
+    target_rows   TEXT[] NOT NULL DEFAULT '{}',
     checked_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (doc_id, target_doc_id, kind)
 );
@@ -1029,6 +1034,9 @@ CREATE TABLE agent_runs (
     -- The run of the same agent on the same item it waits behind: proposed on top of that run's
     -- undecided changes, it is approved only once that one is decided.
     queued_behind TEXT,
+    -- A database run's: the rows its landed changes touched, by table ([{table_id, row_ids, rows}]),
+    -- ids only, which the Log names as the table reads when it is read.
+    touched      JSONB,
     created_at   TIMESTAMPTZ NOT NULL,
     updated_at   TIMESTAMPTZ NOT NULL
 );

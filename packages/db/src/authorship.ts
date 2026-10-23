@@ -126,6 +126,21 @@ export async function waitingRuns(sql: Queryable, workspaceId: string, docIds: r
   return out;
 }
 
+/**
+ * The databases in the workspace where AI changes `reviewer` asked for wait, the latest first: where a new row
+ * of theirs may wait that no word of the table's approved text names yet. Ids only; the caller gates them.
+ */
+export async function databasesWaitingFor(sql: Queryable, workspaceId: string, reviewer: string, limit: number): Promise<string[]> {
+  const rows = await sql<{ doc_id: string }[]>`
+    SELECT doc_id FROM agent_runs
+    WHERE workspace_id = ${workspaceId} AND reviewer = ${reviewer} AND doc_kind = 'database'
+      AND status = 'open' AND pending > 0 AND NOT reverted
+    GROUP BY doc_id
+    ORDER BY max(updated_at) DESC, doc_id
+    LIMIT ${limit}`;
+  return rows.map((r) => r.doc_id);
+}
+
 /** Each document's authorship, for the documents of `docIds` in the workspace; a missing one is left out. */
 export async function docAuthorship(sql: Queryable, workspaceId: string, docIds: readonly string[]): Promise<Map<string, DocAuthorship>> {
   const out = new Map<string, DocAuthorship>();

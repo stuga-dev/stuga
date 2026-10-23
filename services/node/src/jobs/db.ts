@@ -63,6 +63,7 @@ import {
   recordWebhookDelivery,
   setChunkEmbedding,
   setDatabaseSearchText,
+  type DatabaseFacts,
   syncDocMentions,
   syncDocWiki,
   trashPagesOf,
@@ -86,8 +87,8 @@ export function jobsDb(sql: Sql) {
     insertAiUsage: (u: Parameters<typeof insertAiUsage>[1]) => insertAiUsage(sql, u),
     indexDoc: (input: Parameters<typeof indexDoc>[1]) => indexDoc(sql, input),
     advanceSnapshotSeq: (docId: string, snapshotSeq: number) => advanceSnapshotSeq(sql, docId, snapshotSeq),
-    setDatabaseSearchText: (docId: string, text: string, languages: readonly SearchLanguage[]) =>
-      setDatabaseSearchText(sql, docId, text, languages),
+    setDatabaseSearchText: (docId: string, text: string, languages: readonly SearchLanguage[], facts?: DatabaseFacts) =>
+      setDatabaseSearchText(sql, docId, text, languages, facts),
     /**
      * Store a notification and, when the row is new, queue its sink delivery in the same
      * transaction: a retried job then never finds its own row and skips a delivery that never ran.

@@ -930,6 +930,26 @@ memory.
   [change](#changes-one-piece-of-work-reviewed-as-one), reviewed on one card. Afterwards the agent
   tells you what it saved where, what was already there, and what waits for approval, and when it
   wrote nothing, says so.
+- **Tables.** A fact a table's columns name, such as a customer's contact, plan or refund window,
+  goes in a row; prose, such as a decision, a reason or how something is done, goes in a page. So
+  `remember` also reads the databases the point's words reach (their names, their columns' names and
+  their cells) that you can read, and offers, as `kind: "row"`, the row the point names by the value
+  of its title cell (its first text column: "Initech", matched as search matches text, whatever its
+  case, its width or its Chinese script), or a new row (`row: null`) when the point names the table
+  or two of its columns and no row of it. `fills` lists the columns the point names, by every word
+  of their name or by a choice they offer ("the Pro plan"), each with the cell as it reads now
+  (`now`): `already_saved` when it holds what the point says and nothing in the point says another
+  value for it ("30 days; it was 14 days before" says nothing of the 14 days but that it was),
+  `possibly_replaces` when it holds another value, or may, and `waiting` when a change you asked for
+  already waits to write it. A row that says the point already comes first after the pages that do;
+  a row the point fills comes before the pages about it, and a page found by one word alone is left
+  out; a row it names and fills nothing of, after them. A new row you already asked for that the
+  point names is `waiting_row`, never offered again. The cells that say the point, or hold another
+  value, also join `already_saved` and `possibly_replaces`, naming the table, row and column. A
+  database you can read but not edit offers no row; its cells still say what is there. The agent
+  writes a row with `databases_change` action `update_rows`, changing a cell in place rather than
+  adding a second row, or a new one with `databases_add` action `insert_rows`, in the same change as
+  the rest of the save.
 - **Who said it, and when.** What you tell the agent yourself is saved without your name or a date
   ("per Liv", "noted on 2026-10-22"): Stuga's version history records who changed what and when. A
   point from a meeting, an email or a document goes in with that as its `source`, cited in the text
@@ -956,6 +976,22 @@ memory.
   can answer "the page says 14 days; a change to 30 days waits for a colleague". The agent answers
   with the approved text and says what waits. A person's search and retrieval over REST answer as
   before.
+- **Rows.** An agent's `search` and `retrieve` answers also carry `rows`: up to five rows of the
+  tables the question's words reach whose cells hold its words, with the database, the table, the
+  row's title, its cells as the approved table holds them, and the `matched` columns. A row counts
+  when its title cell holds a word of the question, or when the question's words it accounts for
+  come to two: words its cells hold, and words naming one of its columns or its table ("Globex's
+  contact": Globex in Name, contact naming Contact). Each row carries `updated_at`, `last_edited_by`
+  (who made the change that last wrote it, an agent by the person it worked for) and the changes you
+  asked for that wait for it (`pending_changes`, as a document's, a change to a cell naming its
+  `column`). A new row you asked for that waits is listed with `waiting_row` and no cells. Changes
+  other people asked for are counted for the whole database in `tables_waiting`, never tied to a
+  row: which rows they touch is for whoever asked and whoever decides, and another person's new row
+  is nobody's to see until approved. `tables` gives the names `query` reads each table and column by
+  (a column named Plan may be `plan_x` in SQL), `rows_more` names a table with more matching rows
+  than are listed, and the agent answers a precise question over a table, such as which customers
+  are on a plan, with `query`. A row is cited by its database's `doc_id` with its `table_id` and
+  `row_id`.
 - **What waits, in a read.** An agent's `markdown` read lays the changes made through its connection
   over the text, so its next edits line up with them, and opens with a block that says the text is
   not the approved text and lists each change as it would land ("Approved now: … → after approval:
@@ -1023,14 +1059,16 @@ Both are generated from what you can open; nothing writes to them, an agent incl
   from a folder you cannot open under **Shared with you**, and your own My notes last. Each shows
   its opening paragraph, when its approved text last changed and who changed it (a person by name,
   an agent or the AI co-author by the person it worked for, an AI change approved by a person under
-  that person's name), and **Needs checking**. A row page is listed by its database. One Index lists
+  that person's name), and **Needs checking**. A database shows how many rows it holds, and its last
+  change is the last change to its rows or columns. A row page is listed by its database. One Index lists
   up to 1,000 pages; `?folder=<id>` shows one folder and what is under it. `docs` action `index`
   answers the same, up to 300 pages, `parent_id` narrowing it to a folder, and leaves out pages
   kept out of search, as an agent's search does.
 - **The Log** (`/wiki/log`, **Wiki → Log**) lists the AI changes people approved or declined, and
   those applied directly, newest first, over the year the review inbox keeps them: each
   [change](#changes-one-piece-of-work-reviewed-as-one) once, with the pages of it you can open, who
-  asked and through which AI, who approved or declined it, and when. A change's title shows to
+  asked and through which AI, who approved or declined it, and when. A change to a database names
+  each table and the rows it touched, as the table names them now; a row deleted since is counted. A change's title shows to
   whoever asked for it or decided some of it, as on its card. While a page of it you can open still
   waits, it is in the review inbox instead. `docs` action `log` answers the same, a page at a time
   (pass its `next` as `before`), with the title only of a change that agent made itself.
@@ -1046,18 +1084,21 @@ Say **Check Stuga** to your AI, or pick it from the prompt menu, and it looks ov
   so none of them counts.
 - **Broken links**: links and citations to a page in the trash (named, when you can open it), or to
   one that is gone or that you cannot open, which it tells apart from nothing (`not_found`, no
-  title).
+  title); and links to a row, or citations of one, in a database you can open, once the row is gone
+  from its table (`row_deleted`).
 
 The agent proposes each fix as a small edit, all of them in one change for your approval: it
 corrects the sentences a changed source makes untrue, citing the source again, links an orphan from
-the page a reader would look in, and repoints a link to a page in the trash. A link `not_found` may
+the page a reader would look in, repoints a link to a page in the trash, and points a link to a
+deleted row at the row meant, found with `query`, or keeps its text without the link. A link `not_found` may
 name a page someone else can open, so the agent asks you before it changes one. It never rewrites a
 page to fix it, and leaves marking a page checked to you. A read-only connection tells you what it
 would change.
 
-A citation names a page the caller can read in the workspace. `cited_edits` naming any other is
-refused whole with `citation_not_found`, the same answer for a page that is missing as for one out
-of reach, and nothing is proposed.
+A citation names a page the caller can read in the workspace, or a row of a database they can read
+(`table_id` and `row_id`), whose footnote opens that row in its table. `cited_edits` naming any other,
+or a row that is not there, is refused whole with `citation_not_found`, the same answer for a page
+that is missing as for one out of reach, and nothing is proposed.
 
 ## The tools
 
@@ -1074,25 +1115,25 @@ the item's `agent_mode` decide what a call does.
 |---|---|
 | `workspaces` | `list` · `instructions`. The workspaces this connection reaches and the node each is on ([above](#one-connection-and-which-node-a-call-lands-on)), whom the connection acts for (`user`), and one workspace's instructions for agents. |
 | `docs` | `list` · `metadata` · `index` · `log` · `lint`. `list` takes an optional folder (`parent_id`, null for the root). `metadata` includes this agent's `review` answer for the document, its `instructions`, `linked_from` and `needs_checking`. `index`, `log` and `lint` read [the wiki](#the-wiki). |
-| `search` | Hybrid keyword and semantic search that returns documents, across `workspace_ids`, optionally within a collection. Each result says who last changed it and when, and what waits for approval ([Asking](#save-to-stuga-and-ask-stuga)). |
+| `search` | Hybrid keyword and semantic search that returns documents, across `workspace_ids`, optionally within a collection. Each result says who last changed it and when, and what waits for approval, and `rows` lists the table rows that hold the query's words ([Asking](#save-to-stuga-and-ask-stuga)). |
 | `markdown` | `read` · `status` · `provenance`. `read` lists the changes that wait for approval, then shows the document's instructions in a marked block, then the text with the waiting changes made through the connection laid over it. `status` reports what became of its edits. |
 | `comments` | A document's comments. An `author` of `panel:<alias>` is that person's [in-app co-author](#questions-in-comments), and the agent's own comments carry `you: true`. |
 | `folders` | The folders the credential can read in the workspace. |
 | `events` | What changed in the workspace since `after`, optionally narrowed by `types`. Without `after` it starts from the newest event. |
 | `collections` | `list` · `open`. The saved document sets of the credential's person, which `search` and `retrieve` can be scoped to. `open` lists the members the credential can read ([collections.md](collections.md)). |
-| `retrieve` | The passages most relevant to a question across `workspace_ids`, with their sources, who last changed each and what waits for approval, optionally within a collection ([rag-cross-doc-qa.md](rag-cross-doc-qa.md)). With embeddings off, the passages that hold the question's words. |
+| `retrieve` | The passages most relevant to a question across `workspace_ids`, with their sources, who last changed each and what waits for approval, optionally within a collection ([rag-cross-doc-qa.md](rag-cross-doc-qa.md)), and the table rows that hold the question's words. With embeddings off, the passages that hold the question's words. |
 | `databases` | `list` · `schema` · `status` · `page`. `schema` returns tables, columns with their physical SQL names and `description` (what the column holds, written by the people here), saved views and the database's `instructions`. `page` returns the `doc_id` of a row's page, or null when it has none. |
-| `query` | One read-only `SELECT` (SQLite dialect) against one database, with `?` parameters. At most 8 KB of SQL, 1,000 rows, 1 MB per value and five seconds of work. `WITH RECURSIVE` is refused, because a recursive query that never ends cannot be stopped. |
+| `query` | One read-only `SELECT` (SQLite dialect) against one database, with `?` parameters: the answer to a precise question over a table. At most 8 KB of SQL, 1,000 rows, 1 MB per value and five seconds of work. `WITH RECURSIVE` is refused, because a recursive query that never ends cannot be stopped. |
 
 **Writes.** None but `remember` is idempotent. *Destructive* ones may replace or remove what exists;
 *open-world* ones may make the node download an image or file from the web.
 
 | Tool | Actions and use | Destructive | Open-world |
 |---|---|---|---|
-| `remember` | Save to Stuga: where each of 1 to 20 points belongs ([above](#save-to-stuga-and-ask-stuga)). It writes no text, and makes the person's [My notes](#my-notes) the first time. | no | no |
+| `remember` | Save to Stuga: where each of 1 to 20 points belongs, a page or a table's row ([above](#save-to-stuga-and-ask-stuga)). It writes no text, and makes the person's [My notes](#my-notes) the first time. | no | no |
 | `docs_create` | A document with a title, optionally in a folder. Returns its `instructions`, and its `change_id` when it is in a [change](#changes-one-piece-of-work-reviewed-as-one). | no | no |
 | `markdown_append` | Adds text at the end of a document, or under `heading`, and touches nothing else. Under a heading it goes at the end of that heading's own text: before its first subsection when it has any (so under a page's title heading, in the page's opening), and the answer says where it went and names the subsections; else at the end of its section. A heading the page lacks is refused with the headings it has, or, on a page with none, a note to put the heading in the text. | no | yes |
-| `markdown_edit` | `write` · `str_replace` · `cited_edits`. `write` replaces the whole document, `str_replace` swaps `find` for `replace` (one occurrence, or all with `replace_all`; `old_string` and `new_string` are the same), and `cited_edits` makes several exact edits at once with citations that become footnotes, each of a page the caller can read (`citation_not_found` otherwise). | yes | yes |
+| `markdown_edit` | `write` · `str_replace` · `cited_edits`. `write` replaces the whole document, `str_replace` swaps `find` for `replace` (one occurrence, or all with `replace_all`; `old_string` and `new_string` are the same), and `cited_edits` makes several exact edits at once with citations that become footnotes, each of a page the caller can read or a row of a database they can read (`citation_not_found` otherwise). | yes | yes |
 | `comments_add` | A comment on a document, a reply in a thread (`parent_num`), or a comment on a passage (`quote`, its exact text). It may mention at most 5 people, and those who can read the document are notified, as are the document's owner and, for a reply, the thread's people ([Agents in comment threads](#agents-in-comment-threads)). | no | no |
 | `media_upload` | `upload` · `upload_from_url` · `start_upload`. Stores an image or any other file with a document, or a file with a database: from base64 of up to 3 MB with its `name`, from a public URL the node downloads, or, after `start_upload`, from the `upload_url` the caller sends it to itself, by `upload_id`. A document gets the Markdown that places it, an image shown and any other file a link that downloads; a database gets the link for a `files` cell. | no | yes |
 | `collections_edit` | `create` · `rename` · `delete` · `add_items` · `remove_items`. `add_items` skips ids the credential cannot read and says how many. | yes | no |

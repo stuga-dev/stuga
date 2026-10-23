@@ -771,6 +771,40 @@ export async function docsByTitle(
     LIMIT ${normalizeQueryLimit(input.limit, 20)}`;
 }
 
+/** A database a question's or a point's words reach, best first. */
+export interface WordedDatabase {
+  doc_id: string;
+  title: string;
+}
+
+/**
+ * The visible databases whose title or text (each table's name, its column names, its cells: what its
+ * indexing wrote) holds any word of `query`, those holding the most first: the tables an agent's recall and
+ * its Save to Stuga plan read rows from. Gated as a search is (tenant, trash, hidden, ACL and scope).
+ */
+export async function databasesByWords(
+  sql: Sql,
+  input: Pick<AskInput, "principals" | "workspaceId" | "query" | "scopeDocIds" | "scopeFolderIds" | "searchLanguages" | "limit">,
+): Promise<WordedDatabase[]> {
+  if (input.scopeDocIds && input.scopeDocIds.length === 0) return [];
+  const plan = await planKeywords(sql, input.query, input.searchLanguages?.() ?? []);
+  if (plan.queries.length === 0) return [];
+  const scopeFilter = scopeFragment(sql, input.scopeDocIds ?? null, input.scopeFolderIds ?? null);
+  const any = plan.queries.map((q) => `(${q})`).join(" | ");
+  // How many of the query's words it holds, title or text: one term may stand for several stems.
+  const held = sql`(
+    SELECT count(*) FROM unnest(${plan.queries}::tsquery[]) AS q(tq)
+    WHERE d.title_tsv @@ q.tq OR d.search_tsv @@ q.tq)`;
+  return sql<WordedDatabase[]>`
+    SELECT d.doc_id, d.title
+    FROM docs d
+    WHERE ${visibleDocs(sql, input, scopeFilter)}
+      AND d.doc_type = 'database'
+      AND (d.title_tsv @@ ${any}::tsquery OR d.search_tsv @@ ${any}::tsquery)
+    ORDER BY ${held} DESC, ts_rank(d.title_tsv, ${any}::tsquery) DESC, d.updated_at DESC, d.doc_id
+    LIMIT ${normalizeQueryLimit(input.limit, 5)}`;
+}
+
 /**
  * The words of `words` that search leaves out as stopwords under any of the node's configurations
  * (English and each search language): "with", "their", "über". A word search never matches on is no

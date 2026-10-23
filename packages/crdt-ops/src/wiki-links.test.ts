@@ -1,7 +1,7 @@
 /** What the wiki reads of a page's text: its links and citations with their passages, and its summary. */
 import { describe, expect, it } from "vitest";
 import { applyCitedStrEdits } from "./footnotes.js";
-import { WIKI_SUMMARY_MAX, wikiLinkTarget, wikiText } from "./wiki-links.js";
+import { WIKI_SUMMARY_MAX, wikiLinkRef, wikiLinkTarget, wikiText } from "./wiki-links.js";
 
 describe("wikiLinkTarget", () => {
   it("reads the page an in-app link opens, with or without a query", () => {
@@ -18,6 +18,14 @@ describe("wikiLinkTarget", () => {
     expect(wikiText("[Policy](https://wiki.example.com/doc/p1)", { origins }).links.map((l) => l.target)).toEqual(["p1"]);
   });
 
+  it("reads the row a link opens in its table, and nothing else as one", () => {
+    expect(wikiLinkRef("/doc/db1?table=t1&row=r1")).toEqual({ target: "db1", row: "t1.r1" });
+    expect(wikiLinkRef("/doc/db1?row=r1")).toEqual({ target: "db1", row: null });
+    expect(wikiLinkRef("/doc/db1?table=t.1&row=r1")).toEqual({ target: "db1", row: null });
+    expect(wikiLinkRef("/doc/db1#row=r1")).toEqual({ target: "db1", row: null });
+    expect(wikiLinkRef("https://example.com/doc/db1?table=t1&row=r1")).toBeNull();
+  });
+
   it("leaves every other address alone", () => {
     expect(wikiLinkTarget("https://example.com/doc/abc")).toBeNull();
     expect(wikiLinkTarget("/docs/abc")).toBeNull();
@@ -32,8 +40,8 @@ describe("wikiText", () => {
     const md = "# Handbook\n\nSee [the refund policy](/doc/refunds) first.\n\n- Ask [Refunds](/doc/refunds) or [Leave](/doc/leave?x=1)\n";
     const { links } = wikiText(md);
     expect(links).toEqual([
-      { target: "refunds", kind: "link", passages: ["See the refund policy first.", "Ask Refunds or Leave"] },
-      { target: "leave", kind: "link", passages: ["Ask Refunds or Leave"] },
+      { target: "refunds", kind: "link", passages: ["See the refund policy first.", "Ask Refunds or Leave"], rows: [] },
+      { target: "leave", kind: "link", passages: ["Ask Refunds or Leave"], rows: [] },
     ]);
   });
 
@@ -49,8 +57,30 @@ describe("wikiText", () => {
         target: "policy",
         kind: "citation",
         passages: ['Refund policy — Window "Refunds within 14 days."', "Refunds take 14 days.", "Ask the desk."],
+        rows: [],
       },
     ]);
+  });
+
+  it("reads the rows of a database a link opens, and a citation of a row, each once", () => {
+    const md = applyCitedStrEdits(
+      "Intro.",
+      [
+        {
+          old_string: "Intro.",
+          new_string:
+            "[Initech](/doc/cust?table=tbl_1&row=row_a) and [Globex](https://wiki.example.com/doc/cust?table=tbl_1&row=row_b) " +
+            "and [the table](/doc/cust) and [Initech again](/doc/cust?row=row_a&table=tbl_1).\n\nIts contact is Ana [^1].",
+        },
+      ],
+      [{ n: 1, doc_id: "cust", title: "Customers", heading_path: "Initech", content: "Ana Ruiz", table_id: "tbl_1", row_id: "row_a" }],
+    );
+    const links = wikiText(md, { origins: ["https://wiki.example.com"] }).links;
+    expect(links.map((l) => [l.target, l.kind, l.rows])).toEqual([
+      ["cust", "link", ["tbl_1.row_a", "tbl_1.row_b"]],
+      ["cust", "citation", ["tbl_1.row_a"]],
+    ]);
+    expect(md).toContain("[Customers — Initech](/doc/cust?table=tbl_1&row=row_a)");
   });
 
   it("keeps a link and a citation of the same page apart", () => {

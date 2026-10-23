@@ -12,8 +12,8 @@ import type {
   ProposedChange,
   ViewShape,
   ProposeInstructionLabels,
+  RetrieveBody,
   WaitingChanges,
-  WaitsFor,
 } from "@stuga/agent-surface/backend";
 import { MAX_INLINE_IMAGE_BYTES } from "@stuga/agent-surface/catalog";
 import {
@@ -52,7 +52,9 @@ import {
   openCollection,
   renamePersonCollection,
 } from "../api/collections.js";
+import { recallRows } from "../agents/recall-rows.js";
 import { planRemember } from "../agents/remember.js";
+import { collectionScope } from "../retrieval/scope.js";
 import { retrievePassages, searchDocuments } from "../api/search.js";
 import { folderSummary } from "../api/summaries.js";
 import { eventActorOf } from "../audit/record.js";
@@ -91,7 +93,7 @@ import {
   storeImage,
 } from "../media/media.js";
 import { createMediaUpload, takeMediaUpload } from "../media/uploads.js";
-import { landsIn, netChanges, relevance, type NetChange, type NetOfRun, type PassageOf } from "./waiting.js";
+import { landsIn, netChanges, relevance, waitsFor, type NetChange, type NetOfRun, type PassageOf } from "./waiting.js";
 import { docWikiLinks, wikiIndex, wikiLint, wikiLog } from "../wiki/wiki.js";
 import { WIKI_LOG_PAGE_MAX } from "@stuga/agent-surface/catalog";
 
@@ -153,7 +155,9 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
     async searchDocs(query) {
       // An agent's search falls back to the pages holding some of its words, said to be partial.
       const answer = orCollectionNotFound(await searchDocuments(ctx, query, { anyWordFallback: true }));
-      return "error" in answer ? answer : { ...answer, results: await withAuthorship(ctx, answer.results, query.q, null) };
+      if ("error" in answer) return answer;
+      const [results, rows] = await Promise.all([withAuthorship(ctx, answer.results, query.q, null), rowsOf(ctx, query)]);
+      return { ...answer, results, ...rows };
     },
 
     async docMetadata(docId) {
@@ -349,7 +353,9 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
     async retrieve(query) {
       // With embeddings off, an agent still gets passages, found by their words.
       const answer = orCollectionNotFound(await retrievePassages(ctx, query, { keywordWhenOff: true }));
-      return "error" in answer ? answer : { ...answer, chunks: await withAuthorship(ctx, answer.chunks, query.q, (c) => c) };
+      if ("error" in answer) return answer;
+      const [chunks, rows] = await Promise.all([withAuthorship(ctx, answer.chunks, query.q, (c) => c), rowsOf(ctx, query)]);
+      return { ...answer, chunks, ...rows };
     },
 
     async databaseSchema(databaseId, opts) {
@@ -437,11 +443,23 @@ export function nodeBackend(ctx: Ctx): AgentBackend {
 }
 
 /**
- * Who approves a change proposed at `proposed` to an item at `itemNow`: a decision takes the stricter of the
- * two. A change at `auto` waits only behind earlier ones, which the person who asked decides first.
+ * The rows of tables a recall's words reach, beside its documents or passages: an agent's alone, so a person's
+ * answers stay as they are. Within the collection the call names. Best-effort: without them the answer stands.
  */
-function waitsFor(proposed: ReviewMode, itemNow: ReviewMode): WaitsFor {
-  return stricterReviewMode(proposed, itemNow) === "colleague" ? "colleague" : "review";
+async function rowsOf(ctx: Ctx, query: { q: string; collection_id?: string }): Promise<Pick<RetrieveBody, "rows" | "rows_more" | "tables_waiting" | "tables">> {
+  try {
+    const scope = await collectionScope(ctx, query.collection_id);
+    if (scope === "not-found") return {};
+    const { rows, rows_more, tables_waiting, tables } = await recallRows(ctx, query.q, { scopeDocIds: scope });
+    return {
+      ...(rows.length > 0 ? { rows, tables } : {}),
+      ...(rows_more.length > 0 ? { rows_more } : {}),
+      ...(tables_waiting.length > 0 ? { tables_waiting } : {}),
+    };
+  } catch (e) {
+    console.warn("[node] the rows a recall found are unavailable", { err: e instanceof Error ? e.message : String(e) });
+    return {};
+  }
 }
 
 /** One of the user's own waiting changes, as it would land, in its run's order. */

@@ -94,20 +94,25 @@ describe("/rows/export", () => {
 });
 
 describe("the text the workspace search reads", () => {
-  it("names each table, then a line per row of its cells as a person reads them", async () => {
+  it("names each table and its columns, then a line per row of its cells as a person reads them", async () => {
     const { actor, h } = await bakery();
-    const out = await doJson<{ text: string }>(actor, "/search-text");
+    const out = await doJson<{ text: string; rows: number; changed_at: number; changed_by: string }>(actor, "/search-text");
     expect(out.text).toBe(
       [
         "Table 1",
+        "Name · Notes · Done · Price · Day · Kind",
         "Sourdough loaf · Flour from Miller · 4.5 · 2026-10-15 · Bread",
         "Matcha cake · 抹茶蛋糕, 100% green · 12 · Cake",
         "Rye_bread · Line one line two · 3 · 2026-11-01",
       ].join("\n"),
     );
+    // How many rows it holds, and its last change: the rows the bakery's person inserted.
+    expect(out.rows).toBe(3);
+    expect(out.changed_by).toBe(HUMAN.alias);
+    expect(typeof out.changed_at).toBe("number");
     // Cut at whole lines, never past the cap.
-    const cut = databaseSearchText(h.state.storage, 80);
-    expect(cut).toBe("Table 1\nSourdough loaf · Flour from Miller · 4.5 · 2026-10-15 · Bread");
+    const cut = databaseSearchText(h.state.storage, 120);
+    expect(cut).toBe("Table 1\nName · Notes · Done · Price · Day · Kind\nSourdough loaf · Flour from Miller · 4.5 · 2026-10-15 · Bread");
   });
 
   afterEach(() => vi.useRealTimers());

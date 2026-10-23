@@ -272,7 +272,7 @@ interface MarkdownEditArgs extends Omit<ProposeInput, "action" | "citations"> {
   /** str_replace: `find` and `replace` by the names `cited_edits` uses. */
   old_string?: string;
   new_string?: string;
-  citations?: Array<{ n: number; doc_id: string; title: string; heading_path?: string | null; content?: string }>;
+  citations?: Array<{ n: number; doc_id: string; title: string; heading_path?: string | null; content?: string; table_id?: string; row_id?: string }>;
 }
 
 interface MediaArgs {

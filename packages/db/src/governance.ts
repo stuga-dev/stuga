@@ -21,12 +21,13 @@ export async function upsertAgentRun(sql: Sql, e: RunIndexEntry): Promise<void> 
     INSERT INTO agent_runs
       (run_id, workspace_id, doc_id, doc_kind, doc_title, source, agent, agent_alias, reviewer, status,
        review_mode, approver_group, approved_by, decided_by, auto_applied, reverted, acknowledged, pending, accepted, rejected,
-       conflicts, applied, client, model, queued_behind, created_at, updated_at)
+       conflicts, applied, client, model, queued_behind, touched, created_at, updated_at)
     SELECT ${e.runId}, ${e.workspaceId}, ${e.docId}, ${e.docKind}, ${e.docTitle}, ${e.source}, ${e.agent},
            ${e.agentAlias}, ${e.reviewer}, ${e.status}, ${e.reviewMode}, ${e.approverGroup}, ${e.approvedBy}::text[],
            ${e.decidedBy ?? []}::text[],
            ${e.autoApplied}, ${e.reverted}, ${e.acknowledged}, ${e.pending}, ${e.accepted}, ${e.rejected},
-           ${e.conflicts}, ${e.applied}, ${e.client}, ${e.model}, ${e.queuedBehind ?? null}, ${createdAt}::timestamptz, ${updatedAt}::timestamptz
+           ${e.conflicts}, ${e.applied}, ${e.client}, ${e.model}, ${e.queuedBehind ?? null},
+           ${e.touched ? sql.json(e.touched as unknown as Parameters<typeof sql.json>[0]) : null}, ${createdAt}::timestamptz, ${updatedAt}::timestamptz
     WHERE EXISTS (SELECT 1 FROM workspaces WHERE workspace_id = ${e.workspaceId})
     ON CONFLICT (run_id) DO UPDATE SET
       doc_title = EXCLUDED.doc_title,
@@ -46,6 +47,7 @@ export async function upsertAgentRun(sql: Sql, e: RunIndexEntry): Promise<void> 
       conflicts = EXCLUDED.conflicts,
       applied = EXCLUDED.applied,
       queued_behind = EXCLUDED.queued_behind,
+      touched = EXCLUDED.touched,
       updated_at = EXCLUDED.updated_at
     WHERE agent_runs.updated_at <= EXCLUDED.updated_at`;
   // The proposal's answer linked it to its change already; this heals a link that write lost.

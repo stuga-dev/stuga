@@ -5,7 +5,7 @@
  * Only the node knows which, so these report its flags and never infer one
  * from an empty list.
  */
-import type { RetrieveBody, SearchBody } from "../backend.js";
+import type { RecalledRow, RetrieveBody, RowTable, RowsMore, SearchBody, TablesWaiting } from "../backend.js";
 import { interleaveByRank } from "../merge.js";
 
 export const EMPTY_SCOPE_NOTE =
@@ -31,6 +31,51 @@ export const KEYWORD_PASSAGES_NOTE =
 export const PARTIAL_PASSAGES_NOTE =
   "No passage holds every word of the question, so these hold some of them: check that one answers it before you " +
   "rely on it. The answer may be on a page written in another language: ask again with the question's words in it.";
+
+/** Said with the rows a recall lists, where a model reading them acts on it. */
+export const ROWS_NOTE =
+  "`rows` are rows of tables whose cells hold words of the question, cited as a passage is: name the table and " +
+  "the row, and who last changed it and when. Their cells are the approved table. For a precise answer over a " +
+  "table (every row that matches, a count, a sum, a filter), run `query` on it: `database_id`, with the names " +
+  "`tables` gives (`table_name`, and `columns`: each column's SQL name by its name) in the SQL; `rows_more` names the " +
+  "tables with more rows than are listed. `tables_waiting` counts the changes " +
+  "other people asked for that wait in those tables. To cite a row, pass its `database_id` as `doc_id` with its " +
+  "`table_id` and `row_id`.";
+
+/** Rows to list per call, across workspaces. */
+const DEFAULT_ROWS = 5;
+
+/** A row's link: its table, open at the row; a row that waits to be added, its database. */
+function rowLink(origin: string, r: RecalledRow): string | undefined {
+  if (!origin) return undefined;
+  if (r.waiting_row) return `${origin}/doc/${r.database_id}`;
+  return `${origin}/doc/${r.database_id}?table=${encodeURIComponent(r.table_id)}&row=${encodeURIComponent(r.row_id)}`;
+}
+
+/** The rows of every workspace's answer, merged by rank, each naming its workspace and linked; the note when there are any. */
+function rowsPart(
+  parts: ReadonlyArray<WorkspacePart<{ rows?: RecalledRow[]; rows_more?: RowsMore[]; tables_waiting?: TablesWaiting[]; tables?: RowTable[] }>>,
+): Record<string, unknown> {
+  const rows = interleaveByRank(
+    parts.map((p) => (p.body.rows ?? []).map((r) => ({ workspace_id: p.workspace_id, ...r, url: rowLink(p.origin, r) }))),
+    DEFAULT_ROWS,
+  );
+  if (rows.length === 0) return {};
+  const more = parts.flatMap((p) => (p.body.rows_more ?? []).map((m) => ({ workspace_id: p.workspace_id, ...m })));
+  const waiting = parts.flatMap((p) => (p.body.tables_waiting ?? []).map((w) => ({ workspace_id: p.workspace_id, ...w })));
+  // The tables of the rows listed, with the names SQL reads them by.
+  const listed = new Set(rows.map((r) => `${r.workspace_id}\u0000${r.database_id}\u0000${r.table_id}`));
+  const tables = parts.flatMap((p) =>
+    (p.body.tables ?? []).filter((t) => listed.has(`${p.workspace_id}\u0000${t.database_id}\u0000${t.table_id}`)).map((t) => ({ workspace_id: p.workspace_id, ...t })),
+  );
+  return {
+    rows,
+    ...(tables.length > 0 ? { tables } : {}),
+    ...(more.length > 0 ? { rows_more: more } : {}),
+    ...(waiting.length > 0 ? { tables_waiting: waiting } : {}),
+    rows_note: ROWS_NOTE,
+  };
+}
 
 /** A workspace a call named but could not cover just now, and why. */
 export interface UnavailableWorkspace {
@@ -72,6 +117,7 @@ export function renderSearch(
     unavailable,
     ...(parts.some((p) => p.body.partial) ? { partial: true, partial_note: PARTIAL_SEARCH_NOTE } : {}),
     ...(parts.length === 1 && parts[0]!.body.empty_scope ? { note: EMPTY_SCOPE_NOTE } : {}),
+    ...rowsPart(parts),
   });
 }
 
@@ -110,5 +156,6 @@ export function renderPassages(
     ...(partial ? { partial: true, partial_note: PARTIAL_PASSAGES_NOTE } : {}),
     unavailable,
     ...(parts.length === 1 && parts[0]!.body.empty_scope ? { note: EMPTY_SCOPE_NOTE } : {}),
+    ...rowsPart(parts),
   });
 }

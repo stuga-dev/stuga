@@ -55,6 +55,8 @@ export interface IndexEntry {
   changed_at: string;
   changed_by: AuthorRef[];
   needs_checking: boolean;
+  /** A database's rows, once it was indexed. */
+  row_count?: number;
 }
 
 export interface IndexSection {
@@ -86,6 +88,17 @@ export interface LogPage {
   /** Applied at once, where AI edits apply directly. */
   applied: number;
   reverted: boolean;
+  /**
+   * A database's: the rows its landed changes touched, by table, named as the table reads now (a row since
+   * deleted, or with no name, is counted alone); `count` is every row touched. A table since deleted is left out.
+   */
+  tables?: LogTable[];
+}
+
+export interface LogTable {
+  table: string;
+  rows: string[];
+  count: number;
 }
 
 export type LogOutcome = "approved" | "declined" | "partly" | "applied" | "reverted";
@@ -126,9 +139,12 @@ export interface LintBrokenLink {
   /** The address as the page's text writes it, so it can be found there. */
   href: string;
   kind: WikiLinkKind;
-  /** `in_trash`: a page the reader opens is in the trash; `not_found`: it is gone, or not one the reader can open. */
-  reason: "in_trash" | "not_found";
-  /** The page's title, for one in the trash. */
+  /**
+   * `in_trash`: a page the reader opens is in the trash; `not_found`: it is gone, or not one the reader can open;
+   * `row_deleted`: the row of a database the reader opens that it names is gone from its table.
+   */
+  reason: "in_trash" | "not_found" | "row_deleted";
+  /** The page's title, for one in the trash; the database's, for a row deleted. */
   title?: string;
 }
 

@@ -1,7 +1,8 @@
 /**
- * What the workspace search reads of a database: each table's name, then a
- * line per row of its cells as a person reads them, in the order the rows were
- * added, cut at a fixed size. Checkboxes say nothing a search would look for.
+ * What the workspace search reads of a database: each table's name, a line of
+ * its column names, then a line per row of its cells as a person reads them, in
+ * the order the rows were added, cut at a fixed size. A column's name finds the
+ * table ("refund window"); a checkbox's cells say nothing a search would look for.
  */
 import { cellPlainText } from "@stuga/protocol/databases/csv";
 import { DATABASE_SEARCH_TEXT_MAX_CHARS } from "@stuga/protocol/databases/limits";
@@ -23,7 +24,9 @@ export function databaseSearchText(storage: Pick<ActorStorage, "sql" | "transact
   };
   for (const table of listTables(storage.sql)) {
     if (!add(table.display)) break;
-    const columns = getColumns(storage.sql, table.table_id).filter((c) => c.type !== "checkbox");
+    const all = getColumns(storage.sql, table.table_id);
+    if (all.length > 0 && !add(all.map((c) => c.display).join(CELL_SEPARATOR))) break;
+    const columns = all.filter((c) => c.type !== "checkbox");
     if (columns.length === 0) continue;
     let full = false;
     storage.transactionSync(() => {

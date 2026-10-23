@@ -51,8 +51,8 @@ export interface DocWikiSync {
   summary: string;
   /** Who made that snapshot: the aliases its flush names. */
   editors: string[];
-  /** One per page and kind, the page itself left out. */
-  links: Array<{ target: string; kind: WikiLinkKind; contextHash: string }>;
+  /** One per page and kind, the page itself left out; `rows`, the rows of a database it names (`<table_id>.<row_id>`). */
+  links: Array<{ target: string; kind: WikiLinkKind; contextHash: string; rows?: string[] }>;
 }
 
 /**
@@ -78,6 +78,8 @@ export async function syncDocWiki(sql: Sql, s: DocWikiSync): Promise<boolean> {
     const targets = links.map((l) => l.target);
     const kinds = links.map((l) => l.kind);
     const hashes = links.map((l) => l.contextHash);
+    // One array per link, as text: unnest flattens a two-dimensional array, so each goes as its JSON.
+    const rows = links.map((l) => JSON.stringify(l.rows ?? []));
     await tx`
       DELETE FROM doc_links l
       WHERE l.doc_id = ${s.docId}
@@ -86,11 +88,13 @@ export async function syncDocWiki(sql: Sql, s: DocWikiSync): Promise<boolean> {
           WHERE n.target = l.target_doc_id AND n.kind = l.kind)`;
     if (links.length > 0) {
       await tx`
-        INSERT INTO doc_links (doc_id, workspace_id, target_doc_id, kind, context_hash)
-        SELECT ${s.docId}, ${row.workspace_id}, n.target, n.kind, n.hash
-        FROM unnest(${targets}::text[], ${kinds}::text[], ${hashes}::text[]) AS n(target, kind, hash)
+        INSERT INTO doc_links (doc_id, workspace_id, target_doc_id, kind, context_hash, target_rows)
+        SELECT ${s.docId}, ${row.workspace_id}, n.target, n.kind, n.hash,
+               ARRAY(SELECT jsonb_array_elements_text(n.rows::jsonb))
+        FROM unnest(${targets}::text[], ${kinds}::text[], ${hashes}::text[], ${rows}::text[]) AS n(target, kind, hash, rows)
         ON CONFLICT (doc_id, target_doc_id, kind) DO UPDATE SET
           context_hash = EXCLUDED.context_hash,
+          target_rows = EXCLUDED.target_rows,
           checked_at = CASE WHEN doc_links.context_hash = EXCLUDED.context_hash THEN doc_links.checked_at ELSE now() END`;
     }
     return true;
@@ -186,6 +190,8 @@ export interface IndexPage {
   /** Who changed it then, as author aliases (people, agents, co-authors); who made it, before. */
   changed_by: string[];
   needs_checking: boolean;
+  /** A database's rows, once it was indexed; null for a page. */
+  row_count: number | null;
 }
 
 /**
@@ -201,7 +207,7 @@ export async function indexPages(
   const ids = folders?.filter((f): f is string => f !== null) ?? [];
   const top = folders?.includes(null) ?? false;
   const rows = await sql<IndexPage[]>`
-    SELECT d.doc_id, d.title, d.doc_type, d.parent_id, d.summary,
+    SELECT d.doc_id, d.title, d.doc_type, d.parent_id, d.summary, d.row_count,
            coalesce(d.text_changed_at, d.created_at) AS changed_at,
            CASE WHEN d.text_changed_at IS NULL
                 THEN ARRAY[regexp_replace(coalesce(d.created_by, d.owner), '^(user|agent):', '')]
@@ -313,6 +319,38 @@ export async function brokenLinks(sql: Queryable, r: WikiReader, scope: WikiScop
   return { links: rows.slice(0, scope.limit), truncated: rows.length > scope.limit };
 }
 
+export interface RowLink {
+  /** The page holding the link, which the reader opens. */
+  doc_id: string;
+  title: string;
+  parent_id: string | null;
+  /** A database the reader opens, out of the trash, and its title. */
+  target_doc_id: string;
+  target_title: string;
+  kind: WikiLinkKind;
+  /** The rows of it the link names, `<table_id>.<row_id>`. */
+  target_rows: string[];
+}
+
+/**
+ * Links and citations, from pages in scope, naming rows of a database the reader opens and that is out of the
+ * trash: whether each row is still there is the database's to say. A database gone, in the trash or one the
+ * reader cannot open is a broken link already (brokenLinks). At most `limit`.
+ */
+export async function rowLinks(sql: Queryable, r: WikiReader, scope: WikiScope): Promise<{ links: RowLink[]; truncated: boolean }> {
+  const rows = await sql<RowLink[]>`
+    SELECT s.doc_id, s.title, s.parent_id, l.target_doc_id, t.title AS target_title, l.kind, l.target_rows
+    FROM doc_links l
+    JOIN docs s ON s.doc_id = l.doc_id
+    JOIN docs t ON t.doc_id = l.target_doc_id
+    WHERE l.workspace_id = ${r.workspaceId} AND l.target_doc_id <> l.doc_id AND cardinality(l.target_rows) > 0
+      AND ${opens(sql, "s", r)} AND ${inWiki(sql, "s")} ${inScope(sql, "s", scope)}
+      AND t.doc_type = 'database' AND ${opens(sql, "t", r)} AND t.trashed = FALSE
+    ORDER BY lower(s.title), s.doc_id, l.target_doc_id, l.kind
+    LIMIT ${scope.limit + 1}`;
+  return { links: rows.slice(0, scope.limit), truncated: rows.length > scope.limit };
+}
+
 // ---- The Log ------------------------------------------------------------------------------
 
 /** One run of an entry, on a page the reader opens. */
@@ -340,6 +378,8 @@ export interface LogRun {
   applied: number;
   decided_by: string[];
   updated_at: string;
+  /** A database run's rows its landed changes touched, by table: ids, for the caller to name as the table reads now. */
+  touched: Array<{ table_id: string; row_ids: string[]; rows: number }> | null;
 }
 
 /** A change, or a run in none, with every run of it on a page the reader opens. */
@@ -370,7 +410,7 @@ export async function logEntries(
       SELECT r.run_id, r.doc_id, r.doc_kind, coalesce(nullif(d.title, ''), r.doc_title) AS title,
              cr.change_id, c.title AS change_title, r.agent, r.agent_alias, r.client, r.source, r.reviewer,
              r.review_mode, r.auto_applied, r.reverted, r.accepted, r.rejected, r.conflicts, r.applied,
-             r.decided_by, r.updated_at, r.status, r.pending,
+             r.decided_by, r.updated_at, r.status, r.pending, r.touched,
              coalesce(cr.change_id, r.run_id) AS entry_id
       FROM agent_runs r
       JOIN docs d ON d.doc_id = r.doc_id

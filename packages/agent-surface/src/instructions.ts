@@ -50,13 +50,14 @@ const ROUTING =
 function phrases(readOnly: boolean): string {
   const ask =
     '"Ask Stuga", or a question about what the user or their team decided, recorded or know, means `retrieve` or ' +
-    "`search` here first, citing who wrote it and when; answer with the approved text, and say what still waits for " +
-    "approval.";
+    "`search` here first, citing who wrote it and when; their `rows` cover tables, and `query` answers a precise " +
+    "question over one. Answer with the approved text, and say what still waits for approval.";
   const check = '"Check Stuga" means `docs` action:lint, then ';
   return readOnly
     ? `ASK: ${ask} ${check}telling the user what each fix would be.\n\n`
     : 'SAVE, ASK AND CHECK: "Save to Stuga" (in any language, or "remember this in Stuga") means `remember`, then writing ' +
-        `where it says; ${ask} ${check}proposing its fixes as one change for approval.\n\n`;
+        `where it says: a fact a table's columns name in its row, prose in a page; ${ask} ${check}proposing its fixes as ` +
+        "one change for approval.\n\n";
 }
 
 /**

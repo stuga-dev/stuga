@@ -110,7 +110,7 @@ async function syncWiki(env: JobsEnv, deps: JobDeps, docId: string, seq: number,
     textHash: sha256Hex(markdown),
     summary,
     editors: [...new Set(editors.filter((a) => !EDITOR_MARKER.test(a)))],
-    links: links.map((l) => ({ target: l.target, kind: l.kind, contextHash: sha256Hex(l.passages.join("\n")) })),
+    links: links.map((l) => ({ target: l.target, kind: l.kind, contextHash: sha256Hex(l.passages.join("\n")), rows: l.rows })),
   });
 }
 
@@ -118,15 +118,24 @@ async function syncWiki(env: JobsEnv, deps: JobDeps, docId: string, seq: number,
  * A database's search text: what its cells say, read from its actor, so the
  * workspace search finds a table by an order number or a product name. Kept to
  * `search_text` under the database's own row, so whoever can read the database
- * finds it and nobody else; no passages are embedded, as Ask reads tables
- * through its own tools.
+ * finds it and nobody else; no passages are embedded, as an agent reads a table's
+ * rows through its own tools. Its row count and last change come with it, for the
+ * wiki's Index.
  */
 async function indexDatabaseText(env: JobsEnv, deps: JobDeps, docId: string): Promise<void> {
   const res = await env.databases.get(docId).fetch(`http://actor/search-text?dbId=${encodeURIComponent(docId)}`);
   if (!res.ok) throw new Error(`database search text: actor answered ${res.status}`);
-  const body = (await res.json()) as { text?: unknown };
+  const body = (await res.json()) as { text?: unknown; rows?: unknown; changed_at?: unknown; changed_by?: unknown };
   if (typeof body.text !== "string") throw new Error("database search text: no text in the actor's answer");
-  await deps.db.setDatabaseSearchText(docId, body.text, env.searchLanguages.current());
+  const facts =
+    typeof body.rows === "number"
+      ? {
+          rows: body.rows,
+          changedAt: typeof body.changed_at === "number" ? body.changed_at : null,
+          changedBy: typeof body.changed_by === "string" ? body.changed_by : null,
+        }
+      : undefined;
+  await deps.db.setDatabaseSearchText(docId, body.text, env.searchLanguages.current(), facts);
 }
 
 export async function handleIndexDoc(env: JobsEnv, deps: JobDeps, msg: IndexDocMessage): Promise<void> {

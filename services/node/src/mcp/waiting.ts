@@ -6,7 +6,17 @@
  */
 import { headingPathAt } from "@stuga/ai";
 import { applyStrEditsStrict, computeStrEdits } from "@stuga/crdt-ops";
+import type { WaitsFor } from "@stuga/agent-surface/backend";
 import { sharedWords } from "@stuga/db";
+import { stricterReviewMode, type ReviewMode } from "@stuga/protocol/domain/events";
+
+/**
+ * Who approves a change proposed at `proposed` to an item at `itemNow`: a decision takes the stricter of the
+ * two. A change at `auto` waits only behind earlier ones, which the person who asked decides first.
+ */
+export function waitsFor(proposed: ReviewMode, itemNow: ReviewMode): WaitsFor {
+  return stricterReviewMode(proposed, itemNow) === "colleague" ? "colleague" : "review";
+}
 
 export interface NetChange {
   /** The approved lines it changes, whole, the lines it keeps left out: "" when it adds. */

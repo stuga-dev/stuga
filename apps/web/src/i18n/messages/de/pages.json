@@ -103,15 +103,16 @@
 
   "wiki.nav": "Wiki",
   "wiki.index.title": "Verzeichnis",
-  "wiki.index.intro": "Alle Seiten, die du öffnen kannst, nach Ordnern.",
+  "wiki.index.intro": "Alle Seiten und Datenbanken, die du öffnen kannst, nach Ordnern.",
   "wiki.index.topLevel": "Oberste Ebene",
   "wiki.index.elsewhere": "Mit dir geteilt",
   "wiki.index.changed": "Geändert <time>{when}</time>",
   "wiki.index.changedBy": "Geändert <time>{when}</time> von {names}",
+  "wiki.index.rows": "{count, plural, one {# Zeile} other {# Zeilen}}",
   "wiki.index.checkingOnly": "Nur zu prüfende",
   "wiki.index.checkingCount": "{count, plural, one {# Seite ist zu prüfen.} other {# Seiten sind zu prüfen.}}",
   "wiki.index.emptyTitle": "Hier beginnt dein Wiki",
-  "wiki.index.emptyNote": "Seiten, die du öffnen kannst, erscheinen hier nach Ordnern.",
+  "wiki.index.emptyNote": "Seiten und Datenbanken, die du öffnen kannst, erscheinen hier nach Ordnern.",
   "wiki.index.allCheckedTitle": "Alle Seiten sind aktuell",
   "wiki.index.allCheckedNote": "Eine Seite erscheint hier, wenn sich eine Seite ändert, die sie zitiert.",
   "wiki.index.truncated": "Die ersten {count, number} Seiten. Öffne einen Ordner, um alles darin zu sehen.",
@@ -137,5 +138,8 @@
   "wiki.log.by.partly": "Teilweise genehmigt von {names}",
   "wiki.log.askedBy": "Angefragt von {name} über {agent}",
   "wiki.log.through": "Über {agent}",
-  "wiki.log.changes": "{count, plural, one {# Änderung} other {# Änderungen}}"
+  "wiki.log.changes": "{count, plural, one {# Änderung} other {# Änderungen}}",
+  "wiki.log.tableRows": "{table}: {names}",
+  "wiki.log.tableRowsMore": "{table}: {names} und {more, plural, one {# weitere Zeile} other {# weitere Zeilen}}",
+  "wiki.log.tableCount": "{table}: {count, plural, one {# Zeile} other {# Zeilen}}"
 }

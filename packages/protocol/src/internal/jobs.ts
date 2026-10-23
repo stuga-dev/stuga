@@ -188,6 +188,16 @@ export type NotifyDeliverMessage = {
 };
 
 /** One run as the inbox needs it; counts only, hunk text stays in the actor. */
+/** Row ids a run's index entry keeps per table. */
+export const RUN_TOUCHED_ROWS_MAX = 20;
+
+export interface RunTouchedTable {
+  table_id: string;
+  row_ids: string[];
+  /** Rows touched in all, those past the ids kept included. */
+  rows: number;
+}
+
 export interface RunIndexEntry {
   runId: string;
   workspaceId: string;
@@ -222,6 +232,12 @@ export interface RunIndexEntry {
   conflicts: number;
   /** Hunks/ops that auto-applied. */
   applied: number;
+  /**
+   * A database run's: the rows its landed changes wrote, inserted or deleted, by table, at most
+   * RUN_TOUCHED_ROWS_MAX ids a table beside how many there were. Ids only: the Log reads their names
+   * from the table when it is read, so a row deleted since is named by nobody.
+   */
+  touched?: RunTouchedTable[];
   /** epoch ms */
   createdAt: number;
   updatedAt: number;

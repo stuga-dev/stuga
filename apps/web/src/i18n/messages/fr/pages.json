@@ -103,15 +103,16 @@
 
   "wiki.nav": "Wiki",
   "wiki.index.title": "Sommaire",
-  "wiki.index.intro": "Toutes les pages que vous pouvez ouvrir, par dossier.",
+  "wiki.index.intro": "Toutes les pages et bases de données que vous pouvez ouvrir, par dossier.",
   "wiki.index.topLevel": "Niveau supérieur",
   "wiki.index.elsewhere": "Partagées avec vous",
   "wiki.index.changed": "Modifiée <time>{when}</time>",
   "wiki.index.changedBy": "Modifiée <time>{when}</time> par {names}",
+  "wiki.index.rows": "{count, plural, one {# ligne} many {# lignes} other {# lignes}}",
   "wiki.index.checkingOnly": "À vérifier uniquement",
   "wiki.index.checkingCount": "{count, plural, one {# page est à vérifier.} many {# pages sont à vérifier.} other {# pages sont à vérifier.}}",
   "wiki.index.emptyTitle": "Votre wiki commence ici",
-  "wiki.index.emptyNote": "Les pages que vous pouvez ouvrir s’affichent ici, par dossier.",
+  "wiki.index.emptyNote": "Les pages et bases de données que vous pouvez ouvrir s’affichent ici, par dossier.",
   "wiki.index.allCheckedTitle": "Toutes les pages sont à jour",
   "wiki.index.allCheckedNote": "Une page s’affiche ici quand une page qu’elle cite change.",
   "wiki.index.truncated": "Les {count, number} premières pages. Ouvrez un dossier pour voir tout son contenu.",
@@ -137,5 +138,8 @@
   "wiki.log.by.partly": "Approuvée en partie par {names}",
   "wiki.log.askedBy": "Demandée par {name} via {agent}",
   "wiki.log.through": "Via {agent}",
-  "wiki.log.changes": "{count, plural, one {# modification} many {# modifications} other {# modifications}}"
+  "wiki.log.changes": "{count, plural, one {# modification} many {# modifications} other {# modifications}}",
+  "wiki.log.tableRows": "{table} : {names}",
+  "wiki.log.tableRowsMore": "{table} : {names} et {more, plural, one {# autre ligne} many {# autres lignes} other {# autres lignes}}",
+  "wiki.log.tableCount": "{table} : {count, plural, one {# ligne} many {# lignes} other {# lignes}}"
 }

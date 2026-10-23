@@ -668,13 +668,19 @@ describe("runMaintenanceTick", () => {
 });
 
 describe("index_doc: a database", () => {
-  it("stores the cell text its actor reads out, and indexes no passages", async () => {
+  it("stores the cell text its actor reads out, with its rows and last change, and indexes no passages", async () => {
     const db = fakeDb({ getDoc: vi.fn(async () => ({ doc_id: "db1", doc_type: "database", title: "Orders" }) as never) });
-    const fetch = vi.fn(async (_url: string) => Response.json({ text: "Orders\nORD-00777 · 236.3 · Refunded" }));
+    const fetch = vi.fn(async (_url: string) =>
+      Response.json({ text: "Orders\nORD-00777 · 236.3 · Refunded", rows: 1, changed_at: 1_760_000_000_000, changed_by: "agent-scout" }),
+    );
     const env = fakeEnv({ databases: { get: vi.fn(() => ({ fetch })) } as unknown as JobsEnv["databases"] });
     await dispatchJob(env, { kind: "index_doc", docId: "db1", reason: "database_changed" }, { db, log: silentLog, embed: vi.fn() });
     expect(fetch.mock.calls[0]![0]).toBe("http://actor/search-text?dbId=db1");
-    expect(db.setDatabaseSearchText).toHaveBeenCalledWith("db1", "Orders\nORD-00777 · 236.3 · Refunded", []);
+    expect(db.setDatabaseSearchText).toHaveBeenCalledWith("db1", "Orders\nORD-00777 · 236.3 · Refunded", [], {
+      rows: 1,
+      changedAt: 1_760_000_000_000,
+      changedBy: "agent-scout",
+    });
     expect(db.indexDoc).not.toHaveBeenCalled();
   });
 

@@ -28,6 +28,9 @@ import { sessionConnection, withDatabase, type LockSql } from "../writer-lock.js
 import type { RememberCandidate, RememberPlanPoint } from "@stuga/agent-surface/backend";
 import { CANDIDATES_MAX, OTHER_LANGUAGE_NOTE, planRemember } from "./remember.js";
 
+/** A place's id: a page's or a table's, or a folder's for a new page. */
+const idOf = (c: RememberPlanPoint["candidates"][number]): string => (c.kind === "page" ? c.doc_id : c.kind === "row" ? c.database_id : c.folder_id);
+
 /** A point's page candidates, the new pages a folder could hold left out. */
 const pagesOf = (point: RememberPlanPoint): RememberCandidate[] => point.candidates.filter((c): c is RememberCandidate => c.kind === "page");
 
@@ -561,7 +564,7 @@ describe.skipIf(!URL)("Save to Stuga", () => {
     it("offers My notes pages only when nothing of the wiki is about the point", async () => {
       const team = (await planRemember(agentOf("liv"), [{ text: "Acme documents are written in British spelling.", topic: "Acme" }])).points[0]!;
       expect(team.candidates[0]).toMatchObject({ doc_id: "d_acme" });
-      expect(team.candidates.map((c) => (c.kind === "page" ? c.doc_id : c.folder_id))).not.toContain("d_prefs");
+      expect(team.candidates.map(idOf)).not.toContain("d_prefs");
       const own = (await planRemember(agentOf("liv"), [{ text: "I prefer British spelling in documents.", topic: "Writing preferences" }])).points[0]!;
       expect(own.candidates[0]).toMatchObject({ doc_id: "d_prefs", in_my_notes: true });
     });
@@ -696,7 +699,7 @@ describe.skipIf(!URL)("Save to Stuga", () => {
         expect(point.candidates[0]).toMatchObject({ kind: "page", doc_id: "nw_initech", title: "Initech", section: null, excerpt: "" });
         expect(point.candidates[0]!.why).toContain("none of its text is approved yet");
         // Acme and Globex are other customers: no place for Initech's terms, and their sentences are not what these replace.
-        const ids = point.candidates.map((c) => (c.kind === "page" ? c.doc_id : c.folder_id));
+        const ids = point.candidates.map(idOf);
         expect(ids).not.toContain("nw_acme");
         expect(ids).not.toContain("nw_globex");
         expect(point.possibly_replaces.map((r) => r.doc_id)).not.toContain("nw_acme");
@@ -705,16 +708,16 @@ describe.skipIf(!URL)("Save to Stuga", () => {
       const net = await planRemember(nw("liv"), [
         { text: "Initech's invoices are paid net 45, meaning payment is due 45 days after the invoice date.", topic: "Initech contract" },
       ]);
-      expect(net.points[0]!.candidates.map((c) => (c.kind === "page" ? c.doc_id : c.folder_id))).toEqual(["nw_initech"]);
+      expect(net.points[0]!.candidates.map(idOf)).toEqual(["nw_initech"]);
     });
 
     it("leaves out a page found by another form of the topic's word, by a word of an address, or by one common word", async () => {
       const plan = await planRemember(nw("liv"), [{ text: "Globex wants invoices sent to ap@globex.example.", topic: "Globex account" }]);
-      expect(plan.points[0]!.candidates.map((c) => (c.kind === "page" ? c.doc_id : c.folder_id))).toEqual(["nw_globex"]);
+      expect(plan.points[0]!.candidates.map(idOf)).toEqual(["nw_globex"]);
       // With no page named, a word two pages hold is common: "contract" alone names neither customer's section.
       const unnamed = await planRemember(nw("liv"), [{ text: "The new supplier's contract starts in spring.", topic: "Supplier contract" }]);
-      expect(unnamed.points[0]!.candidates.map((c) => (c.kind === "page" ? c.doc_id : c.folder_id))).not.toEqual(expect.arrayContaining(["nw_acme"]));
-      expect(unnamed.points[0]!.candidates.map((c) => (c.kind === "page" ? c.doc_id : c.folder_id))).not.toEqual(expect.arrayContaining(["nw_globex"]));
+      expect(unnamed.points[0]!.candidates.map(idOf)).not.toEqual(expect.arrayContaining(["nw_acme"]));
+      expect(unnamed.points[0]!.candidates.map(idOf)).not.toEqual(expect.arrayContaining(["nw_globex"]));
     });
 
     it("never names a sentence about another customer as one the point replaces", async () => {
